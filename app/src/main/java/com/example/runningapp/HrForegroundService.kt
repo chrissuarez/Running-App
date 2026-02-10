@@ -29,6 +29,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 
 // simple data class to hold the state
@@ -38,7 +41,9 @@ data class HrState(
     val lastUpdateTimestamp: Long = 0,
     val connectedDeviceName: String? = null,
     val scannedDevices: List<BluetoothDevice> = emptyList(),
-    val discoveredServices: List<String> = emptyList()
+    val discoveredServices: List<String> = emptyList(),
+    val lastPacketTimeFormatted: String = "--:--:--.---",
+    val dataBits: String = "Unknown"
 )
 
 class HrForegroundService : Service() {
@@ -259,14 +264,10 @@ class HrForegroundService : Service() {
         if (data.isEmpty()) return
         
         val flag = data[0].toInt()
-        val format = if ((flag and 0x01) != 0) {
-            BluetoothGattCharacteristic.FORMAT_UINT16
-        } else {
-            BluetoothGattCharacteristic.FORMAT_UINT8
-        }
+        val is16Bit = (flag and 0x01) != 0
         
         var bpm = 0
-        if (format == BluetoothGattCharacteristic.FORMAT_UINT16) {
+        if (is16Bit) {
              if (data.size >= 3) {
                  bpm = ((data[2].toInt() and 0xFF) shl 8) + (data[1].toInt() and 0xFF)
              }
@@ -275,11 +276,18 @@ class HrForegroundService : Service() {
                  bpm = data[1].toInt() and 0xFF
              }
         }
+        
+        val timestamp = System.currentTimeMillis()
+        val sdf = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+        val formattedTime = sdf.format(Date(timestamp))
+        val formatString = if (is16Bit) "16-bit (UINT16)" else "8-bit (UINT8)"
 
         _hrState.update { 
             it.copy(
                 bpm = bpm, 
-                lastUpdateTimestamp = System.currentTimeMillis()
+                lastUpdateTimestamp = timestamp,
+                lastPacketTimeFormatted = formattedTime,
+                dataBits = formatString
             ) 
         }
         

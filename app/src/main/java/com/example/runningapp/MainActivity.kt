@@ -214,8 +214,15 @@ fun MainScreen(
             
             Spacer(modifier = Modifier.height(24.dp))
             
-            Text("Debug Info (Services):", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Column(modifier = Modifier.fillMaxWidth().height(200.dp).verticalScroll(rememberScrollState()).background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
+            Text("Debug Info:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            
+            Text("Last Packet: ${state.lastPacketTimeFormatted}", style = MaterialTheme.typography.bodyMedium)
+            Text("Data Format: ${state.dataBits}", style = MaterialTheme.typography.bodyMedium)
+            
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Text("Discovered Services:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Column(modifier = Modifier.fillMaxWidth().height(150.dp).verticalScroll(rememberScrollState()).background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
                  state.discoveredServices.forEach { uuid ->
                      Text(text = uuid, fontSize = 12.sp)
                  }
