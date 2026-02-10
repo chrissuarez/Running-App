@@ -15,9 +15,14 @@ import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
@@ -48,7 +53,7 @@ data class HrState(
     val dataBits: String = "Unknown"
 )
 
-class HrForegroundService : Service() {
+class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -70,6 +75,11 @@ class HrForegroundService : Service() {
     private var reconnectDelay = 1000L
     private var lastNotificationTime = 0L
     private var isReconnecting = false
+    
+    // TTS & Audio Focus
+    private var tts: TextToSpeech? = null
+    private var audioManager: AudioManager? = null
+    private var focusRequest: AudioFocusRequest? = null
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
@@ -91,6 +101,10 @@ class HrForegroundService : Service() {
         super.onCreate()
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
+        
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        tts = TextToSpeech(this, this)
+        
         createNotificationChannel()
     }
 
@@ -106,6 +120,74 @@ class HrForegroundService : Service() {
         }
         return START_STICKY
     }
+    
+    override fun onInit(status: Int) {
+        if (status == TextToSpeech.SUCCESS) {
+            tts?.language = Locale.US
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {}
+
+                override fun onDone(utteranceId: String?) {
+                    abandonAudioFocus()
+                }
+
+                override fun onError(utteranceId: String?) {
+                    abandonAudioFocus()
+                }
+            })
+        } else {
+            Log.e(TAG, "TTS Initialization failed")
+        }
+    }
+    
+    fun playCue(text: String) {
+        if (tts == null) return
+        
+        if (requestAudioFocus()) {
+            val params = android.os.Bundle()
+            params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "CUE_ID")
+        } else {
+            Log.w(TAG, "Audio focus request failed")
+        }
+    }
+
+    private fun requestAudioFocus(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val attributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                .build()
+
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(attributes)
+                .setAcceptsDelayedFocusGain(false)
+                .setOnAudioFocusChangeListener { /* No-op, managed by transient duration */ }
+                .build()
+
+            focusRequest = request
+            val res = audioManager?.requestAudioFocus(request)
+            return res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        } else {
+            @Suppress("DEPRECATION")
+            val res = audioManager?.requestAudioFocus(
+                null, 
+                AudioManager.STREAM_MUSIC, 
+                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+            )
+            return res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            focusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager?.abandonAudioFocus(null)
+        }
+    }
+
 
     private fun startForegroundService() {
         val notification = createNotification("Monitoring Heart Rate...")
@@ -343,5 +425,6 @@ class HrForegroundService : Service() {
         super.onDestroy()
         serviceScope.cancel()
         disconnect()
+        tts?.shutdown()
     }
 }

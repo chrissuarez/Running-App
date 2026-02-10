@@ -100,6 +100,9 @@ class MainActivity : ComponentActivity() {
                         },
                         onConnectToDevice = { address ->
                             boundService?.connectToDevice(address)
+                        },
+                        onTestCue = {
+                            boundService?.playCue("Target heart rate reached. Keep it up!")
                         }
                     )
                 }
@@ -147,7 +150,8 @@ fun MainScreen(
     onRequestPermissions: () -> Unit,
     onStartService: () -> Unit,
     onStopService: () -> Unit,
-    onConnectToDevice: (String) -> Unit
+    onConnectToDevice: (String) -> Unit,
+    onTestCue: () -> Unit
 ) {
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     
@@ -184,6 +188,12 @@ fun MainScreen(
             Button(onClick = onStopService, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
                 Text("Stop / Disconnect")
             }
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Button(onClick = onTestCue) {
+            Text("Test Audio Cue")
         }
         
         Spacer(modifier = Modifier.height(16.dp))
