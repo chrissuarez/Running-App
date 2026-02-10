@@ -1,6 +1,7 @@
 package com.example.runningapp
 
 import android.Manifest
+import android.bluetooth.BluetoothDevice
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -12,13 +13,22 @@ import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
@@ -60,17 +70,10 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // Pass the expected stateflow if bound, else null or empty
                     val serviceState = hrService?.hrState?.collectAsState(initial = HrState())
-                    
-                    // We need a way to trigger recomposition when service binds
-                    // A simple way is to checking periodically or using a MutableState for the service itself
-                    // For this scaffold, we'll use a producesState or just rely on the fact that once bound,
-                    // we can pass the flow.
                     
                     var boundService by remember { mutableStateOf<HrForegroundService?>(null) }
                     
-                    // Poll for service binding (simple solution for scaffold)
                     LaunchedEffect(Unit) {
                         while(true) {
                             if (isBound && hrService != null) {
@@ -94,6 +97,9 @@ class MainActivity : ComponentActivity() {
                                 action = HrForegroundService.ACTION_STOP_FOREGROUND
                             }
                             startService(intent)
+                        },
+                        onConnectToDevice = { address ->
+                            boundService?.connectToDevice(address)
                         }
                     )
                 }
@@ -140,7 +146,8 @@ fun MainScreen(
     hrService: HrForegroundService?, 
     onRequestPermissions: () -> Unit,
     onStartService: () -> Unit,
-    onStopService: () -> Unit
+    onStopService: () -> Unit,
+    onConnectToDevice: (String) -> Unit
 ) {
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     
@@ -160,38 +167,79 @@ fun MainScreen(
 
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(text = "Heart Rate Monitor", style = MaterialTheme.typography.headlineMedium)
         
-        Spacer(modifier = Modifier.height(32.dp))
-        
-        Text(text = "Status: ${state.connectionStatus}")
-        if (state.connectedDeviceName != null) {
-            Text(text = "Device: ${state.connectedDeviceName}")
-        }
-        
         Spacer(modifier = Modifier.height(16.dp))
         
-        Text(text = "${state.bpm} BPM", style = MaterialTheme.typography.displayLarge)
-        Text(text = "Last update: ${timeSinceUpdate}s ago")
+        Text(text = "Status: ${state.connectionStatus}")
         
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(16.dp))
         
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Button(onClick = onStartService) {
-                Text("Start Service")
+                Text("Scan / Start")
             }
             Button(onClick = onStopService, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
-                Text("Stop Service")
+                Text("Stop / Disconnect")
             }
         }
         
         Spacer(modifier = Modifier.height(16.dp))
-        
         Button(onClick = onRequestPermissions) {
             Text("Request Permissions")
+        }
+        
+        Spacer(modifier = Modifier.height(24.dp))
+
+        if (state.connectionStatus == "Scanning...") {
+            Text("Scanned Devices:", style = MaterialTheme.typography.titleMedium)
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth().background(Color.LightGray.copy(alpha = 0.2f))
+            ) {
+                items(state.scannedDevices) { device ->
+                    DeviceListItem(device = device, onClick = { onConnectToDevice(device.address) })
+                }
+            }
+        } else if (state.connectionStatus == "Connected" || state.connectionStatus.startsWith("Connecting")) {
+             if (state.connectedDeviceName != null) {
+                Text(text = "Device: ${state.connectedDeviceName}", style = MaterialTheme.typography.titleMedium)
+            }
+            
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            Text(text = "${state.bpm} BPM", style = MaterialTheme.typography.displayLarge)
+            Text(text = "Last update: ${timeSinceUpdate}s ago")
+            
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            Text("Debug Info (Services):", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Column(modifier = Modifier.fillMaxWidth().height(200.dp).verticalScroll(rememberScrollState()).background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
+                 state.discoveredServices.forEach { uuid ->
+                     Text(text = uuid, fontSize = 12.sp)
+                 }
+            }
+        } else {
+            Spacer(modifier = Modifier.weight(1f))
+            Text("Service not running or disconnected.")
+            Spacer(modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+fun DeviceListItem(device: BluetoothDevice, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(4.dp)
+            .clickable { onClick() },
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(text = device.name ?: "Unknown Device", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            Text(text = device.address, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
