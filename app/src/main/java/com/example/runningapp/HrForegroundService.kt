@@ -38,8 +38,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.LinkedList
 import java.util.Locale
 import java.util.UUID
+import kotlin.math.roundToInt
 
 // simple data class to hold the state
 data class HrState(
@@ -50,7 +52,12 @@ data class HrState(
     val scannedDevices: List<BluetoothDevice> = emptyList(),
     val discoveredServices: List<String> = emptyList(),
     val lastPacketTimeFormatted: String = "--:--:--.---",
-    val dataBits: String = "Unknown"
+    val dataBits: String = "Unknown",
+    // Coaching Debug Info
+    val avgBpm: Int = 0,
+    val currentZone: String = "No Data", // "Low", "Target", "High"
+    val timeInZoneString: String = "0s", // e.g. "Trigger in 25s"
+    val cooldownWithHysteresisString: String = "Ready" // "Cool: 45s" or "Hysteresis: 10s"
 )
 
 class HrForegroundService : Service(), TextToSpeech.OnInitListener {
@@ -80,6 +87,27 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var audioManager: AudioManager? = null
     private var focusRequest: AudioFocusRequest? = null
+
+    // --- Coaching Rules Engine State ---
+    private val TARGET_LOW = 120
+    private val TARGET_HIGH = 140
+    private val HISTORY_WINDOW_MS = 5000L
+    
+    // Pair<Timestamp, Bpm>
+    private val bpmHistory = LinkedList<Pair<Long, Int>>()
+    
+    private enum class Zone { LOW, TARGET, HIGH, UNKNOWN }
+    private var currentZone = Zone.UNKNOWN
+    private var zoneEnterTime = 0L
+    
+    private var lastCueTime = 0L
+    private val COOLDOWN_MS = 75_000L
+    
+    // Hysteresis: Must return to TARGET for 20s to re-arm cues
+    private var hysteresisEnterTime = 0L
+    private val HYSTERESIS_MS = 20_000L
+    private var isSystemArmed = true // Starts armed
+
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
@@ -147,6 +175,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             val params = android.os.Bundle()
             params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "CUE_ID")
+            Log.d(TAG, "Playing Cue: $text")
         } else {
             Log.w(TAG, "Audio focus request failed")
         }
@@ -246,34 +275,34 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
-        scanner.startScan(object : android.bluetooth.le.ScanCallback() {
-            override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult?) {
-                result?.device?.let { device ->
-                    // Add device if not already in list
-                    _hrState.update { currentState ->
-                        val currentList = currentState.scannedDevices
-                        if (currentList.none { it.address == device.address }) {
-                            // Check for permission to read name
-                            if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                                if (device.name != null) {
-                                    currentState.copy(scannedDevices = currentList + device)
-                                } else {
-                                    currentState
-                                }
+        scanner.startScan(scanCallback)
+    }
+
+    private val scanCallback = object : android.bluetooth.le.ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult?) {
+            result?.device?.let { device ->
+                _hrState.update { currentState ->
+                    val currentList = currentState.scannedDevices
+                    if (currentList.none { it.address == device.address }) {
+                        if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                            if (device.name != null) {
+                                currentState.copy(scannedDevices = currentList + device)
                             } else {
                                 currentState
                             }
                         } else {
                             currentState
                         }
+                    } else {
+                        currentState
                     }
                 }
             }
-            
-            override fun onScanFailed(errorCode: Int) {
-                _hrState.update { it.copy(connectionStatus = "Scan Failed: $errorCode") }
-            }
-        })
+        }
+        
+        override fun onScanFailed(errorCode: Int) {
+            _hrState.update { it.copy(connectionStatus = "Scan Failed: $errorCode") }
+        }
     }
     
     fun connectToDevice(address: String) {
@@ -285,7 +314,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     
     private fun stopScanning() {
          if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
-             bluetoothAdapter?.bluetoothLeScanner?.stopScan(object: android.bluetooth.le.ScanCallback() {})
+             bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
          }
     }
 
@@ -294,8 +323,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         isReconnecting = false
         _hrState.update { it.copy(connectionStatus = "Connecting to ${device.name}...") }
-        
-        // AutoConnect = false for initial connection is usually better/faster
         bluetoothGatt = device.connectGatt(this, false, gattCallback)
     }
     
@@ -308,9 +335,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
          
          serviceScope.launch {
              delay(delayMs)
-             // Increase backoff: 1s, 2s, 4s, 8s, 16s, 30s (cap)
              reconnectDelay = (reconnectDelay * 2).coerceAtMost(30000L)
-             
              if (targetDeviceAddress != null) {
                  connectToDevice(targetDeviceAddress!!)
              }
@@ -318,13 +343,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     fun disconnect() {
-        targetDeviceAddress = null // Prevent auto-reconnect
+        targetDeviceAddress = null 
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
             bluetoothGatt?.disconnect()
             bluetoothGatt?.close()
             bluetoothGatt = null
         }
         _hrState.update { it.copy(connectionStatus = "Disconnected", bpm = 0, connectedDeviceName = null, discoveredServices = emptyList()) }
+        bpmHistory.clear()
+        isSystemArmed = true 
+        currentZone = Zone.UNKNOWN
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -332,13 +360,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return
 
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                reconnectDelay = 1000L // Reset backoff
+                reconnectDelay = 1000L 
                 isReconnecting = false
                 _hrState.update { it.copy(connectionStatus = "Connected", connectedDeviceName = gatt?.device?.name) }
+                gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
                 gatt?.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 if (targetDeviceAddress != null) {
-                    // Unexpected disconnect (or failed connect), try to reconnect
                      _hrState.update { it.copy(connectionStatus = "Disconnected (Retrying)") }
                     gatt?.close()
                     bluetoothGatt = null
@@ -365,7 +393,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 if (characteristic != null) {
                     if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
                         gatt.setCharacteristicNotification(characteristic, true)
-                        
                         val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
                         descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                         gatt.writeDescriptor(descriptor)
@@ -383,10 +410,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun handleHeartRate(data: ByteArray) {
         if (data.isEmpty()) return
-        
         val flag = data[0].toInt()
         val is16Bit = (flag and 0x01) != 0
-        
         var bpm = 0
         if (is16Bit) {
              if (data.size >= 3) {
@@ -402,23 +427,74 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val sdf = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
         val formattedTime = sdf.format(Date(timestamp))
         val formatString = if (is16Bit) "16-bit (UINT16)" else "8-bit (UINT8)"
+        
+        processCoachingRules(bpm, timestamp)
+        val debugInfo = getCoachingDebugInfo(timestamp)
 
         _hrState.update { 
             it.copy(
                 bpm = bpm, 
                 lastUpdateTimestamp = timestamp,
                 lastPacketTimeFormatted = formattedTime,
-                dataBits = formatString
+                dataBits = formatString,
+                avgBpm = debugInfo.avg,
+                currentZone = debugInfo.zone,
+                timeInZoneString = debugInfo.timeInZone,
+                cooldownWithHysteresisString = debugInfo.cooldown
             ) 
         }
         
-        // Rate limit notification updates (every 5 seconds)
         if (System.currentTimeMillis() - lastNotificationTime > 5000) {
             lastNotificationTime = System.currentTimeMillis()
-            val notification = createNotification("HR: $bpm BPM")
+            val notification = createNotification("HR: $bpm BPM | Avg: ${debugInfo.avg}")
             val manager = getSystemService(NotificationManager::class.java)
             manager.notify(NOTIFICATION_ID, notification)
         }
+    }
+    
+    private fun processCoachingRules(bpm: Int, now: Long) {
+        bpmHistory.add(Pair(now, bpm))
+        while (bpmHistory.isNotEmpty() && (now - bpmHistory.first.first > HISTORY_WINDOW_MS)) {
+            bpmHistory.removeFirst()
+        }
+        if (bpmHistory.isEmpty()) return
+        val avgBpm = bpmHistory.map { it.second }.average().roundToInt()
+        
+        val newZone = when {
+            avgBpm < TARGET_LOW -> Zone.LOW
+            avgBpm > TARGET_HIGH -> Zone.HIGH
+            else -> Zone.TARGET
+        }
+        
+        if (newZone != currentZone) {
+            currentZone = newZone
+            zoneEnterTime = now
+        }
+        
+        val timeInCurrentZone = now - zoneEnterTime
+        val cooldownRemaining = (lastCueTime + COOLDOWN_MS) - now
+        
+        if (cooldownRemaining <= 0) {
+             if (currentZone == Zone.HIGH && timeInCurrentZone >= 30_000L) {
+                 playCue("Ease off slightly.")
+                 lastCueTime = now
+             } else if (currentZone == Zone.LOW && timeInCurrentZone >= 45_000L) {
+                 playCue("Gently increase pace.")
+                 lastCueTime = now
+             }
+        }
+    }
+    
+    private data class DebugInfo(val avg: Int, val zone: String, val timeInZone: String, val cooldown: String)
+    
+    private fun getCoachingDebugInfo(now: Long): DebugInfo {
+        if (bpmHistory.isEmpty()) return DebugInfo(0, "Init", "0s", "Ready")
+        val avg = bpmHistory.map { it.second }.average().roundToInt()
+        val zoneStr = currentZone.name
+        val timeInZone = (now - zoneEnterTime) / 1000
+        val cooldownRem = ((lastCueTime + COOLDOWN_MS) - now).coerceAtLeast(0) / 1000
+        val statusStr = if (cooldownRem > 0) "Cool: ${cooldownRem}s" else "Ready"
+        return DebugInfo(avg, zoneStr, "${timeInZone}s", statusStr)
     }
 
     override fun onDestroy() {

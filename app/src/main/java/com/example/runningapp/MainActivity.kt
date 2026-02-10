@@ -229,6 +229,16 @@ fun MainScreen(
             Text("Last Packet: ${state.lastPacketTimeFormatted}", style = MaterialTheme.typography.bodyMedium)
             Text("Data Format: ${state.dataBits}", style = MaterialTheme.typography.bodyMedium)
             
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Text("Coaching Debug:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text("Avg BPM (5s): ${state.avgBpm}", style = MaterialTheme.typography.bodyMedium)
+            Text("Zone: ${state.currentZone}", style = MaterialTheme.typography.bodyMedium, 
+                color = if(state.currentZone == "TARGET") Color.Green else if (state.currentZone == "LOW" || state.currentZone == "HIGH") Color.Red else Color.Gray
+            )
+            Text("Time in Zone: ${state.timeInZoneString}", style = MaterialTheme.typography.bodyMedium)
+            Text("Status: ${state.cooldownWithHysteresisString}", style = MaterialTheme.typography.bodyMedium)
+            
             Spacer(modifier = Modifier.height(8.dp))
             
             Text("Discovered Services:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
