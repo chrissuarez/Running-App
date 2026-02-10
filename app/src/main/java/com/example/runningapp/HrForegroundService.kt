@@ -25,10 +25,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -62,6 +64,12 @@ class HrForegroundService : Service() {
     private val HEART_RATE_SERVICE_UUID = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb")
     private val HEART_RATE_MEASUREMENT_UUID = UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb")
     private val CLIENT_CHARACTERISTIC_CONFIG_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+
+    // Reconnection & Rate Limiting State
+    private var targetDeviceAddress: String? = null
+    private var reconnectDelay = 1000L
+    private var lastNotificationTime = 0L
+    private var isReconnecting = false
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
@@ -121,6 +129,7 @@ class HrForegroundService : Service() {
             .setContentTitle("HR Monitor")
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_menu_compass)
+            .setOnlyAlertOnce(true) // Don't buzz every time
             .setOngoing(true)
             .build()
     }
@@ -145,7 +154,7 @@ class HrForegroundService : Service() {
             return
         }
         
-        if (_hrState.value.connectionStatus == "Connected") return // Don't scan if connected
+        if (_hrState.value.connectionStatus == "Connected" || isReconnecting) return
 
         _hrState.update { it.copy(connectionStatus = "Scanning...", scannedDevices = emptyList()) }
 
@@ -162,7 +171,7 @@ class HrForegroundService : Service() {
                     _hrState.update { currentState ->
                         val currentList = currentState.scannedDevices
                         if (currentList.none { it.address == device.address }) {
-                            // Check for permission to read name, though we already checked for SCAN
+                            // Check for permission to read name
                             if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
                                 if (device.name != null) {
                                     currentState.copy(scannedDevices = currentList + device)
@@ -187,6 +196,7 @@ class HrForegroundService : Service() {
     
     fun connectToDevice(address: String) {
         stopScanning()
+        targetDeviceAddress = address
         val device = bluetoothAdapter?.getRemoteDevice(address) ?: return
         connectToDevice(device)
     }
@@ -200,12 +210,33 @@ class HrForegroundService : Service() {
     private fun connectToDevice(device: BluetoothDevice) {
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return
 
+        isReconnecting = false
         _hrState.update { it.copy(connectionStatus = "Connecting to ${device.name}...") }
         
+        // AutoConnect = false for initial connection is usually better/faster
         bluetoothGatt = device.connectGatt(this, false, gattCallback)
+    }
+    
+    private fun attemptReconnect() {
+         if (targetDeviceAddress == null) return
+         
+         isReconnecting = true
+         val delayMs = reconnectDelay
+         _hrState.update { it.copy(connectionStatus = "Reconnecting in ${delayMs/1000}s...") }
+         
+         serviceScope.launch {
+             delay(delayMs)
+             // Increase backoff: 1s, 2s, 4s, 8s, 16s, 30s (cap)
+             reconnectDelay = (reconnectDelay * 2).coerceAtMost(30000L)
+             
+             if (targetDeviceAddress != null) {
+                 connectToDevice(targetDeviceAddress!!)
+             }
+         }
     }
 
     fun disconnect() {
+        targetDeviceAddress = null // Prevent auto-reconnect
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
             bluetoothGatt?.disconnect()
             bluetoothGatt?.close()
@@ -219,10 +250,22 @@ class HrForegroundService : Service() {
             if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return
 
             if (newState == BluetoothProfile.STATE_CONNECTED) {
+                reconnectDelay = 1000L // Reset backoff
+                isReconnecting = false
                 _hrState.update { it.copy(connectionStatus = "Connected", connectedDeviceName = gatt?.device?.name) }
                 gatt?.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                _hrState.update { it.copy(connectionStatus = "Disconnected") }
+                if (targetDeviceAddress != null) {
+                    // Unexpected disconnect (or failed connect), try to reconnect
+                     _hrState.update { it.copy(connectionStatus = "Disconnected (Retrying)") }
+                    gatt?.close()
+                    bluetoothGatt = null
+                    attemptReconnect()
+                } else {
+                     _hrState.update { it.copy(connectionStatus = "Disconnected") }
+                     gatt?.close()
+                     bluetoothGatt = null
+                }
             }
         }
 
@@ -231,10 +274,6 @@ class HrForegroundService : Service() {
                 val servicesList = mutableListOf<String>()
                 gatt?.services?.forEach { service ->
                     servicesList.add(service.uuid.toString())
-                    Log.d(TAG, "Discovered Service: ${service.uuid}")
-                    service.characteristics.forEach { char ->
-                        Log.d(TAG, "  - Characteristic: ${char.uuid}")
-                    }
                 }
                 _hrState.update { it.copy(discoveredServices = servicesList) }
 
@@ -291,9 +330,13 @@ class HrForegroundService : Service() {
             ) 
         }
         
-        val notification = createNotification("HR: $bpm BPM")
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, notification)
+        // Rate limit notification updates (every 5 seconds)
+        if (System.currentTimeMillis() - lastNotificationTime > 5000) {
+            lastNotificationTime = System.currentTimeMillis()
+            val notification = createNotification("HR: $bpm BPM")
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.notify(NOTIFICATION_ID, notification)
+        }
     }
 
     override fun onDestroy() {
