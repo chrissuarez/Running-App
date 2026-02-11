@@ -37,12 +37,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.LinkedList
 import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
+import com.example.runningapp.data.AppDatabase
+import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.data.HrSample
 
 enum class SessionStatus { IDLE, CONNECTING, RUNNING, PAUSED, STOPPING, STOPPED, ERROR }
 
@@ -106,6 +107,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private lateinit var settingsRepository: SettingsRepository
     private var currentSettings = UserSettings()
 
+    private lateinit var database: AppDatabase
+    private var currentSessionId: Long? = null
+    private var sessionMaxBpm = 0
+    private var sessionBpmSum = 0L
+    private var sessionSampleCount = 0
+    private var sessionInTargetZoneSeconds = 0L
+    private var lastRecordedSecond = -1L
+
     // --- Coaching Rules Engine State ---
     private val HISTORY_WINDOW_MS = 5000L
     
@@ -161,6 +170,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         tts = TextToSpeech(this, this)
         
+        database = AppDatabase.getDatabase(this)
+        
         createNotificationChannel()
         startSessionTimerLoop()
     }
@@ -175,6 +186,35 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     when (currentState.sessionStatus) {
                         SessionStatus.RUNNING -> {
                             sessionSecondsRunning++
+                            
+                            // Record sample once per second
+                            if (sessionSecondsRunning > lastRecordedSecond) {
+                                lastRecordedSecond = sessionSecondsRunning
+                                val currentBpm = currentState.bpm
+                                if (currentBpm > 0) {
+                                    sessionMaxBpm = maxOf(sessionMaxBpm, currentBpm)
+                                    sessionBpmSum += currentBpm
+                                    sessionSampleCount++
+                                    
+                                    val isTarget = currentState.currentZone == "TARGET"
+                                    if (isTarget) sessionInTargetZoneSeconds++
+                                    
+                                    val sessionId = currentSessionId
+                                    if (sessionId != null) {
+                                        val sample = HrSample(
+                                            sessionId = sessionId,
+                                            elapsedSeconds = sessionSecondsRunning,
+                                            rawBpm = currentBpm,
+                                            smoothedBpm = currentState.avgBpm,
+                                            connectionState = currentState.connectionStatus
+                                        )
+                                        serviceScope.launch(Dispatchers.IO) {
+                                            database.sampleDao().insertSample(sample)
+                                        }
+                                    }
+                                }
+                            }
+
                             currentState.copy(
                                 secondsRunning = sessionSecondsRunning,
                                 lastHrAgeSeconds = hrAge
@@ -257,14 +297,54 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun resumeSession() {
+        if (currentSessionId == null) {
+            startNewDatabaseSession()
+        }
         _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
         Log.d(TAG, "Session RESUMED")
+    }
+
+    private fun startNewDatabaseSession() {
+        serviceScope.launch(Dispatchers.IO) {
+            val session = RunnerSession(
+                startTime = System.currentTimeMillis()
+            )
+            currentSessionId = database.sessionDao().insertSession(session)
+            sessionMaxBpm = 0
+            sessionBpmSum = 0
+            sessionSampleCount = 0
+            sessionInTargetZoneSeconds = 0
+            lastRecordedSecond = -1
+            Log.d(TAG, "Started DB Session: $currentSessionId")
+        }
     }
 
     fun stopSession() {
         _hrState.update { it.copy(sessionStatus = SessionStatus.STOPPING) }
         stopScanning()
         disconnect()
+        
+        // Finalize DB session
+        val sessionId = currentSessionId
+        if (sessionId != null) {
+            serviceScope.launch(Dispatchers.IO) {
+                val session = database.sessionDao().getSessionById(sessionId)
+                if (session != null) {
+                    val avgBpm = if (sessionSampleCount > 0) (sessionBpmSum / sessionSampleCount).toInt() else 0
+                    val updatedSession = session.copy(
+                        endTime = System.currentTimeMillis(),
+                        durationSeconds = sessionSecondsRunning,
+                        avgBpm = avgBpm,
+                        maxBpm = sessionMaxBpm,
+                        timeInTargetZoneSeconds = sessionInTargetZoneSeconds
+                    )
+                    database.sessionDao().updateSession(updatedSession)
+                    Log.d(TAG, "Finalized DB Session: $sessionId")
+                }
+                currentSessionId = null
+            }
+        }
+
         _hrState.update { it.copy(sessionStatus = SessionStatus.STOPPED) }
         stopForegroundService()
     }

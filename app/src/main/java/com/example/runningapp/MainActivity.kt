@@ -35,6 +35,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import com.example.runningapp.data.AppDatabase
+import com.example.runningapp.ui.HistoryScreen
+import com.example.runningapp.ui.SessionDetailScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -88,49 +91,88 @@ class MainActivity : ComponentActivity() {
                     }
 
                     var currentScreen by remember { mutableStateOf("main") }
+                    var selectedSessionId by remember { mutableStateOf<Long?>(null) }
+                    
                     val settingsRepository = remember { SettingsRepository(this) }
                     val userSettings by settingsRepository.userSettingsFlow.collectAsState(initial = UserSettings())
 
-                    if (currentScreen == "main") {
-                        MainScreen(
-                            hrService = boundService,
-                            onRequestPermissions = { checkAndRequestPermissions() },
-                            onStartService = {
-                                val intent = Intent(this, HrForegroundService::class.java).apply {
-                                    action = HrForegroundService.ACTION_START_FOREGROUND
+                    val database = remember { AppDatabase.getDatabase(this) }
+                    val historySessions by database.sessionDao().getLast20Sessions().collectAsState(initial = emptyList())
+                    
+                    val sessionSamples by produceState<List<com.example.runningapp.data.HrSample>>(initialValue = emptyList(), key1 = selectedSessionId) {
+                        selectedSessionId?.let { id ->
+                            database.sampleDao().getSamplesForSession(id).collect { value = it }
+                        }
+                    }
+                    val selectedSession by produceState<com.example.runningapp.data.RunnerSession?>(initialValue = null, key1 = selectedSessionId) {
+                        selectedSessionId?.let { id ->
+                            value = database.sessionDao().getSessionById(id)
+                        }
+                    }
+
+                    when (currentScreen) {
+                        "main" -> {
+                            MainScreen(
+                                hrService = boundService,
+                                onRequestPermissions = { checkAndRequestPermissions() },
+                                onStartService = {
+                                    val intent = Intent(this, HrForegroundService::class.java).apply {
+                                        action = HrForegroundService.ACTION_START_FOREGROUND
+                                    }
+                                    startService(intent)
+                                },
+                                onTogglePause = {
+                                    boundService?.togglePause()
+                                },
+                                onStopSession = {
+                                     val intent = Intent(this, HrForegroundService::class.java).apply {
+                                        action = HrForegroundService.ACTION_STOP_FOREGROUND
+                                    }
+                                    startService(intent)
+                                },
+                                onConnectToDevice = { address ->
+                                    boundService?.connectToDevice(address)
+                                },
+                                onTestCue = {
+                                    boundService?.playCue("Target heart rate reached. Keep it up!")
+                                },
+                                onOpenSettings = {
+                                    currentScreen = "settings"
+                                },
+                                onOpenHistory = {
+                                    currentScreen = "history"
                                 }
-                                startService(intent)
-                            },
-                            onTogglePause = {
-                                boundService?.togglePause()
-                            },
-                            onStopSession = {
-                                 val intent = Intent(this, HrForegroundService::class.java).apply {
-                                    action = HrForegroundService.ACTION_STOP_FOREGROUND
-                                }
-                                startService(intent)
-                            },
-                            onConnectToDevice = { address ->
-                                boundService?.connectToDevice(address)
-                            },
-                            onTestCue = {
-                                boundService?.playCue("Target heart rate reached. Keep it up!")
-                            },
-                            onOpenSettings = {
-                                currentScreen = "settings"
-                            }
-                        )
-                    } else {
-                        SettingsScreen(
-                            settings = userSettings,
-                            onSave = { updatedSettings ->
-                                scope.launch {
-                                    settingsRepository.updateSettings(updatedSettings)
-                                    currentScreen = "main"
-                                }
-                            },
-                            onBack = { currentScreen = "main" }
-                        )
+                            )
+                        }
+                        "settings" -> {
+                            SettingsScreen(
+                                settings = userSettings,
+                                onSave = { updatedSettings ->
+                                    scope.launch {
+                                        settingsRepository.updateSettings(updatedSettings)
+                                        currentScreen = "main"
+                                    }
+                                },
+                                onBack = { currentScreen = "main" }
+                            )
+                        }
+                        "history" -> {
+                            HistoryScreen(
+                                sessions = historySessions,
+                                onSessionClick = { id ->
+                                    selectedSessionId = id
+                                    currentScreen = "detail"
+                                },
+                                onBack = { currentScreen = "main" }
+                            )
+                        }
+                        "detail" -> {
+                            SessionDetailScreen(
+                                session = selectedSession,
+                                samples = sessionSamples,
+                                onBack = { currentScreen = "history" }
+                            )
+                        }
                     }
                 }
             }
@@ -180,7 +222,8 @@ fun MainScreen(
     onStopSession: () -> Unit,
     onConnectToDevice: (String) -> Unit,
     onTestCue: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenHistory: () -> Unit
 ) {
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     
@@ -190,8 +233,13 @@ fun MainScreen(
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(text = "Running App", style = MaterialTheme.typography.headlineMedium)
-            IconButton(onClick = onOpenSettings) {
-                Text("⚙️", fontSize = 24.sp)
+            Row {
+                IconButton(onClick = onOpenHistory) {
+                    Text("📜", fontSize = 24.sp)
+                }
+                IconButton(onClick = onOpenSettings) {
+                    Text("⚙️", fontSize = 24.sp)
+                }
             }
         }
         
