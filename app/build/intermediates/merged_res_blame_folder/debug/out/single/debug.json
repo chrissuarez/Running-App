@@ -1,18 +1,18 @@
 [
     {
-        "merged": "com.example.runningapp-merged_res-40:/xml_backup_rules.xml.flat",
-        "source": "com.example.runningapp-main-42:/xml/backup_rules.xml"
+        "merged": "com.example.runningapp-merged_res-42:/xml_backup_rules.xml.flat",
+        "source": "com.example.runningapp-main-44:/xml/backup_rules.xml"
     },
     {
-        "merged": "com.example.runningapp-merged_res-40:/mipmap-anydpi-v26_ic_launcher.xml.flat",
-        "source": "com.example.runningapp-main-42:/mipmap-anydpi-v26/ic_launcher.xml"
+        "merged": "com.example.runningapp-merged_res-42:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "com.example.runningapp-main-44:/mipmap-anydpi-v26/ic_launcher.xml"
     },
     {
-        "merged": "com.example.runningapp-merged_res-40:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
-        "source": "com.example.runningapp-main-42:/mipmap-anydpi-v26/ic_launcher_round.xml"
+        "merged": "com.example.runningapp-merged_res-42:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "com.example.runningapp-main-44:/mipmap-anydpi-v26/ic_launcher_round.xml"
     },
     {
-        "merged": "com.example.runningapp-merged_res-40:/xml_data_extraction_rules.xml.flat",
-        "source": "com.example.runningapp-main-42:/xml/data_extraction_rules.xml"
+        "merged": "com.example.runningapp-merged_res-42:/xml_data_extraction_rules.xml.flat",
+        "source": "com.example.runningapp-main-44:/xml/data_extraction_rules.xml"
     }
 ]

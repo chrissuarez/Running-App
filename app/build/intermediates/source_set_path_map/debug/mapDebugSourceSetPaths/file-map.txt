@@ -1,0 +1,45 @@
+com.example.runningapp-material3-1.1.1-0 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\0401ee9dd9b75c018e5e7899ef3b5163\transformed\material3-1.1.1\res
+com.example.runningapp-activity-ktx-1.8.2-1 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\04588bf5be95bebd361aad09163029f5\transformed\activity-ktx-1.8.2\res
+com.example.runningapp-material-icons-core-release-2 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\057a25d38a358051c1e391515a4cf725\transformed\material-icons-core-release\res
+com.example.runningapp-ui-geometry-release-3 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\05e6521e7ce8116422cafc96e45940bc\transformed\ui-geometry-release\res
+com.example.runningapp-runtime-saveable-release-4 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\0a2d3545d0369fe7d3a63dbc80e480bf\transformed\runtime-saveable-release\res
+com.example.runningapp-core-runtime-2.2.0-5 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\0bcb7e2e491df2bd53373f1d761be8b0\transformed\core-runtime-2.2.0\res
+com.example.runningapp-emoji2-1.4.0-6 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\1159a4d60fb8b923230de7532fd47e5e\transformed\emoji2-1.4.0\res
+com.example.runningapp-annotation-experimental-1.3.0-7 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\137a09771eb54d46c7cbbe89cd2866e5\transformed\annotation-experimental-1.3.0\res
+com.example.runningapp-core-1.12.0-8 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\1dcbd3ef5235364ecb05dc46f7b1e033\transformed\core-1.12.0\res
+com.example.runningapp-activity-compose-1.8.2-9 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\2b03c622172e26bd5f40069cda6960a8\transformed\activity-compose-1.8.2\res
+com.example.runningapp-startup-runtime-1.1.1-10 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\2c6e84a0fecd9d0617c20b9f56c55c88\transformed\startup-runtime-1.1.1\res
+com.example.runningapp-lifecycle-livedata-core-2.7.0-11 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\2f44ffe1a91d5396a9ed1fb2a6d3883b\transformed\lifecycle-livedata-core-2.7.0\res
+com.example.runningapp-ui-unit-release-12 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\41804ae8b1ad89e2fa05cf6832119f2b\transformed\ui-unit-release\res
+com.example.runningapp-customview-poolingcontainer-1.0.0-13 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\5aad1b54f3d527c57c824f30ce4f1797\transformed\customview-poolingcontainer-1.0.0\res
+com.example.runningapp-datastore-1.0.0-14 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\5bdea17bf4feab90609bcaa08dd82ea1\transformed\datastore-1.0.0\res
+com.example.runningapp-material-ripple-release-15 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\6af91ebfbadd0dbe8e5c0da0fbf05960\transformed\material-ripple-release\res
+com.example.runningapp-ui-text-release-16 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\6d3d81e5e5a85cee96a8d6ad82681344\transformed\ui-text-release\res
+com.example.runningapp-savedstate-1.2.1-17 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\6dc3ed65885e33530387c8132d898f9c\transformed\savedstate-1.2.1\res
+com.example.runningapp-animation-release-18 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\81dec792ce3b992f5d7676be5fc6972f\transformed\animation-release\res
+com.example.runningapp-foundation-layout-release-19 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\828daee1540e43d330bd6677d0c2e270\transformed\foundation-layout-release\res
+com.example.runningapp-activity-1.8.2-20 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\8527ce0d47c345406bebe0ca5b37ca11\transformed\activity-1.8.2\res
+com.example.runningapp-lifecycle-runtime-2.7.0-21 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\89d963096dff570fa816066ac9433935\transformed\lifecycle-runtime-2.7.0\res
+com.example.runningapp-savedstate-ktx-1.2.1-22 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\93d2b746094380895f85e49ab8ddb040\transformed\savedstate-ktx-1.2.1\res
+com.example.runningapp-animation-core-release-23 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\960e61f66810294248cbe96bf0761cb4\transformed\animation-core-release\res
+com.example.runningapp-runtime-release-24 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\9ecfea1cc7f1da28b3c3a96ab85a216d\transformed\runtime-release\res
+com.example.runningapp-foundation-release-25 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\a14446ca319c4f725843a8223cf778de\transformed\foundation-release\res
+com.example.runningapp-lifecycle-viewmodel-savedstate-2.7.0-26 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\a553546afcbba3cf71a17e5ede2745b1\transformed\lifecycle-viewmodel-savedstate-2.7.0\res
+com.example.runningapp-lifecycle-viewmodel-ktx-2.7.0-27 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\b39b53e3f28c68ef0e9a05cd7af094e2\transformed\lifecycle-viewmodel-ktx-2.7.0\res
+com.example.runningapp-lifecycle-viewmodel-2.7.0-28 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\bd77f0d6baa979cf614ac11525b7199e\transformed\lifecycle-viewmodel-2.7.0\res
+com.example.runningapp-ui-util-release-29 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\cb484c4a51e3132d6b3c13838587336c\transformed\ui-util-release\res
+com.example.runningapp-datastore-preferences-1.0.0-30 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\d23bc29d484eddc4019e7b32fb4a9a99\transformed\datastore-preferences-1.0.0\res
+com.example.runningapp-core-ktx-1.12.0-31 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\d2fe9e5787924554b8f28d466f8222b1\transformed\core-ktx-1.12.0\res
+com.example.runningapp-lifecycle-process-2.7.0-32 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\e6febe9cc355806919b03c9e88820f30\transformed\lifecycle-process-2.7.0\res
+com.example.runningapp-ui-release-33 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\e929a1cc4749d676409c481cb946bd8c\transformed\ui-release\res
+com.example.runningapp-ui-graphics-release-34 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\ee37921c221cd252fc37ce0a19e89e9e\transformed\ui-graphics-release\res
+com.example.runningapp-ui-tooling-preview-release-35 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\f0e3f8c7846ecc279078a83ac7168ef3\transformed\ui-tooling-preview-release\res
+com.example.runningapp-profileinstaller-1.3.0-36 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\fa104897911acd12993aa399924741d6\transformed\profileinstaller-1.3.0\res
+com.example.runningapp-lifecycle-runtime-ktx-2.7.0-37 C:\Users\Dad\.gradle\caches\9.0-milestone-1\transforms\fea5379f9c6f6506dfe1a218793d0104\transformed\lifecycle-runtime-ktx-2.7.0\res
+com.example.runningapp-resValues-38 C:\Users\Dad\OneDrive\Documents\Coding Projects\Running App\app\build\generated\res\resValues\debug
+com.example.runningapp-updated_navigation_xml-39 C:\Users\Dad\OneDrive\Documents\Coding Projects\Running App\app\build\generated\updated_navigation_xml\debug
+com.example.runningapp-packageDebugResources-40 C:\Users\Dad\OneDrive\Documents\Coding Projects\Running App\app\build\intermediates\incremental\debug\packageDebugResources\merged.dir
+com.example.runningapp-packageDebugResources-41 C:\Users\Dad\OneDrive\Documents\Coding Projects\Running App\app\build\intermediates\incremental\debug\packageDebugResources\stripped.dir
+com.example.runningapp-debug-42 C:\Users\Dad\OneDrive\Documents\Coding Projects\Running App\app\build\intermediates\merged_res\debug\mergeDebugResources
+com.example.runningapp-debug-43 C:\Users\Dad\OneDrive\Documents\Coding Projects\Running App\app\src\debug\res
+com.example.runningapp-main-44 C:\Users\Dad\OneDrive\Documents\Coding Projects\Running App\app\src\main\res

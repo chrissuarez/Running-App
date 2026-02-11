@@ -34,6 +34,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -68,7 +69,10 @@ data class HrState(
     val secondsPaused: Long = 0,
     val reconnectAttempts: Int = 0,
     val lastHrAgeSeconds: Long = 0,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
+    
+    // Mission 2: Settings Summary
+    val userSettings: UserSettings = UserSettings()
 )
 
 class HrForegroundService : Service(), TextToSpeech.OnInitListener {
@@ -99,9 +103,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var audioManager: AudioManager? = null
     private var focusRequest: AudioFocusRequest? = null
 
+    private lateinit var settingsRepository: SettingsRepository
+    private var currentSettings = UserSettings()
+
     // --- Coaching Rules Engine State ---
-    private val TARGET_LOW = 120
-    private val TARGET_HIGH = 140
     private val HISTORY_WINDOW_MS = 5000L
     
     // Pair<Timestamp, Bpm>
@@ -112,7 +117,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var zoneEnterTime = 0L
     
     private var lastCueTime = 0L
-    private val COOLDOWN_MS = 75_000L
     
     // --- Session Engine State ---
     private var sessionSecondsRunning = 0L
@@ -142,6 +146,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     override fun onCreate() {
         super.onCreate()
+        settingsRepository = SettingsRepository(this)
+        
+        serviceScope.launch {
+            settingsRepository.userSettingsFlow.collect { settings ->
+                currentSettings = settings
+                _hrState.update { it.copy(userSettings = settings) }
+            }
+        }
+        
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
         
@@ -603,6 +616,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
     
     private fun processCoachingRules(bpm: Int, now: Long) {
+        if (!currentSettings.coachingEnabled) return
+
         bpmHistory.add(Pair(now, bpm))
         while (bpmHistory.isNotEmpty() && (now - bpmHistory.first.first > HISTORY_WINDOW_MS)) {
             bpmHistory.removeFirst()
@@ -611,8 +626,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val avgBpm = bpmHistory.map { it.second }.average().roundToInt()
         
         val newZone = when {
-            avgBpm < TARGET_LOW -> Zone.LOW
-            avgBpm > TARGET_HIGH -> Zone.HIGH
+            avgBpm < currentSettings.zone2Low -> Zone.LOW
+            avgBpm > currentSettings.zone2High -> Zone.HIGH
             else -> Zone.TARGET
         }
         
@@ -622,14 +637,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         
         val timeInCurrentZone = now - zoneEnterTime
-        val cooldownRemaining = (lastCueTime + COOLDOWN_MS) - now
+        val cooldownMs = currentSettings.cooldownSeconds * 1000L
+        val cooldownRemaining = (lastCueTime + cooldownMs) - now
         
         if (cooldownRemaining <= 0) {
-             if (currentZone == Zone.HIGH && timeInCurrentZone >= 30_000L) {
-                 playCue("Ease off slightly.")
+             val persistenceHighMs = currentSettings.persistenceHighSeconds * 1000L
+             val persistenceLowMs = currentSettings.persistenceLowSeconds * 1000L
+
+             if (currentZone == Zone.HIGH && timeInCurrentZone >= persistenceHighMs) {
+                 val text = if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
+                 playCue(text)
                  lastCueTime = now
-             } else if (currentZone == Zone.LOW && timeInCurrentZone >= 45_000L) {
-                 playCue("Gently increase pace.")
+             } else if (currentZone == Zone.LOW && timeInCurrentZone >= persistenceLowMs) {
+                 val text = if (currentSettings.voiceStyle == "short") "Faster" else "Gently increase pace."
+                 playCue(text)
                  lastCueTime = now
              }
         }
@@ -639,10 +660,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     
     private fun getCoachingDebugInfo(now: Long): DebugInfo {
         if (bpmHistory.isEmpty()) return DebugInfo(0, "Init", "0s", "Ready")
+        if (!currentSettings.coachingEnabled) return DebugInfo(bpmHistory.last().second, "Disabled", "--", "Off")
+
         val avg = bpmHistory.map { it.second }.average().roundToInt()
         val zoneStr = currentZone.name
         val timeInZone = (now - zoneEnterTime) / 1000
-        val cooldownRem = ((lastCueTime + COOLDOWN_MS) - now).coerceAtLeast(0) / 1000
+        val cooldownMs = currentSettings.cooldownSeconds * 1000L
+        val cooldownRem = ((lastCueTime + cooldownMs) - now).coerceAtLeast(0) / 1000
         val statusStr = if (cooldownRem > 0) "Cool: ${cooldownRem}s" else "Ready"
         return DebugInfo(avg, zoneStr, "${timeInZone}s", statusStr)
     }

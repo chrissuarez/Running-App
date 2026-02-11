@@ -26,12 +26,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
 
@@ -71,6 +74,7 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val serviceState = hrService?.hrState?.collectAsState(initial = HrState())
+                    val scope = rememberCoroutineScope()
                     
                     var boundService by remember { mutableStateOf<HrForegroundService?>(null) }
                     
@@ -83,31 +87,51 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    MainScreen(
-                        hrService = boundService,
-                        onRequestPermissions = { checkAndRequestPermissions() },
-                        onStartService = {
-                            val intent = Intent(this, HrForegroundService::class.java).apply {
-                                action = HrForegroundService.ACTION_START_FOREGROUND
+                    var currentScreen by remember { mutableStateOf("main") }
+                    val settingsRepository = remember { SettingsRepository(this) }
+                    val userSettings by settingsRepository.userSettingsFlow.collectAsState(initial = UserSettings())
+
+                    if (currentScreen == "main") {
+                        MainScreen(
+                            hrService = boundService,
+                            onRequestPermissions = { checkAndRequestPermissions() },
+                            onStartService = {
+                                val intent = Intent(this, HrForegroundService::class.java).apply {
+                                    action = HrForegroundService.ACTION_START_FOREGROUND
+                                }
+                                startService(intent)
+                            },
+                            onTogglePause = {
+                                boundService?.togglePause()
+                            },
+                            onStopSession = {
+                                 val intent = Intent(this, HrForegroundService::class.java).apply {
+                                    action = HrForegroundService.ACTION_STOP_FOREGROUND
+                                }
+                                startService(intent)
+                            },
+                            onConnectToDevice = { address ->
+                                boundService?.connectToDevice(address)
+                            },
+                            onTestCue = {
+                                boundService?.playCue("Target heart rate reached. Keep it up!")
+                            },
+                            onOpenSettings = {
+                                currentScreen = "settings"
                             }
-                            startService(intent)
-                        },
-                        onTogglePause = {
-                            boundService?.togglePause()
-                        },
-                        onStopSession = {
-                             val intent = Intent(this, HrForegroundService::class.java).apply {
-                                action = HrForegroundService.ACTION_STOP_FOREGROUND
-                            }
-                            startService(intent)
-                        },
-                        onConnectToDevice = { address ->
-                            boundService?.connectToDevice(address)
-                        },
-                        onTestCue = {
-                            boundService?.playCue("Target heart rate reached. Keep it up!")
-                        }
-                    )
+                        )
+                    } else {
+                        SettingsScreen(
+                            settings = userSettings,
+                            onSave = { updatedSettings ->
+                                scope.launch {
+                                    settingsRepository.updateSettings(updatedSettings)
+                                    currentScreen = "main"
+                                }
+                            },
+                            onBack = { currentScreen = "main" }
+                        )
+                    }
                 }
             }
         }
@@ -155,7 +179,8 @@ fun MainScreen(
     onTogglePause: () -> Unit,
     onStopSession: () -> Unit,
     onConnectToDevice: (String) -> Unit,
-    onTestCue: () -> Unit
+    onTestCue: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     
@@ -163,7 +188,12 @@ fun MainScreen(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(text = "Heart Rate Monitor", style = MaterialTheme.typography.headlineMedium)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(text = "Running App", style = MaterialTheme.typography.headlineMedium)
+            IconButton(onClick = onOpenSettings) {
+                Text("⚙️", fontSize = 24.sp)
+            }
+        }
         
         Spacer(modifier = Modifier.height(16.dp))
         
@@ -193,14 +223,19 @@ fun MainScreen(
         
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
              Button(onClick = onTestCue) {
-                Text("Test Audio Cue")
+                Text("Test Audio")
             }
             Button(onClick = onRequestPermissions) {
-                Text("Permissions")
+                Text("Perms")
             }
         }
         
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        // Settings Summary
+        SettingsSummaryCard(settings = state.userSettings)
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         if (state.connectionStatus == "Scanning...") {
             Text("Scanned Devices:", style = MaterialTheme.typography.titleMedium)
@@ -212,62 +247,174 @@ fun MainScreen(
                 }
             }
         } else if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
-             if (state.connectedDeviceName != null) {
-                Text(text = "Device: ${state.connectedDeviceName}", style = MaterialTheme.typography.titleMedium)
-            }
-            
-            Spacer(modifier = Modifier.height(32.dp))
-            
-            Text(text = "${state.bpm} BPM", style = MaterialTheme.typography.displayLarge)
-            Text(text = "Data Age: ${state.lastHrAgeSeconds}s")
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            Text("Session Engine:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Text("State: ${state.sessionStatus}", style = MaterialTheme.typography.bodyMedium, 
-                 color = when(state.sessionStatus) {
-                     SessionStatus.RUNNING -> Color.Green
-                     SessionStatus.PAUSED -> Color.Yellow
-                     SessionStatus.CONNECTING -> Color.Cyan
-                     SessionStatus.ERROR -> Color.Red
-                     else -> Color.Gray
-                 }
-            )
-            Text("Active Time: ${formatTime(state.secondsRunning)}", style = MaterialTheme.typography.bodyMedium)
-            Text("Paused Time: ${formatTime(state.secondsPaused)}", style = MaterialTheme.typography.bodyMedium)
-            if (state.reconnectAttempts > 0) {
-                Text("Reconnect Attempts: ${state.reconnectAttempts}", style = MaterialTheme.typography.bodyMedium, color = Color.Red)
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Text("Coaching Debug:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Text("Avg BPM (5s): ${state.avgBpm}", style = MaterialTheme.typography.bodyMedium)
-            Text("Zone: ${state.currentZone}", style = MaterialTheme.typography.bodyMedium, 
-                color = if(state.currentZone == "TARGET") Color.Green else if (state.currentZone == "LOW" || state.currentZone == "HIGH") Color.Red else Color.Gray
-            )
-            Text("Time in Zone: ${state.timeInZoneString}", style = MaterialTheme.typography.bodyMedium)
-            Text("Status: ${state.cooldownWithHysteresisString}", style = MaterialTheme.typography.bodyMedium)
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Text("Raw BLE Info:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Text("Last Packet: ${state.lastPacketTimeFormatted}", style = MaterialTheme.typography.bodySmall)
-            Text("Data Format: ${state.dataBits}", style = MaterialTheme.typography.bodySmall)
-            
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            Column(modifier = Modifier.fillMaxWidth().height(100.dp).verticalScroll(rememberScrollState()).background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
-                  Text("Discovered Services:", fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                  state.discoveredServices.forEach { uuid ->
-                     Text(text = uuid, fontSize = 10.sp)
-                 }
-            }
+             WorkoutView(state = state)
         } else {
             Spacer(modifier = Modifier.weight(1f))
             Text("Ready to start a session.")
             Spacer(modifier = Modifier.weight(1f))
         }
+    }
+}
+
+@Composable
+fun SettingsSummaryCard(settings: UserSettings) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+    ) {
+        Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Zone 2: ${settings.zone2Low}-${settings.zone2High} BPM", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                Text("Cooldown: ${settings.cooldownSeconds}s | Persistence: ${settings.persistenceHighSeconds}s/${settings.persistenceLowSeconds}s", style = MaterialTheme.typography.bodySmall)
+            }
+            Text(if (settings.coachingEnabled) "Coaching ON" else "Coaching OFF", style = MaterialTheme.typography.bodySmall, color = if (settings.coachingEnabled) Color.Green else Color.Red)
+        }
+    }
+}
+
+@Composable
+fun WorkoutView(state: HrState) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.verticalScroll(rememberScrollState())) {
+         if (state.connectedDeviceName != null) {
+            Text(text = "Device: ${state.connectedDeviceName}", style = MaterialTheme.typography.titleMedium)
+        }
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Text(text = "${state.bpm} BPM", style = MaterialTheme.typography.displayLarge)
+        Text(text = "Data Age: ${state.lastHrAgeSeconds}s")
+        
+        Spacer(modifier = Modifier.height(24.dp))
+        
+        Text("Session Engine:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Text("State: ${state.sessionStatus}", style = MaterialTheme.typography.bodyMedium, 
+             color = when(state.sessionStatus) {
+                 SessionStatus.RUNNING -> Color.Green
+                 SessionStatus.PAUSED -> Color.Yellow
+                 SessionStatus.CONNECTING -> Color.Cyan
+                 SessionStatus.ERROR -> Color.Red
+                 else -> Color.Gray
+             }
+        )
+        Text("Active Time: ${formatTime(state.secondsRunning)}", style = MaterialTheme.typography.bodyMedium)
+        Text("Paused Time: ${formatTime(state.secondsPaused)}", style = MaterialTheme.typography.bodyMedium)
+        if (state.reconnectAttempts > 0) {
+            Text("Reconnect Attempts: ${state.reconnectAttempts}", style = MaterialTheme.typography.bodyMedium, color = Color.Red)
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Text("Coaching Debug:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Text("Avg BPM (5s): ${state.avgBpm}", style = MaterialTheme.typography.bodyMedium)
+        Text("Zone: ${state.currentZone}", style = MaterialTheme.typography.bodyMedium, 
+            color = if(state.currentZone == "TARGET") Color.Green else if (state.currentZone == "LOW" || state.currentZone == "HIGH") Color.Red else Color.Gray
+        )
+        Text("Time in Zone: ${state.timeInZoneString}", style = MaterialTheme.typography.bodyMedium)
+        Text("Status: ${state.cooldownWithHysteresisString}", style = MaterialTheme.typography.bodyMedium)
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        Text("Raw BLE Info:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        Text("Last Packet: ${state.lastPacketTimeFormatted}", style = MaterialTheme.typography.bodySmall)
+        Text("Data Format: ${state.dataBits}", style = MaterialTheme.typography.bodySmall)
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        Column(modifier = Modifier.fillMaxWidth().height(100.dp).verticalScroll(rememberScrollState()).background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
+              Text("Discovered Services:", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+              state.discoveredServices.forEach { uuid ->
+                 Text(text = uuid, fontSize = 10.sp)
+             }
+        }
+    }
+}
+
+@Composable
+fun SettingsScreen(
+    settings: UserSettings,
+    onSave: (UserSettings) -> Unit,
+    onBack: () -> Unit
+) {
+    var maxHr by remember { mutableStateOf(settings.maxHr.toString()) }
+    var zone2Low by remember { mutableStateOf(settings.zone2Low.toString()) }
+    var zone2High by remember { mutableStateOf(settings.zone2High.toString()) }
+    var cooldown by remember { mutableStateOf(settings.cooldownSeconds.toString()) }
+    var persistenceHigh by remember { mutableStateOf(settings.persistenceHighSeconds.toString()) }
+    var persistenceLow by remember { mutableStateOf(settings.persistenceLowSeconds.toString()) }
+    var voiceStyle by remember { mutableStateOf(settings.voiceStyle) }
+    var coachingEnabled by remember { mutableStateOf(settings.coachingEnabled) }
+
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Settings", style = MaterialTheme.typography.headlineMedium)
+            Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)) {
+                Text("Back")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Basic Info
+        OutlinedTextField(value = maxHr, onValueChange = { maxHr = it }, label = { Text("Max HR") }, modifier = Modifier.fillMaxWidth())
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(value = zone2Low, onValueChange = { zone2Low = it }, label = { Text("Zone 2 Low") }, modifier = Modifier.weight(1f))
+            OutlinedTextField(value = zone2High, onValueChange = { zone2High = it }, label = { Text("Zone 2 High") }, modifier = Modifier.weight(1f))
+        }
+        
+        Button(onClick = {
+            val max = maxHr.toIntOrNull() ?: 190
+            zone2Low = (max * 0.6).roundToInt().toString()
+            zone2High = (max * 0.75).roundToInt().toString()
+        }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            Text("Derive Defaults from Max HR")
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+        Text("Coaching Preferences", style = MaterialTheme.typography.titleMedium)
+        
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = coachingEnabled, onCheckedChange = { coachingEnabled = it })
+            Text("Enable Coaching Cues")
+        }
+
+        OutlinedTextField(value = cooldown, onValueChange = { cooldown = it }, label = { Text("Cue Cooldown (s)") }, modifier = Modifier.fillMaxWidth())
+        
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(value = persistenceHigh, onValueChange = { persistenceHigh = it }, label = { Text("High Persistence (s)") }, modifier = Modifier.weight(1f))
+            OutlinedTextField(value = persistenceLow, onValueChange = { persistenceLow = it }, label = { Text("Low Persistence (s)") }, modifier = Modifier.weight(1f))
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Voice Style:")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = voiceStyle == "short", onClick = { voiceStyle = "short" })
+            Text("Short")
+            Spacer(modifier = Modifier.width(16.dp))
+            RadioButton(selected = voiceStyle == "detailed", onClick = { voiceStyle = "detailed" })
+            Text("Detailed")
+        }
+
+        Spacer(modifier = Modifier.height(32.dp))
+        
+        Button(onClick = {
+            onSave(UserSettings(
+                maxHr = maxHr.toIntOrNull() ?: settings.maxHr,
+                zone2Low = zone2Low.toIntOrNull() ?: settings.zone2Low,
+                zone2High = zone2High.toIntOrNull() ?: settings.zone2High,
+                cooldownSeconds = cooldown.toIntOrNull() ?: settings.cooldownSeconds,
+                persistenceHighSeconds = persistenceHigh.toIntOrNull() ?: settings.persistenceHighSeconds,
+                persistenceLowSeconds = persistenceLow.toIntOrNull() ?: settings.persistenceLowSeconds,
+                voiceStyle = voiceStyle,
+                coachingEnabled = coachingEnabled
+            ))
+        }, modifier = Modifier.fillMaxWidth()) {
+            Text("Save Settings")
+        }
+        
+        Spacer(modifier = Modifier.height(32.dp))
     }
 }
 
