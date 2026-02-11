@@ -92,7 +92,10 @@ class MainActivity : ComponentActivity() {
                             }
                             startService(intent)
                         },
-                        onStopService = {
+                        onTogglePause = {
+                            boundService?.togglePause()
+                        },
+                        onStopSession = {
                              val intent = Intent(this, HrForegroundService::class.java).apply {
                                 action = HrForegroundService.ACTION_STOP_FOREGROUND
                             }
@@ -149,26 +152,13 @@ fun MainScreen(
     hrService: HrForegroundService?, 
     onRequestPermissions: () -> Unit,
     onStartService: () -> Unit,
-    onStopService: () -> Unit,
+    onTogglePause: () -> Unit,
+    onStopSession: () -> Unit,
     onConnectToDevice: (String) -> Unit,
     onTestCue: () -> Unit
 ) {
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     
-    // Calculate age of last update
-    var timeSinceUpdate by remember { mutableStateOf(0L) }
-    
-    LaunchedEffect(state.lastUpdateTimestamp) {
-        while(true) {
-            if (state.lastUpdateTimestamp > 0) {
-                timeSinceUpdate = (System.currentTimeMillis() - state.lastUpdateTimestamp) / 1000
-            } else {
-                timeSinceUpdate = 0
-            }
-            delay(1000)
-        }
-    }
-
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -178,27 +168,36 @@ fun MainScreen(
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(text = "Status: ${state.connectionStatus}")
+        if (state.sessionStatus == SessionStatus.ERROR) {
+            Text(text = "ERROR: ${state.errorMessage ?: "Unknown"}", color = Color.Red, fontWeight = FontWeight.Bold)
+        }
         
         Spacer(modifier = Modifier.height(16.dp))
         
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Button(onClick = onStartService) {
-                Text("Scan / Start")
-            }
-            Button(onClick = onStopService, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
-                Text("Stop / Disconnect")
+            if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
+                Button(onClick = onStartService) {
+                    Text("Scan / Start")
+                }
+            } else {
+                Button(onClick = onTogglePause) {
+                    Text(if (state.sessionStatus == SessionStatus.PAUSED) "Resume" else "Pause")
+                }
+                Button(onClick = onStopSession, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
+                    Text("Stop")
+                }
             }
         }
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        Button(onClick = onTestCue) {
-            Text("Test Audio Cue")
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = onRequestPermissions) {
-            Text("Request Permissions")
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+             Button(onClick = onTestCue) {
+                Text("Test Audio Cue")
+            }
+            Button(onClick = onRequestPermissions) {
+                Text("Permissions")
+            }
         }
         
         Spacer(modifier = Modifier.height(24.dp))
@@ -212,7 +211,7 @@ fun MainScreen(
                     DeviceListItem(device = device, onClick = { onConnectToDevice(device.address) })
                 }
             }
-        } else if (state.connectionStatus == "Connected" || state.connectionStatus.startsWith("Connecting")) {
+        } else if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
              if (state.connectedDeviceName != null) {
                 Text(text = "Device: ${state.connectedDeviceName}", style = MaterialTheme.typography.titleMedium)
             }
@@ -220,15 +219,26 @@ fun MainScreen(
             Spacer(modifier = Modifier.height(32.dp))
             
             Text(text = "${state.bpm} BPM", style = MaterialTheme.typography.displayLarge)
-            Text(text = "Last update: ${timeSinceUpdate}s ago")
+            Text(text = "Data Age: ${state.lastHrAgeSeconds}s")
             
             Spacer(modifier = Modifier.height(24.dp))
             
-            Text("Debug Info:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            
-            Text("Last Packet: ${state.lastPacketTimeFormatted}", style = MaterialTheme.typography.bodyMedium)
-            Text("Data Format: ${state.dataBits}", style = MaterialTheme.typography.bodyMedium)
-            
+            Text("Session Engine:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text("State: ${state.sessionStatus}", style = MaterialTheme.typography.bodyMedium, 
+                 color = when(state.sessionStatus) {
+                     SessionStatus.RUNNING -> Color.Green
+                     SessionStatus.PAUSED -> Color.Yellow
+                     SessionStatus.CONNECTING -> Color.Cyan
+                     SessionStatus.ERROR -> Color.Red
+                     else -> Color.Gray
+                 }
+            )
+            Text("Active Time: ${formatTime(state.secondsRunning)}", style = MaterialTheme.typography.bodyMedium)
+            Text("Paused Time: ${formatTime(state.secondsPaused)}", style = MaterialTheme.typography.bodyMedium)
+            if (state.reconnectAttempts > 0) {
+                Text("Reconnect Attempts: ${state.reconnectAttempts}", style = MaterialTheme.typography.bodyMedium, color = Color.Red)
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
             
             Text("Coaching Debug:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
@@ -239,20 +249,32 @@ fun MainScreen(
             Text("Time in Zone: ${state.timeInZoneString}", style = MaterialTheme.typography.bodyMedium)
             Text("Status: ${state.cooldownWithHysteresisString}", style = MaterialTheme.typography.bodyMedium)
             
+            Spacer(modifier = Modifier.height(16.dp))
+            
+            Text("Raw BLE Info:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text("Last Packet: ${state.lastPacketTimeFormatted}", style = MaterialTheme.typography.bodySmall)
+            Text("Data Format: ${state.dataBits}", style = MaterialTheme.typography.bodySmall)
+            
             Spacer(modifier = Modifier.height(8.dp))
             
-            Text("Discovered Services:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            Column(modifier = Modifier.fillMaxWidth().height(150.dp).verticalScroll(rememberScrollState()).background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
-                 state.discoveredServices.forEach { uuid ->
-                     Text(text = uuid, fontSize = 12.sp)
+            Column(modifier = Modifier.fillMaxWidth().height(100.dp).verticalScroll(rememberScrollState()).background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
+                  Text("Discovered Services:", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                  state.discoveredServices.forEach { uuid ->
+                     Text(text = uuid, fontSize = 10.sp)
                  }
             }
         } else {
             Spacer(modifier = Modifier.weight(1f))
-            Text("Service not running or disconnected.")
+            Text("Ready to start a session.")
             Spacer(modifier = Modifier.weight(1f))
         }
     }
+}
+
+private fun formatTime(seconds: Long): String {
+    val mins = seconds / 60
+    val secs = seconds % 60
+    return "%02d:%02d".format(mins, secs)
 }
 
 @Composable

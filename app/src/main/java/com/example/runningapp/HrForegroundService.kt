@@ -43,9 +43,12 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
 
+enum class SessionStatus { IDLE, CONNECTING, RUNNING, PAUSED, STOPPING, STOPPED, ERROR }
+
 // simple data class to hold the state
 data class HrState(
     val connectionStatus: String = "Disconnected",
+    val sessionStatus: SessionStatus = SessionStatus.IDLE,
     val bpm: Int = 0,
     val lastUpdateTimestamp: Long = 0,
     val connectedDeviceName: String? = null,
@@ -53,11 +56,19 @@ data class HrState(
     val discoveredServices: List<String> = emptyList(),
     val lastPacketTimeFormatted: String = "--:--:--.---",
     val dataBits: String = "Unknown",
+    
     // Coaching Debug Info
     val avgBpm: Int = 0,
-    val currentZone: String = "No Data", // "Low", "Target", "High"
-    val timeInZoneString: String = "0s", // e.g. "Trigger in 25s"
-    val cooldownWithHysteresisString: String = "Ready" // "Cool: 45s" or "Hysteresis: 10s"
+    val currentZone: String = "No Data", 
+    val timeInZoneString: String = "0s", 
+    val cooldownWithHysteresisString: String = "Ready",
+    
+    // Session Engine Debug Info
+    val secondsRunning: Long = 0,
+    val secondsPaused: Long = 0,
+    val reconnectAttempts: Int = 0,
+    val lastHrAgeSeconds: Long = 0,
+    val errorMessage: String? = null
 )
 
 class HrForegroundService : Service(), TextToSpeech.OnInitListener {
@@ -103,17 +114,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var lastCueTime = 0L
     private val COOLDOWN_MS = 75_000L
     
-    // Hysteresis: Must return to TARGET for 20s to re-arm cues
-    private var hysteresisEnterTime = 0L
-    private val HYSTERESIS_MS = 20_000L
-    private var isSystemArmed = true // Starts armed
-
+    // --- Session Engine State ---
+    private var sessionSecondsRunning = 0L
+    private var sessionSecondsPaused = 0L
+    private var reconnectAttemptCount = 0
+    private var lastHrTimestamp = 0L
+    private var firstDisconnectTime = 0L
+    private val RECONNECT_TIMEOUT_MS = 120_000L // 2 minutes
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
         const val NOTIFICATION_ID = 1
         const val ACTION_START_FOREGROUND = "ACTION_START_FOREGROUND"
         const val ACTION_STOP_FOREGROUND = "ACTION_STOP_FOREGROUND"
+        const val ACTION_PAUSE_SESSION = "ACTION_PAUSE_SESSION"
+        const val ACTION_RESUME_SESSION = "ACTION_RESUME_SESSION"
         const val TAG = "HrService"
     }
 
@@ -134,6 +149,66 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         tts = TextToSpeech(this, this)
         
         createNotificationChannel()
+        startSessionTimerLoop()
+    }
+
+    private fun startSessionTimerLoop() {
+        serviceScope.launch {
+            while (true) {
+                _hrState.update { currentState ->
+                    val now = System.currentTimeMillis()
+                    val hrAge = if (lastHrTimestamp > 0) (now - lastHrTimestamp) / 1000 else 0
+                    
+                    when (currentState.sessionStatus) {
+                        SessionStatus.RUNNING -> {
+                            sessionSecondsRunning++
+                            currentState.copy(
+                                secondsRunning = sessionSecondsRunning,
+                                lastHrAgeSeconds = hrAge
+                            )
+                        }
+                        SessionStatus.PAUSED -> {
+                            sessionSecondsPaused++
+                            currentState.copy(
+                                secondsPaused = sessionSecondsPaused,
+                                lastHrAgeSeconds = hrAge
+                            )
+                        }
+                        SessionStatus.CONNECTING -> {
+                            // Check for 2-minute reconnect timeout
+                            if (firstDisconnectTime > 0 && (now - firstDisconnectTime > RECONNECT_TIMEOUT_MS)) {
+                                currentState.copy(
+                                    sessionStatus = SessionStatus.ERROR,
+                                    errorMessage = "Reconnect Timeout (2m)",
+                                    lastHrAgeSeconds = hrAge
+                                )
+                            } else {
+                                currentState.copy(lastHrAgeSeconds = hrAge)
+                            }
+                        }
+                        else -> currentState.copy(lastHrAgeSeconds = hrAge)
+                    }
+                }
+                updateNotification() // Refresh HR Age in notification
+                delay(1000)
+            }
+        }
+    }
+
+    private fun updateNotification() {
+        if (_hrState.value.sessionStatus != SessionStatus.IDLE && _hrState.value.sessionStatus != SessionStatus.STOPPED) {
+             val state = _hrState.value
+             val content = "HR: ${state.bpm} | Active: ${formatTime(state.secondsRunning)}"
+             val notification = createNotification(content)
+             val manager = getSystemService(NotificationManager::class.java)
+             manager.notify(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun formatTime(seconds: Long): String {
+        val mins = seconds / 60
+        val secs = seconds % 60
+        return "%02d:%02d".format(mins, secs)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -143,10 +218,42 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 startScanning()
             }
             ACTION_STOP_FOREGROUND -> {
-                stopForegroundService()
+                stopSession()
+            }
+            ACTION_PAUSE_SESSION -> {
+                pauseSession()
+            }
+            ACTION_RESUME_SESSION -> {
+                resumeSession()
             }
         }
         return START_STICKY
+    }
+    
+    fun togglePause() {
+        if (_hrState.value.sessionStatus == SessionStatus.RUNNING) {
+            pauseSession()
+        } else if (_hrState.value.sessionStatus == SessionStatus.PAUSED) {
+            resumeSession()
+        }
+    }
+
+    private fun pauseSession() {
+        _hrState.update { it.copy(sessionStatus = SessionStatus.PAUSED) }
+        Log.d(TAG, "Session PAUSED")
+    }
+
+    private fun resumeSession() {
+        _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
+        Log.d(TAG, "Session RESUMED")
+    }
+
+    fun stopSession() {
+        _hrState.update { it.copy(sessionStatus = SessionStatus.STOPPING) }
+        stopScanning()
+        disconnect()
+        _hrState.update { it.copy(sessionStatus = SessionStatus.STOPPED) }
+        stopForegroundService()
     }
     
     override fun onInit(status: Int) {
@@ -331,7 +438,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
          
          isReconnecting = true
          val delayMs = reconnectDelay
-         _hrState.update { it.copy(connectionStatus = "Reconnecting in ${delayMs/1000}s...") }
+         
+         reconnectAttemptCount++
+         _hrState.update { it.copy(
+             connectionStatus = "Reconnecting in ${delayMs/1000}s...",
+             reconnectAttempts = reconnectAttemptCount
+         ) }
          
          serviceScope.launch {
              delay(delayMs)
@@ -349,10 +461,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             bluetoothGatt?.close()
             bluetoothGatt = null
         }
-        _hrState.update { it.copy(connectionStatus = "Disconnected", bpm = 0, connectedDeviceName = null, discoveredServices = emptyList()) }
+        _hrState.update { it.copy(
+            connectionStatus = "Disconnected", 
+            sessionStatus = SessionStatus.STOPPED,
+            bpm = 0, 
+            connectedDeviceName = null, 
+            discoveredServices = emptyList()
+        ) }
         bpmHistory.clear()
-        isSystemArmed = true 
         currentZone = Zone.UNKNOWN
+        
+        sessionSecondsRunning = 0
+        sessionSecondsPaused = 0
+        reconnectAttemptCount = 0
+        firstDisconnectTime = 0
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -362,17 +484,39 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             if (newState == BluetoothProfile.STATE_CONNECTED) {
                 reconnectDelay = 1000L 
                 isReconnecting = false
-                _hrState.update { it.copy(connectionStatus = "Connected", connectedDeviceName = gatt?.device?.name) }
+                reconnectAttemptCount = 0
+                firstDisconnectTime = 0
+                
+                _hrState.update { it.copy(
+                    connectionStatus = "Connected", 
+                    sessionStatus = SessionStatus.RUNNING,
+                    connectedDeviceName = gatt?.device?.name,
+                    reconnectAttempts = 0,
+                    errorMessage = null
+                ) }
+                
                 gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
                 gatt?.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 if (targetDeviceAddress != null) {
-                     _hrState.update { it.copy(connectionStatus = "Disconnected (Retrying)") }
+                    // Unexpected disconnect while RUNNING or PAUSED
+                    if (firstDisconnectTime == 0L) {
+                        firstDisconnectTime = System.currentTimeMillis()
+                    }
+                    
+                    _hrState.update { it.copy(
+                        connectionStatus = "Disconnected (Retrying)",
+                        sessionStatus = if (it.sessionStatus == SessionStatus.RUNNING) SessionStatus.CONNECTING else it.sessionStatus
+                    ) }
+                    
                     gatt?.close()
                     bluetoothGatt = null
                     attemptReconnect()
                 } else {
-                     _hrState.update { it.copy(connectionStatus = "Disconnected") }
+                     _hrState.update { it.copy(
+                         connectionStatus = "Disconnected",
+                         sessionStatus = SessionStatus.STOPPED
+                     ) }
                      gatt?.close()
                      bluetoothGatt = null
                 }
@@ -424,15 +568,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         
         val timestamp = System.currentTimeMillis()
+        lastHrTimestamp = timestamp // Track for session engine age
+        
         val sdf = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
         val formattedTime = sdf.format(Date(timestamp))
         val formatString = if (is16Bit) "16-bit (UINT16)" else "8-bit (UINT8)"
         
-        processCoachingRules(bpm, timestamp)
+        // --- PROCESSS COACHING RULES (Session must be RUNNING) ---
+        if (_hrState.value.sessionStatus == SessionStatus.RUNNING) {
+            processCoachingRules(bpm, timestamp)
+        }
+        
         val debugInfo = getCoachingDebugInfo(timestamp)
 
-        _hrState.update { 
-            it.copy(
+        _hrState.update { currentState ->
+            currentState.copy(
                 bpm = bpm, 
                 lastUpdateTimestamp = timestamp,
                 lastPacketTimeFormatted = formattedTime,
