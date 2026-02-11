@@ -1,27 +1,10 @@
 {
     "logs": [
         {
-            "outputFile": "com.example.runningapp-mergeDebugResources-40:/values-ky/values-ky.xml",
+            "outputFile": "com.example.runningapp-mergeDebugResources-44:/values-ky/values-ky.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\Dad\\.gradle\\caches\\9.0-milestone-1\\transforms\\e929a1cc4749d676409c481cb946bd8c\\transformed\\ui-release\\res\\values-ky\\values-ky.xml",
-                    "from": {
-                        "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
-                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
-                        "startOffsets": "105,198,282,392,492,577,659,757,846,931,997,1064,1149,1236,1309,1388,1456",
-                        "endColumns": "92,83,109,99,84,81,97,88,84,65,66,84,86,72,78,67,117",
-                        "endOffsets": "193,277,387,487,572,654,752,841,926,992,1059,1144,1231,1304,1383,1451,1569"
-                    },
-                    "to": {
-                        "startLines": "13,14,47,48,50,52,53,54,55,56,57,58,59,61,65,66,67",
-                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
-                        "startOffsets": "1322,1415,5148,5258,5430,5601,5683,5781,5870,5955,6021,6088,6173,6342,6705,6784,6852",
-                        "endColumns": "92,83,109,99,84,81,97,88,84,65,66,84,86,72,78,67,117",
-                        "endOffsets": "1410,1494,5253,5353,5510,5678,5776,5865,5950,6016,6083,6168,6255,6410,6779,6847,6965"
-                    }
-                },
-                {
-                    "source": "C:\\Users\\Dad\\.gradle\\caches\\9.0-milestone-1\\transforms\\1dcbd3ef5235364ecb05dc46f7b1e033\\transformed\\core-1.12.0\\res\\values-ky\\values-ky.xml",
+                    "source": "C:\\Users\\Dad\\.gradle\\caches\\8.13\\transforms\\6f0eb9e99bad75070ae2fb32d4d125cb\\transformed\\core-1.12.0\\res\\values-ky\\values-ky.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9",
                         "startColumns": "4,4,4,4,4,4,4,4",
@@ -38,7 +21,24 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\Dad\\.gradle\\caches\\9.0-milestone-1\\transforms\\0401ee9dd9b75c018e5e7899ef3b5163\\transformed\\material3-1.1.1\\res\\values-ky\\values-ky.xml",
+                    "source": "C:\\Users\\Dad\\.gradle\\caches\\8.13\\transforms\\c8f8a085a0d86469033856ad4fafdab8\\transformed\\ui-release\\res\\values-ky\\values-ky.xml",
+                    "from": {
+                        "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "105,198,282,392,492,577,659,757,846,931,997,1064,1149,1236,1309,1388,1456",
+                        "endColumns": "92,83,109,99,84,81,97,88,84,65,66,84,86,72,78,67,117",
+                        "endOffsets": "193,277,387,487,572,654,752,841,926,992,1059,1144,1231,1304,1383,1451,1569"
+                    },
+                    "to": {
+                        "startLines": "13,14,47,48,50,52,53,54,55,56,57,58,59,61,65,66,67",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "1322,1415,5148,5258,5430,5601,5683,5781,5870,5955,6021,6088,6173,6342,6705,6784,6852",
+                        "endColumns": "92,83,109,99,84,81,97,88,84,65,66,84,86,72,78,67,117",
+                        "endOffsets": "1410,1494,5253,5353,5510,5678,5776,5865,5950,6016,6083,6168,6255,6410,6779,6847,6965"
+                    }
+                },
+                {
+                    "source": "C:\\Users\\Dad\\.gradle\\caches\\8.13\\transforms\\12b98b041ded56f4ed271e02a764dfb2\\transformed\\material3-1.1.1\\res\\values-ky\\values-ky.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",

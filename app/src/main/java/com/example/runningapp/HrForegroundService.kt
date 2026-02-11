@@ -44,6 +44,8 @@ import kotlin.math.roundToInt
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.HrSample
+import java.text.SimpleDateFormat
+import java.util.Date
 
 enum class SessionStatus { IDLE, CONNECTING, RUNNING, PAUSED, STOPPING, STOPPED, ERROR }
 
