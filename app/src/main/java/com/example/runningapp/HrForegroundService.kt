@@ -600,7 +600,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             connectedDeviceName = null, 
             discoveredServices = emptyList()
         ) }
-        bpmHistory.clear()
+        synchronized(bpmHistory) {
+            bpmHistory.clear()
+        }
         currentZone = Zone.UNKNOWN
         
         // Counters are now reset in startNewDatabaseSession() to persist until stopSession() finishes
@@ -741,12 +743,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun processCoachingRules(bpm: Int, now: Long) {
         if (!currentSettings.coachingEnabled) return
 
-        bpmHistory.add(Pair(now, bpm))
-        while (bpmHistory.isNotEmpty() && (now - bpmHistory.first.first > HISTORY_WINDOW_MS)) {
-            bpmHistory.removeFirst()
+        var avgBpm = 0
+        synchronized(bpmHistory) {
+            bpmHistory.add(Pair(now, bpm))
+            while (bpmHistory.isNotEmpty() && (now - bpmHistory.first.first > HISTORY_WINDOW_MS)) {
+                bpmHistory.removeFirst()
+            }
+            if (bpmHistory.isEmpty()) return
+            avgBpm = bpmHistory.map { it.second }.average().roundToInt()
         }
-        if (bpmHistory.isEmpty()) return
-        val avgBpm = bpmHistory.map { it.second }.average().roundToInt()
         
         val newZone = when {
             avgBpm < currentSettings.zone2Low -> Zone.LOW
@@ -782,10 +787,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private data class DebugInfo(val avg: Int, val zone: String, val timeInZone: String, val cooldown: String)
     
     private fun getCoachingDebugInfo(now: Long): DebugInfo {
-        if (bpmHistory.isEmpty()) return DebugInfo(0, "Init", "0s", "Ready")
-        if (!currentSettings.coachingEnabled) return DebugInfo(bpmHistory.last().second, "Disabled", "--", "Off")
+        var avg = 0
+        synchronized(bpmHistory) {
+            if (bpmHistory.isEmpty()) return DebugInfo(0, "Init", "0s", "Ready")
+            if (!currentSettings.coachingEnabled) return DebugInfo(bpmHistory.last().second, "Disabled", "--", "Off")
 
-        val avg = bpmHistory.map { it.second }.average().roundToInt()
+            avg = bpmHistory.map { it.second }.average().roundToInt()
+        }
+
         val zoneStr = currentZone.name
         val timeInZone = (now - zoneEnterTime) / 1000
         val cooldownMs = currentSettings.cooldownSeconds * 1000L
