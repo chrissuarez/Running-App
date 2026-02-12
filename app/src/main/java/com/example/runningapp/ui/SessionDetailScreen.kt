@@ -15,6 +15,9 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.tooling.preview.Preview
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunnerSession
 import java.text.SimpleDateFormat
@@ -104,20 +107,73 @@ fun HrChart(samples: List<HrSample>, modifier: Modifier = Modifier) {
         return
     }
 
-    val maxBpm = samples.maxOf { it.rawBpm }.toFloat().coerceAtLeast(200f)
-    val minBpm = samples.minOf { it.rawBpm }.toFloat().coerceAtMost(40f)
-    val range = (maxBpm - minBpm).coerceAtLeast(1f)
+    val textMeasurer = rememberTextMeasurer()
+    val labelStyle = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, color = Color.Gray)
 
-    Canvas(modifier = modifier.background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
-        val width = size.width
-        val height = size.height
-        
+    val rawMax = samples.maxOf { it.rawBpm }.toFloat()
+    val rawMin = samples.minOf { it.rawBpm }.toFloat()
+    
+    // Rounded range for cleaner labels
+    val chartMin = (rawMin - 10f).coerceAtLeast(40f).let { (it / 10).toInt() * 10f }
+    val chartMax = (rawMax + 10f).coerceAtMost(220f).let { ((it + 9) / 10).toInt() * 10f }
+    val bpmRange = (chartMax - chartMin).coerceAtLeast(1f)
+
+    val durationSeconds = samples.last().elapsedSeconds
+
+    Canvas(modifier = modifier.background(Color.Black.copy(alpha = 0.05f)).padding(horizontal = 8.dp)) {
+        val leftPadding = 40.dp.toPx()
+        val bottomPadding = 24.dp.toPx()
+        val chartWidth = size.width - leftPadding
+        val chartHeight = size.height - bottomPadding
+
+        // 1. Draw Y-axis labels and horizontal grid lines (5 ticks)
+        val yTicks = 5
+        for (i in 0 until yTicks) {
+            val fraction = i / (yTicks - 1).toFloat()
+            val bpm = chartMin + (fraction * bpmRange)
+            val y = chartHeight - (fraction * chartHeight)
+            
+            // Grid line
+            drawLine(
+                color = Color.LightGray.copy(alpha = 0.5f),
+                start = Offset(leftPadding, y),
+                end = Offset(size.width, y),
+                strokeWidth = 1.dp.toPx()
+            )
+            
+            // Label
+            val labelLayout = textMeasurer.measure(bpm.toInt().toString(), style = labelStyle)
+            drawText(
+                textLayoutResult = labelLayout,
+                topLeft = Offset(leftPadding - labelLayout.size.width - 4.dp.toPx(), y - labelLayout.size.height / 2)
+            )
+        }
+
+        // 2. Draw X-axis labels (3-4 ticks based on duration)
+        val xTicks = if (durationSeconds < 120) 3 else 4
+        for (i in 0 until xTicks) {
+            val fraction = i / (xTicks - 1).toFloat()
+            val seconds = (fraction * durationSeconds).toLong()
+            val x = leftPadding + (fraction * chartWidth)
+            
+            val label = if (durationSeconds < 3600) {
+                "%02d:%02d".format(seconds / 60, seconds % 60)
+            } else {
+                "%dh %dm".format(seconds / 3600, (seconds % 3600) / 60)
+            }
+            
+            val labelLayout = textMeasurer.measure(label, style = labelStyle)
+            drawText(
+                textLayoutResult = labelLayout,
+                topLeft = Offset(x - labelLayout.size.width / 2, chartHeight + 4.dp.toPx())
+            )
+        }
+
+        // 3. Draw HR Path
         val path = Path()
-        val stepX = width / (samples.size - 1).coerceAtLeast(1)
-        
         samples.forEachIndexed { index, sample ->
-            val x = index * stepX
-            val y = height - ((sample.rawBpm - minBpm) / range * height)
+            val x = leftPadding + (sample.elapsedSeconds.toFloat() / durationSeconds.coerceAtLeast(1) * chartWidth)
+            val y = chartHeight - ((sample.rawBpm - chartMin) / bpmRange * chartHeight)
             
             if (index == 0) {
                 path.moveTo(x, y)
@@ -139,4 +195,25 @@ private fun formatDurationLarge(seconds: Long): String {
     val m = (seconds % 3600) / 60
     val s = seconds % 60
     return if (h > 0) "%dh %dm".format(h, m) else "%dm %ds".format(m, s)
+}
+@Preview(showBackground = true)
+@Composable
+fun PreviewHrChart() {
+    val samples = listOf(
+        HrSample(1, 1, 0, 70, 70, "CONNECTED"),
+        HrSample(2, 1, 30, 85, 80, "CONNECTED"),
+        HrSample(3, 1, 60, 110, 100, "CONNECTED"),
+        HrSample(4, 1, 90, 140, 130, "CONNECTED"),
+        HrSample(5, 1, 120, 135, 135, "CONNECTED"),
+        HrSample(6, 1, 150, 155, 150, "CONNECTED")
+    )
+    MaterialTheme {
+        HrChart(
+            samples = samples,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(200.dp)
+                .padding(16.dp)
+        )
+    }
 }
