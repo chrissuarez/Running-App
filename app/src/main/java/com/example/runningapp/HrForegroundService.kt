@@ -74,6 +74,10 @@ data class HrState(
     val lastHrAgeSeconds: Long = 0,
     val errorMessage: String? = null,
     
+    // Mission 3: In-Memory Zone Timers
+    val zoneTimes: Map<Int, Long> = mapOf(1 to 0L, 2 to 0L, 3 to 0L, 4 to 0L, 5 to 0L),
+    val isSimulating: Boolean = false,
+
     // Mission 2: Settings Summary
     val userSettings: UserSettings = UserSettings()
 )
@@ -116,6 +120,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var sessionSampleCount = 0
     private var sessionInTargetZoneSeconds = 0L
     private var lastRecordedSecond = -1L
+    
+    // Mission 3: In-Memory Zone Tracking
+    private val sessionZoneTimes = mutableMapOf(1 to 0L, 2 to 0L, 3 to 0L, 4 to 0L, 5 to 0L)
+    private var isSimulationEnabled = false
+    private var simulationBpm = 70
+    private var simulationDirection = 1
 
     // --- Coaching Rules Engine State ---
     private val HISTORY_WINDOW_MS = 5000L
@@ -201,26 +211,38 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                     val isTarget = currentState.currentZone == "TARGET"
                                     if (isTarget) sessionInTargetZoneSeconds++
                                     
-                                    val sessionId = currentSessionId
-                                    if (sessionId != null) {
-                                        val sample = HrSample(
-                                            sessionId = sessionId,
-                                            elapsedSeconds = sessionSecondsRunning,
-                                            rawBpm = currentBpm,
-                                            smoothedBpm = currentState.avgBpm,
-                                            connectionState = currentState.connectionStatus
-                                        )
-                                        serviceScope.launch(Dispatchers.IO) {
-                                            database.sampleDao().insertSample(sample)
-                                        }
-                                    }
-                                }
-                            }
+                                     if (sessionId != null) {
+                                         val sample = HrSample(
+                                             sessionId = sessionId,
+                                             elapsedSeconds = sessionSecondsRunning,
+                                             rawBpm = currentBpm,
+                                             smoothedBpm = currentState.avgBpm,
+                                             connectionState = currentState.connectionStatus
+                                         )
+                                         serviceScope.launch(Dispatchers.IO) {
+                                             database.sampleDao().insertSample(sample)
+                                         }
+                                     }
+                                 }
+                                 
+                                 // Calculate and track zone for this second
+                                 val zone = calculateZone(currentBpm, currentSettings.maxHr)
+                                 if (zone in 1..5) {
+                                     sessionZoneTimes[zone] = (sessionZoneTimes[zone] ?: 0L) + 1
+                                 }
+                             }
+ 
+                             // Simulation logic
+                             if (isSimulationEnabled) {
+                                 updateSimulationData()
+                             }
 
-                            currentState.copy(
-                                secondsRunning = sessionSecondsRunning,
-                                lastHrAgeSeconds = hrAge
-                            )
+                             currentState.copy(
+                                 secondsRunning = sessionSecondsRunning,
+                                 lastHrAgeSeconds = hrAge,
+                                 zoneTimes = sessionZoneTimes.toMap(),
+                                 isSimulating = isSimulationEnabled
+                             )
                         }
                         SessionStatus.PAUSED -> {
                             sessionSecondsPaused++
@@ -321,6 +343,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             sessionSampleCount = 0
             sessionInTargetZoneSeconds = 0
             lastRecordedSecond = -1
+            
+            // Mission 3: Reset Zone Timers
+            sessionZoneTimes.keys.forEach { sessionZoneTimes[it] = 0L }
+            
             Log.d(TAG, "Started DB Session: $currentSessionId")
         }
     }
@@ -765,6 +791,56 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val cooldownRem = ((lastCueTime + cooldownMs) - now).coerceAtLeast(0) / 1000
         val statusStr = if (cooldownRem > 0) "Cool: ${cooldownRem}s" else "Ready"
         return DebugInfo(avg, zoneStr, "${timeInZone}s", statusStr)
+    }
+
+    private fun calculateZone(bpm: Int, maxHr: Int): Int {
+        if (bpm <= 0 || maxHr <= 0) return 0
+        val percent = (bpm.toFloat() / maxHr) * 100
+        return when {
+            percent < 50 -> 0
+            percent < 60 -> 1
+            percent < 70 -> 2
+            percent < 80 -> 3
+            percent < 90 -> 4
+            else -> 5
+        }
+    }
+
+    private fun updateSimulationData() {
+        // Simple sawtooth simulation to sweep through zones
+        simulationBpm += (5 * simulationDirection)
+        if (simulationBpm >= currentSettings.maxHr + 10) simulationDirection = -1
+        if (simulationBpm <= 60) simulationDirection = 1
+        
+        handleHeartRateForSimulation(simulationBpm)
+    }
+
+    private fun handleHeartRateForSimulation(bpm: Int) {
+        val timestamp = System.currentTimeMillis()
+        lastHrTimestamp = timestamp
+        
+        // Use a simpler version of handleHeartRate for simulated data
+        if (_hrState.value.sessionStatus == SessionStatus.RUNNING) {
+            processCoachingRules(bpm, timestamp)
+        }
+        
+        val debugInfo = getCoachingDebugInfo(timestamp)
+        _hrState.update { it.copy(
+            bpm = bpm,
+            lastUpdateTimestamp = timestamp,
+            lastPacketTimeFormatted = "SIMULATED",
+            dataBits = "Simulation Mode",
+            avgBpm = debugInfo.avg,
+            currentZone = debugInfo.zone,
+            timeInZoneString = debugInfo.timeInZone,
+            cooldownWithHysteresisString = debugInfo.cooldown
+        ) }
+    }
+
+    fun toggleSimulation() {
+        isSimulationEnabled = !isSimulationEnabled
+        _hrState.update { it.copy(isSimulating = isSimulationEnabled) }
+        Log.d(TAG, "Simulation Mode: $isSimulationEnabled")
     }
 
     override fun onDestroy() {

@@ -141,6 +141,9 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onOpenHistory = {
                                     currentScreen = "history"
+                                },
+                                onToggleSimulation = {
+                                    boundService?.toggleSimulation()
                                 }
                             )
                         }
@@ -223,7 +226,8 @@ fun MainScreen(
     onConnectToDevice: (String) -> Unit,
     onTestCue: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenHistory: () -> Unit
+    onOpenHistory: () -> Unit,
+    onToggleSimulation: () -> Unit
 ) {
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     
@@ -270,11 +274,14 @@ fun MainScreen(
         Spacer(modifier = Modifier.height(16.dp))
         
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-             Button(onClick = onTestCue) {
-                Text("Test Audio")
-            }
-            Button(onClick = onRequestPermissions) {
+             Button(onClick = onRequestPermissions) {
                 Text("Perms")
+            }
+            Button(
+                onClick = onToggleSimulation,
+                colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = Color.Magenta) else ButtonDefaults.buttonColors()
+            ) {
+                Text(if (state.isSimulating) "Stop Sim" else "Simulate")
             }
         }
         
@@ -359,6 +366,30 @@ fun WorkoutView(state: HrState) {
         )
         Text("Time in Zone: ${state.timeInZoneString}", style = MaterialTheme.typography.bodyMedium)
         Text("Status: ${state.cooldownWithHysteresisString}", style = MaterialTheme.typography.bodyMedium)
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        // Zone Timer Breakdown
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.03f))
+        ) {
+            Column(modifier = Modifier.padding(8.dp)) {
+                Text("Zone Breakdown (Active Only):", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    (1..5).forEach { zone ->
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Z$zone", style = MaterialTheme.typography.labelSmall)
+                            Text(
+                                text = formatTime(state.zoneTimes[zone] ?: 0L),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = if ((state.zoneTimes[zone] ?: 0L) > 0) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+            }
+        }
         
         Spacer(modifier = Modifier.height(16.dp))
         
