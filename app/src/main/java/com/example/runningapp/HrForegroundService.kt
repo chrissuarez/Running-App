@@ -189,8 +189,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startSessionTimerLoop() {
-        serviceScope.launch {
-            while (true) {
+        if (timerJob?.isActive == true) return
+        timerJob = serviceScope.launch {
+            while (isActive) {
+                delay(1000)
+                
+                // Mission 3: Side-effect outside of .update to avoid CAS recursion/ANR
+                if (isSimulationEnabled) {
+                    updateSimulationData()
+                }
+
                 _hrState.update { currentState ->
                     val now = System.currentTimeMillis()
                     val hrAge = if (lastHrTimestamp > 0) (now - lastHrTimestamp) / 1000 else 0
@@ -233,11 +241,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                  }
                              }
  
-                             // Simulation logic
-                             if (isSimulationEnabled) {
-                                 updateSimulationData()
-                             }
-
                              currentState.copy(
                                  secondsRunning = sessionSecondsRunning,
                                  lastHrAgeSeconds = hrAge,
@@ -268,7 +271,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
                 updateNotification() // Refresh HR Age in notification
-                delay(1000)
             }
         }
     }
@@ -691,6 +693,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun handleHeartRate(data: ByteArray) {
+        if (isSimulationEnabled) return // Mission 3: Ignore real data during simulation
         if (data.isEmpty()) return
         val flag = data[0].toInt()
         val is16Bit = (flag and 0x01) != 0
