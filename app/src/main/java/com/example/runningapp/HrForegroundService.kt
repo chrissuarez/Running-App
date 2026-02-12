@@ -211,6 +211,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                     val isTarget = currentState.currentZone == "TARGET"
                                     if (isTarget) sessionInTargetZoneSeconds++
                                     
+                                     val sessionId = currentSessionId
                                      if (sessionId != null) {
                                          val sample = HrSample(
                                              sessionId = sessionId,
