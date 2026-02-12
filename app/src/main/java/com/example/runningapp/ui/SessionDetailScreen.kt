@@ -114,30 +114,33 @@ fun HrChart(samples: List<HrSample>, modifier: Modifier = Modifier) {
     val rawMin = samples.minOf { it.rawBpm }.toFloat()
     
     // Rounded range for cleaner labels
-    val chartMin = (rawMin - 10f).coerceAtLeast(40f).let { (it / 10).toInt() * 10f }
-    val chartMax = (rawMax + 10f).coerceAtMost(220f).let { ((it + 9) / 10).toInt() * 10f }
+    val chartMin = (rawMin - 5f).coerceAtLeast(40f).let { (it / 10).toInt() * 10f }
+    val chartMax = (rawMax + 5f).coerceAtMost(220f).let { ((it + 9) / 10).toInt() * 10f }
     val bpmRange = (chartMax - chartMin).coerceAtLeast(1f)
 
     val durationSeconds = samples.last().elapsedSeconds
 
-    Canvas(modifier = modifier.background(Color.Black.copy(alpha = 0.05f)).padding(horizontal = 8.dp)) {
-        val leftPadding = 40.dp.toPx()
-        val bottomPadding = 24.dp.toPx()
-        val chartWidth = size.width - leftPadding
-        val chartHeight = size.height - bottomPadding
+    Canvas(modifier = modifier.background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
+        val leftPadding = 32.dp.toPx() // Decreased slightly to fit text better
+        val bottomPadding = 20.dp.toPx()
+        val topPadding = 16.dp.toPx() // Improved top spacing
+        val rightPadding = 16.dp.toPx() // Improved right spacing
+
+        val chartWidth = size.width - leftPadding - rightPadding
+        val chartHeight = size.height - bottomPadding - topPadding
 
         // 1. Draw Y-axis labels and horizontal grid lines (5 ticks)
         val yTicks = 5
         for (i in 0 until yTicks) {
             val fraction = i / (yTicks - 1).toFloat()
             val bpm = chartMin + (fraction * bpmRange)
-            val y = chartHeight - (fraction * chartHeight)
+            val y = topPadding + chartHeight - (fraction * chartHeight)
             
             // Grid line
             drawLine(
                 color = Color.LightGray.copy(alpha = 0.5f),
                 start = Offset(leftPadding, y),
-                end = Offset(size.width, y),
+                end = Offset(size.width - rightPadding, y),
                 strokeWidth = 1.dp.toPx()
             )
             
@@ -163,9 +166,17 @@ fun HrChart(samples: List<HrSample>, modifier: Modifier = Modifier) {
             }
             
             val labelLayout = textMeasurer.measure(label, style = labelStyle)
+            
+            // Adjust X position to keep text within bounds
+            val textX = when (i) {
+                0 -> x // Left aligned
+                xTicks - 1 -> x - labelLayout.size.width // Right aligned
+                else -> x - labelLayout.size.width / 2 // Center aligned
+            }
+            
             drawText(
                 textLayoutResult = labelLayout,
-                topLeft = Offset(x - labelLayout.size.width / 2, chartHeight + 4.dp.toPx())
+                topLeft = Offset(textX, topPadding + chartHeight + 4.dp.toPx())
             )
         }
 
@@ -173,7 +184,7 @@ fun HrChart(samples: List<HrSample>, modifier: Modifier = Modifier) {
         val path = Path()
         samples.forEachIndexed { index, sample ->
             val x = leftPadding + (sample.elapsedSeconds.toFloat() / durationSeconds.coerceAtLeast(1) * chartWidth)
-            val y = chartHeight - ((sample.rawBpm - chartMin) / bpmRange * chartHeight)
+            val y = topPadding + chartHeight - ((sample.rawBpm - chartMin) / bpmRange * chartHeight)
             
             if (index == 0) {
                 path.moveTo(x, y)
