@@ -31,6 +31,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -146,6 +148,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var lastHrTimestamp = 0L
     private var firstDisconnectTime = 0L
     private val RECONNECT_TIMEOUT_MS = 120_000L // 2 minutes
+    private var timerJob: Job? = null
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
@@ -191,7 +194,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun startSessionTimerLoop() {
         if (timerJob?.isActive == true) return
         timerJob = serviceScope.launch {
-            while (isActive) {
+            while (this.isActive) {
                 delay(1000)
                 
                 // Mission 3: Side-effect outside of .update to avoid CAS recursion/ANR
