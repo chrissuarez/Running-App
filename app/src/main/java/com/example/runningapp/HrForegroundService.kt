@@ -308,6 +308,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun startNewDatabaseSession() {
         serviceScope.launch(Dispatchers.IO) {
+            // Reset session-level counters only when a new database session begins
+            sessionSecondsRunning = 0
+            sessionSecondsPaused = 0
+            
             val session = RunnerSession(
                 startTime = System.currentTimeMillis()
             )
@@ -324,6 +328,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     fun stopSession() {
         _hrState.update { it.copy(sessionStatus = SessionStatus.STOPPING) }
         stopScanning()
+        
+        // FIX: Capture final counters BEFORE disconnect() resets BLE state
+        val finalSecondsRunning = sessionSecondsRunning
+        val finalSecondsPaused = sessionSecondsPaused
+        
         disconnect()
         
         // Finalize DB session
@@ -335,13 +344,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     val avgBpm = if (sessionSampleCount > 0) (sessionBpmSum / sessionSampleCount).toInt() else 0
                     val updatedSession = session.copy(
                         endTime = System.currentTimeMillis(),
-                        durationSeconds = sessionSecondsRunning,
+                        durationSeconds = finalSecondsRunning, // Use captured non-zero value
                         avgBpm = avgBpm,
                         maxBpm = sessionMaxBpm,
                         timeInTargetZoneSeconds = sessionInTargetZoneSeconds
                     )
                     database.sessionDao().updateSession(updatedSession)
-                    Log.d(TAG, "Finalized DB Session: $sessionId")
+                    // Added debug evidence as requested
+                    Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: secondsRunning=$finalSecondsRunning, secondsPaused=$finalSecondsPaused, finalDuration=${updatedSession.durationSeconds}")
                 }
                 currentSessionId = null
             }
@@ -566,8 +576,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         bpmHistory.clear()
         currentZone = Zone.UNKNOWN
         
-        sessionSecondsRunning = 0
-        sessionSecondsPaused = 0
+        // Counters are now reset in startNewDatabaseSession() to persist until stopSession() finishes
         reconnectAttemptCount = 0
         firstDisconnectTime = 0
     }
@@ -589,6 +598,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     reconnectAttempts = 0,
                     errorMessage = null
                 ) }
+
+                // FIX: Ensure a database session exists immediately upon connection
+                if (currentSessionId == null) {
+                    startNewDatabaseSession()
+                }
                 
                 gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
                 gatt?.discoverServices()
