@@ -157,6 +157,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_STOP_FOREGROUND = "ACTION_STOP_FOREGROUND"
         const val ACTION_PAUSE_SESSION = "ACTION_PAUSE_SESSION"
         const val ACTION_RESUME_SESSION = "ACTION_RESUME_SESSION"
+        const val ACTION_FORCE_SCAN = "ACTION_FORCE_SCAN"
         const val TAG = "HrService"
     }
 
@@ -316,6 +317,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             ACTION_RESUME_SESSION -> {
                 resumeSession()
+            }
+            ACTION_FORCE_SCAN -> {
+                Log.d(TAG, "ACTION_FORCE_SCAN received")
+                startForegroundService()
+                startScanning()
             }
         }
         return START_STICKY
@@ -523,16 +529,36 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             return
         }
         
-        if (_hrState.value.connectionStatus == "Connected" || isReconnecting) return
+        // Allow scanning even if connecting/reconnecting, but NOT if already connected
+        if (_hrState.value.connectionStatus == "Connected") {
+            Log.d(TAG, "startScanning() - Already connected, ignoring")
+            return
+        }
+
+        Log.d(TAG, "startScanning() - Resetting connection state and starting fresh scan")
+        
+        // ABORT any current connection attempts or reconnect loops
+        isReconnecting = false
+        targetDeviceAddress = null
+        bluetoothGatt?.close()
+        bluetoothGatt = null
 
         _hrState.update { it.copy(connectionStatus = "Scanning...", scannedDevices = emptyList()) }
 
         val scanner = bluetoothAdapter?.bluetoothLeScanner
         if (scanner == null) {
+            Log.e(TAG, "startScanning() - Bluetooth scanner unavailable!")
             _hrState.update { it.copy(connectionStatus = "Bluetooth Off/Unavailable") }
             return
         }
 
+        try {
+            // Some devices need a stop before a start or it fails silently
+            scanner.stopScan(scanCallback)
+        } catch (e: Exception) {
+            Log.w(TAG, "Stop scan failed during reset: ${e.message}")
+        }
+        
         scanner.startScan(scanCallback)
     }
 
