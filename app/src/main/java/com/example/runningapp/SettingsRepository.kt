@@ -9,6 +9,11 @@ import kotlinx.coroutines.flow.map
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
+data class SavedDevice(
+    val address: String,
+    val name: String
+)
+
 data class UserSettings(
     val maxHr: Int = 190,
     val zone2Low: Int = 120,
@@ -17,7 +22,9 @@ data class UserSettings(
     val persistenceHighSeconds: Int = 30,
     val persistenceLowSeconds: Int = 45,
     val voiceStyle: String = "detailed", // "short" or "detailed"
-    val coachingEnabled: Boolean = true
+    val coachingEnabled: Boolean = true,
+    val savedDevices: List<SavedDevice> = emptyList(),
+    val activeDeviceAddress: String? = null
 )
 
 class SettingsRepository(private val context: Context) {
@@ -31,10 +38,18 @@ class SettingsRepository(private val context: Context) {
         val PERSISTENCE_LOW_SECONDS = intPreferencesKey("persistence_low_seconds")
         val VOICE_STYLE = stringPreferencesKey("voice_style")
         val COACHING_ENABLED = booleanPreferencesKey("coaching_enabled")
+        val SAVED_DEVICES = stringSetPreferencesKey("saved_devices")
+        val ACTIVE_DEVICE_ADDRESS = stringPreferencesKey("active_device_address")
     }
 
     val userSettingsFlow: Flow<UserSettings> = context.dataStore.data
         .map { preferences ->
+            val savedDevicesStrings = preferences[PreferencesKeys.SAVED_DEVICES] ?: emptySet()
+            val savedDevices = savedDevicesStrings.mapNotNull {
+                val parts = it.split("|")
+                if (parts.size == 2) SavedDevice(parts[0], parts[1]) else null
+            }
+
             UserSettings(
                 maxHr = preferences[PreferencesKeys.MAX_HR] ?: 190,
                 zone2Low = preferences[PreferencesKeys.ZONE2_LOW] ?: 120,
@@ -43,7 +58,9 @@ class SettingsRepository(private val context: Context) {
                 persistenceHighSeconds = preferences[PreferencesKeys.PERSISTENCE_HIGH_SECONDS] ?: 30,
                 persistenceLowSeconds = preferences[PreferencesKeys.PERSISTENCE_LOW_SECONDS] ?: 45,
                 voiceStyle = preferences[PreferencesKeys.VOICE_STYLE] ?: "detailed",
-                coachingEnabled = preferences[PreferencesKeys.COACHING_ENABLED] ?: true
+                coachingEnabled = preferences[PreferencesKeys.COACHING_ENABLED] ?: true,
+                savedDevices = savedDevices,
+                activeDeviceAddress = preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS]
             )
         }
 
@@ -57,6 +74,47 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.PERSISTENCE_LOW_SECONDS] = settings.persistenceLowSeconds
             preferences[PreferencesKeys.VOICE_STYLE] = settings.voiceStyle
             preferences[PreferencesKeys.COACHING_ENABLED] = settings.coachingEnabled
+            preferences[PreferencesKeys.SAVED_DEVICES] = settings.savedDevices.map { "${it.address}|${it.name}" }.toSet()
+            if (settings.activeDeviceAddress != null) {
+                preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS] = settings.activeDeviceAddress
+            } else {
+                preferences.remove(PreferencesKeys.ACTIVE_DEVICE_ADDRESS)
+            }
+        }
+    }
+
+    suspend fun saveDevice(address: String, name: String) {
+        context.dataStore.edit { preferences ->
+            val current = preferences[PreferencesKeys.SAVED_DEVICES] ?: emptySet()
+            val updated = current.toMutableSet()
+            // Remove if already exists to update name if needed
+            updated.removeIf { it.startsWith("$address|") }
+            updated.add("$address|$name")
+            preferences[PreferencesKeys.SAVED_DEVICES] = updated
+            preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS] = address
+        }
+    }
+
+    suspend fun removeDevice(address: String) {
+        context.dataStore.edit { preferences ->
+            val current = preferences[PreferencesKeys.SAVED_DEVICES] ?: emptySet()
+            val updated = current.toMutableSet()
+            updated.removeIf { it.startsWith("$address|") }
+            preferences[PreferencesKeys.SAVED_DEVICES] = updated
+            
+            if (preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS] == address) {
+                preferences.remove(PreferencesKeys.ACTIVE_DEVICE_ADDRESS)
+            }
+        }
+    }
+
+    suspend fun setActiveDevice(address: String?) {
+        context.dataStore.edit { preferences ->
+            if (address != null) {
+                preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS] = address
+            } else {
+                preferences.remove(PreferencesKeys.ACTIVE_DEVICE_ADDRESS)
+            }
         }
     }
 }
