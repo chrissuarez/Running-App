@@ -12,14 +12,16 @@ A robust Android application designed to track heart rate (HR) during runs and p
     - **Hysteresis & Cooldown**: Prevents back-to-back voice cues with a customizable cooldown period.
     - **Voice Cues**: Text-to-Speech (TTS) alerts with "Short" or "Detailed" styles.
 - **Session Management**:
-    - Start, Pause, Resume, and Stop controls.
+    - **Phases**: Supports **Warm-up** (auto-start), **Main Workout**, and **Cool-down** phases.
+    - Start, Pause, Resume, and Stop controls with phase-skipping capabilities.
     - Tracks active vs. paused time.
     - Automatic reconnection logic with exponential backoff if a device disconnects.
 - **History & Data**:
     - All sessions are saved locally to a Room database.
-    - View past workout summaries including Avg BPM, Max BPM, and Time in Target Zone.
+    - View past workout summaries including Avg BPM, Max BPM, and **Time in Zones breakdown** (persisted across sessions).
 - **Customizable Settings**:
     - Define Max HR and target Zone 2 ranges.
+    - **Phase Durations**: Configure Warm-up and Cool-down times in minutes and seconds.
     - Fine-tune coaching behavior (cooldowns, persistence, voice style).
 
 ## 🛠️ How it Works
@@ -38,8 +40,16 @@ The coaching engine monitors your **Smoothed BPM**:
 - **Low Persistence**: If your HR drops below the `Zone 2 Low` threshold for `Y` seconds, the app plays a "Faster" cue.
 - **Cooldown**: After a cue is played, the coach remains silent for the `Cooldown` duration to allow your body to react.
 
-### 4. Data Storage
-Every second of your session is recorded as an `HrSample` in the local database. When a session is finalized (Stopped), a summary is generated and saved as a `RunnerSession`.
+### 4. Session Phases
+A session is divided into three distinct phases:
+- **Warm-up**: Silent tracking to let your heart rate stabilize. Includes a 10-second vocal "ready" warning before merging into the main phase.
+- **Main Phase**: The core workout where coaching cues and zone-tracking logic are active.
+- **Cool-down**: A period of low-intensity recording after the main effort. Silent coaching with a final termination warning.
+
+### 5. Data Storage & Analytics
+Every second of your session is recorded as an `HrSample`.
+- **Zone Breakdown**: The app tracks time spent in all 5 HR zones during the **Main Phase**. This data is persisted to the database.
+- **Session History**: Detailed summaries allow you to review intensity distribution even for sessions recorded days ago.
 
 ## 💻 Technical Stack
 
