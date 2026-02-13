@@ -116,8 +116,13 @@ class MainActivity : ComponentActivity() {
                                 hrService = boundService,
                                 onRequestPermissions = { checkAndRequestPermissions() },
                                 onStartService = {
-                                    val intent = Intent(this, HrForegroundService::class.java).apply {
-                                        action = HrForegroundService.ACTION_START_FOREGROUND
+                                    val action = if (boundService == null) {
+                                        HrForegroundService.ACTION_START_FOREGROUND
+                                    } else {
+                                        HrForegroundService.ACTION_FORCE_SCAN
+                                    }
+                                    val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                        this.action = action
                                     }
                                     startService(intent)
                                 },
@@ -307,7 +312,8 @@ fun MainScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
                 Button(onClick = onStartService) {
-                    Text("Scan / Start")
+                    val label = if (hrService == null) "Start Service" else "Scan for Devices"
+                    Text(label)
                 }
             } else {
                 Button(onClick = onTogglePause) {
