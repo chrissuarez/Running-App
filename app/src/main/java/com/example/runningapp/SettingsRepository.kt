@@ -17,7 +17,9 @@ data class UserSettings(
     val persistenceHighSeconds: Int = 30,
     val persistenceLowSeconds: Int = 45,
     val voiceStyle: String = "detailed", // "short" or "detailed"
-    val coachingEnabled: Boolean = true
+    val coachingEnabled: Boolean = true,
+    val warmUpDurationSeconds: Int = 300,
+    val coolDownDurationSeconds: Int = 180
 )
 
 class SettingsRepository(private val context: Context) {
@@ -31,6 +33,8 @@ class SettingsRepository(private val context: Context) {
         val PERSISTENCE_LOW_SECONDS = intPreferencesKey("persistence_low_seconds")
         val VOICE_STYLE = stringPreferencesKey("voice_style")
         val COACHING_ENABLED = booleanPreferencesKey("coaching_enabled")
+        val WARM_UP_DURATION = intPreferencesKey("warm_up_duration")
+        val COOL_DOWN_DURATION = intPreferencesKey("cool_down_duration")
     }
 
     val userSettingsFlow: Flow<UserSettings> = context.dataStore.data
@@ -43,7 +47,9 @@ class SettingsRepository(private val context: Context) {
                 persistenceHighSeconds = preferences[PreferencesKeys.PERSISTENCE_HIGH_SECONDS] ?: 30,
                 persistenceLowSeconds = preferences[PreferencesKeys.PERSISTENCE_LOW_SECONDS] ?: 45,
                 voiceStyle = preferences[PreferencesKeys.VOICE_STYLE] ?: "detailed",
-                coachingEnabled = preferences[PreferencesKeys.COACHING_ENABLED] ?: true
+                coachingEnabled = preferences[PreferencesKeys.COACHING_ENABLED] ?: true,
+                warmUpDurationSeconds = preferences[PreferencesKeys.WARM_UP_DURATION] ?: 300,
+                coolDownDurationSeconds = preferences[PreferencesKeys.COOL_DOWN_DURATION] ?: 180
             )
         }
 
@@ -57,6 +63,8 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.PERSISTENCE_LOW_SECONDS] = settings.persistenceLowSeconds
             preferences[PreferencesKeys.VOICE_STYLE] = settings.voiceStyle
             preferences[PreferencesKeys.COACHING_ENABLED] = settings.coachingEnabled
+            preferences[PreferencesKeys.WARM_UP_DURATION] = settings.warmUpDurationSeconds
+            preferences[PreferencesKeys.COOL_DOWN_DURATION] = settings.coolDownDurationSeconds
         }
     }
 }

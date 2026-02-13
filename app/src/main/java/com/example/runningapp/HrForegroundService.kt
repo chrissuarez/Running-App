@@ -50,6 +50,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 
 enum class SessionStatus { IDLE, CONNECTING, RUNNING, PAUSED, STOPPING, STOPPED, ERROR }
+enum class SessionPhase { WARM_UP, MAIN, COOL_DOWN }
 
 // simple data class to hold the state
 data class HrState(
@@ -79,6 +80,10 @@ data class HrState(
     // Mission 3: In-Memory Zone Timers
     val zoneTimes: Map<Int, Long> = mapOf(1 to 0L, 2 to 0L, 3 to 0L, 4 to 0L, 5 to 0L),
     val isSimulating: Boolean = false,
+
+    // Session Phases
+    val currentPhase: SessionPhase = SessionPhase.WARM_UP,
+    val phaseSecondsRemaining: Int = 0,
 
     // Mission 2: Settings Summary
     val userSettings: UserSettings = UserSettings()
@@ -149,6 +154,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var firstDisconnectTime = 0L
     private val RECONNECT_TIMEOUT_MS = 120_000L // 2 minutes
     private var timerJob: Job? = null
+    
+    // Mission: Session Phases
+    private var currentPhase = SessionPhase.WARM_UP
+    private var phaseSecondsRunning = 0L
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
@@ -209,6 +218,31 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     when (currentState.sessionStatus) {
                         SessionStatus.RUNNING -> {
                             sessionSecondsRunning++
+                            phaseSecondsRunning++
+                            
+                            // Phase Transition & Notification Logic
+                            val phaseLimit = when (currentPhase) {
+                                SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
+                                SessionPhase.MAIN -> Int.MAX_VALUE
+                                SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
+                            }
+                            
+                            val remaining = (phaseLimit - phaseSecondsRunning).toInt()
+                            
+                            // Voice alert at 10 seconds
+                            if (currentPhase != SessionPhase.MAIN && remaining == 10) {
+                                val phaseName = if (currentPhase == SessionPhase.WARM_UP) "warm up" else "cool down"
+                                playCue("10 seconds of $phaseName remaining")
+                            }
+                            
+                            // Auto-transition
+                            if (currentPhase == SessionPhase.WARM_UP && phaseSecondsRunning >= phaseLimit) {
+                                currentPhase = SessionPhase.MAIN
+                                phaseSecondsRunning = 0
+                                playCue("Starting main workout")
+                            } else if (currentPhase == SessionPhase.COOL_DOWN && phaseSecondsRunning >= phaseLimit) {
+                                serviceScope.launch { stopSession() }
+                            }
                             
                             // Record sample once per second
                             if (sessionSecondsRunning > lastRecordedSecond) {
@@ -219,37 +253,42 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                     sessionBpmSum += currentBpm
                                     sessionSampleCount++
                                     
-                                    val isTarget = currentState.currentZone == "TARGET"
-                                    if (isTarget) sessionInTargetZoneSeconds++
+                                    // MISSION: Coaching & Zones only in MAIN phase
+                                    if (currentPhase == SessionPhase.MAIN) {
+                                        val isTarget = currentState.currentZone == "TARGET"
+                                        if (isTarget) sessionInTargetZoneSeconds++
+                                        
+                                        // Calculate and track zone for this second
+                                        val zone = calculateZone(currentBpm, currentSettings.maxHr)
+                                        if (zone in 1..5) {
+                                            sessionZoneTimes[zone] = (sessionZoneTimes[zone] ?: 0L) + 1
+                                        }
+                                    }
                                     
-                                     val sessionId = currentSessionId
-                                     if (sessionId != null) {
-                                         val sample = HrSample(
-                                             sessionId = sessionId,
-                                             elapsedSeconds = sessionSecondsRunning,
-                                             rawBpm = currentBpm,
-                                             smoothedBpm = currentState.avgBpm,
-                                             connectionState = currentState.connectionStatus
-                                         )
-                                         serviceScope.launch(Dispatchers.IO) {
-                                             database.sampleDao().insertSample(sample)
-                                         }
-                                     }
-                                 }
-                                 
-                                 // Calculate and track zone for this second
-                                 val zone = calculateZone(currentBpm, currentSettings.maxHr)
-                                 if (zone in 1..5) {
-                                     sessionZoneTimes[zone] = (sessionZoneTimes[zone] ?: 0L) + 1
-                                 }
-                             }
+                                    val sessionId = currentSessionId
+                                    if (sessionId != null) {
+                                        val sample = HrSample(
+                                            sessionId = sessionId,
+                                            elapsedSeconds = sessionSecondsRunning,
+                                            rawBpm = currentBpm,
+                                            smoothedBpm = currentState.avgBpm,
+                                            connectionState = currentState.connectionStatus
+                                        )
+                                        serviceScope.launch(Dispatchers.IO) {
+                                            database.sampleDao().insertSample(sample)
+                                        }
+                                    }
+                                }
+                            }
  
-                             currentState.copy(
-                                 secondsRunning = sessionSecondsRunning,
-                                 lastHrAgeSeconds = hrAge,
-                                 zoneTimes = sessionZoneTimes.toMap(),
-                                 isSimulating = isSimulationEnabled
-                             )
+                            currentState.copy(
+                                secondsRunning = sessionSecondsRunning,
+                                lastHrAgeSeconds = hrAge,
+                                zoneTimes = sessionZoneTimes.toMap(),
+                                isSimulating = isSimulationEnabled,
+                                currentPhase = currentPhase,
+                                phaseSecondsRemaining = if (currentPhase == SessionPhase.MAIN) 0 else remaining
+                            )
                         }
                         SessionStatus.PAUSED -> {
                             sessionSecondsPaused++
@@ -353,7 +392,29 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // Mission 3: Reset Zone Timers
             sessionZoneTimes.keys.forEach { sessionZoneTimes[it] = 0L }
             
+            // Mission: Session Phases
+            currentPhase = SessionPhase.WARM_UP
+            phaseSecondsRunning = 0
+            
             Log.d(TAG, "Started DB Session: $currentSessionId")
+        }
+    }
+
+    fun skipCurrentPhase() {
+        when (currentPhase) {
+            SessionPhase.WARM_UP -> {
+                currentPhase = SessionPhase.MAIN
+                phaseSecondsRunning = 0
+                playCue("Warm up skipped. Starting workout.")
+            }
+            SessionPhase.MAIN -> {
+                currentPhase = SessionPhase.COOL_DOWN
+                phaseSecondsRunning = 0
+                playCue("Starting cool down.")
+            }
+            SessionPhase.COOL_DOWN -> {
+                stopSession()
+            }
         }
     }
 
@@ -753,6 +814,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
     
     private fun processCoachingRules(bpm: Int, now: Long) {
+        // MISSION: Block coaching cues outside MAIN phase
+        if (currentPhase != SessionPhase.MAIN) {
+            _hrState.update { it.copy(currentZone = "NONE", timeInZoneString = "N/A") }
+            return
+        }
+
         if (!currentSettings.coachingEnabled) return
 
         var avgBpm = 0

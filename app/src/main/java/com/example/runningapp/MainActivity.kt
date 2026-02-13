@@ -265,8 +265,19 @@ fun MainScreen(
                 Button(onClick = onTogglePause) {
                     Text(if (state.sessionStatus == SessionStatus.PAUSED) "Resume" else "Pause")
                 }
+                
+                // Mission: Phase Skipping
+                Button(onClick = { hrService?.skipCurrentPhase() }) {
+                    val label = when(state.currentPhase) {
+                        SessionPhase.WARM_UP -> "Skip Warmup"
+                        SessionPhase.MAIN -> "Start Cooldown"
+                        SessionPhase.COOL_DOWN -> "End Session"
+                    }
+                    Text(label)
+                }
+
                 Button(onClick = onStopSession, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
-                    Text("Stop")
+                    Text("Force Stop")
                 }
             }
         }
@@ -342,6 +353,28 @@ fun WorkoutView(state: HrState) {
         Spacer(modifier = Modifier.height(24.dp))
         
         Text("Session Engine:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+        
+        // Phase Indicator
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+            Text(
+                text = "${state.currentPhase}",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Black,
+                color = when(state.currentPhase) {
+                    SessionPhase.WARM_UP -> Color(0xFFFFA500)
+                    SessionPhase.MAIN -> Color.Green
+                    SessionPhase.COOL_DOWN -> Color.Cyan
+                }
+            )
+            if (state.currentPhase != SessionPhase.MAIN) {
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "${formatTime(state.phaseSecondsRemaining.toLong())} remaining",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Color.Red
+                )
+            }
+        }
         Text("State: ${state.sessionStatus}", style = MaterialTheme.typography.bodyMedium, 
              color = when(state.sessionStatus) {
                  SessionStatus.RUNNING -> Color.Green
@@ -422,6 +455,14 @@ fun SettingsScreen(
     var persistenceLow by remember { mutableStateOf(settings.persistenceLowSeconds.toString()) }
     var voiceStyle by remember { mutableStateOf(settings.voiceStyle) }
     var coachingEnabled by remember { mutableStateOf(settings.coachingEnabled) }
+    
+    // Warm-up Min/Sec
+    var warmUpMin by remember { mutableStateOf((settings.warmUpDurationSeconds / 60).toString()) }
+    var warmUpSec by remember { mutableStateOf((settings.warmUpDurationSeconds % 60).toString()) }
+    
+    // Cool-down Min/Sec
+    var coolDownMin by remember { mutableStateOf((settings.coolDownDurationSeconds / 60).toString()) }
+    var coolDownSec by remember { mutableStateOf((settings.coolDownDurationSeconds % 60).toString()) }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -476,6 +517,25 @@ fun SettingsScreen(
             Text("Detailed")
         }
 
+        Spacer(modifier = Modifier.height(24.dp))
+        Text("Session Phases", style = MaterialTheme.typography.titleMedium)
+        
+        Text("Warm-up Duration", style = MaterialTheme.typography.labelMedium)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(value = warmUpMin, onValueChange = { warmUpMin = it }, label = { Text("Min") }, modifier = Modifier.weight(1f))
+            Text(":")
+            OutlinedTextField(value = warmUpSec, onValueChange = { warmUpSec = it }, label = { Text("Sec") }, modifier = Modifier.weight(1f))
+        }
+        
+        Spacer(modifier = Modifier.height(12.dp))
+        
+        Text("Cool-down Duration", style = MaterialTheme.typography.labelMedium)
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(value = coolDownMin, onValueChange = { coolDownMin = it }, label = { Text("Min") }, modifier = Modifier.weight(1f))
+            Text(":")
+            OutlinedTextField(value = coolDownSec, onValueChange = { coolDownSec = it }, label = { Text("Sec") }, modifier = Modifier.weight(1f))
+        }
+
         Spacer(modifier = Modifier.height(32.dp))
         
         Button(onClick = {
@@ -487,7 +547,9 @@ fun SettingsScreen(
                 persistenceHighSeconds = persistenceHigh.toIntOrNull() ?: settings.persistenceHighSeconds,
                 persistenceLowSeconds = persistenceLow.toIntOrNull() ?: settings.persistenceLowSeconds,
                 voiceStyle = voiceStyle,
-                coachingEnabled = coachingEnabled
+                coachingEnabled = coachingEnabled,
+                warmUpDurationSeconds = (warmUpMin.toIntOrNull() ?: 0) * 60 + (warmUpSec.toIntOrNull() ?: 0),
+                coolDownDurationSeconds = (coolDownMin.toIntOrNull() ?: 0) * 60 + (coolDownSec.toIntOrNull() ?: 0)
             ))
         }, modifier = Modifier.fillMaxWidth()) {
             Text("Save Settings")
