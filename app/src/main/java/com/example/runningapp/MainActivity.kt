@@ -593,7 +593,7 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(32.dp))
         
         Button(onClick = {
-            onSave(UserSettings(
+            onSave(settings.copy(
                 maxHr = maxHr.toIntOrNull() ?: settings.maxHr,
                 zone2Low = zone2Low.toIntOrNull() ?: settings.zone2Low,
                 zone2High = zone2High.toIntOrNull() ?: settings.zone2High,
