@@ -379,7 +379,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         durationSeconds = finalSecondsRunning, // Use captured non-zero value
                         avgBpm = avgBpm,
                         maxBpm = sessionMaxBpm,
-                        timeInTargetZoneSeconds = sessionInTargetZoneSeconds
+                        timeInTargetZoneSeconds = sessionInTargetZoneSeconds,
+                        // Mission 3: Persist Zone Timers
+                        zone1Seconds = sessionZoneTimes[1] ?: 0L,
+                        zone2Seconds = sessionZoneTimes[2] ?: 0L,
+                        zone3Seconds = sessionZoneTimes[3] ?: 0L,
+                        zone4Seconds = sessionZoneTimes[4] ?: 0L,
+                        zone5Seconds = sessionZoneTimes[5] ?: 0L
                     )
                     database.sessionDao().updateSession(updatedSession)
                     // Added debug evidence as requested

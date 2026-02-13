@@ -56,6 +56,12 @@ fun SessionDetailScreen(
             ) {
                 SummaryStats(session)
                 Spacer(modifier = Modifier.height(24.dp))
+                
+                Text("Heart Rate Zones", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                ZoneBarChart(session)
+                Spacer(modifier = Modifier.height(24.dp))
+
                 Text("Heart Rate Chart", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(8.dp))
                 HrChart(samples = samples, modifier = Modifier.fillMaxWidth().height(200.dp))
@@ -226,5 +232,69 @@ fun PreviewHrChart() {
                 .height(200.dp)
                 .padding(16.dp)
         )
+    }
+}@Composable
+fun ZoneBarChart(session: RunnerSession) {
+    val zones = listOf(
+        session.zone1Seconds,
+        session.zone2Seconds,
+        session.zone3Seconds,
+        session.zone4Seconds,
+        session.zone5Seconds
+    )
+    val maxSeconds = zones.maxOrNull() ?: 0L
+    
+    if (maxSeconds == 0L) {
+        Text("No zone data available for this session.", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+        return
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        zones.forEachIndexed { index, seconds ->
+            val zoneNum = index + 1
+            val label = "Zone $zoneNum"
+            val percentage = if (maxSeconds > 0) seconds.toFloat() / maxSeconds else 0f
+            val timeStr = formatDurationLarge(seconds) // Reusing existing formatter
+
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = label, 
+                    modifier = Modifier.width(60.dp), 
+                    style = MaterialTheme.typography.bodySmall, 
+                    fontWeight = FontWeight.Bold
+                )
+                
+                Box(modifier = Modifier.weight(1f).height(24.dp)) {
+                    // Background track
+                    Box(modifier = Modifier.fillMaxSize().background(Color.LightGray.copy(alpha = 0.3f)))
+                    
+                    // Filled bar
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(percentage)
+                            .fillMaxHeight()
+                            .background(
+                                when (zoneNum) {
+                                    1 -> Color.Gray
+                                    2 -> Color.Blue
+                                    3 -> Color.Green
+                                    4 -> Color(0xFFFFA500) // Orange
+                                    5 -> Color.Red
+                                    else -> Color.Gray
+                                }
+                            )
+                    )
+                }
+                
+                Text(
+                    text = timeStr, 
+                    modifier = Modifier.width(70.dp).padding(start = 8.dp), 
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
     }
 }

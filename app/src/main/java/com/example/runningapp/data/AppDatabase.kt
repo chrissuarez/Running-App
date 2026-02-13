@@ -1,6 +1,8 @@
 package com.example.runningapp.data
 
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "sessions")
@@ -11,7 +13,12 @@ data class RunnerSession(
     val durationSeconds: Long = 0,
     val avgBpm: Int = 0,
     val maxBpm: Int = 0,
-    val timeInTargetZoneSeconds: Long = 0
+    val timeInTargetZoneSeconds: Long = 0,
+    val zone1Seconds: Long = 0,
+    val zone2Seconds: Long = 0,
+    val zone3Seconds: Long = 0,
+    val zone4Seconds: Long = 0,
+    val zone5Seconds: Long = 0
 )
 
 @Entity(
@@ -59,7 +66,7 @@ interface SampleDao {
     fun getSamplesForSession(sessionId: Long): Flow<List<HrSample>>
 }
 
-@Database(entities = [RunnerSession::class, HrSample::class], version = 1, exportSchema = false)
+@Database(entities = [RunnerSession::class, HrSample::class], version = 2, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
     abstract fun sampleDao(): SampleDao
@@ -74,10 +81,22 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "running_app_db"
-                ).build()
+                )
+                .addMigrations(MIGRATION_1_2)
+                .build()
                 INSTANCE = instance
                 instance
             }
         }
+    }
+}
+
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE sessions ADD COLUMN zone1Seconds INTEGER NOT NULL DEFAULT 0")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN zone2Seconds INTEGER NOT NULL DEFAULT 0")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN zone3Seconds INTEGER NOT NULL DEFAULT 0")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN zone4Seconds INTEGER NOT NULL DEFAULT 0")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN zone5Seconds INTEGER NOT NULL DEFAULT 0")
     }
 }
