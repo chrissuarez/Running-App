@@ -337,7 +337,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         when (intent?.action) {
             ACTION_START_FOREGROUND -> {
                 startForegroundService()
-                startScanning()
+                serviceScope.launch {
+                    // Try to connect to active device first, else scan
+                    val settings = currentSettings
+                    if (settings.activeDeviceAddress != null) {
+                        connectToDevice(settings.activeDeviceAddress!!)
+                    } else {
+                        startScanning()
+                    }
+                }
             }
             ACTION_STOP_FOREGROUND -> {
                 stopSession()
@@ -633,7 +641,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return
 
         isReconnecting = false
-        _hrState.update { it.copy(connectionStatus = "Connecting to ${device.name}...") }
+        val deviceName = if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+            device.name ?: device.address
+        } else {
+            device.address
+        }
+        _hrState.update { it.copy(connectionStatus = "Connecting to $deviceName...") }
         bluetoothGatt = device.connectGatt(this, false, gattCallback)
     }
     
@@ -692,13 +705,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 reconnectAttemptCount = 0
                 firstDisconnectTime = 0
                 
+                val deviceName = gatt?.device?.name ?: "Unknown"
+                val deviceAddress = gatt?.device?.address ?: ""
+                
                 _hrState.update { it.copy(
                     connectionStatus = "Connected", 
                     sessionStatus = SessionStatus.RUNNING,
-                    connectedDeviceName = gatt?.device?.name,
+                    connectedDeviceName = deviceName,
                     reconnectAttempts = 0,
                     errorMessage = null
                 ) }
+
+                // Save device as active
+                serviceScope.launch {
+                    settingsRepository.saveDevice(deviceAddress, deviceName)
+                }
 
                 // FIX: Ensure a database session exists immediately upon connection
                 if (currentSessionId == null) {
