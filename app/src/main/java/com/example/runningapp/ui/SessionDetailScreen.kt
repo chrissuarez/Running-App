@@ -92,6 +92,16 @@ fun SummaryStats(session: RunnerSession) {
                 StatLarge(label = "Max HR", value = "${session.maxBpm}")
                 StatLarge(label = "In Target", value = formatDurationLarge(session.timeInTargetZoneSeconds))
             }
+
+            if (session.runMode == "outdoor") {
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatLarge(label = "Distance", value = "%.2f km".format(session.distanceKm))
+                    val p = session.avgPaceMinPerKm
+                    val pStr = if (p > 0) "%d:%02d min/km".format(p.toInt(), ((p - p.toInt()) * 60).roundToInt()) else "--:--"
+                    StatLarge(label = "Avg Pace", value = pStr)
+                }
+            }
         }
     }
 }

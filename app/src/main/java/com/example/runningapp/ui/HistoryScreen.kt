@@ -72,7 +72,12 @@ fun SessionItem(session: RunnerSession, onClick: () -> Unit) {
             Spacer(modifier = Modifier.height(8.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 StatSmall(label = "Avg HR", value = "${session.avgBpm}")
-                StatSmall(label = "Max HR", value = "${session.maxBpm}")
+                if (session.runMode == "outdoor") {
+                    StatSmall(label = "Dist", value = "%.2f km".format(session.distanceKm))
+                    val p = session.avgPaceMinPerKm
+                    val pStr = if (p > 0) "%d:%02d".format(p.toInt(), ((p - p.toInt()) * 60).roundToInt()) else "--:--"
+                    StatSmall(label = "Pace", value = pStr)
+                }
                 StatSmall(label = "Target", value = formatDuration(session.timeInTargetZoneSeconds))
             }
         }

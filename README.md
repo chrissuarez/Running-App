@@ -13,6 +13,10 @@ A robust Android application designed to track heart rate (HR) during runs and p
     - **Voice Cues**: Text-to-Speech (TTS) alerts with "Short" or "Detailed" styles.
 - **Session Management**:
     - **Phases**: Supports **Warm-up** (auto-start), **Main Workout**, and **Cool-down** phases.
+    - **Run Modes**: Choose between **Treadmill** (HR only) and **Outdoor** (GPS tracking).
+    - **GPS Tracking**: Records distance and calculates pace using the Fused Location Provider.
+    - **Pace Smoothing**: Uses a 15-second sliding window to provide stable pace readings.
+    - **Split Announcements**: Automatic voice alerts for every 1km covered (distance, pace).
     - Start, Pause, Resume, and Stop controls with phase-skipping capabilities.
     - Tracks active vs. paused time.
     - Automatic reconnection logic with exponential backoff if a device disconnects.
@@ -20,8 +24,10 @@ A robust Android application designed to track heart rate (HR) during runs and p
     - All sessions are saved locally to a Room database.
     - View past workout summaries including Avg BPM, Max BPM, and **Time in Zones breakdown** (persisted across sessions).
 - **Customizable Settings**:
+    - **Run Mode Selection**: Toggle between **Treadmill** and **Outdoor (GPS)** modes.
     - Define Max HR and target Zone 2 ranges.
     - **Phase Durations**: Configure Warm-up and Cool-down times in minutes and seconds.
+    - **Split Announcements**: Enable/disable 1km audio split alerts.
     - Fine-tune coaching behavior (cooldowns, persistence, voice style).
 
 ## 🛠️ How it Works

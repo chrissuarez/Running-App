@@ -223,6 +223,10 @@ class MainActivity : ComponentActivity() {
              permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
         
+        // Mission 4: Location permissions for GPS
+        permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -385,7 +389,8 @@ fun SettingsSummaryCard(settings: UserSettings) {
         Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column(modifier = Modifier.weight(1f)) {
                 Text("Zone 2: ${settings.zone2Low}-${settings.zone2High} BPM", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                Text("Cooldown: ${settings.cooldownSeconds}s | Persistence: ${settings.persistenceHighSeconds}s/${settings.persistenceLowSeconds}s", style = MaterialTheme.typography.bodySmall)
+                val modeLabel = if (settings.runMode == "outdoor") "Outdoor Run" else "Treadmill Run"
+                Text("Mode: $modeLabel | Cooldown: ${settings.cooldownSeconds}s", style = MaterialTheme.typography.bodySmall)
             }
             Text(if (settings.coachingEnabled) "Coaching ON" else "Coaching OFF", style = MaterialTheme.typography.bodySmall, color = if (settings.coachingEnabled) Color.Green else Color.Red)
         }
@@ -402,6 +407,27 @@ fun WorkoutView(state: HrState) {
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(text = "${state.bpm} BPM", style = MaterialTheme.typography.displayLarge)
+        
+        if (state.runMode == "outdoor") {
+             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                     Text("${"%.2f".format(state.distanceKm)} km", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                     Text("Distance", style = MaterialTheme.typography.labelSmall)
+                 }
+                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                     val pace = state.paceMinPerKm
+                     val paceStr = if (pace > 0) {
+                         val mins = pace.toInt()
+                         val secs = ((pace - mins) * 60).roundToInt()
+                         "%d:%02d".format(mins, secs)
+                     } else "--:--"
+                     Text(paceStr, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                     Text("Pace (min/km)", style = MaterialTheme.typography.labelSmall)
+                 }
+             }
+             Spacer(modifier = Modifier.height(8.dp))
+        }
+        
         Text(text = "Data Age: ${state.lastHrAgeSeconds}s")
         
         Spacer(modifier = Modifier.height(24.dp))
@@ -509,6 +535,8 @@ fun SettingsScreen(
     var persistenceLow by remember { mutableStateOf(settings.persistenceLowSeconds.toString()) }
     var voiceStyle by remember { mutableStateOf(settings.voiceStyle) }
     var coachingEnabled by remember { mutableStateOf(settings.coachingEnabled) }
+    var runMode by remember { mutableStateOf(settings.runMode) }
+    var splitAudio by remember { mutableStateOf(settings.splitAnnouncementsEnabled) }
     
     // Warm-up Min/Sec
     var warmUpMin by remember { mutableStateOf((settings.warmUpDurationSeconds / 60).toString()) }
@@ -572,6 +600,23 @@ fun SettingsScreen(
         }
 
         Spacer(modifier = Modifier.height(24.dp))
+        Text("Mission 4: Run Configuration", style = MaterialTheme.typography.titleMedium)
+        
+        Text("Running Mode:")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = runMode == "treadmill", onClick = { runMode = "treadmill" })
+            Text("Treadmill")
+            Spacer(modifier = Modifier.width(16.dp))
+            RadioButton(selected = runMode == "outdoor", onClick = { runMode = "outdoor" })
+            Text("Outdoor (GPS)")
+        }
+        
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = splitAudio, onCheckedChange = { splitAudio = it })
+            Text("1km Split Audio Announcements")
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
         Text("Session Phases", style = MaterialTheme.typography.titleMedium)
         
         Text("Warm-up Duration", style = MaterialTheme.typography.labelMedium)
@@ -602,6 +647,8 @@ fun SettingsScreen(
                 persistenceLowSeconds = persistenceLow.toIntOrNull() ?: settings.persistenceLowSeconds,
                 voiceStyle = voiceStyle,
                 coachingEnabled = coachingEnabled,
+                runMode = runMode,
+                splitAnnouncementsEnabled = splitAudio,
                 warmUpDurationSeconds = (warmUpMin.toIntOrNull() ?: 0) * 60 + (warmUpSec.toIntOrNull() ?: 0),
                 coolDownDurationSeconds = (coolDownMin.toIntOrNull() ?: 0) * 60 + (coolDownSec.toIntOrNull() ?: 0)
             ))

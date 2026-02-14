@@ -18,7 +18,10 @@ data class RunnerSession(
     val zone2Seconds: Long = 0,
     val zone3Seconds: Long = 0,
     val zone4Seconds: Long = 0,
-    val zone5Seconds: Long = 0
+    val zone5Seconds: Long = 0,
+    val runMode: String = "treadmill",
+    val distanceKm: Double = 0.0,
+    val avgPaceMinPerKm: Double = 0.0
 )
 
 @Entity(
@@ -39,7 +42,10 @@ data class HrSample(
     val elapsedSeconds: Long,
     val rawBpm: Int,
     val smoothedBpm: Int,
-    val connectionState: String
+    val connectionState: String,
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val paceMinPerKm: Double? = null
 )
 
 @Dao
@@ -66,7 +72,7 @@ interface SampleDao {
     fun getSamplesForSession(sessionId: Long): Flow<List<HrSample>>
 }
 
-@Database(entities = [RunnerSession::class, HrSample::class], version = 2, exportSchema = false)
+@Database(entities = [RunnerSession::class, HrSample::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
     abstract fun sampleDao(): SampleDao
@@ -82,7 +88,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "running_app_db"
                 )
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
                 INSTANCE = instance
                 instance
@@ -98,5 +104,17 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
         database.execSQL("ALTER TABLE sessions ADD COLUMN zone3Seconds INTEGER NOT NULL DEFAULT 0")
         database.execSQL("ALTER TABLE sessions ADD COLUMN zone4Seconds INTEGER NOT NULL DEFAULT 0")
         database.execSQL("ALTER TABLE sessions ADD COLUMN zone5Seconds INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE sessions ADD COLUMN runMode TEXT NOT NULL DEFAULT 'treadmill'")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN distanceKm REAL NOT NULL DEFAULT 0.0")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN avgPaceMinPerKm REAL NOT NULL DEFAULT 0.0")
+        
+        database.execSQL("ALTER TABLE hr_samples ADD COLUMN latitude REAL")
+        database.execSQL("ALTER TABLE hr_samples ADD COLUMN longitude REAL")
+        database.execSQL("ALTER TABLE hr_samples ADD COLUMN paceMinPerKm REAL")
     }
 }
