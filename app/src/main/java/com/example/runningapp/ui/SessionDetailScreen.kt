@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.tooling.preview.Preview
+import kotlin.math.roundToInt
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunnerSession
 import java.text.SimpleDateFormat

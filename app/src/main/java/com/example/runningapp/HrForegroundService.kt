@@ -1023,7 +1023,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startLocationUpdates() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             Log.w(TAG, "Location permission missing, cannot start updates")
             return
         }

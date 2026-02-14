@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.runningapp.data.RunnerSession
+import kotlin.math.roundToInt
 import java.text.SimpleDateFormat
 import java.util.*
 
