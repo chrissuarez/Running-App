@@ -116,8 +116,13 @@ class MainActivity : ComponentActivity() {
                                 hrService = boundService,
                                 onRequestPermissions = { checkAndRequestPermissions() },
                                 onStartService = {
-                                    val intent = Intent(this, HrForegroundService::class.java).apply {
-                                        action = HrForegroundService.ACTION_START_FOREGROUND
+                                    val action = if (boundService == null) {
+                                        HrForegroundService.ACTION_START_FOREGROUND
+                                    } else {
+                                        HrForegroundService.ACTION_FORCE_SCAN
+                                    }
+                                    val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                        this.action = action
                                     }
                                     startService(intent)
                                 },
@@ -142,9 +147,33 @@ class MainActivity : ComponentActivity() {
                                 onOpenHistory = {
                                     currentScreen = "history"
                                 },
+                                onOpenManageDevices = {
+                                    currentScreen = "manage_devices"
+                                },
                                 onToggleSimulation = {
                                     boundService?.toggleSimulation()
                                 }
+                            )
+                        }
+                        "manage_devices" -> {
+                            ManageDevicesScreen(
+                                settings = userSettings,
+                                connectionStatus = serviceState?.value?.connectionStatus ?: "Disconnected",
+                                onSetActive = { address ->
+                                    scope.launch {
+                                        settingsRepository.setActiveDevice(address)
+                                    }
+                                },
+                                onRemove = { address ->
+                                    scope.launch {
+                                        settingsRepository.removeDevice(address)
+                                    }
+                                },
+                                onConnect = { address ->
+                                    boundService?.connectToDevice(address)
+                                    currentScreen = "main"
+                                },
+                                onBack = { currentScreen = "main" }
                             )
                         }
                         "settings" -> {
@@ -227,6 +256,7 @@ fun MainScreen(
     onTestCue: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenManageDevices: () -> Unit,
     onToggleSimulation: () -> Unit
 ) {
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
@@ -241,6 +271,9 @@ fun MainScreen(
                 IconButton(onClick = onOpenHistory) {
                     Text("📜", fontSize = 24.sp)
                 }
+                IconButton(onClick = onOpenManageDevices) {
+                    Text("⌚", fontSize = 24.sp)
+                }
                 IconButton(onClick = onOpenSettings) {
                     Text("⚙️", fontSize = 24.sp)
                 }
@@ -250,6 +283,26 @@ fun MainScreen(
         Spacer(modifier = Modifier.height(16.dp))
         
         Text(text = "Status: ${state.connectionStatus}")
+        
+        // Active Device Shortcut
+        val activeDevice = state.userSettings.savedDevices.find { it.address == state.userSettings.activeDeviceAddress }
+        if (activeDevice != null && state.connectionStatus == "Disconnected") {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
+            ) {
+                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Active Device: ${activeDevice.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                        Text(activeDevice.address, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Button(onClick = { onConnectToDevice(activeDevice.address) }) {
+                        Text("Connect")
+                    }
+                }
+            }
+        }
+
         if (state.sessionStatus == SessionStatus.ERROR) {
             Text(text = "ERROR: ${state.errorMessage ?: "Unknown"}", color = Color.Red, fontWeight = FontWeight.Bold)
         }
@@ -259,7 +312,8 @@ fun MainScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
                 Button(onClick = onStartService) {
-                    Text("Scan / Start")
+                    val label = if (hrService == null) "Start Service" else "Scan for Devices"
+                    Text(label)
                 }
             } else {
                 Button(onClick = onTogglePause) {
@@ -539,7 +593,7 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(32.dp))
         
         Button(onClick = {
-            onSave(UserSettings(
+            onSave(settings.copy(
                 maxHr = maxHr.toIntOrNull() ?: settings.maxHr,
                 zone2Low = zone2Low.toIntOrNull() ?: settings.zone2Low,
                 zone2High = zone2High.toIntOrNull() ?: settings.zone2High,
@@ -556,6 +610,88 @@ fun SettingsScreen(
         }
         
         Spacer(modifier = Modifier.height(32.dp))
+    }
+}
+
+@Composable
+fun ManageDevicesScreen(
+    settings: UserSettings,
+    connectionStatus: String,
+    onSetActive: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    onConnect: (String) -> Unit,
+    onBack: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("Manage Devices", style = MaterialTheme.typography.headlineMedium)
+            Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)) {
+                Text("Back")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Text("Status: $connectionStatus", style = MaterialTheme.typography.bodySmall)
+        Spacer(modifier = Modifier.height(16.dp))
+
+        if (settings.savedDevices.isEmpty()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text("No saved devices. Scan to add one.")
+            }
+        } else {
+            LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                items(settings.savedDevices) { device ->
+                    val isActive = device.address == settings.activeDeviceAddress
+                    SavedDeviceListItem(
+                        device = device,
+                        isActive = isActive,
+                        onSetActive = { onSetActive(device.address) },
+                        onRemove = { onRemove(device.address) },
+                        onConnect = { onConnect(device.address) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SavedDeviceListItem(
+    device: SavedDevice,
+    isActive: Boolean,
+    onSetActive: () -> Unit,
+    onRemove: () -> Unit,
+    onConnect: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        colors = if (isActive) CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else CardDefaults.cardColors()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = device.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+                    Text(text = device.address, style = MaterialTheme.typography.bodySmall)
+                    if (isActive) {
+                        Text("ACTIVE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Row {
+                    if (!isActive) {
+                        TextButton(onClick = onSetActive) {
+                            Text("Set Active")
+                        }
+                    }
+                    Button(onClick = onConnect, modifier = Modifier.padding(start = 8.dp)) {
+                        Text("Connect")
+                    }
+                }
+            }
+            Divider(modifier = Modifier.padding(vertical = 8.dp), thickness = 0.5.dp, color = Color.Gray.copy(alpha = 0.3f))
+            TextButton(onClick = onRemove, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) {
+                Text("Forget Device")
+            }
+        }
     }
 }
 
