@@ -278,16 +278,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                     sessionBpmSum += currentBpm
                                     sessionSampleCount++
                                     
-                                    // MISSION: Coaching & Zones only in MAIN phase
-                                    if (currentPhase == SessionPhase.MAIN) {
-                                        val isTarget = currentState.currentZone == "TARGET"
-                                        if (isTarget) sessionInTargetZoneSeconds++
-                                        
-                                        // Calculate and track zone for this second
-                                        val zone = calculateZone(currentBpm, currentSettings.maxHr)
-                                        if (zone in 1..5) {
-                                            sessionZoneTimes[zone] = (sessionZoneTimes[zone] ?: 0L) + 1
-                                        }
+                                    // MISSION: Record zones throughout the entire session
+                                    val isTarget = currentState.currentZone == "TARGET"
+                                    if (isTarget) sessionInTargetZoneSeconds++
+                                    
+                                    // Calculate and track zone for this second
+                                    val zone = calculateZone(currentBpm, currentSettings.maxHr)
+                                    if (zone in 1..5) {
+                                        sessionZoneTimes[zone] = (sessionZoneTimes[zone] ?: 0L) + 1
                                     }
                                     
                                     val sessionId = currentSessionId
@@ -1074,9 +1072,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val now = System.currentTimeMillis()
         Log.d(TAG, "New location: lat=${location.latitude}, lon=${location.longitude}, acc=${location.accuracy}")
         
-        // 1. Update Distance
+        // 1. Update Distance and Speed Fallback
+        var speedMps = 0.0
         lastLocation?.let { last ->
             val distance = last.distanceTo(location).toDouble()
+            val timeDeltaSec = (now - last.time) / 1000.0
+            
             // Relaxed jitter filter for better indoor/car testing (Mission 4 Fix)
             if (location.accuracy < 50) { 
                 sessionDistanceMeters += distance
@@ -1084,14 +1085,23 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             } else {
                 Log.w(TAG, "Location rejected due to low accuracy: ${location.accuracy}")
             }
+
+            // Speed fallback if hardware speed is missing
+            speedMps = if (location.hasSpeed() && location.speed > 0.1f) {
+                location.speed.toDouble()
+            } else if (timeDeltaSec > 0.5) {
+                distance / timeDeltaSec // Calculate speed from distance/time
+            } else {
+                0.0
+            }
         }
         lastLocation = location
         
         // 2. Update Pace History for Smoothing
-        val speed = if (location.hasSpeed()) location.speed.toDouble() else 0.0
-        if (speed > 0.5) { // Only record if moving > 1.8km/h
+        // Use a lower threshold (0.2 m/s ~= 0.7 km/h) for people walking or testing
+        if (speedMps > 0.2) { 
             synchronized(paceHistory) {
-                paceHistory.add(Pair(now, speed))
+                paceHistory.add(Pair(now, speedMps))
                 while (paceHistory.isNotEmpty() && (now - paceHistory.first.first > PACE_WINDOW_MS)) {
                     paceHistory.removeFirst()
                 }
