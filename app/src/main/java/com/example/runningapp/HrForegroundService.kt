@@ -590,7 +590,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val notification = createNotification("Monitoring Heart Rate...")
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+            // Mission 4: Add location type to foreground service
+            val serviceType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
+                              android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            startForeground(NOTIFICATION_ID, notification, serviceType)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -1019,7 +1022,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     fun toggleSimulation() {
         isSimulationEnabled = !isSimulationEnabled
         _hrState.update { it.copy(isSimulating = isSimulationEnabled) }
-        Log.d(TAG, "Simulation Mode: $isSimulationEnabled")
+        
+        if (isSimulationEnabled) {
+            Log.d(TAG, "Simulation Mode ENABLED - Starting Session")
+            if (currentSessionId == null) {
+                startNewDatabaseSession()
+            }
+            _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
+            if (currentSettings.runMode == "outdoor") {
+                startLocationUpdates()
+            }
+        } else {
+            Log.d(TAG, "Simulation Mode DISABLED")
+            // Note: We don't necessarily stop the session here if the user wanted to keep it running
+            // but usually simulation is for the whole session in tests.
+        }
     }
 
     private fun startLocationUpdates() {
@@ -1055,13 +1072,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun handleNewLocation(location: Location) {
         val now = System.currentTimeMillis()
+        Log.d(TAG, "New location: lat=${location.latitude}, lon=${location.longitude}, acc=${location.accuracy}")
         
         // 1. Update Distance
         lastLocation?.let { last ->
             val distance = last.distanceTo(location).toDouble()
-            // Ignore small jitter if accuracy is low
-            if (location.accuracy < 20) {
+            // Relaxed jitter filter for better indoor/car testing (Mission 4 Fix)
+            if (location.accuracy < 50) { 
                 sessionDistanceMeters += distance
+                Log.d(TAG, "Distance updated: +${"%.2f".format(distance)}m, total=${"%.2f".format(sessionDistanceMeters)}m")
+            } else {
+                Log.w(TAG, "Location rejected due to low accuracy: ${location.accuracy}")
             }
         }
         lastLocation = location
