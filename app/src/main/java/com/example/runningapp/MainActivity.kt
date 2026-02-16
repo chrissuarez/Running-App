@@ -231,6 +231,10 @@ class MainActivity : ComponentActivity() {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         }
         
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            permissions.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        }
+        
         val missing = permissions.filter { 
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED 
         }

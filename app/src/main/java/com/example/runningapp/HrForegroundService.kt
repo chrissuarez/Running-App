@@ -795,6 +795,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 if (currentSessionId == null) {
                     startNewDatabaseSession()
                 }
+
+                // Mission 4 FIX: Ensure location updates start if in outdoor mode
+                if (currentSettings.runMode == "outdoor") {
+                    startLocationUpdates()
+                }
                 
                 gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
                 gatt?.discoverServices()
@@ -1078,8 +1083,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             val distance = last.distanceTo(location).toDouble()
             val timeDeltaSec = (now - last.time) / 1000.0
             
-            // Relaxed jitter filter for better indoor/car testing (Mission 4 Fix)
-            if (location.accuracy < 50) { 
+            // Relaxed jitter filter for better outdoor reliability (100m threshold)
+            if (location.accuracy < 100) { 
                 sessionDistanceMeters += distance
                 Log.d(TAG, "Distance updated: +${"%.2f".format(distance)}m, total=${"%.2f".format(sessionDistanceMeters)}m")
             } else {
