@@ -131,6 +131,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // Mission 4: Location
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var locationCallback: LocationCallback? = null
+    private var lastValidLocationTime = 0L
     private var lastLocation: Location? = null
     private var sessionDistanceMeters = 0.0
     private var lastSplitAnnouncedKm = 0
@@ -146,6 +147,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var currentSessionId: Long? = null
     private var sessionMaxBpm = 0
     private var sessionBpmSum = 0L
+    private var sessionNoDataSeconds = 0L
     private var sessionSampleCount = 0
     private var sessionInTargetZoneSeconds = 0L
     private var lastRecordedSecond = -1L
@@ -288,14 +290,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                     sessionBpmSum += (currentBpm * deltaSeconds) // Weighted sum for better average
                                     sessionSampleCount += deltaSeconds.toInt()
                                     
-                                    // MISSION: Record zones throughout the entire session
-                                    val isTarget = currentState.currentZone == "TARGET"
-                                    if (isTarget) sessionInTargetZoneSeconds += deltaSeconds
-                                    
                                     // Calculate and track zone for this second
-                                    val zone = calculateZone(currentBpm, currentSettings.maxHr)
+                                    val zone = calculateZone(currentBpm, currentSettings)
                                     if (zone in 1..5) {
                                         sessionZoneTimes[zone] = (sessionZoneTimes[zone] ?: 0L) + deltaSeconds
+                                        
+                                        // MISSION: Align "In Target" specifically with Zone 2 for consistency
+                                        if (zone == 2) {
+                                            sessionInTargetZoneSeconds += deltaSeconds
+                                        }
+                                    } else {
+                                        // Count time where BPM is too low or not in a defined zone
+                                        sessionNoDataSeconds += deltaSeconds
                                     }
                                     
                                     val sessionId = currentSessionId
@@ -513,7 +519,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             zone2Seconds = sessionZoneTimes[2] ?: 0L,
                             zone3Seconds = sessionZoneTimes[3] ?: 0L,
                             zone4Seconds = sessionZoneTimes[4] ?: 0L,
-                            zone5Seconds = sessionZoneTimes[5] ?: 0L
+                            zone5Seconds = sessionZoneTimes[5] ?: 0L,
+                            noDataSeconds = sessionNoDataSeconds
                         )
                         database.sessionDao().updateSession(updatedSession)
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
@@ -990,14 +997,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         return DebugInfo(avg, zoneStr, "${timeInZone}s", statusStr)
     }
 
-    private fun calculateZone(bpm: Int, maxHr: Int): Int {
-        if (bpm <= 0 || maxHr <= 0) return 0
-        val percent = (bpm.toFloat() / maxHr) * 100
+    private fun calculateZone(bpm: Int, settings: UserSettings): Int {
+        val maxHr = settings.maxHr
+        if (maxHr <= 0 || bpm <= 0) return 0
+        
+        // 1. Zone 2 is defined by user settings (Target)
+        if (bpm >= settings.zone2Low && bpm <= settings.zone2High) return 2
+        
+        // 2. Derive other zones relative to Zone 2 and Max HR
+        val percent = (bpm.toFloat() / maxHr * 100).toInt()
+        
         return when {
-            percent < 50 -> 0
-            percent < 60 -> 1
-            percent < 70 -> 2
-            percent < 80 -> 3
+            bpm < settings.zone2Low -> 1
+            bpm > settings.zone2High && percent < 80 -> 3
             percent < 90 -> 4
             else -> 5
         }
@@ -1095,12 +1107,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             val distance = last.distanceTo(location).toDouble()
             val timeDeltaSec = (now - last.time) / 1000.0
             
-            // Relaxed jitter filter for better outdoor reliability (100m threshold)
-            if (location.accuracy < 100) { 
+            // MISSION: Smart Reject - Allow lower accuracy if we just recovered from a gap
+            val timeSinceLastValid = (now - lastValidLocationTime) / 1000
+            val accuracyThreshold = if (timeSinceLastValid > 30) 250.0 else 100.0
+            
+            if (location.accuracy <= accuracyThreshold) { 
                 sessionDistanceMeters += distance
-                Log.d(TAG, "Distance updated: +${"%.2f".format(distance)}m, total=${"%.2f".format(sessionDistanceMeters)}m")
+                lastValidLocationTime = now
+                Log.d(TAG, "Distance updated: +${"%.2f".format(distance)}m, total=${"%.2f".format(sessionDistanceMeters)}m (Threshold: ${accuracyThreshold}m)")
             } else {
-                Log.w(TAG, "Location rejected due to low accuracy: ${location.accuracy}")
+                Log.w(TAG, "Location rejected: accuracy=${location.accuracy}m > threshold=${accuracyThreshold}m")
             }
 
             // Speed fallback if hardware speed is missing

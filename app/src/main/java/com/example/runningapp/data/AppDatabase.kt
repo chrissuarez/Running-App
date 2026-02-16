@@ -21,7 +21,8 @@ data class RunnerSession(
     val zone5Seconds: Long = 0,
     val runMode: String = "treadmill",
     val distanceKm: Double = 0.0,
-    val avgPaceMinPerKm: Double = 0.0
+    val avgPaceMinPerKm: Double = 0.0,
+    val noDataSeconds: Long = 0L
 )
 
 @Entity(
@@ -75,7 +76,7 @@ interface SampleDao {
     fun getSamplesForSession(sessionId: Long): Flow<List<HrSample>>
 }
 
-@Database(entities = [RunnerSession::class, HrSample::class], version = 3, exportSchema = false)
+@Database(entities = [RunnerSession::class, HrSample::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
     abstract fun sampleDao(): SampleDao
@@ -91,7 +92,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "running_app_db"
                 )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
                 INSTANCE = instance
                 instance
@@ -119,5 +120,11 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
         database.execSQL("ALTER TABLE hr_samples ADD COLUMN latitude REAL")
         database.execSQL("ALTER TABLE hr_samples ADD COLUMN longitude REAL")
         database.execSQL("ALTER TABLE hr_samples ADD COLUMN paceMinPerKm REAL")
+    }
+}
+
+val MIGRATION_3_4 = object : Migration(3, 4) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE sessions ADD COLUMN noDataSeconds INTEGER NOT NULL DEFAULT 0")
     }
 }

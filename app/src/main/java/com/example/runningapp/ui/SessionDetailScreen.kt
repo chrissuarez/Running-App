@@ -251,7 +251,8 @@ fun ZoneBarChart(session: RunnerSession) {
         session.zone2Seconds,
         session.zone3Seconds,
         session.zone4Seconds,
-        session.zone5Seconds
+        session.zone5Seconds,
+        session.noDataSeconds
     )
     val maxSeconds = zones.maxOrNull() ?: 0L
     
@@ -263,7 +264,7 @@ fun ZoneBarChart(session: RunnerSession) {
     Column(modifier = Modifier.fillMaxWidth()) {
         zones.forEachIndexed { index, seconds ->
             val zoneNum = index + 1
-            val label = "Zone $zoneNum"
+            val label = if (zoneNum <= 5) "Zone $zoneNum" else "No Data"
             val percentage = if (maxSeconds > 0) seconds.toFloat() / maxSeconds else 0f
             val timeStr = formatDurationLarge(seconds) // Reusing existing formatter
 
@@ -273,7 +274,7 @@ fun ZoneBarChart(session: RunnerSession) {
             ) {
                 Text(
                     text = label, 
-                    modifier = Modifier.width(60.dp), 
+                    modifier = Modifier.width(70.dp), // Increased width for "No Data"
                     style = MaterialTheme.typography.bodySmall, 
                     fontWeight = FontWeight.Bold
                 )
@@ -294,7 +295,7 @@ fun ZoneBarChart(session: RunnerSession) {
                                     3 -> Color.Green
                                     4 -> Color(0xFFFFA500) // Orange
                                     5 -> Color.Red
-                                    else -> Color.Gray
+                                    else -> Color.LightGray // For No Data
                                 }
                             )
                     )
