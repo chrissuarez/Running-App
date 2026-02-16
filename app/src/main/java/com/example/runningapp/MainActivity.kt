@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -90,8 +91,8 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    var currentScreen by remember { mutableStateOf("main") }
-                    var selectedSessionId by remember { mutableStateOf<Long?>(null) }
+                    var currentScreen by rememberSaveable { mutableStateOf("main") }
+                    var selectedSessionId by rememberSaveable { mutableStateOf<Long?>(null) }
                     
                     val settingsRepository = remember { SettingsRepository(this) }
                     val userSettings by settingsRepository.userSettingsFlow.collectAsState(initial = UserSettings())
@@ -106,7 +107,7 @@ class MainActivity : ComponentActivity() {
                     }
                     val selectedSession by produceState<com.example.runningapp.data.RunnerSession?>(initialValue = null, key1 = selectedSessionId) {
                         selectedSessionId?.let { id ->
-                            value = database.sessionDao().getSessionById(id)
+                            database.sessionDao().getSessionByIdFlow(id).collect { value = it }
                         }
                     }
 
@@ -229,6 +230,10 @@ class MainActivity : ComponentActivity() {
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            permissions.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         }
         
         val missing = permissions.filter { 

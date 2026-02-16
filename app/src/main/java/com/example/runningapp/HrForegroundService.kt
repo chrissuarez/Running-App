@@ -496,29 +496,30 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val sessionId = currentSessionId
         if (sessionId != null) {
             serviceScope.launch(Dispatchers.IO) {
-                val session = database.sessionDao().getSessionById(sessionId)
-                if (session != null) {
-                    val avgBpm = if (sessionSampleCount > 0) (sessionBpmSum / sessionSampleCount).toInt() else 0
-                    val updatedSession = session.copy(
-                        endTime = System.currentTimeMillis(),
-                        durationSeconds = finalSecondsRunning, // Use captured non-zero value
-                        avgBpm = avgBpm,
-                        maxBpm = sessionMaxBpm,
-                        timeInTargetZoneSeconds = sessionInTargetZoneSeconds,
-                        distanceKm = finalDistanceKm,
-                        avgPaceMinPerKm = finalAvgPace,
-                        // Mission 3: Persist Zone Timers
-                        zone1Seconds = sessionZoneTimes[1] ?: 0L,
-                        zone2Seconds = sessionZoneTimes[2] ?: 0L,
-                        zone3Seconds = sessionZoneTimes[3] ?: 0L,
-                        zone4Seconds = sessionZoneTimes[4] ?: 0L,
-                        zone5Seconds = sessionZoneTimes[5] ?: 0L
-                    )
-                    database.sessionDao().updateSession(updatedSession)
-                    // Added debug evidence as requested
-                    Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: secondsRunning=$finalSecondsRunning, secondsPaused=$finalSecondsPaused, finalDuration=${updatedSession.durationSeconds}")
+                // MISSION: Ensure DB update is not cancelled by service destruction
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    val session = database.sessionDao().getSessionById(sessionId)
+                    if (session != null) {
+                        val avgBpm = if (sessionSampleCount > 0) (sessionBpmSum / sessionSampleCount).toInt() else 0
+                        val updatedSession = session.copy(
+                            endTime = System.currentTimeMillis(),
+                            durationSeconds = finalSecondsRunning,
+                            avgBpm = avgBpm,
+                            maxBpm = sessionMaxBpm,
+                            timeInTargetZoneSeconds = sessionInTargetZoneSeconds,
+                            distanceKm = finalDistanceKm,
+                            avgPaceMinPerKm = finalAvgPace,
+                            zone1Seconds = sessionZoneTimes[1] ?: 0L,
+                            zone2Seconds = sessionZoneTimes[2] ?: 0L,
+                            zone3Seconds = sessionZoneTimes[3] ?: 0L,
+                            zone4Seconds = sessionZoneTimes[4] ?: 0L,
+                            zone5Seconds = sessionZoneTimes[5] ?: 0L
+                        )
+                        database.sessionDao().updateSession(updatedSession)
+                        Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
+                    }
+                    currentSessionId = null
                 }
-                currentSessionId = null
             }
         }
 
@@ -806,6 +807,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 if (currentSessionId == null) {
                     startNewDatabaseSession()
                 }
+
+                // Mission 4 FIX: Ensure location updates start if in outdoor mode
+                if (currentSettings.runMode == "outdoor") {
+                    startLocationUpdates()
+                }
                 
                 gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
                 gatt?.discoverServices()
@@ -1089,8 +1095,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             val distance = last.distanceTo(location).toDouble()
             val timeDeltaSec = (now - last.time) / 1000.0
             
-            // Relaxed jitter filter for better indoor/car testing (Mission 4 Fix)
-            if (location.accuracy < 50) { 
+            // Relaxed jitter filter for better outdoor reliability (100m threshold)
+            if (location.accuracy < 100) { 
                 sessionDistanceMeters += distance
                 Log.d(TAG, "Distance updated: +${"%.2f".format(distance)}m, total=${"%.2f".format(sessionDistanceMeters)}m")
             } else {
