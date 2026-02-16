@@ -227,9 +227,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun startSessionTimerLoop() {
         if (timerJob?.isActive == true) return
-        timerJob = serviceScope.launch {
+        timerJob = serviceScope.launch(Dispatchers.Default) {
+            var lastIterationTime = System.currentTimeMillis()
             while (this.isActive) {
                 delay(1000)
+                val now = System.currentTimeMillis()
+                val deltaMillis = now - lastIterationTime
+                val deltaSeconds = deltaMillis / 1000
+                
+                if (deltaSeconds < 1) continue // Skip if less than a second has passed
+                
+                lastIterationTime = now
                 
                 // Mission 3: Side-effect outside of .update to avoid CAS recursion/ANR
                 if (isSimulationEnabled) {
@@ -237,13 +245,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 }
 
                 _hrState.update { currentState ->
-                    val now = System.currentTimeMillis()
                     val hrAge = if (lastHrTimestamp > 0) (now - lastHrTimestamp) / 1000 else 0
                     
                     when (currentState.sessionStatus) {
                         SessionStatus.RUNNING -> {
-                            sessionSecondsRunning++
-                            phaseSecondsRunning++
+                            sessionSecondsRunning += deltaSeconds
+                            phaseSecondsRunning += deltaSeconds
                             
                             // Phase Transition & Notification Logic
                             val phaseLimit = when (currentPhase) {
@@ -254,8 +261,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             
                             val remaining = (phaseLimit - phaseSecondsRunning).toInt()
                             
-                            // Voice alert at 10 seconds
-                            if (currentPhase != SessionPhase.MAIN && remaining == 10) {
+                            // Voice alert at 10 seconds (check if we just crossed the 10s mark)
+                            if (currentPhase != SessionPhase.MAIN && remaining <= 10 && (remaining + deltaSeconds.toInt()) > 10) {
                                 val phaseName = if (currentPhase == SessionPhase.WARM_UP) "warm up" else "cool down"
                                 playCue("10 seconds of $phaseName remaining")
                             }
@@ -269,27 +276,31 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                 serviceScope.launch { stopSession() }
                             }
                             
-                            // Record sample once per second
+                            // Record sample once per second? 
+                            // Since we might have skipped multiple seconds, we should ideally record for each,
+                            // but for simplicity and performance in throttled background, 
+                            // we'll record the latest BPM for the current elapsed total.
                             if (sessionSecondsRunning > lastRecordedSecond) {
                                 lastRecordedSecond = sessionSecondsRunning
                                 val currentBpm = currentState.bpm
                                 if (currentBpm > 0) {
                                     sessionMaxBpm = maxOf(sessionMaxBpm, currentBpm)
-                                    sessionBpmSum += currentBpm
-                                    sessionSampleCount++
+                                    sessionBpmSum += (currentBpm * deltaSeconds) // Weighted sum for better average
+                                    sessionSampleCount += deltaSeconds.toInt()
                                     
                                     // MISSION: Record zones throughout the entire session
                                     val isTarget = currentState.currentZone == "TARGET"
-                                    if (isTarget) sessionInTargetZoneSeconds++
+                                    if (isTarget) sessionInTargetZoneSeconds += deltaSeconds
                                     
                                     // Calculate and track zone for this second
                                     val zone = calculateZone(currentBpm, currentSettings.maxHr)
                                     if (zone in 1..5) {
-                                        sessionZoneTimes[zone] = (sessionZoneTimes[zone] ?: 0L) + 1
+                                        sessionZoneTimes[zone] = (sessionZoneTimes[zone] ?: 0L) + deltaSeconds
                                     }
                                     
                                     val sessionId = currentSessionId
                                     if (sessionId != null) {
+                                        // Still insert one sample representing the current state
                                         val sample = HrSample(
                                             sessionId = sessionId,
                                             elapsedSeconds = sessionSecondsRunning,
@@ -317,7 +328,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             )
                         }
                         SessionStatus.PAUSED -> {
-                            sessionSecondsPaused++
+                            sessionSecondsPaused += deltaSeconds
                             currentState.copy(
                                 secondsPaused = sessionSecondsPaused,
                                 lastHrAgeSeconds = hrAge
