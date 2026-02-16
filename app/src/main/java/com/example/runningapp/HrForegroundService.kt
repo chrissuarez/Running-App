@@ -310,8 +310,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                         sessionNoDataSeconds += deltaSeconds
                                     }
                                     
+                                    val sessionId = currentSessionId
                                     // MISSION: Update notification periodically to signal activity to the OS
-                                    if (sessionSecondsRunning % 5 == 0) {
+                                    if (sessionSecondsRunning % 5L == 0L) {
                                         val distStr = "%.2f".format(sessionDistanceMeters / 1000.0)
                                         updateNotification("Distance: ${distStr}km | Heart Rate: $currentBpm BPM")
                                     }
