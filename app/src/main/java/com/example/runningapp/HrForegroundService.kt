@@ -23,6 +23,8 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.PowerManager
 import android.os.IBinder
+import android.os.Handler
+import android.os.HandlerThread
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
@@ -133,6 +135,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // Mission 4: Location
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var locationCallback: LocationCallback? = null
+    private var locationHandlerThread: HandlerThread? = null
+    private var locationHandler: Handler? = null
     private var lastValidLocationTime = 0L
     private var lastLocation: Location? = null
     private var sessionDistanceMeters = 0.0
@@ -306,7 +310,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                         sessionNoDataSeconds += deltaSeconds
                                     }
                                     
-                                    val sessionId = currentSessionId
+                                    // MISSION: Update notification periodically to signal activity to the OS
+                                    if (sessionSecondsRunning % 5 == 0) {
+                                        val distStr = "%.2f".format(sessionDistanceMeters / 1000.0)
+                                        updateNotification("Distance: ${distStr}km | Heart Rate: $currentBpm BPM")
+                                    }
                                     if (sessionId != null) {
                                         // Still insert one sample representing the current state
                                         val sample = HrSample(
@@ -605,6 +613,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
 
+    private fun updateNotification(content: String) {
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.notify(NOTIFICATION_ID, createNotification(content))
+    }
+
     private fun startForegroundService() {
         val notification = createNotification("Service is running...")
         
@@ -664,7 +677,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
                 "HR Monitor Service Channel",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             )
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(serviceChannel)
@@ -1098,6 +1111,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             return
         }
 
+        // MISSION: Move location updates to a background thread to prevent main thread stalls
+        if (locationHandlerThread == null) {
+            locationHandlerThread = HandlerThread("LocationThread").apply { start() }
+            locationHandler = Handler(locationHandlerThread!!.looper)
+        }
+
         val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000L)
             .setMinUpdateIntervalMillis(2000L)
             .build()
@@ -1110,8 +1129,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
         }
         
-        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback!!, mainLooper)
-        Log.d(TAG, "Location updates started")
+        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback!!, locationHandler?.looper ?: mainLooper)
+        Log.d(TAG, "Location updates started on custom looper")
     }
 
     private fun stopLocationUpdates() {
@@ -1214,6 +1233,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         disconnect()
         stopLocationUpdates()
         releaseWakeLock()
+        locationHandlerThread?.quitSafely()
+        locationHandlerThread = null
         timerJob?.cancel()
         tts?.shutdown()
         Log.d(TAG, "Service destroyed")

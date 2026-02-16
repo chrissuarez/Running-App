@@ -221,19 +221,14 @@ class MainActivity : ComponentActivity() {
         } else {
              permissions.add(Manifest.permission.BLUETOOTH)
              permissions.add(Manifest.permission.BLUETOOTH_ADMIN)
-             permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
         
-        // Mission 4: Location permissions for GPS
+        // Mission 4: Location permissions (Foreground)
         permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
         permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            permissions.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         }
         
         val missing = permissions.filter { 
@@ -242,6 +237,19 @@ class MainActivity : ComponentActivity() {
         
         if (missing.isNotEmpty()) {
             requestPermissionLauncher.launch(missing.toTypedArray())
+        } else {
+            // Foreground granted, now check background if needed
+            checkBackgroundLocationPermission()
+        }
+    }
+
+    private fun checkBackgroundLocationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                // Show a dialog/explanation if needed? For now just request.
+                // NOTE: Android 11+ requires separate request for background.
+                requestPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
+            }
         }
     }
 
