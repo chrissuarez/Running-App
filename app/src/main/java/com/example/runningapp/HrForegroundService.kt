@@ -19,6 +19,7 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Binder
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.speech.tts.TextToSpeech
@@ -604,21 +605,45 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
 
     private fun startForegroundService() {
-        val notification = createNotification("Monitoring Heart Rate...")
+        val notification = createNotification("Service is running...")
         
+        // Mission: Specify foreground service types for Android 14+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Mission 4: Add location type to foreground service
-            val serviceType = android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
-                              android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            startForeground(NOTIFICATION_ID, notification, serviceType)
+            startForeground(
+                NOTIFICATION_ID, 
+                notification, 
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            )
         } else {
             startForeground(NOTIFICATION_ID, notification)
+        }
+        
+        // Mission: Acquire WakeLock to ensure CPU remains alive during session
+        acquireWakeLock()
+    }
+
+    private var wakeLock: PowerManager.WakeLock? = null
+    private fun acquireWakeLock() {
+        if (wakeLock == null) {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "RunningApp::SessionWakeLock")
+            wakeLock?.acquire(10 * 60 * 60 * 1000L) // 10 hours max
+            Log.d(TAG, "WakeLock acquired")
+        }
+    }
+    
+    private fun releaseWakeLock() {
+        if (wakeLock?.isHeld == true) {
+            wakeLock?.release()
+            wakeLock = null
+            Log.d(TAG, "WakeLock released")
         }
     }
 
     private fun stopForegroundService() {
         stopScanning() // Stop scanning if running
         disconnect() // Disconnect GATT if connected
+        releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -1184,9 +1209,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         super.onDestroy()
-        serviceScope.cancel()
+        stopScanning()
         disconnect()
         stopLocationUpdates()
+        releaseWakeLock()
+        timerJob?.cancel()
         tts?.shutdown()
+        Log.d(TAG, "Service destroyed")
     }
 }
