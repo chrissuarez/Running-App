@@ -106,7 +106,7 @@ class MainActivity : ComponentActivity() {
                     }
                     val selectedSession by produceState<com.example.runningapp.data.RunnerSession?>(initialValue = null, key1 = selectedSessionId) {
                         selectedSessionId?.let { id ->
-                            value = database.sessionDao().getSessionById(id)
+                            database.sessionDao().getSessionByIdFlow(id).collect { value = it }
                         }
                     }
 
