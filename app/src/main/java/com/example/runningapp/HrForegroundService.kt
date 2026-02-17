@@ -142,6 +142,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var sessionDistanceMeters = 0.0
     private var lastSplitAnnouncedKm = 0
     
+    // Mission: Resilient Tracking Loop
+    private var sessionHandlerThread: HandlerThread? = null
+    private var sessionHandler: Handler? = null
+    private val sessionTimerRunnable = object : Runnable {
+        override fun run() {
+            pulseSession()
+            sessionHandler?.postDelayed(this, 1000)
+        }
+    }
+    
     // Pace Smoothing (15s window)
     private val PACE_WINDOW_MS = 15000L
     private val paceHistory = LinkedList<Pair<Long, Double>>() // Pair<Timestamp, MetersPerSecond>
@@ -183,7 +193,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var lastHrTimestamp = 0L
     private var firstDisconnectTime = 0L
     private val RECONNECT_TIMEOUT_MS = 120_000L // 2 minutes
-    private var timerJob: Job? = null
+    // private var timerJob: Job? = null // REPLACED by HandlerThread
     
     // Mission: Session Phases
     private var currentPhase = SessionPhase.WARM_UP
@@ -225,154 +235,147 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         tts = TextToSpeech(this, this)
         
+        
         database = AppDatabase.getDatabase(this)
         
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+        
+        // Mission: Dedicated Session Thread
+        sessionHandlerThread = HandlerThread("SessionTrackingThread").apply { start() }
+        sessionHandler = Handler(sessionHandlerThread!!.looper)
         
         createNotificationChannel()
         startSessionTimerLoop()
     }
 
     private fun startSessionTimerLoop() {
-        if (timerJob?.isActive == true) return
-        timerJob = serviceScope.launch(Dispatchers.Default) {
-            var lastIterationTime = System.currentTimeMillis()
-            while (this.isActive) {
-                delay(1000)
-                val now = System.currentTimeMillis()
-                val deltaMillis = now - lastIterationTime
-                val deltaSeconds = deltaMillis / 1000
+        sessionHandler?.removeCallbacks(sessionTimerRunnable)
+        sessionHandler?.post(sessionTimerRunnable)
+    }
+
+    private var lastPulseTime = 0L
+    private fun pulseSession() {
+        val now = System.currentTimeMillis()
+        if (lastPulseTime == 0L) {
+            lastPulseTime = now
+            return
+        }
+        val deltaSeconds = (now - lastPulseTime) / 1000
+        if (deltaSeconds < 1) return 
+        lastPulseTime = now
+
+        if (isSimulationEnabled) {
+            updateSimulationData()
+        }
+
+        val currentState = _hrState.value
+        val hrAge = if (lastHrTimestamp > 0) (now - lastHrTimestamp) / 1000 else 0
+        
+        if (sessionSecondsRunning % 10 == 0L) {
+            Log.d(TAG, "Timer heartbeat: running=${sessionSecondsRunning}s, age=${hrAge}s, status=${currentState.sessionStatus}")
+        }
+
+        when (currentState.sessionStatus) {
+            SessionStatus.RUNNING -> {
+                sessionSecondsRunning += deltaSeconds
+                phaseSecondsRunning += deltaSeconds
                 
-                if (deltaSeconds < 1) continue // Skip if less than a second has passed
+                val phaseLimit = when (currentPhase) {
+                    SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
+                    SessionPhase.MAIN -> Int.MAX_VALUE
+                    SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
+                }
                 
-                lastIterationTime = now
+                val remaining = (phaseLimit - phaseSecondsRunning).toInt()
                 
-                // Mission 3: Side-effect outside of .update to avoid CAS recursion/ANR
-                if (isSimulationEnabled) {
-                    updateSimulationData()
+                if (currentPhase != SessionPhase.MAIN && remaining <= 10 && (remaining + deltaSeconds.toInt()) > 10) {
+                    val phaseName = if (currentPhase == SessionPhase.WARM_UP) "warm up" else "cool down"
+                    playCue("10 seconds of $phaseName remaining")
+                }
+                
+                if (currentPhase == SessionPhase.WARM_UP && phaseSecondsRunning >= phaseLimit) {
+                    currentPhase = SessionPhase.MAIN
+                    phaseSecondsRunning = 0
+                    playCue("Starting main workout")
+                } else if (currentPhase == SessionPhase.COOL_DOWN && phaseSecondsRunning >= phaseLimit) {
+                    serviceScope.launch { stopSession() }
                 }
 
-                _hrState.update { currentState ->
-                    val hrAge = if (lastHrTimestamp > 0) (now - lastHrTimestamp) / 1000 else 0
-                    
-                    if (sessionSecondsRunning % 10 == 0L) {
-                        Log.d(TAG, "Timer heartbeat: running=${sessionSecondsRunning}s, age=${hrAge}s, status=${currentState.sessionStatus}")
-                    }
-                    
-                    when (currentState.sessionStatus) {
-                        SessionStatus.RUNNING -> {
-                            sessionSecondsRunning += deltaSeconds
-                            phaseSecondsRunning += deltaSeconds
-                            
-                            // Phase Transition & Notification Logic
-                            val phaseLimit = when (currentPhase) {
-                                SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
-                                SessionPhase.MAIN -> Int.MAX_VALUE
-                                SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
-                            }
-                            
-                            val remaining = (phaseLimit - phaseSecondsRunning).toInt()
-                            
-                            // Voice alert at 10 seconds (check if we just crossed the 10s mark)
-                            if (currentPhase != SessionPhase.MAIN && remaining <= 10 && (remaining + deltaSeconds.toInt()) > 10) {
-                                val phaseName = if (currentPhase == SessionPhase.WARM_UP) "warm up" else "cool down"
-                                playCue("10 seconds of $phaseName remaining")
-                            }
-                            
-                            // Auto-transition
-                            if (currentPhase == SessionPhase.WARM_UP && phaseSecondsRunning >= phaseLimit) {
-                                currentPhase = SessionPhase.MAIN
-                                phaseSecondsRunning = 0
-                                playCue("Starting main workout")
-                            } else if (currentPhase == SessionPhase.COOL_DOWN && phaseSecondsRunning >= phaseLimit) {
-                                serviceScope.launch { stopSession() }
-                            }
-                            
-                            // Record sample once per second? 
-                            // Since we might have skipped multiple seconds, we should ideally record for each,
-                            // but for simplicity and performance in throttled background, 
-                            // we'll record the latest BPM for the current elapsed total.
-                            if (sessionSecondsRunning > lastRecordedSecond) {
-                                lastRecordedSecond = sessionSecondsRunning
-                                val currentBpm = currentState.bpm
-                                if (currentBpm > 0) {
-                                    sessionMaxBpm = maxOf(sessionMaxBpm, currentBpm)
-                                    sessionBpmSum += (currentBpm * deltaSeconds) // Weighted sum for better average
-                                    sessionSampleCount += deltaSeconds.toInt()
-                                    
-                                    // Calculate and track zone for this second
-                                    val zone = calculateZone(currentBpm, currentSettings)
-                                    if (zone in 1..5) {
-                                        sessionZoneTimes[zone] = (sessionZoneTimes[zone] ?: 0L) + deltaSeconds
-                                        
-                                        // MISSION: Align "In Target" specifically with Zone 2 for consistency
-                                        if (zone == 2) {
-                                            sessionInTargetZoneSeconds += deltaSeconds
-                                        }
-                                    } else {
-                                        // Count time where BPM is too low or not in a defined zone
-                                        sessionNoDataSeconds += deltaSeconds
-                                    }
-                                    
-                                    val sessionId = currentSessionId
-                                    // MISSION: Update notification periodically to signal activity to the OS
-                                    if (sessionSecondsRunning % 5L == 0L) {
-                                        val distStr = "%.2f".format(sessionDistanceMeters / 1000.0)
-                                        updateNotification("Distance: ${distStr}km | Heart Rate: $currentBpm BPM")
-                                    }
-                                    if (sessionId != null) {
-                                        // Still insert one sample representing the current state
-                                        val sample = HrSample(
-                                            sessionId = sessionId,
-                                            elapsedSeconds = sessionSecondsRunning,
-                                            rawBpm = currentBpm,
-                                            smoothedBpm = currentState.avgBpm,
-                                            connectionState = currentState.connectionStatus,
-                                            latitude = lastLocation?.latitude,
-                                            longitude = lastLocation?.longitude,
-                                            paceMinPerKm = currentState.paceMinPerKm
-                                        )
-                                        serviceScope.launch(Dispatchers.IO) {
-                                            database.sampleDao().insertSample(sample)
-                                        }
-                                    }
-                                }
-                            }
- 
-                            currentState.copy(
-                                secondsRunning = sessionSecondsRunning,
-                                lastHrAgeSeconds = hrAge,
-                                zoneTimes = sessionZoneTimes.toMap(),
-                                isSimulating = isSimulationEnabled,
-                                currentPhase = currentPhase,
-                                phaseSecondsRemaining = if (currentPhase == SessionPhase.MAIN) 0 else remaining
+                if (sessionSecondsRunning > lastRecordedSecond) {
+                    lastRecordedSecond = sessionSecondsRunning
+                    val currentBpm = currentState.bpm
+                    if (currentBpm > 0) {
+                        sessionMaxBpm = maxOf(sessionMaxBpm, currentBpm)
+                        sessionBpmSum += (currentBpm * deltaSeconds)
+                        sessionSampleCount += deltaSeconds.toInt()
+                        
+                        val zone = calculateZone(currentBpm, currentSettings)
+                        if (zone in 1..5) {
+                            sessionZoneTimes[zone] = (sessionZoneTimes[zone] ?: 0L) + deltaSeconds
+                            if (zone == 2) sessionInTargetZoneSeconds += deltaSeconds
+                        } else {
+                            sessionNoDataSeconds += deltaSeconds
+                        }
+                        
+                        // Side-effect: DB Record (Moved outside state update)
+                        val sessionId = currentSessionId
+                        if (sessionId != null) {
+                            val sample = HrSample(
+                                sessionId = sessionId,
+                                elapsedSeconds = sessionSecondsRunning,
+                                rawBpm = currentBpm,
+                                smoothedBpm = currentState.avgBpm,
+                                connectionState = currentState.connectionStatus,
+                                latitude = lastLocation?.latitude,
+                                longitude = lastLocation?.longitude,
+                                paceMinPerKm = currentState.paceMinPerKm
                             )
+                            database.sampleDao().insertSample(sample)
                         }
-                        SessionStatus.PAUSED -> {
-                            sessionSecondsPaused += deltaSeconds
-                            currentState.copy(
-                                secondsPaused = sessionSecondsPaused,
-                                lastHrAgeSeconds = hrAge
-                            )
+
+                        if (sessionSecondsRunning % 5L == 0L) {
+                            val distStr = "%.2f".format(sessionDistanceMeters / 1000.0)
+                            updateNotification("Distance: ${distStr}km | Heart Rate: $currentBpm BPM")
                         }
-                        SessionStatus.CONNECTING -> {
-                            // Check for 2-minute reconnect timeout
-                            if (firstDisconnectTime > 0 && (now - firstDisconnectTime > RECONNECT_TIMEOUT_MS)) {
-                                currentState.copy(
-                                    sessionStatus = SessionStatus.ERROR,
-                                    errorMessage = "Reconnect Timeout (2m)",
-                                    lastHrAgeSeconds = hrAge
-                                )
-                            } else {
-                                currentState.copy(lastHrAgeSeconds = hrAge)
-                            }
-                        }
-                        else -> currentState.copy(lastHrAgeSeconds = hrAge)
                     }
                 }
-                updateNotification() // Refresh HR Age in notification
+
+                _hrState.update { 
+                    it.copy(
+                        secondsRunning = sessionSecondsRunning,
+                        lastHrAgeSeconds = hrAge,
+                        zoneTimes = sessionZoneTimes.toMap(),
+                        isSimulating = isSimulationEnabled,
+                        currentPhase = currentPhase,
+                        phaseSecondsRemaining = if (currentPhase == SessionPhase.MAIN) 0 else remaining
+                    )
+                }
             }
+            SessionStatus.PAUSED -> {
+                sessionSecondsPaused += deltaSeconds
+                _hrState.update { 
+                    it.copy(
+                        secondsPaused = sessionSecondsPaused,
+                        lastHrAgeSeconds = hrAge
+                    )
+                }
+            }
+            SessionStatus.CONNECTING -> {
+                if (firstDisconnectTime > 0 && (now - firstDisconnectTime > RECONNECT_TIMEOUT_MS)) {
+                    _hrState.update { 
+                        it.copy(
+                            sessionStatus = SessionStatus.ERROR,
+                            errorMessage = "Reconnect Timeout (2m)",
+                            lastHrAgeSeconds = hrAge
+                        )
+                    }
+                } else {
+                    _hrState.update { it.copy(lastHrAgeSeconds = hrAge) }
+                }
+            }
+            else -> _hrState.update { it.copy(lastHrAgeSeconds = hrAge) }
         }
+        updateNotification()
     }
 
     private fun updateNotification() {
@@ -1248,7 +1251,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         releaseWakeLock()
         locationHandlerThread?.quitSafely()
         locationHandlerThread = null
-        timerJob?.cancel()
+        sessionHandlerThread?.quitSafely()
+        sessionHandlerThread = null
+        sessionHandler?.removeCallbacks(sessionTimerRunnable)
+        // timerJob?.cancel()
         tts?.shutdown()
         Log.d(TAG, "Service destroyed")
     }
