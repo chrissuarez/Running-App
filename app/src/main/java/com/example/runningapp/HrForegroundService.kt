@@ -193,7 +193,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var lastHrTimestamp = 0L
     private var firstDisconnectTime = 0L
     private val RECONNECT_TIMEOUT_MS = 120_000L // 2 minutes
-    // private var timerJob: Job? = null // REPLACED by HandlerThread
     
     // Mission: Session Phases
     private var currentPhase = SessionPhase.WARM_UP
@@ -379,17 +378,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         updateNotification()
     }
-
-    private fun updateNotification() {
-        if (_hrState.value.sessionStatus != SessionStatus.IDLE && _hrState.value.sessionStatus != SessionStatus.STOPPED) {
-             val state = _hrState.value
-             val content = "HR: ${state.bpm} | Active: ${formatTime(state.secondsRunning)}"
-             val notification = createNotification(content)
-             val manager = getSystemService(NotificationManager::class.java)
-             manager.notify(NOTIFICATION_ID, notification)
-        }
-    }
-
+    
     private fun formatTime(seconds: Long): String {
         val mins = seconds / 60
         val secs = seconds % 60
@@ -623,9 +612,25 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
 
-    private fun updateNotification(content: String) {
-        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        notificationManager.notify(NOTIFICATION_ID, createNotification(content))
+    private var lastNotificationTime = 0L
+    private val NOTIFICATION_THROTTLE_MS = 10_000L // 10 seconds in background
+    
+    private fun updateNotification(forceText: String? = null) {
+        val now = System.currentTimeMillis()
+        val isBackground = isBound == false // Heuristic: if no activity is bound, we are in background
+        
+        if (forceText == null && isBackground && (now - lastNotificationTime < NOTIFICATION_THROTTLE_MS)) {
+            // Skip non-critical update while in background to save system resources
+            return
+        }
+        lastNotificationTime = now
+        
+        val state = _hrState.value
+        val defaultContent = "HR: ${state.bpm} | Active: ${formatTime(state.secondsRunning)}"
+        val notification = createNotification(forceText ?: defaultContent)
+        
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, notification)
     }
 
     private fun startForegroundService() {
@@ -650,7 +655,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             startForeground(NOTIFICATION_ID, notification)
         }
         
-        // Mission: Acquire WakeLock to ensure CPU remains alive during session
         acquireWakeLock()
     }
 
@@ -1256,7 +1260,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         sessionHandlerThread?.quitSafely()
         sessionHandlerThread = null
         sessionHandler?.removeCallbacks(sessionTimerRunnable)
-        // timerJob?.cancel()
         tts?.shutdown()
         Log.d(TAG, "Service destroyed")
     }

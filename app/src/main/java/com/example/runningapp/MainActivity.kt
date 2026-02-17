@@ -32,6 +32,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -48,7 +50,8 @@ class MainActivity : ComponentActivity() {
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(className: ComponentName, service: IBinder) {
             val binder = service as HrForegroundService.LocalBinder
-            hrService = binder.getService()
+            val bound = binder.getService()
+            hrService = bound
             isBound = true
         }
 
@@ -77,19 +80,14 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    val serviceState = hrService?.hrState?.collectAsState(initial = HrState())
-                    val scope = rememberCoroutineScope()
-                    
-                    var boundService by remember { mutableStateOf<HrForegroundService?>(null) }
-                    
-                    LaunchedEffect(Unit) {
-                        while(true) {
-                            if (isBound && hrService != null) {
-                                boundService = hrService
+                    val serviceState = produceState(initialValue = HrState(), key1 = hrService) {
+                        hrService?.let { service ->
+                            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                                service.hrState.collect { value = it }
                             }
-                            delay(500)
                         }
                     }
+                    val scope = rememberCoroutineScope()
 
                     var currentScreen by rememberSaveable { mutableStateOf("main") }
                     var selectedSessionId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -114,10 +112,10 @@ class MainActivity : ComponentActivity() {
                     when (currentScreen) {
                         "main" -> {
                             MainScreen(
-                                hrService = boundService,
+                                hrService = hrService,
                                 onRequestPermissions = { checkAndRequestPermissions() },
                                 onStartService = {
-                                    val action = if (boundService == null) {
+                                    val action = if (hrService == null) {
                                         HrForegroundService.ACTION_START_FOREGROUND
                                     } else {
                                         HrForegroundService.ACTION_FORCE_SCAN
@@ -128,7 +126,7 @@ class MainActivity : ComponentActivity() {
                                     startService(intent)
                                 },
                                 onTogglePause = {
-                                    boundService?.togglePause()
+                                    hrService?.togglePause()
                                 },
                                 onStopSession = {
                                      val intent = Intent(this, HrForegroundService::class.java).apply {
@@ -137,10 +135,10 @@ class MainActivity : ComponentActivity() {
                                     startService(intent)
                                 },
                                 onConnectToDevice = { address ->
-                                    boundService?.connectToDevice(address)
+                                    hrService?.connectToDevice(address)
                                 },
                                 onTestCue = {
-                                    boundService?.playCue("Target heart rate reached. Keep it up!")
+                                    hrService?.playCue("Target heart rate reached. Keep it up!")
                                 },
                                 onOpenSettings = {
                                     currentScreen = "settings"
@@ -152,7 +150,7 @@ class MainActivity : ComponentActivity() {
                                     currentScreen = "manage_devices"
                                 },
                                 onToggleSimulation = {
-                                    boundService?.toggleSimulation()
+                                    hrService?.toggleSimulation()
                                 }
                             )
                         }
@@ -171,7 +169,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 onConnect = { address ->
-                                    boundService?.connectToDevice(address)
+                                    hrService?.connectToDevice(address)
                                     currentScreen = "main"
                                 },
                                 onBack = { currentScreen = "main" }
