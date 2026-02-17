@@ -330,7 +330,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                 longitude = lastLocation?.longitude,
                                 paceMinPerKm = currentState.paceMinPerKm
                             )
-                            database.sampleDao().insertSample(sample)
+                            serviceScope.launch(Dispatchers.IO) {
+                                database.sampleDao().insertSample(sample)
+                            }
                         }
 
                         if (sessionSecondsRunning % 5L == 0L) {
