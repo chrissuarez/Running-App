@@ -124,8 +124,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // Reconnection & Rate Limiting State
     private var targetDeviceAddress: String? = null
     private var reconnectDelay = 1000L
-    private var lastNotificationTime = 0L
     private var isReconnecting = false
+    private var isActivityBound = false
     
     // TTS & Audio Focus
     private var tts: TextToSpeech? = null
@@ -214,7 +214,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onBind(intent: Intent): IBinder {
+        isActivityBound = true
         return binder
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        isActivityBound = false
+        return super.onUnbind(intent)
+    }
+
+    override fun onRebind(intent: Intent?) {
+        isActivityBound = true
+        super.onRebind(intent)
     }
 
     override fun onCreate() {
@@ -617,7 +628,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     
     private fun updateNotification(forceText: String? = null) {
         val now = System.currentTimeMillis()
-        val isBackground = isBound == false // Heuristic: if no activity is bound, we are in background
+        val isBackground = !isActivityBound
         
         if (forceText == null && isBackground && (now - lastNotificationTime < NOTIFICATION_THROTTLE_MS)) {
             // Skip non-critical update while in background to save system resources
@@ -979,13 +990,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 timeInZoneString = debugInfo.timeInZone,
                 cooldownWithHysteresisString = debugInfo.cooldown
             ) 
-        }
-        
-        if (System.currentTimeMillis() - lastNotificationTime > 5000) {
-            lastNotificationTime = System.currentTimeMillis()
-            val notification = createNotification("HR: $bpm BPM | Avg: ${debugInfo.avg}")
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.notify(NOTIFICATION_ID, notification)
         }
     }
     
