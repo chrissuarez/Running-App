@@ -255,6 +255,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 _hrState.update { currentState ->
                     val hrAge = if (lastHrTimestamp > 0) (now - lastHrTimestamp) / 1000 else 0
                     
+                    if (sessionSecondsRunning % 10 == 0L) {
+                        Log.d(TAG, "Timer heartbeat: running=${sessionSecondsRunning}s, age=${hrAge}s, status=${currentState.sessionStatus}")
+                    }
+                    
                     when (currentState.sessionStatus) {
                         SessionStatus.RUNNING -> {
                             sessionSecondsRunning += deltaSeconds
@@ -623,7 +627,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val notification = createNotification("Service is running...")
         
         // Mission: Specify foreground service types for Android 14+
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NOTIFICATION_ID, 
+                notification, 
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or 
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
+            )
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID, 
                 notification, 
