@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
@@ -57,7 +58,8 @@ class MainActivity : ComponentActivity() {
             isBound = true
             
             // Mission: Robust Sync - if service is running, force UI to main screen
-            if (bound.isRunning()) {
+            if (bound.isSessionActive()) {
+                Log.d("MainActivity", "Restoring active session UI")
                 currentScreenState.value = "main"
             }
         }

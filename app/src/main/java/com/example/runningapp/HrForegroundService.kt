@@ -223,6 +223,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                _hrState.value.sessionStatus == SessionStatus.ERROR
     }
 
+    fun isSessionActive(): Boolean = isRunning()
+
     override fun onBind(intent: Intent): IBinder {
         isActivityBound = true
         return binder
@@ -291,9 +293,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val currentState = _hrState.value
         val hrAge = if (lastHrTimestamp > 0) (now - lastHrTimestamp) / 1000 else 0
         
-        if (sessionSecondsRunning % 10 == 0L) {
-            Log.d(TAG, "Timer heartbeat: running=${sessionSecondsRunning}s, age=${hrAge}s, status=${currentState.sessionStatus}")
-        }
+        // Mission: 1Hz Heartbeat for log verification
+        Log.d(TAG, "Timer heartbeat: running=${sessionSecondsRunning}s, age=${hrAge}s, status=${currentState.sessionStatus}")
 
         when (currentState.sessionStatus) {
             SessionStatus.RUNNING -> {
