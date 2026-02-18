@@ -118,7 +118,7 @@ class MainActivity : ComponentActivity() {
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         this.action = action
                                     }
-                                    startService(intent)
+                                    ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
                                 onTogglePause = {
                                     hrService?.togglePause()
@@ -127,7 +127,7 @@ class MainActivity : ComponentActivity() {
                                      val intent = Intent(this, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_STOP_FOREGROUND
                                     }
-                                    startService(intent)
+                                    ContextCompat.startForegroundService(this, intent)
                                 },
                                 onConnectToDevice = { address ->
                                     hrService?.connectToDevice(address)

@@ -409,9 +409,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Mission: Build persistent notification and call startForeground immediately
+        startForegroundService()
+
         when (intent?.action) {
             ACTION_START_FOREGROUND -> {
-                startForegroundService()
+                // Already called startForegroundService() above
                 serviceScope.launch {
                     // Try to connect to active device first, else scan
                     val settings = currentSettings
