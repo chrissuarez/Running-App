@@ -287,69 +287,74 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         when (currentState.sessionStatus) {
             SessionStatus.RUNNING -> {
-                sessionSecondsRunning += deltaSeconds
-                phaseSecondsRunning += deltaSeconds
+                val startSecond = sessionSecondsRunning
+                val endSecond = sessionSecondsRunning + deltaSeconds
                 
-                val phaseLimit = when (currentPhase) {
-                    SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
-                    SessionPhase.MAIN -> Int.MAX_VALUE
-                    SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
-                }
-                
-                val remaining = (phaseLimit - phaseSecondsRunning).toInt()
-                
-                if (currentPhase != SessionPhase.MAIN && remaining <= 10 && (remaining + deltaSeconds.toInt()) > 10) {
-                    val phaseName = if (currentPhase == SessionPhase.WARM_UP) "warm up" else "cool down"
-                    playCue("10 seconds of $phaseName remaining")
-                }
-                
-                if (currentPhase == SessionPhase.WARM_UP && phaseSecondsRunning >= phaseLimit) {
-                    currentPhase = SessionPhase.MAIN
-                    phaseSecondsRunning = 0
-                    playCue("Starting main workout")
-                } else if (currentPhase == SessionPhase.COOL_DOWN && phaseSecondsRunning >= phaseLimit) {
-                    serviceScope.launch { stopSession() }
-                }
+                for (sec in (startSecond + 1)..endSecond) {
+                    sessionSecondsRunning = sec
+                    phaseSecondsRunning += 1
+                    
+                    val phaseLimit = when (currentPhase) {
+                        SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
+                        SessionPhase.MAIN -> Int.MAX_VALUE
+                        SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
+                    }
+                    
+                    val remaining = (phaseLimit - phaseSecondsRunning).toInt()
+                    
+                    if (currentPhase != SessionPhase.MAIN && remaining == 10) {
+                        val phaseName = if (currentPhase == SessionPhase.WARM_UP) "warm up" else "cool down"
+                        playCue("10 seconds of $phaseName remaining")
+                    }
+                    
+                    if (currentPhase == SessionPhase.WARM_UP && phaseSecondsRunning >= phaseLimit) {
+                        currentPhase = SessionPhase.MAIN
+                        phaseSecondsRunning = 0
+                        playCue("Starting main workout")
+                    } else if (currentPhase == SessionPhase.COOL_DOWN && phaseSecondsRunning >= phaseLimit) {
+                        serviceScope.launch { stopSession() }
+                        break
+                    }
 
-                if (sessionSecondsRunning > lastRecordedSecond) {
-                    lastRecordedSecond = sessionSecondsRunning
-                    val currentBpm = currentState.bpm
-                    if (currentBpm > 0) {
-                        sessionMaxBpm = maxOf(sessionMaxBpm, currentBpm)
-                        sessionBpmSum += (currentBpm * deltaSeconds)
-                        sessionSampleCount += deltaSeconds.toInt()
-                        
-                        val zone = calculateZone(currentBpm, currentSettings)
-                        if (zone in 1..5) {
-                            sessionZoneTimes[zone] = (sessionZoneTimes[zone] ?: 0L) + deltaSeconds
-                            if (zone == 2) sessionInTargetZoneSeconds += deltaSeconds
-                        } else {
-                            sessionNoDataSeconds += deltaSeconds
-                        }
-                        
-                        // Side-effect: DB Record (Moved outside state update)
-                        val sessionId = currentSessionId
-                        if (sessionId != null) {
-                            val sample = HrSample(
-                                sessionId = sessionId,
-                                elapsedSeconds = sessionSecondsRunning,
-                                rawBpm = currentBpm,
-                                smoothedBpm = currentState.avgBpm,
-                                connectionState = currentState.connectionStatus,
-                                latitude = lastLocation?.latitude,
-                                longitude = lastLocation?.longitude,
-                                paceMinPerKm = currentState.paceMinPerKm
-                            )
-                            serviceScope.launch(Dispatchers.IO) {
-                                database.sampleDao().insertSample(sample)
+                    if (sessionSecondsRunning > lastRecordedSecond) {
+                        lastRecordedSecond = sessionSecondsRunning
+                        val currentBpm = currentState.bpm
+                        if (currentBpm > 0) {
+                            sessionMaxBpm = maxOf(sessionMaxBpm, currentBpm)
+                            sessionBpmSum += currentBpm
+                            sessionSampleCount += 1
+                            
+                            val zone = calculateZone(currentBpm, currentSettings)
+                            if (zone in 1..5) {
+                                sessionZoneTimes[zone] = (sessionZoneTimes[zone] ?: 0L) + 1
+                                if (zone == 2) sessionInTargetZoneSeconds += 1
+                            } else {
+                                sessionNoDataSeconds += 1
+                            }
+                            
+                            val sessionId = currentSessionId
+                            if (sessionId != null) {
+                                val sample = HrSample(
+                                    sessionId = sessionId,
+                                    elapsedSeconds = sessionSecondsRunning,
+                                    rawBpm = currentBpm,
+                                    smoothedBpm = currentState.avgBpm,
+                                    connectionState = currentState.connectionStatus,
+                                    latitude = lastLocation?.latitude,
+                                    longitude = lastLocation?.longitude,
+                                    paceMinPerKm = currentState.paceMinPerKm
+                                )
+                                serviceScope.launch(Dispatchers.IO) {
+                                    database.sampleDao().insertSample(sample)
+                                }
                             }
                         }
-
-                        if (sessionSecondsRunning % 5L == 0L) {
-                            val distStr = "%.2f".format(sessionDistanceMeters / 1000.0)
-                            updateNotification("Distance: ${distStr}km | Heart Rate: $currentBpm BPM")
-                        }
                     }
+                }
+
+                if (sessionSecondsRunning % 5L == 0L || deltaSeconds > 1) {
+                    val distStr = "%.2f".format(sessionDistanceMeters / 1000.0)
+                    updateNotification("Distance: ${distStr}km | Heart Rate: ${currentState.bpm} BPM")
                 }
 
                 _hrState.update { 
@@ -359,7 +364,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         zoneTimes = sessionZoneTimes.toMap(),
                         isSimulating = isSimulationEnabled,
                         currentPhase = currentPhase,
-                        phaseSecondsRemaining = if (currentPhase == SessionPhase.MAIN) 0 else remaining
+                        phaseSecondsRemaining = if (currentPhase == SessionPhase.MAIN) 0 else {
+                            val limit = when (currentPhase) {
+                                SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
+                                SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
+                                else -> 0
+                            }
+                            (limit - phaseSecondsRunning).toInt()
+                        }
                     )
                 }
             }
