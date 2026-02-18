@@ -44,8 +44,8 @@ import com.example.runningapp.ui.SessionDetailScreen
 
 class MainActivity : ComponentActivity() {
 
-    private var hrService: HrForegroundService? = null
-    private var isBound = false
+    private var hrService by mutableStateOf<HrForegroundService?>(null)
+    private var isBound by mutableStateOf(false)
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(className: ComponentName, service: IBinder) {
