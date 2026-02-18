@@ -124,7 +124,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     // Reconnection & Rate Limiting State
     private var targetDeviceAddress: String? = null
-    private var reconnectDelay = 1000L
+    private var reconnectDelay = 3000L
     private var isReconnecting = false
     private var isActivityBound = false
     
@@ -214,6 +214,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     inner class LocalBinder : Binder() {
         fun getService(): HrForegroundService = this@HrForegroundService
+    }
+
+    fun isRunning(): Boolean {
+        return _hrState.value.sessionStatus == SessionStatus.RUNNING || 
+               _hrState.value.sessionStatus == SessionStatus.PAUSED ||
+               _hrState.value.sessionStatus == SessionStatus.CONNECTING ||
+               _hrState.value.sessionStatus == SessionStatus.ERROR
     }
 
     override fun onBind(intent: Intent): IBinder {
@@ -723,10 +730,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun stopForegroundService() {
-        stopScanning() // Stop scanning if running
-        disconnect() // Disconnect GATT if connected
+        Log.d(TAG, "stopForegroundService called - Kill Switch")
+        stopScanning() 
+        disconnect() 
         releaseWakeLock()
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        
+        // Mission: Explicit Kill Switch - ensure notification vanishes
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
         stopSelf()
     }
     
@@ -859,7 +874,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             device.address
         }
         _hrState.update { it.copy(connectionStatus = "Connecting to $deviceName...") }
-        bluetoothGatt = device.connectGatt(this, false, gattCallback)
+        
+        // Mission: Robust Bluetooth - Close old connection and connect on IO
+        serviceScope.launch(Dispatchers.IO) {
+            bluetoothGatt?.close()
+            bluetoothGatt = null
+            
+            Log.d(TAG, "Connecting to GATT on IO thread...")
+            bluetoothGatt = device.connectGatt(this@HrForegroundService, false, gattCallback)
+        }
     }
     
     private fun attemptReconnect() {
@@ -885,10 +908,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     fun disconnect() {
         targetDeviceAddress = null 
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-            bluetoothGatt?.disconnect()
-            bluetoothGatt?.close()
-            bluetoothGatt = null
+        serviceScope.launch(Dispatchers.IO) {
+            if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                bluetoothGatt?.disconnect()
+                bluetoothGatt?.close()
+                bluetoothGatt = null
+            }
         }
         _hrState.update { it.copy(
             connectionStatus = "Disconnected", 
@@ -912,7 +937,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return
 
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                reconnectDelay = 1000L 
+                reconnectDelay = 3000L 
                 isReconnecting = false
                 reconnectAttemptCount = 0
                 firstDisconnectTime = 0
@@ -957,16 +982,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         sessionStatus = if (it.sessionStatus == SessionStatus.RUNNING) SessionStatus.CONNECTING else it.sessionStatus
                     ) }
                     
-                    gatt?.close()
-                    bluetoothGatt = null
-                    attemptReconnect()
+                    serviceScope.launch(Dispatchers.IO) {
+                        gatt?.close()
+                        if (bluetoothGatt == gatt) bluetoothGatt = null
+                        attemptReconnect()
+                    }
                 } else {
                      _hrState.update { it.copy(
                          connectionStatus = "Disconnected",
                          sessionStatus = SessionStatus.STOPPED
                      ) }
-                     gatt?.close()
-                     bluetoothGatt = null
+                     serviceScope.launch(Dispatchers.IO) {
+                        gatt?.close()
+                        if (bluetoothGatt == gatt) bluetoothGatt = null
+                     }
                 }
             }
         }

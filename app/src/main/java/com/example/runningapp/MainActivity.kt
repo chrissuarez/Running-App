@@ -47,12 +47,19 @@ class MainActivity : ComponentActivity() {
     private var hrService by mutableStateOf<HrForegroundService?>(null)
     private var isBound by mutableStateOf(false)
 
+    private var currentScreenState = mutableStateOf("main")
+
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(className: ComponentName, service: IBinder) {
             val binder = service as HrForegroundService.LocalBinder
             val bound = binder.getService()
             hrService = bound
             isBound = true
+            
+            // Mission: Robust Sync - if service is running, force UI to main screen
+            if (bound.isRunning()) {
+                currentScreenState.value = "main"
+            }
         }
 
         override fun onServiceDisconnected(arg0: ComponentName) {
@@ -84,7 +91,7 @@ class MainActivity : ComponentActivity() {
                     }
                     val scope = rememberCoroutineScope()
 
-                    var currentScreen by rememberSaveable { mutableStateOf("main") }
+                    var currentScreen by currentScreenState
                     var selectedSessionId by rememberSaveable { mutableStateOf<Long?>(null) }
                     
                     val settingsRepository = remember { SettingsRepository(this) }
@@ -362,8 +369,15 @@ fun MainScreen(
                     }
                     Text(label)
                 }
-
-                Button(onClick = onStopSession, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
+            }
+            
+            // Mission: Robust Kill Switch - show Force Stop if service is active or in error
+            if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
+                Button(
+                    onClick = onStopSession, 
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.padding(start = 8.dp)
+                ) {
                     Text("Force Stop")
                 }
             }
