@@ -130,6 +130,10 @@ class MainActivity : ComponentActivity() {
                                     ContextCompat.startForegroundService(this, intent)
                                 },
                                 onConnectToDevice = { address ->
+                                    val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                        action = HrForegroundService.ACTION_START_FOREGROUND
+                                    }
+                                    ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.connectToDevice(address)
                                 },
                                 onTestCue = {
@@ -145,6 +149,10 @@ class MainActivity : ComponentActivity() {
                                     currentScreen = "manage_devices"
                                 },
                                 onToggleSimulation = {
+                                    val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                        action = HrForegroundService.ACTION_START_FOREGROUND
+                                    }
+                                    ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.toggleSimulation()
                                 }
                             )

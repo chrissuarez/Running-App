@@ -20,9 +20,9 @@ import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Binder
 import android.content.pm.ServiceInfo
-import android.os.Build
 import android.os.PowerManager
 import android.os.IBinder
+import android.app.PendingIntent
 import android.os.Handler
 import android.os.HandlerThread
 import android.speech.tts.TextToSpeech
@@ -141,6 +141,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var lastLocation: Location? = null
     private var sessionDistanceMeters = 0.0
     private var lastSplitAnnouncedKm = 0
+    private var lastNotificationZone = -1
+    private var lastNotificationPhase = SessionPhase.WARM_UP
     
     // Mission: Resilient Tracking Loop
     private var sessionHandlerThread: HandlerThread? = null
@@ -352,9 +354,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
 
-                if (sessionSecondsRunning % 5L == 0L || deltaSeconds > 1) {
+                // Mission: Throttled Notification Updates (10s in background)
+                val statusChanged = currentPhase != currentState.currentPhase || 
+                                   currentState.connectionStatus.contains("Failed")
+                
+                if (sessionSecondsRunning % 10L == 0L || deltaSeconds > 1 || statusChanged) {
                     val distStr = "%.2f".format(sessionDistanceMeters / 1000.0)
-                    updateNotification("Distance: ${distStr}km | Heart Rate: ${currentState.bpm} BPM")
+                    updateNotification(
+                        forceUpdate = statusChanged,
+                        overrideText = "Dist: ${distStr}km | HR: ${currentState.bpm} BPM"
+                    )
                 }
 
                 _hrState.update { 
@@ -641,19 +650,29 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var lastNotificationTime = 0L
     private val NOTIFICATION_THROTTLE_MS = 10_000L // 10 seconds in background
     
-    private fun updateNotification(forceText: String? = null) {
+    private fun updateNotification(forceUpdate: Boolean = false, overrideText: String? = null) {
         val now = System.currentTimeMillis()
         val isBackground = !isActivityBound
         
-        if (forceText == null && isBackground && (now - lastNotificationTime < NOTIFICATION_THROTTLE_MS)) {
+        // Critical State Detection
+        val currentState = _hrState.value
+        val currentZone = calculateZone(currentState.bpm, currentSettings)
+        val zoneChanged = currentZone != lastNotificationZone
+        val phaseChanged = currentPhase != lastNotificationPhase
+        
+        val isCritical = forceUpdate || zoneChanged || phaseChanged
+        
+        if (!isCritical && isBackground && (now - lastNotificationTime < NOTIFICATION_THROTTLE_MS)) {
             // Skip non-critical update while in background to save system resources
             return
         }
-        lastNotificationTime = now
         
-        val state = _hrState.value
-        val defaultContent = "HR: ${state.bpm} | Active: ${formatTime(state.secondsRunning)}"
-        val notification = createNotification(forceText ?: defaultContent)
+        lastNotificationTime = now
+        lastNotificationZone = currentZone
+        lastNotificationPhase = currentPhase
+        
+        val defaultContent = "HR: ${currentState.bpm} | Active: ${formatTime(sessionSecondsRunning)}"
+        val notification = createNotification(overrideText ?: defaultContent)
         
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, notification)
@@ -711,12 +730,28 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
     
     private fun createNotification(content: String): Notification {
-         return NotificationCompat.Builder(this, CHANNEL_ID)
+        val stopIntent = Intent(this, HrForegroundService::class.java).apply {
+            action = ACTION_STOP_FOREGROUND
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this, 0, stopIntent, 
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val activityIntent = Intent(this, MainActivity::class.java)
+        val activityPendingIntent = PendingIntent.getActivity(
+            this, 0, activityIntent, 
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("HR Monitor")
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_menu_compass)
-            .setOnlyAlertOnce(true) // Don't buzz every time
+            .setOnlyAlertOnce(true)
             .setOngoing(true)
+            .setContentIntent(activityPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Workout", stopPendingIntent)
             .build()
     }
 
