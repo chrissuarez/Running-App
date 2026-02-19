@@ -336,9 +336,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         break
                     }
 
-                    if (sec == 30L && currentState.bpm > 0) {
+                    if (sec == 600L && currentState.bpm > 0) {
                         baselineHr = currentState.bpm
-                        Log.d(TAG, "Drift Baseline captured: $baselineHr")
+                        Log.d(TAG, "Drift Baseline captured at 10m: $baselineHr")
                     }
 
                     if (sessionSecondsRunning > lastRecordedSecond) {
@@ -1204,13 +1204,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                  val isBufferActive = sessionSecondsRunning < 480
                  val criticalThreshold = currentSettings.zone2High + 15
                  
-                 // MISSION: Cardiac Drift Detection (TESTING MODE) - > 60s, <= baseline + 12
-                 val isDrifting = sessionSecondsRunning > 60 && 
+                 // MISSION: Cardiac Drift Detection - > 20m, <= baseline + 12
+                 val isDrifting = sessionSecondsRunning > 1200 && 
                                  baselineHr != null && 
                                  avgBpm <= (baselineHr!! + 12)
 
                  if (isDrifting && avgBpm > currentSettings.zone2High) {
-                    val driftCooldownMs = 60_000L // 1 min (TESTING)
+                    val driftCooldownMs = 300_000L // 5 mins
                     if (now - lastDriftCueTime >= driftCooldownMs) {
                         playCue("Heart rate drifting up. Keep effort steady, or take a short walk break.")
                         lastDriftCueTime = now
