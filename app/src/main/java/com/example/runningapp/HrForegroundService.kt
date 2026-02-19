@@ -275,7 +275,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         sessionHandler = Handler(sessionHandlerThread!!.looper)
         
         createNotificationChannel()
-        startSessionTimerLoop()
     }
 
     private fun startSessionTimerLoop() {
@@ -502,6 +501,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             startNewDatabaseSession()
         }
         _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
+        startSessionTimerLoop()
         if (currentSettings.runMode == "outdoor") {
             startLocationUpdates()
         }
@@ -539,6 +539,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 runMode = currentSettings.runMode
             )
             currentSessionId = database.sessionDao().insertSession(session)
+            startSessionTimerLoop()
             sessionMaxBpm = 0
             sessionBpmSum = 0
             sessionSampleCount = 0
@@ -1267,6 +1268,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 startNewDatabaseSession()
             }
             _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
+            startSessionTimerLoop()
             if (currentSettings.runMode == "outdoor") {
                 startLocationUpdates()
             }
