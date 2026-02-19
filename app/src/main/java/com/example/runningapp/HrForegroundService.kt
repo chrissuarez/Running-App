@@ -195,6 +195,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var zoneEnterTime = 0L
     
     private var lastCueTime = 0L
+    private var baselineHr: Int? = null
+    private var lastDriftCueTime = 0L
     
     // --- Session Engine State ---
     private var sessionSecondsRunning = 0L
@@ -332,6 +334,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     } else if (currentPhase == SessionPhase.COOL_DOWN && phaseSecondsRunning >= phaseLimit) {
                         serviceScope.launch { stopSession() }
                         break
+                    }
+
+                    if (sec == 600L && currentState.bpm > 0) {
+                        baselineHr = currentState.bpm
+                        Log.d(TAG, "Baseline HR captured at 10m: $baselineHr BPM")
                     }
 
                     if (sessionSecondsRunning > lastRecordedSecond) {
@@ -555,6 +562,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             sessionMaxBpm = 0
             sessionBpmSum = 0
             sessionSampleCount = 0
+            baselineHr = null
+            lastDriftCueTime = 0L
             sessionInTargetZoneSeconds = 0
             lastRecordedSecond = -1
             
@@ -1195,7 +1204,22 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                  val isBufferActive = sessionSecondsRunning < 480
                  val criticalThreshold = currentSettings.zone2High + 15
                  
-                 if (!isBufferActive || avgBpm > criticalThreshold) {
+                 // MISSION: Cardiac Drift Detection - >20 mins, < baseline + 12
+                 val isDrifting = sessionSecondsRunning > 1200 && 
+                                 baselineHr != null && 
+                                 avgBpm < (baselineHr!! + 12)
+
+                 if (isDrifting) {
+                    val driftCooldownMs = 300_000L // 5 mins
+                    if (now - lastDriftCueTime >= driftCooldownMs) {
+                        playCue("Heart rate drifting up. Keep effort steady, or take a short walk break.")
+                        lastDriftCueTime = now
+                        lastCueTime = now
+                        Log.d(TAG, "Drift Cue Played (Time: ${sessionSecondsRunning}s, Avg: $avgBpm, Base: $baselineHr)")
+                    } else {
+                        Log.d(TAG, "Drift detected but suppressed by anti-nag cooldown")
+                    }
+                 } else if (!isBufferActive || avgBpm > criticalThreshold) {
                      val text = if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
                      playCue(text)
                      lastCueTime = now
