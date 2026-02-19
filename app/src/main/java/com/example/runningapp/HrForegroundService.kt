@@ -510,6 +510,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun startNewDatabaseSession() {
         serviceScope.launch(Dispatchers.IO) {
+            // Mission: Reset Phase Engine for a fresh session
+            currentPhase = SessionPhase.WARM_UP
+            phaseSecondsRunning = 0
+            
             // Reset session-level counters only when a new database session begins
             sessionSecondsRunning = 0
             sessionSecondsPaused = 0
@@ -519,6 +523,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             lastSplitAnnouncedKm = 0
             synchronized(paceHistory) { paceHistory.clear() }
             lastLocation = null
+
+            // Mission: Immediate UI State Reset 
+            _hrState.update { it.copy(
+                currentPhase = SessionPhase.WARM_UP,
+                phaseSecondsRemaining = currentSettings.warmUpDurationSeconds,
+                secondsRunning = 0,
+                secondsPaused = 0,
+                distanceKm = 0.0,
+                paceMinPerKm = 0.0
+            )}
 
             val session = RunnerSession(
                 startTime = System.currentTimeMillis(),
@@ -1298,15 +1312,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun stopLocationUpdates() {
         Log.d(TAG, "stopLocationUpdates() - Killing location engine")
-        locationCallback?.let { 
-            fusedLocationClient.removeLocationUpdates(it)
+        val callback = locationCallback
+        if (callback != null) {
+            fusedLocationClient.removeLocationUpdates(callback).addOnCompleteListener { task ->
+                Log.d(TAG, "removeLocationUpdates task complete. Success: ${task.isSuccessful}")
+                locationHandlerThread?.quitSafely()
+                locationHandlerThread = null
+                locationHandler = null
+            }
             locationCallback = null
         }
-        
-        // Mission: Explicitly quit the thread to stop the looper
-        locationHandlerThread?.quitSafely()
-        locationHandlerThread = null
-        locationHandler = null
         
         lastLocation = null
         Log.d(TAG, "Location updates stopped and thread reaped")
@@ -1417,8 +1432,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         sessionHandlerThread = null
         
         stopLocationUpdates()
-        locationHandlerThread?.quitSafely()
-        locationHandlerThread = null
+        // locationHandlerThread disposal is now handled asynchronously in stopLocationUpdates()
         
         releaseWakeLock()
         tts?.shutdown()
