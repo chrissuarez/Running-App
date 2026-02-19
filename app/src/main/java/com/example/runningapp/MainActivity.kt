@@ -141,6 +141,7 @@ class MainActivity : ComponentActivity() {
                                 onConnectToDevice = { address ->
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
+                                        putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.connectToDevice(address)
@@ -181,6 +182,11 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 onConnect = { address ->
+                                    val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                        action = HrForegroundService.ACTION_START_FOREGROUND
+                                        putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
+                                    }
+                                    ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.connectToDevice(address)
                                     currentScreen = "main"
                                 },

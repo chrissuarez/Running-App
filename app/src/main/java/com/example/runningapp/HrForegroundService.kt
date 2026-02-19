@@ -209,6 +209,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_PAUSE_SESSION = "ACTION_PAUSE_SESSION"
         const val ACTION_RESUME_SESSION = "ACTION_RESUME_SESSION"
         const val ACTION_FORCE_SCAN = "ACTION_FORCE_SCAN"
+        const val EXTRA_DEVICE_ADDRESS = "EXTRA_DEVICE_ADDRESS"
         const val TAG = "HrService"
     }
 
@@ -432,14 +433,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         when (intent?.action) {
             ACTION_START_FOREGROUND -> {
-                // Already called startForegroundService() above
+                val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                 serviceScope.launch {
-                    // Try to connect to active device first, else scan
-                    val settings = currentSettings
-                    if (settings.activeDeviceAddress != null) {
-                        connectToDevice(settings.activeDeviceAddress!!)
+                    if (overrideAddress != null) {
+                        Log.d(TAG, "EXTRA_DEVICE_ADDRESS found: $overrideAddress. Overriding saved state.")
+                        connectToDevice(overrideAddress)
                     } else {
-                        startScanning()
+                        // Try to connect to active device first, else scan
+                        val settings = currentSettings
+                        if (settings.activeDeviceAddress != null) {
+                            connectToDevice(settings.activeDeviceAddress!!)
+                        } else {
+                            startScanning()
+                        }
                     }
                 }
             }
@@ -854,6 +860,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     
     fun connectToDevice(address: String) {
         stopScanning()
+        
+        // Step 3: Deep Cleanup / State Sanitization
+        reconnectAttemptCount = 0
+        reconnectDelay = 3000L
+        
         targetDeviceAddress = address
         val device = bluetoothAdapter?.getRemoteDevice(address) ?: return
         connectToDevice(device)
@@ -954,11 +965,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     errorMessage = null
                 ) }
 
-                // Save device as active
-                serviceScope.launch {
-                    settingsRepository.saveDevice(deviceAddress, deviceName)
-                }
-
                 // FIX: Ensure a database session exists immediately upon connection
                 if (currentSessionId == null) {
                     startNewDatabaseSession()
@@ -1013,6 +1019,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 val characteristic = service?.getCharacteristic(HEART_RATE_MEASUREMENT_UUID)
                 
                 if (characteristic != null) {
+                    // Mission: Post-Connection Persistence - Save as active ONLY when HR service is verified
+                    gatt?.device?.let { device ->
+                        val deviceName = if (ActivityCompat.checkSelfPermission(this@HrForegroundService, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                            device.name ?: "Unknown"
+                        } else "Unknown"
+                        val deviceAddress = device.address
+                        serviceScope.launch {
+                            settingsRepository.saveDevice(deviceAddress, deviceName)
+                        }
+                    }
+
                     if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
                         gatt.setCharacteristicNotification(characteristic, true)
                         val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
