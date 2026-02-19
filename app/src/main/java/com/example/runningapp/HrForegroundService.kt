@@ -152,7 +152,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private val sessionTimerRunnable = object : Runnable {
         override fun run() {
             pulseSession()
-            sessionHandler?.postDelayed(this, 1000)
+            // Mission: Stop the zombie loop if status is STOPPED or IDLE
+            val status = _hrState.value.sessionStatus
+            if (status != SessionStatus.STOPPED && status != SessionStatus.IDLE) {
+                sessionHandler?.postDelayed(this, 1000)
+            } else {
+                Log.d(TAG, "Timer loop exiting - status is $status")
+            }
         }
     }
     
@@ -742,6 +748,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         stopScanning() 
         disconnect() 
         releaseWakeLock()
+        
+        // Mission: Stop the zombie timer loop immediately
+        sessionHandler?.removeCallbacks(sessionTimerRunnable)
         
         // Mission: Explicit Kill Switch - ensure notification vanishes
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -1354,15 +1363,28 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         super.onDestroy()
+        Log.d(TAG, "onDestroy called - Clean Exit")
+        
+        // 1. Clean up Bluetooth precisely
         stopScanning()
-        disconnect()
-        stopLocationUpdates()
-        releaseWakeLock()
-        locationHandlerThread?.quitSafely()
-        locationHandlerThread = null
+        targetDeviceAddress = null
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+            bluetoothGatt?.disconnect()
+            bluetoothGatt?.close()
+            bluetoothGatt = null
+        }
+        
+        // 2. Kill all background loops and threads
+        serviceScope.cancel() 
+        sessionHandler?.removeCallbacks(sessionTimerRunnable)
         sessionHandlerThread?.quitSafely()
         sessionHandlerThread = null
-        sessionHandler?.removeCallbacks(sessionTimerRunnable)
+        
+        stopLocationUpdates()
+        locationHandlerThread?.quitSafely()
+        locationHandlerThread = null
+        
+        releaseWakeLock()
         tts?.shutdown()
         Log.d(TAG, "Service destroyed")
     }
