@@ -103,6 +103,24 @@ fun SummaryStats(session: RunnerSession) {
                     StatLarge(label = "Avg Pace", value = pStr)
                 }
             }
+
+            if (session.isRunWalkMode || session.walkBreaksCount > 0) {
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatLarge(
+                        label = "Walk Breaks", 
+                        value = "${session.walkBreaksCount}"
+                    )
+                    if (session.isRunWalkMode) {
+                        StatLarge(
+                            label = "Coach Mode", 
+                            value = "Run/Walk"
+                        )
+                    }
+                }
+            }
         }
     }
 }

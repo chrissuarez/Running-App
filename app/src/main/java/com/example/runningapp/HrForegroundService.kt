@@ -626,6 +626,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val finalSecondsPaused = sessionSecondsPaused
         val finalDistanceKm = sessionDistanceMeters / 1000.0
         val finalAvgPace = calculatePace()
+        val finalWalkBreaksCount = walkBreaksCount
+        val finalIsRunWalkMode = currentSettings.runWalkCoachEnabled
         
         disconnect()
         stopLocationUpdates()
@@ -652,7 +654,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             zone3Seconds = sessionZoneTimes[3] ?: 0L,
                             zone4Seconds = sessionZoneTimes[4] ?: 0L,
                             zone5Seconds = sessionZoneTimes[5] ?: 0L,
-                            noDataSeconds = sessionNoDataSeconds
+                            noDataSeconds = sessionNoDataSeconds,
+                            walkBreaksCount = finalWalkBreaksCount,
+                            isRunWalkMode = finalIsRunWalkMode
                         )
                         database.sessionDao().updateSession(updatedSession)
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")

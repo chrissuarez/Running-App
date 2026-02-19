@@ -66,8 +66,25 @@ fun SessionItem(session: RunnerSession, onClick: () -> Unit) {
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(text = dateStr, fontWeight = FontWeight.Bold)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(text = dateStr, fontWeight = FontWeight.Bold)
+                    if (session.isRunWalkMode) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            shape = MaterialTheme.shapes.extraSmall,
+                            color = Color(0xFFFFA500).copy(alpha = 0.2f)
+                        ) {
+                            Text(
+                                text = "RUN/WALK",
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFFFFA500)
+                            )
+                        }
+                    }
+                }
                 Text(text = formatDuration(session.durationSeconds))
             }
             Spacer(modifier = Modifier.height(8.dp))
