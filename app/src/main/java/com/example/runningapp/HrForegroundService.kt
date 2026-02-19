@@ -1441,9 +1441,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         sessionHandlerThread = null
         
         stopLocationUpdates()
-        locationHandlerThread?.quitSafely()
-        locationHandlerThread = null
-        locationHandler = null
         
         releaseWakeLock()
         tts?.shutdown()
