@@ -139,6 +139,7 @@ class MainActivity : ComponentActivity() {
                                     ContextCompat.startForegroundService(this, intent)
                                 },
                                 onConnectToDevice = { address ->
+                                    Log.d("MainActivity", "User tapped device: $address")
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
@@ -182,6 +183,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 onConnect = { address ->
+                                    Log.d("MainActivity", "User tapped device in ManageDevices: $address")
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
