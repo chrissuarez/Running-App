@@ -449,19 +449,27 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         when (intent?.action) {
             ACTION_START_FOREGROUND -> {
                 val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
-                serviceScope.launch {
-                    if (overrideAddress != null) {
-                        Log.d(TAG, "EXTRA_DEVICE_ADDRESS found: $overrideAddress. Overriding saved state.")
-                        connectToDevice(overrideAddress)
-                    } else {
-                        // Try to connect to active device first, else scan
-                        val settings = currentSettings
-                        if (settings.activeDeviceAddress != null) {
-                            connectToDevice(settings.activeDeviceAddress!!)
+                if (!isSimulationEnabled) {
+                    serviceScope.launch {
+                        if (overrideAddress != null) {
+                            Log.d(TAG, "EXTRA_DEVICE_ADDRESS found: $overrideAddress. Overriding saved state.")
+                            connectToDevice(overrideAddress)
                         } else {
-                            startScanning()
+                            // Try to connect to active device first, else scan
+                            val settings = currentSettings
+                            if (settings.activeDeviceAddress != null) {
+                                connectToDevice(settings.activeDeviceAddress!!)
+                            } else {
+                                startScanning()
+                            }
                         }
                     }
+                } else {
+                    Log.d(TAG, "ACTION_START_FOREGROUND received but Simulation Mode is active. Bypassing hardware.")
+                    if (currentSessionId == null) {
+                        startNewDatabaseSession()
+                    }
+                    _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
                 }
             }
             ACTION_STOP_FOREGROUND -> {
@@ -476,7 +484,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             ACTION_FORCE_SCAN -> {
                 Log.d(TAG, "ACTION_FORCE_SCAN received")
                 startForegroundService()
-                startScanning()
+                if (!isSimulationEnabled) {
+                    startScanning()
+                } else {
+                    Log.d(TAG, "Ignoring Force Scan - Simulation Mode is active.")
+                }
             }
         }
         return START_STICKY
@@ -502,7 +514,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
         startSessionTimerLoop()
-        if (currentSettings.runMode == "outdoor") {
+        if (currentSettings.runMode == "outdoor" && !isSimulationEnabled) {
             startLocationUpdates()
         }
         Log.d(TAG, "Session RESUMED")
@@ -1269,7 +1281,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
             startSessionTimerLoop()
-            if (currentSettings.runMode == "outdoor") {
+            if (currentSettings.runMode == "outdoor" && !isSimulationEnabled) {
                 startLocationUpdates()
             }
         } else {
