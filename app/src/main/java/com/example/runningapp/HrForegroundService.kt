@@ -1211,15 +1211,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val cooldownMs = currentSettings.cooldownSeconds * 1000L
         val cooldownRemaining = (lastCueTime + cooldownMs) - now
         
+        val isBufferActive = sessionSecondsRunning < 480
+        val criticalThreshold = currentSettings.zone2High + 15
+
         if (cooldownRemaining <= 0) {
              val persistenceHighMs = currentSettings.persistenceHighSeconds * 1000L
              val persistenceLowMs = currentSettings.persistenceLowSeconds * 1000L
 
              if (currentZone == Zone.HIGH && timeInCurrentZone >= persistenceHighMs) {
-                 // MISSION: Warm-up Coaching Buffer - mute High HR cues for first 8 mins
-                 val isBufferActive = sessionSecondsRunning < 480
-                 val criticalThreshold = currentSettings.zone2High + 15
-                 
                  // MISSION: Cardiac Drift Detection - > 20m, <= baseline + 12
                  val isDrifting = sessionSecondsRunning > 1200 && 
                                  baselineHr != null && 
@@ -1236,29 +1235,43 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         Log.d(TAG, "Drift detected but suppressed by anti-nag cooldown")
                     }
                  } else if (baselineHr != null && avgBpm > (baselineHr!! + 12)) {
-                     // Danger cue if significantly above baseline
+                     // Danger cue if significantly above baseline (usually after 10m)
                      val text = if (isRunWalk) "Heart rate high. Walk until your breathing settles." else {
                          if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
                      }
                      playCue(text)
                      lastCueTime = now
                      Log.d(TAG, "HR above drift ceiling! Playing danger cue. Avg: $avgBpm, Ceiling: ${baselineHr!! + 12}")
-                 } else if (!isBufferActive || avgBpm > criticalThreshold) {
+                 } else if (avgBpm > criticalThreshold) {
+                     // MISSION: Safety Override - Play cue regardless of buffer if HR is in danger zone
                      val text = if (isRunWalk) "Heart rate high. Walk until your breathing settles." else {
                          if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
                      }
                      playCue(text)
                      lastCueTime = now
+                     Log.d(TAG, "Safety Override Triggered! HR: $avgBpm > Limit: $criticalThreshold")
+                 } else if (isBufferActive) {
+                     // MISSION: Total Silence during Warm-up Buffer
+                     Log.d(TAG, "Warm-up Buffer Active: Muting High HR cue (Time: ${sessionSecondsRunning}s, Avg: $avgBpm)")
                  } else {
-                     Log.d(TAG, "Warm-up Buffer Active: Muting High HR cue (Time: ${sessionSecondsRunning}s, Avg: $avgBpm, Limit: $criticalThreshold)")
+                     // Normal HIGH cue
+                     val text = if (isRunWalk) "Heart rate high. Walk until your breathing settles." else {
+                         if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
+                     }
+                     playCue(text)
+                     lastCueTime = now
                  }
              } else if (currentZone == Zone.LOW && timeInCurrentZone >= persistenceLowMs) {
-                 // Low HR cues are NOT muted during buffer
-                 val text = if (isRunWalk) "Heart rate recovered. Transition to a light jog." else {
-                     if (currentSettings.voiceStyle == "short") "Faster" else "Gently increase pace."
+                 // MISSION: Total Silence during Warm-up Buffer for LOW cues too
+                 if (isBufferActive) {
+                     Log.d(TAG, "Warm-up Buffer Active: Muting Low HR cue (Time: ${sessionSecondsRunning}s)")
+                 } else {
+                     val text = if (isRunWalk) "Heart rate recovered. Transition to a light jog." else {
+                         if (currentSettings.voiceStyle == "short") "Faster" else "Gently increase pace."
+                     }
+                     playCue(text)
+                     lastCueTime = now
                  }
-                 playCue(text)
-                 lastCueTime = now
              }
         }
     }
