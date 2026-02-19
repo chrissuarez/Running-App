@@ -444,6 +444,9 @@ fun SettingsSummaryCard(settings: UserSettings) {
                 Text("Zone 2: ${settings.zone2Low}-${settings.zone2High} BPM", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                 val modeLabel = if (settings.runMode == "outdoor") "Outdoor Run" else "Treadmill Run"
                 Text("Mode: $modeLabel | Cooldown: ${settings.cooldownSeconds}s", style = MaterialTheme.typography.bodySmall)
+                if (settings.runWalkCoachEnabled) {
+                    Text("RUN/WALK COACH ACTIVE", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black, color = Color(0xFFFFA500))
+                }
             }
             Text(if (settings.coachingEnabled) "Coaching ON" else "Coaching OFF", style = MaterialTheme.typography.bodySmall, color = if (settings.coachingEnabled) Color.Green else Color.Red)
         }
@@ -590,6 +593,7 @@ fun SettingsScreen(
     var coachingEnabled by remember { mutableStateOf(settings.coachingEnabled) }
     var runMode by remember { mutableStateOf(settings.runMode) }
     var splitAudio by remember { mutableStateOf(settings.splitAnnouncementsEnabled) }
+    var runWalkCoach by remember { mutableStateOf(settings.runWalkCoachEnabled) }
     
     // Warm-up Min/Sec
     var warmUpMin by remember { mutableStateOf((settings.warmUpDurationSeconds / 60).toString()) }
@@ -633,6 +637,18 @@ fun SettingsScreen(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = coachingEnabled, onCheckedChange = { coachingEnabled = it })
             Text("Enable Coaching Cues")
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).background(if (runWalkCoach) Color(0xFFFFA500).copy(alpha = 0.1f) else Color.Transparent).padding(4.dp)
+        ) {
+            Switch(checked = runWalkCoach, onCheckedChange = { runWalkCoach = it })
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text("Run/Walk Coach Mode", fontWeight = FontWeight.Bold)
+                Text("Special cues for beginner Z2 training", style = MaterialTheme.typography.labelSmall)
+            }
         }
 
         OutlinedTextField(value = cooldown, onValueChange = { cooldown = it }, label = { Text("Cue Cooldown (s)") }, modifier = Modifier.fillMaxWidth())
@@ -702,6 +718,7 @@ fun SettingsScreen(
                 coachingEnabled = coachingEnabled,
                 runMode = runMode,
                 splitAnnouncementsEnabled = splitAudio,
+                runWalkCoachEnabled = runWalkCoach,
                 warmUpDurationSeconds = (warmUpMin.toIntOrNull() ?: 0) * 60 + (warmUpSec.toIntOrNull() ?: 0),
                 coolDownDurationSeconds = (coolDownMin.toIntOrNull() ?: 0) * 60 + (coolDownSec.toIntOrNull() ?: 0)
             ))

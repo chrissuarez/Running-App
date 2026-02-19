@@ -27,6 +27,7 @@ data class UserSettings(
     val coolDownDurationSeconds: Int = 180,
     val runMode: String = "treadmill", // "treadmill" or "outdoor"
     val splitAnnouncementsEnabled: Boolean = true,
+    val runWalkCoachEnabled: Boolean = false,
     val savedDevices: List<SavedDevice> = emptyList(),
     val activeDeviceAddress: String? = null
 )
@@ -46,6 +47,7 @@ class SettingsRepository(private val context: Context) {
         val COOL_DOWN_DURATION = intPreferencesKey("cool_down_duration")
         val RUN_MODE = stringPreferencesKey("run_mode")
         val SPLIT_ANNOUNCEMENTS_ENABLED = booleanPreferencesKey("split_announcements_enabled")
+        val RUN_WALK_COACH_ENABLED = booleanPreferencesKey("run_walk_coach_enabled")
         val SAVED_DEVICES = stringSetPreferencesKey("saved_devices")
         val ACTIVE_DEVICE_ADDRESS = stringPreferencesKey("active_device_address")
     }
@@ -71,6 +73,7 @@ class SettingsRepository(private val context: Context) {
                 coolDownDurationSeconds = preferences[PreferencesKeys.COOL_DOWN_DURATION] ?: 180,
                 runMode = preferences[PreferencesKeys.RUN_MODE] ?: "treadmill",
                 splitAnnouncementsEnabled = preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] ?: true,
+                runWalkCoachEnabled = preferences[PreferencesKeys.RUN_WALK_COACH_ENABLED] ?: false,
                 savedDevices = savedDevices,
                 activeDeviceAddress = preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS]
             )
@@ -90,6 +93,7 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.COOL_DOWN_DURATION] = settings.coolDownDurationSeconds
             preferences[PreferencesKeys.RUN_MODE] = settings.runMode
             preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] = settings.splitAnnouncementsEnabled
+            preferences[PreferencesKeys.RUN_WALK_COACH_ENABLED] = settings.runWalkCoachEnabled
             preferences[PreferencesKeys.SAVED_DEVICES] = settings.savedDevices.map { "${it.address}|${it.name}" }.toSet()
             if (settings.activeDeviceAddress != null) {
                 preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS] = settings.activeDeviceAddress
