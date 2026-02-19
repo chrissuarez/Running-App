@@ -1286,7 +1286,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
 
         // MISSION: Move location updates to a background thread to prevent main thread stalls
-        if (locationHandlerThread == null) {
+        if (locationHandlerThread == null || !locationHandlerThread!!.isAlive) {
             locationHandlerThread = HandlerThread("LocationThread").apply { start() }
             locationHandler = Handler(locationHandlerThread!!.looper)
         }
