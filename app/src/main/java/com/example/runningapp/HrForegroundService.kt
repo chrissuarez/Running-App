@@ -406,7 +406,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 _hrState.update { 
                     it.copy(
                         secondsPaused = sessionSecondsPaused,
-                        lastHrAgeSeconds = hrAge
+                        lastHrAgeSeconds = hrAge,
+                        currentPhase = currentPhase,
+                        phaseSecondsRemaining = if (currentPhase == SessionPhase.MAIN) 0 else {
+                            val limit = when (currentPhase) {
+                                SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
+                                SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
+                                else -> 0
+                            }
+                            (limit - phaseSecondsRunning).toInt()
+                        }
                     )
                 }
             }
@@ -548,6 +557,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             SessionPhase.COOL_DOWN -> {
                 stopSession()
             }
+        }
+
+        // Mission: Immediate UI Sync
+        _hrState.update { currentState ->
+            currentState.copy(
+                currentPhase = currentPhase,
+                phaseSecondsRemaining = if (currentPhase == SessionPhase.MAIN) 0 else {
+                    val limit = when (currentPhase) {
+                        SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
+                        SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
+                        else -> 0
+                    }
+                    (limit - phaseSecondsRunning).toInt()
+                }
+            )
         }
     }
 
