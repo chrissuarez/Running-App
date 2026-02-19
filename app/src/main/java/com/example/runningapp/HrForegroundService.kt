@@ -1316,17 +1316,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         Log.d(TAG, "stopLocationUpdates() - Killing location engine")
         val callback = locationCallback
         if (callback != null) {
-            fusedLocationClient.removeLocationUpdates(callback).addOnCompleteListener { task ->
-                Log.d(TAG, "removeLocationUpdates task complete. Success: ${task.isSuccessful}")
-                locationHandlerThread?.quitSafely()
-                locationHandlerThread = null
-                locationHandler = null
-            }
+            fusedLocationClient.removeLocationUpdates(callback)
             locationCallback = null
         }
         
         lastLocation = null
-        Log.d(TAG, "Location updates stopped and thread reaped")
+        Log.d(TAG, "Location updates stopped")
     }
 
     private fun handleNewLocation(location: Location) {
@@ -1434,7 +1429,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         sessionHandlerThread = null
         
         stopLocationUpdates()
-        // locationHandlerThread disposal is now handled asynchronously in stopLocationUpdates()
+        locationHandlerThread?.quitSafely()
+        locationHandlerThread = null
+        locationHandler = null
         
         releaseWakeLock()
         tts?.shutdown()
