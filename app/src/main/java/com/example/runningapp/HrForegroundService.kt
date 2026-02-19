@@ -1257,6 +1257,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
+                // Mission: Stop zombie updates if session is no longer active
+                if (_hrState.value.sessionStatus != SessionStatus.RUNNING) {
+                    Log.d(TAG, "Ignoring location update - session not running")
+                    return
+                }
                 for (location in locationResult.locations) {
                     handleNewLocation(location)
                 }
@@ -1268,12 +1273,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun stopLocationUpdates() {
+        Log.d(TAG, "stopLocationUpdates() - Killing location engine")
         locationCallback?.let { 
             fusedLocationClient.removeLocationUpdates(it)
             locationCallback = null
         }
+        
+        // Mission: Explicitly quit the thread to stop the looper
+        locationHandlerThread?.quitSafely()
+        locationHandlerThread = null
+        locationHandler = null
+        
         lastLocation = null
-        Log.d(TAG, "Location updates stopped")
+        Log.d(TAG, "Location updates stopped and thread reaped")
     }
 
     private fun handleNewLocation(location: Location) {
