@@ -8,54 +8,58 @@ A robust Android application designed to track heart rate (HR) during runs and p
 - **Foreground Service**: Continuous tracking even when the screen is off or the app is minimized, using a persistent notification.
 - **Adaptive Coaching**:
     - **Zone 2 Emphasis**: Alerts you when you are above or below your target heart rate.
-    - **Smart Persistence**: Avoids "jittery" alerts by requiring the heart rate to stay outside a zone for a configurable duration (Persistence) before triggering a cue.
-    - **Hysteresis & Cooldown**: Prevents back-to-back voice cues with a customizable cooldown period.
-    - **Voice Cues**: Text-to-Speech (TTS) alerts with "Short" or "Detailed" styles.
+    - **Warm-up Coaching Buffer**: Total audio silence for the first **8 minutes** of a session to allow physiological steady-state. Includes a safety override (Target High + 15 BPM).
+    - **Cardiac Drift Detection**: Detects slow physiological HR rise after 20 minutes using a 10-minute baseline. Plays specialized "Steady Effort" cues with a 5-minute anti-nag cooldown.
+    - **Run/Walk Coach Mode**: Specialized mode for beginner training with tailored interval cues ("Walk until breathing settles", "Transition to a light jog") and wider recovery hysteresis.
+    - **Smart Persistence**: Avoids "jittery" alerts by requiring the heart rate to stay outside a zone for a configurable duration before triggering a cue.
+    - **Hysteresis & Cooldown**: Prevents back-to-back voice cues with customizable cooldown periods.
 - **Session Management**:
-    - **Phases**: Supports **Warm-up** (auto-start), **Main Workout**, and **Cool-down** phases.
+    - **Phases**: Supports **Warm-up**, **Main Workout**, and **Cool-down** phases.
     - **Run Modes**: Choose between **Treadmill** (HR only) and **Outdoor** (GPS tracking).
-    - **GPS Tracking**: Records distance and calculates pace using the Fused Location Provider.
-    - **Pace Smoothing**: Uses a 15-second sliding window to provide stable pace readings.
-    - **Split Announcements**: Automatic voice alerts for every 1km covered (distance, pace).
-    - Start, Pause, Resume, and Stop controls with phase-skipping capabilities.
-    - Tracks active vs. paused time.
-    - Automatic reconnection logic with exponential backoff if a device disconnects.
+    - **Simulation Mode**: Test coaching logic and UI without a physical heart rate strap using realistic mock data.
+    - **GPS Tracking**: Records distance and calculates pace using a 15-second sliding window for stability.
+    - **Split Announcements**: Automatic voice alerts for every 1km covered.
+    - Start, Pause, Resume, and Stop controls with immediate UI synchronization.
 - **History & Data**:
-    - All sessions are saved locally to a Room database.
-    - View past workout summaries including Avg BPM, Max BPM, and **Time in Zones breakdown** (persisted across sessions).
-- **Customizable Settings**:
-    - **Run Mode Selection**: Toggle between **Treadmill** and **Outdoor (GPS)** modes.
-    - Define Max HR and target Zone 2 ranges.
-    - **Phase Durations**: Configure Warm-up and Cool-down times in minutes and seconds.
-    - **Split Announcements**: Enable/disable 1km audio split alerts.
-    - Fine-tune coaching behavior (cooldowns, persistence, voice style).
+    - All sessions and high-resolution HR samples are saved locally to a Room database.
+    - View past workout summaries including Avg BPM, Max BPM, and **Time in Zones breakdown**.
+- **Device Management**:
+    - Prioritizes manually selected BLE devices.
+    - Robust background reconnection logic.
+    - Manage and rename saved devices.
 
 ## 🛠️ How it Works
 
 ### 1. Connecting
-Upon starting the app, Grant the necessary Bluetooth and Notification permissions. Tap **Scan / Start** to find your BLE heart rate strap. Select your device to establish a GATT connection.
+Upon starting the app, Grant permissions for Bluetooth, Location, and Notifications. Tap **Scan** to find your BLE heart rate strap. The app prioritizes explicitly selected devices and persists them for future sessions.
 
 ### 2. Monitoring
-Once connected, the app enters the **Monitoring** state.
-- **Heart Rate Calculation**: The app processes standard BLE HR measurement packets (supporting both 8-bit and 16-bit values).
-- **Smoothing**: A 5-second moving average is calculated to provide stable coaching decisions.
+Once connected, the app enters the tracking state.
+- **Heart Rate Calculation**: Processes standard BLE HR measurement packets (8-bit and 16-bit).
+- **Smoothing**: A 5-second moving average is used for all coaching decisions.
 
-### 3. Coaching Logic
-The coaching engine monitors your **Smoothed BPM**:
-- **High Persistence**: If your HR exceeds the `Zone 2 High` threshold for `X` seconds, the app plays an "Ease off" cue.
-- **Low Persistence**: If your HR drops below the `Zone 2 Low` threshold for `Y` seconds, the app plays a "Faster" cue.
-- **Cooldown**: After a cue is played, the coach remains silent for the `Cooldown` duration to allow your body to react.
+### 3. Coaching Logic (The Rules Engine)
+The coaching engine employs several sophisticated filters:
+- **Warm-up Buffer**: The first 8 minutes of every run are silent to let your heart rate stabilize, preventing annoying cues during your natural ramp-up.
+- **Safety Override**: If your HR exceeds your target by 15+ BPM, the silence is broken immediately to warn of over-exertion.
+- **Cardiac Drift Detection**: 
+    - At the 10-minute mark, the app captures your steady-state **Baseline HR**.
+    - After 20 minutes, if your HR rises slightly above your target but is within 12 BPM of your baseline, the app recognizes this as physiological drift.
+    - Instead of "Ease off", it plays a helpful drift cue: *"Heart rate drifting up. Keep effort steady, or take a short walk break."*
+- **Run/Walk Coach Mode**: 
+    - Changes cues to interval-based instructions (Walk/Jog).
+    - Employs **Wider Hysteresis**: In this mode, the app tells you to start jogging again as soon as your HR drops to the *midpoint* of your target zone, preventing your HR from dropping too low during walk intervals.
 
 ### 4. Session Phases
 A session is divided into three distinct phases:
-- **Warm-up**: Silent tracking to let your heart rate stabilize. Includes a 10-second vocal "ready" warning before merging into the main phase.
-- **Main Phase**: The core workout where coaching cues and zone-tracking logic are active.
-- **Cool-down**: A period of low-intensity recording after the main effort. Silent coaching with a final termination warning.
+- **Warm-up**: Silent tracking with visual zone feedback.
+- **Main Phase**: The core workout where coaching cues (Buffer/Drift/Run-Walk) are active.
+- **Cool-down**: A period of low-intensity recording with silent coaching.
 
 ### 5. Data Storage & Analytics
 Every second of your session is recorded as an `HrSample`.
-- **Zone Breakdown**: The app tracks time spent in all 5 HR zones during the **Main Phase**. This data is persisted to the database.
-- **Session History**: Detailed summaries allow you to review intensity distribution even for sessions recorded days ago.
+- **Zone Breakdown**: The app tracks time spent in all 5 HR zones.
+- **Persistence**: Detailed summaries are stored in a Room database for historical review.
 
 ## 💻 Technical Stack
 
