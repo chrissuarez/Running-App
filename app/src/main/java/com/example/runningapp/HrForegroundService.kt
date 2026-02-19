@@ -103,7 +103,9 @@ data class HrState(
     val runMode: String = "treadmill",
 
     // Mission 2: Settings Summary
-    val userSettings: UserSettings = UserSettings()
+    val userSettings: UserSettings = UserSettings(),
+    
+    val walkBreaksCount: Int = 0
 )
 
 class HrForegroundService : Service(), TextToSpeech.OnInitListener {
@@ -209,6 +211,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // Mission: Session Phases
     private var currentPhase = SessionPhase.WARM_UP
     private var phaseSecondsRunning = 0L
+    private var walkBreaksCount = 0
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
@@ -403,7 +406,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                 else -> 0
                             }
                             (limit - phaseSecondsRunning).toInt()
-                        }
+                        },
+                        walkBreaksCount = walkBreaksCount
                     )
                 }
             }
@@ -421,7 +425,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                 else -> 0
                             }
                             (limit - phaseSecondsRunning).toInt()
-                        }
+                        },
+                        walkBreaksCount = walkBreaksCount
                     )
                 }
             }
@@ -573,6 +578,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // Mission: Session Phases
             currentPhase = SessionPhase.WARM_UP
             phaseSecondsRunning = 0
+            walkBreaksCount = 0
             
             Log.d(TAG, "Started DB Session: $currentSessionId (Mode: ${currentSettings.runMode})")
         }
@@ -1242,6 +1248,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      playCue(text)
                      lastCueTime = now
                      Log.d(TAG, "HR above drift ceiling! Playing danger cue. Avg: $avgBpm, Ceiling: ${baselineHr!! + 12}")
+                     if (isRunWalk) walkBreaksCount++
                  } else if (avgBpm > criticalThreshold) {
                      // MISSION: Safety Override - Play cue regardless of buffer if HR is in danger zone
                      val text = if (isRunWalk) "Heart rate high. Walk until your breathing settles." else {
@@ -1250,6 +1257,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      playCue(text)
                      lastCueTime = now
                      Log.d(TAG, "Safety Override Triggered! HR: $avgBpm > Limit: $criticalThreshold")
+                     if (isRunWalk) walkBreaksCount++
                  } else if (isBufferActive) {
                      // MISSION: Total Silence during Warm-up Buffer
                      Log.d(TAG, "Warm-up Buffer Active: Muting High HR cue (Time: ${sessionSecondsRunning}s, Avg: $avgBpm)")
@@ -1260,6 +1268,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      }
                      playCue(text)
                      lastCueTime = now
+                     if (isRunWalk) walkBreaksCount++
                  }
              } else if (currentZone == Zone.LOW && timeInCurrentZone >= persistenceLowMs) {
                  // MISSION: Total Silence during Warm-up Buffer for LOW cues too
