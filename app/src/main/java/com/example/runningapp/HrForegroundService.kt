@@ -336,9 +336,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         break
                     }
 
-                    if (sec == 600L && currentState.bpm > 0) {
+                    if (sec == 30L && currentState.bpm > 0) {
                         baselineHr = currentState.bpm
-                        Log.d(TAG, "Baseline HR captured at 10m: $baselineHr BPM")
+                        Log.d(TAG, "Drift Baseline captured: $baselineHr")
                     }
 
                     if (sessionSecondsRunning > lastRecordedSecond) {
@@ -1204,21 +1204,27 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                  val isBufferActive = sessionSecondsRunning < 480
                  val criticalThreshold = currentSettings.zone2High + 15
                  
-                 // MISSION: Cardiac Drift Detection - >20 mins, < baseline + 12
-                 val isDrifting = sessionSecondsRunning > 1200 && 
+                 // MISSION: Cardiac Drift Detection (TESTING MODE) - > 60s, <= baseline + 12
+                 val isDrifting = sessionSecondsRunning > 60 && 
                                  baselineHr != null && 
-                                 avgBpm < (baselineHr!! + 12)
+                                 avgBpm <= (baselineHr!! + 12)
 
-                 if (isDrifting) {
-                    val driftCooldownMs = 300_000L // 5 mins
+                 if (isDrifting && avgBpm > currentSettings.zone2High) {
+                    val driftCooldownMs = 60_000L // 1 min (TESTING)
                     if (now - lastDriftCueTime >= driftCooldownMs) {
                         playCue("Heart rate drifting up. Keep effort steady, or take a short walk break.")
                         lastDriftCueTime = now
                         lastCueTime = now
-                        Log.d(TAG, "Drift Cue Played (Time: ${sessionSecondsRunning}s, Avg: $avgBpm, Base: $baselineHr)")
+                        Log.d(TAG, "Drift detected! Smoothed: $avgBpm, Baseline: $baselineHr")
                     } else {
                         Log.d(TAG, "Drift detected but suppressed by anti-nag cooldown")
                     }
+                 } else if (baselineHr != null && avgBpm > (baselineHr!! + 12)) {
+                     // Danger cue if significantly above baseline
+                     val text = if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
+                     playCue(text)
+                     lastCueTime = now
+                     Log.d(TAG, "HR above drift ceiling! Playing danger cue. Avg: $avgBpm, Ceiling: ${baselineHr!! + 12}")
                  } else if (!isBufferActive || avgBpm > criticalThreshold) {
                      val text = if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
                      playCue(text)
