@@ -1153,8 +1153,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
     
     private fun processCoachingRules(bpm: Int, now: Long) {
-        // MISSION: Block coaching cues outside MAIN phase
-        if (currentPhase != SessionPhase.MAIN) {
+        // MISSION: Block coaching cues outside WARM_UP and MAIN phase
+        if (currentPhase != SessionPhase.MAIN && currentPhase != SessionPhase.WARM_UP) {
             _hrState.update { it.copy(currentZone = "NONE", timeInZoneString = "N/A") }
             return
         }
@@ -1191,10 +1191,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
              val persistenceLowMs = currentSettings.persistenceLowSeconds * 1000L
 
              if (currentZone == Zone.HIGH && timeInCurrentZone >= persistenceHighMs) {
-                 val text = if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
-                 playCue(text)
-                 lastCueTime = now
+                 // MISSION: Warm-up Coaching Buffer - mute High HR cues for first 8 mins
+                 val isBufferActive = sessionSecondsRunning < 480
+                 val criticalThreshold = currentSettings.zone2High + 15
+                 
+                 if (!isBufferActive || avgBpm > criticalThreshold) {
+                     val text = if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
+                     playCue(text)
+                     lastCueTime = now
+                 } else {
+                     Log.d(TAG, "Warm-up Buffer Active: Muting High HR cue (Time: ${sessionSecondsRunning}s, Avg: $avgBpm, Limit: $criticalThreshold)")
+                 }
              } else if (currentZone == Zone.LOW && timeInCurrentZone >= persistenceLowMs) {
+                 // Low HR cues are NOT muted during buffer
                  val text = if (currentSettings.voiceStyle == "short") "Faster" else "Gently increase pace."
                  playCue(text)
                  lastCueTime = now
