@@ -213,6 +213,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var currentPhase = SessionPhase.WARM_UP
     private var phaseSecondsRunning = 0L
     private var walkBreaksCount = 0
+    private var isWalkBreakCountedForCurrentZone = false
     @Volatile private var isWarmupSkipped = false
     @Volatile private var currentWarmupDuration = 480
 
@@ -582,6 +583,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             currentPhase = SessionPhase.WARM_UP
             phaseSecondsRunning = 0
             walkBreaksCount = 0
+            isWalkBreakCountedForCurrentZone = false
             isWarmupSkipped = false
             currentWarmupDuration = currentSettings.warmUpDurationSeconds
             
@@ -1222,6 +1224,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         if (newZone != currentZone) {
             currentZone = newZone
             zoneEnterTime = now
+            // Reset walk break counter flag if we leave the HIGH zone
+            if (newZone != Zone.HIGH) {
+                isWalkBreakCountedForCurrentZone = false
+            }
         }
         
         val timeInCurrentZone = now - zoneEnterTime
@@ -1259,7 +1265,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      playCue(text)
                      lastCueTime = now
                      Log.d(TAG, "HR above drift ceiling! Playing danger cue. Avg: $avgBpm, Ceiling: ${baselineHr!! + 12}")
-                     if (isRunWalk) walkBreaksCount++
+                     if (isRunWalk && !isWalkBreakCountedForCurrentZone) {
+                         walkBreaksCount++
+                         isWalkBreakCountedForCurrentZone = true
+                     }
                  } else if (avgBpm > criticalThreshold) {
                      // MISSION: Safety Override - Play cue regardless of buffer if HR is in danger zone
                      val text = if (isRunWalk) "Heart rate high. Walk until your breathing settles." else {
@@ -1268,7 +1277,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      playCue(text)
                      lastCueTime = now
                      Log.d(TAG, "Safety Override Triggered! HR: $avgBpm > Limit: $criticalThreshold")
-                     if (isRunWalk) walkBreaksCount++
+                     if (isRunWalk && !isWalkBreakCountedForCurrentZone) {
+                         walkBreaksCount++
+                         isWalkBreakCountedForCurrentZone = true
+                     }
                  } else if (isBufferActive) {
                      // MISSION: Total Silence during Warm-up Buffer
                      Log.d(TAG, "Warm-up Buffer Active: Muting High HR cue (Time: ${sessionSecondsRunning}s, Avg: $avgBpm)")
@@ -1279,7 +1291,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      }
                      playCue(text)
                      lastCueTime = now
-                     if (isRunWalk) walkBreaksCount++
+                     if (isRunWalk && !isWalkBreakCountedForCurrentZone) { walkBreaksCount++; isWalkBreakCountedForCurrentZone = true; }
                  }
              } else if (currentZone == Zone.LOW && timeInCurrentZone >= persistenceLowMs) {
                  // MISSION: Total Silence during Warm-up Buffer for LOW cues too
