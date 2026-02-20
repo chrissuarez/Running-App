@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.jvm.Volatile
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
 import com.google.android.gms.location.LocationRequest
@@ -201,7 +202,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var lastDriftCueTime = 0L
     
     // --- Session Engine State ---
-    private var sessionSecondsRunning = 0L
+    @Volatile private var sessionSecondsRunning = 0L
     private var sessionSecondsPaused = 0L
     private var reconnectAttemptCount = 0
     private var lastHrTimestamp = 0L
@@ -209,10 +210,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private val RECONNECT_TIMEOUT_MS = 120_000L // 2 minutes
     
     // Mission: Session Phases
-    private var currentPhase = SessionPhase.WARM_UP
+    @Volatile private var currentPhase = SessionPhase.WARM_UP
     private var phaseSecondsRunning = 0L
     private var walkBreaksCount = 0
-    private var isWarmupSkipped = false
+    @Volatile private var isWarmupSkipped = false
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
@@ -592,6 +593,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 currentPhase = SessionPhase.MAIN
                 phaseSecondsRunning = 0
                 isWarmupSkipped = true
+                Log.d(TAG, "Skip Warm-up: isWarmupSkipped set to true. Buffer should now be disabled.")
                 playCue("Warm up skipped. Starting workout.")
             }
             SessionPhase.MAIN -> {
