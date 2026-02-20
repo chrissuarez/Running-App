@@ -23,7 +23,7 @@ data class UserSettings(
     val persistenceLowSeconds: Int = 45,
     val voiceStyle: String = "detailed", // "short" or "detailed"
     val coachingEnabled: Boolean = true,
-    val warmUpDurationSeconds: Int = 300,
+    val warmUpDurationSeconds: Int = 480,
     val coolDownDurationSeconds: Int = 180,
     val runMode: String = "treadmill", // "treadmill" or "outdoor"
     val splitAnnouncementsEnabled: Boolean = true,
@@ -69,7 +69,7 @@ class SettingsRepository(private val context: Context) {
                 persistenceLowSeconds = preferences[PreferencesKeys.PERSISTENCE_LOW_SECONDS] ?: 45,
                 voiceStyle = preferences[PreferencesKeys.VOICE_STYLE] ?: "detailed",
                 coachingEnabled = preferences[PreferencesKeys.COACHING_ENABLED] ?: true,
-                warmUpDurationSeconds = preferences[PreferencesKeys.WARM_UP_DURATION] ?: 300,
+                warmUpDurationSeconds = preferences[PreferencesKeys.WARM_UP_DURATION] ?: 480,
                 coolDownDurationSeconds = preferences[PreferencesKeys.COOL_DOWN_DURATION] ?: 180,
                 runMode = preferences[PreferencesKeys.RUN_MODE] ?: "treadmill",
                 splitAnnouncementsEnabled = preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] ?: true,

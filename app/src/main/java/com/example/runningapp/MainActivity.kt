@@ -595,6 +595,9 @@ fun SettingsScreen(
     var splitAudio by remember { mutableStateOf(settings.splitAnnouncementsEnabled) }
     var runWalkCoach by remember { mutableStateOf(settings.runWalkCoachEnabled) }
     
+    // Warm-up Selection
+    var warmUpSelection by remember { mutableStateOf(if (settings.warmUpDurationSeconds == 480) "recommended" else "custom") }
+    
     // Warm-up Min/Sec
     var warmUpMin by remember { mutableStateOf((settings.warmUpDurationSeconds / 60).toString()) }
     var warmUpSec by remember { mutableStateOf((settings.warmUpDurationSeconds % 60).toString()) }
@@ -688,11 +691,33 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(24.dp))
         Text("Session Phases", style = MaterialTheme.typography.titleMedium)
         
-        Text("Warm-up Duration", style = MaterialTheme.typography.labelMedium)
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(value = warmUpMin, onValueChange = { warmUpMin = it }, label = { Text("Min") }, modifier = Modifier.weight(1f))
-            Text(":")
-            OutlinedTextField(value = warmUpSec, onValueChange = { warmUpSec = it }, label = { Text("Sec") }, modifier = Modifier.weight(1f))
+        Text("Warm-up Duration", style = MaterialTheme.typography.titleSmall)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = warmUpSelection == "recommended", onClick = { warmUpSelection = "recommended" })
+            Text("Recommended (8 mins)")
+            Spacer(modifier = Modifier.width(16.dp))
+            RadioButton(selected = warmUpSelection == "custom", onClick = { warmUpSelection = "custom" })
+            Text("Custom")
+        }
+        
+        if (warmUpSelection == "custom") {
+            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = warmUpMin, 
+                    onValueChange = { warmUpMin = it }, 
+                    label = { Text("Minutes") }, 
+                    modifier = Modifier.weight(1f),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                )
+                Text(":")
+                OutlinedTextField(
+                    value = warmUpSec, 
+                    onValueChange = { warmUpSec = it }, 
+                    label = { Text("Seconds") }, 
+                    modifier = Modifier.weight(1f),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
+                )
+            }
         }
         
         Spacer(modifier = Modifier.height(12.dp))
@@ -719,7 +744,9 @@ fun SettingsScreen(
                 runMode = runMode,
                 splitAnnouncementsEnabled = splitAudio,
                 runWalkCoachEnabled = runWalkCoach,
-                warmUpDurationSeconds = (warmUpMin.toIntOrNull() ?: 0) * 60 + (warmUpSec.toIntOrNull() ?: 0),
+                warmUpDurationSeconds = if (warmUpSelection == "recommended") 480 else {
+                    (warmUpMin.toIntOrNull() ?: 0) * 60 + (warmUpSec.toIntOrNull() ?: 0)
+                },
                 coolDownDurationSeconds = (coolDownMin.toIntOrNull() ?: 0) * 60 + (coolDownSec.toIntOrNull() ?: 0)
             ))
         }, modifier = Modifier.fillMaxWidth()) {
