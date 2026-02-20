@@ -97,6 +97,9 @@ fun SessionItem(session: RunnerSession, onClick: () -> Unit) {
                     StatSmall(label = "Pace", value = pStr)
                 }
                 StatSmall(label = "Target", value = formatDuration(session.timeInTargetZoneSeconds))
+                if (session.walkBreaksCount > 0) {
+                    StatSmall(label = "Walks", value = "${session.walkBreaksCount}")
+                }
             }
         }
     }
