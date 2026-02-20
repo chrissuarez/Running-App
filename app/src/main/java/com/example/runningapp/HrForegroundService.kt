@@ -214,6 +214,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var phaseSecondsRunning = 0L
     private var walkBreaksCount = 0
     @Volatile private var isWarmupSkipped = false
+    @Volatile private var currentWarmupDuration = 480
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
@@ -582,6 +583,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             phaseSecondsRunning = 0
             walkBreaksCount = 0
             isWarmupSkipped = false
+            currentWarmupDuration = currentSettings.warmUpDurationSeconds
             
             Log.d(TAG, "Started DB Session: $currentSessionId (Mode: ${currentSettings.runMode})")
         }
@@ -1226,7 +1228,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val cooldownMs = currentSettings.cooldownSeconds * 1000L
         val cooldownRemaining = (lastCueTime + cooldownMs) - now
         
-        val isBufferActive = sessionSecondsRunning < 480 && !isWarmupSkipped
+        val isBufferActive = sessionSecondsRunning < currentWarmupDuration && !isWarmupSkipped
         val criticalThreshold = currentSettings.zone2High + 15
 
         if (cooldownRemaining <= 0) {
