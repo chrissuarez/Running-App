@@ -16,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,10 +41,12 @@ import com.example.runningapp.TrainingPlanProvider
 fun TrainingPlanScreen(
     activePlanId: String?,
     activeStageId: String?,
+    onActivatePlan: (planId: String, stageId: String) -> Unit,
     onBack: () -> Unit
 ) {
-    val planId = if (activePlanId == "5k_sub_25") activePlanId else "5k_sub_25"
-    val plan = TrainingPlanProvider.getPlanById(planId) ?: return
+    val plan = TrainingPlanProvider.getPlanById("5k_sub_25") ?: return
+    val isPlanActive = activePlanId == plan.id
+    val firstStageId = plan.stages.firstOrNull()?.id
     val fallbackActiveStageId = plan.stages.firstOrNull { !it.isLocked }?.id
 
     Scaffold(
@@ -78,13 +81,29 @@ fun TrainingPlanScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+
+                    if (!isPlanActive && firstStageId != null) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Button(
+                            onClick = { onActivatePlan(plan.id, firstStageId) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Activate Plan")
+                        }
+                    }
                 }
             }
 
             items(plan.stages) { stage ->
                 StageCard(
                     stage = stage,
-                    isActive = stage.id == (activeStageId ?: fallbackActiveStageId)
+                    isActive = stage.id == (
+                        if (isPlanActive) {
+                            activeStageId ?: firstStageId ?: fallbackActiveStageId
+                        } else {
+                            firstStageId ?: fallbackActiveStageId
+                        }
+                    )
                 )
             }
         }

@@ -155,4 +155,20 @@ class SettingsRepository(private val context: Context) {
             }
         }
     }
+
+    suspend fun setActivePlan(planId: String?, stageId: String?) {
+        context.dataStore.edit { preferences ->
+            if (planId != null) {
+                preferences[PreferencesKeys.ACTIVE_PLAN_ID] = planId
+            } else {
+                preferences.remove(PreferencesKeys.ACTIVE_PLAN_ID)
+            }
+
+            if (stageId != null) {
+                preferences[PreferencesKeys.ACTIVE_STAGE_ID] = stageId
+            } else {
+                preferences.remove(PreferencesKeys.ACTIVE_STAGE_ID)
+            }
+        }
+    }
 }

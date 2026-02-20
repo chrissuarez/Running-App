@@ -118,6 +118,7 @@ class MainActivity : ComponentActivity() {
                         "main" -> {
                             MainScreen(
                                 hrService = hrService,
+                                userSettings = userSettings,
                                 onRequestPermissions = { checkAndRequestPermissions() },
                                 onStartService = {
                                     val action = if (hrService == null) {
@@ -232,6 +233,11 @@ class MainActivity : ComponentActivity() {
                             TrainingPlanScreen(
                                 activePlanId = userSettings.activePlanId,
                                 activeStageId = userSettings.activeStageId,
+                                onActivatePlan = { planId, stageId ->
+                                    scope.launch {
+                                        settingsRepository.setActivePlan(planId, stageId)
+                                    }
+                                },
                                 onBack = { currentScreen = "main" }
                             )
                         }
@@ -309,6 +315,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen(
     hrService: HrForegroundService?, 
+    userSettings: UserSettings,
     onRequestPermissions: () -> Unit,
     onStartService: () -> Unit,
     onTogglePause: () -> Unit,
@@ -322,6 +329,9 @@ fun MainScreen(
     onToggleSimulation: () -> Unit
 ) {
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
+    val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
+    val activeStage = activePlan?.stages?.firstOrNull { it.id == userSettings.activeStageId } ?: activePlan?.stages?.firstOrNull()
+    val todaysWorkout = activeStage?.workouts?.firstOrNull()
     
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -371,8 +381,23 @@ fun MainScreen(
         if (state.sessionStatus == SessionStatus.ERROR) {
             Text(text = "ERROR: ${state.errorMessage ?: "Unknown"}", color = Color.Red, fontWeight = FontWeight.Bold)
         }
-        
-        Spacer(modifier = Modifier.height(16.dp))
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (activePlan != null && activeStage != null && todaysWorkout != null) {
+            TodaysWorkoutCard(
+                stageTitle = activeStage.title,
+                workout = todaysWorkout
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        } else if (userSettings.activePlanId == null) {
+            TextButton(onClick = onOpenTrainingPlan) {
+                Text("No active plan - tap to view plans")
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        } else {
+            Spacer(modifier = Modifier.height(12.dp))
+        }
         
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
@@ -444,6 +469,41 @@ fun MainScreen(
             Spacer(modifier = Modifier.weight(1f))
             Text("Ready to start a session.")
             Spacer(modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+fun TodaysWorkoutCard(
+    stageTitle: String,
+    workout: WorkoutTemplate
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f))
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                text = "Today's Workout",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = stageTitle,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = workout.title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Target HR Zone: Z${workout.targetZone}", style = MaterialTheme.typography.bodyMedium)
+            Text("Run: ${workout.runDurationSeconds}s", style = MaterialTheme.typography.bodyMedium)
+            Text("Walk: ${workout.walkDurationSeconds}s", style = MaterialTheme.typography.bodyMedium)
+            Text("Repeats: ${workout.totalRepeats}", style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
