@@ -42,6 +42,7 @@ import kotlin.math.roundToInt
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.ui.HistoryScreen
 import com.example.runningapp.ui.SessionDetailScreen
+import com.example.runningapp.ui.TrainingPlanScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -159,6 +160,9 @@ class MainActivity : ComponentActivity() {
                                 onOpenManageDevices = {
                                     currentScreen = "manage_devices"
                                 },
+                                onOpenTrainingPlan = {
+                                    currentScreen = "training_plan"
+                                },
                                 onToggleSimulation = {
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
@@ -222,6 +226,13 @@ class MainActivity : ComponentActivity() {
                                 session = selectedSession,
                                 samples = sessionSamples,
                                 onBack = { currentScreen = "history" }
+                            )
+                        }
+                        "training_plan" -> {
+                            TrainingPlanScreen(
+                                activePlanId = userSettings.activePlanId,
+                                activeStageId = userSettings.activeStageId,
+                                onBack = { currentScreen = "main" }
                             )
                         }
                     }
@@ -307,6 +318,7 @@ fun MainScreen(
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenManageDevices: () -> Unit,
+    onOpenTrainingPlan: () -> Unit,
     onToggleSimulation: () -> Unit
 ) {
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
@@ -323,6 +335,9 @@ fun MainScreen(
                 }
                 IconButton(onClick = onOpenManageDevices) {
                     Text("⌚", fontSize = 24.sp)
+                }
+                IconButton(onClick = onOpenTrainingPlan) {
+                    Text("🏆", fontSize = 24.sp)
                 }
                 IconButton(onClick = onOpenSettings) {
                     Text("⚙️", fontSize = 24.sp)
