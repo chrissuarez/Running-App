@@ -43,6 +43,8 @@ import kotlin.math.roundToInt
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.ui.HistoryScreen
+import com.example.runningapp.ui.HistoryViewModel
+import com.example.runningapp.ui.HistoryViewModelFactory
 import com.example.runningapp.ui.SessionDetailScreen
 import com.example.runningapp.ui.SessionDetailViewModel
 import com.example.runningapp.ui.SessionDetailViewModelFactory
@@ -106,9 +108,13 @@ class MainActivity : ComponentActivity() {
 
                     val database = remember { AppDatabase.getDatabase(this) }
                     val sessionRepository = remember { SessionRepository(database.sessionDao()) }
+                    val historyViewModel: HistoryViewModel = viewModel(
+                        factory = HistoryViewModelFactory(sessionRepository)
+                    )
                     val sessionDetailViewModel: SessionDetailViewModel = viewModel(
                         factory = SessionDetailViewModelFactory(sessionRepository)
                     )
+                    val selectedSessionIds by historyViewModel.selectedSessionIds.collectAsState()
                     val historySessions by database.sessionDao().getLast20Sessions().collectAsState(initial = emptyList())
                     
                     val sessionSamples by produceState<List<com.example.runningapp.data.HrSample>>(initialValue = emptyList(), key1 = selectedSessionId) {
@@ -230,6 +236,10 @@ class MainActivity : ComponentActivity() {
                         "history" -> {
                             HistoryScreen(
                                 sessions = historySessions,
+                                selectedSessionIds = selectedSessionIds,
+                                onToggleSelection = { id -> historyViewModel.toggleSelection(id) },
+                                onClearSelection = { historyViewModel.clearSelection() },
+                                onDeleteSelected = { historyViewModel.deleteSelectedSessions() },
                                 onSessionClick = { id ->
                                     selectedSessionId = id
                                     currentScreen = "detail"
