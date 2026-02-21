@@ -363,7 +363,20 @@ fun MainScreen(
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
     val activeStage = activePlan?.stages?.firstOrNull { it.id == userSettings.activeStageId } ?: activePlan?.stages?.firstOrNull()
-    val todaysWorkout = activeStage?.workouts?.firstOrNull()
+    val baseWorkout = activeStage?.workouts?.firstOrNull()
+    val aiRunIntervalSeconds = userSettings.aiRunIntervalSeconds
+    val aiWalkIntervalSeconds = userSettings.aiWalkIntervalSeconds
+    val aiRepeats = userSettings.aiRepeats
+    val coachMessage = userSettings.latestCoachMessage?.takeIf { it.isNotBlank() }
+    val todaysWorkout = if (baseWorkout != null && aiRunIntervalSeconds != null) {
+        baseWorkout.copy(
+            runDurationSeconds = aiRunIntervalSeconds,
+            walkDurationSeconds = aiWalkIntervalSeconds ?: baseWorkout.walkDurationSeconds,
+            totalRepeats = aiRepeats ?: baseWorkout.totalRepeats
+        )
+    } else {
+        baseWorkout
+    }
     
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -428,6 +441,27 @@ fun MainScreen(
             }
             Spacer(modifier = Modifier.height(12.dp))
         } else {
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        if (coachMessage != null) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFE7E8FF))
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        text = "AI Coach Debrief",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = coachMessage,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(12.dp))
         }
         
