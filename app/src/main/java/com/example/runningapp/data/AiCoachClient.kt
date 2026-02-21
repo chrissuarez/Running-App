@@ -46,20 +46,64 @@ class AiCoachClient {
             appendLine(gson.toJson(context.recentRuns))
         }
 
-        val response = model.generateContent(prompt)
-        val rawText = response.text ?: "{}"
-        val cleanJson = rawText
-            .substringAfter("```json", rawText)
-            .substringAfter("```", rawText)
-            .substringBeforeLast("```", rawText)
-            .trim()
-        Log.d("AiCoach", "Raw Gemini Response: $cleanJson")
-        val jsonText = extractJsonObject(cleanJson)
+        val endpoint =
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
+
+        val payload = gson.toJson(
+            mapOf(
+                "contents" to listOf(
+                    mapOf(
+                        "parts" to listOf(
+                            mapOf("text" to prompt)
+                        )
+                    )
+                )
+            )
+        )
+
+        val connection = (java.net.URL(endpoint).openConnection() as java.net.HttpURLConnection).apply {
+            requestMethod = "POST"
+            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+            doOutput = true
+            doInput = true
+            connectTimeout = 15000
+            readTimeout = 30000
+        }
 
         return try {
-            gson.fromJson(jsonText, AiCoachResponse::class.java)
-        } catch (e: JsonSyntaxException) {
-            throw IllegalStateException("Gemini returned invalid JSON: $rawText", e)
+            connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+
+            val responseCode = connection.responseCode
+            val responseBody = (if (responseCode in 200..299) connection.inputStream else connection.errorStream)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                .orEmpty()
+
+            if (responseCode == 200) {
+                Log.d("AiCoach", "Raw API Response: $responseBody")
+            } else {
+                Log.e("AiCoach", "API error code=$responseCode")
+                Log.e("AiCoach", "Raw API Error: $responseBody")
+            }
+
+            AiCoachResponse(
+                nextRunDurationSeconds = 60,
+                nextWalkDurationSeconds = 30,
+                nextRepeats = 6,
+                graduatedToNextStage = false,
+                coachMessage = "Temporary fallback while debugging Gemini raw responses."
+            )
+        } catch (e: Exception) {
+            Log.e("AiCoach", "HTTP request failed", e)
+            AiCoachResponse(
+                nextRunDurationSeconds = 60,
+                nextWalkDurationSeconds = 30,
+                nextRepeats = 6,
+                graduatedToNextStage = false,
+                coachMessage = "Temporary fallback due to API request failure."
+            )
+        } finally {
+            connection.disconnect()
         }
     }
 
