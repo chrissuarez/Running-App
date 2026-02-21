@@ -4,6 +4,15 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+val localProperties = java.util.Properties().apply {
+    val localPropsFile = rootProject.file("local.properties")
+    if (localPropsFile.exists()) {
+        localPropsFile.inputStream().use { load(it) }
+    }
+}
+val geminiApiKey = (localProperties.getProperty("GEMINI_API_KEY") ?: "")
+    .replace("\"", "\\\"")
+
 android {
     namespace = "com.example.runningapp"
     compileSdk = 34
@@ -14,7 +23,7 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
-        buildConfigField("String", "GEMINI_API_KEY", "\"\"")
+        buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
         
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -37,6 +46,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.1"
