@@ -28,6 +28,10 @@ class AiCoachClient {
         val prompt = buildString {
             appendLine("You are an expert running coach.")
             appendLine("Analyze the user's last 3 runs against their current stage requirement: ${context.graduationRequirement}.")
+            appendLine("The provided recent runs include timestamps. The run with the most recent timestamp is the workout the user JUST completed today.")
+            appendLine("Base your coachMessage feedback primarily on how they performed in today's run. Make it feel like a post-run debrief.")
+            appendLine("Look at the older runs to establish trends (e.g., is their heart rate consistently improving?).")
+            appendLine("Use this combined context to generate the exact intervals for their NEXT run.")
             appendLine("If they meet the requirement easily, set graduatedToNextStage to true.")
             appendLine("Otherwise, adjust their run/walk intervals safely to build endurance.")
             appendLine("Return ONLY a valid, raw JSON object.")
