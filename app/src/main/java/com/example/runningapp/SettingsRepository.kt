@@ -29,7 +29,9 @@ data class UserSettings(
     val splitAnnouncementsEnabled: Boolean = true,
     val runWalkCoachEnabled: Boolean = false,
     val savedDevices: List<SavedDevice> = emptyList(),
-    val activeDeviceAddress: String? = null
+    val activeDeviceAddress: String? = null,
+    val activePlanId: String? = null,
+    val activeStageId: String? = null
 )
 
 class SettingsRepository(private val context: Context) {
@@ -50,6 +52,8 @@ class SettingsRepository(private val context: Context) {
         val RUN_WALK_COACH_ENABLED = booleanPreferencesKey("run_walk_coach_enabled")
         val SAVED_DEVICES = stringSetPreferencesKey("saved_devices")
         val ACTIVE_DEVICE_ADDRESS = stringPreferencesKey("active_device_address")
+        val ACTIVE_PLAN_ID = stringPreferencesKey("active_plan_id")
+        val ACTIVE_STAGE_ID = stringPreferencesKey("active_stage_id")
     }
 
     val userSettingsFlow: Flow<UserSettings> = context.dataStore.data
@@ -75,7 +79,9 @@ class SettingsRepository(private val context: Context) {
                 splitAnnouncementsEnabled = preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] ?: true,
                 runWalkCoachEnabled = preferences[PreferencesKeys.RUN_WALK_COACH_ENABLED] ?: false,
                 savedDevices = savedDevices,
-                activeDeviceAddress = preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS]
+                activeDeviceAddress = preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS],
+                activePlanId = preferences[PreferencesKeys.ACTIVE_PLAN_ID],
+                activeStageId = preferences[PreferencesKeys.ACTIVE_STAGE_ID]
             )
         }
 
@@ -99,6 +105,18 @@ class SettingsRepository(private val context: Context) {
                 preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS] = settings.activeDeviceAddress
             } else {
                 preferences.remove(PreferencesKeys.ACTIVE_DEVICE_ADDRESS)
+            }
+            
+            if (settings.activePlanId != null) {
+                preferences[PreferencesKeys.ACTIVE_PLAN_ID] = settings.activePlanId
+            } else {
+                preferences.remove(PreferencesKeys.ACTIVE_PLAN_ID)
+            }
+
+            if (settings.activeStageId != null) {
+                preferences[PreferencesKeys.ACTIVE_STAGE_ID] = settings.activeStageId
+            } else {
+                preferences.remove(PreferencesKeys.ACTIVE_STAGE_ID)
             }
         }
     }
@@ -134,6 +152,22 @@ class SettingsRepository(private val context: Context) {
                 preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS] = address
             } else {
                 preferences.remove(PreferencesKeys.ACTIVE_DEVICE_ADDRESS)
+            }
+        }
+    }
+
+    suspend fun setActivePlan(planId: String?, stageId: String?) {
+        context.dataStore.edit { preferences ->
+            if (planId != null) {
+                preferences[PreferencesKeys.ACTIVE_PLAN_ID] = planId
+            } else {
+                preferences.remove(PreferencesKeys.ACTIVE_PLAN_ID)
+            }
+
+            if (stageId != null) {
+                preferences[PreferencesKeys.ACTIVE_STAGE_ID] = stageId
+            } else {
+                preferences.remove(PreferencesKeys.ACTIVE_STAGE_ID)
             }
         }
     }

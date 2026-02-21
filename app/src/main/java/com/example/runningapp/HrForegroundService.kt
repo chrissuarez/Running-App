@@ -65,6 +65,7 @@ import java.util.Date
 
 enum class SessionStatus { IDLE, CONNECTING, RUNNING, PAUSED, STOPPING, STOPPED, ERROR }
 enum class SessionPhase { WARM_UP, MAIN, COOL_DOWN }
+enum class StructuredWorkoutPhase { RUN, WALK }
 
 // simple data class to hold the state
 data class HrState(
@@ -97,6 +98,10 @@ data class HrState(
 
     val currentPhase: SessionPhase = SessionPhase.WARM_UP,
     val phaseSecondsRemaining: Int = 0,
+    val isStructuredWorkout: Boolean = false,
+    val structuredWorkoutPhase: StructuredWorkoutPhase = StructuredWorkoutPhase.RUN,
+    val phaseTimeRemainingSeconds: Int = 0,
+    val currentRepeat: Int = 1,
     
     // Mission 4: Outdoor Running
     val distanceKm: Double = 0.0,
@@ -215,6 +220,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var walkBreaksCount = 0
     @Volatile private var isWarmupSkipped = false
     @Volatile private var currentWarmupDuration = 480
+    @Volatile private var isStructuredWorkout = false
+    @Volatile private var structuredWorkoutPhase = StructuredWorkoutPhase.RUN
+    @Volatile private var phaseTimeRemainingSeconds = 0
+    @Volatile private var currentRepeat = 1
+    private var activeWorkoutTemplate: WorkoutTemplate? = null
+    private var hasStructuredWorkoutStarted = false
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
@@ -342,6 +353,29 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         break
                     }
 
+                    if (currentPhase == SessionPhase.MAIN && isStructuredWorkout) {
+                        val workout = activeWorkoutTemplate
+                        if (workout != null && workout.totalRepeats > 0 &&
+                            (isWarmupSkipped || sessionSecondsRunning >= currentWarmupDuration)
+                        ) {
+                            if (!hasStructuredWorkoutStarted) {
+                                hasStructuredWorkoutStarted = true
+                                structuredWorkoutPhase = StructuredWorkoutPhase.RUN
+                                if (phaseTimeRemainingSeconds <= 0) {
+                                    phaseTimeRemainingSeconds = workout.runDurationSeconds
+                                }
+                                playCue("Start running, interval $currentRepeat of ${workout.totalRepeats}.")
+                            }
+
+                            if (hasStructuredWorkoutStarted && phaseTimeRemainingSeconds > 0) {
+                                phaseTimeRemainingSeconds -= 1
+                                if (phaseTimeRemainingSeconds <= 0) {
+                                    onStructuredWorkoutPhaseComplete(workout)
+                                }
+                            }
+                        }
+                    }
+
                     if (sec == 600L && currentState.bpm > 0) {
                         baselineHr = currentState.bpm
                         Log.d(TAG, "Drift Baseline captured at 10m: $baselineHr")
@@ -410,6 +444,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             }
                             (limit - phaseSecondsRunning).toInt()
                         },
+                        isStructuredWorkout = isStructuredWorkout,
+                        structuredWorkoutPhase = structuredWorkoutPhase,
+                        phaseTimeRemainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0),
+                        currentRepeat = currentRepeat,
                         walkBreaksCount = walkBreaksCount
                     )
                 }
@@ -429,6 +467,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             }
                             (limit - phaseSecondsRunning).toInt()
                         },
+                        isStructuredWorkout = isStructuredWorkout,
+                        structuredWorkoutPhase = structuredWorkoutPhase,
+                        phaseTimeRemainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0),
+                        currentRepeat = currentRepeat,
                         walkBreaksCount = walkBreaksCount
                     )
                 }
@@ -455,6 +497,56 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val mins = seconds / 60
         val secs = seconds % 60
         return "%02d:%02d".format(mins, secs)
+    }
+
+    private fun resolveActiveWorkoutTemplate(): WorkoutTemplate? {
+        val planId = currentSettings.activePlanId ?: return null
+        val plan = TrainingPlanProvider.getPlanById(planId) ?: return null
+        val stage = plan.stages.firstOrNull { it.id == currentSettings.activeStageId } ?: plan.stages.firstOrNull()
+        return stage?.workouts?.firstOrNull()
+    }
+
+    private fun initializeStructuredWorkoutState() {
+        activeWorkoutTemplate = resolveActiveWorkoutTemplate()
+        isStructuredWorkout = activeWorkoutTemplate != null
+        structuredWorkoutPhase = StructuredWorkoutPhase.RUN
+        phaseTimeRemainingSeconds = activeWorkoutTemplate?.runDurationSeconds ?: 0
+        currentRepeat = 1
+        hasStructuredWorkoutStarted = false
+    }
+
+    private fun onStructuredWorkoutPhaseComplete(workout: WorkoutTemplate) {
+        if (structuredWorkoutPhase == StructuredWorkoutPhase.RUN) {
+            if (workout.walkDurationSeconds > 0) {
+                structuredWorkoutPhase = StructuredWorkoutPhase.WALK
+                phaseTimeRemainingSeconds = workout.walkDurationSeconds
+                playCue("Transition to walking, ${workout.walkDurationSeconds} seconds.")
+            } else {
+                currentRepeat += 1
+                if (currentRepeat > workout.totalRepeats) {
+                    playCue("Main workout complete, beginning cool down.")
+                    isStructuredWorkout = false
+                    hasStructuredWorkoutStarted = false
+                    phaseTimeRemainingSeconds = 0
+                } else {
+                    structuredWorkoutPhase = StructuredWorkoutPhase.RUN
+                    phaseTimeRemainingSeconds = workout.runDurationSeconds
+                    playCue("Start running, interval $currentRepeat of ${workout.totalRepeats}.")
+                }
+            }
+        } else {
+            currentRepeat += 1
+            if (currentRepeat > workout.totalRepeats) {
+                playCue("Main workout complete, beginning cool down.")
+                isStructuredWorkout = false
+                hasStructuredWorkoutStarted = false
+                phaseTimeRemainingSeconds = 0
+            } else {
+                structuredWorkoutPhase = StructuredWorkoutPhase.RUN
+                phaseTimeRemainingSeconds = workout.runDurationSeconds
+                playCue("Start running, interval $currentRepeat of ${workout.totalRepeats}.")
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -540,6 +632,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // Mission: Reset Phase Engine for a fresh session
             currentPhase = SessionPhase.WARM_UP
             phaseSecondsRunning = 0
+            isWarmupSkipped = false
+            currentWarmupDuration = currentSettings.warmUpDurationSeconds
+            initializeStructuredWorkoutState()
             
             // Reset session-level counters only when a new database session begins
             sessionSecondsRunning = 0
@@ -555,6 +650,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             _hrState.update { it.copy(
                 currentPhase = SessionPhase.WARM_UP,
                 phaseSecondsRemaining = currentSettings.warmUpDurationSeconds,
+                isStructuredWorkout = isStructuredWorkout,
+                structuredWorkoutPhase = structuredWorkoutPhase,
+                phaseTimeRemainingSeconds = phaseTimeRemainingSeconds,
+                currentRepeat = currentRepeat,
                 secondsRunning = 0,
                 secondsPaused = 0,
                 distanceKm = 0.0,
@@ -584,6 +683,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             walkBreaksCount = 0
             isWarmupSkipped = false
             currentWarmupDuration = currentSettings.warmUpDurationSeconds
+            initializeStructuredWorkoutState()
             
             Log.d(TAG, "Started DB Session: $currentSessionId (Mode: ${currentSettings.runMode})")
         }
@@ -601,6 +701,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             SessionPhase.MAIN -> {
                 currentPhase = SessionPhase.COOL_DOWN
                 phaseSecondsRunning = 0
+                isStructuredWorkout = false
+                hasStructuredWorkoutStarted = false
+                phaseTimeRemainingSeconds = 0
                 playCue("Starting cool down.")
             }
             SessionPhase.COOL_DOWN -> {
@@ -619,7 +722,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         else -> 0
                     }
                     (limit - phaseSecondsRunning).toInt()
-                }
+                },
+                isStructuredWorkout = isStructuredWorkout,
+                structuredWorkoutPhase = structuredWorkoutPhase,
+                phaseTimeRemainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0),
+                currentRepeat = currentRepeat
             )
         }
     }
@@ -1019,12 +1126,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             sessionStatus = SessionStatus.STOPPED,
             bpm = 0, 
             connectedDeviceName = null, 
-            discoveredServices = emptyList()
+            discoveredServices = emptyList(),
+            isStructuredWorkout = false,
+            phaseTimeRemainingSeconds = 0
         ) }
         synchronized(bpmHistory) {
             bpmHistory.clear()
         }
         currentZone = Zone.UNKNOWN
+        isStructuredWorkout = false
+        hasStructuredWorkoutStarted = false
+        phaseTimeRemainingSeconds = 0
+        currentRepeat = 1
+        activeWorkoutTemplate = null
         
         // Counters are now reset in startNewDatabaseSession() to persist until stopSession() finishes
         reconnectAttemptCount = 0

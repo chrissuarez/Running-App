@@ -35,13 +35,20 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import com.example.runningapp.data.AppDatabase
+import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.ui.HistoryScreen
+import com.example.runningapp.ui.HistoryViewModel
+import com.example.runningapp.ui.HistoryViewModelFactory
 import com.example.runningapp.ui.SessionDetailScreen
+import com.example.runningapp.ui.SessionDetailViewModel
+import com.example.runningapp.ui.SessionDetailViewModelFactory
+import com.example.runningapp.ui.TrainingPlanScreen
 
 class MainActivity : ComponentActivity() {
 
@@ -100,6 +107,14 @@ class MainActivity : ComponentActivity() {
                     val userSettings by settingsRepository.userSettingsFlow.collectAsState(initial = UserSettings())
 
                     val database = remember { AppDatabase.getDatabase(this) }
+                    val sessionRepository = remember { SessionRepository(database.sessionDao()) }
+                    val historyViewModel: HistoryViewModel = viewModel(
+                        factory = HistoryViewModelFactory(sessionRepository)
+                    )
+                    val sessionDetailViewModel: SessionDetailViewModel = viewModel(
+                        factory = SessionDetailViewModelFactory(sessionRepository)
+                    )
+                    val selectedSessionIds by historyViewModel.selectedSessionIds.collectAsState()
                     val historySessions by database.sessionDao().getLast20Sessions().collectAsState(initial = emptyList())
                     
                     val sessionSamples by produceState<List<com.example.runningapp.data.HrSample>>(initialValue = emptyList(), key1 = selectedSessionId) {
@@ -113,10 +128,18 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
+                    LaunchedEffect(sessionDetailViewModel) {
+                        sessionDetailViewModel.deleteCompleted.collect {
+                            selectedSessionId = null
+                            currentScreen = "history"
+                        }
+                    }
+
                     when (currentScreen) {
                         "main" -> {
                             MainScreen(
                                 hrService = hrService,
+                                userSettings = userSettings,
                                 onRequestPermissions = { checkAndRequestPermissions() },
                                 onStartService = {
                                     val action = if (hrService == null) {
@@ -158,6 +181,9 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onOpenManageDevices = {
                                     currentScreen = "manage_devices"
+                                },
+                                onOpenTrainingPlan = {
+                                    currentScreen = "training_plan"
                                 },
                                 onToggleSimulation = {
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
@@ -210,6 +236,10 @@ class MainActivity : ComponentActivity() {
                         "history" -> {
                             HistoryScreen(
                                 sessions = historySessions,
+                                selectedSessionIds = selectedSessionIds,
+                                onToggleSelection = { id -> historyViewModel.toggleSelection(id) },
+                                onClearSelection = { historyViewModel.clearSelection() },
+                                onDeleteSelected = { historyViewModel.deleteSelectedSessions() },
                                 onSessionClick = { id ->
                                     selectedSessionId = id
                                     currentScreen = "detail"
@@ -221,7 +251,22 @@ class MainActivity : ComponentActivity() {
                             SessionDetailScreen(
                                 session = selectedSession,
                                 samples = sessionSamples,
+                                onDeleteSession = { id ->
+                                    sessionDetailViewModel.deleteSession(id)
+                                },
                                 onBack = { currentScreen = "history" }
+                            )
+                        }
+                        "training_plan" -> {
+                            TrainingPlanScreen(
+                                activePlanId = userSettings.activePlanId,
+                                activeStageId = userSettings.activeStageId,
+                                onActivatePlan = { planId, stageId ->
+                                    scope.launch {
+                                        settingsRepository.setActivePlan(planId, stageId)
+                                    }
+                                },
+                                onBack = { currentScreen = "main" }
                             )
                         }
                     }
@@ -298,6 +343,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen(
     hrService: HrForegroundService?, 
+    userSettings: UserSettings,
     onRequestPermissions: () -> Unit,
     onStartService: () -> Unit,
     onTogglePause: () -> Unit,
@@ -307,9 +353,13 @@ fun MainScreen(
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenManageDevices: () -> Unit,
+    onOpenTrainingPlan: () -> Unit,
     onToggleSimulation: () -> Unit
 ) {
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
+    val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
+    val activeStage = activePlan?.stages?.firstOrNull { it.id == userSettings.activeStageId } ?: activePlan?.stages?.firstOrNull()
+    val todaysWorkout = activeStage?.workouts?.firstOrNull()
     
     Column(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -323,6 +373,9 @@ fun MainScreen(
                 }
                 IconButton(onClick = onOpenManageDevices) {
                     Text("⌚", fontSize = 24.sp)
+                }
+                IconButton(onClick = onOpenTrainingPlan) {
+                    Text("🏆", fontSize = 24.sp)
                 }
                 IconButton(onClick = onOpenSettings) {
                     Text("⚙️", fontSize = 24.sp)
@@ -356,8 +409,23 @@ fun MainScreen(
         if (state.sessionStatus == SessionStatus.ERROR) {
             Text(text = "ERROR: ${state.errorMessage ?: "Unknown"}", color = Color.Red, fontWeight = FontWeight.Bold)
         }
-        
-        Spacer(modifier = Modifier.height(16.dp))
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (activePlan != null && activeStage != null && todaysWorkout != null) {
+            TodaysWorkoutCard(
+                stageTitle = activeStage.title,
+                workout = todaysWorkout
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        } else if (userSettings.activePlanId == null) {
+            TextButton(onClick = onOpenTrainingPlan) {
+                Text("No active plan - tap to view plans")
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        } else {
+            Spacer(modifier = Modifier.height(12.dp))
+        }
         
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
@@ -429,6 +497,41 @@ fun MainScreen(
             Spacer(modifier = Modifier.weight(1f))
             Text("Ready to start a session.")
             Spacer(modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+fun TodaysWorkoutCard(
+    stageTitle: String,
+    workout: WorkoutTemplate
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f))
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                text = "Today's Workout",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = stageTitle,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = workout.title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Target HR Zone: Z${workout.targetZone}", style = MaterialTheme.typography.bodyMedium)
+            Text("Run: ${workout.runDurationSeconds}s", style = MaterialTheme.typography.bodyMedium)
+            Text("Walk: ${workout.walkDurationSeconds}s", style = MaterialTheme.typography.bodyMedium)
+            Text("Repeats: ${workout.totalRepeats}", style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
