@@ -67,6 +67,30 @@ object TrainingPlanProvider {
                     )
                 )
             )
+        ),
+        TrainingPlan(
+            id = "desk_test_plan",
+            name = "Desk Test Plan",
+            description = "Temporary short-interval plan for desk validation of run/walk transitions.",
+            stages = listOf(
+                PlanStage(
+                    id = "desk_test_stage",
+                    title = "Stage 1: Desk Test Stage",
+                    description = "Quick verification stage for interval state machine behavior.",
+                    graduationRequirementText = "Complete 2 short run/walk repeats.",
+                    isLocked = false,
+                    workouts = listOf(
+                        WorkoutTemplate(
+                            id = "desk_test_workout",
+                            title = "10s Run / 10s Walk Test",
+                            targetZone = 2,
+                            runDurationSeconds = 10,
+                            walkDurationSeconds = 10,
+                            totalRepeats = 2
+                        )
+                    )
+                )
+            )
         )
     )
 
