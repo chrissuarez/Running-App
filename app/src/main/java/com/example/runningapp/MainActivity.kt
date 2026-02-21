@@ -35,13 +35,17 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import com.example.runningapp.data.AppDatabase
+import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.ui.HistoryScreen
 import com.example.runningapp.ui.SessionDetailScreen
+import com.example.runningapp.ui.SessionDetailViewModel
+import com.example.runningapp.ui.SessionDetailViewModelFactory
 import com.example.runningapp.ui.TrainingPlanScreen
 
 class MainActivity : ComponentActivity() {
@@ -101,6 +105,10 @@ class MainActivity : ComponentActivity() {
                     val userSettings by settingsRepository.userSettingsFlow.collectAsState(initial = UserSettings())
 
                     val database = remember { AppDatabase.getDatabase(this) }
+                    val sessionRepository = remember { SessionRepository(database.sessionDao()) }
+                    val sessionDetailViewModel: SessionDetailViewModel = viewModel(
+                        factory = SessionDetailViewModelFactory(sessionRepository)
+                    )
                     val historySessions by database.sessionDao().getLast20Sessions().collectAsState(initial = emptyList())
                     
                     val sessionSamples by produceState<List<com.example.runningapp.data.HrSample>>(initialValue = emptyList(), key1 = selectedSessionId) {
@@ -111,6 +119,13 @@ class MainActivity : ComponentActivity() {
                     val selectedSession by produceState<com.example.runningapp.data.RunnerSession?>(initialValue = null, key1 = selectedSessionId) {
                         selectedSessionId?.let { id ->
                             database.sessionDao().getSessionByIdFlow(id).collect { value = it }
+                        }
+                    }
+
+                    LaunchedEffect(sessionDetailViewModel) {
+                        sessionDetailViewModel.deleteCompleted.collect {
+                            selectedSessionId = null
+                            currentScreen = "history"
                         }
                     }
 
@@ -226,6 +241,9 @@ class MainActivity : ComponentActivity() {
                             SessionDetailScreen(
                                 session = selectedSession,
                                 samples = sessionSamples,
+                                onDeleteSession = { id ->
+                                    sessionDetailViewModel.deleteSession(id)
+                                },
                                 onBack = { currentScreen = "history" }
                             )
                         }
