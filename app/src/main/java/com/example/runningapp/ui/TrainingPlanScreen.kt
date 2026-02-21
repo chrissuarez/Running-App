@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Lock
@@ -44,10 +44,8 @@ fun TrainingPlanScreen(
     onActivatePlan: (planId: String, stageId: String) -> Unit,
     onBack: () -> Unit
 ) {
-    val plan = TrainingPlanProvider.getPlanById("5k_sub_25") ?: return
-    val isPlanActive = activePlanId == plan.id
-    val firstStageId = plan.stages.firstOrNull()?.id
-    val fallbackActiveStageId = plan.stages.firstOrNull { !it.isLocked }?.id
+    val plans = TrainingPlanProvider.getAllPlans()
+    if (plans.isEmpty()) return
 
     Scaffold(
         topBar = {
@@ -68,7 +66,11 @@ fun TrainingPlanScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item {
+            itemsIndexed(plans, key = { _, plan -> plan.id }) { index, plan ->
+                val isPlanActive = activePlanId == plan.id
+                val firstStageId = plan.stages.firstOrNull()?.id
+                val selectedStageId = if (isPlanActive) activeStageId ?: firstStageId else null
+
                 Column {
                     Text(
                         text = plan.name,
@@ -91,20 +93,20 @@ fun TrainingPlanScreen(
                             Text("Activate Plan")
                         }
                     }
-                }
-            }
 
-            items(plan.stages) { stage ->
-                StageCard(
-                    stage = stage,
-                    isActive = stage.id == (
-                        if (isPlanActive) {
-                            activeStageId ?: firstStageId ?: fallbackActiveStageId
-                        } else {
-                            firstStageId ?: fallbackActiveStageId
-                        }
-                    )
-                )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    plan.stages.forEach { stage ->
+                        StageCard(
+                            stage = stage,
+                            isActive = stage.id == selectedStageId
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+
+                    if (index != plans.lastIndex) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                }
             }
         }
     }

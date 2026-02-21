@@ -94,5 +94,6 @@ object TrainingPlanProvider {
         )
     )
 
+    fun getAllPlans(): List<TrainingPlan> = plans
     fun getPlanById(id: String) = plans.find { it.id == id }
 }
