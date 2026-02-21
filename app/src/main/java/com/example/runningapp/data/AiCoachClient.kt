@@ -18,7 +18,7 @@ class AiCoachClient {
     private val gson = Gson()
     private val apiKey = BuildConfig.GEMINI_API_KEY
     private val model = GenerativeModel(
-        modelName = "gemini-1.5-flash",
+        modelName = "gemini-1.5-flash-latest",
         apiKey = apiKey
     )
 
@@ -30,7 +30,9 @@ class AiCoachClient {
             appendLine("Analyze the user's last 3 runs against their current stage requirement: ${context.graduationRequirement}.")
             appendLine("If they meet the requirement easily, set graduatedToNextStage to true.")
             appendLine("Otherwise, adjust their run/walk intervals safely to build endurance.")
-            appendLine("Respond ONLY with a raw JSON object matching this exact schema:")
+            appendLine("Return ONLY a valid, raw JSON object.")
+            appendLine("Do not include markdown formatting like ```json.")
+            appendLine("Your response must be parseable directly into this schema:")
             appendLine("{")
             appendLine("  \"nextRunDurationSeconds\": Int,")
             appendLine("  \"nextWalkDurationSeconds\": Int,")
@@ -44,7 +46,12 @@ class AiCoachClient {
         }
 
         val rawText = model.generateContent(prompt).text.orEmpty()
-        val jsonText = extractJsonObject(rawText)
+        val cleanedText = rawText
+            .removePrefix("```json")
+            .removePrefix("```")
+            .removeSuffix("```")
+            .trim()
+        val jsonText = extractJsonObject(cleanedText)
 
         return try {
             gson.fromJson(jsonText, AiCoachResponse::class.java)
