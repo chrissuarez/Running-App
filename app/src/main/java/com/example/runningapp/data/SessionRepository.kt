@@ -1,5 +1,6 @@
 package com.example.runningapp.data
 
+import android.util.Log
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.TrainingPlanProvider
 
@@ -59,8 +60,15 @@ class SessionRepository(
         val coachClient = aiCoachClient ?: return
 
         try {
+            Log.d("AiCoach", "Starting AI evaluation for stage: $stageId")
             val context = getAiTrainingContext(stageId)
+            Log.d("AiCoach", "Sending prompt to Gemini with ${context.recentRuns.size} recent runs.")
             val response = coachClient.evaluateProgress(context)
+            Log.d(
+                "AiCoach",
+                "Gemini response received! Adjusted intervals: ${response.nextRunDurationSeconds}s Run / " +
+                    "${response.nextWalkDurationSeconds}s Walk. Message: ${response.coachMessage}"
+            )
 
             settingsRepo.setAiAdjustments(
                 latestCoachMessage = response.coachMessage,
@@ -82,8 +90,8 @@ class SessionRepository(
 
                 settingsRepo.advanceStageAndClearAiIntervals(nextStageId)
             }
-        } catch (_: Exception) {
-            // Prevent network/parsing issues from crashing post-run flow.
+        } catch (e: Exception) {
+            Log.e("AiCoach", "Failed to evaluate progress", e)
         }
     }
 }

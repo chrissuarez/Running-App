@@ -797,9 +797,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
                         val stageId = currentSettings.activeStageId
                         if (stageId != null) {
-                            serviceScope.launch(Dispatchers.IO) {
-                                sessionRepository.evaluateAndAdjustPlan(stageId)
-                            }
+                            Log.d("AiCoach", "Triggering AI evaluation after session finalization for stage: $stageId")
+                            sessionRepository.evaluateAndAdjustPlan(stageId)
                         }
                     }
                     currentSessionId = null
