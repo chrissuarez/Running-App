@@ -18,7 +18,7 @@ class AiCoachClient {
     private val gson = Gson()
     private val apiKey = BuildConfig.GEMINI_API_KEY
     private val model = GenerativeModel(
-        modelName = "gemini-1.5-flash-latest",
+        modelName = "gemini-pro",
         apiKey = apiKey
     )
 
