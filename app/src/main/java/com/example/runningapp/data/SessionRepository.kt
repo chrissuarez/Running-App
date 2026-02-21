@@ -6,4 +6,9 @@ class SessionRepository(
     suspend fun deleteSession(sessionId: Long) {
         sessionDao.deleteSessionById(sessionId)
     }
+
+    suspend fun deleteSessions(sessionIds: List<Long>) {
+        if (sessionIds.isEmpty()) return
+        sessionDao.deleteSessionsByIds(sessionIds)
+    }
 }
