@@ -1,5 +1,6 @@
 package com.example.runningapp.data
 
+import android.util.Log
 import com.example.runningapp.BuildConfig
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.gson.Gson
@@ -45,13 +46,15 @@ class AiCoachClient {
             appendLine(gson.toJson(context.recentRuns))
         }
 
-        val rawText = model.generateContent(prompt).text.orEmpty()
-        val cleanedText = rawText
-            .removePrefix("```json")
-            .removePrefix("```")
-            .removeSuffix("```")
+        val response = model.generateContent(prompt)
+        val rawText = response.text ?: "{}"
+        val cleanJson = rawText
+            .substringAfter("```json", rawText)
+            .substringAfter("```", rawText)
+            .substringBeforeLast("```", rawText)
             .trim()
-        val jsonText = extractJsonObject(cleanedText)
+        Log.d("AiCoach", "Raw Gemini Response: $cleanJson")
+        val jsonText = extractJsonObject(cleanJson)
 
         return try {
             gson.fromJson(jsonText, AiCoachResponse::class.java)
