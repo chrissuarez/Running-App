@@ -4,7 +4,6 @@ import android.util.Log
 import com.example.runningapp.BuildConfig
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.gson.Gson
-import com.google.gson.JsonSyntaxException
 
 data class AiCoachResponse(
     val nextRunDurationSeconds: Int,
@@ -19,7 +18,7 @@ class AiCoachClient {
     private val gson = Gson()
     private val apiKey = BuildConfig.GEMINI_API_KEY
     private val model = GenerativeModel(
-        modelName = "gemini-1.5-flash",
+        modelName = "gemini-2.5-flash",
         apiKey = apiKey
     )
 
@@ -46,79 +45,23 @@ class AiCoachClient {
             appendLine(gson.toJson(context.recentRuns))
         }
 
-        val endpoint =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey"
-
-        val payload = gson.toJson(
-            mapOf(
-                "contents" to listOf(
-                    mapOf(
-                        "parts" to listOf(
-                            mapOf("text" to prompt)
-                        )
-                    )
-                )
-            )
-        )
-
-        val connection = (java.net.URL(endpoint).openConnection() as java.net.HttpURLConnection).apply {
-            requestMethod = "POST"
-            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-            doOutput = true
-            doInput = true
-            connectTimeout = 15000
-            readTimeout = 30000
-        }
-
         return try {
-            connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
-
-            val responseCode = connection.responseCode
-            val responseBody = (if (responseCode in 200..299) connection.inputStream else connection.errorStream)
-                ?.bufferedReader()
-                ?.use { it.readText() }
-                .orEmpty()
-
-            if (responseCode == 200) {
-                Log.d("AiCoach", "Raw API Response: $responseBody")
-            } else {
-                Log.e("AiCoach", "API error code=$responseCode")
-                Log.e("AiCoach", "Raw API Error: $responseBody")
-            }
-
-            AiCoachResponse(
-                nextRunDurationSeconds = 60,
-                nextWalkDurationSeconds = 30,
-                nextRepeats = 6,
-                graduatedToNextStage = false,
-                coachMessage = "Temporary fallback while debugging Gemini raw responses."
-            )
+            val response = model.generateContent(prompt)
+            val cleanJson = response.text
+                ?.replace("```json", "")
+                ?.replace("```", "")
+                ?.trim()
+                ?: "{}"
+            gson.fromJson(cleanJson, AiCoachResponse::class.java)
         } catch (e: Exception) {
-            Log.e("AiCoach", "HTTP request failed", e)
+            Log.e("AiCoach", "Failed to evaluate progress with Gemini", e)
             AiCoachResponse(
                 nextRunDurationSeconds = 60,
                 nextWalkDurationSeconds = 30,
                 nextRepeats = 6,
                 graduatedToNextStage = false,
-                coachMessage = "Temporary fallback due to API request failure."
+                coachMessage = "Coach update unavailable right now. Keep going."
             )
-        } finally {
-            connection.disconnect()
         }
-    }
-
-    private fun extractJsonObject(raw: String): String {
-        val trimmed = raw.trim()
-        if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed
-
-        val fenceRegex = Regex("```(?:json)?\\s*(\\{[\\s\\S]*})\\s*```")
-        val fenced = fenceRegex.find(trimmed)?.groupValues?.getOrNull(1)?.trim()
-        if (!fenced.isNullOrBlank()) return fenced
-
-        val start = trimmed.indexOf('{')
-        val end = trimmed.lastIndexOf('}')
-        if (start >= 0 && end > start) return trimmed.substring(start, end + 1)
-
-        throw IllegalStateException("No JSON object found in Gemini response: $raw")
     }
 }
