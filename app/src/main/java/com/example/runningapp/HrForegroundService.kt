@@ -58,8 +58,10 @@ import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
 import com.example.runningapp.data.AppDatabase
+import com.example.runningapp.data.AiCoachClient
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.HrSample
+import com.example.runningapp.data.SessionRepository
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -175,6 +177,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private val paceHistory = LinkedList<Pair<Long, Double>>() // Pair<Timestamp, MetersPerSecond>
 
     private lateinit var settingsRepository: SettingsRepository
+    private lateinit var sessionRepository: SessionRepository
     private var currentSettings = UserSettings()
 
     private lateinit var database: AppDatabase
@@ -286,6 +289,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         
         
         database = AppDatabase.getDatabase(this)
+        sessionRepository = SessionRepository(
+            sessionDao = database.sessionDao(),
+            settingsRepository = settingsRepository,
+            aiCoachClient = AiCoachClient()
+        )
         
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         
@@ -503,7 +511,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val planId = currentSettings.activePlanId ?: return null
         val plan = TrainingPlanProvider.getPlanById(planId) ?: return null
         val stage = plan.stages.firstOrNull { it.id == currentSettings.activeStageId } ?: plan.stages.firstOrNull()
-        return stage?.workouts?.firstOrNull()
+        val baseWorkout = stage?.workouts?.firstOrNull() ?: return null
+        val run = currentSettings.aiRunIntervalSeconds
+        val walk = currentSettings.aiWalkIntervalSeconds
+        val repeats = currentSettings.aiRepeats
+        return if (run != null && walk != null && repeats != null) {
+            baseWorkout.copy(
+                runDurationSeconds = run,
+                walkDurationSeconds = walk,
+                totalRepeats = repeats
+            )
+        } else {
+            baseWorkout
+        }
     }
 
     private fun initializeStructuredWorkoutState() {
@@ -774,6 +794,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         )
                         database.sessionDao().updateSession(updatedSession)
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
+
+                        val stageId = currentSettings.activeStageId
+                        if (stageId != null) {
+                            serviceScope.launch(Dispatchers.IO) {
+                                sessionRepository.evaluateAndAdjustPlan(stageId)
+                            }
+                        }
                     }
                     currentSessionId = null
                 }

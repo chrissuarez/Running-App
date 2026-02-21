@@ -1,5 +1,6 @@
 package com.example.runningapp.data
 
+import com.example.runningapp.SettingsRepository
 import com.example.runningapp.TrainingPlanProvider
 
 data class AiRecentRun(
@@ -16,7 +17,9 @@ data class AiTrainingContext(
 )
 
 class SessionRepository(
-    private val sessionDao: SessionDao
+    private val sessionDao: SessionDao,
+    private val settingsRepository: SettingsRepository? = null,
+    private val aiCoachClient: AiCoachClient? = null
 ) {
     suspend fun deleteSession(sessionId: Long) {
         sessionDao.deleteSessionById(sessionId)
@@ -49,5 +52,38 @@ class SessionRepository(
             graduationRequirement = stage.graduationRequirementText,
             recentRuns = recentRuns
         )
+    }
+
+    suspend fun evaluateAndAdjustPlan(stageId: String) {
+        val settingsRepo = settingsRepository ?: return
+        val coachClient = aiCoachClient ?: return
+
+        try {
+            val context = getAiTrainingContext(stageId)
+            val response = coachClient.evaluateProgress(context)
+
+            settingsRepo.setAiAdjustments(
+                latestCoachMessage = response.coachMessage,
+                aiRunIntervalSeconds = response.nextRunDurationSeconds,
+                aiWalkIntervalSeconds = response.nextWalkDurationSeconds,
+                aiRepeats = response.nextRepeats
+            )
+
+            if (response.graduatedToNextStage) {
+                val plan = TrainingPlanProvider
+                    .getAllPlans()
+                    .firstOrNull { currentPlan -> currentPlan.stages.any { it.id == stageId } }
+
+                val nextStageId = plan
+                    ?.stages
+                    ?.indexOfFirst { it.id == stageId }
+                    ?.takeIf { it >= 0 }
+                    ?.let { index -> plan.stages.getOrNull(index + 1)?.id }
+
+                settingsRepo.advanceStageAndClearAiIntervals(nextStageId)
+            }
+        } catch (_: Exception) {
+            // Prevent network/parsing issues from crashing post-run flow.
+        }
     }
 }
