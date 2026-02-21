@@ -1,5 +1,6 @@
 package com.example.runningapp.data
 
+import com.example.runningapp.BuildConfig
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.gson.Gson
 import com.google.gson.JsonSyntaxException
@@ -12,9 +13,10 @@ data class AiCoachResponse(
     val coachMessage: String
 )
 
-class AiCoachClient(private val apiKey: String) {
+class AiCoachClient {
 
     private val gson = Gson()
+    private val apiKey = BuildConfig.GEMINI_API_KEY
     private val model = GenerativeModel(
         modelName = "gemini-1.5-flash",
         apiKey = apiKey
