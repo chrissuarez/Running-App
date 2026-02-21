@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import com.example.runningapp.data.AppDatabase
+import com.example.runningapp.data.AiCoachClient
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.ui.HistoryScreen
 import com.example.runningapp.ui.HistoryViewModel
@@ -54,6 +55,15 @@ class MainActivity : ComponentActivity() {
 
     private var hrService by mutableStateOf<HrForegroundService?>(null)
     private var isBound by mutableStateOf(false)
+    private val aiCoachClient by lazy {
+        AiCoachClient(
+            apiKey = if (BuildConfig.GEMINI_API_KEY.isNotBlank()) {
+                BuildConfig.GEMINI_API_KEY
+            } else {
+                "REPLACE_WITH_GEMINI_API_KEY"
+            }
+        )
+    }
 
     private var currentScreenState = mutableStateOf("main")
 
