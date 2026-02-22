@@ -8,6 +8,7 @@ data class AiRecentRun(
     val durationSeconds: Long,
     val avgHr: Int,
     val walkBreaksCount: Int,
+    val sessionType: String,
     val timestamp: Long
 )
 
@@ -44,6 +45,7 @@ class SessionRepository(
                 durationSeconds = session.durationSeconds,
                 avgHr = session.avgBpm,
                 walkBreaksCount = session.walkBreaksCount,
+                sessionType = session.sessionType,
                 timestamp = session.startTime
             )
         }

@@ -179,6 +179,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private lateinit var settingsRepository: SettingsRepository
     private lateinit var sessionRepository: SessionRepository
     private var currentSettings = UserSettings()
+    @Volatile private var currentSessionType = SESSION_TYPE_RUN_WALK
 
     private lateinit var database: AppDatabase
     private var currentSessionId: Long? = null
@@ -239,7 +240,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_RESUME_SESSION = "ACTION_RESUME_SESSION"
         const val ACTION_FORCE_SCAN = "ACTION_FORCE_SCAN"
         const val EXTRA_DEVICE_ADDRESS = "EXTRA_DEVICE_ADDRESS"
+        const val EXTRA_SESSION_TYPE = "EXTRA_SESSION_TYPE"
+        const val SESSION_TYPE_RUN_WALK = "Run/Walk"
+        const val SESSION_TYPE_ZONE2_WALK = "Zone 2 Walk"
+        const val SESSION_TYPE_FREE_TRACK = "Free Track"
         const val TAG = "HrService"
+    }
+
+    private fun sanitizeSessionType(value: String?): String {
+        return when (value) {
+            SESSION_TYPE_RUN_WALK,
+            SESSION_TYPE_ZONE2_WALK,
+            SESSION_TYPE_FREE_TRACK -> value
+            else -> SESSION_TYPE_RUN_WALK
+        }
     }
 
     inner class LocalBinder : Binder() {
@@ -361,7 +375,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         break
                     }
 
-                    if (currentPhase == SessionPhase.MAIN && isStructuredWorkout) {
+                    if (currentPhase == SessionPhase.MAIN && isStructuredWorkout && currentSessionType == SESSION_TYPE_RUN_WALK) {
                         val workout = activeWorkoutTemplate
                         if (workout != null && workout.totalRepeats > 0 &&
                             (isWarmupSkipped || sessionSecondsRunning >= currentWarmupDuration)
@@ -528,9 +542,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun initializeStructuredWorkoutState() {
         activeWorkoutTemplate = resolveActiveWorkoutTemplate()
-        isStructuredWorkout = activeWorkoutTemplate != null
-        structuredWorkoutPhase = StructuredWorkoutPhase.RUN
-        phaseTimeRemainingSeconds = activeWorkoutTemplate?.runDurationSeconds ?: 0
+        isStructuredWorkout = activeWorkoutTemplate != null && currentSessionType == SESSION_TYPE_RUN_WALK
+        structuredWorkoutPhase = if (currentSessionType == SESSION_TYPE_RUN_WALK) {
+            StructuredWorkoutPhase.RUN
+        } else {
+            StructuredWorkoutPhase.WALK
+        }
+        phaseTimeRemainingSeconds = if (currentSessionType == SESSION_TYPE_RUN_WALK) {
+            activeWorkoutTemplate?.runDurationSeconds ?: 0
+        } else {
+            0
+        }
         currentRepeat = 1
         hasStructuredWorkoutStarted = false
     }
@@ -575,6 +597,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         when (intent?.action) {
             ACTION_START_FOREGROUND -> {
+                currentSessionType = sanitizeSessionType(intent.getStringExtra(EXTRA_SESSION_TYPE))
                 val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                 if (!isSimulationEnabled) {
                     serviceScope.launch {
@@ -610,6 +633,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             ACTION_FORCE_SCAN -> {
                 Log.d(TAG, "ACTION_FORCE_SCAN received")
+                currentSessionType = sanitizeSessionType(intent.getStringExtra(EXTRA_SESSION_TYPE))
                 startForegroundService()
                 if (!isSimulationEnabled) {
                     startScanning()
@@ -682,7 +706,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
             val session = RunnerSession(
                 startTime = System.currentTimeMillis(),
-                runMode = currentSettings.runMode
+                runMode = currentSettings.runMode,
+                sessionType = currentSessionType
             )
             currentSessionId = database.sessionDao().insertSession(session)
             startSessionTimerLoop()
@@ -790,13 +815,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             zone5Seconds = sessionZoneTimes[5] ?: 0L,
                             noDataSeconds = sessionNoDataSeconds,
                             walkBreaksCount = finalWalkBreaksCount,
-                            isRunWalkMode = finalIsRunWalkMode
+                            isRunWalkMode = finalIsRunWalkMode,
+                            sessionType = currentSessionType
                         )
                         database.sessionDao().updateSession(updatedSession)
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
 
                         val stageId = currentSettings.activeStageId
-                        if (stageId != null) {
+                        if (stageId != null && currentSessionType == SESSION_TYPE_RUN_WALK) {
                             Log.d("AiCoach", "Triggering AI evaluation after session finalization for stage: $stageId")
                             sessionRepository.evaluateAndAdjustPlan(stageId)
                         }
@@ -830,6 +856,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
     
     fun playCue(text: String) {
+        if (currentSessionType == SESSION_TYPE_FREE_TRACK) return
         if (tts == null) return
         
         if (requestAudioFocus()) {
@@ -1337,7 +1364,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             avgBpm = bpmHistory.map { it.second }.average().roundToInt()
         }
         
-        val isRunWalk = currentSettings.runWalkCoachEnabled
+        val isRunWalk = currentSettings.runWalkCoachEnabled && currentSessionType == SESSION_TYPE_RUN_WALK
         
         val newZone = when {
             isRunWalk -> {

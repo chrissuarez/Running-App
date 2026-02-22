@@ -24,7 +24,8 @@ data class RunnerSession(
     val avgPaceMinPerKm: Double = 0.0,
     val noDataSeconds: Long = 0L,
     val walkBreaksCount: Int = 0,
-    val isRunWalkMode: Boolean = false
+    val isRunWalkMode: Boolean = false,
+    val sessionType: String = "Run/Walk"
 )
 
 @Entity(
@@ -87,7 +88,7 @@ interface SampleDao {
     fun getSamplesForSession(sessionId: Long): Flow<List<HrSample>>
 }
 
-@Database(entities = [RunnerSession::class, HrSample::class], version = 5, exportSchema = false)
+@Database(entities = [RunnerSession::class, HrSample::class], version = 6, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
     abstract fun sampleDao(): SampleDao
@@ -103,7 +104,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "running_app_db"
                 )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
                 INSTANCE = instance
                 instance
@@ -144,5 +145,11 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
     override fun migrate(database: SupportSQLiteDatabase) {
         database.execSQL("ALTER TABLE sessions ADD COLUMN walkBreaksCount INTEGER NOT NULL DEFAULT 0")
         database.execSQL("ALTER TABLE sessions ADD COLUMN isRunWalkMode INTEGER NOT NULL DEFAULT 0")
+    }
+}
+
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE sessions ADD COLUMN sessionType TEXT NOT NULL DEFAULT 'Run/Walk'")
     }
 }

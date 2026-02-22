@@ -51,6 +51,10 @@ import com.example.runningapp.ui.SessionDetailViewModel
 import com.example.runningapp.ui.SessionDetailViewModelFactory
 import com.example.runningapp.ui.TrainingPlanScreen
 
+private const val SESSION_TYPE_RUN_WALK = "Run/Walk"
+private const val SESSION_TYPE_ZONE2_WALK = "Zone 2 Walk"
+private const val SESSION_TYPE_FREE_TRACK = "Free Track"
+
 class MainActivity : ComponentActivity() {
 
     private var hrService by mutableStateOf<HrForegroundService?>(null)
@@ -145,7 +149,7 @@ class MainActivity : ComponentActivity() {
                                 hrService = hrService,
                                 userSettings = userSettings,
                                 onRequestPermissions = { checkAndRequestPermissions() },
-                                onStartService = {
+                                onStartService = { selectedSessionType ->
                                     val action = if (hrService == null) {
                                         HrForegroundService.ACTION_START_FOREGROUND
                                     } else {
@@ -153,6 +157,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         this.action = action
+                                        putExtra(HrForegroundService.EXTRA_SESSION_TYPE, selectedSessionType)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
@@ -165,11 +170,12 @@ class MainActivity : ComponentActivity() {
                                     }
                                     ContextCompat.startForegroundService(this, intent)
                                 },
-                                onConnectToDevice = { address ->
+                                onConnectToDevice = { address, selectedSessionType ->
                                     Log.d("MainActivity", "User tapped device: $address")
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
+                                        putExtra(HrForegroundService.EXTRA_SESSION_TYPE, selectedSessionType)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.connectToDevice(address)
@@ -349,10 +355,10 @@ fun MainScreen(
     hrService: HrForegroundService?, 
     userSettings: UserSettings,
     onRequestPermissions: () -> Unit,
-    onStartService: () -> Unit,
+    onStartService: (String) -> Unit,
     onTogglePause: () -> Unit,
     onStopSession: () -> Unit,
-    onConnectToDevice: (String) -> Unit,
+    onConnectToDevice: (String, String) -> Unit,
     onTestCue: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
@@ -360,6 +366,13 @@ fun MainScreen(
     onOpenTrainingPlan: () -> Unit,
     onToggleSimulation: () -> Unit
 ) {
+    val sessionTypeOptions = listOf(
+        SESSION_TYPE_RUN_WALK,
+        SESSION_TYPE_ZONE2_WALK,
+        SESSION_TYPE_FREE_TRACK
+    )
+    var selectedSessionType by rememberSaveable { mutableStateOf(SESSION_TYPE_RUN_WALK) }
+
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
     val activeStage = activePlan?.stages?.firstOrNull { it.id == userSettings.activeStageId } ?: activePlan?.stages?.firstOrNull()
@@ -419,7 +432,7 @@ fun MainScreen(
                         Text("Active Device: ${activeDevice.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                         Text(activeDevice.address, style = MaterialTheme.typography.bodySmall)
                     }
-                    Button(onClick = { onConnectToDevice(activeDevice.address) }) {
+                    Button(onClick = { onConnectToDevice(activeDevice.address, selectedSessionType) }) {
                         Text("Connect")
                     }
                 }
@@ -467,10 +480,41 @@ fun MainScreen(
             }
             Spacer(modifier = Modifier.height(12.dp))
         }
-        
+
+        Text(
+            text = "Session Type",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            sessionTypeOptions.forEach { option ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { selectedSessionType = option }
+                ) {
+                    RadioButton(
+                        selected = selectedSessionType == option,
+                        onClick = { selectedSessionType = option }
+                    )
+                    Text(
+                        text = option,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
-                Button(onClick = onStartService) {
+                Button(onClick = { onStartService(selectedSessionType) }) {
                     val label = if (hrService == null) "Start Service" else "Scan for Devices"
                     Text(label)
                 }
@@ -529,7 +573,7 @@ fun MainScreen(
                 modifier = Modifier.weight(1f).fillMaxWidth().background(Color.LightGray.copy(alpha = 0.2f))
             ) {
                 items(state.scannedDevices) { device ->
-                    DeviceListItem(device = device, onClick = { onConnectToDevice(device.address) })
+                    DeviceListItem(device = device, onClick = { onConnectToDevice(device.address, selectedSessionType) })
                 }
             }
         } else if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
