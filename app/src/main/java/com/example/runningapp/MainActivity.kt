@@ -406,92 +406,90 @@ fun MainScreen(
         baseWorkout
     }
     
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
+    val activeDevice = state.userSettings.savedDevices.find { it.address == state.userSettings.activeDeviceAddress }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(text = "Running App", style = MaterialTheme.typography.headlineMedium)
-            Row {
-                IconButton(onClick = onOpenHistory) {
-                    Text("📜", fontSize = 24.sp)
-                }
-                IconButton(onClick = onOpenManageDevices) {
-                    Text("⌚", fontSize = 24.sp)
-                }
-                IconButton(onClick = onOpenTrainingPlan) {
-                    Text("🏆", fontSize = 24.sp)
-                }
-                IconButton(onClick = onOpenSettings) {
-                    Text("⚙️", fontSize = 24.sp)
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(text = "Running App", style = MaterialTheme.typography.headlineMedium)
+                Row {
+                    IconButton(onClick = onOpenHistory) { Text("📜", fontSize = 24.sp) }
+                    IconButton(onClick = onOpenManageDevices) { Text("⌚", fontSize = 24.sp) }
+                    IconButton(onClick = onOpenTrainingPlan) { Text("🏆", fontSize = 24.sp) }
+                    IconButton(onClick = onOpenSettings) { Text("⚙️", fontSize = 24.sp) }
                 }
             }
         }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Text(text = "Status: ${state.connectionStatus}")
-        
-        // Active Device Shortcut
-        val activeDevice = state.userSettings.savedDevices.find { it.address == state.userSettings.activeDeviceAddress }
+
+        item {
+            Text(text = "Status: ${state.connectionStatus}")
+        }
+
         if (activeDevice != null && state.connectionStatus == "Disconnected") {
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
-            ) {
-                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Active Device: ${activeDevice.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                        Text(activeDevice.address, style = MaterialTheme.typography.bodySmall)
-                    }
-                    Button(onClick = { onConnectToDevice(activeDevice.address, selectedSessionType) }) {
-                        Text("Connect")
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
+                ) {
+                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Active Device: ${activeDevice.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            Text(activeDevice.address, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Button(onClick = { onConnectToDevice(activeDevice.address, selectedSessionType) }) {
+                            Text("Connect")
+                        }
                     }
                 }
             }
         }
 
         if (state.sessionStatus == SessionStatus.ERROR) {
-            Text(text = "ERROR: ${state.errorMessage ?: "Unknown"}", color = Color.Red, fontWeight = FontWeight.Bold)
+            item {
+                Text(
+                    text = "ERROR: ${state.errorMessage ?: "Unknown"}",
+                    color = Color.Red,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-
         if (activePlan != null && activeStage != null && todaysWorkout != null) {
-            TodaysWorkoutCard(
-                stageTitle = activeStage.title,
-                workout = todaysWorkout
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-        } else if (userSettings.activePlanId == null) {
-            TextButton(onClick = onOpenTrainingPlan) {
-                Text("No active plan - tap to view plans")
+            item {
+                TodaysWorkoutCard(
+                    stageTitle = activeStage.title,
+                    workout = todaysWorkout
+                )
             }
-            Spacer(modifier = Modifier.height(12.dp))
-        } else {
-            Spacer(modifier = Modifier.height(12.dp))
+        } else if (userSettings.activePlanId == null) {
+            item {
+                TextButton(onClick = onOpenTrainingPlan) {
+                    Text("No active plan - tap to view plans")
+                }
+            }
         }
 
         if (coachMessage != null) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFE7E8FF))
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text(
-                        text = "AI Coach Debrief",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 140.dp)
-                            .verticalScroll(rememberScrollState())
-                    ) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE7E8FF))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = "AI Coach Debrief",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = coachMessage,
                             style = MaterialTheme.typography.bodyMedium
@@ -499,110 +497,109 @@ fun MainScreen(
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(12.dp))
         }
 
-        Text(
-            text = "Session Type",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            sessionTypeOptions.forEach { option ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable { selectedSessionType = option }
-                ) {
-                    RadioButton(
-                        selected = selectedSessionType == option,
-                        onClick = { selectedSessionType = option }
-                    )
-                    Text(
-                        text = option,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-            }
-        }
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
-                Button(onClick = { onStartService(selectedSessionType) }) {
-                    val label = if (hrService == null) "Start Service" else "Scan for Devices"
-                    Text(label)
-                }
-            } else {
-                Button(onClick = onTogglePause) {
-                    Text(if (state.sessionStatus == SessionStatus.PAUSED) "Resume" else "Pause")
-                }
-                
-                // Mission: Phase Skipping
-                Button(onClick = { hrService?.skipCurrentPhase() }) {
-                    val label = when(state.currentPhase) {
-                        SessionPhase.WARM_UP -> "Skip Warmup"
-                        SessionPhase.MAIN -> "Start Cooldown"
-                        SessionPhase.COOL_DOWN -> "End Session"
-                    }
-                    Text(label)
-                }
-            }
-            
-            // Mission: Robust Kill Switch - show Force Stop if service is active or in error
-            if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
-                Button(
-                    onClick = onStopSession, 
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    modifier = Modifier.padding(start = 8.dp)
-                ) {
-                    Text("Force Stop")
-                }
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-             Button(onClick = onRequestPermissions) {
-                Text("Perms")
-            }
-            Button(
-                onClick = { onToggleSimulation(!state.isSimulating) },
-                colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = Color.Magenta) else ButtonDefaults.buttonColors()
+        item {
+            Text(
+                text = "Session Type",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(if (state.isSimulating) "Stop Sim" else "Simulate")
+                sessionTypeOptions.forEach { option ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { selectedSessionType = option }
+                    ) {
+                        RadioButton(
+                            selected = selectedSessionType == option,
+                            onClick = { selectedSessionType = option }
+                        )
+                        Text(
+                            text = option,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
             }
         }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        // Settings Summary
-        SettingsSummaryCard(settings = state.userSettings)
 
-        Spacer(modifier = Modifier.height(16.dp))
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
+                    Button(onClick = { onStartService(selectedSessionType) }) {
+                        val label = if (hrService == null) "Start Service" else "Scan for Devices"
+                        Text(label)
+                    }
+                } else {
+                    Button(onClick = onTogglePause) {
+                        Text(if (state.sessionStatus == SessionStatus.PAUSED) "Resume" else "Pause")
+                    }
+                    Button(onClick = { hrService?.skipCurrentPhase() }) {
+                        val label = when (state.currentPhase) {
+                            SessionPhase.WARM_UP -> "Skip Warmup"
+                            SessionPhase.MAIN -> "Start Cooldown"
+                            SessionPhase.COOL_DOWN -> "End Session"
+                        }
+                        Text(label)
+                    }
+                }
+
+                if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
+                    Button(
+                        onClick = onStopSession,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.padding(start = 8.dp)
+                    ) {
+                        Text("Force Stop")
+                    }
+                }
+            }
+        }
+
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Button(onClick = onRequestPermissions) {
+                    Text("Perms")
+                }
+                Button(
+                    onClick = { onToggleSimulation(!state.isSimulating) },
+                    colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = Color.Magenta) else ButtonDefaults.buttonColors()
+                ) {
+                    Text(if (state.isSimulating) "Stop Sim" else "Simulate")
+                }
+            }
+        }
+
+        item {
+            SettingsSummaryCard(settings = state.userSettings)
+        }
 
         if (state.connectionStatus == "Scanning...") {
-            Text("Scanned Devices:", style = MaterialTheme.typography.titleMedium)
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth().background(Color.LightGray.copy(alpha = 0.2f))
-            ) {
-                items(state.scannedDevices) { device ->
-                    DeviceListItem(device = device, onClick = { onConnectToDevice(device.address, selectedSessionType) })
-                }
+            item {
+                Text("Scanned Devices:", style = MaterialTheme.typography.titleMedium)
+            }
+            items(state.scannedDevices) { device ->
+                DeviceListItem(
+                    device = device,
+                    onClick = { onConnectToDevice(device.address, selectedSessionType) }
+                )
             }
         } else if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
-             WorkoutView(state = state)
+            item {
+                WorkoutView(state = state)
+            }
         } else {
-            Spacer(modifier = Modifier.weight(1f))
-            Text("Ready to start a session.")
-            Spacer(modifier = Modifier.weight(1f))
+            item {
+                Text("Ready to start a session.")
+            }
         }
     }
 }
