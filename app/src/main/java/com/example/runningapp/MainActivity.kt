@@ -36,6 +36,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -196,24 +197,24 @@ class MainActivity : ComponentActivity() {
                                     currentScreen = "training_plan"
                                 },
                                 onToggleSimulation = { simulationEnabled ->
-                                    scope.launch {
+                                    scope.launch(Dispatchers.IO) {
                                         settingsRepository.setSimulationEnabled(simulationEnabled)
-                                    }
 
-                                    val isSessionRunning =
-                                        hrService?.hrState?.value?.sessionStatus == SessionStatus.RUNNING
+                                        val isSessionRunning =
+                                            hrService?.hrState?.value?.sessionStatus == SessionStatus.RUNNING
 
-                                    val startIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
-                                        action = HrForegroundService.ACTION_START_FOREGROUND
-                                    }
-                                    ContextCompat.startForegroundService(this@MainActivity, startIntent)
-                                    hrService?.toggleSimulation()
-
-                                    if (!simulationEnabled && isSessionRunning) {
-                                        val stopIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
-                                            action = HrForegroundService.ACTION_STOP_FOREGROUND
+                                        val startIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                            action = HrForegroundService.ACTION_START_FOREGROUND
                                         }
-                                        ContextCompat.startForegroundService(this@MainActivity, stopIntent)
+                                        ContextCompat.startForegroundService(this@MainActivity, startIntent)
+                                        hrService?.toggleSimulation()
+
+                                        if (!simulationEnabled && isSessionRunning) {
+                                            val stopIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                                action = HrForegroundService.ACTION_STOP_FOREGROUND
+                                            }
+                                            ContextCompat.startForegroundService(this@MainActivity, stopIntent)
+                                        }
                                     }
                                 }
                             )
@@ -408,8 +409,7 @@ fun MainScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
+            .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -486,10 +486,17 @@ fun MainScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = coachMessage,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 140.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text(
+                            text = coachMessage,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
@@ -657,7 +664,7 @@ fun SettingsSummaryCard(settings: UserSettings) {
 
 @Composable
 fun WorkoutView(state: HrState) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.verticalScroll(rememberScrollState())) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
          if (state.connectedDeviceName != null) {
             Text(text = "Device: ${state.connectedDeviceName}", style = MaterialTheme.typography.titleMedium)
         }
@@ -770,7 +777,7 @@ fun WorkoutView(state: HrState) {
         
         Spacer(modifier = Modifier.height(8.dp))
         
-        Column(modifier = Modifier.fillMaxWidth().height(100.dp).verticalScroll(rememberScrollState()).background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().height(100.dp).background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
               Text("Discovered Services:", fontSize = 10.sp, fontWeight = FontWeight.Bold)
               state.discoveredServices.forEach { uuid ->
                  Text(text = uuid, fontSize = 10.sp)
