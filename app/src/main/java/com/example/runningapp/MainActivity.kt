@@ -517,9 +517,7 @@ fun MainScreen(
                 sessionTypeOptions.forEach { option ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .weight(1f)
-                            .clickable { selectedSessionType = option }
+                        modifier = Modifier.weight(1f)
                     ) {
                         RadioButton(
                             selected = selectedSessionType == option,

@@ -256,6 +256,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun updateSessionTypeFromIntent(intent: Intent?) {
+        val provided = intent?.getStringExtra(EXTRA_SESSION_TYPE) ?: return
+        currentSessionType = sanitizeSessionType(provided)
+    }
+
     inner class LocalBinder : Binder() {
         fun getService(): HrForegroundService = this@HrForegroundService
     }
@@ -597,7 +602,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         when (intent?.action) {
             ACTION_START_FOREGROUND -> {
-                currentSessionType = sanitizeSessionType(intent.getStringExtra(EXTRA_SESSION_TYPE))
+                updateSessionTypeFromIntent(intent)
                 val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                 if (!isSimulationEnabled) {
                     serviceScope.launch {
@@ -633,7 +638,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             ACTION_FORCE_SCAN -> {
                 Log.d(TAG, "ACTION_FORCE_SCAN received")
-                currentSessionType = sanitizeSessionType(intent.getStringExtra(EXTRA_SESSION_TYPE))
+                updateSessionTypeFromIntent(intent)
                 startForegroundService()
                 if (!isSimulationEnabled) {
                     startScanning()
