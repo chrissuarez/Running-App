@@ -369,6 +369,7 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(
     hrService: HrForegroundService?, 
     userSettings: UserSettings,
+    paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
     onStartService: (String) -> Unit,
     onTogglePause: () -> Unit,
@@ -408,7 +409,9 @@ fun MainScreen(
     
     val activeDevice = state.userSettings.savedDevices.find { it.address == state.userSettings.activeDeviceAddress }
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(paddingValues),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
