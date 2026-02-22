@@ -1,34 +1,33 @@
 *.iml
-.gradle
-/local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
 .DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
+*.log
+*.hprof
 *google-services.json
 
+# Gradle / Android build output
+/.gradle/
+/build/
+/app/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+
+# Local machine settings
+/local.properties
+
 # Android Studio / IntelliJ
+/.idea/*
+!/.idea/
+!/.idea/codeStyles/
+!/.idea/codeStyles/**
+!/.idea/runConfigurations/
+!/.idea/runConfigurations/**
+!/.idea/vcs.xml
+
+# Signing and local secrets
 *.keystore
 *.jks
 *.p12
 *.key
 *.user
 *.secure
-
-# Local history
-.idea/dictionaries
-.idea/libraries
-.idea/shelf
-
-# Log files
-*.log
-
-# Android Profiler
-*.hprof
