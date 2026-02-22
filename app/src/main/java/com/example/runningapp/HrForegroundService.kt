@@ -257,7 +257,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun updateSessionTypeFromIntent(intent: Intent?) {
-        val provided = intent?.getStringExtra(EXTRA_SESSION_TYPE) ?: return
+        val provided = intent?.getStringExtra(EXTRA_SESSION_TYPE)
+            ?: intent?.getStringExtra("SESSION_TYPE")
+            ?: return
         currentSessionType = sanitizeSessionType(provided)
     }
 

@@ -465,39 +465,67 @@ fun MainScreen(
             }
         }
 
-        if (activePlan != null && activeStage != null && todaysWorkout != null) {
-            item {
-                TodaysWorkoutCard(
-                    stageTitle = activeStage.title,
-                    workout = todaysWorkout
-                )
-            }
-        } else if (userSettings.activePlanId == null) {
-            item {
-                TextButton(onClick = onOpenTrainingPlan) {
-                    Text("No active plan - tap to view plans")
+        if (selectedSessionType == SESSION_TYPE_RUN_WALK) {
+            if (activePlan != null && activeStage != null && todaysWorkout != null) {
+                item {
+                    TodaysWorkoutCard(
+                        stageTitle = activeStage.title,
+                        workout = todaysWorkout
+                    )
+                }
+            } else if (userSettings.activePlanId == null) {
+                item {
+                    TextButton(onClick = onOpenTrainingPlan) {
+                        Text("No active plan - tap to view plans")
+                    }
                 }
             }
-        }
 
-        if (coachMessage != null) {
+            if (coachMessage != null) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFE7E8FF))
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text(
+                                text = "AI Coach Debrief",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = coachMessage,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+            }
+        } else if (selectedSessionType == SESSION_TYPE_ZONE2_WALK) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFE7E8FF))
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f))
                 ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text(
-                            text = "AI Coach Debrief",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = coachMessage,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
+                    Text(
+                        text = "Zone 2 Walk Mode: Aerobic volume. HR safety cues only.",
+                        modifier = Modifier.padding(14.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
+        } else if (selectedSessionType == SESSION_TYPE_FREE_TRACK) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f))
+                ) {
+                    Text(
+                        text = "Free Track Mode: Pure data logging. No audio cues.",
+                        modifier = Modifier.padding(14.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
             }
         }
