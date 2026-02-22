@@ -31,7 +31,11 @@ data class UserSettings(
     val savedDevices: List<SavedDevice> = emptyList(),
     val activeDeviceAddress: String? = null,
     val activePlanId: String? = null,
-    val activeStageId: String? = null
+    val activeStageId: String? = null,
+    val latestCoachMessage: String? = null,
+    val aiRunIntervalSeconds: Int? = null,
+    val aiWalkIntervalSeconds: Int? = null,
+    val aiRepeats: Int? = null
 )
 
 class SettingsRepository(private val context: Context) {
@@ -54,6 +58,10 @@ class SettingsRepository(private val context: Context) {
         val ACTIVE_DEVICE_ADDRESS = stringPreferencesKey("active_device_address")
         val ACTIVE_PLAN_ID = stringPreferencesKey("active_plan_id")
         val ACTIVE_STAGE_ID = stringPreferencesKey("active_stage_id")
+        val LATEST_COACH_MESSAGE = stringPreferencesKey("latest_coach_message")
+        val AI_RUN_INTERVAL_SECONDS = intPreferencesKey("ai_run_interval_seconds")
+        val AI_WALK_INTERVAL_SECONDS = intPreferencesKey("ai_walk_interval_seconds")
+        val AI_REPEATS = intPreferencesKey("ai_repeats")
     }
 
     val userSettingsFlow: Flow<UserSettings> = context.dataStore.data
@@ -81,7 +89,11 @@ class SettingsRepository(private val context: Context) {
                 savedDevices = savedDevices,
                 activeDeviceAddress = preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS],
                 activePlanId = preferences[PreferencesKeys.ACTIVE_PLAN_ID],
-                activeStageId = preferences[PreferencesKeys.ACTIVE_STAGE_ID]
+                activeStageId = preferences[PreferencesKeys.ACTIVE_STAGE_ID],
+                latestCoachMessage = preferences[PreferencesKeys.LATEST_COACH_MESSAGE],
+                aiRunIntervalSeconds = preferences[PreferencesKeys.AI_RUN_INTERVAL_SECONDS],
+                aiWalkIntervalSeconds = preferences[PreferencesKeys.AI_WALK_INTERVAL_SECONDS],
+                aiRepeats = preferences[PreferencesKeys.AI_REPEATS]
             )
         }
 
@@ -117,6 +129,30 @@ class SettingsRepository(private val context: Context) {
                 preferences[PreferencesKeys.ACTIVE_STAGE_ID] = settings.activeStageId
             } else {
                 preferences.remove(PreferencesKeys.ACTIVE_STAGE_ID)
+            }
+
+            if (settings.latestCoachMessage != null) {
+                preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = settings.latestCoachMessage
+            } else {
+                preferences.remove(PreferencesKeys.LATEST_COACH_MESSAGE)
+            }
+
+            if (settings.aiRunIntervalSeconds != null) {
+                preferences[PreferencesKeys.AI_RUN_INTERVAL_SECONDS] = settings.aiRunIntervalSeconds
+            } else {
+                preferences.remove(PreferencesKeys.AI_RUN_INTERVAL_SECONDS)
+            }
+
+            if (settings.aiWalkIntervalSeconds != null) {
+                preferences[PreferencesKeys.AI_WALK_INTERVAL_SECONDS] = settings.aiWalkIntervalSeconds
+            } else {
+                preferences.remove(PreferencesKeys.AI_WALK_INTERVAL_SECONDS)
+            }
+
+            if (settings.aiRepeats != null) {
+                preferences[PreferencesKeys.AI_REPEATS] = settings.aiRepeats
+            } else {
+                preferences.remove(PreferencesKeys.AI_REPEATS)
             }
         }
     }
@@ -169,6 +205,50 @@ class SettingsRepository(private val context: Context) {
             } else {
                 preferences.remove(PreferencesKeys.ACTIVE_STAGE_ID)
             }
+        }
+    }
+
+    suspend fun setAiAdjustments(
+        latestCoachMessage: String?,
+        aiRunIntervalSeconds: Int?,
+        aiWalkIntervalSeconds: Int?,
+        aiRepeats: Int?
+    ) {
+        context.dataStore.edit { preferences ->
+            if (latestCoachMessage != null) {
+                preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = latestCoachMessage
+            } else {
+                preferences.remove(PreferencesKeys.LATEST_COACH_MESSAGE)
+            }
+
+            if (aiRunIntervalSeconds != null) {
+                preferences[PreferencesKeys.AI_RUN_INTERVAL_SECONDS] = aiRunIntervalSeconds
+            } else {
+                preferences.remove(PreferencesKeys.AI_RUN_INTERVAL_SECONDS)
+            }
+
+            if (aiWalkIntervalSeconds != null) {
+                preferences[PreferencesKeys.AI_WALK_INTERVAL_SECONDS] = aiWalkIntervalSeconds
+            } else {
+                preferences.remove(PreferencesKeys.AI_WALK_INTERVAL_SECONDS)
+            }
+
+            if (aiRepeats != null) {
+                preferences[PreferencesKeys.AI_REPEATS] = aiRepeats
+            } else {
+                preferences.remove(PreferencesKeys.AI_REPEATS)
+            }
+        }
+    }
+
+    suspend fun advanceStageAndClearAiIntervals(nextStageId: String?) {
+        context.dataStore.edit { preferences ->
+            if (nextStageId != null) {
+                preferences[PreferencesKeys.ACTIVE_STAGE_ID] = nextStageId
+            }
+            preferences.remove(PreferencesKeys.AI_RUN_INTERVAL_SECONDS)
+            preferences.remove(PreferencesKeys.AI_WALK_INTERVAL_SECONDS)
+            preferences.remove(PreferencesKeys.AI_REPEATS)
         }
     }
 }

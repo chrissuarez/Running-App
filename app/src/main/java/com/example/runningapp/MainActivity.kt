@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import com.example.runningapp.data.AppDatabase
+import com.example.runningapp.data.AiCoachClient
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.ui.HistoryScreen
 import com.example.runningapp.ui.HistoryViewModel
@@ -54,6 +55,9 @@ class MainActivity : ComponentActivity() {
 
     private var hrService by mutableStateOf<HrForegroundService?>(null)
     private var isBound by mutableStateOf(false)
+    private val aiCoachClient by lazy {
+        AiCoachClient()
+    }
 
     private var currentScreenState = mutableStateOf("main")
 
@@ -359,10 +363,26 @@ fun MainScreen(
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
     val activeStage = activePlan?.stages?.firstOrNull { it.id == userSettings.activeStageId } ?: activePlan?.stages?.firstOrNull()
-    val todaysWorkout = activeStage?.workouts?.firstOrNull()
+    val baseWorkout = activeStage?.workouts?.firstOrNull()
+    val aiRunIntervalSeconds = userSettings.aiRunIntervalSeconds
+    val aiWalkIntervalSeconds = userSettings.aiWalkIntervalSeconds
+    val aiRepeats = userSettings.aiRepeats
+    val coachMessage = userSettings.latestCoachMessage?.takeIf { it.isNotBlank() }
+    val todaysWorkout = if (baseWorkout != null && aiRunIntervalSeconds != null) {
+        baseWorkout.copy(
+            runDurationSeconds = aiRunIntervalSeconds,
+            walkDurationSeconds = aiWalkIntervalSeconds ?: baseWorkout.walkDurationSeconds,
+            totalRepeats = aiRepeats ?: baseWorkout.totalRepeats
+        )
+    } else {
+        baseWorkout
+    }
     
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -424,6 +444,27 @@ fun MainScreen(
             }
             Spacer(modifier = Modifier.height(12.dp))
         } else {
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        if (coachMessage != null) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFFE7E8FF))
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Text(
+                        text = "AI Coach Debrief",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = coachMessage,
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                }
+            }
             Spacer(modifier = Modifier.height(12.dp))
         }
         
@@ -529,8 +570,8 @@ fun TodaysWorkoutCard(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text("Target HR Zone: Z${workout.targetZone}", style = MaterialTheme.typography.bodyMedium)
-            Text("Run: ${workout.runDurationSeconds}s", style = MaterialTheme.typography.bodyMedium)
-            Text("Walk: ${workout.walkDurationSeconds}s", style = MaterialTheme.typography.bodyMedium)
+            Text("Run: ${formatSecondsToMinutes(workout.runDurationSeconds)}", style = MaterialTheme.typography.bodyMedium)
+            Text("Walk: ${formatSecondsToMinutes(workout.walkDurationSeconds)}", style = MaterialTheme.typography.bodyMedium)
             Text("Repeats: ${workout.totalRepeats}", style = MaterialTheme.typography.bodyMedium)
         }
     }
@@ -940,6 +981,12 @@ fun SavedDeviceListItem(
             }
         }
     }
+}
+
+private fun formatSecondsToMinutes(totalSeconds: Int): String {
+    val m = totalSeconds / 60
+    val s = totalSeconds % 60
+    return "${m}m ${s}s"
 }
 
 private fun formatTime(seconds: Long): String {
