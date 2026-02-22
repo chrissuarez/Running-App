@@ -35,7 +35,8 @@ data class UserSettings(
     val latestCoachMessage: String? = null,
     val aiRunIntervalSeconds: Int? = null,
     val aiWalkIntervalSeconds: Int? = null,
-    val aiRepeats: Int? = null
+    val aiRepeats: Int? = null,
+    val simulationEnabled: Boolean = false
 )
 
 class SettingsRepository(private val context: Context) {
@@ -62,6 +63,7 @@ class SettingsRepository(private val context: Context) {
         val AI_RUN_INTERVAL_SECONDS = intPreferencesKey("ai_run_interval_seconds")
         val AI_WALK_INTERVAL_SECONDS = intPreferencesKey("ai_walk_interval_seconds")
         val AI_REPEATS = intPreferencesKey("ai_repeats")
+        val SIMULATION_ENABLED = booleanPreferencesKey("simulation_enabled")
     }
 
     val userSettingsFlow: Flow<UserSettings> = context.dataStore.data
@@ -93,7 +95,8 @@ class SettingsRepository(private val context: Context) {
                 latestCoachMessage = preferences[PreferencesKeys.LATEST_COACH_MESSAGE],
                 aiRunIntervalSeconds = preferences[PreferencesKeys.AI_RUN_INTERVAL_SECONDS],
                 aiWalkIntervalSeconds = preferences[PreferencesKeys.AI_WALK_INTERVAL_SECONDS],
-                aiRepeats = preferences[PreferencesKeys.AI_REPEATS]
+                aiRepeats = preferences[PreferencesKeys.AI_REPEATS],
+                simulationEnabled = preferences[PreferencesKeys.SIMULATION_ENABLED] ?: false
             )
         }
 
@@ -154,6 +157,7 @@ class SettingsRepository(private val context: Context) {
             } else {
                 preferences.remove(PreferencesKeys.AI_REPEATS)
             }
+            preferences[PreferencesKeys.SIMULATION_ENABLED] = settings.simulationEnabled
         }
     }
 
@@ -249,6 +253,12 @@ class SettingsRepository(private val context: Context) {
             preferences.remove(PreferencesKeys.AI_RUN_INTERVAL_SECONDS)
             preferences.remove(PreferencesKeys.AI_WALK_INTERVAL_SECONDS)
             preferences.remove(PreferencesKeys.AI_REPEATS)
+        }
+    }
+
+    suspend fun setSimulationEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.SIMULATION_ENABLED] = enabled
         }
     }
 }
