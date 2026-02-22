@@ -570,8 +570,8 @@ fun TodaysWorkoutCard(
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text("Target HR Zone: Z${workout.targetZone}", style = MaterialTheme.typography.bodyMedium)
-            Text("Run: ${workout.runDurationSeconds}s", style = MaterialTheme.typography.bodyMedium)
-            Text("Walk: ${workout.walkDurationSeconds}s", style = MaterialTheme.typography.bodyMedium)
+            Text("Run: ${formatSecondsToMinutes(workout.runDurationSeconds)}", style = MaterialTheme.typography.bodyMedium)
+            Text("Walk: ${formatSecondsToMinutes(workout.walkDurationSeconds)}", style = MaterialTheme.typography.bodyMedium)
             Text("Repeats: ${workout.totalRepeats}", style = MaterialTheme.typography.bodyMedium)
         }
     }
@@ -981,6 +981,12 @@ fun SavedDeviceListItem(
             }
         }
     }
+}
+
+private fun formatSecondsToMinutes(totalSeconds: Int): String {
+    val m = totalSeconds / 60
+    val s = totalSeconds % 60
+    return "${m}m ${s}s"
 }
 
 private fun formatTime(seconds: Long): String {
