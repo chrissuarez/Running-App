@@ -158,7 +158,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         this.action = action
-                                        putExtra("SESSION_TYPE", selectedSessionType)
+                                        putExtra(HrForegroundService.EXTRA_SESSION_TYPE, selectedSessionType)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
@@ -176,7 +176,7 @@ class MainActivity : ComponentActivity() {
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
-                                        putExtra("SESSION_TYPE", selectedSessionType)
+                                        putExtra(HrForegroundService.EXTRA_SESSION_TYPE, selectedSessionType)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.connectToDevice(address)

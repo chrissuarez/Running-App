@@ -179,7 +179,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private lateinit var settingsRepository: SettingsRepository
     private lateinit var sessionRepository: SessionRepository
     private var currentSettings = UserSettings()
-    @Volatile private var currentSessionType = SESSION_TYPE_RUN_WALK
+    @Volatile private var currentSessionType: String = SESSION_TYPE_RUN_WALK
 
     private lateinit var database: AppDatabase
     private var currentSessionId: Long? = null
@@ -559,6 +559,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun onStructuredWorkoutPhaseComplete(workout: WorkoutTemplate) {
+        if (currentSessionType != SESSION_TYPE_RUN_WALK) return
+
         if (structuredWorkoutPhase == StructuredWorkoutPhase.RUN) {
             if (workout.walkDurationSeconds > 0) {
                 structuredWorkoutPhase = StructuredWorkoutPhase.WALK
@@ -596,13 +598,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // Mission: Build persistent notification and call startForeground immediately
         startForegroundService()
 
+        currentSessionType = sanitizeSessionType(
+            intent?.getStringExtra(EXTRA_SESSION_TYPE)
+                ?: intent?.getStringExtra(LEGACY_EXTRA_SESSION_TYPE)
+                ?: currentSessionType
+        )
+        Log.d(TAG, "Started with Session Type: $currentSessionType")
+
         when (intent?.action) {
             ACTION_START_FOREGROUND -> {
-                currentSessionType = sanitizeSessionType(
-                    intent.getStringExtra("SESSION_TYPE")
-                        ?: intent.getStringExtra(LEGACY_EXTRA_SESSION_TYPE)
-                        ?: SESSION_TYPE_RUN_WALK
-                )
                 val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                 if (!isSimulationEnabled) {
                     serviceScope.launch {
@@ -638,11 +642,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             ACTION_FORCE_SCAN -> {
                 Log.d(TAG, "ACTION_FORCE_SCAN received")
-                currentSessionType = sanitizeSessionType(
-                    intent.getStringExtra("SESSION_TYPE")
-                        ?: intent.getStringExtra(LEGACY_EXTRA_SESSION_TYPE)
-                        ?: SESSION_TYPE_RUN_WALK
-                )
                 startForegroundService()
                 if (!isSimulationEnabled) {
                     startScanning()
