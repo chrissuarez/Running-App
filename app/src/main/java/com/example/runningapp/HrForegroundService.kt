@@ -240,7 +240,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_RESUME_SESSION = "ACTION_RESUME_SESSION"
         const val ACTION_FORCE_SCAN = "ACTION_FORCE_SCAN"
         const val EXTRA_DEVICE_ADDRESS = "EXTRA_DEVICE_ADDRESS"
-        const val EXTRA_SESSION_TYPE = "EXTRA_SESSION_TYPE"
+        const val EXTRA_SESSION_TYPE = "SESSION_TYPE"
+        const val LEGACY_EXTRA_SESSION_TYPE = "EXTRA_SESSION_TYPE"
         const val SESSION_TYPE_RUN_WALK = "Run/Walk"
         const val SESSION_TYPE_ZONE2_WALK = "Zone 2 Walk"
         const val SESSION_TYPE_FREE_TRACK = "Free Track"
@@ -254,13 +255,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             SESSION_TYPE_FREE_TRACK -> value
             else -> SESSION_TYPE_RUN_WALK
         }
-    }
-
-    private fun updateSessionTypeFromIntent(intent: Intent?) {
-        val provided = intent?.getStringExtra(EXTRA_SESSION_TYPE)
-            ?: intent?.getStringExtra("SESSION_TYPE")
-            ?: return
-        currentSessionType = sanitizeSessionType(provided)
     }
 
     inner class LocalBinder : Binder() {
@@ -604,7 +598,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         when (intent?.action) {
             ACTION_START_FOREGROUND -> {
-                updateSessionTypeFromIntent(intent)
+                currentSessionType = sanitizeSessionType(
+                    intent.getStringExtra("SESSION_TYPE")
+                        ?: intent.getStringExtra(LEGACY_EXTRA_SESSION_TYPE)
+                        ?: SESSION_TYPE_RUN_WALK
+                )
                 val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                 if (!isSimulationEnabled) {
                     serviceScope.launch {
@@ -640,7 +638,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             ACTION_FORCE_SCAN -> {
                 Log.d(TAG, "ACTION_FORCE_SCAN received")
-                updateSessionTypeFromIntent(intent)
+                currentSessionType = sanitizeSessionType(
+                    intent.getStringExtra("SESSION_TYPE")
+                        ?: intent.getStringExtra(LEGACY_EXTRA_SESSION_TYPE)
+                        ?: SESSION_TYPE_RUN_WALK
+                )
                 startForegroundService()
                 if (!isSimulationEnabled) {
                     startScanning()

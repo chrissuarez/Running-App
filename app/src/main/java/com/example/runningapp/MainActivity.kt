@@ -158,7 +158,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         this.action = action
-                                        putExtra(HrForegroundService.EXTRA_SESSION_TYPE, selectedSessionType)
+                                        putExtra("SESSION_TYPE", selectedSessionType)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
@@ -176,7 +176,7 @@ class MainActivity : ComponentActivity() {
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
-                                        putExtra(HrForegroundService.EXTRA_SESSION_TYPE, selectedSessionType)
+                                        putExtra("SESSION_TYPE", selectedSessionType)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.connectToDevice(address)
@@ -608,7 +608,10 @@ fun MainScreen(
         }
 
         item {
-            SettingsSummaryCard(settings = state.userSettings)
+            SettingsSummaryCard(
+                settings = state.userSettings,
+                selectedSessionType = selectedSessionType
+            )
         }
 
         if (state.connectionStatus == "Scanning...") {
@@ -669,7 +672,10 @@ fun TodaysWorkoutCard(
 }
 
 @Composable
-fun SettingsSummaryCard(settings: UserSettings) {
+fun SettingsSummaryCard(
+    settings: UserSettings,
+    selectedSessionType: String
+) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
@@ -679,9 +685,18 @@ fun SettingsSummaryCard(settings: UserSettings) {
                 Text("Zone 2: ${settings.zone2Low}-${settings.zone2High} BPM", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                 val modeLabel = if (settings.runMode == "outdoor") "Outdoor Run" else "Treadmill Run"
                 Text("Mode: $modeLabel | Cooldown: ${settings.cooldownSeconds}s", style = MaterialTheme.typography.bodySmall)
-                if (settings.runWalkCoachEnabled) {
-                    Text("RUN/WALK COACH ACTIVE", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black, color = Color(0xFFFFA500))
+                val sessionTypeSummary = when (selectedSessionType) {
+                    SESSION_TYPE_RUN_WALK -> "RUN/WALK COACH ACTIVE" to Color(0xFFFFA500)
+                    SESSION_TYPE_ZONE2_WALK -> "ZONE 2 WALK (Volume Only)" to MaterialTheme.colorScheme.primary
+                    SESSION_TYPE_FREE_TRACK -> "FREE TRACK (Silent Logging)" to MaterialTheme.colorScheme.outline
+                    else -> "RUN/WALK COACH ACTIVE" to Color(0xFFFFA500)
                 }
+                Text(
+                    text = sessionTypeSummary.first,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Black,
+                    color = sessionTypeSummary.second
+                )
             }
             Text(if (settings.coachingEnabled) "Coaching ON" else "Coaching OFF", style = MaterialTheme.typography.bodySmall, color = if (settings.coachingEnabled) Color.Green else Color.Red)
         }
