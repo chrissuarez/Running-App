@@ -196,7 +196,7 @@ class MainActivity : ComponentActivity() {
                                 onOpenTrainingPlan = {
                                     currentScreen = "training_plan"
                                 },
-                                onToggleSimulation = { simulationEnabled ->
+                                onToggleSimulation = { simulationEnabled, sessionType ->
                                     scope.launch(Dispatchers.IO) {
                                         settingsRepository.setSimulationEnabled(simulationEnabled)
 
@@ -205,6 +205,7 @@ class MainActivity : ComponentActivity() {
 
                                         val startIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                             action = HrForegroundService.ACTION_START_FOREGROUND
+                                            putExtra(HrForegroundService.EXTRA_SESSION_TYPE, sessionType)
                                         }
                                         ContextCompat.startForegroundService(this@MainActivity, startIntent)
                                         hrService?.toggleSimulation()
@@ -380,7 +381,7 @@ fun MainScreen(
     onOpenHistory: () -> Unit,
     onOpenManageDevices: () -> Unit,
     onOpenTrainingPlan: () -> Unit,
-    onToggleSimulation: (Boolean) -> Unit
+    onToggleSimulation: (Boolean, String) -> Unit
 ) {
     val sessionTypeOptions = listOf(
         SESSION_TYPE_RUN_WALK,
@@ -599,7 +600,7 @@ fun MainScreen(
                     Text("Perms")
                 }
                 Button(
-                    onClick = { onToggleSimulation(!state.isSimulating) },
+                    onClick = { onToggleSimulation(!state.isSimulating, selectedSessionType) },
                     colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = Color.Magenta) else ButtonDefaults.buttonColors()
                 ) {
                     Text(if (state.isSimulating) "Stop Sim" else "Simulate")
