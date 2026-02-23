@@ -150,20 +150,28 @@ fun SessionItem(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(text = dateStr, fontWeight = FontWeight.Bold)
-                    if (session.isRunWalkMode) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Surface(
-                            shape = MaterialTheme.shapes.extraSmall,
-                            color = Color(0xFFFFA500).copy(alpha = 0.2f)
-                        ) {
-                            Text(
-                                text = "RUN/WALK",
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Black,
-                                color = Color(0xFFFFA500)
-                            )
-                        }
+                    val badgeColor = when (session.sessionType) {
+                        "Zone 2 Walk" -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f)
+                        "Free Track" -> MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                        else -> Color(0xFFFFA500).copy(alpha = 0.2f)
+                    }
+                    val badgeTextColor = when (session.sessionType) {
+                        "Zone 2 Walk" -> MaterialTheme.colorScheme.secondary
+                        "Free Track" -> MaterialTheme.colorScheme.outline
+                        else -> Color(0xFFFFA500)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        shape = MaterialTheme.shapes.extraSmall,
+                        color = badgeColor
+                    ) {
+                        Text(
+                            text = session.sessionType,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Black,
+                            color = badgeTextColor
+                        )
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {

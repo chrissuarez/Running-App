@@ -217,6 +217,11 @@ class MainActivity : ComponentActivity() {
                                             ContextCompat.startForegroundService(this@MainActivity, stopIntent)
                                         }
                                     }
+                                },
+                                onSessionTypeChange = { sessionType ->
+                                    scope.launch(Dispatchers.IO) {
+                                        settingsRepository.updateSettings(userSettings.copy(lastSessionType = sessionType))
+                                    }
                                 }
                             )
                         }
@@ -381,14 +386,19 @@ fun MainScreen(
     onOpenHistory: () -> Unit,
     onOpenManageDevices: () -> Unit,
     onOpenTrainingPlan: () -> Unit,
-    onToggleSimulation: (Boolean, String) -> Unit
+    onToggleSimulation: (Boolean, String) -> Unit,
+    onSessionTypeChange: (String) -> Unit
 ) {
     val sessionTypeOptions = listOf(
         SESSION_TYPE_RUN_WALK,
         SESSION_TYPE_ZONE2_WALK,
         SESSION_TYPE_FREE_TRACK
     )
-    var selectedSessionType by rememberSaveable { mutableStateOf(SESSION_TYPE_RUN_WALK) }
+    var selectedSessionType by rememberSaveable { mutableStateOf(userSettings.lastSessionType) }
+
+    LaunchedEffect(userSettings.lastSessionType) {
+        selectedSessionType = userSettings.lastSessionType
+    }
 
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
@@ -550,7 +560,10 @@ fun MainScreen(
                     ) {
                         RadioButton(
                             selected = selectedSessionType == option,
-                            onClick = { selectedSessionType = option }
+                            onClick = {
+                                selectedSessionType = option
+                                onSessionTypeChange(option)
+                            }
                         )
                         Text(
                             text = option,
