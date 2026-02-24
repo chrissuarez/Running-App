@@ -199,22 +199,16 @@ class MainActivity : ComponentActivity() {
                                 onToggleSimulation = { simulationEnabled, sessionType ->
                                     scope.launch(Dispatchers.IO) {
                                         settingsRepository.setSimulationEnabled(simulationEnabled)
-
-                                        val isSessionRunning =
-                                            hrService?.hrState?.value?.sessionStatus == SessionStatus.RUNNING
-
-                                        val startIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
-                                            action = HrForegroundService.ACTION_START_FOREGROUND
-                                            putExtra(HrForegroundService.EXTRA_SESSION_TYPE, sessionType)
-                                        }
-                                        ContextCompat.startForegroundService(this@MainActivity, startIntent)
-                                        hrService?.toggleSimulation()
-
-                                        if (!simulationEnabled && isSessionRunning) {
-                                            val stopIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
-                                                action = HrForegroundService.ACTION_STOP_FOREGROUND
+                                        val boundService = hrService
+                                        if (boundService != null) {
+                                            boundService.setSimulationEnabled(simulationEnabled, sessionType)
+                                        } else {
+                                            val simulationIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                                action = HrForegroundService.ACTION_SET_SIMULATION
+                                                putExtra(HrForegroundService.EXTRA_SIMULATION_ENABLED, simulationEnabled)
+                                                putExtra(HrForegroundService.EXTRA_SESSION_TYPE, sessionType)
                                             }
-                                            ContextCompat.startForegroundService(this@MainActivity, stopIntent)
+                                            ContextCompat.startForegroundService(this@MainActivity, simulationIntent)
                                         }
                                     }
                                 },
@@ -244,6 +238,7 @@ class MainActivity : ComponentActivity() {
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
+                                        putExtra(HrForegroundService.EXTRA_SESSION_TYPE, userSettings.lastSessionType)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.connectToDevice(address)

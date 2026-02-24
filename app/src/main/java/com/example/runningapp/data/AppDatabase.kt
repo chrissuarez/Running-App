@@ -72,6 +72,9 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE endTime > 0 AND durationSeconds > 120 ORDER BY startTime DESC LIMIT 3")
     suspend fun getLast3CompletedSessions(): List<RunnerSession>
 
+    @Query("SELECT * FROM sessions WHERE endTime > 0 ORDER BY endTime DESC LIMIT 1")
+    suspend fun getMostRecentFinalizedSession(): RunnerSession?
+
     @Query("DELETE FROM sessions WHERE id = :sessionId")
     suspend fun deleteSessionById(sessionId: Long)
 
