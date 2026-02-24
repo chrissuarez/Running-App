@@ -179,6 +179,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private lateinit var settingsRepository: SettingsRepository
     private lateinit var sessionRepository: SessionRepository
     private var currentSettings = UserSettings()
+    @Volatile private var currentSessionType: String = SESSION_TYPE_RUN_WALK
 
     private lateinit var database: AppDatabase
     private var currentSessionId: Long? = null
@@ -227,8 +228,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var structuredWorkoutPhase = StructuredWorkoutPhase.RUN
     @Volatile private var phaseTimeRemainingSeconds = 0
     @Volatile private var currentRepeat = 1
+    @Volatile private var isCreatingSession = false
     private var activeWorkoutTemplate: WorkoutTemplate? = null
     private var hasStructuredWorkoutStarted = false
+    private val sessionCreationLock = Any()
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
@@ -238,8 +241,24 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_PAUSE_SESSION = "ACTION_PAUSE_SESSION"
         const val ACTION_RESUME_SESSION = "ACTION_RESUME_SESSION"
         const val ACTION_FORCE_SCAN = "ACTION_FORCE_SCAN"
+        const val ACTION_SET_SIMULATION = "ACTION_SET_SIMULATION"
         const val EXTRA_DEVICE_ADDRESS = "EXTRA_DEVICE_ADDRESS"
+        const val EXTRA_SESSION_TYPE = "SESSION_TYPE"
+        const val LEGACY_EXTRA_SESSION_TYPE = "EXTRA_SESSION_TYPE"
+        const val EXTRA_SIMULATION_ENABLED = "SIMULATION_ENABLED"
+        const val SESSION_TYPE_RUN_WALK = "Run/Walk"
+        const val SESSION_TYPE_ZONE2_WALK = "Zone 2 Walk"
+        const val SESSION_TYPE_FREE_TRACK = "Free Track"
         const val TAG = "HrService"
+    }
+
+    private fun sanitizeSessionType(value: String?): String {
+        return when (value) {
+            SESSION_TYPE_RUN_WALK,
+            SESSION_TYPE_ZONE2_WALK,
+            SESSION_TYPE_FREE_TRACK -> value
+            else -> SESSION_TYPE_RUN_WALK
+        }
     }
 
     inner class LocalBinder : Binder() {
@@ -361,7 +380,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         break
                     }
 
-                    if (currentPhase == SessionPhase.MAIN && isStructuredWorkout) {
+                    if (currentPhase == SessionPhase.MAIN && isStructuredWorkout && currentSessionType == SESSION_TYPE_RUN_WALK) {
                         val workout = activeWorkoutTemplate
                         if (workout != null && workout.totalRepeats > 0 &&
                             (isWarmupSkipped || sessionSecondsRunning >= currentWarmupDuration)
@@ -528,14 +547,24 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun initializeStructuredWorkoutState() {
         activeWorkoutTemplate = resolveActiveWorkoutTemplate()
-        isStructuredWorkout = activeWorkoutTemplate != null
-        structuredWorkoutPhase = StructuredWorkoutPhase.RUN
-        phaseTimeRemainingSeconds = activeWorkoutTemplate?.runDurationSeconds ?: 0
+        isStructuredWorkout = activeWorkoutTemplate != null && currentSessionType == SESSION_TYPE_RUN_WALK
+        structuredWorkoutPhase = if (currentSessionType == SESSION_TYPE_RUN_WALK) {
+            StructuredWorkoutPhase.RUN
+        } else {
+            StructuredWorkoutPhase.WALK
+        }
+        phaseTimeRemainingSeconds = if (currentSessionType == SESSION_TYPE_RUN_WALK) {
+            activeWorkoutTemplate?.runDurationSeconds ?: 0
+        } else {
+            0
+        }
         currentRepeat = 1
         hasStructuredWorkoutStarted = false
     }
 
     private fun onStructuredWorkoutPhaseComplete(workout: WorkoutTemplate) {
+        if (currentSessionType != SESSION_TYPE_RUN_WALK) return
+
         if (structuredWorkoutPhase == StructuredWorkoutPhase.RUN) {
             if (workout.walkDurationSeconds > 0) {
                 structuredWorkoutPhase = StructuredWorkoutPhase.WALK
@@ -573,6 +602,24 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // Mission: Build persistent notification and call startForeground immediately
         startForegroundService()
 
+        val explicitSessionType = intent?.getStringExtra(EXTRA_SESSION_TYPE)
+        val legacySessionType = intent?.getStringExtra(LEGACY_EXTRA_SESSION_TYPE)
+        val sessionTypeSource = when {
+            !explicitSessionType.isNullOrBlank() -> "intent:$EXTRA_SESSION_TYPE"
+            !legacySessionType.isNullOrBlank() -> "intent:$LEGACY_EXTRA_SESSION_TYPE"
+            currentSettings.lastSessionType.isNotBlank() -> "settings:lastSessionType"
+            else -> "service:currentSessionType"
+        }
+        currentSessionType = sanitizeSessionType(
+            explicitSessionType
+                ?: legacySessionType
+                ?: currentSettings.lastSessionType
+        )
+        Log.d(
+            TAG,
+            "Service start action=${intent?.action ?: "null"} sessionType=$currentSessionType source=$sessionTypeSource"
+        )
+
         when (intent?.action) {
             ACTION_START_FOREGROUND -> {
                 val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
@@ -592,11 +639,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         }
                     }
                 } else {
-                    Log.d(TAG, "ACTION_START_FOREGROUND received but Simulation Mode is active. Bypassing hardware.")
-                    if (currentSessionId == null) {
-                        startNewDatabaseSession()
-                    }
-                    _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
+                    Log.d(TAG, "ACTION_START_FOREGROUND received while simulation is active. Skipping hardware startup.")
                 }
             }
             ACTION_STOP_FOREGROUND -> {
@@ -616,6 +659,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 } else {
                     Log.d(TAG, "Ignoring Force Scan - Simulation Mode is active.")
                 }
+            }
+            ACTION_SET_SIMULATION -> {
+                val enabled = intent.getBooleanExtra(EXTRA_SIMULATION_ENABLED, isSimulationEnabled)
+                setSimulationEnabled(enabled)
             }
         }
         return START_STICKY
@@ -649,6 +696,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun startNewDatabaseSession() {
         serviceScope.launch(Dispatchers.IO) {
+            synchronized(sessionCreationLock) {
+                if (isCreatingSession || currentSessionId != null) {
+                    Log.d(TAG, "Skipping DB session start: creating=$isCreatingSession sessionId=$currentSessionId")
+                    return@launch
+                }
+                isCreatingSession = true
+            }
+
+            try {
             // Mission: Reset Phase Engine for a fresh session
             currentPhase = SessionPhase.WARM_UP
             phaseSecondsRunning = 0
@@ -682,7 +738,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
             val session = RunnerSession(
                 startTime = System.currentTimeMillis(),
-                runMode = currentSettings.runMode
+                runMode = currentSettings.runMode,
+                sessionType = currentSessionType
             )
             currentSessionId = database.sessionDao().insertSession(session)
             startSessionTimerLoop()
@@ -706,6 +763,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             initializeStructuredWorkoutState()
             
             Log.d(TAG, "Started DB Session: $currentSessionId (Mode: ${currentSettings.runMode})")
+            } finally {
+                synchronized(sessionCreationLock) {
+                    isCreatingSession = false
+                }
+            }
         }
     }
 
@@ -790,13 +852,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             zone5Seconds = sessionZoneTimes[5] ?: 0L,
                             noDataSeconds = sessionNoDataSeconds,
                             walkBreaksCount = finalWalkBreaksCount,
-                            isRunWalkMode = finalIsRunWalkMode
+                            isRunWalkMode = finalIsRunWalkMode,
+                            sessionType = currentSessionType
                         )
                         database.sessionDao().updateSession(updatedSession)
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
 
                         val stageId = currentSettings.activeStageId
-                        if (stageId != null) {
+                        if (stageId != null && currentSessionType == SESSION_TYPE_RUN_WALK) {
                             Log.d("AiCoach", "Triggering AI evaluation after session finalization for stage: $stageId")
                             sessionRepository.evaluateAndAdjustPlan(stageId)
                         }
@@ -830,6 +893,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
     
     fun playCue(text: String) {
+        if (currentSessionType == SESSION_TYPE_FREE_TRACK) return
         if (tts == null) return
         
         if (requestAudioFocus()) {
@@ -1337,7 +1401,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             avgBpm = bpmHistory.map { it.second }.average().roundToInt()
         }
         
-        val isRunWalk = currentSettings.runWalkCoachEnabled
+        val isRunWalk = currentSettings.runWalkCoachEnabled && currentSessionType == SESSION_TYPE_RUN_WALK
         
         val newZone = when {
             isRunWalk -> {
@@ -1504,25 +1568,41 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         ) }
     }
 
-    fun toggleSimulation() {
-        isSimulationEnabled = !isSimulationEnabled
+    fun setSimulationEnabled(enabled: Boolean, sessionType: String? = null) {
+        if (sessionType != null && currentSessionId == null) {
+            currentSessionType = sanitizeSessionType(sessionType)
+        }
+        if (isSimulationEnabled == enabled) {
+            _hrState.update { it.copy(isSimulating = isSimulationEnabled) }
+            Log.d(
+                TAG,
+                "Simulation unchanged: enabled=$isSimulationEnabled sessionId=$currentSessionId status=${_hrState.value.sessionStatus} phase=$currentPhase running=${sessionSecondsRunning}s"
+            )
+            return
+        }
+
+        isSimulationEnabled = enabled
         _hrState.update { it.copy(isSimulating = isSimulationEnabled) }
         
         if (isSimulationEnabled) {
-            Log.d(TAG, "Simulation Mode ENABLED - Starting Session")
-            if (currentSessionId == null) {
+            val status = _hrState.value.sessionStatus
+            if (currentSessionId == null && (status == SessionStatus.IDLE || status == SessionStatus.STOPPED)) {
                 startNewDatabaseSession()
-            }
-            _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
-            startSessionTimerLoop()
-            if (currentSettings.runMode == "outdoor" && !isSimulationEnabled) {
-                startLocationUpdates()
+                _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
+            } else if (status == SessionStatus.RUNNING) {
+                startSessionTimerLoop()
             }
         } else {
             Log.d(TAG, "Simulation Mode DISABLED")
-            // Note: We don't necessarily stop the session here if the user wanted to keep it running
-            // but usually simulation is for the whole session in tests.
         }
+        Log.d(
+            TAG,
+            "Simulation toggled: enabled=$isSimulationEnabled sessionId=$currentSessionId status=${_hrState.value.sessionStatus} phase=$currentPhase running=${sessionSecondsRunning}s"
+        )
+    }
+
+    fun toggleSimulation() {
+        setSimulationEnabled(!isSimulationEnabled)
     }
 
     private fun startLocationUpdates() {

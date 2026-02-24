@@ -4,10 +4,13 @@ import android.util.Log
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.TrainingPlanProvider
 
+private const val SESSION_TYPE_RUN_WALK = "Run/Walk"
+
 data class AiRecentRun(
     val durationSeconds: Long,
     val avgHr: Int,
     val walkBreaksCount: Int,
+    val sessionType: String,
     val timestamp: Long
 )
 
@@ -44,6 +47,7 @@ class SessionRepository(
                 durationSeconds = session.durationSeconds,
                 avgHr = session.avgBpm,
                 walkBreaksCount = session.walkBreaksCount,
+                sessionType = session.sessionType,
                 timestamp = session.startTime
             )
         }
@@ -60,6 +64,15 @@ class SessionRepository(
         val coachClient = aiCoachClient ?: return
 
         try {
+            val latestFinalizedSession = sessionDao.getMostRecentFinalizedSession()
+            if (latestFinalizedSession?.sessionType != SESSION_TYPE_RUN_WALK) {
+                Log.d(
+                    "AiCoach",
+                    "Skipping AI evaluation: latestSessionType=${latestFinalizedSession?.sessionType ?: "none"} stageId=$stageId"
+                )
+                return
+            }
+
             Log.d("AiCoach", "Starting AI evaluation for stage: $stageId")
             val context = getAiTrainingContext(stageId)
             Log.d("AiCoach", "Sending prompt to Gemini with ${context.recentRuns.size} recent runs.")

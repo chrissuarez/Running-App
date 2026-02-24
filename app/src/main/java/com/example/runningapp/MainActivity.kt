@@ -36,6 +36,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -50,6 +51,10 @@ import com.example.runningapp.ui.SessionDetailScreen
 import com.example.runningapp.ui.SessionDetailViewModel
 import com.example.runningapp.ui.SessionDetailViewModelFactory
 import com.example.runningapp.ui.TrainingPlanScreen
+
+private const val SESSION_TYPE_RUN_WALK = "Run/Walk"
+private const val SESSION_TYPE_ZONE2_WALK = "Zone 2 Walk"
+private const val SESSION_TYPE_FREE_TRACK = "Free Track"
 
 class MainActivity : ComponentActivity() {
 
@@ -145,7 +150,7 @@ class MainActivity : ComponentActivity() {
                                 hrService = hrService,
                                 userSettings = userSettings,
                                 onRequestPermissions = { checkAndRequestPermissions() },
-                                onStartService = {
+                                onStartService = { selectedSessionType ->
                                     val action = if (hrService == null) {
                                         HrForegroundService.ACTION_START_FOREGROUND
                                     } else {
@@ -153,6 +158,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         this.action = action
+                                        putExtra(HrForegroundService.EXTRA_SESSION_TYPE, selectedSessionType)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
@@ -165,11 +171,12 @@ class MainActivity : ComponentActivity() {
                                     }
                                     ContextCompat.startForegroundService(this, intent)
                                 },
-                                onConnectToDevice = { address ->
+                                onConnectToDevice = { address, selectedSessionType ->
                                     Log.d("MainActivity", "User tapped device: $address")
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
+                                        putExtra(HrForegroundService.EXTRA_SESSION_TYPE, selectedSessionType)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.connectToDevice(address)
@@ -189,12 +196,26 @@ class MainActivity : ComponentActivity() {
                                 onOpenTrainingPlan = {
                                     currentScreen = "training_plan"
                                 },
-                                onToggleSimulation = {
-                                    val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
-                                        action = HrForegroundService.ACTION_START_FOREGROUND
+                                onToggleSimulation = { simulationEnabled, sessionType ->
+                                    scope.launch(Dispatchers.IO) {
+                                        settingsRepository.setSimulationEnabled(simulationEnabled)
+                                        val boundService = hrService
+                                        if (boundService != null) {
+                                            boundService.setSimulationEnabled(simulationEnabled, sessionType)
+                                        } else {
+                                            val simulationIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                                action = HrForegroundService.ACTION_SET_SIMULATION
+                                                putExtra(HrForegroundService.EXTRA_SIMULATION_ENABLED, simulationEnabled)
+                                                putExtra(HrForegroundService.EXTRA_SESSION_TYPE, sessionType)
+                                            }
+                                            ContextCompat.startForegroundService(this@MainActivity, simulationIntent)
+                                        }
                                     }
-                                    ContextCompat.startForegroundService(this@MainActivity, intent)
-                                    hrService?.toggleSimulation()
+                                },
+                                onSessionTypeChange = { sessionType ->
+                                    scope.launch(Dispatchers.IO) {
+                                        settingsRepository.updateSettings(userSettings.copy(lastSessionType = sessionType))
+                                    }
                                 }
                             )
                         }
@@ -217,6 +238,7 @@ class MainActivity : ComponentActivity() {
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
+                                        putExtra(HrForegroundService.EXTRA_SESSION_TYPE, userSettings.lastSessionType)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.connectToDevice(address)
@@ -348,18 +370,31 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(
     hrService: HrForegroundService?, 
     userSettings: UserSettings,
+    paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
-    onStartService: () -> Unit,
+    onStartService: (String) -> Unit,
     onTogglePause: () -> Unit,
     onStopSession: () -> Unit,
-    onConnectToDevice: (String) -> Unit,
+    onConnectToDevice: (String, String) -> Unit,
     onTestCue: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenManageDevices: () -> Unit,
     onOpenTrainingPlan: () -> Unit,
-    onToggleSimulation: () -> Unit
+    onToggleSimulation: (Boolean, String) -> Unit,
+    onSessionTypeChange: (String) -> Unit
 ) {
+    val sessionTypeOptions = listOf(
+        SESSION_TYPE_RUN_WALK,
+        SESSION_TYPE_ZONE2_WALK,
+        SESSION_TYPE_FREE_TRACK
+    )
+    var selectedSessionType by rememberSaveable { mutableStateOf(userSettings.lastSessionType) }
+
+    LaunchedEffect(userSettings.lastSessionType) {
+        selectedSessionType = userSettings.lastSessionType
+    }
+
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
     val activeStage = activePlan?.stages?.firstOrNull { it.id == userSettings.activeStageId } ?: activePlan?.stages?.firstOrNull()
@@ -378,166 +413,234 @@ fun MainScreen(
         baseWorkout
     }
     
-    Column(
+    val activeDevice = state.userSettings.savedDevices.find { it.address == state.userSettings.activeDeviceAddress }
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
-            .verticalScroll(rememberScrollState()),
+            .padding(paddingValues),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text(text = "Running App", style = MaterialTheme.typography.headlineMedium)
-            Row {
-                IconButton(onClick = onOpenHistory) {
-                    Text("📜", fontSize = 24.sp)
-                }
-                IconButton(onClick = onOpenManageDevices) {
-                    Text("⌚", fontSize = 24.sp)
-                }
-                IconButton(onClick = onOpenTrainingPlan) {
-                    Text("🏆", fontSize = 24.sp)
-                }
-                IconButton(onClick = onOpenSettings) {
-                    Text("⚙️", fontSize = 24.sp)
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(text = "Running App", style = MaterialTheme.typography.headlineMedium)
+                Row {
+                    IconButton(onClick = onOpenHistory) { Text("📜", fontSize = 24.sp) }
+                    IconButton(onClick = onOpenManageDevices) { Text("⌚", fontSize = 24.sp) }
+                    IconButton(onClick = onOpenTrainingPlan) { Text("🏆", fontSize = 24.sp) }
+                    IconButton(onClick = onOpenSettings) { Text("⚙️", fontSize = 24.sp) }
                 }
             }
         }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Text(text = "Status: ${state.connectionStatus}")
-        
-        // Active Device Shortcut
-        val activeDevice = state.userSettings.savedDevices.find { it.address == state.userSettings.activeDeviceAddress }
+
+        item {
+            Text(text = "Status: ${state.connectionStatus}")
+        }
+
         if (activeDevice != null && state.connectionStatus == "Disconnected") {
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
-            ) {
-                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Active Device: ${activeDevice.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                        Text(activeDevice.address, style = MaterialTheme.typography.bodySmall)
-                    }
-                    Button(onClick = { onConnectToDevice(activeDevice.address) }) {
-                        Text("Connect")
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
+                ) {
+                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Active Device: ${activeDevice.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                            Text(activeDevice.address, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Button(onClick = { onConnectToDevice(activeDevice.address, selectedSessionType) }) {
+                            Text("Connect")
+                        }
                     }
                 }
             }
         }
 
         if (state.sessionStatus == SessionStatus.ERROR) {
-            Text(text = "ERROR: ${state.errorMessage ?: "Unknown"}", color = Color.Red, fontWeight = FontWeight.Bold)
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        if (activePlan != null && activeStage != null && todaysWorkout != null) {
-            TodaysWorkoutCard(
-                stageTitle = activeStage.title,
-                workout = todaysWorkout
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-        } else if (userSettings.activePlanId == null) {
-            TextButton(onClick = onOpenTrainingPlan) {
-                Text("No active plan - tap to view plans")
+            item {
+                Text(
+                    text = "ERROR: ${state.errorMessage ?: "Unknown"}",
+                    color = Color.Red,
+                    fontWeight = FontWeight.Bold
+                )
             }
-            Spacer(modifier = Modifier.height(12.dp))
-        } else {
-            Spacer(modifier = Modifier.height(12.dp))
         }
 
-        if (coachMessage != null) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFFE7E8FF))
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text(
-                        text = "AI Coach Debrief",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
+        if (selectedSessionType == SESSION_TYPE_RUN_WALK) {
+            if (activePlan != null && activeStage != null && todaysWorkout != null) {
+                item {
+                    TodaysWorkoutCard(
+                        stageTitle = activeStage.title,
+                        workout = todaysWorkout
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
+                }
+            } else if (userSettings.activePlanId == null) {
+                item {
+                    TextButton(onClick = onOpenTrainingPlan) {
+                        Text("No active plan - tap to view plans")
+                    }
+                }
+            }
+
+            if (coachMessage != null) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFE7E8FF))
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text(
+                                text = "AI Coach Debrief",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = coachMessage,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+            }
+        } else if (selectedSessionType == SESSION_TYPE_ZONE2_WALK) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f))
+                ) {
                     Text(
-                        text = coachMessage,
+                        text = "Zone 2 Walk Mode: Aerobic volume. HR safety cues only.",
+                        modifier = Modifier.padding(14.dp),
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(12.dp))
-        }
-        
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
-                Button(onClick = onStartService) {
-                    val label = if (hrService == null) "Start Service" else "Scan for Devices"
-                    Text(label)
-                }
-            } else {
-                Button(onClick = onTogglePause) {
-                    Text(if (state.sessionStatus == SessionStatus.PAUSED) "Resume" else "Pause")
-                }
-                
-                // Mission: Phase Skipping
-                Button(onClick = { hrService?.skipCurrentPhase() }) {
-                    val label = when(state.currentPhase) {
-                        SessionPhase.WARM_UP -> "Skip Warmup"
-                        SessionPhase.MAIN -> "Start Cooldown"
-                        SessionPhase.COOL_DOWN -> "End Session"
-                    }
-                    Text(label)
-                }
-            }
-            
-            // Mission: Robust Kill Switch - show Force Stop if service is active or in error
-            if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
-                Button(
-                    onClick = onStopSession, 
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    modifier = Modifier.padding(start = 8.dp)
+        } else if (selectedSessionType == SESSION_TYPE_FREE_TRACK) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f))
                 ) {
-                    Text("Force Stop")
+                    Text(
+                        text = "Free Track Mode: Pure data logging. No audio cues.",
+                        modifier = Modifier.padding(14.dp),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
                 }
             }
         }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-             Button(onClick = onRequestPermissions) {
-                Text("Perms")
-            }
-            Button(
-                onClick = onToggleSimulation,
-                colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = Color.Magenta) else ButtonDefaults.buttonColors()
+
+        item {
+            Text(
+                text = "Session Type",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(if (state.isSimulating) "Stop Sim" else "Simulate")
+                sessionTypeOptions.forEach { option ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        RadioButton(
+                            selected = selectedSessionType == option,
+                            onClick = {
+                                selectedSessionType = option
+                                onSessionTypeChange(option)
+                            }
+                        )
+                        Text(
+                            text = option,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
             }
         }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        // Settings Summary
-        SettingsSummaryCard(settings = state.userSettings)
 
-        Spacer(modifier = Modifier.height(16.dp))
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
+                    Button(onClick = { onStartService(selectedSessionType) }) {
+                        val label = if (hrService == null) "Start Service" else "Scan for Devices"
+                        Text(label)
+                    }
+                } else {
+                    Button(onClick = onTogglePause) {
+                        Text(if (state.sessionStatus == SessionStatus.PAUSED) "Resume" else "Pause")
+                    }
+                    Button(onClick = { hrService?.skipCurrentPhase() }) {
+                        val label = when (state.currentPhase) {
+                            SessionPhase.WARM_UP -> "Skip Warmup"
+                            SessionPhase.MAIN -> "Start Cooldown"
+                            SessionPhase.COOL_DOWN -> "End Session"
+                        }
+                        Text(label)
+                    }
+                }
+
+                if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
+                    Button(
+                        onClick = onStopSession,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                        modifier = Modifier.padding(start = 8.dp)
+                    ) {
+                        Text("Force Stop")
+                    }
+                }
+            }
+        }
+
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Button(onClick = onRequestPermissions) {
+                    Text("Perms")
+                }
+                Button(
+                    onClick = { onToggleSimulation(!state.isSimulating, selectedSessionType) },
+                    colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = Color.Magenta) else ButtonDefaults.buttonColors()
+                ) {
+                    Text(if (state.isSimulating) "Stop Sim" else "Simulate")
+                }
+            }
+        }
+
+        item {
+            SettingsSummaryCard(
+                settings = state.userSettings,
+                selectedSessionType = selectedSessionType
+            )
+        }
 
         if (state.connectionStatus == "Scanning...") {
-            Text("Scanned Devices:", style = MaterialTheme.typography.titleMedium)
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth().background(Color.LightGray.copy(alpha = 0.2f))
-            ) {
-                items(state.scannedDevices) { device ->
-                    DeviceListItem(device = device, onClick = { onConnectToDevice(device.address) })
-                }
+            item {
+                Text("Scanned Devices:", style = MaterialTheme.typography.titleMedium)
+            }
+            items(state.scannedDevices) { device ->
+                DeviceListItem(
+                    device = device,
+                    onClick = { onConnectToDevice(device.address, selectedSessionType) }
+                )
             }
         } else if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
-             WorkoutView(state = state)
+            item {
+                WorkoutView(state = state)
+            }
         } else {
-            Spacer(modifier = Modifier.weight(1f))
-            Text("Ready to start a session.")
-            Spacer(modifier = Modifier.weight(1f))
+            item {
+                Text("Ready to start a session.")
+            }
         }
     }
 }
@@ -578,7 +681,10 @@ fun TodaysWorkoutCard(
 }
 
 @Composable
-fun SettingsSummaryCard(settings: UserSettings) {
+fun SettingsSummaryCard(
+    settings: UserSettings,
+    selectedSessionType: String
+) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
@@ -588,9 +694,18 @@ fun SettingsSummaryCard(settings: UserSettings) {
                 Text("Zone 2: ${settings.zone2Low}-${settings.zone2High} BPM", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
                 val modeLabel = if (settings.runMode == "outdoor") "Outdoor Run" else "Treadmill Run"
                 Text("Mode: $modeLabel | Cooldown: ${settings.cooldownSeconds}s", style = MaterialTheme.typography.bodySmall)
-                if (settings.runWalkCoachEnabled) {
-                    Text("RUN/WALK COACH ACTIVE", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black, color = Color(0xFFFFA500))
+                val sessionTypeSummary = when (selectedSessionType) {
+                    SESSION_TYPE_RUN_WALK -> "RUN/WALK COACH ACTIVE" to Color(0xFFFFA500)
+                    SESSION_TYPE_ZONE2_WALK -> "ZONE 2 WALK (Volume Only)" to MaterialTheme.colorScheme.primary
+                    SESSION_TYPE_FREE_TRACK -> "FREE TRACK (Silent Logging)" to MaterialTheme.colorScheme.outline
+                    else -> "RUN/WALK COACH ACTIVE" to Color(0xFFFFA500)
                 }
+                Text(
+                    text = sessionTypeSummary.first,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Black,
+                    color = sessionTypeSummary.second
+                )
             }
             Text(if (settings.coachingEnabled) "Coaching ON" else "Coaching OFF", style = MaterialTheme.typography.bodySmall, color = if (settings.coachingEnabled) Color.Green else Color.Red)
         }
@@ -599,7 +714,7 @@ fun SettingsSummaryCard(settings: UserSettings) {
 
 @Composable
 fun WorkoutView(state: HrState) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.verticalScroll(rememberScrollState())) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
          if (state.connectedDeviceName != null) {
             Text(text = "Device: ${state.connectedDeviceName}", style = MaterialTheme.typography.titleMedium)
         }
@@ -712,7 +827,7 @@ fun WorkoutView(state: HrState) {
         
         Spacer(modifier = Modifier.height(8.dp))
         
-        Column(modifier = Modifier.fillMaxWidth().height(100.dp).verticalScroll(rememberScrollState()).background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
+        Column(modifier = Modifier.fillMaxWidth().height(100.dp).background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
               Text("Discovered Services:", fontSize = 10.sp, fontWeight = FontWeight.Bold)
               state.discoveredServices.forEach { uuid ->
                  Text(text = uuid, fontSize = 10.sp)

@@ -2,6 +2,22 @@
 
 A robust Android application designed to track heart rate (HR) during runs and provide real-time audio coaching to keep you in your target heart rate zones (specifically optimized for Zone 2 training).
 
+## 🆕 New Features & Fixes (February 24, 2026)
+
+- **Session Type Routing Hardening**:
+    - Fixed a path where sessions launched from Manage Devices could lose the selected mode.
+    - Service now resolves session type with safer fallback order and explicit source logging.
+- **Zone 2 Isolation Improvements**:
+    - Zone 2 sessions now stay in Zone 2 behavior (zone-focused cues only).
+    - Prevented Run/Walk interval-style behavior from leaking into Zone 2 flows.
+- **AI Evaluation Safety Gate**:
+    - Added a repository-level guard so AI plan adjustments only run for finalized **Run/Walk** sessions.
+    - Non-Run/Walk sessions now skip Gemini evaluation with explicit logs.
+- **Simulation Stability Fixes**:
+    - Reworked simulation toggling to avoid duplicate DB session creation.
+    - Toggling simulation during an active run now preserves session continuity (session id, phase, and elapsed time).
+    - Added explicit simulation action handling for bound/unbound service paths.
+
 ## 🚀 Features
 
 - **Real-time Monitoring**: Connects to BLE heart rate monitors (using standard HRS GATT services).

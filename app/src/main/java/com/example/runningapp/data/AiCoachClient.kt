@@ -31,6 +31,8 @@ class AiCoachClient {
             appendLine("The provided recent runs include timestamps. The run with the most recent timestamp is the workout the user JUST completed today.")
             appendLine("Base your coachMessage feedback primarily on how they performed in today's run. Make it feel like a post-run debrief.")
             appendLine("Look at the older runs to establish trends (e.g., is their heart rate consistently improving?).")
+            appendLine("The recent runs data now includes a 'sessionType' ('Run/Walk', 'Zone 2 Walk', or 'Free Track').")
+            appendLine("CRITICAL RULE: Sessions marked as 'Zone 2 Walk' or 'Free Track' are for volume and recovery. Do NOT set graduatedToNextStage to true based on these modes. Progression ONLY happens via 'Run/Walk' sessions.")
             appendLine("Use this combined context to generate the exact intervals for their NEXT run.")
             appendLine("If they meet the requirement easily, set graduatedToNextStage to true.")
             appendLine("Otherwise, adjust their run/walk intervals safely to build endurance.")
