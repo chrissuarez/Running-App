@@ -243,7 +243,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         var actualRunningDurationBeforeHrTriggerSeconds: Int? = null,
         var hrTriggerEvents: Int = 0,
         var walkingRecoverySeconds: Int = 0,
-        var isInRecoveryWindow: Boolean = false
+        var isInRecoveryWindow: Boolean = false,
+        var triggerHrSum: Double = 0.0,
+        var triggerHrCount: Int = 0,
+        var recoveryDurationSumSeconds: Int = 0,
+        var recoveryEventCount: Int = 0,
+        var activeRecoveryStartSecond: Int? = null
     )
     private var activeRunIntervalTracker: RunIntervalTracker? = null
     private val completedRunIntervalStats = mutableListOf<RunWalkIntervalStat>()
@@ -301,7 +306,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun recordRunWalkHighHrTriggerEvent() {
+    private fun recordRunWalkHighHrTriggerEvent(avgBpm: Int) {
         if (currentSessionType != SESSION_TYPE_RUN_WALK ||
             currentPhase != SessionPhase.MAIN ||
             !isStructuredWorkout ||
@@ -319,7 +324,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             tracker.actualRunningDurationBeforeHrTriggerSeconds = elapsedAtTrigger
         }
         tracker.hrTriggerEvents += 1
+        tracker.triggerHrSum += avgBpm.toDouble()
+        tracker.triggerHrCount += 1
         tracker.isInRecoveryWindow = true
+        if (tracker.activeRecoveryStartSecond == null) {
+            tracker.activeRecoveryStartSecond = elapsedAtTrigger
+        }
     }
 
     private fun recordRunWalkRecoveryCueEvent() {
@@ -330,14 +340,42 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         ) {
             return
         }
-        activeRunIntervalTracker?.isInRecoveryWindow = false
+        val tracker = activeRunIntervalTracker ?: return
+        val elapsedAtRecovery = maxOf(
+            tracker.elapsedSeconds,
+            (sessionSecondsRunning - tracker.startSessionSecond).coerceAtLeast(0).toInt()
+        )
+        closeActiveRecoveryWindow(tracker, elapsedAtRecovery)
+        tracker.isInRecoveryWindow = false
+    }
+
+    private fun closeActiveRecoveryWindow(
+        tracker: RunIntervalTracker,
+        endElapsedSeconds: Int
+    ) {
+        val start = tracker.activeRecoveryStartSecond ?: return
+        val duration = (endElapsedSeconds - start).coerceAtLeast(0)
+        tracker.recoveryDurationSumSeconds += duration
+        tracker.recoveryEventCount += 1
+        tracker.activeRecoveryStartSecond = null
     }
 
     private fun finalizeActiveRunIntervalTracking() {
         val tracker = activeRunIntervalTracker ?: return
         val sessionId = currentSessionId
+        closeActiveRecoveryWindow(tracker, tracker.elapsedSeconds)
         val actualBeforeTrigger = tracker.actualRunningDurationBeforeHrTriggerSeconds
             ?: tracker.elapsedSeconds
+        val avgHrAtTrigger = if (tracker.triggerHrCount > 0) {
+            tracker.triggerHrSum / tracker.triggerHrCount.toDouble()
+        } else {
+            null
+        }
+        val avgRecoverySeconds = if (tracker.recoveryEventCount > 0) {
+            tracker.recoveryDurationSumSeconds.toDouble() / tracker.recoveryEventCount.toDouble()
+        } else {
+            null
+        }
         if (sessionId != null) {
             completedRunIntervalStats += RunWalkIntervalStat(
                 sessionId = sessionId,
@@ -346,7 +384,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 actualRunningDurationBeforeHrTriggerSeconds = actualBeforeTrigger,
                 timeIntoIntervalWhenHrExceededCapSeconds = tracker.firstHrTriggerSecondIntoInterval,
                 hrTriggerEvents = tracker.hrTriggerEvents,
-                totalTimeSpentWalkingDuringRunIntervalSeconds = tracker.walkingRecoverySeconds
+                totalTimeSpentWalkingDuringRunIntervalSeconds = tracker.walkingRecoverySeconds,
+                avgHrAtTriggerInInterval = avgHrAtTrigger,
+                avgRecoverySecondsAfterTriggerInInterval = avgRecoverySeconds
             )
         }
         activeRunIntervalTracker = null
@@ -412,6 +452,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         database = AppDatabase.getDatabase(this)
         sessionRepository = SessionRepository(
             sessionDao = database.sessionDao(),
+            runWalkIntervalStatDao = database.runWalkIntervalStatDao(),
             settingsRepository = settingsRepository,
             aiCoachClient = AiCoachClient()
         )
@@ -1592,7 +1633,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         playCue("Heart rate drifting up. Keep effort steady, or take a short walk break.")
                         lastDriftCueTime = now
                         lastCueTime = now
-                        if (isRunWalk) recordRunWalkHighHrTriggerEvent()
+                        if (isRunWalk) recordRunWalkHighHrTriggerEvent(avgBpm)
                         Log.d(TAG, "Drift Cue Played (Time: ${sessionSecondsRunning}s, Avg: $avgBpm, Base: $baselineHr)")
                     } else {
                         Log.d(TAG, "Drift detected but suppressed by anti-nag cooldown")
@@ -1607,7 +1648,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      Log.d(TAG, "HR above drift ceiling! Playing danger cue. Avg: $avgBpm, Ceiling: ${baselineHr!! + 12}")
                      if (isRunWalk) {
                          walkBreaksCount++
-                         recordRunWalkHighHrTriggerEvent()
+                         recordRunWalkHighHrTriggerEvent(avgBpm)
                      }
                  } else if (avgBpm > criticalThreshold) {
                      // MISSION: Safety Override - Play cue regardless of buffer if HR is in danger zone
@@ -1619,7 +1660,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      Log.d(TAG, "Safety Override Triggered! HR: $avgBpm > Limit: $criticalThreshold")
                      if (isRunWalk) {
                          walkBreaksCount++
-                         recordRunWalkHighHrTriggerEvent()
+                         recordRunWalkHighHrTriggerEvent(avgBpm)
                      }
                  } else if (isBufferActive) {
                      // MISSION: Total Silence during Warm-up Buffer
@@ -1633,7 +1674,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      lastCueTime = now
                      if (isRunWalk) {
                          walkBreaksCount++
-                         recordRunWalkHighHrTriggerEvent()
+                         recordRunWalkHighHrTriggerEvent(avgBpm)
                      }
                  }
              } else if (currentZone == Zone.LOW && timeInCurrentZone >= persistenceLowMs) {
