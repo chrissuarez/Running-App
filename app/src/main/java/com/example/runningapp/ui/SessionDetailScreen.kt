@@ -21,15 +21,19 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.tooling.preview.Preview
 import kotlin.math.roundToInt
 import com.example.runningapp.data.HrSample
+import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
 import java.text.SimpleDateFormat
 import java.util.*
+
+private const val SESSION_TYPE_RUN_WALK = "Run/Walk"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionDetailScreen(
     session: RunnerSession?,
     samples: List<HrSample>,
+    intervalStats: List<RunWalkIntervalStat>,
     onDeleteSession: (Long) -> Unit,
     onBack: () -> Unit
 ) {
@@ -69,6 +73,11 @@ fun SessionDetailScreen(
             ) {
                 SummaryStats(session)
                 Spacer(modifier = Modifier.height(24.dp))
+
+                if (session.sessionType == SESSION_TYPE_RUN_WALK && intervalStats.isNotEmpty()) {
+                    RunWalkIntervalSummaryCard(intervalStats = intervalStats)
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
                 
                 Text("Heart Rate Zones", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(8.dp))
@@ -158,6 +167,121 @@ fun SummaryStats(session: RunnerSession) {
             }
         }
     }
+}
+
+private data class RunWalkIntervalSummaryMetrics(
+    val totalIntervals: Int,
+    val cleanPercent: Int,
+    val avgTimeToTriggerSeconds: Int?,
+    val longestCleanSeconds: Int?,
+    val earlyBreakdownCount: Int,
+    val earlyBreakdownPercent: Int
+)
+
+@Composable
+private fun RunWalkIntervalSummaryCard(intervalStats: List<RunWalkIntervalStat>) {
+    val metrics = remember(intervalStats) {
+        computeRunWalkIntervalSummaryMetrics(intervalStats)
+    }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Run/Walk Interval Summary",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            SummaryMetricRow("Total run intervals", "${metrics.totalIntervals}")
+            SummaryMetricRow("% intervals without HR trigger", "${metrics.cleanPercent}%")
+            SummaryMetricRow(
+                "Average time-to-trigger",
+                metrics.avgTimeToTriggerSeconds?.let { formatMinutesSeconds(it) } ?: "--"
+            )
+            SummaryMetricRow(
+                "Longest clean interval",
+                metrics.longestCleanSeconds?.let { formatMinutesSeconds(it) } ?: "--"
+            )
+            SummaryMetricRow(
+                "Early breakdown (<30%)",
+                "${metrics.earlyBreakdownCount} (${metrics.earlyBreakdownPercent}%)"
+            )
+        }
+    }
+}
+
+@Composable
+private fun SummaryMetricRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.Gray
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+private fun computeRunWalkIntervalSummaryMetrics(
+    intervalStats: List<RunWalkIntervalStat>
+): RunWalkIntervalSummaryMetrics {
+    val totalIntervals = intervalStats.size
+    if (totalIntervals == 0) {
+        return RunWalkIntervalSummaryMetrics(
+            totalIntervals = 0,
+            cleanPercent = 0,
+            avgTimeToTriggerSeconds = null,
+            longestCleanSeconds = null,
+            earlyBreakdownCount = 0,
+            earlyBreakdownPercent = 0
+        )
+    }
+
+    val cleanCount = intervalStats.count { it.hrTriggerEvents == 0 }
+    val cleanPercent = percentRounded(cleanCount, totalIntervals)
+
+    val triggeredTimes = intervalStats.mapNotNull { it.timeIntoIntervalWhenHrExceededCapSeconds }
+    val avgTimeToTriggerSeconds = triggeredTimes
+        .takeIf { it.isNotEmpty() }
+        ?.average()
+        ?.roundToInt()
+
+    val longestCleanSeconds = intervalStats
+        .asSequence()
+        .filter { it.hrTriggerEvents == 0 }
+        .map { it.actualRunningDurationBeforeHrTriggerSeconds }
+        .maxOrNull()
+
+    val earlyBreakdownCount = intervalStats.count { stat ->
+        val triggerTime = stat.timeIntoIntervalWhenHrExceededCapSeconds
+        triggerTime != null &&
+            stat.plannedDurationSeconds > 0 &&
+            triggerTime.toDouble() < (stat.plannedDurationSeconds * 0.30)
+    }
+    val earlyBreakdownPercent = percentRounded(earlyBreakdownCount, totalIntervals)
+
+    return RunWalkIntervalSummaryMetrics(
+        totalIntervals = totalIntervals,
+        cleanPercent = cleanPercent,
+        avgTimeToTriggerSeconds = avgTimeToTriggerSeconds,
+        longestCleanSeconds = longestCleanSeconds,
+        earlyBreakdownCount = earlyBreakdownCount,
+        earlyBreakdownPercent = earlyBreakdownPercent
+    )
+}
+
+private fun percentRounded(part: Int, total: Int): Int {
+    if (total <= 0) return 0
+    return ((part.toDouble() / total.toDouble()) * 100.0).roundToInt()
 }
 
 @Composable
@@ -277,6 +401,13 @@ private fun formatDurationLarge(seconds: Long): String {
     val s = seconds % 60
     return if (h > 0) "%dh %dm".format(h, m) else "%dm %ds".format(m, s)
 }
+
+private fun formatMinutesSeconds(seconds: Int): String {
+    val mins = seconds / 60
+    val secs = seconds % 60
+    return "%02d:%02d".format(mins, secs)
+}
+
 @Preview(showBackground = true)
 @Composable
 fun PreviewHrChart() {

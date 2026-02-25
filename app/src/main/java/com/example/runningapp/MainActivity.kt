@@ -131,6 +131,11 @@ class MainActivity : ComponentActivity() {
                             database.sampleDao().getSamplesForSession(id).collect { value = it }
                         }
                     }
+                    val sessionIntervalStats by produceState<List<com.example.runningapp.data.RunWalkIntervalStat>>(initialValue = emptyList(), key1 = selectedSessionId) {
+                        selectedSessionId?.let { id ->
+                            database.runWalkIntervalStatDao().getIntervalStatsForSessionFlow(id).collect { value = it }
+                        }
+                    }
                     val selectedSession by produceState<com.example.runningapp.data.RunnerSession?>(initialValue = null, key1 = selectedSessionId) {
                         selectedSessionId?.let { id ->
                             database.sessionDao().getSessionByIdFlow(id).collect { value = it }
@@ -277,6 +282,7 @@ class MainActivity : ComponentActivity() {
                             SessionDetailScreen(
                                 session = selectedSession,
                                 samples = sessionSamples,
+                                intervalStats = sessionIntervalStats,
                                 onDeleteSession = { id ->
                                     sessionDetailViewModel.deleteSession(id)
                                 },

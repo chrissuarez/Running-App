@@ -127,6 +127,9 @@ interface RunWalkIntervalStatDao {
     suspend fun insertIntervalStats(stats: List<RunWalkIntervalStat>)
 
     @Query("SELECT * FROM run_walk_interval_stats WHERE sessionId = :sessionId ORDER BY intervalIndex ASC")
+    fun getIntervalStatsForSessionFlow(sessionId: Long): Flow<List<RunWalkIntervalStat>>
+
+    @Query("SELECT * FROM run_walk_interval_stats WHERE sessionId = :sessionId ORDER BY intervalIndex ASC")
     suspend fun getIntervalStatsForSession(sessionId: Long): List<RunWalkIntervalStat>
 }
 
