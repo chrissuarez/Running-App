@@ -23,6 +23,7 @@ data class UserSettings(
     val persistenceLowSeconds: Int = 45,
     val voiceStyle: String = "detailed", // "short" or "detailed"
     val coachingEnabled: Boolean = true,
+    val aiDataSharingEnabled: Boolean = true,
     val warmUpDurationSeconds: Int = 480,
     val coolDownDurationSeconds: Int = 180,
     val runMode: String = "treadmill", // "treadmill" or "outdoor"
@@ -51,6 +52,7 @@ class SettingsRepository(private val context: Context) {
         val PERSISTENCE_LOW_SECONDS = intPreferencesKey("persistence_low_seconds")
         val VOICE_STYLE = stringPreferencesKey("voice_style")
         val COACHING_ENABLED = booleanPreferencesKey("coaching_enabled")
+        val AI_DATA_SHARING_ENABLED = booleanPreferencesKey("ai_data_sharing_enabled")
         val WARM_UP_DURATION = intPreferencesKey("warm_up_duration")
         val COOL_DOWN_DURATION = intPreferencesKey("cool_down_duration")
         val RUN_MODE = stringPreferencesKey("run_mode")
@@ -85,6 +87,7 @@ class SettingsRepository(private val context: Context) {
                 persistenceLowSeconds = preferences[PreferencesKeys.PERSISTENCE_LOW_SECONDS] ?: 45,
                 voiceStyle = preferences[PreferencesKeys.VOICE_STYLE] ?: "detailed",
                 coachingEnabled = preferences[PreferencesKeys.COACHING_ENABLED] ?: true,
+                aiDataSharingEnabled = preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] ?: true,
                 warmUpDurationSeconds = preferences[PreferencesKeys.WARM_UP_DURATION] ?: 480,
                 coolDownDurationSeconds = preferences[PreferencesKeys.COOL_DOWN_DURATION] ?: 180,
                 runMode = preferences[PreferencesKeys.RUN_MODE] ?: "treadmill",
@@ -113,6 +116,7 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.PERSISTENCE_LOW_SECONDS] = settings.persistenceLowSeconds
             preferences[PreferencesKeys.VOICE_STYLE] = settings.voiceStyle
             preferences[PreferencesKeys.COACHING_ENABLED] = settings.coachingEnabled
+            preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] = settings.aiDataSharingEnabled
             preferences[PreferencesKeys.WARM_UP_DURATION] = settings.warmUpDurationSeconds
             preferences[PreferencesKeys.COOL_DOWN_DURATION] = settings.coolDownDurationSeconds
             preferences[PreferencesKeys.RUN_MODE] = settings.runMode

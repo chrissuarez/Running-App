@@ -25,7 +25,8 @@ data class RunnerSession(
     val noDataSeconds: Long = 0L,
     val walkBreaksCount: Int = 0,
     val isRunWalkMode: Boolean = false,
-    val sessionType: String = "Run/Walk"
+    val sessionType: String = "Run/Walk",
+    val includeInAiTraining: Boolean = true
 )
 
 @Entity(
@@ -52,6 +53,29 @@ data class HrSample(
     val paceMinPerKm: Double? = null
 )
 
+@Entity(
+    tableName = "run_walk_interval_stats",
+    foreignKeys = [
+        ForeignKey(
+            entity = RunnerSession::class,
+            parentColumns = ["id"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("sessionId")]
+)
+data class RunWalkIntervalStat(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sessionId: Long,
+    val intervalIndex: Int,
+    val plannedDurationSeconds: Int,
+    val actualRunningDurationBeforeHrTriggerSeconds: Int,
+    val timeIntoIntervalWhenHrExceededCapSeconds: Int? = null,
+    val hrTriggerEvents: Int,
+    val totalTimeSpentWalkingDuringRunIntervalSeconds: Int
+)
+
 @Dao
 interface SessionDao {
     @Insert
@@ -72,6 +96,9 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE endTime > 0 AND durationSeconds > 120 ORDER BY startTime DESC LIMIT 3")
     suspend fun getLast3CompletedSessions(): List<RunnerSession>
 
+    @Query("SELECT * FROM sessions WHERE endTime > 0 AND durationSeconds > 120 AND includeInAiTraining = 1 ORDER BY startTime DESC LIMIT 3")
+    suspend fun getLast3AiEligibleCompletedSessions(): List<RunnerSession>
+
     @Query("SELECT * FROM sessions WHERE endTime > 0 ORDER BY endTime DESC LIMIT 1")
     suspend fun getMostRecentFinalizedSession(): RunnerSession?
 
@@ -91,10 +118,27 @@ interface SampleDao {
     fun getSamplesForSession(sessionId: Long): Flow<List<HrSample>>
 }
 
-@Database(entities = [RunnerSession::class, HrSample::class], version = 6, exportSchema = false)
+@Dao
+interface RunWalkIntervalStatDao {
+    @Insert
+    suspend fun insertIntervalStat(stat: RunWalkIntervalStat): Long
+
+    @Insert
+    suspend fun insertIntervalStats(stats: List<RunWalkIntervalStat>)
+
+    @Query("SELECT * FROM run_walk_interval_stats WHERE sessionId = :sessionId ORDER BY intervalIndex ASC")
+    suspend fun getIntervalStatsForSession(sessionId: Long): List<RunWalkIntervalStat>
+}
+
+@Database(
+    entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class],
+    version = 7,
+    exportSchema = false
+)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
     abstract fun sampleDao(): SampleDao
+    abstract fun runWalkIntervalStatDao(): RunWalkIntervalStatDao
 
     companion object {
         @Volatile
@@ -107,7 +151,14 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "running_app_db"
                 )
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                    MIGRATION_6_7
+                )
                 .build()
                 INSTANCE = instance
                 instance
@@ -154,5 +205,29 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
 val MIGRATION_5_6 = object : Migration(5, 6) {
     override fun migrate(database: SupportSQLiteDatabase) {
         database.execSQL("ALTER TABLE sessions ADD COLUMN sessionType TEXT NOT NULL DEFAULT 'Run/Walk'")
+    }
+}
+
+val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE sessions ADD COLUMN includeInAiTraining INTEGER NOT NULL DEFAULT 1")
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `run_walk_interval_stats` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `sessionId` INTEGER NOT NULL,
+                `intervalIndex` INTEGER NOT NULL,
+                `plannedDurationSeconds` INTEGER NOT NULL,
+                `actualRunningDurationBeforeHrTriggerSeconds` INTEGER NOT NULL,
+                `timeIntoIntervalWhenHrExceededCapSeconds` INTEGER,
+                `hrTriggerEvents` INTEGER NOT NULL,
+                `totalTimeSpentWalkingDuringRunIntervalSeconds` INTEGER NOT NULL,
+                FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_run_walk_interval_stats_sessionId` ON `run_walk_interval_stats` (`sessionId`)"
+        )
     }
 }

@@ -850,6 +850,7 @@ fun SettingsScreen(
     var persistenceLow by remember { mutableStateOf(settings.persistenceLowSeconds.toString()) }
     var voiceStyle by remember { mutableStateOf(settings.voiceStyle) }
     var coachingEnabled by remember { mutableStateOf(settings.coachingEnabled) }
+    var aiDataSharingEnabled by remember { mutableStateOf(settings.aiDataSharingEnabled) }
     var runMode by remember { mutableStateOf(settings.runMode) }
     var splitAudio by remember { mutableStateOf(settings.splitAnnouncementsEnabled) }
     var runWalkCoach by remember { mutableStateOf(settings.runWalkCoachEnabled) }
@@ -899,6 +900,26 @@ fun SettingsScreen(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = coachingEnabled, onCheckedChange = { coachingEnabled = it })
             Text("Enable Coaching Cues")
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+        ) {
+            Switch(
+                checked = aiDataSharingEnabled,
+                onCheckedChange = { aiDataSharingEnabled = it }
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text("AI Training Data Sharing", fontWeight = FontWeight.Bold)
+                Text(
+                    "Send this session data to AI Coach / contribute to training",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
         }
 
         Row(
@@ -1000,6 +1021,7 @@ fun SettingsScreen(
                 persistenceLowSeconds = persistenceLow.toIntOrNull() ?: settings.persistenceLowSeconds,
                 voiceStyle = voiceStyle,
                 coachingEnabled = coachingEnabled,
+                aiDataSharingEnabled = aiDataSharingEnabled,
                 runMode = runMode,
                 splitAnnouncementsEnabled = splitAudio,
                 runWalkCoachEnabled = runWalkCoach,

@@ -61,6 +61,7 @@ import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.AiCoachClient
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.HrSample
+import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.SessionRepository
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -232,6 +233,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var activeWorkoutTemplate: WorkoutTemplate? = null
     private var hasStructuredWorkoutStarted = false
     private val sessionCreationLock = Any()
+    private var currentSessionIncludeInAiTraining = true
+    private data class RunIntervalTracker(
+        val intervalIndex: Int,
+        val plannedDurationSeconds: Int,
+        val startSessionSecond: Long,
+        var elapsedSeconds: Int = 0,
+        var firstHrTriggerSecondIntoInterval: Int? = null,
+        var actualRunningDurationBeforeHrTriggerSeconds: Int? = null,
+        var hrTriggerEvents: Int = 0,
+        var walkingRecoverySeconds: Int = 0,
+        var isInRecoveryWindow: Boolean = false
+    )
+    private var activeRunIntervalTracker: RunIntervalTracker? = null
+    private val completedRunIntervalStats = mutableListOf<RunWalkIntervalStat>()
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
@@ -259,6 +274,93 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             SESSION_TYPE_FREE_TRACK -> value
             else -> SESSION_TYPE_RUN_WALK
         }
+    }
+
+    private fun resetRunIntervalTracking() {
+        activeRunIntervalTracker = null
+        completedRunIntervalStats.clear()
+    }
+
+    private fun startRunIntervalTracking(intervalIndex: Int, plannedDurationSeconds: Int) {
+        if (currentSessionType != SESSION_TYPE_RUN_WALK || plannedDurationSeconds <= 0) return
+        if (activeRunIntervalTracker != null) {
+            finalizeActiveRunIntervalTracking()
+        }
+        activeRunIntervalTracker = RunIntervalTracker(
+            intervalIndex = intervalIndex,
+            plannedDurationSeconds = plannedDurationSeconds,
+            startSessionSecond = sessionSecondsRunning
+        )
+    }
+
+    private fun recordRunIntervalSecond() {
+        val tracker = activeRunIntervalTracker ?: return
+        tracker.elapsedSeconds += 1
+        if (tracker.isInRecoveryWindow) {
+            tracker.walkingRecoverySeconds += 1
+        }
+    }
+
+    private fun recordRunWalkHighHrTriggerEvent() {
+        if (currentSessionType != SESSION_TYPE_RUN_WALK ||
+            currentPhase != SessionPhase.MAIN ||
+            !isStructuredWorkout ||
+            structuredWorkoutPhase != StructuredWorkoutPhase.RUN
+        ) {
+            return
+        }
+        val tracker = activeRunIntervalTracker ?: return
+        val elapsedAtTrigger = maxOf(
+            tracker.elapsedSeconds,
+            (sessionSecondsRunning - tracker.startSessionSecond).coerceAtLeast(0).toInt()
+        )
+        if (tracker.firstHrTriggerSecondIntoInterval == null) {
+            tracker.firstHrTriggerSecondIntoInterval = elapsedAtTrigger
+            tracker.actualRunningDurationBeforeHrTriggerSeconds = elapsedAtTrigger
+        }
+        tracker.hrTriggerEvents += 1
+        tracker.isInRecoveryWindow = true
+    }
+
+    private fun recordRunWalkRecoveryCueEvent() {
+        if (currentSessionType != SESSION_TYPE_RUN_WALK ||
+            currentPhase != SessionPhase.MAIN ||
+            !isStructuredWorkout ||
+            structuredWorkoutPhase != StructuredWorkoutPhase.RUN
+        ) {
+            return
+        }
+        activeRunIntervalTracker?.isInRecoveryWindow = false
+    }
+
+    private fun finalizeActiveRunIntervalTracking() {
+        val tracker = activeRunIntervalTracker ?: return
+        val sessionId = currentSessionId
+        val actualBeforeTrigger = tracker.actualRunningDurationBeforeHrTriggerSeconds
+            ?: tracker.elapsedSeconds
+        if (sessionId != null) {
+            completedRunIntervalStats += RunWalkIntervalStat(
+                sessionId = sessionId,
+                intervalIndex = tracker.intervalIndex,
+                plannedDurationSeconds = tracker.plannedDurationSeconds,
+                actualRunningDurationBeforeHrTriggerSeconds = actualBeforeTrigger,
+                timeIntoIntervalWhenHrExceededCapSeconds = tracker.firstHrTriggerSecondIntoInterval,
+                hrTriggerEvents = tracker.hrTriggerEvents,
+                totalTimeSpentWalkingDuringRunIntervalSeconds = tracker.walkingRecoverySeconds
+            )
+        }
+        activeRunIntervalTracker = null
+    }
+
+    private suspend fun persistRunIntervalStats(sessionId: Long) {
+        if (completedRunIntervalStats.isEmpty()) return
+        val statsToPersist = completedRunIntervalStats
+            .filter { it.sessionId == sessionId }
+        if (statsToPersist.isNotEmpty()) {
+            database.runWalkIntervalStatDao().insertIntervalStats(statsToPersist)
+            Log.d(TAG, "Persisted ${statsToPersist.size} run interval stats for session $sessionId")
+        }
+        completedRunIntervalStats.clear()
     }
 
     inner class LocalBinder : Binder() {
@@ -391,11 +493,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                 if (phaseTimeRemainingSeconds <= 0) {
                                     phaseTimeRemainingSeconds = workout.runDurationSeconds
                                 }
+                                startRunIntervalTracking(
+                                    intervalIndex = currentRepeat,
+                                    plannedDurationSeconds = workout.runDurationSeconds
+                                )
                                 playCue("Start running, interval $currentRepeat of ${workout.totalRepeats}.")
                             }
 
                             if (hasStructuredWorkoutStarted && phaseTimeRemainingSeconds > 0) {
                                 phaseTimeRemainingSeconds -= 1
+                                if (structuredWorkoutPhase == StructuredWorkoutPhase.RUN) {
+                                    recordRunIntervalSecond()
+                                }
                                 if (phaseTimeRemainingSeconds <= 0) {
                                     onStructuredWorkoutPhaseComplete(workout)
                                 }
@@ -566,6 +675,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         if (currentSessionType != SESSION_TYPE_RUN_WALK) return
 
         if (structuredWorkoutPhase == StructuredWorkoutPhase.RUN) {
+            finalizeActiveRunIntervalTracking()
             if (workout.walkDurationSeconds > 0) {
                 structuredWorkoutPhase = StructuredWorkoutPhase.WALK
                 phaseTimeRemainingSeconds = workout.walkDurationSeconds
@@ -580,6 +690,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 } else {
                     structuredWorkoutPhase = StructuredWorkoutPhase.RUN
                     phaseTimeRemainingSeconds = workout.runDurationSeconds
+                    startRunIntervalTracking(
+                        intervalIndex = currentRepeat,
+                        plannedDurationSeconds = workout.runDurationSeconds
+                    )
                     playCue("Start running, interval $currentRepeat of ${workout.totalRepeats}.")
                 }
             }
@@ -593,6 +707,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             } else {
                 structuredWorkoutPhase = StructuredWorkoutPhase.RUN
                 phaseTimeRemainingSeconds = workout.runDurationSeconds
+                startRunIntervalTracking(
+                    intervalIndex = currentRepeat,
+                    plannedDurationSeconds = workout.runDurationSeconds
+                )
                 playCue("Start running, interval $currentRepeat of ${workout.totalRepeats}.")
             }
         }
@@ -711,6 +829,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             isWarmupSkipped = false
             currentWarmupDuration = currentSettings.warmUpDurationSeconds
             initializeStructuredWorkoutState()
+            resetRunIntervalTracking()
+            currentSessionIncludeInAiTraining = currentSettings.aiDataSharingEnabled
             
             // Reset session-level counters only when a new database session begins
             sessionSecondsRunning = 0
@@ -739,7 +859,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             val session = RunnerSession(
                 startTime = System.currentTimeMillis(),
                 runMode = currentSettings.runMode,
-                sessionType = currentSessionType
+                sessionType = currentSessionType,
+                includeInAiTraining = currentSessionIncludeInAiTraining
             )
             currentSessionId = database.sessionDao().insertSession(session)
             startSessionTimerLoop()
@@ -781,6 +902,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 playCue("Warm up skipped. Starting workout.")
             }
             SessionPhase.MAIN -> {
+                finalizeActiveRunIntervalTracking()
                 currentPhase = SessionPhase.COOL_DOWN
                 phaseSecondsRunning = 0
                 isStructuredWorkout = false
@@ -824,7 +946,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val finalAvgPace = calculatePace()
         val finalWalkBreaksCount = walkBreaksCount
         val finalIsRunWalkMode = currentSettings.runWalkCoachEnabled
-        
+        finalizeActiveRunIntervalTracking()
+
         disconnect()
         stopLocationUpdates()
         
@@ -857,16 +980,34 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         )
                         database.sessionDao().updateSession(updatedSession)
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
+                        persistRunIntervalStats(sessionId)
 
                         val stageId = currentSettings.activeStageId
-                        if (stageId != null && currentSessionType == SESSION_TYPE_RUN_WALK) {
+                        if (stageId != null &&
+                            currentSessionType == SESSION_TYPE_RUN_WALK &&
+                            updatedSession.includeInAiTraining
+                        ) {
                             Log.d("AiCoach", "Triggering AI evaluation after session finalization for stage: $stageId")
                             sessionRepository.evaluateAndAdjustPlan(stageId)
+                        } else if (stageId != null &&
+                            currentSessionType == SESSION_TYPE_RUN_WALK &&
+                            !updatedSession.includeInAiTraining
+                        ) {
+                            Log.d(
+                                "AiCoach",
+                                "Skipping AI evaluation: session opted out of AI training for stage=$stageId"
+                            )
                         }
+                    } else {
+                        resetRunIntervalTracking()
                     }
                     currentSessionId = null
+                    currentSessionIncludeInAiTraining = true
                 }
             }
+        } else {
+            resetRunIntervalTracking()
+            currentSessionIncludeInAiTraining = true
         }
 
         _hrState.update { it.copy(sessionStatus = SessionStatus.STOPPED) }
@@ -1451,6 +1592,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         playCue("Heart rate drifting up. Keep effort steady, or take a short walk break.")
                         lastDriftCueTime = now
                         lastCueTime = now
+                        if (isRunWalk) recordRunWalkHighHrTriggerEvent()
                         Log.d(TAG, "Drift Cue Played (Time: ${sessionSecondsRunning}s, Avg: $avgBpm, Base: $baselineHr)")
                     } else {
                         Log.d(TAG, "Drift detected but suppressed by anti-nag cooldown")
@@ -1463,7 +1605,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      playCue(text)
                      lastCueTime = now
                      Log.d(TAG, "HR above drift ceiling! Playing danger cue. Avg: $avgBpm, Ceiling: ${baselineHr!! + 12}")
-                     if (isRunWalk) walkBreaksCount++
+                     if (isRunWalk) {
+                         walkBreaksCount++
+                         recordRunWalkHighHrTriggerEvent()
+                     }
                  } else if (avgBpm > criticalThreshold) {
                      // MISSION: Safety Override - Play cue regardless of buffer if HR is in danger zone
                      val text = if (isRunWalk) "Heart rate high. Walk until your breathing settles." else {
@@ -1472,7 +1617,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      playCue(text)
                      lastCueTime = now
                      Log.d(TAG, "Safety Override Triggered! HR: $avgBpm > Limit: $criticalThreshold")
-                     if (isRunWalk) walkBreaksCount++
+                     if (isRunWalk) {
+                         walkBreaksCount++
+                         recordRunWalkHighHrTriggerEvent()
+                     }
                  } else if (isBufferActive) {
                      // MISSION: Total Silence during Warm-up Buffer
                      Log.d(TAG, "Warm-up Buffer Active: Muting High HR cue (Time: ${sessionSecondsRunning}s, Avg: $avgBpm)")
@@ -1483,7 +1631,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      }
                      playCue(text)
                      lastCueTime = now
-                     if (isRunWalk) walkBreaksCount++
+                     if (isRunWalk) {
+                         walkBreaksCount++
+                         recordRunWalkHighHrTriggerEvent()
+                     }
                  }
              } else if (currentZone == Zone.LOW && timeInCurrentZone >= persistenceLowMs) {
                  // MISSION: Total Silence during Warm-up Buffer for LOW cues too
@@ -1495,6 +1646,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      }
                      playCue(text)
                      lastCueTime = now
+                     if (isRunWalk) recordRunWalkRecoveryCueEvent()
                  }
              }
         }

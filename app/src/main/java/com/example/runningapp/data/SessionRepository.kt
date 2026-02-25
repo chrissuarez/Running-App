@@ -42,7 +42,7 @@ class SessionRepository(
             .firstOrNull { it.id == stageId }
             ?: throw IllegalArgumentException("Stage not found for id: $stageId")
 
-        val recentRuns = sessionDao.getLast3CompletedSessions().map { session ->
+        val recentRuns = sessionDao.getLast3AiEligibleCompletedSessions().map { session ->
             AiRecentRun(
                 durationSeconds = session.durationSeconds,
                 avgHr = session.avgBpm,
@@ -65,6 +65,13 @@ class SessionRepository(
 
         try {
             val latestFinalizedSession = sessionDao.getMostRecentFinalizedSession()
+            if (latestFinalizedSession?.includeInAiTraining == false) {
+                Log.d(
+                    "AiCoach",
+                    "Skipping AI evaluation: latest session is excluded from AI training. stageId=$stageId"
+                )
+                return
+            }
             if (latestFinalizedSession?.sessionType != SESSION_TYPE_RUN_WALK) {
                 Log.d(
                     "AiCoach",
