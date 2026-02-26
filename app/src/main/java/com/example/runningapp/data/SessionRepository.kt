@@ -1,8 +1,11 @@
 package com.example.runningapp.data
 
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.TrainingPlanProvider
+import kotlinx.coroutines.flow.first
+import kotlin.math.floor
 import kotlin.math.roundToInt
 
 private const val SESSION_TYPE_RUN_WALK = "Run/Walk"
@@ -30,6 +33,11 @@ data class AiTrainingContext(
     val recentRuns: List<AiRecentRun>
 )
 
+data class Max30dLoad(
+    val maxDistanceKm: Double,
+    val maxDurationSeconds: Long
+)
+
 class SessionRepository(
     private val sessionDao: SessionDao,
     private val runWalkIntervalStatDao: RunWalkIntervalStatDao? = null,
@@ -43,6 +51,17 @@ class SessionRepository(
     suspend fun deleteSessions(sessionIds: List<Long>) {
         if (sessionIds.isEmpty()) return
         sessionDao.deleteSessionsByIds(sessionIds)
+    }
+
+    suspend fun getMaxSessionLoadLast30Days(
+        nowEpochMillis: Long = System.currentTimeMillis()
+    ): Max30dLoad {
+        val cutoffEpochMillis = nowEpochMillis - (30L * 24 * 60 * 60 * 1000)
+        val projection = sessionDao.getMaxSessionLoadLast30Days(cutoffEpochMillis)
+        return Max30dLoad(
+            maxDistanceKm = projection.maxDistanceKm ?: 0.0,
+            maxDurationSeconds = projection.maxDurationSeconds ?: 0L
+        )
     }
 
     suspend fun getAiTrainingContext(stageId: String): AiTrainingContext {
@@ -101,20 +120,21 @@ class SessionRepository(
             val context = getAiTrainingContext(stageId)
             Log.d("AiCoach", "Sending prompt to Gemini with ${context.recentRuns.size} recent runs.")
             val response = coachClient.evaluateProgress(context)
+            val clampedResponse = clampAiResponseByRecentLoad(response, settingsRepo)
             Log.d(
                 "AiCoach",
-                "Gemini response received! Adjusted intervals: ${response.nextRunDurationSeconds}s Run / " +
-                    "${response.nextWalkDurationSeconds}s Walk. Message: ${response.coachMessage}"
+                "Gemini response received! Adjusted intervals: ${clampedResponse.nextRunDurationSeconds}s Run / " +
+                    "${clampedResponse.nextWalkDurationSeconds}s Walk. Message: ${clampedResponse.coachMessage}"
             )
 
             settingsRepo.setAiAdjustments(
-                latestCoachMessage = response.coachMessage,
-                aiRunIntervalSeconds = response.nextRunDurationSeconds,
-                aiWalkIntervalSeconds = response.nextWalkDurationSeconds,
-                aiRepeats = response.nextRepeats
+                latestCoachMessage = clampedResponse.coachMessage,
+                aiRunIntervalSeconds = clampedResponse.nextRunDurationSeconds,
+                aiWalkIntervalSeconds = clampedResponse.nextWalkDurationSeconds,
+                aiRepeats = clampedResponse.nextRepeats
             )
 
-            if (response.graduatedToNextStage) {
+            if (clampedResponse.graduatedToNextStage) {
                 val plan = TrainingPlanProvider
                     .getAllPlans()
                     .firstOrNull { currentPlan -> currentPlan.stages.any { it.id == stageId } }
@@ -130,6 +150,71 @@ class SessionRepository(
         } catch (e: Exception) {
             Log.e("AiCoach", "Failed to evaluate progress", e)
         }
+    }
+
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal suspend fun clampAiResponseByRecentLoad(
+        response: AiCoachResponse,
+        settingsRepo: SettingsRepository
+    ): AiCoachResponse {
+        val settings = settingsRepo.userSettingsFlow.first()
+        val warmupSeconds = settings.warmUpDurationSeconds.coerceAtLeast(0)
+        val cooldownSeconds = settings.coolDownDurationSeconds.coerceAtLeast(0)
+        val max30d = getMaxSessionLoadLast30Days()
+        if (max30d.maxDurationSeconds <= 0L) return response
+
+        val safeWalkSeconds = response.nextWalkDurationSeconds.coerceAtLeast(0)
+        val safeRepeats = response.nextRepeats.coerceAtLeast(1)
+        val safeRunSeconds = response.nextRunDurationSeconds.coerceAtLeast(1)
+
+        val allowedTotalSeconds = floor(max30d.maxDurationSeconds.toDouble() * 1.10).toLong()
+        val proposedTotalSeconds = computePlannedTotalSeconds(
+            runSeconds = safeRunSeconds,
+            walkSeconds = safeWalkSeconds,
+            repeats = safeRepeats,
+            warmupSeconds = warmupSeconds,
+            cooldownSeconds = cooldownSeconds
+        )
+
+        if (proposedTotalSeconds <= allowedTotalSeconds) {
+            return response.copy(
+                nextRunDurationSeconds = safeRunSeconds,
+                nextWalkDurationSeconds = safeWalkSeconds,
+                nextRepeats = safeRepeats
+            )
+        }
+
+        val mainBudgetSeconds = (allowedTotalSeconds - warmupSeconds.toLong() - cooldownSeconds.toLong())
+            .coerceAtLeast(0L)
+        val walkTotalSeconds = safeWalkSeconds.toLong() * safeRepeats.toLong()
+        val runBudgetSeconds = (mainBudgetSeconds - walkTotalSeconds).coerceAtLeast(0L)
+        var clampedRunSeconds = (runBudgetSeconds / safeRepeats.toLong()).toInt()
+        var clampedRepeats = safeRepeats
+
+        if (clampedRunSeconds < 1) {
+            val perRepeatMinimum = (safeWalkSeconds + 1).coerceAtLeast(1)
+            clampedRepeats = (mainBudgetSeconds / perRepeatMinimum.toLong()).toInt().coerceAtLeast(1)
+            val adjustedRunBudget = (mainBudgetSeconds - (safeWalkSeconds.toLong() * clampedRepeats.toLong()))
+                .coerceAtLeast(0L)
+            clampedRunSeconds = (adjustedRunBudget / clampedRepeats.toLong()).toInt().coerceAtLeast(1)
+        }
+
+        return response.copy(
+            nextRunDurationSeconds = clampedRunSeconds,
+            nextWalkDurationSeconds = safeWalkSeconds,
+            nextRepeats = clampedRepeats
+        )
+    }
+
+    private fun computePlannedTotalSeconds(
+        runSeconds: Int,
+        walkSeconds: Int,
+        repeats: Int,
+        warmupSeconds: Int,
+        cooldownSeconds: Int
+    ): Long {
+        val mainSetSeconds = (runSeconds.toLong() + walkSeconds.toLong()) * repeats.toLong()
+        return warmupSeconds.toLong() + mainSetSeconds + cooldownSeconds.toLong()
     }
 
     private suspend fun buildRunWalkMetrics(sessionId: Long): AiRunWalkMetrics? {
