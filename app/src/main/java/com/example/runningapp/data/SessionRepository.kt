@@ -30,6 +30,11 @@ data class AiTrainingContext(
     val recentRuns: List<AiRecentRun>
 )
 
+data class Max30dLoad(
+    val maxDistanceKm: Double,
+    val maxDurationSeconds: Long
+)
+
 class SessionRepository(
     private val sessionDao: SessionDao,
     private val runWalkIntervalStatDao: RunWalkIntervalStatDao? = null,
@@ -43,6 +48,17 @@ class SessionRepository(
     suspend fun deleteSessions(sessionIds: List<Long>) {
         if (sessionIds.isEmpty()) return
         sessionDao.deleteSessionsByIds(sessionIds)
+    }
+
+    suspend fun getMaxSessionLoadLast30Days(
+        nowEpochMillis: Long = System.currentTimeMillis()
+    ): Max30dLoad {
+        val cutoffEpochMillis = nowEpochMillis - (30L * 24 * 60 * 60 * 1000)
+        val projection = sessionDao.getMaxSessionLoadLast30Days(cutoffEpochMillis)
+        return Max30dLoad(
+            maxDistanceKm = projection.maxDistanceKm ?: 0.0,
+            maxDurationSeconds = projection.maxDurationSeconds ?: 0L
+        )
     }
 
     suspend fun getAiTrainingContext(stageId: String): AiTrainingContext {
