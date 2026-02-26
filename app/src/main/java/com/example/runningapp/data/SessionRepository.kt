@@ -1,6 +1,7 @@
 package com.example.runningapp.data
 
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.TrainingPlanProvider
 import kotlinx.coroutines.flow.first
@@ -151,7 +152,8 @@ class SessionRepository(
         }
     }
 
-    private suspend fun clampAiResponseByRecentLoad(
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal suspend fun clampAiResponseByRecentLoad(
         response: AiCoachResponse,
         settingsRepo: SettingsRepository
     ): AiCoachResponse {
@@ -173,8 +175,15 @@ class SessionRepository(
             warmupSeconds = warmupSeconds,
             cooldownSeconds = cooldownSeconds
         )
+        Log.d(
+            "AiCoach",
+            "Clamp check max30dDuration=${max30d.maxDurationSeconds}s allowedTotal=$allowedTotalSeconds " +
+                "proposedTotal=$proposedTotalSeconds warmup=$warmupSeconds cooldown=$cooldownSeconds " +
+                "aiRun=$safeRunSeconds aiWalk=$safeWalkSeconds aiRepeats=$safeRepeats"
+        )
 
         if (proposedTotalSeconds <= allowedTotalSeconds) {
+            Log.d("AiCoach", "Clamp not needed: proposed load is within 10% ceiling.")
             return response.copy(
                 nextRunDurationSeconds = safeRunSeconds,
                 nextWalkDurationSeconds = safeWalkSeconds,
@@ -196,6 +205,12 @@ class SessionRepository(
                 .coerceAtLeast(0L)
             clampedRunSeconds = (adjustedRunBudget / clampedRepeats.toLong()).toInt().coerceAtLeast(1)
         }
+
+        Log.d(
+            "AiCoach",
+            "Clamp applied clampedRun=$clampedRunSeconds clampedWalk=$safeWalkSeconds clampedRepeats=$clampedRepeats " +
+                "finalTotal=${computePlannedTotalSeconds(clampedRunSeconds, safeWalkSeconds, clampedRepeats, warmupSeconds, cooldownSeconds)}"
+        )
 
         return response.copy(
             nextRunDurationSeconds = clampedRunSeconds,
