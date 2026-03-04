@@ -144,6 +144,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var audioManager: AudioManager? = null
     private var focusRequest: AudioFocusRequest? = null
+    private var currentCueUtteranceId: String? = null
+    private var isCueFocusHeld = false
+    private var cueCounter = 0L
+    private var cueFocusTimeoutJob: Job? = null
+    private val cueFocusTimeoutMs = 8_000L
 
     // Mission 4: Location
     private lateinit var fusedLocationClient: FusedLocationProviderClient
@@ -1051,6 +1056,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             currentSessionIncludeInAiTraining = true
         }
 
+        releaseCueAudioFocus("session_stop", currentCueUtteranceId)
         _hrState.update { it.copy(sessionStatus = SessionStatus.STOPPED) }
         stopForegroundService()
     }
@@ -1062,11 +1068,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 override fun onStart(utteranceId: String?) {}
 
                 override fun onDone(utteranceId: String?) {
-                    abandonAudioFocus()
+                    if (isCurrentCueUtterance(utteranceId)) {
+                        releaseCueAudioFocus("done", utteranceId)
+                    }
                 }
 
                 override fun onError(utteranceId: String?) {
-                    abandonAudioFocus()
+                    if (isCurrentCueUtterance(utteranceId)) {
+                        releaseCueAudioFocus("error", utteranceId)
+                    }
+                }
+
+                override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                    if (isCurrentCueUtterance(utteranceId)) {
+                        releaseCueAudioFocus("stop(interrupted=$interrupted)", utteranceId)
+                    }
                 }
             })
         } else {
@@ -1077,12 +1093,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     fun playCue(text: String) {
         if (currentSessionType == SESSION_TYPE_FREE_TRACK) return
         if (tts == null) return
-        
+
+        if (isCueFocusHeld) {
+            releaseCueAudioFocus("pre_speak_cleanup", currentCueUtteranceId)
+        }
+
         if (requestAudioFocus()) {
+            val utteranceId = "CUE_${++cueCounter}_${System.currentTimeMillis()}"
+            currentCueUtteranceId = utteranceId
+            isCueFocusHeld = true
+            scheduleCueFocusTimeout(utteranceId)
+
             val params = android.os.Bundle()
             params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, "CUE_ID")
-            Log.d(TAG, "Playing Cue: $text")
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+            Log.d(TAG, "Playing Cue: $text (utteranceId=$utteranceId)")
         } else {
             Log.w(TAG, "Audio focus request failed")
         }
@@ -1122,6 +1147,31 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             @Suppress("DEPRECATION")
             audioManager?.abandonAudioFocus(null)
         }
+    }
+
+    private fun isCurrentCueUtterance(utteranceId: String?): Boolean {
+        return utteranceId != null && utteranceId == currentCueUtteranceId
+    }
+
+    private fun scheduleCueFocusTimeout(utteranceId: String) {
+        cueFocusTimeoutJob?.cancel()
+        cueFocusTimeoutJob = serviceScope.launch {
+            delay(cueFocusTimeoutMs)
+            if (isCurrentCueUtterance(utteranceId)) {
+                releaseCueAudioFocus("timeout", utteranceId)
+            }
+        }
+    }
+
+    private fun releaseCueAudioFocus(reason: String, utteranceId: String? = null) {
+        if (!isCueFocusHeld) return
+
+        cueFocusTimeoutJob?.cancel()
+        cueFocusTimeoutJob = null
+        abandonAudioFocus()
+        isCueFocusHeld = false
+        currentCueUtteranceId = null
+        Log.d(TAG, "Released cue audio focus: reason=$reason utteranceId=$utteranceId")
     }
 
 
@@ -1950,6 +2000,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         stopLocationUpdates()
         
         releaseWakeLock()
+        releaseCueAudioFocus("service_destroy", currentCueUtteranceId)
         tts?.shutdown()
         Log.d(TAG, "Service destroyed")
     }
