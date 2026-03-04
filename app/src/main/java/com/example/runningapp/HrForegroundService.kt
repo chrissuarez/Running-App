@@ -105,6 +105,11 @@ data class HrState(
     val structuredWorkoutPhase: StructuredWorkoutPhase = StructuredWorkoutPhase.RUN,
     val phaseTimeRemainingSeconds: Int = 0,
     val currentRepeat: Int = 1,
+    val totalRepeats: Int = 0,
+    val currentIntervalPlannedSeconds: Int = 0,
+    val nextIntervalType: StructuredWorkoutPhase? = null,
+    val nextIntervalDurationSeconds: Int = 0,
+    val workoutProgressPercent: Int = 0,
     
     // Mission 4: Outdoor Running
     val distanceKm: Double = 0.0,
@@ -298,6 +303,86 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun resetRunIntervalTracking() {
         activeRunIntervalTracker = null
         completedRunIntervalStats.clear()
+    }
+
+    private data class StructuredProgressUiState(
+        val totalRepeats: Int = 0,
+        val currentIntervalPlannedSeconds: Int = 0,
+        val nextIntervalType: StructuredWorkoutPhase? = null,
+        val nextIntervalDurationSeconds: Int = 0,
+        val workoutProgressPercent: Int = 0
+    )
+
+    private fun buildStructuredProgressUiState(): StructuredProgressUiState {
+        val workout = activeWorkoutTemplate
+        if (currentPhase != SessionPhase.MAIN ||
+            !isStructuredWorkout ||
+            currentSessionType != SESSION_TYPE_RUN_WALK ||
+            workout == null ||
+            workout.totalRepeats <= 0
+        ) {
+            return StructuredProgressUiState()
+        }
+
+        val totalRepeats = workout.totalRepeats
+        val walkSeconds = workout.walkDurationSeconds.coerceAtLeast(0)
+        val currentPlannedSeconds = when (structuredWorkoutPhase) {
+            StructuredWorkoutPhase.RUN -> workout.runDurationSeconds.coerceAtLeast(0)
+            StructuredWorkoutPhase.WALK -> walkSeconds
+        }
+
+        val remainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0)
+        val elapsedSeconds = (currentPlannedSeconds - remainingSeconds).coerceIn(0, currentPlannedSeconds)
+
+        val (nextType, nextDurationSeconds) = when (structuredWorkoutPhase) {
+            StructuredWorkoutPhase.RUN -> {
+                if (walkSeconds > 0) {
+                    StructuredWorkoutPhase.WALK to walkSeconds
+                } else if (currentRepeat < totalRepeats) {
+                    StructuredWorkoutPhase.RUN to workout.runDurationSeconds.coerceAtLeast(0)
+                } else {
+                    null to 0
+                }
+            }
+            StructuredWorkoutPhase.WALK -> {
+                if (currentRepeat < totalRepeats) {
+                    StructuredWorkoutPhase.RUN to workout.runDurationSeconds.coerceAtLeast(0)
+                } else {
+                    null to 0
+                }
+            }
+        }
+
+        val totalSegments = if (walkSeconds > 0) totalRepeats * 2 else totalRepeats
+        val completedSegmentsBeforeCurrent = when (structuredWorkoutPhase) {
+            StructuredWorkoutPhase.RUN -> {
+                if (walkSeconds > 0) (currentRepeat - 1).coerceAtLeast(0) * 2
+                else (currentRepeat - 1).coerceAtLeast(0)
+            }
+            StructuredWorkoutPhase.WALK -> ((currentRepeat - 1).coerceAtLeast(0) * 2) + 1
+        }.coerceAtLeast(0)
+
+        val segmentFraction = if (currentPlannedSeconds > 0) {
+            elapsedSeconds.toDouble() / currentPlannedSeconds.toDouble()
+        } else {
+            0.0
+        }
+
+        val workoutProgressPercent = if (totalSegments > 0) {
+            (((completedSegmentsBeforeCurrent.toDouble() + segmentFraction) / totalSegments.toDouble()) * 100.0)
+                .roundToInt()
+                .coerceIn(0, 100)
+        } else {
+            0
+        }
+
+        return StructuredProgressUiState(
+            totalRepeats = totalRepeats,
+            currentIntervalPlannedSeconds = currentPlannedSeconds,
+            nextIntervalType = nextType,
+            nextIntervalDurationSeconds = nextDurationSeconds,
+            workoutProgressPercent = workoutProgressPercent
+        )
     }
 
     private fun startRunIntervalTracking(intervalIndex: Int, plannedDurationSeconds: Int) {
@@ -621,6 +706,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 }
 
                 _hrState.update { 
+                    val structuredProgress = buildStructuredProgressUiState()
                     it.copy(
                         secondsRunning = sessionSecondsRunning,
                         lastHrAgeSeconds = hrAge,
@@ -639,6 +725,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         structuredWorkoutPhase = structuredWorkoutPhase,
                         phaseTimeRemainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0),
                         currentRepeat = currentRepeat,
+                        totalRepeats = structuredProgress.totalRepeats,
+                        currentIntervalPlannedSeconds = structuredProgress.currentIntervalPlannedSeconds,
+                        nextIntervalType = structuredProgress.nextIntervalType,
+                        nextIntervalDurationSeconds = structuredProgress.nextIntervalDurationSeconds,
+                        workoutProgressPercent = structuredProgress.workoutProgressPercent,
                         walkBreaksCount = walkBreaksCount
                     )
                 }
@@ -646,6 +737,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             SessionStatus.PAUSED -> {
                 sessionSecondsPaused += deltaSeconds
                 _hrState.update { 
+                    val structuredProgress = buildStructuredProgressUiState()
                     it.copy(
                         secondsPaused = sessionSecondsPaused,
                         lastHrAgeSeconds = hrAge,
@@ -662,6 +754,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         structuredWorkoutPhase = structuredWorkoutPhase,
                         phaseTimeRemainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0),
                         currentRepeat = currentRepeat,
+                        totalRepeats = structuredProgress.totalRepeats,
+                        currentIntervalPlannedSeconds = structuredProgress.currentIntervalPlannedSeconds,
+                        nextIntervalType = structuredProgress.nextIntervalType,
+                        nextIntervalDurationSeconds = structuredProgress.nextIntervalDurationSeconds,
+                        workoutProgressPercent = structuredProgress.workoutProgressPercent,
                         walkBreaksCount = walkBreaksCount
                     )
                 }
@@ -908,6 +1005,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 structuredWorkoutPhase = structuredWorkoutPhase,
                 phaseTimeRemainingSeconds = phaseTimeRemainingSeconds,
                 currentRepeat = currentRepeat,
+                totalRepeats = 0,
+                currentIntervalPlannedSeconds = 0,
+                nextIntervalType = null,
+                nextIntervalDurationSeconds = 0,
+                workoutProgressPercent = 0,
                 secondsRunning = 0,
                 secondsPaused = 0,
                 distanceKm = 0.0,
@@ -975,6 +1077,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         // Mission: Immediate UI Sync
         _hrState.update { currentState ->
+            val structuredProgress = buildStructuredProgressUiState()
             currentState.copy(
                 currentPhase = currentPhase,
                 phaseSecondsRemaining = if (currentPhase == SessionPhase.MAIN) 0 else {
@@ -988,7 +1091,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 isStructuredWorkout = isStructuredWorkout,
                 structuredWorkoutPhase = structuredWorkoutPhase,
                 phaseTimeRemainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0),
-                currentRepeat = currentRepeat
+                currentRepeat = currentRepeat,
+                totalRepeats = structuredProgress.totalRepeats,
+                currentIntervalPlannedSeconds = structuredProgress.currentIntervalPlannedSeconds,
+                nextIntervalType = structuredProgress.nextIntervalType,
+                nextIntervalDurationSeconds = structuredProgress.nextIntervalDurationSeconds,
+                workoutProgressPercent = structuredProgress.workoutProgressPercent
             )
         }
     }
@@ -1462,7 +1570,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             connectedDeviceName = null, 
             discoveredServices = emptyList(),
             isStructuredWorkout = false,
-            phaseTimeRemainingSeconds = 0
+            phaseTimeRemainingSeconds = 0,
+            totalRepeats = 0,
+            currentIntervalPlannedSeconds = 0,
+            nextIntervalType = null,
+            nextIntervalDurationSeconds = 0,
+            workoutProgressPercent = 0
         ) }
         synchronized(bpmHistory) {
             bpmHistory.clear()

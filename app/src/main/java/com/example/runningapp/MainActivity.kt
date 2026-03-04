@@ -791,6 +791,45 @@ fun WorkoutView(state: HrState) {
             Text("Reconnect Attempts: ${state.reconnectAttempts}", style = MaterialTheme.typography.bodyMedium, color = Color.Red)
         }
 
+        if (state.currentPhase == SessionPhase.MAIN && state.isStructuredWorkout && state.totalRepeats > 0) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f))
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("Workout Progress", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "Interval ${state.currentRepeat} of ${state.totalRepeats} • ${state.structuredWorkoutPhase}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "Countdown: ${formatTime(state.phaseTimeRemainingSeconds.toLong())}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LinearProgressIndicator(
+                        progress = (state.workoutProgressPercent.coerceIn(0, 100)) / 100f,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        "${state.workoutProgressPercent}%",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    if (state.nextIntervalType != null && state.nextIntervalDurationSeconds > 0) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            "Next: ${state.nextIntervalType} ${formatTime(state.nextIntervalDurationSeconds.toLong())}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+        }
+
         Spacer(modifier = Modifier.height(16.dp))
         
         Text("Coaching Debug:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
