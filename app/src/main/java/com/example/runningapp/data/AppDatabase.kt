@@ -78,6 +78,11 @@ data class RunWalkIntervalStat(
     val avgRecoverySecondsAfterTriggerInInterval: Double? = null
 )
 
+data class MaxSessionLoad30dProjection(
+    val maxDistanceKm: Double?,
+    val maxDurationSeconds: Long?
+)
+
 @Dao
 interface SessionDao {
     @Insert
@@ -103,6 +108,18 @@ interface SessionDao {
 
     @Query("SELECT * FROM sessions WHERE endTime > 0 ORDER BY endTime DESC LIMIT 1")
     suspend fun getMostRecentFinalizedSession(): RunnerSession?
+
+    @Query(
+        """
+        SELECT
+            MAX(CASE WHEN distanceKm > 0 THEN distanceKm END) AS maxDistanceKm,
+            MAX(durationSeconds) AS maxDurationSeconds
+        FROM sessions
+        WHERE endTime > 0
+          AND endTime >= :cutoffEpochMillis
+        """
+    )
+    suspend fun getMaxSessionLoadLast30Days(cutoffEpochMillis: Long): MaxSessionLoad30dProjection
 
     @Query("DELETE FROM sessions WHERE id = :sessionId")
     suspend fun deleteSessionById(sessionId: Long)
