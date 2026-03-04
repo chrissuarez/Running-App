@@ -215,6 +215,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var lastCueTime = 0L
     private var baselineHr: Int? = null
     private var lastDriftCueTime = 0L
+    private var wasInHighZoneSinceRunIntervalStart = false
+    private var recoveryCueEligibleSinceMs = 0L
+    private var lastRecoveryCueBpm = 0
     
     // --- Session Engine State ---
     @Volatile private var sessionSecondsRunning = 0L
@@ -256,6 +259,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         var activeRecoveryStartSecond: Int? = null
     )
     private var activeRunIntervalTracker: RunIntervalTracker? = null
+
+    private fun resetRunIntervalRecoveryCueState() {
+        wasInHighZoneSinceRunIntervalStart = false
+        recoveryCueEligibleSinceMs = 0L
+        lastRecoveryCueBpm = 0
+    }
     private val completedRunIntervalStats = mutableListOf<RunWalkIntervalStat>()
 
     companion object {
@@ -715,6 +724,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         currentRepeat = 1
         hasStructuredWorkoutStarted = false
+        resetRunIntervalRecoveryCueState()
     }
 
     private fun onStructuredWorkoutPhaseComplete(workout: WorkoutTemplate) {
@@ -736,6 +746,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 } else {
                     structuredWorkoutPhase = StructuredWorkoutPhase.RUN
                     phaseTimeRemainingSeconds = workout.runDurationSeconds
+                    resetRunIntervalRecoveryCueState()
                     startRunIntervalTracking(
                         intervalIndex = currentRepeat,
                         plannedDurationSeconds = workout.runDurationSeconds
@@ -753,6 +764,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             } else {
                 structuredWorkoutPhase = StructuredWorkoutPhase.RUN
                 phaseTimeRemainingSeconds = workout.runDurationSeconds
+                resetRunIntervalRecoveryCueState()
                 startRunIntervalTracking(
                     intervalIndex = currentRepeat,
                     plannedDurationSeconds = workout.runDurationSeconds
@@ -1666,6 +1678,33 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         
         val isBufferActive = sessionSecondsRunning < currentWarmupDuration && !isWarmupSkipped
         val criticalThreshold = currentSettings.zone2High + 15
+        val isRunWalkRecoveryScope = isRunWalk &&
+            currentPhase == SessionPhase.MAIN &&
+            isStructuredWorkout &&
+            structuredWorkoutPhase == StructuredWorkoutPhase.RUN
+        val recoveryThresholdReached = avgBpm <= currentSettings.zone2Low
+
+        if (isRunWalkRecoveryScope && wasInHighZoneSinceRunIntervalStart && recoveryThresholdReached) {
+            if (recoveryCueEligibleSinceMs == 0L) {
+                recoveryCueEligibleSinceMs = now
+                Log.d(
+                    TAG,
+                    "Recovery threshold reached in RUN interval. avgBpm=$avgBpm threshold=${currentSettings.zone2Low}"
+                )
+            }
+            lastRecoveryCueBpm = avgBpm
+        } else {
+            if (recoveryCueEligibleSinceMs != 0L && isRunWalk) {
+                val reason = when {
+                    !isRunWalkRecoveryScope -> "scope_inactive"
+                    !wasInHighZoneSinceRunIntervalStart -> "no_prior_high_trigger"
+                    !recoveryThresholdReached -> "above_recovery_threshold"
+                    else -> "reset"
+                }
+                Log.d(TAG, "Recovery eligibility reset: reason=$reason avgBpm=$avgBpm")
+            }
+            recoveryCueEligibleSinceMs = 0L
+        }
 
         if (cooldownRemaining <= 0) {
              val persistenceHighMs = currentSettings.persistenceHighSeconds * 1000L
@@ -1680,6 +1719,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                  if (isDrifting && avgBpm > currentSettings.zone2High) {
                     val driftCooldownMs = 300_000L // 5 mins
                     if (now - lastDriftCueTime >= driftCooldownMs) {
+                        if (isRunWalkRecoveryScope) wasInHighZoneSinceRunIntervalStart = true
                         playCue("Heart rate drifting up. Keep effort steady, or take a short walk break.")
                         lastDriftCueTime = now
                         lastCueTime = now
@@ -1693,6 +1733,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      val text = if (isRunWalk) "Heart rate high. Walk until your breathing settles." else {
                          if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
                      }
+                     if (isRunWalkRecoveryScope) wasInHighZoneSinceRunIntervalStart = true
                      playCue(text)
                      lastCueTime = now
                      Log.d(TAG, "HR above drift ceiling! Playing danger cue. Avg: $avgBpm, Ceiling: ${baselineHr!! + 12}")
@@ -1705,6 +1746,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      val text = if (isRunWalk) "Heart rate high. Walk until your breathing settles." else {
                          if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
                      }
+                     if (isRunWalkRecoveryScope) wasInHighZoneSinceRunIntervalStart = true
                      playCue(text)
                      lastCueTime = now
                      Log.d(TAG, "Safety Override Triggered! HR: $avgBpm > Limit: $criticalThreshold")
@@ -1720,6 +1762,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      val text = if (isRunWalk) "Heart rate high. Walk until your breathing settles." else {
                          if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
                      }
+                     if (isRunWalkRecoveryScope) wasInHighZoneSinceRunIntervalStart = true
                      playCue(text)
                      lastCueTime = now
                      if (isRunWalk) {
@@ -1727,19 +1770,36 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                          recordRunWalkHighHrTriggerEvent(avgBpm)
                      }
                  }
-             } else if (currentZone == Zone.LOW && timeInCurrentZone >= persistenceLowMs) {
+             } else if (
+                 isRunWalkRecoveryScope &&
+                 wasInHighZoneSinceRunIntervalStart &&
+                 recoveryCueEligibleSinceMs != 0L &&
+                 (now - recoveryCueEligibleSinceMs) >= persistenceLowMs
+             ) {
+                 if (isBufferActive) {
+                     Log.d(TAG, "Warm-up Buffer Active: Muting recovery cue (Time: ${sessionSecondsRunning}s)")
+                 } else {
+                     val text = "Heart rate recovered. Transition to a light jog."
+                     playCue(text)
+                     lastCueTime = now
+                     recordRunWalkRecoveryCueEvent()
+                     Log.d(
+                         TAG,
+                         "Recovery cue fired in RUN interval. avgBpm=$lastRecoveryCueBpm threshold=${currentSettings.zone2Low}"
+                     )
+                 }
+             } else if (!isRunWalk && currentZone == Zone.LOW && timeInCurrentZone >= persistenceLowMs) {
                  // MISSION: Total Silence during Warm-up Buffer for LOW cues too
                  if (isBufferActive) {
                      Log.d(TAG, "Warm-up Buffer Active: Muting Low HR cue (Time: ${sessionSecondsRunning}s)")
                  } else {
-                     val text = if (isRunWalk) "Heart rate recovered. Transition to a light jog." else {
-                         if (currentSettings.voiceStyle == "short") "Faster" else "Gently increase pace."
-                     }
+                     val text = if (currentSettings.voiceStyle == "short") "Faster" else "Gently increase pace."
                      playCue(text)
                      lastCueTime = now
-                     if (isRunWalk) recordRunWalkRecoveryCueEvent()
                  }
              }
+        } else if (isRunWalkRecoveryScope && recoveryCueEligibleSinceMs != 0L) {
+            Log.d(TAG, "Recovery cue waiting for cooldown: remainingMs=$cooldownRemaining")
         }
     }
     
