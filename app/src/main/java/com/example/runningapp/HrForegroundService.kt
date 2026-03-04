@@ -110,6 +110,10 @@ data class HrState(
     val nextIntervalType: StructuredWorkoutPhase? = null,
     val nextIntervalDurationSeconds: Int = 0,
     val workoutProgressPercent: Int = 0,
+    val currentIntervalElapsedSeconds: Int = 0,
+    val currentWalkReason: String = "Planned",
+    val hrCapExceededInCurrentInterval: Boolean = false,
+    val hrCapExceededAtSecond: Int? = null,
     
     // Mission 4: Outdoor Running
     val distanceKm: Double = 0.0,
@@ -310,8 +314,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val currentIntervalPlannedSeconds: Int = 0,
         val nextIntervalType: StructuredWorkoutPhase? = null,
         val nextIntervalDurationSeconds: Int = 0,
-        val workoutProgressPercent: Int = 0
+        val workoutProgressPercent: Int = 0,
+        val currentIntervalElapsedSeconds: Int = 0
     )
+
+    private var currentWalkReasonState = "Planned"
+    private var hrCapExceededInCurrentIntervalState = false
+    private var hrCapExceededAtSecondState: Int? = null
+
+    private fun resetCurrentIntervalTransparencyState() {
+        currentWalkReasonState = "Planned"
+        hrCapExceededInCurrentIntervalState = false
+        hrCapExceededAtSecondState = null
+    }
 
     private fun buildStructuredProgressUiState(): StructuredProgressUiState {
         val workout = activeWorkoutTemplate
@@ -381,7 +396,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             currentIntervalPlannedSeconds = currentPlannedSeconds,
             nextIntervalType = nextType,
             nextIntervalDurationSeconds = nextDurationSeconds,
-            workoutProgressPercent = workoutProgressPercent
+            workoutProgressPercent = workoutProgressPercent,
+            currentIntervalElapsedSeconds = elapsedSeconds
         )
     }
 
@@ -390,6 +406,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         if (activeRunIntervalTracker != null) {
             finalizeActiveRunIntervalTracking()
         }
+        resetCurrentIntervalTransparencyState()
         activeRunIntervalTracker = RunIntervalTracker(
             intervalIndex = intervalIndex,
             plannedDurationSeconds = plannedDurationSeconds,
@@ -422,6 +439,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             tracker.firstHrTriggerSecondIntoInterval = elapsedAtTrigger
             tracker.actualRunningDurationBeforeHrTriggerSeconds = elapsedAtTrigger
         }
+        if (!hrCapExceededInCurrentIntervalState) {
+            hrCapExceededInCurrentIntervalState = true
+            hrCapExceededAtSecondState = elapsedAtTrigger
+        }
+        currentWalkReasonState = "HR-triggered"
         tracker.hrTriggerEvents += 1
         tracker.triggerHrSum += avgBpm.toDouble()
         tracker.triggerHrCount += 1
@@ -730,6 +752,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         nextIntervalType = structuredProgress.nextIntervalType,
                         nextIntervalDurationSeconds = structuredProgress.nextIntervalDurationSeconds,
                         workoutProgressPercent = structuredProgress.workoutProgressPercent,
+                        currentIntervalElapsedSeconds = structuredProgress.currentIntervalElapsedSeconds,
+                        currentWalkReason = currentWalkReasonState,
+                        hrCapExceededInCurrentInterval = hrCapExceededInCurrentIntervalState,
+                        hrCapExceededAtSecond = hrCapExceededAtSecondState,
                         walkBreaksCount = walkBreaksCount
                     )
                 }
@@ -759,6 +785,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         nextIntervalType = structuredProgress.nextIntervalType,
                         nextIntervalDurationSeconds = structuredProgress.nextIntervalDurationSeconds,
                         workoutProgressPercent = structuredProgress.workoutProgressPercent,
+                        currentIntervalElapsedSeconds = structuredProgress.currentIntervalElapsedSeconds,
+                        currentWalkReason = currentWalkReasonState,
+                        hrCapExceededInCurrentInterval = hrCapExceededInCurrentIntervalState,
+                        hrCapExceededAtSecond = hrCapExceededAtSecondState,
                         walkBreaksCount = walkBreaksCount
                     )
                 }
@@ -809,6 +839,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun initializeStructuredWorkoutState() {
         activeWorkoutTemplate = resolveActiveWorkoutTemplate()
         isStructuredWorkout = activeWorkoutTemplate != null && currentSessionType == SESSION_TYPE_RUN_WALK
+        resetCurrentIntervalTransparencyState()
         structuredWorkoutPhase = if (currentSessionType == SESSION_TYPE_RUN_WALK) {
             StructuredWorkoutPhase.RUN
         } else {
@@ -830,12 +861,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         if (structuredWorkoutPhase == StructuredWorkoutPhase.RUN) {
             finalizeActiveRunIntervalTracking()
             if (workout.walkDurationSeconds > 0) {
+                currentWalkReasonState = if (hrCapExceededInCurrentIntervalState) "HR-triggered" else "Planned"
                 structuredWorkoutPhase = StructuredWorkoutPhase.WALK
                 phaseTimeRemainingSeconds = workout.walkDurationSeconds
                 playCue("Transition to walking, ${workout.walkDurationSeconds} seconds.")
             } else {
                 currentRepeat += 1
                 if (currentRepeat > workout.totalRepeats) {
+                    resetCurrentIntervalTransparencyState()
                     playCue("Main workout complete, beginning cool down.")
                     isStructuredWorkout = false
                     hasStructuredWorkoutStarted = false
@@ -854,6 +887,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         } else {
             currentRepeat += 1
             if (currentRepeat > workout.totalRepeats) {
+                resetCurrentIntervalTransparencyState()
                 playCue("Main workout complete, beginning cool down.")
                 isStructuredWorkout = false
                 hasStructuredWorkoutStarted = false
@@ -1010,6 +1044,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 nextIntervalType = null,
                 nextIntervalDurationSeconds = 0,
                 workoutProgressPercent = 0,
+                currentIntervalElapsedSeconds = 0,
+                currentWalkReason = "Planned",
+                hrCapExceededInCurrentInterval = false,
+                hrCapExceededAtSecond = null,
                 secondsRunning = 0,
                 secondsPaused = 0,
                 distanceKm = 0.0,
@@ -1067,6 +1105,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 phaseSecondsRunning = 0
                 isStructuredWorkout = false
                 hasStructuredWorkoutStarted = false
+                resetCurrentIntervalTransparencyState()
                 phaseTimeRemainingSeconds = 0
                 playCue("Starting cool down.")
             }
@@ -1096,7 +1135,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 currentIntervalPlannedSeconds = structuredProgress.currentIntervalPlannedSeconds,
                 nextIntervalType = structuredProgress.nextIntervalType,
                 nextIntervalDurationSeconds = structuredProgress.nextIntervalDurationSeconds,
-                workoutProgressPercent = structuredProgress.workoutProgressPercent
+                workoutProgressPercent = structuredProgress.workoutProgressPercent,
+                currentIntervalElapsedSeconds = structuredProgress.currentIntervalElapsedSeconds,
+                currentWalkReason = currentWalkReasonState,
+                hrCapExceededInCurrentInterval = hrCapExceededInCurrentIntervalState,
+                hrCapExceededAtSecond = hrCapExceededAtSecondState
             )
         }
     }
@@ -1575,7 +1618,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             currentIntervalPlannedSeconds = 0,
             nextIntervalType = null,
             nextIntervalDurationSeconds = 0,
-            workoutProgressPercent = 0
+            workoutProgressPercent = 0,
+            currentIntervalElapsedSeconds = 0,
+            currentWalkReason = "Planned",
+            hrCapExceededInCurrentInterval = false,
+            hrCapExceededAtSecond = null
         ) }
         synchronized(bpmHistory) {
             bpmHistory.clear()
@@ -1585,6 +1632,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         hasStructuredWorkoutStarted = false
         phaseTimeRemainingSeconds = 0
         currentRepeat = 1
+        resetCurrentIntervalTransparencyState()
         activeWorkoutTemplate = null
         
         // Counters are now reset in startNewDatabaseSession() to persist until stopSession() finishes

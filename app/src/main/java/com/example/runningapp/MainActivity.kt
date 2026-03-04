@@ -809,6 +809,23 @@ fun WorkoutView(state: HrState) {
                         "Countdown: ${formatTime(state.phaseTimeRemainingSeconds.toLong())}",
                         style = MaterialTheme.typography.bodySmall
                     )
+                    Text(
+                        "Elapsed: ${formatTime(state.currentIntervalElapsedSeconds.toLong())} / ${formatTime(state.currentIntervalPlannedSeconds.toLong())}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        "Walk reason: ${state.currentWalkReason}",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    state.hrCapExceededAtSecond?.let { exceededSecond ->
+                        if (state.hrCapExceededInCurrentInterval) {
+                            Text(
+                                "HR cap exceeded at ${formatTime(exceededSecond.toLong())}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.height(6.dp))
                     LinearProgressIndicator(
                         progress = (state.workoutProgressPercent.coerceIn(0, 100)) / 100f,
