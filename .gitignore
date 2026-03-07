@@ -31,3 +31,6 @@
 *.key
 *.user
 *.secure
+
+# Local notes/knowledge docs
+/knowledge/
