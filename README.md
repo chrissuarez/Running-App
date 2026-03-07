@@ -2,21 +2,23 @@
 
 A robust Android application designed to track heart rate (HR) during runs and provide real-time audio coaching to keep you in your target heart rate zones (specifically optimized for Zone 2 training).
 
-## 🆕 New Features & Fixes (February 24, 2026)
+## 🆕 New Features & Fixes (February 25 - March 7, 2026)
 
-- **Session Type Routing Hardening**:
-    - Fixed a path where sessions launched from Manage Devices could lose the selected mode.
-    - Service now resolves session type with safer fallback order and explicit source logging.
-- **Zone 2 Isolation Improvements**:
-    - Zone 2 sessions now stay in Zone 2 behavior (zone-focused cues only).
-    - Prevented Run/Walk interval-style behavior from leaking into Zone 2 flows.
-- **AI Evaluation Safety Gate**:
-    - Added a repository-level guard so AI plan adjustments only run for finalized **Run/Walk** sessions.
-    - Non-Run/Walk sessions now skip Gemini evaluation with explicit logs.
-- **Simulation Stability Fixes**:
-    - Reworked simulation toggling to avoid duplicate DB session creation.
-    - Toggling simulation during an active run now preserves session continuity (session id, phase, and elapsed time).
-    - Added explicit simulation action handling for bound/unbound service paths.
+- **Run/Walk Workout Progress Visibility (Live During Main Phase)**:
+    - Added a dedicated Workout Progress card showing interval number, interval type, countdown, elapsed/planned interval time, and next interval preview.
+    - Added live progress percentage and progress bar updates for structured sessions.
+    - Added explicit walk-reason and HR-cap trigger visibility while an interval is running.
+- **Run/Walk Interval Telemetry + Session Summary Metrics**:
+    - Added per-interval telemetry persistence for Run/Walk sessions (trigger events, time-to-trigger, run duration before trigger, walk time during run interval).
+    - Added trigger-quality metrics (`avgHrAtTriggerInInterval`, `avgRecoverySecondsAfterTriggerInInterval`) for richer debrief analysis.
+    - Added a Run/Walk Interval Summary card in Session Detail with clean-interval rate, average time-to-trigger, longest clean interval, and early-breakdown rate.
+- **AI Coaching Context & Safety Improvements**:
+    - Added per-session AI training opt-out support (`includeInAiTraining`) and skip logic for excluded sessions.
+    - Expanded Gemini context with structured Run/Walk adaptation metrics (early breakdown rate, drift slope, completion ratio, trigger/recovery stats).
+    - Added a deterministic progression safety clamp: AI-generated next workout load is limited to 110% of the runner's max completed load in the last 30 days.
+- **Coaching/Audio Reliability Fixes**:
+    - Fixed run/walk recovery cue timing so RUN-interval recovery cues fire at the Zone 2 low threshold.
+    - Hardened audio ducking cleanup to always release cue audio focus after spoken coaching cues.
 
 ## 🚀 Features
 
