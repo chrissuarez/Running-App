@@ -24,7 +24,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
@@ -449,7 +448,7 @@ fun MainScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ActionIconButton(
                         label = "History",
-                        icon = { Icon(Icons.Default.History, contentDescription = "Open history") },
+                        icon = { Icon(Icons.Default.CheckCircle, contentDescription = "Open history") },
                         onClick = onOpenHistory
                     )
                     ActionIconButton(
@@ -821,6 +820,7 @@ fun SettingsSummaryCard(
 @Composable
 fun WorkoutView(state: HrState) {
     val uiState = remember(state) { mapWorkoutPlayerUiState(state) }
+    val errorColor = MaterialTheme.colorScheme.error
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -946,12 +946,12 @@ fun WorkoutView(state: HrState) {
                             }
                             TimelineMarkerType.HR_TRIGGER -> {
                                 drawCircle(
-                                    color = MaterialTheme.colorScheme.error,
+                                    color = errorColor,
                                     radius = 5f,
                                     center = androidx.compose.ui.geometry.Offset(x, 34f)
                                 )
                                 drawLine(
-                                    color = MaterialTheme.colorScheme.error,
+                                    color = errorColor,
                                     start = androidx.compose.ui.geometry.Offset(x - 5f, 29f),
                                     end = androidx.compose.ui.geometry.Offset(x + 5f, 39f),
                                     strokeWidth = 2f
