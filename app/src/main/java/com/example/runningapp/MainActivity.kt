@@ -14,6 +14,7 @@ import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,24 +22,26 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import com.example.runningapp.data.AppDatabase
@@ -51,6 +54,15 @@ import com.example.runningapp.ui.SessionDetailScreen
 import com.example.runningapp.ui.SessionDetailViewModel
 import com.example.runningapp.ui.SessionDetailViewModelFactory
 import com.example.runningapp.ui.TrainingPlanScreen
+import com.example.runningapp.ui.theme.RunningAppTheme
+import com.example.runningapp.ui.theme.RunningUiTokens
+import com.example.runningapp.ui.workout.CUE_REASON_HR_HIGH
+import com.example.runningapp.ui.workout.CUE_REASON_SENSOR_LOST
+import com.example.runningapp.ui.workout.CueSeverity
+import com.example.runningapp.ui.workout.TimelineMarkerType
+import com.example.runningapp.ui.workout.TimelineSegmentType
+import com.example.runningapp.ui.workout.ZoneBand
+import com.example.runningapp.ui.workout.mapWorkoutPlayerUiState
 
 private const val SESSION_TYPE_RUN_WALK = "Run/Walk"
 private const val SESSION_TYPE_ZONE2_WALK = "Zone 2 Walk"
@@ -95,7 +107,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         setContent {
-            MaterialTheme {
+            RunningAppTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -374,7 +386,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun MainScreen(
-    hrService: HrForegroundService?, 
+    hrService: HrForegroundService?,
     userSettings: UserSettings,
     paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
@@ -405,28 +417,27 @@ fun MainScreen(
     val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
     val activeStage = activePlan?.stages?.firstOrNull { it.id == userSettings.activeStageId } ?: activePlan?.stages?.firstOrNull()
     val baseWorkout = activeStage?.workouts?.firstOrNull()
-    val aiRunIntervalSeconds = userSettings.aiRunIntervalSeconds
-    val aiWalkIntervalSeconds = userSettings.aiWalkIntervalSeconds
-    val aiRepeats = userSettings.aiRepeats
     val coachMessage = userSettings.latestCoachMessage?.takeIf { it.isNotBlank() }
-    val todaysWorkout = if (baseWorkout != null && aiRunIntervalSeconds != null) {
+    val todaysWorkout = if (baseWorkout != null && userSettings.aiRunIntervalSeconds != null) {
         baseWorkout.copy(
-            runDurationSeconds = aiRunIntervalSeconds,
-            walkDurationSeconds = aiWalkIntervalSeconds ?: baseWorkout.walkDurationSeconds,
-            totalRepeats = aiRepeats ?: baseWorkout.totalRepeats
+            runDurationSeconds = userSettings.aiRunIntervalSeconds,
+            walkDurationSeconds = userSettings.aiWalkIntervalSeconds ?: baseWorkout.walkDurationSeconds,
+            totalRepeats = userSettings.aiRepeats ?: baseWorkout.totalRepeats
         )
     } else {
         baseWorkout
     }
-    
+
     val activeDevice = state.userSettings.savedDevices.find { it.address == state.userSettings.activeDeviceAddress }
+    val isSessionActive = state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(paddingValues),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        contentPadding = PaddingValues(RunningUiTokens.PagePadding),
+        verticalArrangement = Arrangement.spacedBy(RunningUiTokens.SectionSpacing),
+        horizontalAlignment = Alignment.Start
     ) {
         item {
             Row(
@@ -435,17 +446,39 @@ fun MainScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(text = "Running App", style = MaterialTheme.typography.headlineMedium)
-                Row {
-                    IconButton(onClick = onOpenHistory) { Text("📜", fontSize = 24.sp) }
-                    IconButton(onClick = onOpenManageDevices) { Text("⌚", fontSize = 24.sp) }
-                    IconButton(onClick = onOpenTrainingPlan) { Text("🏆", fontSize = 24.sp) }
-                    IconButton(onClick = onOpenSettings) { Text("⚙️", fontSize = 24.sp) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ActionIconButton(
+                        label = "History",
+                        icon = { Icon(Icons.Default.History, contentDescription = "Open history") },
+                        onClick = onOpenHistory
+                    )
+                    ActionIconButton(
+                        label = "Devices",
+                        icon = { Icon(Icons.Default.CheckCircle, contentDescription = "Open devices") },
+                        onClick = onOpenManageDevices
+                    )
+                    ActionIconButton(
+                        label = "Plans",
+                        icon = { Icon(Icons.Default.Lock, contentDescription = "Open training plans") },
+                        onClick = onOpenTrainingPlan
+                    )
+                    ActionIconButton(
+                        label = "Settings",
+                        icon = { Icon(Icons.Default.Settings, contentDescription = "Open settings") },
+                        onClick = onOpenSettings
+                    )
                 }
             }
         }
 
         item {
-            Text(text = "Status: ${state.connectionStatus}")
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
+                    Text("Sensor readiness", style = MaterialTheme.typography.labelLarge)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(text = state.connectionStatus, style = MaterialTheme.typography.bodyLarge)
+                }
+            }
         }
 
         if (activeDevice != null && state.connectionStatus == "Disconnected") {
@@ -459,7 +492,10 @@ fun MainScreen(
                             Text("Active Device: ${activeDevice.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                             Text(activeDevice.address, style = MaterialTheme.typography.bodySmall)
                         }
-                        Button(onClick = { onConnectToDevice(activeDevice.address, selectedSessionType) }) {
+                        Button(
+                            onClick = { onConnectToDevice(activeDevice.address, selectedSessionType) },
+                            modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget)
+                        ) {
                             Text("Connect")
                         }
                     }
@@ -471,13 +507,13 @@ fun MainScreen(
             item {
                 Text(
                     text = "ERROR: ${state.errorMessage ?: "Unknown"}",
-                    color = Color.Red,
+                    color = MaterialTheme.colorScheme.error,
                     fontWeight = FontWeight.Bold
                 )
             }
         }
 
-        if (selectedSessionType == SESSION_TYPE_RUN_WALK) {
+        if (!isSessionActive && selectedSessionType == SESSION_TYPE_RUN_WALK) {
             if (activePlan != null && activeStage != null && todaysWorkout != null) {
                 item {
                     TodaysWorkoutCard(
@@ -497,9 +533,9 @@ fun MainScreen(
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFFE7E8FF))
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
                     ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
+                        Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
                             Text(
                                 text = "AI Coach Debrief",
                                 style = MaterialTheme.typography.titleSmall,
@@ -514,7 +550,7 @@ fun MainScreen(
                     }
                 }
             }
-        } else if (selectedSessionType == SESSION_TYPE_ZONE2_WALK) {
+        } else if (!isSessionActive && selectedSessionType == SESSION_TYPE_ZONE2_WALK) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -522,12 +558,12 @@ fun MainScreen(
                 ) {
                     Text(
                         text = "Zone 2 Walk Mode: Aerobic volume. HR safety cues only.",
-                        modifier = Modifier.padding(14.dp),
+                        modifier = Modifier.padding(RunningUiTokens.CardPadding),
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
             }
-        } else if (selectedSessionType == SESSION_TYPE_FREE_TRACK) {
+        } else if (!isSessionActive && selectedSessionType == SESSION_TYPE_FREE_TRACK) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -535,7 +571,7 @@ fun MainScreen(
                 ) {
                     Text(
                         text = "Free Track Mode: Pure data logging. No audio cues.",
-                        modifier = Modifier.padding(14.dp),
+                        modifier = Modifier.padding(RunningUiTokens.CardPadding),
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
@@ -543,81 +579,120 @@ fun MainScreen(
         }
 
         item {
-            Text(
-                text = "Session Type",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                sessionTypeOptions.forEach { option ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        RadioButton(
-                            selected = selectedSessionType == option,
-                            onClick = {
-                                selectedSessionType = option
-                                onSessionTypeChange(option)
-                            }
-                        )
-                        Text(
-                            text = option,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            }
-        }
-
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
-                    Button(onClick = { onStartService(selectedSessionType) }) {
-                        val label = if (hrService == null) "Start Service" else "Scan for Devices"
-                        Text(label)
-                    }
-                } else {
-                    Button(onClick = onTogglePause) {
-                        Text(if (state.sessionStatus == SessionStatus.PAUSED) "Resume" else "Pause")
-                    }
-                    Button(onClick = { hrService?.skipCurrentPhase() }) {
-                        val label = when (state.currentPhase) {
-                            SessionPhase.WARM_UP -> "Skip Warmup"
-                            SessionPhase.MAIN -> "Start Cooldown"
-                            SessionPhase.COOL_DOWN -> "End Session"
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
+                    Text(
+                        text = "Session Type",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    sessionTypeOptions.forEach { option ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            RadioButton(
+                                selected = selectedSessionType == option,
+                                onClick = {
+                                    selectedSessionType = option
+                                    onSessionTypeChange(option)
+                                }
+                            )
+                            Text(
+                                text = option,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
                         }
-                        Text(label)
-                    }
-                }
-
-                if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
-                    Button(
-                        onClick = onStopSession,
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                        modifier = Modifier.padding(start = 8.dp)
-                    ) {
-                        Text("Force Stop")
                     }
                 }
             }
         }
 
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Button(onClick = onRequestPermissions) {
-                    Text("Perms")
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
+                    Text("Controls", style = MaterialTheme.typography.labelLarge)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                        if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
+                            Button(
+                                onClick = { onStartService(selectedSessionType) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+                            ) {
+                                val label = if (hrService == null) "Start Service" else "Scan Devices"
+                                Text(label)
+                            }
+                        } else {
+                            Button(
+                                onClick = onTogglePause,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+                            ) {
+                                Text(if (state.sessionStatus == SessionStatus.PAUSED) "Resume" else "Pause")
+                            }
+                            Button(
+                                onClick = { hrService?.skipCurrentPhase() },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+                            ) {
+                                val label = when (state.currentPhase) {
+                                    SessionPhase.WARM_UP -> "Skip Warmup"
+                                    SessionPhase.MAIN -> "Start Cooldown"
+                                    SessionPhase.COOL_DOWN -> "End Session"
+                                }
+                                Text(label)
+                            }
+                        }
+                    }
+
+                    if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = onStopSession,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = RunningUiTokens.MinTouchTarget)
+                        ) {
+                            Text("Force Stop")
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = onRequestPermissions,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = RunningUiTokens.MinTouchTarget)
+                ) {
+                    Text("Permissions")
                 }
                 Button(
                     onClick = { onToggleSimulation(!state.isSimulating, selectedSessionType) },
-                    colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = Color.Magenta) else ButtonDefaults.buttonColors()
+                    colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer) else ButtonDefaults.buttonColors(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = RunningUiTokens.MinTouchTarget)
                 ) {
                     Text(if (state.isSimulating) "Stop Sim" else "Simulate")
+                }
+                OutlinedButton(
+                    onClick = onTestCue,
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = RunningUiTokens.MinTouchTarget)
+                ) {
+                    Text("Test Cue")
                 }
             }
         }
@@ -639,7 +714,7 @@ fun MainScreen(
                     onClick = { onConnectToDevice(device.address, selectedSessionType) }
                 )
             }
-        } else if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
+        } else if (isSessionActive) {
             item {
                 WorkoutView(state = state)
             }
@@ -652,6 +727,23 @@ fun MainScreen(
 }
 
 @Composable
+private fun ActionIconButton(
+    label: String,
+    icon: @Composable () -> Unit,
+    onClick: () -> Unit
+) {
+    FilledTonalButton(
+        onClick = onClick,
+        modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+    ) {
+        icon()
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
 fun TodaysWorkoutCard(
     stageTitle: String,
     workout: WorkoutTemplate
@@ -660,7 +752,7 @@ fun TodaysWorkoutCard(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f))
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
             Text(
                 text = "Today's Workout",
                 style = MaterialTheme.typography.titleMedium,
@@ -692,12 +784,16 @@ fun SettingsSummaryCard(
     selectedSessionType: String
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
     ) {
-        Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.padding(RunningUiTokens.CardPadding),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Zone 2: ${settings.zone2Low}-${settings.zone2High} BPM", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                Text("Zone 2: ${settings.zone2Low}-${settings.zone2High} BPM", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
                 val modeLabel = if (settings.runMode == "outdoor") "Outdoor Run" else "Treadmill Run"
                 Text("Mode: $modeLabel | Cooldown: ${settings.cooldownSeconds}s", style = MaterialTheme.typography.bodySmall)
                 val sessionTypeSummary = when (selectedSessionType) {
@@ -713,187 +809,178 @@ fun SettingsSummaryCard(
                     color = sessionTypeSummary.second
                 )
             }
-            Text(if (settings.coachingEnabled) "Coaching ON" else "Coaching OFF", style = MaterialTheme.typography.bodySmall, color = if (settings.coachingEnabled) Color.Green else Color.Red)
+            Text(
+                if (settings.coachingEnabled) "Coaching ON" else "Coaching OFF",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (settings.coachingEnabled) Color(0xFF9CF7AD) else MaterialTheme.colorScheme.error
+            )
         }
     }
 }
 
 @Composable
 fun WorkoutView(state: HrState) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-         if (state.connectedDeviceName != null) {
-            Text(text = "Device: ${state.connectedDeviceName}", style = MaterialTheme.typography.titleMedium)
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Text(text = "${state.bpm} BPM", style = MaterialTheme.typography.displayLarge)
-        
-        if (state.runMode == "outdoor") {
-             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                     Text("${"%.2f".format(state.distanceKm)} km", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                     Text("Distance", style = MaterialTheme.typography.labelSmall)
-                 }
-                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                     val pace = state.paceMinPerKm
-                     val paceStr = if (pace > 0) {
-                         val mins = pace.toInt()
-                         val secs = ((pace - mins) * 60).roundToInt()
-                         "%d:%02d".format(mins, secs)
-                     } else "--:--"
-                     Text(paceStr, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                     Text("Pace (min/km)", style = MaterialTheme.typography.labelSmall)
-                 }
-             }
-             Spacer(modifier = Modifier.height(8.dp))
-        }
-        
-        Text(text = "Data Age: ${state.lastHrAgeSeconds}s")
-        
-        Spacer(modifier = Modifier.height(24.dp))
-        
-        Text("Session Engine:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-        
-        // Phase Indicator
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
-            Text(
-                text = "${state.currentPhase}",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Black,
-                color = when(state.currentPhase) {
-                    SessionPhase.WARM_UP -> Color(0xFFFFA500)
-                    SessionPhase.MAIN -> Color.Green
-                    SessionPhase.COOL_DOWN -> Color.Cyan
-                }
+    val uiState = remember(state) { mapWorkoutPlayerUiState(state) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(RunningUiTokens.CardPadding)
+        ) {
+            Text(uiState.intervalLabel, style = MaterialTheme.typography.labelLarge)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(uiState.phaseLabel, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+            Text(uiState.countdownText, style = MaterialTheme.typography.displayLarge)
+            LinearProgressIndicator(
+                progress = uiState.progressFraction,
+                modifier = Modifier.fillMaxWidth(),
+                strokeCap = StrokeCap.Round
             )
-            if (state.currentPhase != SessionPhase.MAIN) {
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = "${formatTime(state.phaseSecondsRemaining.toLong())} remaining",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Color.Red
+            Text(uiState.progressLabel, style = MaterialTheme.typography.labelMedium)
+            uiState.nextLabel?.let {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(it, style = MaterialTheme.typography.bodySmall)
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(uiState.hrText, style = MaterialTheme.typography.titleLarge)
+                    val zoneColor = when (uiState.zoneBand) {
+                        ZoneBand.BELOW -> Color(0xFF8FD0FF)
+                        ZoneBand.IN -> Color(0xFF9CF7AD)
+                        ZoneBand.ABOVE -> MaterialTheme.colorScheme.error
+                        ZoneBand.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                    Text("${uiState.zoneBand} • ${uiState.zoneLabel}", color = zoneColor, style = MaterialTheme.typography.bodyMedium)
+                }
+                AssistChip(
+                    onClick = { },
+                    label = { Text(uiState.sensorFreshnessText) },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = if (uiState.sensorStale) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer
+                    )
                 )
             }
-        }
-        Text("State: ${state.sessionStatus}", style = MaterialTheme.typography.bodyMedium, 
-             color = when(state.sessionStatus) {
-                 SessionStatus.RUNNING -> Color.Green
-                 SessionStatus.PAUSED -> Color.Yellow
-                 SessionStatus.CONNECTING -> Color.Cyan
-                 SessionStatus.ERROR -> Color.Red
-                 else -> Color.Gray
-             }
-        )
-        Text("Active Time: ${formatTime(state.secondsRunning)}", style = MaterialTheme.typography.bodyMedium)
-        Text("Paused Time: ${formatTime(state.secondsPaused)}", style = MaterialTheme.typography.bodyMedium)
-        if (state.reconnectAttempts > 0) {
-            Text("Reconnect Attempts: ${state.reconnectAttempts}", style = MaterialTheme.typography.bodyMedium, color = Color.Red)
-        }
 
-        if (state.currentPhase == SessionPhase.MAIN && state.isStructuredWorkout && state.totalRepeats > 0) {
-            Spacer(modifier = Modifier.height(12.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f))
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text("Workout Progress", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "Interval ${state.currentRepeat} of ${state.totalRepeats} • ${state.structuredWorkoutPhase}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        "Countdown: ${formatTime(state.phaseTimeRemainingSeconds.toLong())}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "Elapsed: ${formatTime(state.currentIntervalElapsedSeconds.toLong())} / ${formatTime(state.currentIntervalPlannedSeconds.toLong())}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text(
-                        "Walk reason: ${state.currentWalkReason}",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    state.hrCapExceededAtSecond?.let { exceededSecond ->
-                        if (state.hrCapExceededInCurrentInterval) {
-                            Text(
-                                "HR cap exceeded at ${formatTime(exceededSecond.toLong())}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
+                uiState.secondaryMetrics.forEach { (label, value) ->
+                    Column {
+                        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(value, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    LinearProgressIndicator(
-                        progress = (state.workoutProgressPercent.coerceIn(0, 100)) / 100f,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text(
-                        "${state.workoutProgressPercent}%",
-                        style = MaterialTheme.typography.labelSmall
-                    )
-                    if (state.nextIntervalType != null && state.nextIntervalDurationSeconds > 0) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            "Next: ${state.nextIntervalType} ${formatTime(state.nextIntervalDurationSeconds.toLong())}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary
+                }
+            }
+
+            uiState.coachCue?.let { cue ->
+                Spacer(modifier = Modifier.height(12.dp))
+                val cueColor = when (cue.severity) {
+                    CueSeverity.CRITICAL -> MaterialTheme.colorScheme.errorContainer
+                    CueSeverity.WARNING -> MaterialTheme.colorScheme.primaryContainer
+                    CueSeverity.INFO -> MaterialTheme.colorScheme.surfaceVariant
+                }
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = cueColor),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text("Coach", style = MaterialTheme.typography.labelMedium)
+                        Text(cue.message, style = MaterialTheme.typography.bodyMedium)
+                        Text("Reason: ${cue.reasonTag}", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            }
+
+            uiState.timeline?.let { timeline ->
+                Spacer(modifier = Modifier.height(12.dp))
+                Text("Workout Timeline", style = MaterialTheme.typography.labelLarge)
+                Spacer(modifier = Modifier.height(6.dp))
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(46.dp)
+                ) {
+                    if (timeline.segments.isEmpty()) return@Canvas
+                    val segmentWidth = size.width / timeline.segments.size.toFloat()
+                    timeline.segments.forEachIndexed { index, segment ->
+                        val left = index * segmentWidth
+                        val color = when (segment.type) {
+                            TimelineSegmentType.RUN -> Color(0xFF78BDF4)
+                            TimelineSegmentType.WALK -> Color(0xFFFFC261)
+                            TimelineSegmentType.RECOVER -> Color(0xFF98E892)
+                            TimelineSegmentType.OTHER -> Color(0xFF697789)
+                        }
+                        drawRect(
+                            color = color,
+                            topLeft = androidx.compose.ui.geometry.Offset(left, 8f),
+                            size = androidx.compose.ui.geometry.Size(segmentWidth - 2f, 20f)
                         )
                     }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Text("Coaching Debug:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-        Text("Avg BPM (5s): ${state.avgBpm}", style = MaterialTheme.typography.bodyMedium)
-        Text("Zone: ${state.currentZone}", style = MaterialTheme.typography.bodyMedium, 
-            color = if(state.currentZone == "TARGET") Color.Green else if (state.currentZone == "LOW" || state.currentZone == "HIGH") Color.Red else Color.Gray
-        )
-        Text("Time in Zone: ${state.timeInZoneString}", style = MaterialTheme.typography.bodyMedium)
-        Text("Status: ${state.cooldownWithHysteresisString}", style = MaterialTheme.typography.bodyMedium)
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        // Zone Timer Breakdown
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-            colors = CardDefaults.cardColors(containerColor = Color.Black.copy(alpha = 0.03f))
-        ) {
-            Column(modifier = Modifier.padding(8.dp)) {
-                Text("Zone Breakdown (Active Only):", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    (1..5).forEach { zone ->
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Z$zone", style = MaterialTheme.typography.labelSmall)
-                            Text(
-                                text = formatTime(state.zoneTimes[zone] ?: 0L),
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = if ((state.zoneTimes[zone] ?: 0L) > 0) FontWeight.Bold else FontWeight.Normal
-                            )
+                    val currentLeft = timeline.currentSegmentIndex * segmentWidth
+                    val markerX = currentLeft + (segmentWidth * timeline.currentSegmentFraction.coerceIn(0f, 1f))
+                    drawLine(
+                        color = Color.White,
+                        start = androidx.compose.ui.geometry.Offset(markerX, 4f),
+                        end = androidx.compose.ui.geometry.Offset(markerX, 36f),
+                        strokeWidth = 4f
+                    )
+                    timeline.markers.forEach { marker ->
+                        val markerBase = marker.segmentIndex * segmentWidth
+                        val x = markerBase + (segmentWidth * marker.fractionInSegment.coerceIn(0f, 1f))
+                        when (marker.type) {
+                            TimelineMarkerType.PLANNED_TRANSITION -> {
+                                drawLine(
+                                    color = Color.White,
+                                    start = androidx.compose.ui.geometry.Offset(x, 8f),
+                                    end = androidx.compose.ui.geometry.Offset(x, 28f),
+                                    strokeWidth = 2f
+                                )
+                            }
+                            TimelineMarkerType.HR_TRIGGER -> {
+                                drawCircle(
+                                    color = MaterialTheme.colorScheme.error,
+                                    radius = 5f,
+                                    center = androidx.compose.ui.geometry.Offset(x, 34f)
+                                )
+                                drawLine(
+                                    color = MaterialTheme.colorScheme.error,
+                                    start = androidx.compose.ui.geometry.Offset(x - 5f, 29f),
+                                    end = androidx.compose.ui.geometry.Offset(x + 5f, 39f),
+                                    strokeWidth = 2f
+                                )
+                            }
+                            TimelineMarkerType.HR_RECOVERY -> {
+                                drawCircle(
+                                    color = Color(0xFF9CF7AD),
+                                    radius = 4f,
+                                    center = androidx.compose.ui.geometry.Offset(x, 34f),
+                                    style = Stroke(width = 2f)
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
-        
-        Spacer(modifier = Modifier.height(16.dp))
-        
-        Text("Raw BLE Info:", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-        Text("Last Packet: ${state.lastPacketTimeFormatted}", style = MaterialTheme.typography.bodySmall)
-        Text("Data Format: ${state.dataBits}", style = MaterialTheme.typography.bodySmall)
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        Column(modifier = Modifier.fillMaxWidth().height(100.dp).background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
-              Text("Discovered Services:", fontSize = 10.sp, fontWeight = FontWeight.Bold)
-              state.discoveredServices.forEach { uuid ->
-                 Text(text = uuid, fontSize = 10.sp)
-             }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Connection: ${state.connectionStatus}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                "Debug state: ${state.sessionStatus} • ${state.currentPhase}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (uiState.coachCue?.reasonTag == CUE_REASON_SENSOR_LOST || uiState.coachCue?.reasonTag == CUE_REASON_HR_HIGH) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text("Safety cue active", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+            }
         }
     }
 }

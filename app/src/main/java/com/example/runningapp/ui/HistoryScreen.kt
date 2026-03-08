@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.data.RunnerSession
 import kotlin.math.roundToInt
 import java.text.SimpleDateFormat
@@ -72,7 +73,7 @@ fun HistoryScreen(
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(16.dp),
+                contentPadding = PaddingValues(RunningUiTokens.PagePadding),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(sessions, key = { it.id }) { session ->
@@ -132,6 +133,7 @@ fun SessionItem(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = RunningUiTokens.MinTouchTarget * 2)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
@@ -204,7 +206,7 @@ fun SessionItem(
 @Composable
 fun StatSmall(label: String, value: String) {
     Column {
-        Text(text = label, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+        Text(text = label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(text = value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
     }
 }

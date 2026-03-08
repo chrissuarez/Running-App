@@ -20,6 +20,23 @@ A robust Android application designed to track heart rate (HR) during runs and p
     - Fixed run/walk recovery cue timing so RUN-interval recovery cues fire at the Zone 2 low threshold.
     - Hardened audio ducking cleanup to always release cue audio focus after spoken coaching cues.
 
+## 🆕 UI Redesign Update (March 8, 2026)
+
+- **Evidence-led Workout-first UI refresh**:
+    - Reworked the main/home flow for faster pre-run decisions (sensor readiness, session type, controls).
+    - Replaced emoji top actions with explicit Material icon buttons and labels.
+    - Added daylight-focused high-contrast Compose theme and shared UI tokens for spacing/tap targets.
+- **New in-run workout player hierarchy**:
+    - Tier 1: dominant phase + countdown + interval progress.
+    - Tier 2: HR + zone status with simple below/in/above signalling.
+    - Tier 3: lightweight secondary metrics (elapsed, distance, pace when available).
+- **Interval transparency additions**:
+    - Added workout timeline strip with current-position marker.
+    - Planned transitions and HR-triggered events are visually distinct (not color-only).
+    - Added low-noise coach chip with reason tags (`planned_transition`, `hr_too_high`, `hr_recovered`, `sensor_lost`, `unknown`).
+- **Secondary screen consistency pass**:
+    - Updated history/session detail typography contrast and touch-target sizing to match the new visual baseline.
+
 ## 🚀 Features
 
 - **Real-time Monitoring**: Connects to BLE heart rate monitors (using standard HRS GATT services).
@@ -96,3 +113,27 @@ Every second of your session is recorded as an `HrSample`.
 - Android device with Bluetooth LE support.
 - Compatible BLE Heart Rate Strap (Polar, Garmin, Wahoo, etc.).
 - Location permissions (required for BLE scanning on older Android versions) and Near Device permissions (Android 12+).
+
+## ✅ Recommended Test Workflow (Phone-first)
+
+Use this order for reliable validation:
+
+1. **Real phone + Android Studio deploy (primary)**:
+    - Validate permissions, BLE scanning/connection, foreground service, audio cues, and navigation.
+2. **Simulation mode (fast loop)**:
+    - Validate in-run UI flow (countdown, timeline, coach chip, controls) without a strap.
+3. **Real strap pass**:
+    - Validate live HR updates, sensor freshness behavior, pause/resume/stop, and post-run summary/history.
+4. **Quick outdoor readability check**:
+    - Brightness high, bright-light glanceability for countdown/HR/zone.
+
+### 10-minute smoke script
+
+1. Launch app and grant permissions.
+2. Turn on simulation and start a session.
+3. Verify workout player hierarchy, timeline, and coach chip behavior.
+4. Pause/resume, skip/start cooldown, then force stop.
+5. Open History and Session Detail, then return.
+6. Open Settings, save a small non-critical change, return.
+7. Turn simulation off, connect real strap, start session, confirm live HR + sensor freshness.
+8. Stop session and confirm latest summary renders correctly in history/detail.

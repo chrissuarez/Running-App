@@ -20,6 +20,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.tooling.preview.Preview
 import kotlin.math.roundToInt
+import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
@@ -69,7 +70,7 @@ fun SessionDetailScreen(
                     .fillMaxSize()
                     .padding(padding)
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp)
+                    .padding(RunningUiTokens.PagePadding)
             ) {
                 SummaryStats(session)
                 Spacer(modifier = Modifier.height(24.dp))
@@ -122,7 +123,7 @@ fun SummaryStats(session: RunnerSession) {
     val dateStr = sdf.format(Date(session.startTime))
 
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
             Text(text = dateStr, style = MaterialTheme.typography.bodySmall)
             Spacer(modifier = Modifier.height(16.dp))
             
@@ -185,7 +186,7 @@ private fun RunWalkIntervalSummaryCard(intervalStats: List<RunWalkIntervalStat>)
     }
 
     Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
             Text(
                 text = "Run/Walk Interval Summary",
                 style = MaterialTheme.typography.titleMedium,
@@ -221,7 +222,7 @@ private fun SummaryMetricRow(label: String, value: String) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
-            color = Color.Gray
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
             text = value,
@@ -287,7 +288,7 @@ private fun percentRounded(part: Int, total: Int): Int {
 @Composable
 fun StatLarge(label: String, value: String) {
     Column {
-        Text(text = label, style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+        Text(text = label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(text = value, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
     }
 }
@@ -302,7 +303,7 @@ fun HrChart(samples: List<HrSample>, modifier: Modifier = Modifier) {
     }
 
     val textMeasurer = rememberTextMeasurer()
-    val labelStyle = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, color = Color.Gray)
+    val labelStyle = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
     val rawMax = samples.maxOf { it.rawBpm }.toFloat()
     val rawMin = samples.minOf { it.rawBpm }.toFloat()
@@ -441,7 +442,7 @@ fun ZoneBarChart(session: RunnerSession) {
     val maxSeconds = zones.maxOrNull() ?: 0L
     
     if (maxSeconds == 0L) {
-        Text("No zone data available for this session.", style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
+        Text("No zone data available for this session.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
 
