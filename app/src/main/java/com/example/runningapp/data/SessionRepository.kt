@@ -100,6 +100,11 @@ class SessionRepository(
         val coachClient = aiCoachClient ?: return
 
         try {
+            val settings = settingsRepo.userSettingsFlow.first()
+            if (settings.testingModeEnabled) {
+                Log.d("AiCoach", "Skipping AI evaluation: testing mode enabled")
+                return
+            }
             val latestFinalizedSession = sessionDao.getMostRecentFinalizedSession()
             if (latestFinalizedSession?.includeInAiTraining == false) {
                 Log.d(

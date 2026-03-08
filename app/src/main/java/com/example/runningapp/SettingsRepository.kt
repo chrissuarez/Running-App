@@ -38,7 +38,8 @@ data class UserSettings(
     val aiWalkIntervalSeconds: Int? = null,
     val aiRepeats: Int? = null,
     val simulationEnabled: Boolean = false,
-    val lastSessionType: String = "Run/Walk"
+    val lastSessionType: String = "Run/Walk",
+    val testingModeEnabled: Boolean = false
 )
 
 class SettingsRepository(private val context: Context) {
@@ -68,6 +69,7 @@ class SettingsRepository(private val context: Context) {
         val AI_REPEATS = intPreferencesKey("ai_repeats")
         val SIMULATION_ENABLED = booleanPreferencesKey("simulation_enabled")
         val LAST_SESSION_TYPE = stringPreferencesKey("last_session_type")
+        val TESTING_MODE_ENABLED = booleanPreferencesKey("testing_mode_enabled")
     }
 
     val userSettingsFlow: Flow<UserSettings> = context.dataStore.data
@@ -102,7 +104,8 @@ class SettingsRepository(private val context: Context) {
                 aiWalkIntervalSeconds = preferences[PreferencesKeys.AI_WALK_INTERVAL_SECONDS],
                 aiRepeats = preferences[PreferencesKeys.AI_REPEATS],
                 simulationEnabled = preferences[PreferencesKeys.SIMULATION_ENABLED] ?: false,
-                lastSessionType = preferences[PreferencesKeys.LAST_SESSION_TYPE] ?: "Run/Walk"
+                lastSessionType = preferences[PreferencesKeys.LAST_SESSION_TYPE] ?: "Run/Walk",
+                testingModeEnabled = preferences[PreferencesKeys.TESTING_MODE_ENABLED] ?: false
             )
         }
 
@@ -166,6 +169,7 @@ class SettingsRepository(private val context: Context) {
             }
             preferences[PreferencesKeys.SIMULATION_ENABLED] = settings.simulationEnabled
             preferences[PreferencesKeys.LAST_SESSION_TYPE] = settings.lastSessionType
+            preferences[PreferencesKeys.TESTING_MODE_ENABLED] = settings.testingModeEnabled
         }
     }
 

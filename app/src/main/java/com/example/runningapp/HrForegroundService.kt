@@ -822,6 +822,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val plan = TrainingPlanProvider.getPlanById(planId) ?: return null
         val stage = plan.stages.firstOrNull { it.id == currentSettings.activeStageId } ?: plan.stages.firstOrNull()
         val baseWorkout = stage?.workouts?.firstOrNull() ?: return null
+        if (currentSettings.testingModeEnabled) return baseWorkout
         val run = currentSettings.aiRunIntervalSeconds
         val walk = currentSettings.aiWalkIntervalSeconds
         val repeats = currentSettings.aiRepeats
@@ -1019,7 +1020,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             currentWarmupDuration = currentSettings.warmUpDurationSeconds
             initializeStructuredWorkoutState()
             resetRunIntervalTracking()
-            currentSessionIncludeInAiTraining = currentSettings.aiDataSharingEnabled
+            currentSessionIncludeInAiTraining = currentSettings.aiDataSharingEnabled && !currentSettings.testingModeEnabled
             
             // Reset session-level counters only when a new database session begins
             sessionSecondsRunning = 0
@@ -1194,17 +1195,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         val stageId = currentSettings.activeStageId
                         if (stageId != null &&
                             currentSessionType == SESSION_TYPE_RUN_WALK &&
-                            updatedSession.includeInAiTraining
+                            updatedSession.includeInAiTraining &&
+                            !currentSettings.testingModeEnabled
                         ) {
                             Log.d("AiCoach", "Triggering AI evaluation after session finalization for stage: $stageId")
                             sessionRepository.evaluateAndAdjustPlan(stageId)
                         } else if (stageId != null &&
                             currentSessionType == SESSION_TYPE_RUN_WALK &&
-                            !updatedSession.includeInAiTraining
+                            (!updatedSession.includeInAiTraining || currentSettings.testingModeEnabled)
                         ) {
                             Log.d(
                                 "AiCoach",
-                                "Skipping AI evaluation: session opted out of AI training for stage=$stageId"
+                                "Skipping AI evaluation: session opted out or testing mode enabled for stage=$stageId"
                             )
                         }
                     } else {

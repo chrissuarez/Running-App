@@ -77,4 +77,19 @@ class WorkoutPlayerModelsTest {
         assertEquals(ZoneBand.ABOVE, ui.zoneBand)
         assertEquals(CUE_REASON_HR_HIGH, ui.coachCue?.reasonTag)
     }
+
+    @Test
+    fun `mapWorkoutPlayerUiState uses elapsed timer for non-structured main sessions`() {
+        val state = HrState(
+            currentPhase = SessionPhase.MAIN,
+            isStructuredWorkout = false,
+            secondsRunning = 93,
+            sessionStatus = SessionStatus.RUNNING
+        )
+
+        val ui = mapWorkoutPlayerUiState(state)
+
+        assertEquals("01:33", ui.countdownText)
+        assertEquals("Main", ui.intervalLabel)
+    }
 }

@@ -232,6 +232,23 @@ class MainActivity : ComponentActivity() {
                                     scope.launch(Dispatchers.IO) {
                                         settingsRepository.updateSettings(userSettings.copy(lastSessionType = sessionType))
                                     }
+                                },
+                                onToggleTestingMode = { enabled ->
+                                    scope.launch(Dispatchers.IO) {
+                                        val clearedAiSettings = if (enabled) {
+                                            userSettings.copy(
+                                                testingModeEnabled = true,
+                                                aiDataSharingEnabled = false,
+                                                latestCoachMessage = null,
+                                                aiRunIntervalSeconds = null,
+                                                aiWalkIntervalSeconds = null,
+                                                aiRepeats = null
+                                            )
+                                        } else {
+                                            userSettings.copy(testingModeEnabled = false)
+                                        }
+                                        settingsRepository.updateSettings(clearedAiSettings)
+                                    }
                                 }
                             )
                         }
@@ -399,7 +416,8 @@ fun MainScreen(
     onOpenManageDevices: () -> Unit,
     onOpenTrainingPlan: () -> Unit,
     onToggleSimulation: (Boolean, String) -> Unit,
-    onSessionTypeChange: (String) -> Unit
+    onSessionTypeChange: (String) -> Unit,
+    onToggleTestingMode: (Boolean) -> Unit
 ) {
     val sessionTypeOptions = listOf(
         SESSION_TYPE_RUN_WALK,
@@ -416,8 +434,13 @@ fun MainScreen(
     val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
     val activeStage = activePlan?.stages?.firstOrNull { it.id == userSettings.activeStageId } ?: activePlan?.stages?.firstOrNull()
     val baseWorkout = activeStage?.workouts?.firstOrNull()
-    val coachMessage = userSettings.latestCoachMessage?.takeIf { it.isNotBlank() }
-    val todaysWorkout = if (baseWorkout != null && userSettings.aiRunIntervalSeconds != null) {
+    val coachMessage = userSettings.latestCoachMessage
+        ?.takeIf { it.isNotBlank() && !userSettings.testingModeEnabled }
+    val todaysWorkout = if (
+        baseWorkout != null &&
+        userSettings.aiRunIntervalSeconds != null &&
+        !userSettings.testingModeEnabled
+    ) {
         baseWorkout.copy(
             runDurationSeconds = userSettings.aiRunIntervalSeconds,
             walkDurationSeconds = userSettings.aiWalkIntervalSeconds ?: baseWorkout.walkDurationSeconds,
@@ -476,6 +499,25 @@ fun MainScreen(
                     Text("Sensor readiness", style = MaterialTheme.typography.labelLarge)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(text = state.connectionStatus, style = MaterialTheme.typography.bodyLarge)
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Testing Mode", style = MaterialTheme.typography.labelLarge)
+                            Text(
+                                "Disables AI progression and excludes test sessions from AI training data.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = userSettings.testingModeEnabled,
+                            onCheckedChange = onToggleTestingMode
+                        )
+                    }
                 }
             }
         }
@@ -1000,6 +1042,7 @@ fun SettingsScreen(
     var voiceStyle by remember { mutableStateOf(settings.voiceStyle) }
     var coachingEnabled by remember { mutableStateOf(settings.coachingEnabled) }
     var aiDataSharingEnabled by remember { mutableStateOf(settings.aiDataSharingEnabled) }
+    var testingModeEnabled by remember { mutableStateOf(settings.testingModeEnabled) }
     var runMode by remember { mutableStateOf(settings.runMode) }
     var splitAudio by remember { mutableStateOf(settings.splitAnnouncementsEnabled) }
     var runWalkCoach by remember { mutableStateOf(settings.runWalkCoachEnabled) }
@@ -1066,6 +1109,29 @@ fun SettingsScreen(
                 Text("AI Training Data Sharing", fontWeight = FontWeight.Bold)
                 Text(
                     "Send this session data to AI Coach / contribute to training",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+        ) {
+            Switch(
+                checked = testingModeEnabled,
+                onCheckedChange = {
+                    testingModeEnabled = it
+                    if (it) {
+                        aiDataSharingEnabled = false
+                    }
+                }
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text("Testing Mode", fontWeight = FontWeight.Bold)
+                Text(
+                    "Exclude runs from AI progression and ignore AI-adjusted intervals.",
                     style = MaterialTheme.typography.labelSmall
                 )
             }
@@ -1170,14 +1236,19 @@ fun SettingsScreen(
                 persistenceLowSeconds = persistenceLow.toIntOrNull() ?: settings.persistenceLowSeconds,
                 voiceStyle = voiceStyle,
                 coachingEnabled = coachingEnabled,
-                aiDataSharingEnabled = aiDataSharingEnabled,
+                aiDataSharingEnabled = if (testingModeEnabled) false else aiDataSharingEnabled,
                 runMode = runMode,
                 splitAnnouncementsEnabled = splitAudio,
                 runWalkCoachEnabled = runWalkCoach,
                 warmUpDurationSeconds = if (warmUpSelection == "recommended") 480 else {
                     (warmUpMin.toIntOrNull() ?: 0) * 60 + (warmUpSec.toIntOrNull() ?: 0)
                 },
-                coolDownDurationSeconds = (coolDownMin.toIntOrNull() ?: 0) * 60 + (coolDownSec.toIntOrNull() ?: 0)
+                coolDownDurationSeconds = (coolDownMin.toIntOrNull() ?: 0) * 60 + (coolDownSec.toIntOrNull() ?: 0),
+                testingModeEnabled = testingModeEnabled,
+                latestCoachMessage = if (testingModeEnabled) null else settings.latestCoachMessage,
+                aiRunIntervalSeconds = if (testingModeEnabled) null else settings.aiRunIntervalSeconds,
+                aiWalkIntervalSeconds = if (testingModeEnabled) null else settings.aiWalkIntervalSeconds,
+                aiRepeats = if (testingModeEnabled) null else settings.aiRepeats
             ))
         }, modifier = Modifier.fillMaxWidth()) {
             Text("Save Settings")
