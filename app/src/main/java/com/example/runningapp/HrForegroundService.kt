@@ -101,6 +101,7 @@ data class HrState(
 
     val currentPhase: SessionPhase = SessionPhase.WARM_UP,
     val phaseSecondsRemaining: Int = 0,
+    val phaseSecondsElapsed: Long = 0,
     val isStructuredWorkout: Boolean = false,
     val structuredWorkoutPhase: StructuredWorkoutPhase = StructuredWorkoutPhase.RUN,
     val phaseTimeRemainingSeconds: Int = 0,
@@ -589,6 +590,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun startSessionTimerLoop() {
         sessionHandler?.removeCallbacks(sessionTimerRunnable)
+        lastPulseTime = 0L
         sessionHandler?.post(sessionTimerRunnable)
     }
 
@@ -612,6 +614,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         
         // Mission: 1Hz Heartbeat for log verification
         Log.d(TAG, "Timer heartbeat: running=${sessionSecondsRunning}s, age=${hrAge}s, status=${currentState.sessionStatus}")
+        Log.d(
+            TAG,
+            "Phase debug: phase=$currentPhase phaseElapsed=${phaseSecondsRunning}s totalElapsed=${sessionSecondsRunning}s " +
+                "repeat=$currentRepeat structured=$isStructuredWorkout segment=$structuredWorkoutPhase segmentRemaining=${phaseTimeRemainingSeconds}s"
+        )
 
         when (currentState.sessionStatus) {
             SessionStatus.RUNNING -> {
@@ -743,6 +750,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             }
                             (limit - phaseSecondsRunning).toInt()
                         },
+                        phaseSecondsElapsed = phaseSecondsRunning,
                         isStructuredWorkout = isStructuredWorkout,
                         structuredWorkoutPhase = structuredWorkoutPhase,
                         phaseTimeRemainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0),
@@ -776,6 +784,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             }
                             (limit - phaseSecondsRunning).toInt()
                         },
+                        phaseSecondsElapsed = phaseSecondsRunning,
                         isStructuredWorkout = isStructuredWorkout,
                         structuredWorkoutPhase = structuredWorkoutPhase,
                         phaseTimeRemainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0),
@@ -1036,6 +1045,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             _hrState.update { it.copy(
                 currentPhase = SessionPhase.WARM_UP,
                 phaseSecondsRemaining = currentSettings.warmUpDurationSeconds,
+                phaseSecondsElapsed = 0,
                 isStructuredWorkout = isStructuredWorkout,
                 structuredWorkoutPhase = structuredWorkoutPhase,
                 phaseTimeRemainingSeconds = phaseTimeRemainingSeconds,
@@ -1128,6 +1138,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     }
                     (limit - phaseSecondsRunning).toInt()
                 },
+                phaseSecondsElapsed = phaseSecondsRunning,
                 isStructuredWorkout = isStructuredWorkout,
                 structuredWorkoutPhase = structuredWorkoutPhase,
                 phaseTimeRemainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0),
@@ -1615,6 +1626,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             connectedDeviceName = null, 
             discoveredServices = emptyList(),
             isStructuredWorkout = false,
+            phaseSecondsElapsed = 0,
             phaseTimeRemainingSeconds = 0,
             totalRepeats = 0,
             currentIntervalPlannedSeconds = 0,

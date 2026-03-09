@@ -81,7 +81,7 @@ data class WorkoutPlayerUiState(
 fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
     val countdownSeconds = when {
         state.currentPhase == SessionPhase.MAIN && state.isStructuredWorkout -> state.phaseTimeRemainingSeconds
-        state.currentPhase == SessionPhase.MAIN -> state.secondsRunning.toInt()
+        state.currentPhase == SessionPhase.MAIN -> state.phaseSecondsElapsed.toInt()
         state.currentPhase != SessionPhase.MAIN -> state.phaseSecondsRemaining
         else -> 0
     }

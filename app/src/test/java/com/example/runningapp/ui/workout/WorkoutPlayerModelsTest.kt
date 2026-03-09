@@ -83,7 +83,7 @@ class WorkoutPlayerModelsTest {
         val state = HrState(
             currentPhase = SessionPhase.MAIN,
             isStructuredWorkout = false,
-            secondsRunning = 93,
+            phaseSecondsElapsed = 93,
             sessionStatus = SessionStatus.RUNNING
         )
 
