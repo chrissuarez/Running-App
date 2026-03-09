@@ -22,10 +22,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -453,96 +449,90 @@ fun MainScreen(
     val activeDevice = state.userSettings.savedDevices.find { it.address == state.userSettings.activeDeviceAddress }
     val isSessionActive = state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED
 
-    LazyColumn(
+    Scaffold(
         modifier = Modifier
             .fillMaxSize()
             .padding(paddingValues),
-        contentPadding = PaddingValues(RunningUiTokens.PagePadding),
-        verticalArrangement = Arrangement.spacedBy(RunningUiTokens.SectionSpacing),
-        horizontalAlignment = Alignment.Start
-    ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        bottomBar = {
+            MainBottomBar(
+                onOpenHistory = onOpenHistory,
+                onOpenManageDevices = onOpenManageDevices,
+                onOpenSettings = onOpenSettings
+            )
+        }
+    ) { innerPadding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentPadding = PaddingValues(RunningUiTokens.PagePadding),
+            verticalArrangement = Arrangement.spacedBy(RunningUiTokens.SectionSpacing),
+            horizontalAlignment = Alignment.Start
+        ) {
+            item {
                 Text(text = "Running App", style = MaterialTheme.typography.headlineMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ActionIconButton(
-                        label = "History",
-                        icon = { Icon(Icons.Default.CheckCircle, contentDescription = "Open history") },
-                        onClick = onOpenHistory
-                    )
-                    ActionIconButton(
-                        label = "Devices",
-                        icon = { Icon(Icons.Default.CheckCircle, contentDescription = "Open devices") },
-                        onClick = onOpenManageDevices
-                    )
-                    ActionIconButton(
-                        label = "Plans",
-                        icon = { Icon(Icons.Default.Lock, contentDescription = "Open training plans") },
-                        onClick = onOpenTrainingPlan
-                    )
-                    ActionIconButton(
-                        label = "Settings",
-                        icon = { Icon(Icons.Default.Settings, contentDescription = "Open settings") },
-                        onClick = onOpenSettings
-                    )
+            }
+            item {
+                OutlinedButton(
+                    onClick = onOpenTrainingPlan,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = RunningUiTokens.MinTouchTarget)
+                ) {
+                    Text("Open Training Plan")
                 }
             }
-        }
 
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
-                    Text("Sensor readiness", style = MaterialTheme.typography.labelLarge)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(text = state.connectionStatus, style = MaterialTheme.typography.bodyLarge)
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Testing Mode", style = MaterialTheme.typography.labelLarge)
-                            Text(
-                                "Disables AI progression and excludes test sessions from AI training data.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
+                        Text("Sensor readiness", style = MaterialTheme.typography.labelLarge)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(text = state.connectionStatus, style = MaterialTheme.typography.bodyLarge)
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Testing Mode", style = MaterialTheme.typography.labelLarge)
+                                Text(
+                                    "Disables AI progression and excludes test sessions from AI training data.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = userSettings.testingModeEnabled,
+                                onCheckedChange = onToggleTestingMode
                             )
                         }
-                        Switch(
-                            checked = userSettings.testingModeEnabled,
-                            onCheckedChange = onToggleTestingMode
-                        )
                     }
                 }
             }
-        }
 
-        if (activeDevice != null && state.connectionStatus == "Disconnected") {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
-                ) {
-                    Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Active Device: ${activeDevice.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                            Text(activeDevice.address, style = MaterialTheme.typography.bodySmall)
-                        }
-                        Button(
-                            onClick = { onConnectToDevice(activeDevice.address, selectedSessionType) },
-                            modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget)
-                        ) {
-                            Text("Connect")
+            if (activeDevice != null && state.connectionStatus == "Disconnected") {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
+                    ) {
+                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Active Device: ${activeDevice.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                Text(activeDevice.address, style = MaterialTheme.typography.bodySmall)
+                            }
+                            Button(
+                                onClick = { onConnectToDevice(activeDevice.address, selectedSessionType) },
+                                modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget)
+                            ) {
+                                Text("Connect")
+                            }
                         }
                     }
                 }
             }
-        }
 
         if (state.sessionStatus == SessionStatus.ERROR) {
             item {
@@ -745,42 +735,76 @@ fun MainScreen(
             )
         }
 
-        if (state.connectionStatus == "Scanning...") {
-            item {
-                Text("Scanned Devices:", style = MaterialTheme.typography.titleMedium)
-            }
-            items(state.scannedDevices) { device ->
-                DeviceListItem(
-                    device = device,
-                    onClick = { onConnectToDevice(device.address, selectedSessionType) }
-                )
-            }
-        } else if (isSessionActive) {
-            item {
-                WorkoutView(state = state)
-            }
-        } else {
-            item {
-                Text("Ready to start a session.")
+            if (state.connectionStatus == "Scanning...") {
+                item {
+                    Text("Scanned Devices:", style = MaterialTheme.typography.titleMedium)
+                }
+                items(state.scannedDevices) { device ->
+                    DeviceListItem(
+                        device = device,
+                        onClick = { onConnectToDevice(device.address, selectedSessionType) }
+                    )
+                }
+            } else if (isSessionActive) {
+                item {
+                    WorkoutView(state = state)
+                }
+            } else {
+                item {
+                    Text("Ready to start a session.")
+                }
             }
         }
     }
 }
 
 @Composable
-private fun ActionIconButton(
-    label: String,
-    icon: @Composable () -> Unit,
-    onClick: () -> Unit
+private fun MainBottomBar(
+    onOpenHistory: () -> Unit,
+    onOpenManageDevices: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
-    FilledTonalButton(
-        onClick = onClick,
-        modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
-    ) {
-        icon()
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(label, style = MaterialTheme.typography.labelMedium)
+    Surface(shadowElevation = 6.dp, tonalElevation = 2.dp) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilledTonalButton(
+                onClick = { },
+                enabled = false,
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+            ) {
+                Text("Home")
+            }
+            FilledTonalButton(
+                onClick = onOpenHistory,
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+            ) {
+                Text("History")
+            }
+            FilledTonalButton(
+                onClick = onOpenManageDevices,
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+            ) {
+                Text("Devices")
+            }
+            FilledTonalButton(
+                onClick = onOpenSettings,
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+            ) {
+                Text("Settings")
+            }
+        }
     }
 }
 
