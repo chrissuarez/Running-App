@@ -31,7 +31,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -768,8 +770,8 @@ private fun MainBottomBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             FilledTonalButton(
                 onClick = { },
@@ -778,7 +780,13 @@ private fun MainBottomBar(
                     .weight(1f)
                     .heightIn(min = RunningUiTokens.MinTouchTarget)
             ) {
-                Text("Home")
+                Text(
+                    text = "Home",
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 13.sp
+                )
             }
             FilledTonalButton(
                 onClick = onOpenHistory,
@@ -786,7 +794,13 @@ private fun MainBottomBar(
                     .weight(1f)
                     .heightIn(min = RunningUiTokens.MinTouchTarget)
             ) {
-                Text("History")
+                Text(
+                    text = "History",
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 13.sp
+                )
             }
             FilledTonalButton(
                 onClick = onOpenManageDevices,
@@ -794,7 +808,13 @@ private fun MainBottomBar(
                     .weight(1f)
                     .heightIn(min = RunningUiTokens.MinTouchTarget)
             ) {
-                Text("Devices")
+                Text(
+                    text = "Devices",
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 13.sp
+                )
             }
             FilledTonalButton(
                 onClick = onOpenSettings,
@@ -802,7 +822,13 @@ private fun MainBottomBar(
                     .weight(1f)
                     .heightIn(min = RunningUiTokens.MinTouchTarget)
             ) {
-                Text("Settings")
+                Text(
+                    text = "Settings",
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 13.sp
+                )
             }
         }
     }
