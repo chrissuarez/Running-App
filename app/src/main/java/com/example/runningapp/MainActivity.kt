@@ -505,16 +505,32 @@ fun MainScreen(
                         Text("Run Mode", style = MaterialTheme.typography.labelLarge)
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            FilterChip(
-                                selected = userSettings.runMode == "treadmill",
+                            OutlinedButton(
                                 onClick = { onRunModeChange("treadmill") },
-                                label = { Text("Treadmill") }
-                            )
-                            FilterChip(
-                                selected = userSettings.runMode == "outdoor",
+                                modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
+                                colors = if (userSettings.runMode == "treadmill") {
+                                    ButtonDefaults.outlinedButtonColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                                    )
+                                } else {
+                                    ButtonDefaults.outlinedButtonColors()
+                                }
+                            ) {
+                                Text("Treadmill")
+                            }
+                            OutlinedButton(
                                 onClick = { onRunModeChange("outdoor") },
-                                label = { Text("Outdoor") }
-                            )
+                                modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
+                                colors = if (userSettings.runMode == "outdoor") {
+                                    ButtonDefaults.outlinedButtonColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                                    )
+                                } else {
+                                    ButtonDefaults.outlinedButtonColors()
+                                }
+                            ) {
+                                Text("Outdoor")
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(12.dp))
