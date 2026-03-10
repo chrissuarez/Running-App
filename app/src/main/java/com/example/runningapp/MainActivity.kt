@@ -165,13 +165,8 @@ class MainActivity : ComponentActivity() {
                                 userSettings = userSettings,
                                 onRequestPermissions = { checkAndRequestPermissions() },
                                 onStartService = { selectedSessionType ->
-                                    val action = if (hrService == null) {
-                                        HrForegroundService.ACTION_START_FOREGROUND
-                                    } else {
-                                        HrForegroundService.ACTION_FORCE_SCAN
-                                    }
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
-                                        this.action = action
+                                        this.action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_SESSION_TYPE, selectedSessionType)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)

@@ -2109,6 +2109,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         _hrState.update { it.copy(isSimulating = isSimulationEnabled) }
         
         if (isSimulationEnabled) {
+            // Ensure simulation sessions remain visible/controllable from lock screen.
+            startForegroundService()
             val status = _hrState.value.sessionStatus
             if (currentSessionId == null && (status == SessionStatus.IDLE || status == SessionStatus.STOPPED)) {
                 startNewDatabaseSession()
