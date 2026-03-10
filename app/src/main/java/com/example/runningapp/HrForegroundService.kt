@@ -727,11 +727,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                    currentState.connectionStatus.contains("Failed")
                 
                 if (sessionSecondsRunning % 10L == 0L || deltaSeconds > 1 || statusChanged) {
-                    val distStr = "%.2f".format(sessionDistanceMeters / 1000.0)
-                    updateNotification(
-                        forceUpdate = statusChanged,
-                        overrideText = "Dist: ${distStr}km | HR: ${currentState.bpm} BPM"
-                    )
+                    updateNotification(forceUpdate = statusChanged)
                 }
 
                 _hrState.update { 
@@ -824,6 +820,28 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val mins = seconds / 60
         val secs = seconds % 60
         return "%02d:%02d".format(mins, secs)
+    }
+
+    private fun buildNotificationContent(state: HrState): String {
+        val phaseName = when (state.currentPhase) {
+            SessionPhase.WARM_UP -> "Warm-up"
+            SessionPhase.MAIN -> "Main"
+            SessionPhase.COOL_DOWN -> "Cooldown"
+        }
+
+        return if (state.isStructuredWorkout && state.totalRepeats > 0) {
+            val segment = when (state.structuredWorkoutPhase) {
+                StructuredWorkoutPhase.RUN -> "RUN"
+                StructuredWorkoutPhase.WALK -> "WALK"
+            }
+            val remaining = formatTime(state.phaseTimeRemainingSeconds.coerceAtLeast(0).toLong())
+            "Int ${state.currentRepeat}/${state.totalRepeats} • $segment • $remaining left"
+        } else if (state.currentPhase == SessionPhase.MAIN) {
+            "Main elapsed ${formatTime(state.phaseSecondsElapsed.coerceAtLeast(0))}"
+        } else {
+            val remaining = formatTime(state.phaseSecondsRemaining.coerceAtLeast(0).toLong())
+            "$phaseName • $remaining left"
+        }
     }
 
     private fun resolveActiveWorkoutTemplate(): WorkoutTemplate? {
@@ -996,6 +1014,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun pauseSession() {
         _hrState.update { it.copy(sessionStatus = SessionStatus.PAUSED) }
         stopLocationUpdates()
+        updateNotification(forceUpdate = true)
         Log.d(TAG, "Session PAUSED")
     }
 
@@ -1008,6 +1027,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         if (currentSettings.runMode == "outdoor" && !isSimulationEnabled) {
             startLocationUpdates()
         }
+        updateNotification(forceUpdate = true)
         Log.d(TAG, "Session RESUMED")
     }
 
@@ -1375,7 +1395,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         lastNotificationZone = currentZone
         lastNotificationPhase = currentPhase
         
-        val defaultContent = "HR: ${currentState.bpm} | Active: ${formatTime(sessionSecondsRunning)}"
+        val defaultContent = buildNotificationContent(currentState)
         val notification = createNotification(overrideText ?: defaultContent)
         
         val manager = getSystemService(NotificationManager::class.java)
@@ -1459,15 +1479,41 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("HR Monitor")
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
             .setContentIntent(activityPendingIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Workout", stopPendingIntent)
-            .build()
+
+        when (_hrState.value.sessionStatus) {
+            SessionStatus.RUNNING -> {
+                val pauseIntent = Intent(this, HrForegroundService::class.java).apply {
+                    action = ACTION_PAUSE_SESSION
+                }
+                val pausePendingIntent = PendingIntent.getService(
+                    this, 2, pauseIntent,
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+                builder.addAction(android.R.drawable.ic_media_pause, "Pause", pausePendingIntent)
+            }
+            SessionStatus.PAUSED -> {
+                val resumeIntent = Intent(this, HrForegroundService::class.java).apply {
+                    action = ACTION_RESUME_SESSION
+                }
+                val resumePendingIntent = PendingIntent.getService(
+                    this, 3, resumeIntent,
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                )
+                builder.addAction(android.R.drawable.ic_media_play, "Resume", resumePendingIntent)
+            }
+            else -> Unit
+        }
+
+        builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop Workout", stopPendingIntent)
+
+        return builder.build()
     }
 
     private fun createNotificationChannel() {
