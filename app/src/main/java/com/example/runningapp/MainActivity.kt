@@ -247,6 +247,11 @@ class MainActivity : ComponentActivity() {
                                         }
                                         settingsRepository.updateSettings(clearedAiSettings)
                                     }
+                                },
+                                onRunModeChange = { runMode ->
+                                    scope.launch(Dispatchers.IO) {
+                                        settingsRepository.updateSettings(userSettings.copy(runMode = runMode))
+                                    }
                                 }
                             )
                         }
@@ -415,7 +420,8 @@ fun MainScreen(
     onOpenTrainingPlan: () -> Unit,
     onToggleSimulation: (Boolean, String) -> Unit,
     onSessionTypeChange: (String) -> Unit,
-    onToggleTestingMode: (Boolean) -> Unit
+    onToggleTestingMode: (Boolean) -> Unit,
+    onRunModeChange: (String) -> Unit
 ) {
     val sessionTypeOptions = listOf(
         SESSION_TYPE_RUN_WALK,
@@ -486,29 +492,59 @@ fun MainScreen(
             }
 
             item {
+                val sensorSummary = when {
+                    state.connectionStatus.contains("Connected", ignoreCase = true) -> "Connected / ready"
+                    state.connectionStatus.contains("Scanning", ignoreCase = true) -> "Scanning"
+                    else -> "Disconnected / not ready"
+                }
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
-                        Text("Sensor readiness", style = MaterialTheme.typography.labelLarge)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(text = state.connectionStatus, style = MaterialTheme.typography.bodyLarge)
+                        Text("Run Setup", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Testing Mode", style = MaterialTheme.typography.labelLarge)
-                                Text(
-                                    "Disables AI progression and excludes test sessions from AI training data.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = userSettings.testingModeEnabled,
-                                onCheckedChange = onToggleTestingMode
+
+                        Text("Run Mode", style = MaterialTheme.typography.labelLarge)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = userSettings.runMode == "treadmill",
+                                onClick = { onRunModeChange("treadmill") },
+                                label = { Text("Treadmill") }
                             )
+                            FilterChip(
+                                selected = userSettings.runMode == "outdoor",
+                                onClick = { onRunModeChange("outdoor") },
+                                label = { Text("Outdoor") }
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text("Sensor readiness: $sensorSummary", style = MaterialTheme.typography.bodyMedium)
+                        Text(
+                            "Connection: ${state.connectionStatus}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            "Testing Mode: ${if (userSettings.testingModeEnabled) "ON" else "OFF"}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (userSettings.testingModeEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            "AI progression is excluded while testing mode is enabled.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = onOpenSettings,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = RunningUiTokens.MinTouchTarget)
+                        ) {
+                            Text("Open Settings")
                         }
                     }
                 }
