@@ -208,17 +208,12 @@ class MainActivity : ComponentActivity() {
                                 onToggleSimulation = { simulationEnabled, sessionType ->
                                     scope.launch(Dispatchers.IO) {
                                         settingsRepository.setSimulationEnabled(simulationEnabled)
-                                        val boundService = hrService
-                                        if (boundService != null) {
-                                            boundService.setSimulationEnabled(simulationEnabled, sessionType)
-                                        } else {
-                                            val simulationIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
-                                                action = HrForegroundService.ACTION_SET_SIMULATION
-                                                putExtra(HrForegroundService.EXTRA_SIMULATION_ENABLED, simulationEnabled)
-                                                putExtra(HrForegroundService.EXTRA_SESSION_TYPE, sessionType)
-                                            }
-                                            ContextCompat.startForegroundService(this@MainActivity, simulationIntent)
+                                        val simulationIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                            action = HrForegroundService.ACTION_SET_SIMULATION
+                                            putExtra(HrForegroundService.EXTRA_SIMULATION_ENABLED, simulationEnabled)
+                                            putExtra(HrForegroundService.EXTRA_SESSION_TYPE, sessionType)
                                         }
+                                        ContextCompat.startForegroundService(this@MainActivity, simulationIntent)
                                     }
                                 },
                                 onSessionTypeChange = { sessionType ->
