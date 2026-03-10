@@ -823,7 +823,7 @@ private fun MainBottomBar(
                     .heightIn(min = RunningUiTokens.MinTouchTarget)
             ) {
                 Text(
-                    text = "Settings",
+                    text = "Prefs",
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis,
