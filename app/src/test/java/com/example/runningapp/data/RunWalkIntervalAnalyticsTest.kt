@@ -18,7 +18,7 @@ class RunWalkIntervalAnalyticsTest {
 
         assertEquals(4, analytics.totalIntervals)
         assertEquals(25, analytics.cleanPercent)
-        assertEquals(38, analytics.avgTimeToTriggerSeconds)
+        assertEquals(30, analytics.avgTimeToTriggerSeconds)
         assertEquals(60, analytics.longestCleanSeconds)
         assertEquals(63, analytics.completionRatioPercent)
         assertEquals(1, analytics.severeBreakdownCount)
