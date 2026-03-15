@@ -1,8 +1,10 @@
 package com.example.runningapp.ui
 
 import androidx.activity.ComponentActivity
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -80,6 +82,6 @@ class SessionDetailScreenTest {
         composeRule.onNodeWithText("Strong completion (>=90%)").assertIsDisplayed()
         composeRule.onNodeWithText("Raw Interval Data").assertIsDisplayed().performClick()
         composeRule.onNodeWithText("Interval 1").assertIsDisplayed()
-        composeRule.onNodeWithText("Completion band").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Completion band").assertCountEquals(2)
     }
 }
