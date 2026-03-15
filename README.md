@@ -11,10 +11,10 @@ A robust Android application designed to track heart rate (HR) during runs and p
 - **Run/Walk Interval Telemetry + Session Summary Metrics**:
     - Added per-interval telemetry persistence for Run/Walk sessions (trigger events, time-to-trigger, run duration before trigger, walk time during run interval).
     - Added trigger-quality metrics (`avgHrAtTriggerInInterval`, `avgRecoverySecondsAfterTriggerInInterval`) for richer debrief analysis.
-    - Added a Run/Walk Interval Summary card in Session Detail with clean-interval rate, average time-to-trigger, longest clean interval, and early-breakdown rate.
+    - Added a Run/Walk Interval Summary card in Session Detail with clean-interval rate, average completion, average time-to-trigger, longest clean interval, and graded completion bands.
 - **AI Coaching Context & Safety Improvements**:
     - Added per-session AI training opt-out support (`includeInAiTraining`) and skip logic for excluded sessions.
-    - Expanded Gemini context with structured Run/Walk adaptation metrics (early breakdown rate, drift slope, completion ratio, trigger/recovery stats).
+    - Expanded Gemini context with structured Run/Walk adaptation metrics (graded completion rates, clean interval rate, drift slope, completion ratio, trigger/recovery stats).
     - Added a deterministic progression safety clamp: AI-generated next workout load is limited to 110% of the runner's max completed load in the last 30 days.
 - **Coaching/Audio Reliability Fixes**:
     - Fixed run/walk recovery cue timing so RUN-interval recovery cues fire at the Zone 2 low threshold.

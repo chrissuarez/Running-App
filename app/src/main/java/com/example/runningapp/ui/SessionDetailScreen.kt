@@ -4,6 +4,8 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,11 +24,14 @@ import androidx.compose.ui.tooling.preview.Preview
 import kotlin.math.roundToInt
 import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.data.HrSample
+import com.example.runningapp.data.IntervalCompletionBand
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.data.classifyIntervalCompletionBand
+import com.example.runningapp.data.computeRunWalkIntervalAnalytics
 import java.text.SimpleDateFormat
 import java.util.*
-
+ 
 private const val SESSION_TYPE_RUN_WALK = "Run/Walk"
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -77,6 +82,8 @@ fun SessionDetailScreen(
 
                 if (session.sessionType == SESSION_TYPE_RUN_WALK && intervalStats.isNotEmpty()) {
                     RunWalkIntervalSummaryCard(intervalStats = intervalStats)
+                    Spacer(modifier = Modifier.height(24.dp))
+                    RunWalkIntervalRawDataCard(intervalStats = intervalStats)
                     Spacer(modifier = Modifier.height(24.dp))
                 }
                 
@@ -175,8 +182,15 @@ private data class RunWalkIntervalSummaryMetrics(
     val cleanPercent: Int,
     val avgTimeToTriggerSeconds: Int?,
     val longestCleanSeconds: Int?,
-    val earlyBreakdownCount: Int,
-    val earlyBreakdownPercent: Int
+    val completionRatioPercent: Int,
+    val severeBreakdownCount: Int,
+    val severeBreakdownPercent: Int,
+    val poorToleranceCount: Int,
+    val poorTolerancePercent: Int,
+    val strainedCompletionCount: Int,
+    val strainedCompletionPercent: Int,
+    val strongCompletionCount: Int,
+    val strongCompletionPercent: Int
 )
 
 @Composable
@@ -195,6 +209,7 @@ private fun RunWalkIntervalSummaryCard(intervalStats: List<RunWalkIntervalStat>)
             Spacer(modifier = Modifier.height(12.dp))
 
             SummaryMetricRow("Total run intervals", "${metrics.totalIntervals}")
+            SummaryMetricRow("Average completion", "${metrics.completionRatioPercent}%")
             SummaryMetricRow("% intervals without HR trigger", "${metrics.cleanPercent}%")
             SummaryMetricRow(
                 "Average time-to-trigger",
@@ -205,8 +220,20 @@ private fun RunWalkIntervalSummaryCard(intervalStats: List<RunWalkIntervalStat>)
                 metrics.longestCleanSeconds?.let { formatMinutesSeconds(it) } ?: "--"
             )
             SummaryMetricRow(
-                "Early breakdown (<30%)",
-                "${metrics.earlyBreakdownCount} (${metrics.earlyBreakdownPercent}%)"
+                "Severe breakdown (<30%)",
+                "${metrics.severeBreakdownCount} (${metrics.severeBreakdownPercent}%)"
+            )
+            SummaryMetricRow(
+                "Poor tolerance (30-59%)",
+                "${metrics.poorToleranceCount} (${metrics.poorTolerancePercent}%)"
+            )
+            SummaryMetricRow(
+                "Strained completion (60-89%)",
+                "${metrics.strainedCompletionCount} (${metrics.strainedCompletionPercent}%)"
+            )
+            SummaryMetricRow(
+                "Strong completion (>=90%)",
+                "${metrics.strongCompletionCount} (${metrics.strongCompletionPercent}%)"
             )
         }
     }
@@ -232,6 +259,95 @@ private fun SummaryMetricRow(label: String, value: String) {
     }
 }
 
+@Composable
+private fun RunWalkIntervalRawDataCard(intervalStats: List<RunWalkIntervalStat>) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Raw Interval Data",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Tap to inspect the saved interval stats used by the summary and AI.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse raw interval data" else "Expand raw interval data"
+                )
+            }
+
+            if (expanded) {
+                Spacer(modifier = Modifier.height(12.dp))
+                intervalStats.forEachIndexed { index, stat ->
+                    RunWalkIntervalRawDataRow(stat = stat)
+                    if (index < intervalStats.lastIndex) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Divider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RunWalkIntervalRawDataRow(stat: RunWalkIntervalStat) {
+    val completionBand = classifyIntervalCompletionBand(stat)
+    val completionPercent = if (stat.plannedDurationSeconds > 0) {
+        ((stat.actualRunningDurationBeforeHrTriggerSeconds.toDouble() / stat.plannedDurationSeconds.toDouble()) * 100.0)
+            .roundToInt()
+            .coerceAtMost(100)
+    } else {
+        0
+    }
+
+    Column {
+        Text(
+            text = "Interval ${stat.intervalIndex + 1}",
+            style = MaterialTheme.typography.bodyLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        SummaryMetricRow("Planned run duration", formatMinutesSeconds(stat.plannedDurationSeconds))
+        SummaryMetricRow("Actual run before trigger", formatMinutesSeconds(stat.actualRunningDurationBeforeHrTriggerSeconds))
+        SummaryMetricRow("Completion", "$completionPercent%")
+        SummaryMetricRow(
+            "First HR trigger",
+            stat.timeIntoIntervalWhenHrExceededCapSeconds?.let { formatMinutesSeconds(it) } ?: "None"
+        )
+        SummaryMetricRow("HR trigger events", "${stat.hrTriggerEvents}")
+        SummaryMetricRow(
+            "Walking during run interval",
+            formatMinutesSeconds(stat.totalTimeSpentWalkingDuringRunIntervalSeconds)
+        )
+        SummaryMetricRow(
+            "Avg HR at trigger",
+            stat.avgHrAtTriggerInInterval?.roundToInt()?.toString() ?: "--"
+        )
+        SummaryMetricRow(
+            "Avg recovery after trigger",
+            stat.avgRecoverySecondsAfterTriggerInInterval?.roundToInt()?.let { formatMinutesSeconds(it) } ?: "--"
+        )
+        SummaryMetricRow("Completion band", completionBand.label)
+    }
+}
+
 private fun computeRunWalkIntervalSummaryMetrics(
     intervalStats: List<RunWalkIntervalStat>
 ): RunWalkIntervalSummaryMetrics {
@@ -242,48 +358,43 @@ private fun computeRunWalkIntervalSummaryMetrics(
             cleanPercent = 0,
             avgTimeToTriggerSeconds = null,
             longestCleanSeconds = null,
-            earlyBreakdownCount = 0,
-            earlyBreakdownPercent = 0
+            completionRatioPercent = 0,
+            severeBreakdownCount = 0,
+            severeBreakdownPercent = 0,
+            poorToleranceCount = 0,
+            poorTolerancePercent = 0,
+            strainedCompletionCount = 0,
+            strainedCompletionPercent = 0,
+            strongCompletionCount = 0,
+            strongCompletionPercent = 0
         )
     }
-
-    val cleanCount = intervalStats.count { it.hrTriggerEvents == 0 }
-    val cleanPercent = percentRounded(cleanCount, totalIntervals)
-
-    val triggeredTimes = intervalStats.mapNotNull { it.timeIntoIntervalWhenHrExceededCapSeconds }
-    val avgTimeToTriggerSeconds = triggeredTimes
-        .takeIf { it.isNotEmpty() }
-        ?.average()
-        ?.roundToInt()
-
-    val longestCleanSeconds = intervalStats
-        .asSequence()
-        .filter { it.hrTriggerEvents == 0 }
-        .map { it.actualRunningDurationBeforeHrTriggerSeconds }
-        .maxOrNull()
-
-    val earlyBreakdownCount = intervalStats.count { stat ->
-        val triggerTime = stat.timeIntoIntervalWhenHrExceededCapSeconds
-        triggerTime != null &&
-            stat.plannedDurationSeconds > 0 &&
-            triggerTime.toDouble() < (stat.plannedDurationSeconds * 0.30)
-    }
-    val earlyBreakdownPercent = percentRounded(earlyBreakdownCount, totalIntervals)
+    val analytics = computeRunWalkIntervalAnalytics(intervalStats)
 
     return RunWalkIntervalSummaryMetrics(
-        totalIntervals = totalIntervals,
-        cleanPercent = cleanPercent,
-        avgTimeToTriggerSeconds = avgTimeToTriggerSeconds,
-        longestCleanSeconds = longestCleanSeconds,
-        earlyBreakdownCount = earlyBreakdownCount,
-        earlyBreakdownPercent = earlyBreakdownPercent
+        totalIntervals = analytics.totalIntervals,
+        cleanPercent = analytics.cleanPercent,
+        avgTimeToTriggerSeconds = analytics.avgTimeToTriggerSeconds,
+        longestCleanSeconds = analytics.longestCleanSeconds,
+        completionRatioPercent = analytics.completionRatioPercent,
+        severeBreakdownCount = analytics.severeBreakdownCount,
+        severeBreakdownPercent = analytics.severeBreakdownPercent,
+        poorToleranceCount = analytics.poorToleranceCount,
+        poorTolerancePercent = analytics.poorTolerancePercent,
+        strainedCompletionCount = analytics.strainedCompletionCount,
+        strainedCompletionPercent = analytics.strainedCompletionPercent,
+        strongCompletionCount = analytics.strongCompletionCount,
+        strongCompletionPercent = analytics.strongCompletionPercent
     )
 }
 
-private fun percentRounded(part: Int, total: Int): Int {
-    if (total <= 0) return 0
-    return ((part.toDouble() / total.toDouble()) * 100.0).roundToInt()
-}
+private val IntervalCompletionBand.label: String
+    get() = when (this) {
+        IntervalCompletionBand.SEVERE_BREAKDOWN -> "Severe breakdown"
+        IntervalCompletionBand.POOR_TOLERANCE -> "Poor tolerance"
+        IntervalCompletionBand.STRAINED_COMPLETION -> "Strained completion"
+        IntervalCompletionBand.STRONG_COMPLETION -> "Strong completion"
+    }
 
 @Composable
 fun StatLarge(label: String, value: String) {

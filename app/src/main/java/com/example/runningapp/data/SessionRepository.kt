@@ -11,7 +11,11 @@ import kotlin.math.roundToInt
 private const val SESSION_TYPE_RUN_WALK = "Run/Walk"
 
 data class AiRunWalkMetrics(
-    val earlyBreakdownRatePercent: Int,
+    val severeBreakdownRatePercent: Int,
+    val poorToleranceRatePercent: Int,
+    val strainedCompletionRatePercent: Int,
+    val strongCompletionRatePercent: Int,
+    val cleanIntervalRatePercent: Int,
     val hrDriftSlopeBpmPerInterval: Double?,
     val intervalCompletionRatioPercent: Int,
     val avgRecoverySecondsAfterTrigger: Double?,
@@ -230,23 +234,7 @@ class SessionRepository(
             return null
         }
 
-        val totalIntervals = stats.size
-        val earlyBreakdownCount = stats.count { stat ->
-            val firstTrigger = stat.timeIntoIntervalWhenHrExceededCapSeconds ?: return@count false
-            firstTrigger.toDouble() < stat.plannedDurationSeconds.toDouble() * 0.30
-        }
-        val earlyBreakdownRatePercent = ((earlyBreakdownCount.toDouble() / totalIntervals.toDouble()) * 100.0).roundToInt()
-
-        val completionRatioPercent = (
-            stats.map { stat ->
-                if (stat.plannedDurationSeconds <= 0) {
-                    0.0
-                } else {
-                    (stat.actualRunningDurationBeforeHrTriggerSeconds.toDouble() / stat.plannedDurationSeconds.toDouble())
-                        .coerceAtMost(1.0)
-                }
-            }.average() * 100.0
-            ).roundToInt()
+        val analytics = computeRunWalkIntervalAnalytics(stats)
 
         val avgHrAtTriggerValues = stats.mapNotNull { it.avgHrAtTriggerInInterval }
         val avgRecoveryValues = stats.mapNotNull { it.avgRecoverySecondsAfterTriggerInInterval }
@@ -265,15 +253,21 @@ class SessionRepository(
 
         Log.d(
             "AiCoach",
-            "Run metrics sessionId=$sessionId early=${earlyBreakdownRatePercent}% " +
-                "completion=${completionRatioPercent}% avgTriggerHr=${avgHrAtTrigger?.roundToInt()} " +
+            "Run metrics sessionId=$sessionId severe=${analytics.severeBreakdownPercent}% " +
+                "poor=${analytics.poorTolerancePercent}% strained=${analytics.strainedCompletionPercent}% " +
+                "strong=${analytics.strongCompletionPercent}% clean=${analytics.cleanPercent}% " +
+                "completion=${analytics.completionRatioPercent}% avgTriggerHr=${avgHrAtTrigger?.roundToInt()} " +
                 "avgRecovery=${avgRecoverySeconds?.roundToInt()}s driftSlope=${hrDriftSlope ?: "null"}"
         )
 
         return AiRunWalkMetrics(
-            earlyBreakdownRatePercent = earlyBreakdownRatePercent,
+            severeBreakdownRatePercent = analytics.severeBreakdownPercent,
+            poorToleranceRatePercent = analytics.poorTolerancePercent,
+            strainedCompletionRatePercent = analytics.strainedCompletionPercent,
+            strongCompletionRatePercent = analytics.strongCompletionPercent,
+            cleanIntervalRatePercent = analytics.cleanPercent,
             hrDriftSlopeBpmPerInterval = hrDriftSlope,
-            intervalCompletionRatioPercent = completionRatioPercent,
+            intervalCompletionRatioPercent = analytics.completionRatioPercent,
             avgRecoverySecondsAfterTrigger = avgRecoverySeconds,
             avgHrAtTrigger = avgHrAtTrigger
         )
