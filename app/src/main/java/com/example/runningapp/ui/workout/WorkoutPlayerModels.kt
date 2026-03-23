@@ -85,6 +85,7 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
     val easyFixedDurationSeconds = EASY_FIXED_DURATION_MINUTES * 60
     val countdownSeconds = when {
         state.currentPhase == SessionPhase.MAIN && state.isStructuredWorkout -> state.phaseTimeRemainingSeconds
+        state.currentPhase == SessionPhase.MAIN && isEasyFixedDuration -> state.phaseSecondsRemaining
         state.currentPhase == SessionPhase.MAIN -> state.phaseSecondsElapsed.toInt()
         state.currentPhase != SessionPhase.MAIN -> state.phaseSecondsRemaining
         else -> 0

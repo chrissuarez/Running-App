@@ -100,6 +100,7 @@ class WorkoutPlayerModelsTest {
             currentPhase = SessionPhase.MAIN,
             isStructuredWorkout = false,
             phaseSecondsElapsed = 900,
+            phaseSecondsRemaining = 900,
             sessionStatus = SessionStatus.RUNNING
         )
 
@@ -107,6 +108,7 @@ class WorkoutPlayerModelsTest {
 
         assertEquals("EASY SESSION", ui.phaseLabel)
         assertEquals("30 min easy session", ui.intervalLabel)
+        assertEquals("15:00", ui.countdownText)
         assertEquals("self-adjust jog/walk", ui.nextLabel)
         assertEquals("50%", ui.progressLabel)
         assertEquals(null, ui.timeline)

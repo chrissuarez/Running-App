@@ -129,6 +129,7 @@ data class HrState(
 )
 
 class HrForegroundService : Service(), TextToSpeech.OnInitListener {
+    private val easyFixedDurationMainSeconds = 30 * 60
 
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -311,6 +312,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun resetRunIntervalTracking() {
         activeRunIntervalTracker = null
         completedRunIntervalStats.clear()
+    }
+
+    private fun getMainPhaseLimitSeconds(): Int {
+        // Easy Fixed Duration is the only non-structured mode with a real main-phase timer.
+        return when (currentSessionType) {
+            SESSION_TYPE_EASY_FIXED_DURATION -> easyFixedDurationMainSeconds
+            else -> Int.MAX_VALUE
+        }
     }
 
     private data class StructuredProgressUiState(
@@ -620,7 +629,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         Log.d(
             TAG,
             "Phase debug: phase=$currentPhase phaseElapsed=${phaseSecondsRunning}s totalElapsed=${sessionSecondsRunning}s " +
-                "repeat=$currentRepeat structured=$isStructuredWorkout segment=$structuredWorkoutPhase segmentRemaining=${phaseTimeRemainingSeconds}s"
+                "repeat=$currentRepeat structured=$isStructuredWorkout " +
+                "segment=${if (isStructuredWorkout) structuredWorkoutPhase else "NONE"} segmentRemaining=${phaseTimeRemainingSeconds}s"
         )
 
         when (currentState.sessionStatus) {
@@ -634,7 +644,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     
                     val phaseLimit = when (currentPhase) {
                         SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
-                        SessionPhase.MAIN -> Int.MAX_VALUE
+                        SessionPhase.MAIN -> getMainPhaseLimitSeconds()
                         SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
                     }
                     
@@ -649,6 +659,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         currentPhase = SessionPhase.MAIN
                         phaseSecondsRunning = 0
                         playCue("Starting main workout")
+                    } else if (
+                        currentPhase == SessionPhase.MAIN &&
+                        currentSessionType == SESSION_TYPE_EASY_FIXED_DURATION &&
+                        phaseSecondsRunning >= phaseLimit
+                    ) {
+                        // Reuse the existing cool-down/stop flow once the fixed 30-minute main block is done.
+                        playCue("Easy session complete, beginning cool down.")
+                        currentPhase = SessionPhase.COOL_DOWN
+                        phaseSecondsRunning = 0
                     } else if (currentPhase == SessionPhase.COOL_DOWN && phaseSecondsRunning >= phaseLimit) {
                         serviceScope.launch { stopSession() }
                         break
@@ -741,13 +760,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         zoneTimes = sessionZoneTimes.toMap(),
                         isSimulating = isSimulationEnabled,
                         currentPhase = currentPhase,
-                        phaseSecondsRemaining = if (currentPhase == SessionPhase.MAIN) 0 else {
+                        phaseSecondsRemaining = when (currentPhase) {
+                            SessionPhase.MAIN -> {
+                                val mainLimit = getMainPhaseLimitSeconds()
+                                if (mainLimit == Int.MAX_VALUE) 0 else (mainLimit - phaseSecondsRunning).toInt().coerceAtLeast(0)
+                            }
+                            else -> {
                             val limit = when (currentPhase) {
                                 SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
                                 SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
                                 else -> 0
                             }
-                            (limit - phaseSecondsRunning).toInt()
+                                (limit - phaseSecondsRunning).toInt().coerceAtLeast(0)
+                            }
                         },
                         phaseSecondsElapsed = phaseSecondsRunning,
                         isStructuredWorkout = isStructuredWorkout,
@@ -775,13 +800,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         secondsPaused = sessionSecondsPaused,
                         lastHrAgeSeconds = hrAge,
                         currentPhase = currentPhase,
-                        phaseSecondsRemaining = if (currentPhase == SessionPhase.MAIN) 0 else {
+                        phaseSecondsRemaining = when (currentPhase) {
+                            SessionPhase.MAIN -> {
+                                val mainLimit = getMainPhaseLimitSeconds()
+                                if (mainLimit == Int.MAX_VALUE) 0 else (mainLimit - phaseSecondsRunning).toInt().coerceAtLeast(0)
+                            }
+                            else -> {
                             val limit = when (currentPhase) {
                                 SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
                                 SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
                                 else -> 0
                             }
-                            (limit - phaseSecondsRunning).toInt()
+                                (limit - phaseSecondsRunning).toInt().coerceAtLeast(0)
+                            }
                         },
                         phaseSecondsElapsed = phaseSecondsRunning,
                         isStructuredWorkout = isStructuredWorkout,
@@ -839,6 +870,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             val remaining = formatTime(state.phaseTimeRemainingSeconds.coerceAtLeast(0).toLong())
             "Int ${state.currentRepeat}/${state.totalRepeats} • $segment • $remaining left"
+        } else if (state.currentPhase == SessionPhase.MAIN && state.sessionType == SESSION_TYPE_EASY_FIXED_DURATION) {
+            val remaining = formatTime(state.phaseSecondsRemaining.coerceAtLeast(0).toLong())
+            "Easy session • $remaining left"
         } else if (state.currentPhase == SessionPhase.MAIN) {
             "Main elapsed ${formatTime(state.phaseSecondsElapsed.coerceAtLeast(0))}"
         } else {
@@ -1153,16 +1187,22 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // Mission: Immediate UI Sync
         _hrState.update { currentState ->
             val structuredProgress = buildStructuredProgressUiState()
-            currentState.copy(
-                sessionType = currentSessionType,
-                currentPhase = currentPhase,
-                phaseSecondsRemaining = if (currentPhase == SessionPhase.MAIN) 0 else {
-                    val limit = when (currentPhase) {
-                        SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
-                        SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
-                        else -> 0
+                currentState.copy(
+                    sessionType = currentSessionType,
+                    currentPhase = currentPhase,
+                phaseSecondsRemaining = when (currentPhase) {
+                    SessionPhase.MAIN -> {
+                        val mainLimit = getMainPhaseLimitSeconds()
+                        if (mainLimit == Int.MAX_VALUE) 0 else (mainLimit - phaseSecondsRunning).toInt().coerceAtLeast(0)
                     }
-                    (limit - phaseSecondsRunning).toInt()
+                    else -> {
+                        val limit = when (currentPhase) {
+                            SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
+                            SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
+                            else -> 0
+                        }
+                        (limit - phaseSecondsRunning).toInt().coerceAtLeast(0)
+                    }
                 },
                 phaseSecondsElapsed = phaseSecondsRunning,
                 isStructuredWorkout = isStructuredWorkout,
