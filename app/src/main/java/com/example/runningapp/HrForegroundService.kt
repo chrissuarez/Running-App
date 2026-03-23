@@ -74,6 +74,7 @@ enum class StructuredWorkoutPhase { RUN, WALK }
 data class HrState(
     val connectionStatus: String = "Disconnected",
     val sessionStatus: SessionStatus = SessionStatus.IDLE,
+    val sessionType: String = HrForegroundService.SESSION_TYPE_RUN_WALK,
     val bpm: Int = 0,
     val lastUpdateTimestamp: Long = 0,
     val connectedDeviceName: String? = null,
@@ -291,6 +292,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         const val LEGACY_EXTRA_SESSION_TYPE = "EXTRA_SESSION_TYPE"
         const val EXTRA_SIMULATION_ENABLED = "SIMULATION_ENABLED"
         const val SESSION_TYPE_RUN_WALK = "Run/Walk"
+        const val SESSION_TYPE_EASY_FIXED_DURATION = "Easy Fixed Duration"
         const val SESSION_TYPE_ZONE2_WALK = "Zone 2 Walk"
         const val SESSION_TYPE_FREE_TRACK = "Free Track"
         const val TAG = "HrService"
@@ -299,6 +301,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun sanitizeSessionType(value: String?): String {
         return when (value) {
             SESSION_TYPE_RUN_WALK,
+            SESSION_TYPE_EASY_FIXED_DURATION,
             SESSION_TYPE_ZONE2_WALK,
             SESSION_TYPE_FREE_TRACK -> value
             else -> SESSION_TYPE_RUN_WALK
@@ -950,6 +953,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 ?: legacySessionType
                 ?: currentSettings.lastSessionType
         )
+        _hrState.update { it.copy(sessionType = currentSessionType) }
         Log.d(
             TAG,
             "Service start action=${intent?.action ?: "null"} sessionType=$currentSessionType source=$sessionTypeSource"
@@ -1063,6 +1067,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
             // Mission: Immediate UI State Reset 
             _hrState.update { it.copy(
+                sessionType = currentSessionType,
                 currentPhase = SessionPhase.WARM_UP,
                 phaseSecondsRemaining = currentSettings.warmUpDurationSeconds,
                 phaseSecondsElapsed = 0,
@@ -1149,6 +1154,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         _hrState.update { currentState ->
             val structuredProgress = buildStructuredProgressUiState()
             currentState.copy(
+                sessionType = currentSessionType,
                 currentPhase = currentPhase,
                 phaseSecondsRemaining = if (currentPhase == SessionPhase.MAIN) 0 else {
                     val limit = when (currentPhase) {
@@ -1668,6 +1674,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         _hrState.update { it.copy(
             connectionStatus = "Disconnected", 
             sessionStatus = SessionStatus.STOPPED,
+            sessionType = currentSessionType,
             bpm = 0, 
             connectedDeviceName = null, 
             discoveredServices = emptyList(),
@@ -2095,6 +2102,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     fun setSimulationEnabled(enabled: Boolean, sessionType: String? = null) {
         if (sessionType != null && currentSessionId == null) {
             currentSessionType = sanitizeSessionType(sessionType)
+            _hrState.update { it.copy(sessionType = currentSessionType) }
         }
         if (isSimulationEnabled == enabled) {
             _hrState.update { it.copy(isSimulating = isSimulationEnabled) }

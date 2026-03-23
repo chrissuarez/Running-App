@@ -117,6 +117,7 @@ class SessionRepository(
                 )
                 return
             }
+            // Keep interval-based AI prescriptions scoped to structured Run/Walk only.
             if (latestFinalizedSession?.sessionType != SESSION_TYPE_RUN_WALK) {
                 Log.d(
                     "AiCoach",

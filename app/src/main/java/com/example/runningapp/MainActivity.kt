@@ -62,8 +62,10 @@ import com.example.runningapp.ui.workout.ZoneBand
 import com.example.runningapp.ui.workout.mapWorkoutPlayerUiState
 
 private const val SESSION_TYPE_RUN_WALK = "Run/Walk"
+private const val SESSION_TYPE_EASY_FIXED_DURATION = "Easy Fixed Duration"
 private const val SESSION_TYPE_ZONE2_WALK = "Zone 2 Walk"
 private const val SESSION_TYPE_FREE_TRACK = "Free Track"
+private const val EASY_FIXED_DURATION_MINUTES = 30
 
 class MainActivity : ComponentActivity() {
 
@@ -415,6 +417,7 @@ fun MainScreen(
 ) {
     val sessionTypeOptions = listOf(
         SESSION_TYPE_RUN_WALK,
+        SESSION_TYPE_EASY_FIXED_DURATION,
         SESSION_TYPE_ZONE2_WALK,
         SESSION_TYPE_FREE_TRACK
     )
@@ -622,6 +625,26 @@ fun MainScreen(
                                 style = MaterialTheme.typography.bodyMedium
                             )
                         }
+                    }
+                }
+            }
+        } else if (!isSessionActive && selectedSessionType == SESSION_TYPE_EASY_FIXED_DURATION) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f))
+                ) {
+                    Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
+                        Text(
+                            text = "$EASY_FIXED_DURATION_MINUTES min easy session",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "self-adjust jog/walk",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     }
                 }
             }
@@ -931,6 +954,7 @@ fun SettingsSummaryCard(
                 Text("Mode: $modeLabel | Cooldown: ${settings.cooldownSeconds}s", style = MaterialTheme.typography.bodySmall)
                 val sessionTypeSummary = when (selectedSessionType) {
                     SESSION_TYPE_RUN_WALK -> "RUN/WALK COACH ACTIVE" to Color(0xFFFFA500)
+                    SESSION_TYPE_EASY_FIXED_DURATION -> "EASY FIXED DURATION (30 MIN)" to MaterialTheme.colorScheme.primary
                     SESSION_TYPE_ZONE2_WALK -> "ZONE 2 WALK (Volume Only)" to MaterialTheme.colorScheme.primary
                     SESSION_TYPE_FREE_TRACK -> "FREE TRACK (Silent Logging)" to MaterialTheme.colorScheme.outline
                     else -> "RUN/WALK COACH ACTIVE" to Color(0xFFFFA500)

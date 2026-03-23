@@ -4,6 +4,8 @@ import com.example.runningapp.HrState
 import com.example.runningapp.SessionPhase
 import com.example.runningapp.StructuredWorkoutPhase
 
+private const val SESSION_TYPE_EASY_FIXED_DURATION = "Easy Fixed Duration"
+private const val EASY_FIXED_DURATION_MINUTES = 30
 const val CUE_REASON_PLANNED = "planned_transition"
 const val CUE_REASON_HR_HIGH = "hr_too_high"
 const val CUE_REASON_HR_RECOVERED = "hr_recovered"
@@ -79,6 +81,8 @@ data class WorkoutPlayerUiState(
 )
 
 fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
+    val isEasyFixedDuration = state.sessionType == SESSION_TYPE_EASY_FIXED_DURATION
+    val easyFixedDurationSeconds = EASY_FIXED_DURATION_MINUTES * 60
     val countdownSeconds = when {
         state.currentPhase == SessionPhase.MAIN && state.isStructuredWorkout -> state.phaseTimeRemainingSeconds
         state.currentPhase == SessionPhase.MAIN -> state.phaseSecondsElapsed.toInt()
@@ -86,10 +90,17 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
         else -> 0
     }
     val isStructuredMain = state.currentPhase == SessionPhase.MAIN && state.isStructuredWorkout && state.totalRepeats > 0
-    val progressFraction = (state.workoutProgressPercent.coerceIn(0, 100) / 100f)
+    val progressPercent = if (isEasyFixedDuration && state.currentPhase == SessionPhase.MAIN && !state.isStructuredWorkout) {
+        ((state.phaseSecondsElapsed.toDouble() / easyFixedDurationSeconds.toDouble()) * 100.0).toInt().coerceIn(0, 100)
+    } else {
+        state.workoutProgressPercent.coerceIn(0, 100)
+    }
+    val progressFraction = progressPercent / 100f
 
     val intervalLabel = if (isStructuredMain) {
         "${state.structuredWorkoutPhase} ${state.currentRepeat}/${state.totalRepeats}"
+    } else if (isEasyFixedDuration && state.currentPhase == SessionPhase.MAIN) {
+        "$EASY_FIXED_DURATION_MINUTES min easy session"
     } else {
         when (state.currentPhase) {
             SessionPhase.WARM_UP -> "Warm-up"
@@ -100,7 +111,9 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
 
     val phaseLabel = when (state.currentPhase) {
         SessionPhase.WARM_UP -> "WARM-UP"
-        SessionPhase.MAIN -> when (state.structuredWorkoutPhase) {
+        SessionPhase.MAIN -> if (isEasyFixedDuration && !state.isStructuredWorkout) {
+            "EASY SESSION"
+        } else when (state.structuredWorkoutPhase) {
             StructuredWorkoutPhase.RUN -> "RUN"
             StructuredWorkoutPhase.WALK -> "WALK"
         }
@@ -131,13 +144,17 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
         phaseLabel = phaseLabel,
         countdownText = formatStopwatch(countdownSeconds.toLong()),
         intervalLabel = intervalLabel,
-        progressLabel = "${state.workoutProgressPercent.coerceIn(0, 100)}%",
+        progressLabel = "${progressPercent}%",
         progressFraction = progressFraction,
-        nextLabel = state.nextIntervalType?.let { next ->
-            if (state.nextIntervalDurationSeconds > 0) {
-                "Next: $next ${formatStopwatch(state.nextIntervalDurationSeconds.toLong())}"
-            } else {
-                "Next: $next"
+        nextLabel = if (isEasyFixedDuration && state.currentPhase == SessionPhase.MAIN && !state.isStructuredWorkout) {
+            "self-adjust jog/walk"
+        } else {
+            state.nextIntervalType?.let { next ->
+                if (state.nextIntervalDurationSeconds > 0) {
+                    "Next: $next ${formatStopwatch(state.nextIntervalDurationSeconds.toLong())}"
+                } else {
+                    "Next: $next"
+                }
             }
         },
         hrText = "${state.bpm} bpm",
@@ -218,7 +235,11 @@ fun mapCoachCueUiState(state: HrState): CoachCueUiState? {
         CUE_REASON_SENSOR_LOST -> "Sensor signal is stale. Keep effort easy until reconnect."
         CUE_REASON_HR_HIGH -> "Above cap. Walk until HR settles."
         CUE_REASON_HR_RECOVERED -> "Recovered. Resume easy jog."
-        CUE_REASON_PLANNED -> "Planned transition. Follow the interval."
+        CUE_REASON_PLANNED -> if (state.sessionType == SESSION_TYPE_EASY_FIXED_DURATION) {
+            "self-adjust jog/walk"
+        } else {
+            "Planned transition. Follow the interval."
+        }
         else -> state.cooldownWithHysteresisString.takeIf { it.isNotBlank() } ?: return null
     }
 
