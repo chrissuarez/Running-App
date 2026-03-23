@@ -64,6 +64,7 @@ data class CoachCueUiState(
 )
 
 data class WorkoutPlayerUiState(
+    val isEasyFixedDurationMode: Boolean,
     val phaseLabel: String,
     val countdownText: String,
     val intervalLabel: String,
@@ -142,6 +143,7 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
     }
 
     return WorkoutPlayerUiState(
+        isEasyFixedDurationMode = isEasyFixedDuration,
         phaseLabel = phaseLabel,
         countdownText = formatStopwatch(countdownSeconds.toLong()),
         intervalLabel = intervalLabel,

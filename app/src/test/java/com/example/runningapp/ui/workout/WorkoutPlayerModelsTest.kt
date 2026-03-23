@@ -106,6 +106,7 @@ class WorkoutPlayerModelsTest {
 
         val ui = mapWorkoutPlayerUiState(state)
 
+        assertEquals(true, ui.isEasyFixedDurationMode)
         assertEquals("EASY SESSION", ui.phaseLabel)
         assertEquals("30 min easy session", ui.intervalLabel)
         assertEquals("15:00", ui.countdownText)

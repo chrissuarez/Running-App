@@ -1050,9 +1050,14 @@ fun WorkoutView(state: HrState) {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(10.dp)) {
-                        Text("Coach", style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            if (uiState.isEasyFixedDurationMode) "Easy cues" else "Coach",
+                            style = MaterialTheme.typography.labelMedium
+                        )
                         Text(cue.message, style = MaterialTheme.typography.bodyMedium)
-                        Text("Reason: ${cue.reasonTag}", style = MaterialTheme.typography.labelSmall)
+                        if (!uiState.isEasyFixedDurationMode) {
+                            Text("Reason: ${cue.reasonTag}", style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
             }
@@ -1131,7 +1136,13 @@ fun WorkoutView(state: HrState) {
             Spacer(modifier = Modifier.height(8.dp))
             Text("Connection: ${state.connectionStatus}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
-                "Debug state: ${state.sessionStatus} • ${state.currentPhase}",
+                if (uiState.isEasyFixedDurationMode) {
+                    // Keep the debug line neutral for the fixed-duration mode instead of exposing
+                    // phase wording that reads like a structured interval workout.
+                    "Debug state: ${state.sessionStatus}"
+                } else {
+                    "Debug state: ${state.sessionStatus} • ${state.currentPhase}"
+                },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
