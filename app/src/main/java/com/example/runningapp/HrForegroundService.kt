@@ -63,6 +63,7 @@ import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.SessionRepository
+import com.example.runningapp.data.computeEasyFixedDurationSummary
 import java.text.SimpleDateFormat
 import java.util.Date
 
@@ -321,6 +322,23 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             else -> Int.MAX_VALUE
         }
     }
+
+    private suspend fun buildEasyFixedDurationSummary(
+        sessionId: Long,
+        actualDurationSeconds: Int,
+        avgBpm: Int,
+        maxBpm: Int
+    ) = computeEasyFixedDurationSummary(
+        plannedDurationSeconds = easyFixedDurationMainSeconds,
+        actualDurationSeconds = actualDurationSeconds.coerceAtLeast(0),
+        avgBpm = avgBpm,
+        maxBpm = maxBpm,
+        // For easy sessions, time above the easy cap is simply time above Zone 2.
+        timeAboveEasyCapSeconds = ((sessionZoneTimes[3] ?: 0L) + (sessionZoneTimes[4] ?: 0L) + (sessionZoneTimes[5] ?: 0L))
+            .toInt(),
+        noDataSeconds = sessionNoDataSeconds,
+        samples = database.sampleDao().getSamplesForSessionOnce(sessionId)
+    )
 
     private data class StructuredProgressUiState(
         val totalRepeats: Int = 0,
@@ -1247,6 +1265,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     val session = database.sessionDao().getSessionById(sessionId)
                     if (session != null) {
                         val avgBpm = if (sessionSampleCount > 0) (sessionBpmSum / sessionSampleCount).toInt() else 0
+                        val easySummary = if (currentSessionType == SESSION_TYPE_EASY_FIXED_DURATION) {
+                            buildEasyFixedDurationSummary(
+                                sessionId = sessionId,
+                                actualDurationSeconds = finalSecondsRunning.toInt(),
+                                avgBpm = avgBpm,
+                                maxBpm = sessionMaxBpm
+                            )
+                        } else {
+                            null
+                        }
                         val updatedSession = session.copy(
                             endTime = System.currentTimeMillis(),
                             durationSeconds = finalSecondsRunning,
@@ -1263,7 +1291,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             noDataSeconds = sessionNoDataSeconds,
                             walkBreaksCount = finalWalkBreaksCount,
                             isRunWalkMode = finalIsRunWalkMode,
-                            sessionType = currentSessionType
+                            sessionType = currentSessionType,
+                            easyPlannedDurationSeconds = easySummary?.plannedDurationSeconds,
+                            easyActualDurationSeconds = easySummary?.actualDurationSeconds,
+                            easyTotalJogSeconds = easySummary?.totalJogSeconds,
+                            easyTotalWalkSeconds = easySummary?.totalWalkSeconds,
+                            easyJogPercent = easySummary?.jogPercent,
+                            easyLongestJogBoutSeconds = easySummary?.longestJogBoutSeconds,
+                            easyWalkInterruptions = easySummary?.walkInterruptions,
+                            easyHrSummary = easySummary?.hrSummary,
+                            easyTimeAboveCapSeconds = easySummary?.timeAboveEasyCapSeconds,
+                            easyDataQualitySummary = easySummary?.dataQualitySummary
                         )
                         database.sessionDao().updateSession(updatedSession)
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")

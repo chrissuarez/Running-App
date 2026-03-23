@@ -26,7 +26,17 @@ data class RunnerSession(
     val walkBreaksCount: Int = 0,
     val isRunWalkMode: Boolean = false,
     val sessionType: String = "Run/Walk",
-    val includeInAiTraining: Boolean = true
+    val includeInAiTraining: Boolean = true,
+    val easyPlannedDurationSeconds: Int? = null,
+    val easyActualDurationSeconds: Int? = null,
+    val easyTotalJogSeconds: Int? = null,
+    val easyTotalWalkSeconds: Int? = null,
+    val easyJogPercent: Int? = null,
+    val easyLongestJogBoutSeconds: Int? = null,
+    val easyWalkInterruptions: Int? = null,
+    val easyHrSummary: String? = null,
+    val easyTimeAboveCapSeconds: Int? = null,
+    val easyDataQualitySummary: String? = null
 )
 
 @Entity(
@@ -135,6 +145,9 @@ interface SampleDao {
 
     @Query("SELECT * FROM hr_samples WHERE sessionId = :sessionId ORDER BY elapsedSeconds ASC")
     fun getSamplesForSession(sessionId: Long): Flow<List<HrSample>>
+
+    @Query("SELECT * FROM hr_samples WHERE sessionId = :sessionId ORDER BY elapsedSeconds ASC")
+    suspend fun getSamplesForSessionOnce(sessionId: Long): List<HrSample>
 }
 
 @Dao
@@ -154,7 +167,7 @@ interface RunWalkIntervalStatDao {
 
 @Database(
     entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -180,7 +193,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_4_5,
                     MIGRATION_5_6,
                     MIGRATION_6_7,
-                    MIGRATION_7_8
+                    MIGRATION_7_8,
+                    MIGRATION_8_9
                 )
                 .build()
                 INSTANCE = instance
@@ -263,5 +277,20 @@ val MIGRATION_7_8 = object : Migration(7, 8) {
         database.execSQL(
             "ALTER TABLE run_walk_interval_stats ADD COLUMN avgRecoverySecondsAfterTriggerInInterval REAL"
         )
+    }
+}
+
+val MIGRATION_8_9 = object : Migration(8, 9) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE sessions ADD COLUMN easyPlannedDurationSeconds INTEGER")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN easyActualDurationSeconds INTEGER")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN easyTotalJogSeconds INTEGER")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN easyTotalWalkSeconds INTEGER")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN easyJogPercent INTEGER")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN easyLongestJogBoutSeconds INTEGER")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN easyWalkInterruptions INTEGER")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN easyHrSummary TEXT")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN easyTimeAboveCapSeconds INTEGER")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN easyDataQualitySummary TEXT")
     }
 }
