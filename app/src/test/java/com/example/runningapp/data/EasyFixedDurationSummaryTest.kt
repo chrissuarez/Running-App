@@ -9,7 +9,7 @@ class EasyFixedDurationSummaryTest {
     @Test
     fun `computeEasyFixedDurationSummary derives locomotion metrics from stable jog then walk pace samples`() {
         val samples = buildList {
-            repeat(40) { second ->
+            repeat(50) { second ->
                 add(
                     HrSample(
                         sessionId = 1,
@@ -25,7 +25,7 @@ class EasyFixedDurationSummaryTest {
                 add(
                     HrSample(
                         sessionId = 1,
-                        elapsedSeconds = (40 + offset).toLong(),
+                        elapsedSeconds = (50 + offset).toLong(),
                         rawBpm = 120,
                         smoothedBpm = 120,
                         connectionState = "Connected",
@@ -37,7 +37,7 @@ class EasyFixedDurationSummaryTest {
 
         val summary = computeEasyFixedDurationSummary(
             plannedDurationSeconds = 1800,
-            actualDurationSeconds = 60,
+            actualDurationSeconds = 70,
             avgBpm = 126,
             maxBpm = 145,
             timeAboveEasyCapSeconds = 7,
@@ -46,14 +46,14 @@ class EasyFixedDurationSummaryTest {
         )
 
         assertEquals(1800, summary.plannedDurationSeconds)
-        assertEquals(60, summary.actualDurationSeconds)
-        assertEquals(40, summary.totalJogSeconds)
+        assertEquals(70, summary.actualDurationSeconds)
+        assertEquals(50, summary.totalJogSeconds)
         assertEquals(16, summary.totalWalkSeconds)
-        assertEquals(71, summary.jogPercent)
-        assertEquals(40, summary.longestJogBoutSeconds)
+        assertEquals(76, summary.jogPercent)
+        assertEquals(50, summary.longestJogBoutSeconds)
         assertEquals(1, summary.walkInterruptions)
         assertEquals(7, summary.timeAboveEasyCapSeconds)
-        assertEquals("pace_inferred coverage=93% noData=0s", summary.dataQualitySummary)
+        assertEquals("pace_inferred coverage=94% noData=0s", summary.dataQualitySummary)
     }
 
     @Test
@@ -88,12 +88,12 @@ class EasyFixedDurationSummaryTest {
             samples = samples
         )
 
-        assertEquals(70, summary.totalJogSeconds)
+        assertEquals(66, summary.totalJogSeconds)
         assertEquals(0, summary.totalWalkSeconds)
         assertEquals(100, summary.jogPercent)
-        assertEquals(70, summary.longestJogBoutSeconds)
+        assertEquals(66, summary.longestJogBoutSeconds)
         assertEquals(0, summary.walkInterruptions)
-        assertEquals("pace_inferred coverage=100% noData=0s", summary.dataQualitySummary)
+        assertEquals("pace_inferred coverage=94% noData=0s", summary.dataQualitySummary)
     }
 
     @Test
@@ -111,7 +111,7 @@ class EasyFixedDurationSummaryTest {
                     )
                 )
             }
-            repeat(61) { offset ->
+            repeat(64) { offset ->
                 add(
                     HrSample(
                         sessionId = 1,
@@ -127,7 +127,7 @@ class EasyFixedDurationSummaryTest {
 
         val summary = computeEasyFixedDurationSummary(
             plannedDurationSeconds = 1800,
-            actualDurationSeconds = 65,
+            actualDurationSeconds = 68,
             avgBpm = 124,
             maxBpm = 145,
             timeAboveEasyCapSeconds = 10,
@@ -135,10 +135,10 @@ class EasyFixedDurationSummaryTest {
             samples = samples
         )
 
-        assertEquals(57, summary.totalJogSeconds)
+        assertEquals(60, summary.totalJogSeconds)
         assertEquals(0, summary.totalWalkSeconds)
         assertEquals(100, summary.jogPercent)
-        assertEquals(57, summary.longestJogBoutSeconds)
+        assertEquals(60, summary.longestJogBoutSeconds)
         assertEquals(0, summary.walkInterruptions)
         assertEquals("pace_inferred coverage=88% noData=4s", summary.dataQualitySummary)
     }
@@ -228,7 +228,7 @@ class EasyFixedDurationSummaryTest {
         assertEquals(35, summary.totalJogSeconds)
         assertEquals(31, summary.totalWalkSeconds)
         assertEquals(53, summary.jogPercent)
-        assertEquals(35, summary.longestJogBoutSeconds)
+        assertEquals(31, summary.longestJogBoutSeconds)
         assertEquals(1, summary.walkInterruptions)
         assertEquals("pace_inferred coverage=83% noData=10s", summary.dataQualitySummary)
     }
