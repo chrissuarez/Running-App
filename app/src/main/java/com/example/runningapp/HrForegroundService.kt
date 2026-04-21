@@ -1494,9 +1494,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             startForeground(
                 NOTIFICATION_ID, 
                 notification, 
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or 
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
             )
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
