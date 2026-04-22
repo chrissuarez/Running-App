@@ -61,6 +61,7 @@ import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.computeEasyFixedDurationSummary
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.Locale
 
 enum class SessionStatus { IDLE, CONNECTING, RUNNING, PAUSED, STOPPING, STOPPED, ERROR }
 enum class SessionPhase { WARM_UP, MAIN, COOL_DOWN }
