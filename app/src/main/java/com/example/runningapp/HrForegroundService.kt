@@ -43,13 +43,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.jvm.Volatile
 import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationCallback
-import com.google.android.gms.location.LocationRequest
-import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
-import android.location.Location
-import java.util.LinkedList
 import java.util.UUID
 import kotlin.math.roundToInt
 import com.example.runningapp.data.AppDatabase
@@ -156,13 +150,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     // Mission 4: Location
     private lateinit var fusedLocationClient: FusedLocationProviderClient
-    private var locationCallback: LocationCallback? = null
-    private var locationHandlerThread: HandlerThread? = null
-    private var locationHandler: Handler? = null
-    private var lastValidLocationTime = 0L
-    private var lastLocation: Location? = null
-    private var sessionDistanceMeters = 0.0
-    private var lastSplitAnnouncedKm = 0
+    private var locationTracker: LocationTracker? = null
     private var lastNotificationZone = -1
     private var lastNotificationPhase = SessionPhase.WARM_UP
     
@@ -182,10 +170,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
     
-    // Pace Smoothing (15s window)
-    private val PACE_WINDOW_MS = 15000L
-    private val paceHistory = LinkedList<Pair<Long, Double>>() // Pair<Timestamp, MetersPerSecond>
-
     private lateinit var settingsRepository: SettingsRepository
     private lateinit var sessionRepository: SessionRepository
     private var currentSettings = UserSettings()
@@ -619,6 +603,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         sessionRepository = appContainer.sessionRepository
         
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+        locationTracker = LocationTracker(
+            context = this,
+            fusedLocationClient = fusedLocationClient,
+            logTag = TAG,
+            playCue = { playCue(it) },
+            getSessionStatus = { _hrState.value.sessionStatus },
+            getShouldTrack = { currentSettings.runMode == "outdoor" && !isSimulationEnabled },
+            isSplitAnnouncementsEnabled = { currentSettings.splitAnnouncementsEnabled },
+            onMetricsUpdated = { distanceKm, paceMinPerKm, lastLocation ->
+                _hrState.update { it.copy(distanceKm = distanceKm, paceMinPerKm = paceMinPerKm) }
+            }
+        )
         
         // Mission: Dedicated Session Thread
         sessionHandlerThread = HandlerThread("SessionTrackingThread").apply { start() }
@@ -759,8 +755,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                     rawBpm = currentBpm,
                                     smoothedBpm = currentState.avgBpm,
                                     connectionState = currentState.connectionStatus,
-                                    latitude = lastLocation?.latitude,
-                                    longitude = lastLocation?.longitude,
+                                    latitude = locationTracker?.getLastLocation()?.latitude,
+                                    longitude = locationTracker?.getLastLocation()?.longitude,
                                     paceMinPerKm = currentState.paceMinPerKm
                                 )
                                 serviceScope.launch(Dispatchers.IO) {
@@ -1068,7 +1064,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun pauseSession() {
         _hrState.update { it.copy(sessionStatus = SessionStatus.PAUSED) }
-        stopLocationUpdates()
+        locationTracker?.stop()
         updateNotification(forceUpdate = true)
         Log.d(TAG, "Session PAUSED")
     }
@@ -1079,7 +1075,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
         startSessionTimerLoop()
-        restartLocationTrackingIfNeeded("resumeSession")
+        locationTracker?.restartIfNeeded("resumeSession", currentSettings.runMode, isSimulationEnabled)
         updateNotification(forceUpdate = true)
         Log.d(TAG, "Session RESUMED")
     }
@@ -1109,10 +1105,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             sessionSecondsPaused = 0
             
             // Mission 4: Reset Location/Pace variables
-            sessionDistanceMeters = 0.0
-            lastSplitAnnouncedKm = 0
-            synchronized(paceHistory) { paceHistory.clear() }
-            lastLocation = null
+            locationTracker?.resetSessionState()
 
             // Mission: Immediate UI State Reset 
             _hrState.update { it.copy(
@@ -1244,14 +1237,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // FIX: Capture final counters BEFORE disconnect() resets BLE state
         val finalSecondsRunning = sessionSecondsRunning
         val finalSecondsPaused = sessionSecondsPaused
-        val finalDistanceKm = sessionDistanceMeters / 1000.0
-        val finalAvgPace = calculatePace()
+        val finalDistanceKm = locationTracker?.getDistanceKm() ?: 0.0
+        val finalAvgPace = locationTracker?.getPaceMinPerKm() ?: 0.0
         val finalWalkBreaksCount = walkBreaksCount
         val finalIsRunWalkMode = currentSettings.runWalkCoachEnabled
         finalizeActiveRunIntervalTracking()
 
         disconnect()
-        stopLocationUpdates()
+        locationTracker?.stop()
         
         // Finalize DB session
         val sessionId = currentSessionId
@@ -1713,7 +1706,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
                 // Mission 4 FIX: Ensure location updates start if in outdoor mode
                 if (currentSettings.runMode == "outdoor") {
-                    startLocationUpdates()
+                    locationTracker?.restartIfNeeded("session_start", currentSettings.runMode, isSimulationEnabled)
                 }
                 
                 gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
@@ -2117,160 +2110,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         setSimulationEnabled(!isSimulationEnabled)
     }
 
-    private fun logLocationDecision(reason: String, detail: String) {
-        Log.d(TAG, "Location decision: $reason | $detail")
-    }
-
-    private fun shouldStartOutdoorLocationTracking(): Boolean {
-        return currentSettings.runMode == "outdoor" && !isSimulationEnabled
-    }
-
-    private fun restartLocationTrackingIfNeeded(trigger: String) {
-        if (shouldStartOutdoorLocationTracking()) {
-            logLocationDecision("start", "trigger=$trigger runMode=${currentSettings.runMode} simulation=$isSimulationEnabled")
-            startLocationUpdates()
-        } else {
-            logLocationDecision("skip_start", "trigger=$trigger runMode=${currentSettings.runMode} simulation=$isSimulationEnabled")
-        }
-    }
-
-    private fun startLocationUpdates() {
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            logLocationDecision("permission_missing", "ACCESS_FINE_LOCATION not granted; cannot start updates")
-            Log.w(TAG, "Location permission missing, cannot start updates")
-            return
-        }
-
-        // MISSION: Move location updates to a background thread to prevent main thread stalls
-        if (locationHandlerThread == null || !locationHandlerThread!!.isAlive) {
-            locationHandlerThread = HandlerThread("LocationThread").apply { start() }
-            locationHandler = Handler(locationHandlerThread!!.looper)
-        }
-
-        logLocationDecision("start_request", "Preparing high-accuracy location updates")
-
-        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000L)
-            .setMinUpdateIntervalMillis(2000L)
-            .build()
-
-        locationCallback = object : LocationCallback() {
-            override fun onLocationResult(locationResult: LocationResult) {
-                // Mission: Stop zombie updates if session is no longer active
-                if (_hrState.value.sessionStatus != SessionStatus.RUNNING) {
-                    Log.d(TAG, "Ignoring location update - session not running")
-                    return
-                }
-                for (location in locationResult.locations) {
-                    handleNewLocation(location)
-                }
-            }
-        }
-        
-        fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback!!, locationHandler?.looper ?: mainLooper)
-        Log.d(TAG, "Location updates started on custom looper")
-        logLocationDecision("started", "Location callback registered on background looper")
-    }
-
-    private fun stopLocationUpdates() {
-        Log.d(TAG, "stopLocationUpdates() - Killing location engine")
-        logLocationDecision("stop", "Stopping location updates and clearing last location")
-        val callback = locationCallback
-        if (callback != null) {
-            fusedLocationClient.removeLocationUpdates(callback)
-            locationCallback = null
-        }
-        
-        lastLocation = null
-        Log.d(TAG, "Location updates stopped")
-    }
-
-    private fun handleNewLocation(location: Location) {
-        val now = System.currentTimeMillis()
-        Log.d(TAG, "New location: lat=${location.latitude}, lon=${location.longitude}, acc=${location.accuracy}")
-        
-        // 1. Update Distance and Speed Fallback
-        var speedMps = 0.0
-        lastLocation?.let { last ->
-            val distance = last.distanceTo(location).toDouble()
-            val timeDeltaSec = (now - last.time) / 1000.0
-            
-            // MISSION: Smart Reject - Allow lower accuracy if we just recovered from a gap
-            val timeSinceLastValid = (now - lastValidLocationTime) / 1000
-            val accuracyThreshold = if (timeSinceLastValid > 30) 250.0 else 100.0
-            logLocationDecision("accuracy_threshold", "timeSinceLastValid=${timeSinceLastValid}s threshold=${accuracyThreshold}m")
-
-            if (location.accuracy <= accuracyThreshold) { 
-                sessionDistanceMeters += distance
-                lastValidLocationTime = now
-                Log.d(TAG, "Distance updated: +${"%.2f".format(distance)}m, total=${"%.2f".format(sessionDistanceMeters)}m (Threshold: ${accuracyThreshold}m)")
-            } else {
-                Log.w(TAG, "Location rejected: accuracy=${location.accuracy}m > threshold=${accuracyThreshold}m")
-            }
-
-            // Speed fallback if hardware speed is missing
-            speedMps = if (location.hasSpeed() && location.speed > 0.1f) {
-                location.speed.toDouble()
-            } else if (timeDeltaSec > 0.5) {
-                distance / timeDeltaSec // Calculate speed from distance/time
-            } else {
-                0.0
-            }
-        }
-        lastLocation = location
-        
-        // 2. Update Pace History for Smoothing
-        // Use a lower threshold (0.2 m/s ~= 0.7 km/h) for people walking or testing
-        if (speedMps > 0.2) { 
-            synchronized(paceHistory) {
-                paceHistory.add(Pair(now, speedMps))
-                while (paceHistory.isNotEmpty() && (now - paceHistory.first.first > PACE_WINDOW_MS)) {
-                    paceHistory.removeFirst()
-                }
-            }
-        } else {
-             synchronized(paceHistory) {
-                 paceHistory.add(Pair(now, 0.0))
-                  while (paceHistory.isNotEmpty() && (now - paceHistory.first.first > PACE_WINDOW_MS)) {
-                    paceHistory.removeFirst()
-                }
-             }
-        }
-
-        // 3. Check for 1km Splits
-        val currentKm = (sessionDistanceMeters / 1000).toInt()
-        if (currentSettings.splitAnnouncementsEnabled && currentKm > lastSplitAnnouncedKm) {
-            lastSplitAnnouncedKm = currentKm
-            val pace = calculatePace()
-            if (pace > 0) {
-                val paceMins = pace.toInt()
-                val paceSecs = ((pace - paceMins) * 60).roundToInt()
-                playCue("Split $currentKm kilometer. Pace $paceMins minutes $paceSecs seconds per kilometer.")
-            } else {
-                playCue("Split $currentKm kilometer.")
-            }
-        }
-
-        val currentDistanceKm = sessionDistanceMeters / 1000.0
-        val currentPace = calculatePace()
-        logLocationDecision("state_update", "distanceKm=${"%.3f".format(currentDistanceKm)} paceMinPerKm=${"%.2f".format(currentPace)}")
-
-        _hrState.update { it.copy(
-            distanceKm = currentDistanceKm,
-            paceMinPerKm = currentPace
-        ) }
-    }
-
-    private fun calculatePace(): Double {
-        synchronized(paceHistory) {
-            if (paceHistory.isEmpty()) return 0.0
-            val avgSpeedMps = paceHistory.map { it.second }.average()
-            if (avgSpeedMps <= 0.1) return 0.0
-            
-            // Pace (min/km) = 1000 / (speed * 60)
-            return 1000.0 / (avgSpeedMps * 60.0)
-        }
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "onDestroy called - Clean Exit")
@@ -2290,7 +2129,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         sessionHandlerThread?.quitSafely()
         sessionHandlerThread = null
         
-        stopLocationUpdates()
+        locationTracker?.shutdown()
         
         releaseWakeLock()
         audioCueManager?.shutdown()
