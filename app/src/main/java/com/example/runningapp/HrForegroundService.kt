@@ -1079,9 +1079,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
         startSessionTimerLoop()
-        if (currentSettings.runMode == "outdoor" && !isSimulationEnabled) {
-            startLocationUpdates()
-        }
+        restartLocationTrackingIfNeeded("resumeSession")
         updateNotification(forceUpdate = true)
         Log.d(TAG, "Session RESUMED")
     }
@@ -2119,8 +2117,26 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         setSimulationEnabled(!isSimulationEnabled)
     }
 
+    private fun logLocationDecision(reason: String, detail: String) {
+        Log.d(TAG, "Location decision: $reason | $detail")
+    }
+
+    private fun shouldStartOutdoorLocationTracking(): Boolean {
+        return currentSettings.runMode == "outdoor" && !isSimulationEnabled
+    }
+
+    private fun restartLocationTrackingIfNeeded(trigger: String) {
+        if (shouldStartOutdoorLocationTracking()) {
+            logLocationDecision("start", "trigger=$trigger runMode=${currentSettings.runMode} simulation=$isSimulationEnabled")
+            startLocationUpdates()
+        } else {
+            logLocationDecision("skip_start", "trigger=$trigger runMode=${currentSettings.runMode} simulation=$isSimulationEnabled")
+        }
+    }
+
     private fun startLocationUpdates() {
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            logLocationDecision("permission_missing", "ACCESS_FINE_LOCATION not granted; cannot start updates")
             Log.w(TAG, "Location permission missing, cannot start updates")
             return
         }
@@ -2130,6 +2146,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             locationHandlerThread = HandlerThread("LocationThread").apply { start() }
             locationHandler = Handler(locationHandlerThread!!.looper)
         }
+
+        logLocationDecision("start_request", "Preparing high-accuracy location updates")
 
         val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000L)
             .setMinUpdateIntervalMillis(2000L)
@@ -2150,10 +2168,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         
         fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback!!, locationHandler?.looper ?: mainLooper)
         Log.d(TAG, "Location updates started on custom looper")
+        logLocationDecision("started", "Location callback registered on background looper")
     }
 
     private fun stopLocationUpdates() {
         Log.d(TAG, "stopLocationUpdates() - Killing location engine")
+        logLocationDecision("stop", "Stopping location updates and clearing last location")
         val callback = locationCallback
         if (callback != null) {
             fusedLocationClient.removeLocationUpdates(callback)
@@ -2177,7 +2197,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // MISSION: Smart Reject - Allow lower accuracy if we just recovered from a gap
             val timeSinceLastValid = (now - lastValidLocationTime) / 1000
             val accuracyThreshold = if (timeSinceLastValid > 30) 250.0 else 100.0
-            
+            logLocationDecision("accuracy_threshold", "timeSinceLastValid=${timeSinceLastValid}s threshold=${accuracyThreshold}m")
+
             if (location.accuracy <= accuracyThreshold) { 
                 sessionDistanceMeters += distance
                 lastValidLocationTime = now
@@ -2231,6 +2252,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         val currentDistanceKm = sessionDistanceMeters / 1000.0
         val currentPace = calculatePace()
+        logLocationDecision("state_update", "distanceKm=${"%.3f".format(currentDistanceKm)} paceMinPerKm=${"%.2f".format(currentPace)}")
 
         _hrState.update { it.copy(
             distanceKm = currentDistanceKm,
