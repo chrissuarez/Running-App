@@ -585,7 +585,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     override fun onCreate() {
         super.onCreate()
-        settingsRepository = SettingsRepository(this)
+        val appContainer = runningAppContainer()
+        settingsRepository = appContainer.settingsRepository
         
         serviceScope.launch {
             settingsRepository.userSettingsFlow.collect { settings ->
@@ -601,13 +602,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         tts = TextToSpeech(this, this)
         
         
-        database = AppDatabase.getDatabase(this)
-        sessionRepository = SessionRepository(
-            sessionDao = database.sessionDao(),
-            runWalkIntervalStatDao = database.runWalkIntervalStatDao(),
-            settingsRepository = settingsRepository,
-            aiCoachClient = AiCoachClient()
-        )
+        database = appContainer.database
+        sessionRepository = appContainer.sessionRepository
         
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
         
