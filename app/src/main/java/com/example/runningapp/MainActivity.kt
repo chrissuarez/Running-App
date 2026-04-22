@@ -41,9 +41,6 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
-import com.example.runningapp.data.AppDatabase
-import com.example.runningapp.data.AiCoachClient
-import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.ui.HistoryScreen
 import com.example.runningapp.ui.HistoryViewModel
 import com.example.runningapp.ui.HistoryViewModelFactory
@@ -71,10 +68,6 @@ class MainActivity : ComponentActivity() {
 
     private var hrService by mutableStateOf<HrForegroundService?>(null)
     private var isBound by mutableStateOf(false)
-    private val aiCoachClient by lazy {
-        AiCoachClient()
-    }
-
     private var currentScreenState = mutableStateOf("main")
 
     private val connection = object : ServiceConnection {
@@ -123,11 +116,12 @@ class MainActivity : ComponentActivity() {
                     var currentScreen by currentScreenState
                     var selectedSessionId by rememberSaveable { mutableStateOf<Long?>(null) }
                     
-                    val settingsRepository = remember { SettingsRepository(this) }
+                    val appContainer = remember { this.runningAppContainer() }
+                    val settingsRepository = remember { appContainer.settingsRepository }
                     val userSettings by settingsRepository.userSettingsFlow.collectAsState(initial = UserSettings())
 
-                    val database = remember { AppDatabase.getDatabase(this) }
-                    val sessionRepository = remember { SessionRepository(database.sessionDao()) }
+                    val database = remember { appContainer.database }
+                    val sessionRepository = remember { appContainer.sessionRepository }
                     val historyViewModel: HistoryViewModel = viewModel(
                         factory = HistoryViewModelFactory(sessionRepository)
                     )
