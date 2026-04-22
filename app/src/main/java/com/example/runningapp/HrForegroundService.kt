@@ -16,8 +16,6 @@ import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Binder
 import android.content.pm.ServiceInfo
@@ -28,7 +26,6 @@ import android.app.PendingIntent
 import android.os.Handler
 import android.os.HandlerThread
 import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
@@ -37,7 +34,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,7 +50,6 @@ import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import android.location.Location
 import java.util.LinkedList
-import java.util.Locale
 import java.util.UUID
 import kotlin.math.roundToInt
 import com.example.runningapp.data.AppDatabase
@@ -156,12 +151,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // TTS & Audio Focus
     private var tts: TextToSpeech? = null
     private var audioManager: AudioManager? = null
-    private var focusRequest: AudioFocusRequest? = null
-    private var currentCueUtteranceId: String? = null
-    private var isCueFocusHeld = false
-    private var cueCounter = 0L
-    private var cueFocusTimeoutJob: Job? = null
-    private val cueFocusTimeoutMs = 8_000L
+    private var audioCueManager: AudioCueManager? = null
 
     // Mission 4: Location
     private lateinit var fusedLocationClient: FusedLocationProviderClient
@@ -621,6 +611,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         tts = TextToSpeech(this, this)
+        tts?.let { audioCueManager = AudioCueManager(it, audioManager, serviceScope, TAG) }
         
         
         database = appContainer.database
@@ -1343,122 +1334,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             currentSessionIncludeInAiTraining = true
         }
 
-        releaseCueAudioFocus("session_stop", currentCueUtteranceId)
+        audioCueManager?.releaseForSessionStop()
         _hrState.update { it.copy(sessionStatus = SessionStatus.STOPPED) }
         stopForegroundService()
     }
     
     override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) {
-            tts?.language = Locale.US
-            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {}
-
-                override fun onDone(utteranceId: String?) {
-                    if (isCurrentCueUtterance(utteranceId)) {
-                        releaseCueAudioFocus("done", utteranceId)
-                    }
-                }
-
-                override fun onError(utteranceId: String?) {
-                    if (isCurrentCueUtterance(utteranceId)) {
-                        releaseCueAudioFocus("error", utteranceId)
-                    }
-                }
-
-                override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                    if (isCurrentCueUtterance(utteranceId)) {
-                        releaseCueAudioFocus("stop(interrupted=$interrupted)", utteranceId)
-                    }
-                }
-            })
-        } else {
-            Log.e(TAG, "TTS Initialization failed")
-        }
+        audioCueManager?.onTtsInit(status)
     }
     
     fun playCue(text: String) {
         if (currentSessionType == SESSION_TYPE_FREE_TRACK) return
-        if (tts == null) return
-
-        if (isCueFocusHeld) {
-            releaseCueAudioFocus("pre_speak_cleanup", currentCueUtteranceId)
-        }
-
-        if (requestAudioFocus()) {
-            val utteranceId = "CUE_${++cueCounter}_${System.currentTimeMillis()}"
-            currentCueUtteranceId = utteranceId
-            isCueFocusHeld = true
-            scheduleCueFocusTimeout(utteranceId)
-
-            val params = android.os.Bundle()
-            params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
-            Log.d(TAG, "Playing Cue: $text (utteranceId=$utteranceId)")
-        } else {
-            Log.w(TAG, "Audio focus request failed")
-        }
-    }
-
-    private fun requestAudioFocus(): Boolean {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val attributes = AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                .build()
-
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                .setAudioAttributes(attributes)
-                .setAcceptsDelayedFocusGain(false)
-                .setOnAudioFocusChangeListener { /* No-op, managed by transient duration */ }
-                .build()
-
-            focusRequest = request
-            val res = audioManager?.requestAudioFocus(request)
-            return res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        } else {
-            @Suppress("DEPRECATION")
-            val res = audioManager?.requestAudioFocus(
-                null, 
-                AudioManager.STREAM_MUSIC, 
-                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
-            )
-            return res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        }
-    }
-
-    private fun abandonAudioFocus() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            focusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager?.abandonAudioFocus(null)
-        }
-    }
-
-    private fun isCurrentCueUtterance(utteranceId: String?): Boolean {
-        return utteranceId != null && utteranceId == currentCueUtteranceId
-    }
-
-    private fun scheduleCueFocusTimeout(utteranceId: String) {
-        cueFocusTimeoutJob?.cancel()
-        cueFocusTimeoutJob = serviceScope.launch {
-            delay(cueFocusTimeoutMs)
-            if (isCurrentCueUtterance(utteranceId)) {
-                releaseCueAudioFocus("timeout", utteranceId)
-            }
-        }
-    }
-
-    private fun releaseCueAudioFocus(reason: String, utteranceId: String? = null) {
-        if (!isCueFocusHeld) return
-
-        cueFocusTimeoutJob?.cancel()
-        cueFocusTimeoutJob = null
-        abandonAudioFocus()
-        isCueFocusHeld = false
-        currentCueUtteranceId = null
-        Log.d(TAG, "Released cue audio focus: reason=$reason utteranceId=$utteranceId")
+        audioCueManager?.playCue(text)
     }
 
 
@@ -2383,8 +2270,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         stopLocationUpdates()
         
         releaseWakeLock()
-        releaseCueAudioFocus("service_destroy", currentCueUtteranceId)
-        tts?.shutdown()
+        audioCueManager?.shutdown()
         Log.d(TAG, "Service destroyed")
     }
 }
