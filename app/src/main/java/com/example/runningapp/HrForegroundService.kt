@@ -310,6 +310,27 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun logBleDecision(reason: String, detail: String) {
+        Log.d(TAG, "BLE decision: $reason | $detail")
+    }
+
+    private fun startHardwareSession(overrideAddress: String?) {
+        if (overrideAddress != null) {
+            logBleDecision("direct_connect", "Using override device address=$overrideAddress")
+            connectToDevice(overrideAddress)
+            return
+        }
+
+        val savedAddress = currentSettings.activeDeviceAddress
+        if (savedAddress != null) {
+            logBleDecision("saved_device_reconnect", "Using saved activeDeviceAddress=$savedAddress")
+            connectToDevice(savedAddress)
+        } else {
+            logBleDecision("fresh_scan", "No saved device available; starting BLE scan")
+            startScanning()
+        }
+    }
+
     private fun resetRunIntervalTracking() {
         activeRunIntervalTracker = null
         completedRunIntervalStats.clear()
@@ -1012,18 +1033,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                 if (!isSimulationEnabled) {
                     serviceScope.launch {
-                        if (overrideAddress != null) {
-                            Log.d(TAG, "EXTRA_DEVICE_ADDRESS found: $overrideAddress. Overriding saved state.")
-                            connectToDevice(overrideAddress)
-                        } else {
-                            // Try to connect to active device first, else scan
-                            val settings = currentSettings
-                            if (settings.activeDeviceAddress != null) {
-                                connectToDevice(settings.activeDeviceAddress!!)
-                            } else {
-                                startScanning()
-                            }
-                        }
+                        startHardwareSession(overrideAddress)
                     }
                 } else {
                     Log.d(TAG, "ACTION_START_FOREGROUND received while simulation is active. Skipping hardware startup.")
@@ -1042,6 +1052,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 Log.d(TAG, "ACTION_FORCE_SCAN received")
                 startForegroundService()
                 if (!isSimulationEnabled) {
+                    logBleDecision("force_scan", "User requested a fresh scan; skipping saved-device reconnect")
                     startScanning()
                 } else {
                     Log.d(TAG, "Ignoring Force Scan - Simulation Mode is active.")
@@ -1622,6 +1633,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
 
         Log.d(TAG, "startScanning() - Resetting connection state and starting fresh scan")
+        logBleDecision("scan_reset", "Clearing reconnect target and scanned device list before scan")
         
         // ABORT any current connection attempts or reconnect loops
         isReconnecting = false
@@ -1646,11 +1658,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         
         scanner.startScan(scanCallback)
+        Log.d(TAG, "startScanning() - BLE scan started")
     }
 
     private val scanCallback = object : android.bluetooth.le.ScanCallback() {
         override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult?) {
             result?.device?.let { device ->
+                if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                    Log.d(TAG, "Scan result: name=${device.name ?: "<unnamed>"} address=${device.address}")
+                }
                 _hrState.update { currentState ->
                     val currentList = currentState.scannedDevices
                     if (currentList.none { it.address == device.address }) {
@@ -1671,11 +1687,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         
         override fun onScanFailed(errorCode: Int) {
+            Log.e(TAG, "BLE scan failed with errorCode=$errorCode")
             _hrState.update { it.copy(connectionStatus = "Scan Failed: $errorCode") }
         }
     }
     
     fun connectToDevice(address: String) {
+        logBleDecision("connect_by_address", "Preparing direct connection to address=$address")
         stopScanning()
         
         // Step 3: Deep Cleanup / State Sanitization
@@ -1690,6 +1708,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun stopScanning() {
          if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
              bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+             Log.d(TAG, "stopScanning() - stopScan invoked")
          }
     }
 
