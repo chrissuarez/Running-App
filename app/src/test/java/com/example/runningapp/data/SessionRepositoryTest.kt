@@ -8,7 +8,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
+import org.mockito.kotlin.times
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
 class SessionRepositoryTest {
@@ -92,5 +96,49 @@ class SessionRepositoryTest {
         assertEquals(60, clamped.nextRunDurationSeconds)
         assertEquals(30, clamped.nextWalkDurationSeconds)
         assertEquals(5, clamped.nextRepeats)
+    }
+
+    @Test
+    fun `saveFeelFeedback updates the row when the session is already finalized`() = runTest {
+        val sessionId = 42L
+        val finalizedSession = RunnerSession(startTime = 1_000L, endTime = 2_000L)
+        whenever(mockDao.getSessionById(sessionId)).thenReturn(finalizedSession)
+
+        repository.saveFeelFeedback(sessionId, effort = 7, note = "  Felt good  ")
+
+        verify(mockDao).updateFeelFeedback(sessionId, 7, "Felt good")
+    }
+
+    @Test
+    fun `saveFeelFeedback waits until the session is finalized before updating`() = runTest {
+        val sessionId = 42L
+        val unfinalizedSession = RunnerSession(startTime = 1_000L, endTime = 0L)
+        val finalizedSession = RunnerSession(startTime = 1_000L, endTime = 2_000L)
+        whenever(mockDao.getSessionById(sessionId)).thenReturn(unfinalizedSession, finalizedSession)
+
+        repository.saveFeelFeedback(sessionId, effort = 5, note = null, finalizeWaitStepMillis = 1L)
+
+        verify(mockDao, times(1)).updateFeelFeedback(sessionId, 5, null)
+    }
+
+    @Test
+    fun `saveFeelFeedback is a no-op when effort is null and note is blank`() = runTest {
+        val sessionId = 42L
+
+        repository.saveFeelFeedback(sessionId, effort = null, note = "   ")
+
+        verify(mockDao, never()).getSessionById(any())
+        verify(mockDao, never()).updateFeelFeedback(any(), anyOrNull(), anyOrNull())
+    }
+
+    @Test
+    fun `saveFeelFeedback trims a blank note down to null when effort is provided`() = runTest {
+        val sessionId = 42L
+        val finalizedSession = RunnerSession(startTime = 1_000L, endTime = 2_000L)
+        whenever(mockDao.getSessionById(sessionId)).thenReturn(finalizedSession)
+
+        repository.saveFeelFeedback(sessionId, effort = 3, note = "   ")
+
+        verify(mockDao).updateFeelFeedback(sessionId, 3, null)
     }
 }
