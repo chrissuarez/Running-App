@@ -38,9 +38,15 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import com.example.runningapp.navigation.Routes
 import com.example.runningapp.ui.HistoryScreen
 import com.example.runningapp.ui.HistoryViewModel
 import com.example.runningapp.ui.HistoryViewModelFactory
@@ -68,7 +74,7 @@ class MainActivity : ComponentActivity() {
 
     private var hrService by mutableStateOf<HrForegroundService?>(null)
     private var isBound by mutableStateOf(false)
-    private var currentScreenState = mutableStateOf("main")
+    private var forceMainToken = mutableStateOf(0)
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(className: ComponentName, service: IBinder) {
@@ -76,11 +82,11 @@ class MainActivity : ComponentActivity() {
             val bound = binder.getService()
             hrService = bound
             isBound = true
-            
+
             // Mission: Robust Sync - if service is running, force UI to main screen
             if (bound.isSessionActive()) {
                 Log.d("MainActivity", "Restoring active session UI")
-                currentScreenState.value = "main"
+                forceMainToken.value++
             }
         }
 
@@ -113,9 +119,14 @@ class MainActivity : ComponentActivity() {
                     }
                     val scope = rememberCoroutineScope()
 
-                    var currentScreen by currentScreenState
-                    var selectedSessionId by rememberSaveable { mutableStateOf<Long?>(null) }
-                    
+                    val navController = rememberNavController()
+                    val navigateTo: (String) -> Unit = { route ->
+                        navController.navigate(route) {
+                            popUpTo(navController.graph.id) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
+
                     val appContainer = remember { this.runningAppContainer() }
                     val settingsRepository = remember { appContainer.settingsRepository }
                     val userSettings by settingsRepository.userSettingsFlow.collectAsState(initial = UserSettings())
@@ -130,32 +141,22 @@ class MainActivity : ComponentActivity() {
                     )
                     val selectedSessionIds by historyViewModel.selectedSessionIds.collectAsState()
                     val historySessions by database.sessionDao().getLast20Sessions().collectAsState(initial = emptyList())
-                    
-                    val sessionSamples by produceState<List<com.example.runningapp.data.HrSample>>(initialValue = emptyList(), key1 = selectedSessionId) {
-                        selectedSessionId?.let { id ->
-                            database.sampleDao().getSamplesForSession(id).collect { value = it }
-                        }
-                    }
-                    val sessionIntervalStats by produceState<List<com.example.runningapp.data.RunWalkIntervalStat>>(initialValue = emptyList(), key1 = selectedSessionId) {
-                        selectedSessionId?.let { id ->
-                            database.runWalkIntervalStatDao().getIntervalStatsForSessionFlow(id).collect { value = it }
-                        }
-                    }
-                    val selectedSession by produceState<com.example.runningapp.data.RunnerSession?>(initialValue = null, key1 = selectedSessionId) {
-                        selectedSessionId?.let { id ->
-                            database.sessionDao().getSessionByIdFlow(id).collect { value = it }
+
+                    val forceMainSignal by forceMainToken
+                    LaunchedEffect(forceMainSignal) {
+                        if (forceMainSignal > 0) {
+                            navigateTo(Routes.MAIN)
                         }
                     }
 
                     LaunchedEffect(sessionDetailViewModel) {
                         sessionDetailViewModel.deleteCompleted.collect {
-                            selectedSessionId = null
-                            currentScreen = "history"
+                            navigateTo(Routes.HISTORY)
                         }
                     }
 
-                    when (currentScreen) {
-                        "main" -> {
+                    NavHost(navController = navController, startDestination = Routes.MAIN) {
+                        composable(Routes.MAIN) {
                             MainScreen(
                                 hrService = hrService,
                                 userSettings = userSettings,
@@ -171,10 +172,10 @@ class MainActivity : ComponentActivity() {
                                     hrService?.togglePause()
                                 },
                                 onStopSession = {
-                                     val intent = Intent(this, HrForegroundService::class.java).apply {
+                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_STOP_FOREGROUND
                                     }
-                                    ContextCompat.startForegroundService(this, intent)
+                                    ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
                                 onConnectToDevice = { address, selectedSessionType ->
                                     Log.d("MainActivity", "User tapped device: $address")
@@ -190,16 +191,16 @@ class MainActivity : ComponentActivity() {
                                     hrService?.playCue("Target heart rate reached. Keep it up!")
                                 },
                                 onOpenSettings = {
-                                    currentScreen = "settings"
+                                    navigateTo(Routes.SETTINGS)
                                 },
                                 onOpenHistory = {
-                                    currentScreen = "history"
+                                    navigateTo(Routes.HISTORY)
                                 },
                                 onOpenManageDevices = {
-                                    currentScreen = "manage_devices"
+                                    navigateTo(Routes.MANAGE_DEVICES)
                                 },
                                 onOpenTrainingPlan = {
-                                    currentScreen = "training_plan"
+                                    navigateTo(Routes.TRAINING_PLAN)
                                 },
                                 onToggleSimulation = { simulationEnabled, sessionType ->
                                     scope.launch(Dispatchers.IO) {
@@ -241,7 +242,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             )
                         }
-                        "manage_devices" -> {
+                        composable(Routes.MANAGE_DEVICES) {
                             ManageDevicesScreen(
                                 settings = userSettings,
                                 connectionStatus = serviceState?.value?.connectionStatus ?: "Disconnected",
@@ -264,24 +265,24 @@ class MainActivity : ComponentActivity() {
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.connectToDevice(address)
-                                    currentScreen = "main"
+                                    navigateTo(Routes.MAIN)
                                 },
-                                onBack = { currentScreen = "main" }
+                                onBack = { navigateTo(Routes.MAIN) }
                             )
                         }
-                        "settings" -> {
+                        composable(Routes.SETTINGS) {
                             SettingsScreen(
                                 settings = userSettings,
                                 onSave = { updatedSettings ->
                                     scope.launch {
                                         settingsRepository.updateSettings(updatedSettings)
-                                        currentScreen = "main"
+                                        navigateTo(Routes.MAIN)
                                     }
                                 },
-                                onBack = { currentScreen = "main" }
+                                onBack = { navigateTo(Routes.MAIN) }
                             )
                         }
-                        "history" -> {
+                        composable(Routes.HISTORY) {
                             HistoryScreen(
                                 sessions = historySessions,
                                 selectedSessionIds = selectedSessionIds,
@@ -289,13 +290,33 @@ class MainActivity : ComponentActivity() {
                                 onClearSelection = { historyViewModel.clearSelection() },
                                 onDeleteSelected = { historyViewModel.deleteSelectedSessions() },
                                 onSessionClick = { id ->
-                                    selectedSessionId = id
-                                    currentScreen = "detail"
+                                    navigateTo(Routes.sessionDetail(id))
                                 },
-                                onBack = { currentScreen = "main" }
+                                onBack = { navigateTo(Routes.MAIN) }
                             )
                         }
-                        "detail" -> {
+                        composable(
+                            route = Routes.SESSION_DETAIL,
+                            arguments = listOf(navArgument(Routes.ARG_SESSION_ID) { type = NavType.LongType })
+                        ) { backStackEntry ->
+                            val sessionId = backStackEntry.arguments?.getLong(Routes.ARG_SESSION_ID)
+
+                            val sessionSamples by produceState<List<com.example.runningapp.data.HrSample>>(initialValue = emptyList(), key1 = sessionId) {
+                                sessionId?.let { id ->
+                                    database.sampleDao().getSamplesForSession(id).collect { value = it }
+                                }
+                            }
+                            val sessionIntervalStats by produceState<List<com.example.runningapp.data.RunWalkIntervalStat>>(initialValue = emptyList(), key1 = sessionId) {
+                                sessionId?.let { id ->
+                                    database.runWalkIntervalStatDao().getIntervalStatsForSessionFlow(id).collect { value = it }
+                                }
+                            }
+                            val selectedSession by produceState<com.example.runningapp.data.RunnerSession?>(initialValue = null, key1 = sessionId) {
+                                sessionId?.let { id ->
+                                    database.sessionDao().getSessionByIdFlow(id).collect { value = it }
+                                }
+                            }
+
                             SessionDetailScreen(
                                 session = selectedSession,
                                 samples = sessionSamples,
@@ -303,10 +324,10 @@ class MainActivity : ComponentActivity() {
                                 onDeleteSession = { id ->
                                     sessionDetailViewModel.deleteSession(id)
                                 },
-                                onBack = { currentScreen = "history" }
+                                onBack = { navigateTo(Routes.HISTORY) }
                             )
                         }
-                        "training_plan" -> {
+                        composable(Routes.TRAINING_PLAN) {
                             TrainingPlanScreen(
                                 activePlanId = userSettings.activePlanId,
                                 activeStageId = userSettings.activeStageId,
@@ -315,7 +336,7 @@ class MainActivity : ComponentActivity() {
                                         settingsRepository.setActivePlan(planId, stageId)
                                     }
                                 },
-                                onBack = { currentScreen = "main" }
+                                onBack = { navigateTo(Routes.MAIN) }
                             )
                         }
                     }
