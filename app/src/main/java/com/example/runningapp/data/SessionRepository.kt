@@ -52,6 +52,30 @@ class SessionRepository(
         sessionDao.deleteSessionById(sessionId)
     }
 
+    /**
+     * Persists the post-run "How did that feel?" feedback. The service finalizes the
+     * session row asynchronously after stop with a full-row update, so this waits until
+     * that write has landed (endTime > 0) before touching the row.
+     */
+    suspend fun saveFeelFeedback(
+        sessionId: Long,
+        effort: Int?,
+        note: String?,
+        finalizeWaitStepMillis: Long = 250L
+    ) {
+        if (effort == null && note.isNullOrBlank()) return
+        repeat(20) {
+            val session = sessionDao.getSessionById(sessionId) ?: return
+            if (session.endTime > 0) {
+                sessionDao.updateFeelFeedback(sessionId, effort, note?.trim()?.ifEmpty { null })
+                return
+            }
+            kotlinx.coroutines.delay(finalizeWaitStepMillis)
+        }
+        // Finalize never landed (should not happen) — save the user's input rather than drop it.
+        sessionDao.updateFeelFeedback(sessionId, effort, note?.trim()?.ifEmpty { null })
+    }
+
     suspend fun deleteSessions(sessionIds: List<Long>) {
         if (sessionIds.isEmpty()) return
         sessionDao.deleteSessionsByIds(sessionIds)

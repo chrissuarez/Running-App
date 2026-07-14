@@ -116,8 +116,11 @@ data class HrState(
 
     // Mission 2: Settings Summary
     val userSettings: UserSettings = UserSettings(),
-    
-    val walkBreaksCount: Int = 0
+
+    val walkBreaksCount: Int = 0,
+
+    // Post-run "How did that feel?" sheet: DB row id for the session the UI should prompt about
+    val activeDbSessionId: Long? = null
 )
 
 class HrForegroundService : Service(), TextToSpeech.OnInitListener {
@@ -1130,7 +1133,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 secondsRunning = 0,
                 secondsPaused = 0,
                 distanceKm = 0.0,
-                paceMinPerKm = 0.0
+                paceMinPerKm = 0.0,
+                activeDbSessionId = null
             )}
 
             val session = RunnerSession(
@@ -1140,6 +1144,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 includeInAiTraining = currentSessionIncludeInAiTraining
             )
             currentSessionId = database.sessionDao().insertSession(session)
+            _hrState.update { it.copy(activeDbSessionId = currentSessionId) }
             startSessionTimerLoop()
             sessionMaxBpm = 0
             sessionBpmSum = 0

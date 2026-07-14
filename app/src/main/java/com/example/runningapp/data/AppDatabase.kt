@@ -36,7 +36,11 @@ data class RunnerSession(
     val easyWalkInterruptions: Int? = null,
     val easyHrSummary: String? = null,
     val easyTimeAboveCapSeconds: Int? = null,
-    val easyDataQualitySummary: String? = null
+    val easyDataQualitySummary: String? = null,
+    // Post-run "How did that feel?" feedback. Context only — must never feed
+    // the Effort/TRIMP or Fitness/Fatigue/Form math (#60).
+    val perceivedEffort: Int? = null,
+    val sessionNote: String? = null
 )
 
 @Entity(
@@ -107,6 +111,9 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE id = :sessionId")
     suspend fun getSessionById(sessionId: Long): RunnerSession?
 
+    @Query("UPDATE sessions SET perceivedEffort = :effort, sessionNote = :note WHERE id = :sessionId")
+    suspend fun updateFeelFeedback(sessionId: Long, effort: Int?, note: String?)
+
     @Query("SELECT * FROM sessions WHERE id = :sessionId")
     fun getSessionByIdFlow(sessionId: Long): Flow<RunnerSession?>
 
@@ -167,7 +174,7 @@ interface RunWalkIntervalStatDao {
 
 @Database(
     entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class],
-    version = 9,
+    version = 10,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -194,7 +201,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_5_6,
                     MIGRATION_6_7,
                     MIGRATION_7_8,
-                    MIGRATION_8_9
+                    MIGRATION_8_9,
+                    MIGRATION_9_10
                 )
                 .build()
                 INSTANCE = instance
@@ -292,5 +300,12 @@ val MIGRATION_8_9 = object : Migration(8, 9) {
         database.execSQL("ALTER TABLE sessions ADD COLUMN easyHrSummary TEXT")
         database.execSQL("ALTER TABLE sessions ADD COLUMN easyTimeAboveCapSeconds INTEGER")
         database.execSQL("ALTER TABLE sessions ADD COLUMN easyDataQualitySummary TEXT")
+    }
+}
+
+val MIGRATION_9_10 = object : Migration(9, 10) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE sessions ADD COLUMN perceivedEffort INTEGER")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN sessionNote TEXT")
     }
 }

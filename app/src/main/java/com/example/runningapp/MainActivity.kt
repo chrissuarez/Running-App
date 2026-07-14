@@ -47,6 +47,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import com.example.runningapp.navigation.Routes
+import com.example.runningapp.ui.FeelFeedbackSheet
 import com.example.runningapp.ui.HistoryScreen
 import com.example.runningapp.ui.HistoryViewModel
 import com.example.runningapp.ui.HistoryViewModelFactory
@@ -110,6 +111,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
+                  Box(modifier = Modifier.fillMaxSize()) {
                     val serviceState = produceState(initialValue = HrState(), key1 = hrService) {
                         hrService?.let { service ->
                             lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -118,6 +120,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     val scope = rememberCoroutineScope()
+                    var feelSheetSessionId by rememberSaveable { mutableStateOf<Long?>(null) }
 
                     val navController = rememberNavController()
                     val navigateTo: (String) -> Unit = { route ->
@@ -127,7 +130,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    val appContainer = remember { this.runningAppContainer() }
+                    val appContainer = remember { this@MainActivity.runningAppContainer() }
                     val settingsRepository = remember { appContainer.settingsRepository }
                     val userSettings by settingsRepository.userSettingsFlow.collectAsState(initial = UserSettings())
 
@@ -172,6 +175,13 @@ class MainActivity : ComponentActivity() {
                                     hrService?.togglePause()
                                 },
                                 onStopSession = {
+                                    hrService?.hrState?.value?.let {
+                                        if (it.activeDbSessionId != null &&
+                                            (it.sessionStatus == SessionStatus.RUNNING || it.sessionStatus == SessionStatus.PAUSED)
+                                        ) {
+                                            feelSheetSessionId = it.activeDbSessionId
+                                        }
+                                    }
                                      val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_STOP_FOREGROUND
                                     }
@@ -340,11 +350,24 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                     }
+
+                    feelSheetSessionId?.let { sessionId ->
+                        FeelFeedbackSheet(
+                            onSave = { effort, note ->
+                                scope.launch(Dispatchers.IO) {
+                                    sessionRepository.saveFeelFeedback(sessionId, effort, note)
+                                }
+                                feelSheetSessionId = null
+                            },
+                            onDismiss = { feelSheetSessionId = null }
+                        )
+                    }
+                  }
                 }
             }
         }
     }
-    
+
     override fun onStart() {
         super.onStart()
         Intent(this, HrForegroundService::class.java).also { intent ->
