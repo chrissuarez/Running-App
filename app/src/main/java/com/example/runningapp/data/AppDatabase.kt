@@ -107,6 +107,39 @@ data class MaxSessionLoad30dProjection(
     val maxDurationSeconds: Long?
 )
 
+object TrackPointSource {
+    const val GPS = "GPS"
+    const val BACKFILL = "BACKFILL"
+}
+
+@Entity(
+    tableName = "track_points",
+    foreignKeys = [
+        ForeignKey(
+            entity = RunnerSession::class,
+            parentColumns = ["id"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("sessionId")]
+)
+data class TrackPoint(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sessionId: Long,
+    val latitude: Double,
+    val longitude: Double,
+    val altitudeMeters: Double? = null,
+    // Null for BACKFILL points — historical hr_samples breadcrumbs never recorded GPS accuracy.
+    val horizontalAccuracyMeters: Float? = null,
+    val verticalAccuracyMeters: Float? = null,
+    val speedMps: Float? = null,
+    // Raw barometer pressure at the time of the fix, hPa. Null on phones without a barometer.
+    val barometerPressureHpa: Float? = null,
+    val timestampMillis: Long,
+    val source: String
+)
+
 @Dao
 interface SessionDao {
     @Insert
@@ -200,6 +233,21 @@ interface SampleDao {
 }
 
 @Dao
+interface TrackPointDao {
+    @Insert
+    suspend fun insertTrackPoint(trackPoint: TrackPoint)
+
+    @Insert
+    suspend fun insertTrackPoints(trackPoints: List<TrackPoint>)
+
+    @Query("SELECT * FROM track_points WHERE sessionId = :sessionId ORDER BY timestampMillis ASC")
+    fun getTrackPointsForSession(sessionId: Long): Flow<List<TrackPoint>>
+
+    @Query("SELECT * FROM track_points WHERE sessionId = :sessionId ORDER BY timestampMillis ASC")
+    suspend fun getTrackPointsForSessionOnce(sessionId: Long): List<TrackPoint>
+}
+
+@Dao
 interface RunWalkIntervalStatDao {
     @Insert
     suspend fun insertIntervalStat(stat: RunWalkIntervalStat): Long
@@ -215,14 +263,15 @@ interface RunWalkIntervalStatDao {
 }
 
 @Database(
-    entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class],
-    version = 11,
+    entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class, TrackPoint::class],
+    version = 12,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
     abstract fun sampleDao(): SampleDao
     abstract fun runWalkIntervalStatDao(): RunWalkIntervalStatDao
+    abstract fun trackPointDao(): TrackPointDao
 
     companion object {
         @Volatile
@@ -245,7 +294,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_7_8,
                     MIGRATION_8_9,
                     MIGRATION_9_10,
-                    MIGRATION_10_11
+                    MIGRATION_10_11,
+                    MIGRATION_11_12
                 )
                 .build()
                 INSTANCE = instance
@@ -362,5 +412,84 @@ val MIGRATION_10_11 = object : Migration(10, 11) {
         database.execSQL("ALTER TABLE sessions ADD COLUMN weatherHumidityPercent INTEGER")
         database.execSQL("ALTER TABLE sessions ADD COLUMN weatherWindSpeedKmh REAL")
         database.execSQL("ALTER TABLE sessions ADD COLUMN weatherConditionCode INTEGER")
+    }
+}
+
+val MIGRATION_11_12 = object : Migration(11, 12) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `track_points` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `sessionId` INTEGER NOT NULL,
+                `latitude` REAL NOT NULL,
+                `longitude` REAL NOT NULL,
+                `altitudeMeters` REAL,
+                `horizontalAccuracyMeters` REAL,
+                `verticalAccuracyMeters` REAL,
+                `speedMps` REAL,
+                `barometerPressureHpa` REAL,
+                `timestampMillis` INTEGER NOT NULL,
+                `source` TEXT NOT NULL,
+                FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_track_points_sessionId` ON `track_points` (`sessionId`)"
+        )
+        backfillTrackPointsFromHrSamples(database)
+    }
+}
+
+/**
+ * Backfills historical hr_samples lat/lon breadcrumbs into track_points as BACKFILL rows,
+ * skipping consecutive duplicate coordinates per session. Walks a Cursor rather than using a
+ * SQL window function for the dedup, since window functions need SQLite 3.25+ and this app's
+ * minSdk 26 devices can ship with older bundled SQLite.
+ */
+private fun backfillTrackPointsFromHrSamples(database: SupportSQLiteDatabase) {
+    val cursor = database.query(
+        """
+        SELECT h.sessionId, h.latitude, h.longitude, h.elapsedSeconds, s.startTime
+        FROM hr_samples h
+        JOIN sessions s ON s.id = h.sessionId
+        WHERE h.latitude IS NOT NULL AND h.longitude IS NOT NULL
+        ORDER BY h.sessionId ASC, h.elapsedSeconds ASC
+        """.trimIndent()
+    )
+    val insertStatement = database.compileStatement(
+        """
+        INSERT INTO track_points
+            (sessionId, latitude, longitude, altitudeMeters, horizontalAccuracyMeters, verticalAccuracyMeters, speedMps, barometerPressureHpa, timestampMillis, source)
+        VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, 'BACKFILL')
+        """.trimIndent()
+    )
+    cursor.use { c ->
+        var lastSessionId: Long? = null
+        var lastLatitude: Double? = null
+        var lastLongitude: Double? = null
+        while (c.moveToNext()) {
+            val sessionId = c.getLong(0)
+            val latitude = c.getDouble(1)
+            val longitude = c.getDouble(2)
+            val elapsedSeconds = c.getLong(3)
+            val startTime = c.getLong(4)
+
+            val isConsecutiveDuplicate = sessionId == lastSessionId &&
+                latitude == lastLatitude &&
+                longitude == lastLongitude
+            if (!isConsecutiveDuplicate) {
+                insertStatement.bindLong(1, sessionId)
+                insertStatement.bindDouble(2, latitude)
+                insertStatement.bindDouble(3, longitude)
+                insertStatement.bindLong(4, startTime + elapsedSeconds * 1000)
+                insertStatement.executeInsert()
+                insertStatement.clearBindings()
+            }
+            lastSessionId = sessionId
+            lastLatitude = latitude
+            lastLongitude = longitude
+        }
     }
 }

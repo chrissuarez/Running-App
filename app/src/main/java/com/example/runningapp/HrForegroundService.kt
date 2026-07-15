@@ -53,6 +53,8 @@ import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.SessionRepository
+import com.example.runningapp.data.TrackPoint
+import com.example.runningapp.data.TrackPointSource
 import com.example.runningapp.data.computeEasyFixedDurationSummary
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -621,6 +623,26 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             isSplitAnnouncementsEnabled = { currentSettings.splitAnnouncementsEnabled },
             onMetricsUpdated = { distanceKm, paceMinPerKm, lastLocation ->
                 _hrState.update { it.copy(distanceKm = distanceKm, paceMinPerKm = paceMinPerKm) }
+            },
+            onRawFix = { location, barometerPressureHpa ->
+                val sessionId = currentSessionId
+                if (sessionId != null) {
+                    val trackPoint = TrackPoint(
+                        sessionId = sessionId,
+                        latitude = location.latitude,
+                        longitude = location.longitude,
+                        altitudeMeters = if (location.hasAltitude()) location.altitude else null,
+                        horizontalAccuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
+                        verticalAccuracyMeters = if (location.hasVerticalAccuracy()) location.verticalAccuracyMeters else null,
+                        speedMps = if (location.hasSpeed()) location.speed else null,
+                        barometerPressureHpa = barometerPressureHpa,
+                        timestampMillis = location.time,
+                        source = TrackPointSource.GPS
+                    )
+                    serviceScope.launch(Dispatchers.IO) {
+                        database.trackPointDao().insertTrackPoint(trackPoint)
+                    }
+                }
             }
         )
         
@@ -763,8 +785,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                     rawBpm = currentBpm,
                                     smoothedBpm = currentState.avgBpm,
                                     connectionState = currentState.connectionStatus,
-                                    latitude = locationTracker?.getLastLocation()?.latitude,
-                                    longitude = locationTracker?.getLastLocation()?.longitude,
                                     paceMinPerKm = currentState.paceMinPerKm
                                 )
                                 serviceScope.launch(Dispatchers.IO) {

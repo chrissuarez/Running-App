@@ -26,12 +26,14 @@ class LocationTracker(
     private val getShouldTrack: () -> Boolean,
     isSplitAnnouncementsEnabled: () -> Boolean,
     onMetricsUpdated: (distanceKm: Double, paceMinPerKm: Double, lastLocation: Location?) -> Unit,
+    private val onRawFix: (location: Location, barometerPressureHpa: Float?) -> Unit = { _, _ -> },
 ) {
     private var locationCallback: LocationCallback? = null
     private var locationHandlerThread: HandlerThread? = null
     private var locationHandler: Handler? = null
     private var lastLocation: Location? = null
     private var firstLocation: Location? = null
+    private val barometerReader = BarometerReader(context)
 
     private val sessionRecorder = SessionRecorder(
         clock = Clock { System.currentTimeMillis() },
@@ -65,6 +67,7 @@ class LocationTracker(
 
     fun getPaceMinPerKm(): Double = sessionRecorder.getPaceMinPerKm()
 
+    @Synchronized
     fun start() {
         if (locationCallback != null) {
             logDecision("already_started", "Location updates already active; ignoring duplicate start")
@@ -82,9 +85,10 @@ class LocationTracker(
         }
 
         logDecision("start_request", "Preparing high-accuracy location updates")
-        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000L)
-            .setMinUpdateIntervalMillis(2000L)
+        val locationRequest = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
+            .setMinUpdateIntervalMillis(1000L)
             .build()
+        barometerReader.start()
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
@@ -103,6 +107,7 @@ class LocationTracker(
         logDecision("started", "Location callback registered on background looper")
     }
 
+    @Synchronized
     fun stop() {
         Log.d(logTag, "stopLocationUpdates() - Killing location engine")
         logDecision("stop", "Stopping location updates and clearing last location")
@@ -111,6 +116,7 @@ class LocationTracker(
             fusedLocationClient.removeLocationUpdates(callback)
             locationCallback = null
         }
+        barometerReader.stop()
         lastLocation = null
         sessionRecorder.discardLastFix()
         Log.d(logTag, "Location updates stopped")
@@ -129,6 +135,9 @@ class LocationTracker(
         if (firstLocation == null) {
             firstLocation = location
         }
+        // Every received fix is recorded as a track point, unfiltered — SessionRecorder below
+        // applies its own accuracy gate separately, only for live distance/pace accumulation.
+        onRawFix(location, barometerReader.getLastPressureHpa())
         sessionRecorder.onLocationFix(
             LocationFix(
                 latitude = location.latitude,
