@@ -1306,22 +1306,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
                         persistRunIntervalStats(sessionId)
 
-                        // Weather snapshot: off the save path entirely (#79) - a separate,
-                        // non-awaited coroutine so a slow/unreachable weather service can never
-                        // delay or fail the save above. Missed fetches are retried at next launch.
+                        // Weather snapshot: after the save above, but still inside the
+                        // NonCancellable block so stopping from the background (which cancels
+                        // serviceScope right after) can't skip it. fetchAndSaveWeather never
+                        // throws, so it can't fail the save. Missed fetches are retried at next launch.
                         val startLatitude = updatedSession.startLatitude
                         val startLongitude = updatedSession.startLongitude
                         if (updatedSession.runMode == "outdoor" && startLatitude != null && startLongitude != null) {
-                            serviceScope.launch(Dispatchers.IO) {
-                                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                                    sessionRepository.fetchAndSaveWeather(
-                                        sessionId = sessionId,
-                                        latitude = startLatitude,
-                                        longitude = startLongitude,
-                                        atEpochMillis = updatedSession.startTime
-                                    )
-                                }
-                            }
+                            sessionRepository.fetchAndSaveWeather(
+                                sessionId = sessionId,
+                                latitude = startLatitude,
+                                longitude = startLongitude,
+                                atEpochMillis = updatedSession.startTime
+                            )
                         }
 
                         val stageId = currentSettings.activeStageId
