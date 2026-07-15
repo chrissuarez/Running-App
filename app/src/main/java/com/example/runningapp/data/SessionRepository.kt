@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.annotation.VisibleForTesting
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.TrainingPlanProvider
+import com.example.runningapp.recording.SessionRecorder
 import kotlinx.coroutines.flow.first
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -45,12 +46,29 @@ data class Max30dLoad(
 class SessionRepository(
     private val sessionDao: SessionDao,
     private val runWalkIntervalStatDao: RunWalkIntervalStatDao? = null,
+    private val trackPointDao: TrackPointDao? = null,
     private val settingsRepository: SettingsRepository? = null,
     private val aiCoachClient: AiCoachClient? = null,
     private val weatherClient: WeatherClient? = null
 ) {
     suspend fun deleteSession(sessionId: Long) {
         sessionDao.deleteSessionById(sessionId)
+    }
+
+    /**
+     * Track points accepted for map drawing (#38): BACKFILL points are historical breadcrumbs with
+     * no recorded GPS accuracy and are always kept; GPS points must meet the same
+     * [SessionRecorder.ACCURACY_THRESHOLD_METERS] bar applied live during recording, so what the
+     * runner heard mid-run matches what they see on the map afterward.
+     */
+    suspend fun getTrackPointsForMap(sessionId: Long): List<TrackPoint> {
+        val dao = trackPointDao ?: return emptyList()
+        return dao.getTrackPointsForSessionOnce(sessionId).filter { it.isAcceptedForMap() }
+    }
+
+    private fun TrackPoint.isAcceptedForMap(): Boolean = when (source) {
+        TrackPointSource.BACKFILL -> true
+        else -> horizontalAccuracyMeters != null && SessionRecorder.isAccuracyAccepted(horizontalAccuracyMeters)
     }
 
     /**

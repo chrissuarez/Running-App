@@ -141,4 +141,37 @@ class SessionRepositoryTest {
 
         verify(mockDao).updateFeelFeedback(sessionId, 3, null)
     }
+
+    @Test
+    fun `getTrackPointsForMap keeps BACKFILL points and only accurate GPS points`() = runTest {
+        val sessionId = 7L
+        val accurateGps = trackPoint(sessionId, lon = 1.0, accuracy = 15f, source = TrackPointSource.GPS)
+        val boundaryGps = trackPoint(sessionId, lon = 2.0, accuracy = 30f, source = TrackPointSource.GPS)
+        val noisyGps = trackPoint(sessionId, lon = 3.0, accuracy = 45f, source = TrackPointSource.GPS)
+        val unknownAccuracyGps = trackPoint(sessionId, lon = 4.0, accuracy = null, source = TrackPointSource.GPS)
+        val backfill = trackPoint(sessionId, lon = 5.0, accuracy = null, source = TrackPointSource.BACKFILL)
+        val mockTrackPointDao: TrackPointDao = mock()
+        whenever(mockTrackPointDao.getTrackPointsForSessionOnce(sessionId)).thenReturn(
+            listOf(accurateGps, boundaryGps, noisyGps, unknownAccuracyGps, backfill)
+        )
+        val repositoryWithTrackPoints = SessionRepository(sessionDao = mockDao, trackPointDao = mockTrackPointDao)
+
+        val result = repositoryWithTrackPoints.getTrackPointsForMap(sessionId)
+
+        assertEquals(listOf(accurateGps, boundaryGps, backfill), result)
+    }
+
+    @Test
+    fun `getTrackPointsForMap returns an empty list when no track point dao is configured`() = runTest {
+        assertEquals(emptyList<TrackPoint>(), repository.getTrackPointsForMap(sessionId = 7L))
+    }
+
+    private fun trackPoint(sessionId: Long, lon: Double, accuracy: Float?, source: String) = TrackPoint(
+        sessionId = sessionId,
+        latitude = 0.0,
+        longitude = lon,
+        horizontalAccuracyMeters = accuracy,
+        timestampMillis = 0L,
+        source = source
+    )
 }

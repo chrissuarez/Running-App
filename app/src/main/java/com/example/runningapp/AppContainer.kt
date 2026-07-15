@@ -30,6 +30,7 @@ class AppContainer(context: Context) {
         SessionRepository(
             sessionDao = database.sessionDao(),
             runWalkIntervalStatDao = database.runWalkIntervalStatDao(),
+            trackPointDao = database.trackPointDao(),
             settingsRepository = settingsRepository,
             aiCoachClient = aiCoachClient,
             weatherClient = weatherClient

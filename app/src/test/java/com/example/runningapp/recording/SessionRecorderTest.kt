@@ -9,7 +9,7 @@ class SessionRecorderTest {
     private val fakeClock = FakeClock()
 
     @Test
-    fun `onLocationFix sums distance only for accepted fixes but keeps rejected fixes as the baseline`() {
+    fun `onLocationFix measures distance from the last accepted fix, skipping over a rejected one in between`() {
         val recorder = SessionRecorder(
             clock = fakeClock,
             playSplitCue = {},
@@ -21,21 +21,23 @@ class SessionRecorderTest {
         fakeClock.currentMillis = 0
         recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
 
-        // Given: second fix is 500m away but noisy (accuracy 150m > 100m threshold for a <30s gap) - rejected.
-        // It still becomes the new baseline even though it wasn't counted.
+        // Given: second fix is 500m away but noisy (accuracy 45m > 30m threshold) - rejected.
+        // It does NOT become the new baseline - the last accepted fix stays the anchor.
         fakeClock.currentMillis = 2_000
-        recorder.onLocationFix(fix(lon = lonDegreesForMeters(500.0), accuracy = 150f, timestampMs = 2_000))
+        recorder.onLocationFix(fix(lon = lonDegreesForMeters(500.0), accuracy = 45f, timestampMs = 2_000))
 
-        // When: third fix is a further 500m away and clean.
+        // When: third fix is a further 500m away (1000m from the original baseline) and clean.
         fakeClock.currentMillis = 4_000
         recorder.onLocationFix(fix(lon = lonDegreesForMeters(1_000.0), accuracy = 10f, timestampMs = 4_000))
 
-        // Then: only the 500m leg from the rejected fix to this one is counted, not the full 1000m.
-        assertEquals(0.5, recorder.getDistanceKm(), 0.001)
+        // Then: the full 1000m from the last accepted fix counts, not just the 500m leg from the
+        // rejected fix - matching the straight line a map would draw between the two accepted
+        // points once SessionRepository.getTrackPointsForMap() drops the rejected one (#38 review).
+        assertEquals(1.0, recorder.getDistanceKm(), 0.001)
     }
 
     @Test
-    fun `onLocationFix widens the accuracy threshold to 250m after a 30s gap since the last valid fix`() {
+    fun `onLocationFix rejects a fix at 31m accuracy and accepts one at exactly 30m`() {
         val recorder = SessionRecorder(
             clock = fakeClock,
             playSplitCue = {},
@@ -46,13 +48,120 @@ class SessionRecorderTest {
         fakeClock.currentMillis = 0
         recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
 
-        // When: next fix arrives 35s later with 200m accuracy - too poor for the normal 100m
-        // threshold but within the widened 250m threshold used after a >30s gap.
-        fakeClock.currentMillis = 35_000
-        recorder.onLocationFix(fix(lon = lonDegreesForMeters(300.0), accuracy = 200f, timestampMs = 35_000))
+        // When: next fix is 300m away with accuracy just over the 30m bar - rejected, and does
+        // not become the baseline.
+        fakeClock.currentMillis = 1_000
+        recorder.onLocationFix(fix(lon = lonDegreesForMeters(300.0), accuracy = 31f, timestampMs = 1_000))
+        assertEquals(0.0, recorder.getDistanceKm(), 0.001)
 
-        // Then: the fix is accepted.
-        assertEquals(0.3, recorder.getDistanceKm(), 0.001)
+        // When: next fix is a further 300m away (600m from the original baseline) with accuracy
+        // exactly at the 30m bar - accepted, measured straight from the first fix.
+        fakeClock.currentMillis = 2_000
+        recorder.onLocationFix(fix(lon = lonDegreesForMeters(600.0), accuracy = 30f, timestampMs = 2_000))
+        assertEquals(0.6, recorder.getDistanceKm(), 0.001)
+    }
+
+    @Test
+    fun `onLocationFix rejects a fix with no accuracy reading instead of treating it as perfect`() {
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {}
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+
+        // When: next fix is 300m away with no accuracy reading at all (Android's Location.hasAccuracy()
+        // false) - must be rejected, not treated as a perfect 0m-accuracy fix.
+        fakeClock.currentMillis = 1_000
+        recorder.onLocationFix(fix(lon = lonDegreesForMeters(300.0), accuracy = null, timestampMs = 1_000))
+
+        assertEquals(0.0, recorder.getDistanceKm(), 0.001)
+    }
+
+    @Test
+    fun `onLocationFix does not widen the accuracy threshold after a long gap since the last accepted fix`() {
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {}
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+
+        // When: next fix arrives 35s later with 45m accuracy - under the old widened 250m rule
+        // this would have been accepted, but the single 30m bar rejects it regardless of the gap.
+        fakeClock.currentMillis = 35_000
+        recorder.onLocationFix(fix(lon = lonDegreesForMeters(300.0), accuracy = 45f, timestampMs = 35_000))
+
+        assertEquals(0.0, recorder.getDistanceKm(), 0.001)
+    }
+
+    @Test
+    fun `onLocationFix excludes a rejected fix from the pace window and does not fire a split cue for it`() {
+        val cues = mutableListOf<String>()
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = { cues.add(it) },
+            isSplitAnnouncementsEnabled = { true },
+            onMetricsUpdated = {}
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+
+        // When: a noisy fix 1200m away reports GPS speed too, but accuracy 45m fails the 30m bar -
+        // it must not move distance or pace, and must not fire a split cue or become the baseline.
+        fakeClock.currentMillis = 1_000
+        recorder.onLocationFix(
+            fix(lon = lonDegreesForMeters(1_200.0), accuracy = 45f, timestampMs = 1_000, speedMps = 5.0f)
+        )
+
+        assertEquals(0.0, recorder.getDistanceKm(), 0.001)
+        assertEquals(0.0, recorder.getPaceMinPerKm(), 0.001)
+        assertTrue(cues.isEmpty())
+
+        // Then: a clean fix 2400m from the original baseline (not the rejected fix) fires the
+        // cue, measured straight from the last accepted fix, skipping over the rejected one.
+        fakeClock.currentMillis = 2_000
+        recorder.onLocationFix(
+            fix(lon = lonDegreesForMeters(2_400.0), accuracy = 10f, timestampMs = 2_000, speedMps = 5.0f)
+        )
+
+        assertEquals(2.4, recorder.getDistanceKm(), 0.001)
+        assertEquals(listOf("Split 2 kilometer. Pace 6 minutes 40 seconds per kilometer."), cues)
+    }
+
+    @Test
+    fun `onLocationFix prunes stale pace samples even while fixes are being rejected`() {
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {}
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+
+        // Given: an accepted fix establishes a nonzero pace.
+        fakeClock.currentMillis = 1_000
+        recorder.onLocationFix(fix(lon = lonDegreesForMeters(5.0), accuracy = 10f, timestampMs = 1_000, speedMps = 5.0f))
+        assertTrue(recorder.getPaceMinPerKm() > 0.0)
+
+        // When: 20s later (past the 15s pace window) only a rejected fix arrives.
+        fakeClock.currentMillis = 21_000
+        recorder.onLocationFix(
+            fix(lon = lonDegreesForMeters(305.0), accuracy = 45f, timestampMs = 21_000, speedMps = 5.0f)
+        )
+
+        // Then: the stale pace samples still age out of the window even though this fix was
+        // rejected - pruning must not be gated on acceptance, only adding a new sample is.
+        assertEquals(0.0, recorder.getPaceMinPerKm(), 0.001)
     }
 
     @Test
@@ -228,7 +337,7 @@ class SessionRecorderTest {
 
         private fun fix(
             lon: Double,
-            accuracy: Float,
+            accuracy: Float?,
             timestampMs: Long,
             lat: Double = 0.0,
             speedMps: Float? = null,

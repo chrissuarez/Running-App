@@ -240,6 +240,8 @@ interface TrackPointDao {
     @Insert
     suspend fun insertTrackPoints(trackPoints: List<TrackPoint>)
 
+    // Raw, unfiltered by accuracy — map-drawing callers should go through
+    // SessionRepository.getTrackPointsForMap() instead so the #38 accuracy gate applies.
     @Query("SELECT * FROM track_points WHERE sessionId = :sessionId ORDER BY timestampMillis ASC")
     fun getTrackPointsForSession(sessionId: Long): Flow<List<TrackPoint>>
 

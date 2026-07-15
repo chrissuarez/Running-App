@@ -13,7 +13,9 @@ import kotlin.math.tan
 data class LocationFix(
     val latitude: Double,
     val longitude: Double,
-    val accuracyMeters: Float,
+    // Null when the platform location has no accuracy estimate (Android's Location.hasAccuracy()
+    // is false) - must never be treated as a perfect 0m-accuracy fix (#38 review).
+    val accuracyMeters: Float?,
     val speedMps: Float?,
     val timestampMs: Long,
 )
@@ -40,8 +42,11 @@ class SessionRecorder(
     private val onMetricsUpdated: (SessionRecorderMetrics) -> Unit,
     private val logDecision: (reason: String, detail: String) -> Unit = { _, _ -> },
 ) {
-    private var lastValidFixTime = 0L
     private var lastFix: LocationFix? = null
+    // The distance-delta baseline. Deliberately only ever an *accepted* fix, so accumulated
+    // distance always equals the sum of accepted-to-accepted legs - the same thing a map drawn
+    // from SessionRepository.getTrackPointsForMap()'s filtered points would show (#38 review).
+    private var lastAcceptedFix: LocationFix? = null
     private var sessionDistanceMeters = 0.0
     private var lastSplitAnnouncedKm = 0
     private val paceHistory = LinkedList<Pair<Long, Double>>()
@@ -51,13 +56,14 @@ class SessionRecorder(
         lastSplitAnnouncedKm = 0
         synchronized(paceHistory) { paceHistory.clear() }
         lastFix = null
-        lastValidFixTime = 0L
+        lastAcceptedFix = null
         onMetricsUpdated(SessionRecorderMetrics(0.0, 0.0, null))
     }
 
     /** Clears the fix used as the distance-delta baseline without losing accumulated distance/pace state. */
     fun discardLastFix() {
         lastFix = null
+        lastAcceptedFix = null
     }
 
     fun getDistanceKm(): Double = sessionDistanceMeters / 1000.0
@@ -66,50 +72,53 @@ class SessionRecorder(
 
     fun onLocationFix(fix: LocationFix) {
         val now = clock.nowMillis()
+        val accepted = isAccuracyAccepted(fix.accuracyMeters)
 
         var speedMps = 0.0
-        lastFix?.let { last ->
-            val distance = distanceBetweenMeters(last, fix)
-            val timeDeltaSec = (now - last.timestampMs) / 1000.0
-            val timeSinceLastValid = (now - lastValidFixTime) / 1000
-            val accuracyThreshold = if (timeSinceLastValid > 30) 250.0 else 100.0
-            logDecision("accuracy_threshold", "timeSinceLastValid=${timeSinceLastValid}s threshold=${accuracyThreshold}m")
-
-            if (fix.accuracyMeters <= accuracyThreshold) {
+        if (accepted) {
+            lastAcceptedFix?.let { last ->
+                val distance = distanceBetweenMeters(last, fix)
+                val timeDeltaSec = (now - last.timestampMs) / 1000.0
                 sessionDistanceMeters += distance
-                lastValidFixTime = now
                 logDecision("distance_updated", "+${"%.2f".format(distance)}m, total=${"%.2f".format(sessionDistanceMeters)}m")
-            } else {
-                logDecision("location_rejected", "accuracy=${fix.accuracyMeters}m > threshold=${accuracyThreshold}m")
-            }
 
-            speedMps = if (fix.speedMps != null && fix.speedMps > 0.1f) {
-                fix.speedMps.toDouble()
-            } else if (timeDeltaSec > 0.5) {
-                distance / timeDeltaSec
-            } else {
-                0.0
+                speedMps = if (fix.speedMps != null && fix.speedMps > 0.1f) {
+                    fix.speedMps.toDouble()
+                } else if (timeDeltaSec > 0.5) {
+                    distance / timeDeltaSec
+                } else {
+                    0.0
+                }
             }
+            lastAcceptedFix = fix
+        } else {
+            logDecision("location_rejected", "accuracy=${fix.accuracyMeters}m > threshold=${ACCURACY_THRESHOLD_METERS}m")
         }
         lastFix = fix
 
         synchronized(paceHistory) {
-            paceHistory.add(Pair(now, if (speedMps > 0.2) speedMps else 0.0))
+            if (accepted) {
+                paceHistory.add(Pair(now, if (speedMps > 0.2) speedMps else 0.0))
+            }
+            // Prune on every fix, not just accepted ones - otherwise a run of rejected fixes
+            // leaves a stale sample sitting past the pace window instead of aging out (#38 review).
             while (paceHistory.isNotEmpty() && (now - paceHistory.first.first > PACE_WINDOW_MS)) {
                 paceHistory.removeFirst()
             }
         }
 
-        val currentKm = (sessionDistanceMeters / 1000).toInt()
-        if (isSplitAnnouncementsEnabled() && currentKm > lastSplitAnnouncedKm) {
-            lastSplitAnnouncedKm = currentKm
-            val pace = calculatePace()
-            if (pace > 0) {
-                val paceMins = pace.toInt()
-                val paceSecs = ((pace - paceMins) * 60).roundToInt()
-                playSplitCue("Split $currentKm kilometer. Pace $paceMins minutes $paceSecs seconds per kilometer.")
-            } else {
-                playSplitCue("Split $currentKm kilometer.")
+        if (accepted) {
+            val currentKm = (sessionDistanceMeters / 1000).toInt()
+            if (isSplitAnnouncementsEnabled() && currentKm > lastSplitAnnouncedKm) {
+                lastSplitAnnouncedKm = currentKm
+                val pace = calculatePace()
+                if (pace > 0) {
+                    val paceMins = pace.toInt()
+                    val paceSecs = ((pace - paceMins) * 60).roundToInt()
+                    playSplitCue("Split $currentKm kilometer. Pace $paceMins minutes $paceSecs seconds per kilometer.")
+                } else {
+                    playSplitCue("Split $currentKm kilometer.")
+                }
             }
         }
 
@@ -129,6 +138,17 @@ class SessionRecorder(
     }
 
     companion object {
+        /**
+         * GPS fixes coarser than this are excluded from distance, pace, and split cues (#38), and
+         * the same bar gates which stored [com.example.runningapp.data.TrackPoint]s a map query
+         * returns, so what the runner hears mid-run matches what they see afterward.
+         */
+        const val ACCURACY_THRESHOLD_METERS = 30.0
+
+        /** Whether a fix this accurate counts toward distance/pace/split cues or a map read (#38). */
+        fun isAccuracyAccepted(accuracyMeters: Float?): Boolean =
+            accuracyMeters != null && accuracyMeters <= ACCURACY_THRESHOLD_METERS
+
         private const val PACE_WINDOW_MS = 15_000L
 
         // WGS84 ellipsoid semi-major/semi-minor axes, meters.
