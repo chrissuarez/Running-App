@@ -41,6 +41,10 @@ class SessionRecorder(
     private val logDecision: (reason: String, detail: String) -> Unit = { _, _ -> },
 ) {
     private var lastFix: LocationFix? = null
+    // The distance-delta baseline. Deliberately only ever an *accepted* fix, so accumulated
+    // distance always equals the sum of accepted-to-accepted legs - the same thing a map drawn
+    // from SessionRepository.getTrackPointsForMap()'s filtered points would show (#38 review).
+    private var lastAcceptedFix: LocationFix? = null
     private var sessionDistanceMeters = 0.0
     private var lastSplitAnnouncedKm = 0
     private val paceHistory = LinkedList<Pair<Long, Double>>()
@@ -50,12 +54,14 @@ class SessionRecorder(
         lastSplitAnnouncedKm = 0
         synchronized(paceHistory) { paceHistory.clear() }
         lastFix = null
+        lastAcceptedFix = null
         onMetricsUpdated(SessionRecorderMetrics(0.0, 0.0, null))
     }
 
     /** Clears the fix used as the distance-delta baseline without losing accumulated distance/pace state. */
     fun discardLastFix() {
         lastFix = null
+        lastAcceptedFix = null
     }
 
     fun getDistanceKm(): Double = sessionDistanceMeters / 1000.0
@@ -64,28 +70,27 @@ class SessionRecorder(
 
     fun onLocationFix(fix: LocationFix) {
         val now = clock.nowMillis()
+        val accepted = isAccuracyAccepted(fix.accuracyMeters)
 
         var speedMps = 0.0
-        var accepted = true
-        lastFix?.let { last ->
-            accepted = isAccuracyAccepted(fix.accuracyMeters)
-            if (!accepted) {
-                logDecision("location_rejected", "accuracy=${fix.accuracyMeters}m > threshold=${ACCURACY_THRESHOLD_METERS}m")
-                return@let
-            }
+        if (accepted) {
+            lastAcceptedFix?.let { last ->
+                val distance = distanceBetweenMeters(last, fix)
+                val timeDeltaSec = (now - last.timestampMs) / 1000.0
+                sessionDistanceMeters += distance
+                logDecision("distance_updated", "+${"%.2f".format(distance)}m, total=${"%.2f".format(sessionDistanceMeters)}m")
 
-            val distance = distanceBetweenMeters(last, fix)
-            val timeDeltaSec = (now - last.timestampMs) / 1000.0
-            sessionDistanceMeters += distance
-            logDecision("distance_updated", "+${"%.2f".format(distance)}m, total=${"%.2f".format(sessionDistanceMeters)}m")
-
-            speedMps = if (fix.speedMps != null && fix.speedMps > 0.1f) {
-                fix.speedMps.toDouble()
-            } else if (timeDeltaSec > 0.5) {
-                distance / timeDeltaSec
-            } else {
-                0.0
+                speedMps = if (fix.speedMps != null && fix.speedMps > 0.1f) {
+                    fix.speedMps.toDouble()
+                } else if (timeDeltaSec > 0.5) {
+                    distance / timeDeltaSec
+                } else {
+                    0.0
+                }
             }
+            lastAcceptedFix = fix
+        } else {
+            logDecision("location_rejected", "accuracy=${fix.accuracyMeters}m > threshold=${ACCURACY_THRESHOLD_METERS}m")
         }
         lastFix = fix
 
