@@ -1214,6 +1214,7 @@ fun SettingsScreen(
     var testingModeEnabled by remember { mutableStateOf(settings.testingModeEnabled) }
     var runMode by remember { mutableStateOf(settings.runMode) }
     var splitAudio by remember { mutableStateOf(settings.splitAnnouncementsEnabled) }
+    var autoPause by remember { mutableStateOf(settings.autoPauseEnabled) }
     var runWalkCoach by remember { mutableStateOf(settings.runWalkCoachEnabled) }
     
     // Warm-up Selection
@@ -1352,6 +1353,21 @@ fun SettingsScreen(
             Text("1km Split Audio Announcements")
         }
 
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+        ) {
+            Switch(checked = autoPause, onCheckedChange = { autoPause = it })
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text("Auto-Pause on Standstill", fontWeight = FontWeight.Bold)
+                Text(
+                    "Pause automatically at traffic lights and other stops; resume on movement",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
         Text("Session Phases", style = MaterialTheme.typography.titleMedium)
         
@@ -1408,6 +1424,7 @@ fun SettingsScreen(
                 aiDataSharingEnabled = if (testingModeEnabled) false else aiDataSharingEnabled,
                 runMode = runMode,
                 splitAnnouncementsEnabled = splitAudio,
+                autoPauseEnabled = autoPause,
                 runWalkCoachEnabled = runWalkCoach,
                 warmUpDurationSeconds = if (warmUpSelection == "recommended") 480 else {
                     (warmUpMin.toIntOrNull() ?: 0) * 60 + (warmUpSec.toIntOrNull() ?: 0)

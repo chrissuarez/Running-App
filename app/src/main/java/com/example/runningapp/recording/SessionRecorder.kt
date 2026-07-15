@@ -41,6 +41,9 @@ class SessionRecorder(
     private val isSplitAnnouncementsEnabled: () -> Boolean,
     private val onMetricsUpdated: (SessionRecorderMetrics) -> Unit,
     private val logDecision: (reason: String, detail: String) -> Unit = { _, _ -> },
+    private val isAutoPauseEnabled: () -> Boolean = { false },
+    private val onAutoPause: () -> Unit = {},
+    private val onAutoResume: () -> Unit = {},
 ) {
     private var lastFix: LocationFix? = null
     // The distance-delta baseline. Deliberately only ever an *accepted* fix, so accumulated
@@ -51,12 +54,22 @@ class SessionRecorder(
     private var lastSplitAnnouncedKm = 0
     private val paceHistory = LinkedList<Pair<Long, Double>>()
 
+    // Auto-pause state machine (#39). isAutoPaused freezes distance/pace/split-cue processing
+    // below exactly like a host-level manual pause freezes the session clock and interval timers -
+    // the two mechanisms are deliberately symmetric so "paused" always means the same thing.
+    private var isAutoPaused = false
+    private var standstillSinceMs: Long? = null
+    private var movingSinceMs: Long? = null
+
     fun reset() {
         sessionDistanceMeters = 0.0
         lastSplitAnnouncedKm = 0
         synchronized(paceHistory) { paceHistory.clear() }
         lastFix = null
         lastAcceptedFix = null
+        isAutoPaused = false
+        standstillSinceMs = null
+        movingSinceMs = null
         onMetricsUpdated(SessionRecorderMetrics(0.0, 0.0, null))
     }
 
@@ -64,11 +77,31 @@ class SessionRecorder(
     fun discardLastFix() {
         lastFix = null
         lastAcceptedFix = null
+        // Only reached via a manual pause/stop (LocationTracker.stop()), which - unlike
+        // auto-pause - already tears down the GPS stream, so any in-flight standstill tracking
+        // is stale and must not carry over into the next resume (#39).
+        isAutoPaused = false
+        standstillSinceMs = null
+        movingSinceMs = null
+    }
+
+    /**
+     * Forces the auto-pause state machine back to "moving" without firing [onAutoResume] - the
+     * host calls this when it resumes the session by some other means (a manual resume while
+     * auto-paused), so a stale internal auto-pause flag doesn't keep freezing distance/pace/split
+     * cues after the host has already moved on to RUNNING (#39).
+     */
+    fun clearAutoPauseState() {
+        isAutoPaused = false
+        standstillSinceMs = null
+        movingSinceMs = null
     }
 
     fun getDistanceKm(): Double = sessionDistanceMeters / 1000.0
 
     fun getPaceMinPerKm(): Double = calculatePace()
+
+    fun isAutoPaused(): Boolean = isAutoPaused
 
     fun onLocationFix(fix: LocationFix) {
         val now = clock.nowMillis()
@@ -76,12 +109,11 @@ class SessionRecorder(
 
         var speedMps = 0.0
         if (accepted) {
-            lastAcceptedFix?.let { last ->
-                val distance = distanceBetweenMeters(last, fix)
+            val last = lastAcceptedFix
+            var distance = 0.0
+            if (last != null) {
+                distance = distanceBetweenMeters(last, fix)
                 val timeDeltaSec = (now - last.timestampMs) / 1000.0
-                sessionDistanceMeters += distance
-                logDecision("distance_updated", "+${"%.2f".format(distance)}m, total=${"%.2f".format(sessionDistanceMeters)}m")
-
                 speedMps = if (fix.speedMps != null && fix.speedMps > 0.1f) {
                     fix.speedMps.toDouble()
                 } else if (timeDeltaSec > 0.5) {
@@ -90,34 +122,46 @@ class SessionRecorder(
                     0.0
                 }
             }
+            // Resolve the auto-pause transition before deciding whether this fix's own delta
+            // counts, so a fix that crosses the standstill/movement boundary is judged by the
+            // state it just entered, not the one it's leaving (#39).
+            updateAutoPauseState(speedMps, now)
+            if (last != null && !isAutoPaused) {
+                sessionDistanceMeters += distance
+                logDecision("distance_updated", "+${"%.2f".format(distance)}m, total=${"%.2f".format(sessionDistanceMeters)}m")
+            }
+            // Kept as the distance baseline even while auto-paused, so it tracks the runner's
+            // (near-stationary) position and resuming doesn't count a phantom leg (#39).
             lastAcceptedFix = fix
         } else {
             logDecision("location_rejected", "accuracy=${fix.accuracyMeters}m > threshold=${ACCURACY_THRESHOLD_METERS}m")
         }
         lastFix = fix
 
-        synchronized(paceHistory) {
-            if (accepted) {
-                paceHistory.add(Pair(now, if (speedMps > 0.2) speedMps else 0.0))
+        if (!isAutoPaused) {
+            synchronized(paceHistory) {
+                if (accepted) {
+                    paceHistory.add(Pair(now, if (speedMps > 0.2) speedMps else 0.0))
+                }
+                // Prune on every fix, not just accepted ones - otherwise a run of rejected fixes
+                // leaves a stale sample sitting past the pace window instead of aging out (#38 review).
+                while (paceHistory.isNotEmpty() && (now - paceHistory.first.first > PACE_WINDOW_MS)) {
+                    paceHistory.removeFirst()
+                }
             }
-            // Prune on every fix, not just accepted ones - otherwise a run of rejected fixes
-            // leaves a stale sample sitting past the pace window instead of aging out (#38 review).
-            while (paceHistory.isNotEmpty() && (now - paceHistory.first.first > PACE_WINDOW_MS)) {
-                paceHistory.removeFirst()
-            }
-        }
 
-        if (accepted) {
-            val currentKm = (sessionDistanceMeters / 1000).toInt()
-            if (isSplitAnnouncementsEnabled() && currentKm > lastSplitAnnouncedKm) {
-                lastSplitAnnouncedKm = currentKm
-                val pace = calculatePace()
-                if (pace > 0) {
-                    val paceMins = pace.toInt()
-                    val paceSecs = ((pace - paceMins) * 60).roundToInt()
-                    playSplitCue("Split $currentKm kilometer. Pace $paceMins minutes $paceSecs seconds per kilometer.")
-                } else {
-                    playSplitCue("Split $currentKm kilometer.")
+            if (accepted) {
+                val currentKm = (sessionDistanceMeters / 1000).toInt()
+                if (isSplitAnnouncementsEnabled() && currentKm > lastSplitAnnouncedKm) {
+                    lastSplitAnnouncedKm = currentKm
+                    val pace = calculatePace()
+                    if (pace > 0) {
+                        val paceMins = pace.toInt()
+                        val paceSecs = ((pace - paceMins) * 60).roundToInt()
+                        playSplitCue("Split $currentKm kilometer. Pace $paceMins minutes $paceSecs seconds per kilometer.")
+                    } else {
+                        playSplitCue("Split $currentKm kilometer.")
+                    }
                 }
             }
         }
@@ -126,6 +170,53 @@ class SessionRecorder(
         val currentPace = calculatePace()
         logDecision("state_update", "distanceKm=${"%.3f".format(currentDistanceKm)} paceMinPerKm=${"%.2f".format(currentPace)}")
         onMetricsUpdated(SessionRecorderMetrics(currentDistanceKm, currentPace, lastFix))
+    }
+
+    /**
+     * Standstill/movement detection (#39): sustained speed below [STANDSTILL_SPEED_THRESHOLD_MPS]
+     * for [AUTO_PAUSE_STANDSTILL_MS] auto-pauses; speed at or above it sustained for
+     * [AUTO_RESUME_SUSTAINED_MS] resumes. Resume needs its own (much shorter) sustain window too -
+     * a single noisy fix at a standstill (position jitter, a derived speed spike from a brief
+     * accuracy blip) must not be enough to unfreeze the session on its own.
+     */
+    private fun updateAutoPauseState(speedMps: Double, now: Long) {
+        if (!isAutoPauseEnabled()) {
+            standstillSinceMs = null
+            movingSinceMs = null
+            // Handing control back to manual pause/resume must not leave the session stuck
+            // auto-paused forever if the toggle is switched off mid-pause.
+            if (isAutoPaused) {
+                isAutoPaused = false
+                onAutoResume()
+            }
+            return
+        }
+
+        if (speedMps < STANDSTILL_SPEED_THRESHOLD_MPS) {
+            movingSinceMs = null
+            if (!isAutoPaused) {
+                val since = standstillSinceMs ?: now
+                standstillSinceMs = since
+                if (now - since >= AUTO_PAUSE_STANDSTILL_MS) {
+                    isAutoPaused = true
+                    standstillSinceMs = null
+                    logDecision("auto_paused", "speed=${"%.2f".format(speedMps)}mps sustained below ${STANDSTILL_SPEED_THRESHOLD_MPS}mps")
+                    onAutoPause()
+                }
+            }
+        } else {
+            standstillSinceMs = null
+            if (isAutoPaused) {
+                val since = movingSinceMs ?: now
+                movingSinceMs = since
+                if (now - since >= AUTO_RESUME_SUSTAINED_MS) {
+                    isAutoPaused = false
+                    movingSinceMs = null
+                    logDecision("auto_resumed", "speed=${"%.2f".format(speedMps)}mps")
+                    onAutoResume()
+                }
+            }
+        }
     }
 
     private fun calculatePace(): Double {
@@ -148,6 +239,23 @@ class SessionRecorder(
         /** Whether a fix this accurate counts toward distance/pace/split cues or a map read (#38). */
         fun isAccuracyAccepted(accuracyMeters: Float?): Boolean =
             accuracyMeters != null && accuracyMeters <= ACCURACY_THRESHOLD_METERS
+
+        /**
+         * Speed below which the runner is considered stationary (#39) - comfortably under even a
+         * slow walking pace (~0.8 m/s+) so a walk, a run/walk WALK interval, or a Zone 2 walk
+         * never reads as a standstill.
+         */
+        const val STANDSTILL_SPEED_THRESHOLD_MPS = 0.3
+
+        /** How long speed must stay below [STANDSTILL_SPEED_THRESHOLD_MPS] before auto-pause fires (#39). */
+        const val AUTO_PAUSE_STANDSTILL_MS = 10_000L
+
+        /**
+         * How long speed must stay at or above [STANDSTILL_SPEED_THRESHOLD_MPS] before auto-resume
+         * fires (#39) - short enough to feel instant to the runner, long enough that one noisy fix
+         * can't unfreeze the session on its own.
+         */
+        const val AUTO_RESUME_SUSTAINED_MS = 2_000L
 
         private const val PACE_WINDOW_MS = 15_000L
 

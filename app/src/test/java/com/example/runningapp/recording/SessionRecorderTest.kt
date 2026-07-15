@@ -1,6 +1,7 @@
 package com.example.runningapp.recording
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -322,6 +323,289 @@ class SessionRecorderTest {
             fix(lon = lonDegreesForMeters(100_000.0) + lonDegreesForMeters(50.0), accuracy = 10f, timestampMs = 101_000)
         )
         assertEquals(0.15, recorder.getDistanceKm(), 0.001)
+    }
+
+    @Test
+    fun `onLocationFix auto-pauses after 10 seconds of sustained standstill`() {
+        val autoPauseEvents = mutableListOf<Unit>()
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {},
+            isAutoPauseEnabled = { true },
+            onAutoPause = { autoPauseEvents.add(Unit) }
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+
+        // Given: 9s of near-zero speed - not yet a sustained enough standstill.
+        fakeClock.currentMillis = 9_000
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 9_000))
+        assertFalse(recorder.isAutoPaused())
+        assertTrue(autoPauseEvents.isEmpty())
+
+        // When: speed stays at zero for the full 10s.
+        fakeClock.currentMillis = 10_000
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 10_000))
+
+        // Then: auto-pause fires exactly once.
+        assertTrue(recorder.isAutoPaused())
+        assertEquals(1, autoPauseEvents.size)
+
+        // And: it does not fire again while the standstill continues.
+        fakeClock.currentMillis = 11_000
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 11_000))
+        assertEquals(1, autoPauseEvents.size)
+    }
+
+    @Test
+    fun `onLocationFix auto-resumes once movement is sustained for 2 seconds`() {
+        val autoResumeEvents = mutableListOf<Unit>()
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {},
+            isAutoPauseEnabled = { true },
+            onAutoResume = { autoResumeEvents.add(Unit) }
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+        fakeClock.currentMillis = 10_000
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 10_000))
+        assertTrue(recorder.isAutoPaused())
+
+        // Given: movement starts, but hasn't been sustained for the full 2s window yet.
+        fakeClock.currentMillis = 11_000
+        recorder.onLocationFix(
+            fix(lon = lonDegreesForMeters(5.0), accuracy = 10f, timestampMs = 11_000, speedMps = 2.0f)
+        )
+        assertTrue(recorder.isAutoPaused())
+        assertTrue(autoResumeEvents.isEmpty())
+
+        // When: movement is still sustained 2s after it first appeared.
+        fakeClock.currentMillis = 13_000
+        recorder.onLocationFix(
+            fix(lon = lonDegreesForMeters(9.0), accuracy = 10f, timestampMs = 13_000, speedMps = 2.0f)
+        )
+
+        // Then: auto-resume fires exactly once.
+        assertFalse(recorder.isAutoPaused())
+        assertEquals(1, autoResumeEvents.size)
+    }
+
+    @Test
+    fun `onLocationFix does not auto-resume on a single noisy fix at a standstill`() {
+        val autoResumeEvents = mutableListOf<Unit>()
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {},
+            isAutoPauseEnabled = { true },
+            onAutoResume = { autoResumeEvents.add(Unit) }
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+        fakeClock.currentMillis = 10_000
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 10_000))
+        assertTrue(recorder.isAutoPaused())
+
+        // When: a single fix reports a brief speed blip (e.g. position jitter)...
+        fakeClock.currentMillis = 11_000
+        recorder.onLocationFix(
+            fix(lon = lonDegreesForMeters(2.0), accuracy = 10f, timestampMs = 11_000, speedMps = 2.0f)
+        )
+        // ...then speed immediately drops back to a standstill before the 2s sustain window elapses.
+        fakeClock.currentMillis = 11_500
+        recorder.onLocationFix(fix(lon = lonDegreesForMeters(2.0), accuracy = 10f, timestampMs = 11_500))
+
+        // Then: the session is still auto-paused - one blip was not enough to resume.
+        assertTrue(recorder.isAutoPaused())
+        assertTrue(autoResumeEvents.isEmpty())
+    }
+
+    @Test
+    fun `onLocationFix never auto-pauses at a sustained walking pace`() {
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {},
+            isAutoPauseEnabled = { true }
+        )
+
+        // A slow walking pace (1 m/s) held for 20s - comfortably past the 10s standstill window -
+        // must never read as a standstill (#39).
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0, speedMps = 1.0f))
+        for (t in 1..20) {
+            val ms = t * 1_000L
+            fakeClock.currentMillis = ms
+            recorder.onLocationFix(
+                fix(lon = lonDegreesForMeters(t * 1.0), accuracy = 10f, timestampMs = ms, speedMps = 1.0f)
+            )
+            assertFalse(recorder.isAutoPaused())
+        }
+    }
+
+    @Test
+    fun `onLocationFix never auto-pauses when the setting is disabled`() {
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {},
+            isAutoPauseEnabled = { false }
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+
+        // When: 15s of zero speed pass - well past the 10s threshold - with the toggle off.
+        fakeClock.currentMillis = 15_000
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 15_000))
+
+        assertFalse(recorder.isAutoPaused())
+    }
+
+    @Test
+    fun `onLocationFix resumes immediately if auto-pause is disabled mid-pause`() {
+        var autoPauseEnabled = true
+        val autoResumeEvents = mutableListOf<Unit>()
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {},
+            isAutoPauseEnabled = { autoPauseEnabled },
+            onAutoResume = { autoResumeEvents.add(Unit) }
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+        fakeClock.currentMillis = 10_000
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 10_000))
+        assertTrue(recorder.isAutoPaused())
+
+        // When: the setting is switched off mid-pause and another fix arrives - still at a standstill.
+        autoPauseEnabled = false
+        fakeClock.currentMillis = 11_000
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 11_000))
+
+        // Then: control is handed back immediately rather than staying stuck paused forever.
+        assertFalse(recorder.isAutoPaused())
+        assertEquals(1, autoResumeEvents.size)
+    }
+
+    @Test
+    fun `discardLastFix clears auto-pause state so a stale standstill isn't carried into the next resume`() {
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {},
+            isAutoPauseEnabled = { true }
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+        fakeClock.currentMillis = 10_000
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 10_000))
+        assertTrue(recorder.isAutoPaused())
+
+        // When: a manual pause/stop discards the tracking baseline (LocationTracker.stop()).
+        recorder.discardLastFix()
+
+        // Then: the auto-pause flag is cleared too, not left stuck true across the gap.
+        assertFalse(recorder.isAutoPaused())
+    }
+
+    @Test
+    fun `clearAutoPauseState resyncs an auto-paused recorder without firing onAutoResume`() {
+        val autoResumeEvents = mutableListOf<Unit>()
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {},
+            isAutoPauseEnabled = { true },
+            onAutoResume = { autoResumeEvents.add(Unit) }
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+        fakeClock.currentMillis = 10_000
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 10_000))
+        assertTrue(recorder.isAutoPaused())
+
+        // When: the host resumes the session by some other means (a manual resume while
+        // auto-paused) and tells the recorder directly, rather than waiting for movement.
+        recorder.clearAutoPauseState()
+
+        // Then: the recorder reflects "moving" immediately, without re-notifying a host that
+        // already knows - a duplicate onAutoResume() here would be a spurious second cue/transition.
+        assertFalse(recorder.isAutoPaused())
+        assertTrue(autoResumeEvents.isEmpty())
+
+        // And: distance/pace accumulate normally again on the next fix.
+        fakeClock.currentMillis = 11_000
+        recorder.onLocationFix(
+            fix(lon = lonDegreesForMeters(50.0), accuracy = 10f, timestampMs = 11_000, speedMps = 5.0f)
+        )
+        assertTrue(recorder.getDistanceKm() > 0.0)
+    }
+
+    @Test
+    fun `onLocationFix freezes distance and pace once auto-paused instead of letting them decay`() {
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {},
+            isAutoPauseEnabled = { true }
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+
+        // Given: a moving fix establishes nonzero distance and pace.
+        fakeClock.currentMillis = 1_000
+        recorder.onLocationFix(
+            fix(lon = lonDegreesForMeters(50.0), accuracy = 10f, timestampMs = 1_000, speedMps = 5.0f)
+        )
+
+        // And: the runner then stops - this fix starts the 10s standstill timer but isn't paused yet.
+        fakeClock.currentMillis = 2_000
+        recorder.onLocationFix(fix(lon = lonDegreesForMeters(50.0), accuracy = 10f, timestampMs = 2_000))
+        assertFalse(recorder.isAutoPaused())
+        val distanceBeforePause = recorder.getDistanceKm()
+        val paceBeforePause = recorder.getPaceMinPerKm()
+        assertEquals(0.05, distanceBeforePause, 0.0001)
+        assertEquals(10.0, paceBeforePause, 0.0001)
+
+        // When: speed stays at zero for the full 10s from there, triggering auto-pause.
+        fakeClock.currentMillis = 12_000
+        recorder.onLocationFix(fix(lon = lonDegreesForMeters(50.0), accuracy = 10f, timestampMs = 12_000))
+        assertTrue(recorder.isAutoPaused())
+
+        // Then: distance and pace are pinned at their pre-pause values, not just coincidentally
+        // unchanged because there was no movement.
+        assertEquals(distanceBeforePause, recorder.getDistanceKm(), 0.0001)
+        assertEquals(paceBeforePause, recorder.getPaceMinPerKm(), 0.0001)
+
+        // And: even once real time has passed the pace window's normal 15s decay, pace stays
+        // pinned rather than aging back down to 0 - proof the freeze suppresses pace-history
+        // pruning entirely rather than merely not adding new samples (#39).
+        fakeClock.currentMillis = 20_000
+        recorder.onLocationFix(fix(lon = lonDegreesForMeters(50.0), accuracy = 10f, timestampMs = 20_000))
+        assertTrue(recorder.isAutoPaused())
+        assertEquals(distanceBeforePause, recorder.getDistanceKm(), 0.0001)
+        assertEquals(paceBeforePause, recorder.getPaceMinPerKm(), 0.0001)
     }
 
     private class FakeClock(var currentMillis: Long = 0L) : Clock {

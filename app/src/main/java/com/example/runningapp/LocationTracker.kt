@@ -27,6 +27,9 @@ class LocationTracker(
     isSplitAnnouncementsEnabled: () -> Boolean,
     onMetricsUpdated: (distanceKm: Double, paceMinPerKm: Double, lastLocation: Location?) -> Unit,
     private val onRawFix: (location: Location, barometerPressureHpa: Float?) -> Unit = { _, _ -> },
+    isAutoPauseEnabled: () -> Boolean = { false },
+    onAutoPause: () -> Unit = {},
+    onAutoResume: () -> Unit = {},
 ) {
     private var locationCallback: LocationCallback? = null
     private var locationHandlerThread: HandlerThread? = null
@@ -41,6 +44,9 @@ class LocationTracker(
         isSplitAnnouncementsEnabled = isSplitAnnouncementsEnabled,
         onMetricsUpdated = { metrics -> onMetricsUpdated(metrics.distanceKm, metrics.paceMinPerKm, lastLocation) },
         logDecision = ::logDecision,
+        isAutoPauseEnabled = isAutoPauseEnabled,
+        onAutoPause = onAutoPause,
+        onAutoResume = onAutoResume,
     )
 
     fun restartIfNeeded(trigger: String, runMode: String, isSimulationEnabled: Boolean) {
@@ -57,6 +63,15 @@ class LocationTracker(
         lastLocation = null
         firstLocation = null
         sessionRecorder.reset()
+    }
+
+    /**
+     * Resyncs the recorder's internal auto-pause flag when the host resumes the session by some
+     * other means (a manual resume while auto-paused) - GPS was never stopped in that case, so
+     * there's no discardLastFix()/reset() call to clear it otherwise (#39).
+     */
+    fun clearAutoPauseState() {
+        sessionRecorder.clearAutoPauseState()
     }
 
     @Synchronized
@@ -95,7 +110,13 @@ class LocationTracker(
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
-                if (getSessionStatus() != SessionStatus.RUNNING) {
+                val status = getSessionStatus()
+                // Auto-pause (#39) keeps GPS registered through a standstill so movement can be
+                // detected - unlike a manual pause, which fully stops updates via stop() below -
+                // so fixes must keep flowing to SessionRecorder while auto-paused too.
+                val shouldProcess = status == SessionStatus.RUNNING ||
+                    (status == SessionStatus.PAUSED && sessionRecorder.isAutoPaused())
+                if (!shouldProcess) {
                     Log.d(logTag, "Ignoring location update - session not running")
                     return
                 }
