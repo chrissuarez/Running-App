@@ -1078,6 +1078,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 startForegroundService()
                 if (!isSimulationEnabled) {
                     logBleDecision("force_scan", "User requested a fresh scan; skipping saved-device reconnect")
+                    if (_hrState.value.connectionStatus == "Connected") {
+                        disconnect()
+                    }
                     startScanning()
                 } else {
                     Log.d(TAG, "Ignoring Force Scan - Simulation Mode is active.")

@@ -178,6 +178,12 @@ class MainActivity : ComponentActivity() {
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
+                                onForceScan = {
+                                    val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                        this.action = HrForegroundService.ACTION_FORCE_SCAN
+                                    }
+                                    ContextCompat.startForegroundService(this@MainActivity, intent)
+                                },
                                 onTogglePause = {
                                     hrService?.togglePause()
                                 },
@@ -448,6 +454,7 @@ fun MainScreen(
     paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
     onStartService: (String) -> Unit,
+    onForceScan: () -> Unit,
     onTogglePause: () -> Unit,
     onStopSession: () -> Unit,
     onConnectToDevice: (String, String) -> Unit,
@@ -762,7 +769,9 @@ fun MainScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                         if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
                             Button(
-                                onClick = { onStartService(selectedSessionType) },
+                                onClick = {
+                                    if (hrService == null) onStartService(selectedSessionType) else onForceScan()
+                                },
                                 modifier = Modifier
                                     .weight(1f)
                                     .heightIn(min = RunningUiTokens.MinTouchTarget)
@@ -1179,7 +1188,7 @@ fun WorkoutView(state: HrState, sessionRepository: SessionRepository) {
                 }
             }
 
-            if (state.runMode == "outdoor") {
+            if (state.userSettings.runMode == "outdoor") {
                 val mapSessionId = state.activeDbSessionId
                 if (mapSessionId != null) {
                     Spacer(modifier = Modifier.height(12.dp))
