@@ -40,7 +40,6 @@ class SessionRecorder(
     private val onMetricsUpdated: (SessionRecorderMetrics) -> Unit,
     private val logDecision: (reason: String, detail: String) -> Unit = { _, _ -> },
 ) {
-    private var lastValidFixTime = 0L
     private var lastFix: LocationFix? = null
     private var sessionDistanceMeters = 0.0
     private var lastSplitAnnouncedKm = 0
@@ -51,7 +50,6 @@ class SessionRecorder(
         lastSplitAnnouncedKm = 0
         synchronized(paceHistory) { paceHistory.clear() }
         lastFix = null
-        lastValidFixTime = 0L
         onMetricsUpdated(SessionRecorderMetrics(0.0, 0.0, null))
     }
 
@@ -68,20 +66,18 @@ class SessionRecorder(
         val now = clock.nowMillis()
 
         var speedMps = 0.0
+        var accepted = true
         lastFix?.let { last ->
+            accepted = isAccuracyAccepted(fix.accuracyMeters)
+            if (!accepted) {
+                logDecision("location_rejected", "accuracy=${fix.accuracyMeters}m > threshold=${ACCURACY_THRESHOLD_METERS}m")
+                return@let
+            }
+
             val distance = distanceBetweenMeters(last, fix)
             val timeDeltaSec = (now - last.timestampMs) / 1000.0
-            val timeSinceLastValid = (now - lastValidFixTime) / 1000
-            val accuracyThreshold = if (timeSinceLastValid > 30) 250.0 else 100.0
-            logDecision("accuracy_threshold", "timeSinceLastValid=${timeSinceLastValid}s threshold=${accuracyThreshold}m")
-
-            if (fix.accuracyMeters <= accuracyThreshold) {
-                sessionDistanceMeters += distance
-                lastValidFixTime = now
-                logDecision("distance_updated", "+${"%.2f".format(distance)}m, total=${"%.2f".format(sessionDistanceMeters)}m")
-            } else {
-                logDecision("location_rejected", "accuracy=${fix.accuracyMeters}m > threshold=${accuracyThreshold}m")
-            }
+            sessionDistanceMeters += distance
+            logDecision("distance_updated", "+${"%.2f".format(distance)}m, total=${"%.2f".format(sessionDistanceMeters)}m")
 
             speedMps = if (fix.speedMps != null && fix.speedMps > 0.1f) {
                 fix.speedMps.toDouble()
@@ -93,23 +89,25 @@ class SessionRecorder(
         }
         lastFix = fix
 
-        synchronized(paceHistory) {
-            paceHistory.add(Pair(now, if (speedMps > 0.2) speedMps else 0.0))
-            while (paceHistory.isNotEmpty() && (now - paceHistory.first.first > PACE_WINDOW_MS)) {
-                paceHistory.removeFirst()
+        if (accepted) {
+            synchronized(paceHistory) {
+                paceHistory.add(Pair(now, if (speedMps > 0.2) speedMps else 0.0))
+                while (paceHistory.isNotEmpty() && (now - paceHistory.first.first > PACE_WINDOW_MS)) {
+                    paceHistory.removeFirst()
+                }
             }
-        }
 
-        val currentKm = (sessionDistanceMeters / 1000).toInt()
-        if (isSplitAnnouncementsEnabled() && currentKm > lastSplitAnnouncedKm) {
-            lastSplitAnnouncedKm = currentKm
-            val pace = calculatePace()
-            if (pace > 0) {
-                val paceMins = pace.toInt()
-                val paceSecs = ((pace - paceMins) * 60).roundToInt()
-                playSplitCue("Split $currentKm kilometer. Pace $paceMins minutes $paceSecs seconds per kilometer.")
-            } else {
-                playSplitCue("Split $currentKm kilometer.")
+            val currentKm = (sessionDistanceMeters / 1000).toInt()
+            if (isSplitAnnouncementsEnabled() && currentKm > lastSplitAnnouncedKm) {
+                lastSplitAnnouncedKm = currentKm
+                val pace = calculatePace()
+                if (pace > 0) {
+                    val paceMins = pace.toInt()
+                    val paceSecs = ((pace - paceMins) * 60).roundToInt()
+                    playSplitCue("Split $currentKm kilometer. Pace $paceMins minutes $paceSecs seconds per kilometer.")
+                } else {
+                    playSplitCue("Split $currentKm kilometer.")
+                }
             }
         }
 
@@ -129,6 +127,16 @@ class SessionRecorder(
     }
 
     companion object {
+        /**
+         * GPS fixes coarser than this are excluded from distance, pace, and split cues (#38), and
+         * the same bar gates which stored [com.example.runningapp.data.TrackPoint]s a map query
+         * returns, so what the runner hears mid-run matches what they see afterward.
+         */
+        const val ACCURACY_THRESHOLD_METERS = 30.0
+
+        /** Whether a fix this accurate counts toward distance/pace/split cues or a map read (#38). */
+        fun isAccuracyAccepted(accuracyMeters: Float): Boolean = accuracyMeters <= ACCURACY_THRESHOLD_METERS
+
         private const val PACE_WINDOW_MS = 15_000L
 
         // WGS84 ellipsoid semi-major/semi-minor axes, meters.
