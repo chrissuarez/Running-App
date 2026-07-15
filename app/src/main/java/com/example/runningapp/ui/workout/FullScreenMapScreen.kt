@@ -1,5 +1,6 @@
 package com.example.runningapp.ui.workout
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,7 +31,10 @@ import com.example.runningapp.ui.theme.RunningUiTokens
 /**
  * Full-screen live map (#41): the same camera-follow/amber-trail/day-night [MapSurface] as the
  * in-run [MapCard], full-bleed, with a slim high-contrast stats strip overlaid on top. Back is
- * the only tappable control, so sweaty thumbs can't reach pause/stop from here.
+ * the only tappable control, so sweaty thumbs can't reach pause/stop from here. The system
+ * back button/gesture is intercepted via [BackHandler] and routed through the same [onBack] as
+ * the strip's back arrow — otherwise it would pop this destination off Navigation-Compose's
+ * `navigateTo`-cleared back stack and exit the app mid-run instead of returning to coaching.
  */
 @Composable
 fun FullScreenMapScreen(
@@ -38,6 +42,7 @@ fun FullScreenMapScreen(
     sessionRepository: SessionRepository,
     onBack: () -> Unit
 ) {
+    BackHandler(onBack = onBack)
     val uiState = remember(state) { mapWorkoutPlayerUiState(state) }
     val sessionId = state.activeDbSessionId
 
