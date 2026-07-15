@@ -61,11 +61,13 @@ import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.ui.workout.CUE_REASON_HR_HIGH
 import com.example.runningapp.ui.workout.CUE_REASON_SENSOR_LOST
 import com.example.runningapp.ui.workout.CueSeverity
+import com.example.runningapp.ui.workout.FullScreenMapScreen
 import com.example.runningapp.ui.workout.MapCard
 import com.example.runningapp.ui.workout.TimelineMarkerType
 import com.example.runningapp.ui.workout.TimelineSegmentType
 import com.example.runningapp.ui.workout.ZoneBand
 import com.example.runningapp.ui.workout.mapWorkoutPlayerUiState
+import com.example.runningapp.ui.workout.zoneBandColor
 
 private const val SESSION_TYPE_RUN_WALK = "Run/Walk"
 private const val SESSION_TYPE_EASY_FIXED_DURATION = "Easy Fixed Duration"
@@ -225,6 +227,9 @@ class MainActivity : ComponentActivity() {
                                 onOpenTrainingPlan = {
                                     navigateTo(Routes.TRAINING_PLAN)
                                 },
+                                onOpenFullScreenMap = {
+                                    navigateTo(Routes.MAP)
+                                },
                                 onToggleSimulation = { simulationEnabled, sessionType ->
                                     scope.launch(Dispatchers.IO) {
                                         settingsRepository.setSimulationEnabled(simulationEnabled)
@@ -362,6 +367,13 @@ class MainActivity : ComponentActivity() {
                                 onBack = { navigateTo(Routes.MAIN) }
                             )
                         }
+                        composable(Routes.MAP) {
+                            FullScreenMapScreen(
+                                state = serviceState.value,
+                                sessionRepository = sessionRepository,
+                                onBack = { navigateTo(Routes.MAIN) }
+                            )
+                        }
                     }
 
                     feelSheetSessionId?.let { sessionId ->
@@ -463,6 +475,7 @@ fun MainScreen(
     onOpenHistory: () -> Unit,
     onOpenManageDevices: () -> Unit,
     onOpenTrainingPlan: () -> Unit,
+    onOpenFullScreenMap: () -> Unit,
     onToggleSimulation: (Boolean, String) -> Unit,
     onSessionTypeChange: (String) -> Unit,
     onToggleTestingMode: (Boolean) -> Unit,
@@ -869,7 +882,7 @@ fun MainScreen(
                 }
             } else if (isSessionActive) {
                 item {
-                    WorkoutView(state = state, sessionRepository = sessionRepository)
+                    WorkoutView(state = state, sessionRepository = sessionRepository, onOpenFullScreenMap = onOpenFullScreenMap)
                 }
             } else {
                 item {
@@ -1031,7 +1044,7 @@ fun SettingsSummaryCard(
 }
 
 @Composable
-fun WorkoutView(state: HrState, sessionRepository: SessionRepository) {
+fun WorkoutView(state: HrState, sessionRepository: SessionRepository, onOpenFullScreenMap: () -> Unit) {
     val uiState = remember(state) { mapWorkoutPlayerUiState(state) }
     val errorColor = MaterialTheme.colorScheme.error
 
@@ -1065,12 +1078,7 @@ fun WorkoutView(state: HrState, sessionRepository: SessionRepository) {
             ) {
                 Column {
                     Text(uiState.hrText, style = MaterialTheme.typography.titleLarge)
-                    val zoneColor = when (uiState.zoneBand) {
-                        ZoneBand.BELOW -> Color(0xFF8FD0FF)
-                        ZoneBand.IN -> Color(0xFF9CF7AD)
-                        ZoneBand.ABOVE -> MaterialTheme.colorScheme.error
-                        ZoneBand.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
-                    }
+                    val zoneColor = zoneBandColor(uiState.zoneBand)
                     Text("${uiState.zoneBand} • ${uiState.zoneLabel}", color = zoneColor, style = MaterialTheme.typography.bodyMedium)
                 }
                 AssistChip(
@@ -1192,7 +1200,7 @@ fun WorkoutView(state: HrState, sessionRepository: SessionRepository) {
                 val mapSessionId = state.activeDbSessionId
                 if (mapSessionId != null) {
                     Spacer(modifier = Modifier.height(12.dp))
-                    MapCard(sessionId = mapSessionId, sessionRepository = sessionRepository)
+                    MapCard(sessionId = mapSessionId, sessionRepository = sessionRepository, onClick = onOpenFullScreenMap)
                 }
             }
 

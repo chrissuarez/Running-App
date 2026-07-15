@@ -19,7 +19,8 @@ class RoutesTest {
             Routes.MANAGE_DEVICES,
             Routes.HISTORY,
             Routes.SESSION_DETAIL,
-            Routes.TRAINING_PLAN
+            Routes.TRAINING_PLAN,
+            Routes.MAP
         )
         assertEquals(routes.size, routes.toSet().size)
     }
