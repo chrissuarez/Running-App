@@ -62,6 +62,26 @@ class SessionRecorderTest {
     }
 
     @Test
+    fun `onLocationFix rejects a fix with no accuracy reading instead of treating it as perfect`() {
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {}
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+
+        // When: next fix is 300m away with no accuracy reading at all (Android's Location.hasAccuracy()
+        // false) - must be rejected, not treated as a perfect 0m-accuracy fix.
+        fakeClock.currentMillis = 1_000
+        recorder.onLocationFix(fix(lon = lonDegreesForMeters(300.0), accuracy = null, timestampMs = 1_000))
+
+        assertEquals(0.0, recorder.getDistanceKm(), 0.001)
+    }
+
+    @Test
     fun `onLocationFix does not widen the accuracy threshold after a long gap since the last accepted fix`() {
         val recorder = SessionRecorder(
             clock = fakeClock,
@@ -317,7 +337,7 @@ class SessionRecorderTest {
 
         private fun fix(
             lon: Double,
-            accuracy: Float,
+            accuracy: Float?,
             timestampMs: Long,
             lat: Double = 0.0,
             speedMps: Float? = null,

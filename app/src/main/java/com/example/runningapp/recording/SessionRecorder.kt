@@ -13,7 +13,9 @@ import kotlin.math.tan
 data class LocationFix(
     val latitude: Double,
     val longitude: Double,
-    val accuracyMeters: Float,
+    // Null when the platform location has no accuracy estimate (Android's Location.hasAccuracy()
+    // is false) - must never be treated as a perfect 0m-accuracy fix (#38 review).
+    val accuracyMeters: Float?,
     val speedMps: Float?,
     val timestampMs: Long,
 )
@@ -144,7 +146,8 @@ class SessionRecorder(
         const val ACCURACY_THRESHOLD_METERS = 30.0
 
         /** Whether a fix this accurate counts toward distance/pace/split cues or a map read (#38). */
-        fun isAccuracyAccepted(accuracyMeters: Float): Boolean = accuracyMeters <= ACCURACY_THRESHOLD_METERS
+        fun isAccuracyAccepted(accuracyMeters: Float?): Boolean =
+            accuracyMeters != null && accuracyMeters <= ACCURACY_THRESHOLD_METERS
 
         private const val PACE_WINDOW_MS = 15_000L
 

@@ -146,7 +146,7 @@ class LocationTracker(
             LocationFix(
                 latitude = location.latitude,
                 longitude = location.longitude,
-                accuracyMeters = location.accuracy,
+                accuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
                 speedMps = if (location.hasSpeed()) location.speed else null,
                 timestampMs = location.time,
             )
