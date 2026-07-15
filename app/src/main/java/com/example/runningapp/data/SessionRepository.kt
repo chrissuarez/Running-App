@@ -46,10 +46,46 @@ class SessionRepository(
     private val sessionDao: SessionDao,
     private val runWalkIntervalStatDao: RunWalkIntervalStatDao? = null,
     private val settingsRepository: SettingsRepository? = null,
-    private val aiCoachClient: AiCoachClient? = null
+    private val aiCoachClient: AiCoachClient? = null,
+    private val weatherClient: WeatherClient? = null
 ) {
     suspend fun deleteSession(sessionId: Long) {
         sessionDao.deleteSessionById(sessionId)
+    }
+
+    /**
+     * Fetches and persists the weather snapshot for a session. Never throws — a failed or
+     * unreachable weather service must not affect the run save it runs after (#79). Failures are
+     * picked up later by [retryMissingWeather] on a subsequent app launch.
+     */
+    suspend fun fetchAndSaveWeather(sessionId: Long, latitude: Double, longitude: Double, atEpochMillis: Long) {
+        val client = weatherClient ?: return
+        val snapshot = try {
+            client.fetchWeather(latitude, longitude, atEpochMillis)
+        } catch (e: Exception) {
+            Log.e("Weather", "Weather fetch failed for sessionId=$sessionId", e)
+            null
+        } ?: return
+
+        sessionDao.updateWeather(
+            sessionId = sessionId,
+            tempC = snapshot.temperatureC,
+            feelsLikeC = snapshot.feelsLikeC,
+            humidityPercent = snapshot.humidityPercent,
+            windSpeedKmh = snapshot.windSpeedKmh,
+            conditionCode = snapshot.conditionCode
+        )
+    }
+
+    /** Retries weather for outdoor sessions that finished without it — called once per app launch. */
+    suspend fun retryMissingWeather() {
+        if (weatherClient == null) return
+        val sessions = sessionDao.getOutdoorSessionsMissingWeather()
+        for (session in sessions) {
+            val latitude = session.startLatitude ?: continue
+            val longitude = session.startLongitude ?: continue
+            fetchAndSaveWeather(session.id, latitude, longitude, session.startTime)
+        }
     }
 
     /**

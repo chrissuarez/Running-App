@@ -128,6 +128,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    // Detached from serviceScope on purpose: the save-time weather fetch must survive
+    // onDestroy() cancelling serviceScope when a run is stopped from the background.
+    private val weatherFetchScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     // Exposed state for UI
     private val _hrState = MutableStateFlow(HrState())
@@ -1245,6 +1249,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val finalSecondsPaused = sessionSecondsPaused
         val finalDistanceKm = locationTracker?.getDistanceKm() ?: 0.0
         val finalAvgPace = locationTracker?.getPaceMinPerKm() ?: 0.0
+        val finalStartLocation = locationTracker?.getFirstLocation()
         val finalWalkBreaksCount = walkBreaksCount
         val finalIsRunWalkMode = currentSettings.runWalkCoachEnabled
         finalizeActiveRunIntervalTracking()
@@ -1279,6 +1284,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             timeInTargetZoneSeconds = sessionInTargetZoneSeconds,
                             distanceKm = finalDistanceKm,
                             avgPaceMinPerKm = finalAvgPace,
+                            startLatitude = finalStartLocation?.latitude,
+                            startLongitude = finalStartLocation?.longitude,
                             zone1Seconds = sessionZoneTimes[1] ?: 0L,
                             zone2Seconds = sessionZoneTimes[2] ?: 0L,
                             zone3Seconds = sessionZoneTimes[3] ?: 0L,
@@ -1302,6 +1309,24 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         database.sessionDao().updateSession(updatedSession)
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
                         persistRunIntervalStats(sessionId)
+
+                        // Weather snapshot: fire-and-forget on weatherFetchScope, which is not
+                        // cancelled by onDestroy(), so stopping from the background can't skip
+                        // it. Not awaited, so a slow/unreachable weather service can't delay
+                        // currentSessionId being cleared below. Missed fetches are retried at
+                        // next launch.
+                        val startLatitude = updatedSession.startLatitude
+                        val startLongitude = updatedSession.startLongitude
+                        if (updatedSession.runMode == "outdoor" && startLatitude != null && startLongitude != null) {
+                            weatherFetchScope.launch {
+                                sessionRepository.fetchAndSaveWeather(
+                                    sessionId = sessionId,
+                                    latitude = startLatitude,
+                                    longitude = startLongitude,
+                                    atEpochMillis = updatedSession.startTime
+                                )
+                            }
+                        }
 
                         val stageId = currentSettings.activeStageId
                         if (stageId != null &&

@@ -3,7 +3,9 @@ package com.example.runningapp
 import android.content.Context
 import com.example.runningapp.data.AiCoachClient
 import com.example.runningapp.data.AppDatabase
+import com.example.runningapp.data.OpenMeteoWeatherClient
 import com.example.runningapp.data.SessionRepository
+import com.example.runningapp.data.WeatherClient
 
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -20,12 +22,17 @@ class AppContainer(context: Context) {
         AiCoachClient()
     }
 
+    val weatherClient: WeatherClient by lazy {
+        OpenMeteoWeatherClient()
+    }
+
     val sessionRepository: SessionRepository by lazy {
         SessionRepository(
             sessionDao = database.sessionDao(),
             runWalkIntervalStatDao = database.runWalkIntervalStatDao(),
             settingsRepository = settingsRepository,
-            aiCoachClient = aiCoachClient
+            aiCoachClient = aiCoachClient,
+            weatherClient = weatherClient
         )
     }
 }

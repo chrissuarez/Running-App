@@ -40,7 +40,17 @@ data class RunnerSession(
     // Post-run "How did that feel?" feedback. Context only — must never feed
     // the Effort/TRIMP or Fitness/Fatigue/Form math (#60).
     val perceivedEffort: Int? = null,
-    val sessionNote: String? = null
+    val sessionNote: String? = null,
+    // Start position, captured from the first GPS fix of the run. Null for treadmill/no-GPS
+    // sessions, or if no fix arrived before the run ended.
+    val startLatitude: Double? = null,
+    val startLongitude: Double? = null,
+    // Weather snapshot at save (#79), fetched from Open-Meteo off the save path.
+    val weatherTempC: Double? = null,
+    val weatherFeelsLikeC: Double? = null,
+    val weatherHumidityPercent: Int? = null,
+    val weatherWindSpeedKmh: Double? = null,
+    val weatherConditionCode: Int? = null
 )
 
 @Entity(
@@ -114,6 +124,38 @@ interface SessionDao {
     @Query("UPDATE sessions SET perceivedEffort = :effort, sessionNote = :note WHERE id = :sessionId")
     suspend fun updateFeelFeedback(sessionId: Long, effort: Int?, note: String?)
 
+    @Query(
+        """
+        UPDATE sessions
+        SET weatherTempC = :tempC,
+            weatherFeelsLikeC = :feelsLikeC,
+            weatherHumidityPercent = :humidityPercent,
+            weatherWindSpeedKmh = :windSpeedKmh,
+            weatherConditionCode = :conditionCode
+        WHERE id = :sessionId
+        """
+    )
+    suspend fun updateWeather(
+        sessionId: Long,
+        tempC: Double,
+        feelsLikeC: Double,
+        humidityPercent: Int,
+        windSpeedKmh: Double,
+        conditionCode: Int
+    )
+
+    @Query(
+        """
+        SELECT * FROM sessions
+        WHERE runMode = 'outdoor'
+          AND startLatitude IS NOT NULL
+          AND startLongitude IS NOT NULL
+          AND weatherTempC IS NULL
+          AND endTime > 0
+        """
+    )
+    suspend fun getOutdoorSessionsMissingWeather(): List<RunnerSession>
+
     @Query("SELECT * FROM sessions WHERE id = :sessionId")
     fun getSessionByIdFlow(sessionId: Long): Flow<RunnerSession?>
 
@@ -174,7 +216,7 @@ interface RunWalkIntervalStatDao {
 
 @Database(
     entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class],
-    version = 10,
+    version = 11,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -202,7 +244,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_6_7,
                     MIGRATION_7_8,
                     MIGRATION_8_9,
-                    MIGRATION_9_10
+                    MIGRATION_9_10,
+                    MIGRATION_10_11
                 )
                 .build()
                 INSTANCE = instance
@@ -307,5 +350,17 @@ val MIGRATION_9_10 = object : Migration(9, 10) {
     override fun migrate(database: SupportSQLiteDatabase) {
         database.execSQL("ALTER TABLE sessions ADD COLUMN perceivedEffort INTEGER")
         database.execSQL("ALTER TABLE sessions ADD COLUMN sessionNote TEXT")
+    }
+}
+
+val MIGRATION_10_11 = object : Migration(10, 11) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE sessions ADD COLUMN startLatitude REAL")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN startLongitude REAL")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN weatherTempC REAL")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN weatherFeelsLikeC REAL")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN weatherHumidityPercent INTEGER")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN weatherWindSpeedKmh REAL")
+        database.execSQL("ALTER TABLE sessions ADD COLUMN weatherConditionCode INTEGER")
     }
 }
