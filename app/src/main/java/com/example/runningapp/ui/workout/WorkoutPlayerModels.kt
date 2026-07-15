@@ -135,7 +135,7 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
     val secondary = mutableListOf(
         "Elapsed" to formatStopwatch(state.secondsRunning)
     )
-    if (state.runMode == "outdoor") {
+    if (state.userSettings.runMode == "outdoor") {
         secondary += "Distance" to "%.2f km".format(state.distanceKm)
         if (state.paceMinPerKm > 0) {
             secondary += "Pace" to formatPace(state.paceMinPerKm)

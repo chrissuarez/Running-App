@@ -46,6 +46,7 @@ import androidx.navigation.navArgument
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.navigation.Routes
 import com.example.runningapp.ui.FeelFeedbackSheet
 import com.example.runningapp.ui.HistoryScreen
@@ -60,6 +61,7 @@ import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.ui.workout.CUE_REASON_HR_HIGH
 import com.example.runningapp.ui.workout.CUE_REASON_SENSOR_LOST
 import com.example.runningapp.ui.workout.CueSeverity
+import com.example.runningapp.ui.workout.MapCard
 import com.example.runningapp.ui.workout.TimelineMarkerType
 import com.example.runningapp.ui.workout.TimelineSegmentType
 import com.example.runningapp.ui.workout.ZoneBand
@@ -167,11 +169,18 @@ class MainActivity : ComponentActivity() {
                             MainScreen(
                                 hrService = hrService,
                                 userSettings = userSettings,
+                                sessionRepository = sessionRepository,
                                 onRequestPermissions = { checkAndRequestPermissions() },
                                 onStartService = { selectedSessionType ->
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         this.action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_SESSION_TYPE, selectedSessionType)
+                                    }
+                                    ContextCompat.startForegroundService(this@MainActivity, intent)
+                                },
+                                onForceScan = {
+                                    val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                        this.action = HrForegroundService.ACTION_FORCE_SCAN
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
@@ -441,9 +450,11 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(
     hrService: HrForegroundService?,
     userSettings: UserSettings,
+    sessionRepository: SessionRepository,
     paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
     onStartService: (String) -> Unit,
+    onForceScan: () -> Unit,
     onTogglePause: () -> Unit,
     onStopSession: () -> Unit,
     onConnectToDevice: (String, String) -> Unit,
@@ -758,7 +769,9 @@ fun MainScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                         if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
                             Button(
-                                onClick = { onStartService(selectedSessionType) },
+                                onClick = {
+                                    if (hrService == null) onStartService(selectedSessionType) else onForceScan()
+                                },
                                 modifier = Modifier
                                     .weight(1f)
                                     .heightIn(min = RunningUiTokens.MinTouchTarget)
@@ -856,7 +869,7 @@ fun MainScreen(
                 }
             } else if (isSessionActive) {
                 item {
-                    WorkoutView(state = state)
+                    WorkoutView(state = state, sessionRepository = sessionRepository)
                 }
             } else {
                 item {
@@ -1018,7 +1031,7 @@ fun SettingsSummaryCard(
 }
 
 @Composable
-fun WorkoutView(state: HrState) {
+fun WorkoutView(state: HrState, sessionRepository: SessionRepository) {
     val uiState = remember(state) { mapWorkoutPlayerUiState(state) }
     val errorColor = MaterialTheme.colorScheme.error
 
@@ -1175,6 +1188,14 @@ fun WorkoutView(state: HrState) {
                 }
             }
 
+            if (state.userSettings.runMode == "outdoor") {
+                val mapSessionId = state.activeDbSessionId
+                if (mapSessionId != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    MapCard(sessionId = mapSessionId, sessionRepository = sessionRepository)
+                }
+            }
+
             Spacer(modifier = Modifier.height(8.dp))
             Text("Connection: ${state.connectionStatus}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
@@ -1214,6 +1235,7 @@ fun SettingsScreen(
     var testingModeEnabled by remember { mutableStateOf(settings.testingModeEnabled) }
     var runMode by remember { mutableStateOf(settings.runMode) }
     var splitAudio by remember { mutableStateOf(settings.splitAnnouncementsEnabled) }
+    var autoPause by remember { mutableStateOf(settings.autoPauseEnabled) }
     var runWalkCoach by remember { mutableStateOf(settings.runWalkCoachEnabled) }
     
     // Warm-up Selection
@@ -1352,6 +1374,21 @@ fun SettingsScreen(
             Text("1km Split Audio Announcements")
         }
 
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+        ) {
+            Switch(checked = autoPause, onCheckedChange = { autoPause = it })
+            Spacer(modifier = Modifier.width(12.dp))
+            Column {
+                Text("Auto-Pause on Standstill", fontWeight = FontWeight.Bold)
+                Text(
+                    "Pause automatically at traffic lights and other stops; resume on movement",
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(24.dp))
         Text("Session Phases", style = MaterialTheme.typography.titleMedium)
         
@@ -1408,6 +1445,7 @@ fun SettingsScreen(
                 aiDataSharingEnabled = if (testingModeEnabled) false else aiDataSharingEnabled,
                 runMode = runMode,
                 splitAnnouncementsEnabled = splitAudio,
+                autoPauseEnabled = autoPause,
                 runWalkCoachEnabled = runWalkCoach,
                 warmUpDurationSeconds = if (warmUpSelection == "recommended") 480 else {
                     (warmUpMin.toIntOrNull() ?: 0) * 60 + (warmUpSec.toIntOrNull() ?: 0)

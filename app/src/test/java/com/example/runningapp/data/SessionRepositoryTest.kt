@@ -2,6 +2,7 @@ package com.example.runningapp.data
 
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.UserSettings
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -164,6 +165,28 @@ class SessionRepositoryTest {
     @Test
     fun `getTrackPointsForMap returns an empty list when no track point dao is configured`() = runTest {
         assertEquals(emptyList<TrackPoint>(), repository.getTrackPointsForMap(sessionId = 7L))
+    }
+
+    @Test
+    fun `getTrackPointsForMapFlow applies the same accuracy filter as the one-shot read`() = runTest {
+        val sessionId = 7L
+        val accurateGps = trackPoint(sessionId, lon = 1.0, accuracy = 15f, source = TrackPointSource.GPS)
+        val noisyGps = trackPoint(sessionId, lon = 3.0, accuracy = 45f, source = TrackPointSource.GPS)
+        val backfill = trackPoint(sessionId, lon = 5.0, accuracy = null, source = TrackPointSource.BACKFILL)
+        val mockTrackPointDao: TrackPointDao = mock()
+        whenever(mockTrackPointDao.getTrackPointsForSession(sessionId)).thenReturn(
+            flowOf(listOf(accurateGps, noisyGps, backfill))
+        )
+        val repositoryWithTrackPoints = SessionRepository(sessionDao = mockDao, trackPointDao = mockTrackPointDao)
+
+        val result = repositoryWithTrackPoints.getTrackPointsForMapFlow(sessionId).first()
+
+        assertEquals(listOf(accurateGps, backfill), result)
+    }
+
+    @Test
+    fun `getTrackPointsForMapFlow emits an empty list when no track point dao is configured`() = runTest {
+        assertEquals(emptyList<TrackPoint>(), repository.getTrackPointsForMapFlow(sessionId = 7L).first())
     }
 
     private fun trackPoint(sessionId: Long, lon: Double, accuracy: Float?, source: String) = TrackPoint(

@@ -5,7 +5,10 @@ import androidx.annotation.VisibleForTesting
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.recording.SessionRecorder
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
@@ -64,6 +67,15 @@ class SessionRepository(
     suspend fun getTrackPointsForMap(sessionId: Long): List<TrackPoint> {
         val dao = trackPointDao ?: return emptyList()
         return dao.getTrackPointsForSessionOnce(sessionId).filter { it.isAcceptedForMap() }
+    }
+
+    /**
+     * Live version of [getTrackPointsForMap] (#40): the in-run map card's trail redraws as new
+     * points are recorded, filtered by the same #38 accuracy rule.
+     */
+    fun getTrackPointsForMapFlow(sessionId: Long): Flow<List<TrackPoint>> {
+        val dao = trackPointDao ?: return flowOf(emptyList())
+        return dao.getTrackPointsForSession(sessionId).map { points -> points.filter { it.isAcceptedForMap() } }
     }
 
     private fun TrackPoint.isAcceptedForMap(): Boolean = when (source) {

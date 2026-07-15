@@ -224,6 +224,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var lastHrTimestamp = 0L
     private var firstDisconnectTime = 0L
     private val RECONNECT_TIMEOUT_MS = 120_000L // 2 minutes
+
+    // Auto-pause on standstill (#39). Distinguishes a PAUSED session that SessionRecorder itself
+    // triggered from a manual pause, so togglePause()/pauseSession() take precedence and GPS
+    // (which must keep running at 1 Hz through an auto-pause to detect resume) is only stopped
+    // on a manual pause.
+    @Volatile private var isAutoPaused = false
     
     // Mission: Session Phases
     @Volatile private var currentPhase = SessionPhase.WARM_UP
@@ -624,6 +630,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             onMetricsUpdated = { distanceKm, paceMinPerKm, lastLocation ->
                 _hrState.update { it.copy(distanceKm = distanceKm, paceMinPerKm = paceMinPerKm) }
             },
+            isAutoPauseEnabled = { currentSettings.autoPauseEnabled },
+            onAutoPause = { serviceScope.launch { autoPauseSession() } },
+            onAutoResume = { serviceScope.launch { autoResumeSession() } },
             onRawFix = { location, barometerPressureHpa ->
                 val sessionId = currentSessionId
                 if (sessionId != null) {
@@ -1069,6 +1078,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 startForegroundService()
                 if (!isSimulationEnabled) {
                     logBleDecision("force_scan", "User requested a fresh scan; skipping saved-device reconnect")
+                    if (_hrState.value.connectionStatus == "Connected") {
+                        disconnect()
+                    }
                     startScanning()
                 } else {
                     Log.d(TAG, "Ignoring Force Scan - Simulation Mode is active.")
@@ -1091,6 +1103,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun pauseSession() {
+        isAutoPaused = false
         _hrState.update { it.copy(sessionStatus = SessionStatus.PAUSED) }
         locationTracker?.stop()
         updateNotification(forceUpdate = true)
@@ -1101,11 +1114,43 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         if (currentSessionId == null) {
             startNewDatabaseSession()
         }
+        // A manual resume always wins, including when the session is currently auto-paused (GPS
+        // was never stopped in that case, so there's no stop()/discardLastFix() call to clear
+        // SessionRecorder's own auto-pause flag - do it explicitly instead) (#39).
+        isAutoPaused = false
+        locationTracker?.clearAutoPauseState()
         _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
         startSessionTimerLoop()
         locationTracker?.restartIfNeeded("resumeSession", currentSettings.runMode, isSimulationEnabled)
         updateNotification(forceUpdate = true)
         Log.d(TAG, "Session RESUMED")
+    }
+
+    /**
+     * Called from [SessionRecorder]'s auto-pause callback (via [LocationTracker], off the main
+     * thread - hence [serviceScope].launch at the call site) once a sustained standstill is
+     * detected (#39). Reuses [SessionStatus.PAUSED] so [pulseSession]'s existing RUNNING/PAUSED
+     * branching freezes the session clock and interval timers exactly like a manual pause, but -
+     * unlike [pauseSession] - deliberately leaves GPS running so movement can still be detected.
+     */
+    private fun autoPauseSession() {
+        if (_hrState.value.sessionStatus != SessionStatus.RUNNING) return
+        isAutoPaused = true
+        _hrState.update { it.copy(sessionStatus = SessionStatus.PAUSED) }
+        updateNotification(forceUpdate = true)
+        playCue("Auto-paused.")
+        Log.d(TAG, "Session AUTO-PAUSED (standstill)")
+    }
+
+    /** Counterpart to [autoPauseSession] - fired once [SessionRecorder] detects movement again. */
+    private fun autoResumeSession() {
+        if (_hrState.value.sessionStatus != SessionStatus.PAUSED || !isAutoPaused) return
+        isAutoPaused = false
+        _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
+        startSessionTimerLoop()
+        updateNotification(forceUpdate = true)
+        playCue("Resuming.")
+        Log.d(TAG, "Session AUTO-RESUMED (movement detected)")
     }
 
     private fun startNewDatabaseSession() {
@@ -1131,7 +1176,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // Reset session-level counters only when a new database session begins
             sessionSecondsRunning = 0
             sessionSecondsPaused = 0
-            
+            isAutoPaused = false
+
             // Mission 4: Reset Location/Pace variables
             locationTracker?.resetSessionState()
 
