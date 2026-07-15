@@ -128,6 +128,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+
+    // Detached from serviceScope on purpose: the save-time weather fetch must survive
+    // onDestroy() cancelling serviceScope when a run is stopped from the background.
+    private val weatherFetchScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     // Exposed state for UI
     private val _hrState = MutableStateFlow(HrState())
@@ -1306,19 +1310,22 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
                         persistRunIntervalStats(sessionId)
 
-                        // Weather snapshot: after the save above, but still inside the
-                        // NonCancellable block so stopping from the background (which cancels
-                        // serviceScope right after) can't skip it. fetchAndSaveWeather never
-                        // throws, so it can't fail the save. Missed fetches are retried at next launch.
+                        // Weather snapshot: fire-and-forget on weatherFetchScope, which is not
+                        // cancelled by onDestroy(), so stopping from the background can't skip
+                        // it. Not awaited, so a slow/unreachable weather service can't delay
+                        // currentSessionId being cleared below. Missed fetches are retried at
+                        // next launch.
                         val startLatitude = updatedSession.startLatitude
                         val startLongitude = updatedSession.startLongitude
                         if (updatedSession.runMode == "outdoor" && startLatitude != null && startLongitude != null) {
-                            sessionRepository.fetchAndSaveWeather(
-                                sessionId = sessionId,
-                                latitude = startLatitude,
-                                longitude = startLongitude,
-                                atEpochMillis = updatedSession.startTime
-                            )
+                            weatherFetchScope.launch {
+                                sessionRepository.fetchAndSaveWeather(
+                                    sessionId = sessionId,
+                                    latitude = startLatitude,
+                                    longitude = startLongitude,
+                                    atEpochMillis = updatedSession.startTime
+                                )
+                            }
                         }
 
                         val stageId = currentSettings.activeStageId
