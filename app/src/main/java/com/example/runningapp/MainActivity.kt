@@ -46,6 +46,7 @@ import androidx.navigation.navArgument
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.navigation.Routes
 import com.example.runningapp.ui.FeelFeedbackSheet
 import com.example.runningapp.ui.HistoryScreen
@@ -60,6 +61,7 @@ import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.ui.workout.CUE_REASON_HR_HIGH
 import com.example.runningapp.ui.workout.CUE_REASON_SENSOR_LOST
 import com.example.runningapp.ui.workout.CueSeverity
+import com.example.runningapp.ui.workout.MapCard
 import com.example.runningapp.ui.workout.TimelineMarkerType
 import com.example.runningapp.ui.workout.TimelineSegmentType
 import com.example.runningapp.ui.workout.ZoneBand
@@ -167,6 +169,7 @@ class MainActivity : ComponentActivity() {
                             MainScreen(
                                 hrService = hrService,
                                 userSettings = userSettings,
+                                sessionRepository = sessionRepository,
                                 onRequestPermissions = { checkAndRequestPermissions() },
                                 onStartService = { selectedSessionType ->
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
@@ -441,6 +444,7 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(
     hrService: HrForegroundService?,
     userSettings: UserSettings,
+    sessionRepository: SessionRepository,
     paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
     onStartService: (String) -> Unit,
@@ -856,7 +860,7 @@ fun MainScreen(
                 }
             } else if (isSessionActive) {
                 item {
-                    WorkoutView(state = state)
+                    WorkoutView(state = state, sessionRepository = sessionRepository)
                 }
             } else {
                 item {
@@ -1018,7 +1022,7 @@ fun SettingsSummaryCard(
 }
 
 @Composable
-fun WorkoutView(state: HrState) {
+fun WorkoutView(state: HrState, sessionRepository: SessionRepository) {
     val uiState = remember(state) { mapWorkoutPlayerUiState(state) }
     val errorColor = MaterialTheme.colorScheme.error
 
@@ -1172,6 +1176,14 @@ fun WorkoutView(state: HrState) {
                             }
                         }
                     }
+                }
+            }
+
+            if (state.runMode == "outdoor") {
+                val mapSessionId = state.activeDbSessionId
+                if (mapSessionId != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    MapCard(sessionId = mapSessionId, sessionRepository = sessionRepository)
                 }
             }
 

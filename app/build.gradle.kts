@@ -14,6 +14,8 @@ if (localPropertiesFile.exists()) {
 }
 val geminiApiKey = localProperties.getProperty("GEMINI_API_KEY", "")
     .replace("\"", "\\\"")
+val mapboxAccessToken = localProperties.getProperty("MAPBOX_ACCESS_TOKEN", "")
+    .replace("\"", "\\\"")
 
 android {
     namespace = "com.example.runningapp"
@@ -26,7 +28,8 @@ android {
         versionCode = 1
         versionName = "1.0"
         buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
-        
+        buildConfigField("String", "MAPBOX_ACCESS_TOKEN", "\"$mapboxAccessToken\"")
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
@@ -88,6 +91,10 @@ dependencies {
 
     // Location
     implementation("com.google.android.gms:play-services-location:21.1.0")
+
+    // Mapbox Maps SDK v11 + Compose extension (#40)
+    implementation("com.mapbox.maps:android:11.26.0")
+    implementation("com.mapbox.extension:maps-compose:11.26.0")
 
     // Testing
     testImplementation("junit:junit:4.13.2")
