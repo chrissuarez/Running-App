@@ -5,6 +5,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Duration
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZoneOffset
 
 class SunriseSunsetCalculatorTest {
@@ -92,5 +93,33 @@ class SunriseSunsetCalculatorTest {
         ) as SunriseSunsetCalculator.SunriseSunset.Times
 
         assertTrue(result.sunset.isAfter(result.sunrise))
+    }
+
+    @Test
+    fun `sunset still lands after sunrise west of Greenwich when it rolls into the next UTC day`() {
+        // San Francisco in summer: sunset local time is late enough that, converted to UTC, it
+        // falls after midnight on the day after `date`. A day-boundary-unaware calculation would
+        // wrap sunset back onto `date`'s early morning, landing it before sunrise.
+        val result = SunriseSunsetCalculator.sunriseSunsetUtc(
+            latitude = 37.77,
+            longitude = -122.42,
+            date = LocalDate.of(2024, 6, 21)
+        ) as SunriseSunsetCalculator.SunriseSunset.Times
+
+        assertTrue(result.sunset.isAfter(result.sunrise))
+
+        // Real daytime, e.g. 5pm PDT (UTC-7) on the solstice, must resolve to daytime. Zone is
+        // passed explicitly so the local-date resolution doesn't depend on the JVM's default
+        // time zone (isDaytime otherwise falls back to ZoneId.systemDefault()).
+        val losAngeles = ZoneId.of("America/Los_Angeles")
+        val fivePmPdt = LocalDate.of(2024, 6, 21).atTime(17, 0).toInstant(ZoneOffset.ofHours(-7))
+        assertTrue(
+            SunriseSunsetCalculator.isDaytime(
+                latitude = 37.77,
+                longitude = -122.42,
+                epochMillis = fivePmPdt.toEpochMilli(),
+                zoneId = losAngeles
+            )
+        )
     }
 }

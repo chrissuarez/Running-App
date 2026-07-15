@@ -108,7 +108,14 @@ object SunriseSunsetCalculator {
         val hourAngleHours = hourAngleDegrees / 15.0
 
         val localMeanTime = hourAngleHours + rightAscension - (0.06571 * t) - 6.622
-        return normalizeHours(localMeanTime - lngHour)
+        // localMeanTime drifts by roughly a full day's worth of hours as dayOfYear grows (the
+        // -0.06571*t term), so it must be folded back into a single day's clock time first.
+        // Deliberately NOT wrapped again after subtracting lngHour: a UTC offset outside
+        // [0, 24) at that point is exactly how this event lands on the UTC day before/after
+        // `date` (e.g. sunset west of Greenwich in summer, or sunrise east of it). Re-wrapping
+        // here would collapse that back onto `date` and can invert sunrise/sunset order -
+        // utcMidnight.plusSeconds in sunriseSunsetUtc carries the rollover correctly as-is.
+        return normalizeHours(localMeanTime) - lngHour
     }
 
     private fun approximateTime(lngHour: Double, dayOfYear: Int, isSunrise: Boolean): Double {
