@@ -1,5 +1,6 @@
 package com.example.runningapp.ui.workout
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -13,7 +14,6 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -29,8 +29,8 @@ import com.example.runningapp.ui.theme.RunningUiTokens
 
 /**
  * Full-screen live map (#41): the same camera-follow/amber-trail/day-night [MapSurface] as the
- * in-run [MapCard], with a slim high-contrast stats strip pinned above it. Back is the only
- * tappable control, so sweaty thumbs can't reach pause/stop from here.
+ * in-run [MapCard], full-bleed, with a slim high-contrast stats strip overlaid on top. Back is
+ * the only tappable control, so sweaty thumbs can't reach pause/stop from here.
  */
 @Composable
 fun FullScreenMapScreen(
@@ -41,27 +41,33 @@ fun FullScreenMapScreen(
     val uiState = remember(state) { mapWorkoutPlayerUiState(state) }
     val sessionId = state.activeDbSessionId
 
-    Scaffold(
-        topBar = { FullScreenMapStatsStrip(uiState = uiState, onBack = onBack) }
-    ) { padding ->
+    Box(modifier = Modifier.fillMaxSize()) {
         if (sessionId != null) {
             MapSurface(
                 sessionId = sessionId,
                 sessionRepository = sessionRepository,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
+                modifier = Modifier.fillMaxSize()
             )
         }
+        FullScreenMapStatsStrip(
+            state = state,
+            uiState = uiState,
+            onBack = onBack,
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
     }
 }
 
 @Composable
-private fun FullScreenMapStatsStrip(uiState: WorkoutPlayerUiState, onBack: () -> Unit) {
-    val metrics = uiState.secondaryMetrics.toMap()
+private fun FullScreenMapStatsStrip(
+    state: HrState,
+    uiState: WorkoutPlayerUiState,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
+        modifier = modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
         contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 4.dp
     ) {
@@ -81,9 +87,13 @@ private fun FullScreenMapStatsStrip(uiState: WorkoutPlayerUiState, onBack: () ->
                 valueColor = zoneBandColor(uiState.zoneBand),
                 modifier = Modifier.weight(1f)
             )
-            MapStat(label = "Pace", value = metrics["Pace"] ?: "--:-- /km", modifier = Modifier.weight(1f))
-            MapStat(label = "Distance", value = metrics["Distance"] ?: "0.00 km", modifier = Modifier.weight(1f))
-            MapStat(label = "Elapsed", value = metrics["Elapsed"] ?: "00:00", modifier = Modifier.weight(1f))
+            MapStat(
+                label = "Pace",
+                value = if (state.paceMinPerKm > 0) formatPace(state.paceMinPerKm) else "--:-- /km",
+                modifier = Modifier.weight(1f)
+            )
+            MapStat(label = "Distance", value = formatDistanceKm(state.distanceKm), modifier = Modifier.weight(1f))
+            MapStat(label = "Elapsed", value = formatStopwatch(state.secondsRunning), modifier = Modifier.weight(1f))
         }
     }
 }
