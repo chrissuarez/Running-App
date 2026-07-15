@@ -52,15 +52,18 @@ class LocationTracker(
         }
     }
 
+    @Synchronized
     fun resetSessionState() {
         lastLocation = null
         firstLocation = null
         sessionRecorder.reset()
     }
 
+    @Synchronized
     fun getLastLocation(): Location? = lastLocation
 
     /** The first GPS fix accepted this session — used as the run's start position (#79). */
+    @Synchronized
     fun getFirstLocation(): Location? = firstLocation
 
     fun getDistanceKm(): Double = sessionRecorder.getDistanceKm()
@@ -129,6 +132,7 @@ class LocationTracker(
         locationHandler = null
     }
 
+    @Synchronized
     private fun handleNewLocation(location: Location) {
         Log.d(logTag, "New location: lat=${location.latitude}, lon=${location.longitude}, acc=${location.accuracy}")
         lastLocation = location
