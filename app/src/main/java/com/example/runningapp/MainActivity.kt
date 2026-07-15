@@ -158,6 +158,10 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
+                    LaunchedEffect(sessionRepository) {
+                        sessionRepository.retryMissingWeather()
+                    }
+
                     NavHost(navController = navController, startDestination = Routes.MAIN) {
                         composable(Routes.MAIN) {
                             MainScreen(

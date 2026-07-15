@@ -1245,6 +1245,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val finalSecondsPaused = sessionSecondsPaused
         val finalDistanceKm = locationTracker?.getDistanceKm() ?: 0.0
         val finalAvgPace = locationTracker?.getPaceMinPerKm() ?: 0.0
+        val finalStartLocation = locationTracker?.getFirstLocation()
         val finalWalkBreaksCount = walkBreaksCount
         val finalIsRunWalkMode = currentSettings.runWalkCoachEnabled
         finalizeActiveRunIntervalTracking()
@@ -1279,6 +1280,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             timeInTargetZoneSeconds = sessionInTargetZoneSeconds,
                             distanceKm = finalDistanceKm,
                             avgPaceMinPerKm = finalAvgPace,
+                            startLatitude = finalStartLocation?.latitude,
+                            startLongitude = finalStartLocation?.longitude,
                             zone1Seconds = sessionZoneTimes[1] ?: 0L,
                             zone2Seconds = sessionZoneTimes[2] ?: 0L,
                             zone3Seconds = sessionZoneTimes[3] ?: 0L,
@@ -1302,6 +1305,24 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         database.sessionDao().updateSession(updatedSession)
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
                         persistRunIntervalStats(sessionId)
+
+                        // Weather snapshot: off the save path entirely (#79) - a separate,
+                        // non-awaited coroutine so a slow/unreachable weather service can never
+                        // delay or fail the save above. Missed fetches are retried at next launch.
+                        val startLatitude = updatedSession.startLatitude
+                        val startLongitude = updatedSession.startLongitude
+                        if (updatedSession.runMode == "outdoor" && startLatitude != null && startLongitude != null) {
+                            serviceScope.launch(Dispatchers.IO) {
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                                    sessionRepository.fetchAndSaveWeather(
+                                        sessionId = sessionId,
+                                        latitude = startLatitude,
+                                        longitude = startLongitude,
+                                        atEpochMillis = updatedSession.startTime
+                                    )
+                                }
+                            }
+                        }
 
                         val stageId = currentSettings.activeStageId
                         if (stageId != null &&

@@ -132,6 +132,14 @@ fun SummaryStats(session: RunnerSession) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
             Text(text = dateStr, style = MaterialTheme.typography.bodySmall)
+            if (session.weatherTempC != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = formatWeatherLine(session),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Spacer(modifier = Modifier.height(16.dp))
             
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -518,6 +526,50 @@ private fun formatMinutesSeconds(seconds: Int): String {
     val mins = seconds / 60
     val secs = seconds % 60
     return "%02d:%02d".format(mins, secs)
+}
+
+// https://open-meteo.com/en/docs (WMO Weather interpretation codes)
+private val WMO_CONDITION_LABELS = mapOf(
+    0 to "Clear sky",
+    1 to "Mainly clear",
+    2 to "Partly cloudy",
+    3 to "Overcast",
+    45 to "Fog",
+    48 to "Fog",
+    51 to "Light drizzle",
+    53 to "Drizzle",
+    55 to "Heavy drizzle",
+    56 to "Freezing drizzle",
+    57 to "Freezing drizzle",
+    61 to "Light rain",
+    63 to "Rain",
+    65 to "Heavy rain",
+    66 to "Freezing rain",
+    67 to "Freezing rain",
+    71 to "Light snow",
+    73 to "Snow",
+    75 to "Heavy snow",
+    77 to "Snow grains",
+    80 to "Light showers",
+    81 to "Showers",
+    82 to "Heavy showers",
+    85 to "Snow showers",
+    86 to "Snow showers",
+    95 to "Thunderstorm",
+    96 to "Thunderstorm with hail",
+    99 to "Thunderstorm with hail"
+)
+
+private fun formatWeatherLine(session: RunnerSession): String {
+    val tempC = session.weatherTempC ?: return ""
+    val condition = session.weatherConditionCode?.let { WMO_CONDITION_LABELS[it] }
+    return buildString {
+        append("%.0f°C".format(tempC))
+        session.weatherFeelsLikeC?.let { append(", feels %.0f°C".format(it)) }
+        condition?.let { append(" · $it") }
+        session.weatherHumidityPercent?.let { append(" · $it% humidity") }
+        session.weatherWindSpeedKmh?.let { append(" · %.0f km/h wind".format(it)) }
+    }
 }
 
 @Preview(showBackground = true)

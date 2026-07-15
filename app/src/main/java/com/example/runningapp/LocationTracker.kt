@@ -31,6 +31,7 @@ class LocationTracker(
     private var locationHandlerThread: HandlerThread? = null
     private var locationHandler: Handler? = null
     private var lastLocation: Location? = null
+    private var firstLocation: Location? = null
 
     private val sessionRecorder = SessionRecorder(
         clock = Clock { System.currentTimeMillis() },
@@ -51,10 +52,14 @@ class LocationTracker(
 
     fun resetSessionState() {
         lastLocation = null
+        firstLocation = null
         sessionRecorder.reset()
     }
 
     fun getLastLocation(): Location? = lastLocation
+
+    /** The first GPS fix accepted this session — used as the run's start position (#79). */
+    fun getFirstLocation(): Location? = firstLocation
 
     fun getDistanceKm(): Double = sessionRecorder.getDistanceKm()
 
@@ -121,6 +126,9 @@ class LocationTracker(
     private fun handleNewLocation(location: Location) {
         Log.d(logTag, "New location: lat=${location.latitude}, lon=${location.longitude}, acc=${location.accuracy}")
         lastLocation = location
+        if (firstLocation == null) {
+            firstLocation = location
+        }
         sessionRecorder.onLocationFix(
             LocationFix(
                 latitude = location.latitude,
