@@ -89,14 +89,18 @@ class SessionRecorder(
         }
         lastFix = fix
 
-        if (accepted) {
-            synchronized(paceHistory) {
+        synchronized(paceHistory) {
+            if (accepted) {
                 paceHistory.add(Pair(now, if (speedMps > 0.2) speedMps else 0.0))
-                while (paceHistory.isNotEmpty() && (now - paceHistory.first.first > PACE_WINDOW_MS)) {
-                    paceHistory.removeFirst()
-                }
             }
+            // Prune on every fix, not just accepted ones - otherwise a run of rejected fixes
+            // leaves a stale sample sitting past the pace window instead of aging out (#38 review).
+            while (paceHistory.isNotEmpty() && (now - paceHistory.first.first > PACE_WINDOW_MS)) {
+                paceHistory.removeFirst()
+            }
+        }
 
+        if (accepted) {
             val currentKm = (sessionDistanceMeters / 1000).toInt()
             if (isSplitAnnouncementsEnabled() && currentKm > lastSplitAnnouncedKm) {
                 lastSplitAnnouncedKm = currentKm

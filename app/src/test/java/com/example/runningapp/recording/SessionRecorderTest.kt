@@ -113,6 +113,34 @@ class SessionRecorderTest {
     }
 
     @Test
+    fun `onLocationFix prunes stale pace samples even while fixes are being rejected`() {
+        val recorder = SessionRecorder(
+            clock = fakeClock,
+            playSplitCue = {},
+            isSplitAnnouncementsEnabled = { false },
+            onMetricsUpdated = {}
+        )
+
+        fakeClock.currentMillis = 0
+        recorder.onLocationFix(fix(lon = 0.0, accuracy = 10f, timestampMs = 0))
+
+        // Given: an accepted fix establishes a nonzero pace.
+        fakeClock.currentMillis = 1_000
+        recorder.onLocationFix(fix(lon = lonDegreesForMeters(5.0), accuracy = 10f, timestampMs = 1_000, speedMps = 5.0f))
+        assertTrue(recorder.getPaceMinPerKm() > 0.0)
+
+        // When: 20s later (past the 15s pace window) only a rejected fix arrives.
+        fakeClock.currentMillis = 21_000
+        recorder.onLocationFix(
+            fix(lon = lonDegreesForMeters(305.0), accuracy = 45f, timestampMs = 21_000, speedMps = 5.0f)
+        )
+
+        // Then: the stale pace samples still age out of the window even though this fix was
+        // rejected - pruning must not be gated on acceptance, only adding a new sample is.
+        assertEquals(0.0, recorder.getPaceMinPerKm(), 0.001)
+    }
+
+    @Test
     fun `getPaceMinPerKm averages GPS-reported speed over a rolling 15 second window`() {
         val recorder = SessionRecorder(
             clock = fakeClock,
