@@ -136,7 +136,7 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
         "Elapsed" to formatStopwatch(state.secondsRunning)
     )
     if (state.userSettings.runMode == "outdoor") {
-        secondary += "Distance" to "%.2f km".format(state.distanceKm)
+        secondary += "Distance" to formatDistanceKm(state.distanceKm)
         if (state.paceMinPerKm > 0) {
             secondary += "Pace" to formatPace(state.paceMinPerKm)
         }
@@ -262,8 +262,10 @@ fun formatStopwatch(seconds: Long): String {
     return "%02d:%02d".format(mins, secs)
 }
 
-private fun formatPace(paceMinPerKm: Double): String {
+fun formatPace(paceMinPerKm: Double): String {
     val mins = paceMinPerKm.toInt()
     val secs = ((paceMinPerKm - mins) * 60).toInt().coerceIn(0, 59)
     return "%d:%02d /km".format(mins, secs)
 }
+
+fun formatDistanceKm(distanceKm: Double): String = "%.2f km".format(distanceKm)

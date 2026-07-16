@@ -1,5 +1,6 @@
 package com.example.runningapp.ui.workout
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.Card
@@ -30,16 +31,41 @@ private val MapCardHeight = 180.dp
 private const val TrailLineWidth = 6.0
 
 /**
- * Live map card for the outdoor in-run screen (#40): camera follows the device's location puck,
- * the session trail is drawn from accuracy-accepted track points, and the style switches between
- * day/night presets from on-device sunrise/sunset. Rendering only while visible (screen off,
- * backgrounded, or navigated away) comes for free: [MapboxMap] ties its internal MapView to the
- * host [androidx.lifecycle.LifecycleOwner] and stops rendering on the Activity's onStop (screen
- * off, backgrounded); navigating to another route removes this composable from composition
- * entirely, via Navigation-Compose's NavHost.
+ * Live map card for the outdoor in-run screen (#40). Tapping it opens the full-screen map (#41)
+ * via [onClick]. Rendering only while visible (screen off, backgrounded, or navigated away) comes
+ * for free: [MapboxMap] ties its internal MapView to the host [androidx.lifecycle.LifecycleOwner]
+ * and stops rendering on the Activity's onStop (screen off, backgrounded); navigating to another
+ * route removes this composable from composition entirely, via Navigation-Compose's NavHost.
  */
 @Composable
-fun MapCard(sessionId: Long, sessionRepository: SessionRepository, modifier: Modifier = Modifier) {
+fun MapCard(
+    sessionId: Long,
+    sessionRepository: SessionRepository,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClickLabel = "Open full-screen map", onClick = onClick)
+    ) {
+        MapSurface(
+            sessionId = sessionId,
+            sessionRepository = sessionRepository,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(MapCardHeight)
+        )
+    }
+}
+
+/**
+ * Shared map rendering for the in-run [MapCard] and the [FullScreenMapScreen]: camera follows the
+ * device's location puck, the session trail is drawn from accuracy-accepted track points, and the
+ * style switches between day/night presets from on-device sunrise/sunset.
+ */
+@Composable
+fun MapSurface(sessionId: Long, sessionRepository: SessionRepository, modifier: Modifier = Modifier) {
     val trackPoints by produceState(initialValue = emptyList<TrackPoint>(), sessionId, sessionRepository) {
         sessionRepository.getTrackPointsForMapFlow(sessionId).collect { value = it }
     }
@@ -64,28 +90,24 @@ fun MapCard(sessionId: Long, sessionRepository: SessionRepository, modifier: Mod
     val mapViewportState = rememberMapViewportState()
     val trailColor = MaterialTheme.colorScheme.primary
 
-    Card(modifier = modifier.fillMaxWidth()) {
-        MapboxMap(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(MapCardHeight),
-            mapViewportState = mapViewportState,
-            style = { MapboxStandardStyle(standardStyleState = standardStyleState) }
-        ) {
-            MapEffect(Unit) { mapView ->
-                mapView.location.updateSettings {
-                    locationPuck = createDefault2DPuck(withBearing = true)
-                    puckBearingEnabled = true
-                    puckBearing = PuckBearing.HEADING
-                    enabled = true
-                }
-                mapViewportState.transitionToFollowPuckState()
+    MapboxMap(
+        modifier = modifier,
+        mapViewportState = mapViewportState,
+        style = { MapboxStandardStyle(standardStyleState = standardStyleState) }
+    ) {
+        MapEffect(Unit) { mapView ->
+            mapView.location.updateSettings {
+                locationPuck = createDefault2DPuck(withBearing = true)
+                puckBearingEnabled = true
+                puckBearing = PuckBearing.HEADING
+                enabled = true
             }
-            if (trailPoints.size >= 2) {
-                PolylineAnnotation(points = trailPoints) {
-                    lineColor = trailColor
-                    lineWidth = TrailLineWidth
-                }
+            mapViewportState.transitionToFollowPuckState()
+        }
+        if (trailPoints.size >= 2) {
+            PolylineAnnotation(points = trailPoints) {
+                lineColor = trailColor
+                lineWidth = TrailLineWidth
             }
         }
     }

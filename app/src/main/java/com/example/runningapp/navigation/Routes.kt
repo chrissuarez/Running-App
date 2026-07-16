@@ -9,6 +9,7 @@ object Routes {
     const val HISTORY = "history"
     const val SESSION_DETAIL = "session_detail/{$ARG_SESSION_ID}"
     const val TRAINING_PLAN = "training_plan"
+    const val MAP = "map"
 
     fun sessionDetail(sessionId: Long): String = "session_detail/$sessionId"
 }
