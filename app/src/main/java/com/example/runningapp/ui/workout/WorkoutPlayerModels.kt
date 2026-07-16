@@ -3,6 +3,10 @@ package com.example.runningapp.ui.workout
 import com.example.runningapp.HrState
 import com.example.runningapp.SessionPhase
 import com.example.runningapp.StructuredWorkoutPhase
+import com.example.runningapp.ZoneBand
+import com.example.runningapp.targetHrZone
+import com.example.runningapp.zoneBandOf
+import com.example.runningapp.zoneRangeLabel
 
 private const val SESSION_TYPE_EASY_FIXED_DURATION = "Easy Fixed Duration"
 private const val EASY_FIXED_DURATION_MINUTES = 30
@@ -16,13 +20,6 @@ enum class CueSeverity {
     INFO,
     WARNING,
     CRITICAL
-}
-
-enum class ZoneBand {
-    BELOW,
-    IN,
-    ABOVE,
-    UNKNOWN
 }
 
 enum class TimelineSegmentType {
@@ -122,12 +119,9 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
         SessionPhase.COOL_DOWN -> "COOL-DOWN"
     }
 
-    val zoneBand = mapZoneBand(
-        bpm = state.avgBpm,
-        zoneLow = state.userSettings.zone2Low,
-        zoneHigh = state.userSettings.zone2High,
-        hasSignal = state.bpm > 0 || state.avgBpm > 0
-    )
+    val hasSignal = state.bpm > 0 || state.avgBpm > 0
+    val zoneBand = if (hasSignal) zoneBandOf(state.avgBpm, state.userSettings) else ZoneBand.UNKNOWN
+    val targetZone = state.userSettings.targetHrZone
 
     val timeline = if (isStructuredMain) mapIntervalTimelineUiState(state) else null
     val cue = mapCoachCueUiState(state)
@@ -162,20 +156,13 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
         },
         hrText = "${state.bpm} bpm",
         zoneBand = zoneBand,
-        zoneLabel = "Z2 ${state.userSettings.zone2Low}-${state.userSettings.zone2High}",
+        zoneLabel = "Z${targetZone.number} ${zoneRangeLabel(targetZone, state.userSettings.maxHr)}",
         secondaryMetrics = secondary,
         sensorFreshnessText = if (state.lastHrAgeSeconds > 0) "HR age ${state.lastHrAgeSeconds}s" else "HR signal active",
         sensorStale = state.lastHrAgeSeconds >= 5,
         timeline = timeline,
         coachCue = cue
     )
-}
-
-fun mapZoneBand(bpm: Int, zoneLow: Int, zoneHigh: Int, hasSignal: Boolean): ZoneBand {
-    if (!hasSignal || bpm <= 0) return ZoneBand.UNKNOWN
-    if (bpm < zoneLow) return ZoneBand.BELOW
-    if (bpm > zoneHigh) return ZoneBand.ABOVE
-    return ZoneBand.IN
 }
 
 fun mapIntervalTimelineUiState(state: HrState): IntervalTimelineUiState {

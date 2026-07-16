@@ -5,18 +5,36 @@ import com.example.runningapp.SessionPhase
 import com.example.runningapp.SessionStatus
 import com.example.runningapp.StructuredWorkoutPhase
 import com.example.runningapp.UserSettings
+import com.example.runningapp.ZoneBand
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WorkoutPlayerModelsTest {
 
+    private fun stateWithHr(bpm: Int, targetZone: Int) = HrState(
+        sessionStatus = SessionStatus.RUNNING,
+        currentPhase = SessionPhase.MAIN,
+        bpm = bpm,
+        avgBpm = bpm,
+        userSettings = UserSettings(maxHr = 190, targetZone = targetZone)
+    )
+
     @Test
-    fun `mapZoneBand returns below in above correctly`() {
-        assertEquals(ZoneBand.BELOW, mapZoneBand(bpm = 120, zoneLow = 130, zoneHigh = 150, hasSignal = true))
-        assertEquals(ZoneBand.IN, mapZoneBand(bpm = 140, zoneLow = 130, zoneHigh = 150, hasSignal = true))
-        assertEquals(ZoneBand.ABOVE, mapZoneBand(bpm = 160, zoneLow = 130, zoneHigh = 150, hasSignal = true))
-        assertEquals(ZoneBand.UNKNOWN, mapZoneBand(bpm = 0, zoneLow = 130, zoneHigh = 150, hasSignal = false))
+    fun `zone band comes from the current zone against the target zone`() {
+        assertEquals(ZoneBand.BELOW, mapWorkoutPlayerUiState(stateWithHr(100, targetZone = 2)).zoneBand)
+        assertEquals(ZoneBand.IN, mapWorkoutPlayerUiState(stateWithHr(120, targetZone = 2)).zoneBand)
+        assertEquals(ZoneBand.ABOVE, mapWorkoutPlayerUiState(stateWithHr(140, targetZone = 2)).zoneBand)
+        assertEquals(ZoneBand.UNKNOWN, mapWorkoutPlayerUiState(stateWithHr(0, targetZone = 2)).zoneBand)
+
+        // Same heart rate, different target.
+        assertEquals(ZoneBand.IN, mapWorkoutPlayerUiState(stateWithHr(140, targetZone = 3)).zoneBand)
+    }
+
+    @Test
+    fun `zone label names the target zone band`() {
+        assertEquals("Z2 114-132", mapWorkoutPlayerUiState(stateWithHr(120, targetZone = 2)).zoneLabel)
+        assertEquals("Z3 133-151", mapWorkoutPlayerUiState(stateWithHr(120, targetZone = 3)).zoneLabel)
     }
 
     @Test
@@ -66,7 +84,7 @@ class WorkoutPlayerModelsTest {
             avgBpm = 152,
             currentWalkReason = "HR cap exceeded",
             hrCapExceededInCurrentInterval = true,
-            userSettings = UserSettings(zone2Low = 120, zone2High = 145)
+            userSettings = UserSettings(maxHr = 190, targetZone = 2)
         )
 
         val ui = mapWorkoutPlayerUiState(state)

@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -30,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -65,7 +67,6 @@ import com.example.runningapp.ui.workout.FullScreenMapScreen
 import com.example.runningapp.ui.workout.MapCard
 import com.example.runningapp.ui.workout.TimelineMarkerType
 import com.example.runningapp.ui.workout.TimelineSegmentType
-import com.example.runningapp.ui.workout.ZoneBand
 import com.example.runningapp.ui.workout.mapWorkoutPlayerUiState
 import com.example.runningapp.ui.workout.zoneBandColor
 
@@ -1017,7 +1018,12 @@ fun SettingsSummaryCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Zone 2: ${settings.zone2Low}-${settings.zone2High} BPM", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                val target = settings.targetHrZone
+                Text(
+                    "Zone ${target.number} · ${target.zoneName}: ${zoneRangeLabel(target, settings.maxHr)} BPM",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold
+                )
                 val modeLabel = if (settings.runMode == "outdoor") "Outdoor Run" else "Treadmill Run"
                 Text("Mode: $modeLabel | Cooldown: ${settings.cooldownSeconds}s", style = MaterialTheme.typography.bodySmall)
                 val sessionTypeSummary = when (selectedSessionType) {
@@ -1232,8 +1238,7 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     var maxHr by remember { mutableStateOf(settings.maxHr.toString()) }
-    var zone2Low by remember { mutableStateOf(settings.zone2Low.toString()) }
-    var zone2High by remember { mutableStateOf(settings.zone2High.toString()) }
+    var targetZone by remember { mutableStateOf(settings.targetHrZone) }
     var cooldown by remember { mutableStateOf(settings.cooldownSeconds.toString()) }
     var persistenceHigh by remember { mutableStateOf(settings.persistenceHighSeconds.toString()) }
     var persistenceLow by remember { mutableStateOf(settings.persistenceLowSeconds.toString()) }
@@ -1269,20 +1274,37 @@ fun SettingsScreen(
 
         // Basic Info
         OutlinedTextField(value = maxHr, onValueChange = { maxHr = it }, label = { Text("Max HR") }, modifier = Modifier.fillMaxWidth())
-        
+
         Spacer(modifier = Modifier.height(8.dp))
-        
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(value = zone2Low, onValueChange = { zone2Low = it }, label = { Text("Zone 2 Low") }, modifier = Modifier.weight(1f))
-            OutlinedTextField(value = zone2High, onValueChange = { zone2High = it }, label = { Text("Zone 2 High") }, modifier = Modifier.weight(1f))
-        }
-        
-        Button(onClick = {
-            val max = maxHr.toIntOrNull() ?: 190
-            zone2Low = (max * 0.6).roundToInt().toString()
-            zone2High = (max * 0.75).roundToInt().toString()
-        }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
-            Text("Derive Defaults from Max HR")
+
+        // Zones are fixed slices of Max HR, so the target is a choice of zone, never a typed band.
+        val maxHrForZones = maxHr.toIntOrNull() ?: settings.maxHr
+        Text("Target Zone", style = MaterialTheme.typography.titleMedium)
+        HrZone.entries.forEach { zone ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(
+                        selected = targetZone == zone,
+                        onClick = { targetZone = zone },
+                        role = Role.RadioButton
+                    )
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                RadioButton(selected = targetZone == zone, onClick = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    "${zone.number} · ${zone.zoneName}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                Text(
+                    "${zoneRangeLabel(zone, maxHrForZones)} BPM",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -1442,9 +1464,8 @@ fun SettingsScreen(
         
         Button(onClick = {
             onSave(settings.copy(
-                maxHr = maxHr.toIntOrNull() ?: settings.maxHr,
-                zone2Low = zone2Low.toIntOrNull() ?: settings.zone2Low,
-                zone2High = zone2High.toIntOrNull() ?: settings.zone2High,
+                maxHr = effectiveMaxHr(maxHr.toIntOrNull() ?: settings.maxHr),
+                targetZone = targetZone.number,
                 cooldownSeconds = cooldown.toIntOrNull() ?: settings.cooldownSeconds,
                 persistenceHighSeconds = persistenceHigh.toIntOrNull() ?: settings.persistenceHighSeconds,
                 persistenceLowSeconds = persistenceLow.toIntOrNull() ?: settings.persistenceLowSeconds,
