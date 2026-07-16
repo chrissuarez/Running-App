@@ -1,0 +1,388 @@
+<title>Record screen — A, when things are missing or broken (#101)</title>
+<style>
+  :root {
+    --ground: #f2f0ec;
+    --ink: #1c1a17;
+    --ink-soft: #55504a;
+    --ink-faint: #8b857c;
+    --rule: #ddd8d0;
+    --accent: #b4501e;
+    --flag: #8a1c1c;
+    --phone-bg: #131417;
+    --phone-card: #1e2025;
+    --phone-card-2: #26292f;
+    --phone-ink: #eceef2;
+    --phone-ink-soft: #9ba1ac;
+    --phone-line: #33373f;
+    --phone-primary: #4a7dff;
+    --phone-on-primary: #ffffff;
+    --phone-target: #3f8f5f;
+    --phone-warn: #d8a13a;
+    --phone-dead: #2a2d33;
+    --phone-dead-ink: #5d626b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #161513; --ink: #eae7e1; --ink-soft: #a49e94;
+      --ink-faint: #746e65; --rule: #2e2c28; --accent: #e0733d; --flag: #e07a7a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #161513; --ink: #eae7e1; --ink-soft: #a49e94;
+    --ink-faint: #746e65; --rule: #2e2c28; --accent: #e0733d; --flag: #e07a7a;
+  }
+  :root[data-theme="light"] {
+    --ground: #f2f0ec; --ink: #1c1a17; --ink-soft: #55504a;
+    --ink-faint: #8b857c; --rule: #ddd8d0; --accent: #b4501e; --flag: #8a1c1c;
+  }
+
+  body {
+    background: var(--ground); color: var(--ink);
+    font-family: Georgia, "Iowan Old Style", "Times New Roman", serif;
+    line-height: 1.55; margin: 0; padding: 2.5rem 1.5rem 5rem;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; display: flex; flex-direction: column; gap: 2.75rem; }
+  h1 { font-size: 1.85rem; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
+  h2 { font-size: 1.25rem; margin: 0; text-wrap: balance; }
+  p { max-width: 66ch; margin: 0; color: var(--ink-soft); }
+  p.lead { color: var(--ink); }
+  a { color: var(--accent); }
+  .eyebrow {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.7rem;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin: 0 0 0.5rem;
+  }
+  section { display: flex; flex-direction: column; gap: 1.25rem; }
+  .sec-head { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  .finding {
+    border: 1px solid var(--rule); border-left: 3px solid var(--flag);
+    padding: 1rem 1.15rem; display: flex; flex-direction: column; gap: 0.5rem;
+    background: color-mix(in srgb, var(--flag) 4%, transparent);
+  }
+  .finding .k {
+    font-family: ui-monospace, monospace; font-size: 0.66rem; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--flag);
+  }
+  .finding p { max-width: 74ch; }
+  code {
+    font-family: ui-monospace, monospace; font-size: 0.85em;
+    background: color-mix(in srgb, var(--ink) 8%, transparent); padding: 0.1em 0.35em; border-radius: 3px;
+  }
+
+  .gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1.5rem; }
+  figure { margin: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+  figcaption { display: flex; flex-direction: column; gap: 0.25rem; }
+  figcaption b { font-size: 0.95rem; font-weight: 600; }
+  figcaption span { font-size: 0.85rem; color: var(--ink-soft); }
+  figcaption em { font-size: 0.85rem; color: var(--accent); font-style: normal; }
+
+  .phone {
+    background: var(--phone-bg); border: 1px solid var(--phone-line); border-radius: 26px;
+    padding: 0.75rem; aspect-ratio: 9 / 17.5; display: flex; flex-direction: column;
+    font-family: Roboto, system-ui, -apple-system, sans-serif; color: var(--phone-ink); overflow: hidden;
+  }
+  .status {
+    display: flex; justify-content: space-between; align-items: center; font-size: 0.6rem;
+    color: var(--phone-ink-soft); padding: 0.15rem 0.5rem 0.6rem; font-variant-numeric: tabular-nums;
+  }
+  .screen { flex: 1; display: flex; flex-direction: column; gap: 0.7rem; padding: 0 0.35rem; min-height: 0; }
+
+  .seg { display: flex; gap: 0.4rem; }
+  .seg button {
+    flex: 1; font: inherit; font-size: 0.78rem; padding: 0.5rem 0; cursor: default;
+    border-radius: 999px; border: 1px solid var(--phone-line); background: transparent; color: var(--phone-ink-soft);
+  }
+  .seg button.on { background: var(--phone-card-2); color: var(--phone-ink); border-color: var(--phone-card-2); }
+
+  .card { background: var(--phone-card); border-radius: 14px; padding: 0.85rem; }
+  .card.dashed { background: transparent; border: 1px dashed var(--phone-line); }
+  .k2 {
+    font-size: 0.6rem; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--phone-ink-soft); margin-bottom: 0.3rem;
+  }
+  .title { font-size: 1.05rem; font-weight: 600; letter-spacing: -0.01em; }
+  .shape { font-size: 0.82rem; color: var(--phone-ink-soft); margin-top: 0.2rem; }
+  .meta { font-size: 0.7rem; color: var(--phone-ink-soft); margin-top: 0.5rem; }
+  .target {
+    display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.7rem; color: var(--phone-target);
+    border: 1px solid var(--phone-target); border-radius: 999px; padding: 0.12rem 0.5rem; margin-top: 0.5rem;
+  }
+  .row-end { display: flex; justify-content: flex-end; margin-top: 0.5rem; }
+  .link {
+    background: none; border: none; font: inherit; font-size: 0.74rem; color: var(--phone-ink-soft);
+    text-decoration: underline; cursor: default; padding: 0.35rem;
+  }
+  .start {
+    background: var(--phone-primary); color: var(--phone-on-primary); border: none; border-radius: 14px;
+    width: 100%; font: inherit; font-weight: 600; font-size: 1rem; letter-spacing: 0.02em;
+    height: 3.4rem; cursor: default;
+  }
+  .start.dead { background: var(--phone-dead); color: var(--phone-dead-ink); }
+  .start small { display: block; font-size: 0.66rem; font-weight: 400; opacity: 0.85; letter-spacing: 0; }
+  .sensor {
+    display: flex; align-items: center; gap: 0.4rem; font-size: 0.72rem; color: var(--phone-ink-soft);
+    padding: 0 0.15rem;
+  }
+  .sensor.warn { color: var(--phone-warn); }
+  .sensor button { margin-left: auto; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+  .grow { flex: 1; min-height: 0.4rem; }
+</style>
+
+<div class="wrap">
+  <header class="sec-head">
+    <p class="eyebrow">Prototype · issue #101 · variant A · throwaway</p>
+    <h1>A, when the plan is missing and when the kit is broken</h1>
+    <p class="lead">
+      You picked A, and asked what it looks like when things are missing or broken. Those turned out to be
+      two different questions, and the second one uncovered something in the code that changes the ticket.
+    </p>
+  </header>
+
+  <div class="finding">
+    <span class="k">Found while mocking this</span>
+    <p>
+      <b>The app has no Start button today, and my earlier mock quietly invented one.</b>
+      Right now the run begins the moment the chest strap connects — <code>onConnected</code> sets the session
+      to RUNNING and opens the database record (<code>HrForegroundService.kt:1793</code>). The buttons on the
+      screen say “Start Service” and “Scan Devices”; neither is “start my run”. Connecting <em>is</em> starting.
+    </p>
+    <p>
+      So “no strap” isn’t a cosmetic broken state — today it means <b>no run at all</b>, and you have no way to
+      record one without the strap. A big blue START changes that rule. That’s a decision for you, not a detail,
+      and it’s what the last two phones below are asking.
+    </p>
+  </div>
+
+  <section>
+    <div class="sec-head">
+      <h2>Missing: nothing is wrong, there’s just no plan</h2>
+      <p>
+        Your open-ended run — the case that replaces Free Track. The first phone is the everyday one for reference.
+        The question is whether the other two feel deliberate or feel like a hole.
+      </p>
+    </div>
+    <div class="gallery">
+
+      <figure>
+        <div class="phone">
+          <div class="status"><span>6:04</span><span>♥ 62 · GPS</span></div>
+          <div class="screen">
+            <div class="seg"><button>Treadmill</button><button class="on">Outdoor</button></div>
+            <div class="card">
+              <div class="k2">Today · Stage 1: Base Builder</div>
+              <div class="title">Aerobic Foundation</div>
+              <div class="shape">5 × (5 min run / 1 min walk)</div>
+              <div class="target">◎ Target: Moderate</div>
+              <div class="meta">5 min warm-up · 5 min cool-down · ≈ 40 min</div>
+              <div class="row-end"><button class="link">Skip today</button></div>
+            </div>
+            <div class="grow"></div>
+            <button class="start">START</button>
+          </div>
+        </div>
+        <figcaption>
+          <b>Plan queued</b>
+          <span>The everyday case, for reference. No decisions required.</span>
+        </figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone">
+          <div class="status"><span>6:04</span><span>♥ 62 · GPS</span></div>
+          <div class="screen">
+            <div class="seg"><button>Treadmill</button><button class="on">Outdoor</button></div>
+            <div class="card dashed">
+              <div class="k2">Today</div>
+              <div class="title">Open run</div>
+              <div class="shape">No structure, no interval cues. Zone coaching still on.</div>
+              <div class="row-end"><button class="link">Bring back Aerobic Foundation</button></div>
+            </div>
+            <div class="grow"></div>
+            <button class="start">START</button>
+          </div>
+        </div>
+        <figcaption>
+          <b>Skipped — as drawn</b>
+          <span>The dashed outline is the problem: it draws the run as the absence of a plan.</span>
+          <em>Not this one.</em>
+        </figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone">
+          <div class="status"><span>6:04</span><span>♥ 62 · GPS</span></div>
+          <div class="screen">
+            <div class="seg"><button>Treadmill</button><button class="on">Outdoor</button></div>
+            <div class="card">
+              <div class="k2">Today</div>
+              <div class="title">Open run</div>
+              <div class="shape">Run as long as you like. No intervals.</div>
+              <div class="target">◎ Target: Moderate</div>
+              <div class="meta">Zone coaching on · splits every 1 km</div>
+              <div class="row-end"><button class="link">Bring back Aerobic Foundation</button></div>
+            </div>
+            <div class="grow"></div>
+            <button class="start">START</button>
+          </div>
+        </div>
+        <figcaption>
+          <b>Skipped — solid card</b>
+          <span>Same card as a real workout: a title, a target, what the app will do for you. An open run is a
+          thing you chose, not a gap.</span>
+          <em>Recommended.</em>
+        </figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone">
+          <div class="status"><span>6:04</span><span>♥ 62 · GPS</span></div>
+          <div class="screen">
+            <div class="seg"><button>Treadmill</button><button class="on">Outdoor</button></div>
+            <div class="card">
+              <div class="k2">Today</div>
+              <div class="title">Open run</div>
+              <div class="shape">Run as long as you like. No intervals.</div>
+              <div class="target">◎ Target: Moderate</div>
+              <div class="meta">Zone coaching on · splits every 1 km</div>
+              <div class="row-end"><button class="link">Choose a plan</button></div>
+            </div>
+            <div class="grow"></div>
+            <button class="start">START</button>
+          </div>
+        </div>
+        <figcaption>
+          <b>No plan at all</b>
+          <span>Identical to skipped — only the link underneath differs. Nothing announces the absence, because
+          an open run is complete on its own terms.</span>
+        </figcaption>
+      </figure>
+
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Broken: the strap or the GPS isn’t there</h2>
+      <p>
+        Here the screen has to say something is wrong without becoming a wall of diagnostics — today’s “Run Setup”
+        card reports sensor readiness, raw connection status and testing mode in three separate lines, which is
+        four more facts than 6am can use.
+      </p>
+    </div>
+    <div class="gallery">
+
+      <figure>
+        <div class="phone">
+          <div class="status"><span>6:04</span><span>· · · GPS</span></div>
+          <div class="screen">
+            <div class="seg"><button>Treadmill</button><button class="on">Outdoor</button></div>
+            <div class="card">
+              <div class="k2">Today · Stage 1: Base Builder</div>
+              <div class="title">Aerobic Foundation</div>
+              <div class="shape">5 × (5 min run / 1 min walk)</div>
+              <div class="target">◎ Target: Moderate</div>
+              <div class="meta">5 min warm-up · 5 min cool-down · ≈ 40 min</div>
+              <div class="row-end"><button class="link">Skip today</button></div>
+            </div>
+            <div class="grow"></div>
+            <div class="sensor"><span class="dot"></span>Looking for your strap…</div>
+            <button class="start">START</button>
+          </div>
+        </div>
+        <figcaption>
+          <b>Strap connecting</b>
+          <span>One quiet line above START. It disappears when the strap connects — no card, no status codes.</span>
+        </figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone">
+          <div class="status"><span>6:04</span><span>· · · GPS</span></div>
+          <div class="screen">
+            <div class="seg"><button>Treadmill</button><button class="on">Outdoor</button></div>
+            <div class="card">
+              <div class="k2">Today · Stage 1: Base Builder</div>
+              <div class="title">Aerobic Foundation</div>
+              <div class="shape">5 × (5 min run / 1 min walk)</div>
+              <div class="target">◎ Target: Moderate</div>
+              <div class="meta">5 min warm-up · 5 min cool-down · ≈ 40 min</div>
+              <div class="row-end"><button class="link">Skip today</button></div>
+            </div>
+            <div class="grow"></div>
+            <div class="sensor warn"><span class="dot"></span>Strap not found<button class="link">Retry</button></div>
+            <button class="start dead">START<small>Waiting for your strap</small></button>
+          </div>
+        </div>
+        <figcaption>
+          <b>No strap — Start blocked</b>
+          <span>Honest about today’s rule: no strap, no run. But it strands you on a dead button in the cold with
+          a flat strap battery.</span>
+          <em>This is the question.</em>
+        </figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone">
+          <div class="status"><span>6:04</span><span>· · · GPS</span></div>
+          <div class="screen">
+            <div class="seg"><button>Treadmill</button><button class="on">Outdoor</button></div>
+            <div class="card">
+              <div class="k2">Today · Stage 1: Base Builder</div>
+              <div class="title">Aerobic Foundation</div>
+              <div class="shape">5 × (5 min run / 1 min walk)</div>
+              <div class="target">◎ Target: Moderate</div>
+              <div class="meta">5 min warm-up · 5 min cool-down · ≈ 40 min</div>
+              <div class="row-end"><button class="link">Skip today</button></div>
+            </div>
+            <div class="grow"></div>
+            <div class="sensor warn"><span class="dot"></span>Strap not found<button class="link">Retry</button></div>
+            <button class="start">START<small>Without heart rate — no zone coaching</small></button>
+          </div>
+        </div>
+        <figcaption>
+          <b>No strap — Start anyway</b>
+          <span>START never dies; it tells you what you’ll lose. You still get distance, pace and the map. The
+          plan’s intervals still run on the clock.</span>
+          <em>Recommended — but it’s a real change.</em>
+        </figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone">
+          <div class="status"><span>6:04</span><span>♥ 62 · · ·</span></div>
+          <div class="screen">
+            <div class="seg"><button>Treadmill</button><button class="on">Outdoor</button></div>
+            <div class="card">
+              <div class="k2">Today · Stage 1: Base Builder</div>
+              <div class="title">Aerobic Foundation</div>
+              <div class="shape">5 × (5 min run / 1 min walk)</div>
+              <div class="target">◎ Target: Moderate</div>
+              <div class="meta">5 min warm-up · 5 min cool-down · ≈ 40 min</div>
+              <div class="row-end"><button class="link">Skip today</button></div>
+            </div>
+            <div class="grow"></div>
+            <div class="sensor"><span class="dot"></span>Finding GPS…</div>
+            <button class="start">START<small>Distance will start when GPS locks on</small></button>
+          </div>
+        </div>
+        <figcaption>
+          <b>No GPS yet, outdoor</b>
+          <span>Never blocks: you can start under trees and let it catch up. Same quiet line, same slot.</span>
+        </figcaption>
+      </figure>
+
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>What I’d land on</h2>
+      <p>
+        One card slot, one sensor line, one START, in the same three places every single morning — the card says
+        what you’re about to do, the line says what’s wrong if anything is, and START is always alive. Nothing
+        on this screen is ever an empty box, and nothing on it is ever a dead end.
+      </p>
+    </div>
+  </section>
+</div>
