@@ -783,7 +783,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             val zone = hrZoneOf(currentBpm, currentSettings)
                             if (zone != null) {
                                 sessionZoneTimes[zone.number] = (sessionZoneTimes[zone.number] ?: 0L) + 1
-                                if (zone == currentSettings.targetHrZone) sessionInTargetZoneSeconds += 1
+                                // Not `zone == target`: zone 1 and 5 chart wider than they band
+                                // (see zoneBandOf), so at those targets zone equality would bank
+                                // seconds the coach was calling BELOW or ABOVE as In Target.
+                                if (zoneBandOf(currentBpm, currentSettings) == ZoneBand.IN) {
+                                    sessionInTargetZoneSeconds += 1
+                                }
                             } else {
                                 sessionNoDataSeconds += 1
                             }

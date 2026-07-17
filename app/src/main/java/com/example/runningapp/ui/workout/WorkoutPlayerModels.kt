@@ -6,7 +6,7 @@ import com.example.runningapp.StructuredWorkoutPhase
 import com.example.runningapp.ZoneBand
 import com.example.runningapp.targetHrZone
 import com.example.runningapp.zoneBandOf
-import com.example.runningapp.zoneRangeLabel
+import com.example.runningapp.targetRangeLabel
 
 private const val SESSION_TYPE_EASY_FIXED_DURATION = "Easy Fixed Duration"
 private const val EASY_FIXED_DURATION_MINUTES = 30
@@ -156,7 +156,7 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
         },
         hrText = "${state.bpm} bpm",
         zoneBand = zoneBand,
-        zoneLabel = "Z${targetZone.number} ${zoneRangeLabel(targetZone, state.userSettings.maxHr)}",
+        zoneLabel = "Z${targetZone.number} ${targetRangeLabel(targetZone, state.userSettings.maxHr)}",
         secondaryMetrics = secondary,
         sensorFreshnessText = if (state.lastHrAgeSeconds > 0) "HR age ${state.lastHrAgeSeconds}s" else "HR signal active",
         sensorStale = state.lastHrAgeSeconds >= 5,

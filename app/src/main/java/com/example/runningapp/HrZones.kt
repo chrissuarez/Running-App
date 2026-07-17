@@ -90,9 +90,23 @@ fun hrZoneOf(bpm: Int, settings: UserSettings): HrZone? = hrZoneOf(bpm, settings
 fun zoneBandOf(bpm: Int, settings: UserSettings): ZoneBand =
     zoneBandOf(bpm, settings.maxHr, settings.targetHrZone)
 
-/** e.g. "114-132", "up to 113", "171+". */
+/**
+ * How [zone] reads as a slice of the chart: e.g. "114-132", "up to 113", "171+".
+ *
+ * Zone 1 and Zone 5 are open-ended here because the chart must account for every second. To
+ * describe a *target*, use [targetRangeLabel] — a target is closed at both ends.
+ */
 fun zoneRangeLabel(zone: HrZone, maxHr: Int): String = when (zone) {
     HrZone.ENDURANCE -> "up to ${zoneUpperBpm(zone, maxHr)}"
     HrZone.ANAEROBIC -> "${zoneLowerBpm(zone, maxHr)}+"
     else -> "${zoneLowerBpm(zone, maxHr)}-${zoneUpperBpm(zone, maxHr)}"
 }
+
+/**
+ * How [zone] reads as a target: e.g. "114-132", "95-113", "171-190" — always closed.
+ *
+ * Every target has an outside (see [zoneBandOf]), so a target range must not advertise BPM the
+ * band would call BELOW or ABOVE. Zones 2-4 read the same as [zoneRangeLabel]; 1 and 5 don't.
+ */
+fun targetRangeLabel(zone: HrZone, maxHr: Int): String =
+    "${zoneLowerBpm(zone, maxHr)}-${zoneUpperBpm(zone, maxHr)}"

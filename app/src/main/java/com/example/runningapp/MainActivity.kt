@@ -1020,7 +1020,7 @@ fun SettingsSummaryCard(
             Column(modifier = Modifier.weight(1f)) {
                 val target = settings.targetHrZone
                 Text(
-                    "Zone ${target.number} · ${target.zoneName}: ${zoneRangeLabel(target, settings.maxHr)} BPM",
+                    "Zone ${target.number} · ${target.zoneName}: ${targetRangeLabel(target, settings.maxHr)} BPM",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Bold
                 )

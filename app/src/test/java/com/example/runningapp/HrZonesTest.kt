@@ -163,6 +163,24 @@ class HrZonesTest {
     }
 
     @Test
+    fun `target ranges are closed, so they never advertise BPM outside the band`() {
+        // Zones 2-4 read the same either way; only the open-ended ends differ.
+        assertEquals("114-132", targetRangeLabel(HrZone.MODERATE, maxHr))
+        assertEquals("95-113", targetRangeLabel(HrZone.ENDURANCE, maxHr))
+        assertEquals("171-190", targetRangeLabel(HrZone.ANAEROBIC, maxHr))
+
+        // Every edge a target range shows must read IN, and stepping outside must not.
+        for (target in HrZone.entries) {
+            val low = zoneLowerBpm(target, maxHr)
+            val high = zoneUpperBpm(target, maxHr)
+            assertEquals(ZoneBand.IN, zoneBandOf(low, maxHr, target))
+            assertEquals(ZoneBand.IN, zoneBandOf(high, maxHr, target))
+            assertEquals(ZoneBand.BELOW, zoneBandOf(low - 1, maxHr, target))
+            assertEquals(ZoneBand.ABOVE, zoneBandOf(high + 1, maxHr, target))
+        }
+    }
+
+    @Test
     fun `zone numbers map back to zones`() {
         assertEquals(HrZone.ENDURANCE, HrZone.ofNumber(1))
         assertEquals(HrZone.ANAEROBIC, HrZone.ofNumber(5))
