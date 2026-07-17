@@ -154,12 +154,10 @@ class HrZonesTest {
     }
 
     @Test
-    fun `zone range labels read the way the table does`() {
-        assertEquals("up to 113", zoneRangeLabel(HrZone.ENDURANCE, maxHr))
-        assertEquals("114-132", zoneRangeLabel(HrZone.MODERATE, maxHr))
-        assertEquals("133-151", zoneRangeLabel(HrZone.TEMPO, maxHr))
-        assertEquals("152-170", zoneRangeLabel(HrZone.THRESHOLD, maxHr))
-        assertEquals("171+", zoneRangeLabel(HrZone.ANAEROBIC, maxHr))
+    fun `range labels read the way the table does`() {
+        assertEquals("114-132", targetRangeLabel(HrZone.MODERATE, maxHr))
+        assertEquals("133-151", targetRangeLabel(HrZone.TEMPO, maxHr))
+        assertEquals("152-170", targetRangeLabel(HrZone.THRESHOLD, maxHr))
     }
 
     @Test

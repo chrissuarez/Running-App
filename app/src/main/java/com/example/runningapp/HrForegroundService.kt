@@ -192,6 +192,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var sessionNoDataSeconds = 0L
     private var sessionSampleCount = 0
     private var sessionInTargetZoneSeconds = 0L
+    private var sessionAboveTargetSeconds = 0L
     private var lastRecordedSecond = -1L
     
     // Mission 3: In-Memory Zone Tracking
@@ -345,11 +346,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         actualDurationSeconds = actualDurationSeconds.coerceAtLeast(0),
         avgBpm = avgBpm,
         maxBpm = maxBpm,
-        // For easy sessions, the easy cap is the target zone, so this is time in any zone above it.
-        timeAboveEasyCapSeconds = HrZone.entries
-            .filter { it.number > currentSettings.targetHrZone.number }
-            .sumOf { sessionZoneTimes[it.number] ?: 0L }
-            .toInt(),
+        // For easy sessions the easy cap is the target zone, so this is time above it. Counted
+        // by band: at a target of 5 there is no zone with a higher number, but there is still
+        // time above the cap.
+        timeAboveEasyCapSeconds = sessionAboveTargetSeconds.toInt(),
         noDataSeconds = sessionNoDataSeconds,
         samples = database.sampleDao().getSamplesForSessionOnce(sessionId)
     )
@@ -783,11 +783,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             val zone = hrZoneOf(currentBpm, currentSettings)
                             if (zone != null) {
                                 sessionZoneTimes[zone.number] = (sessionZoneTimes[zone.number] ?: 0L) + 1
-                                // Not `zone == target`: zone 1 and 5 chart wider than they band
-                                // (see zoneBandOf), so at those targets zone equality would bank
-                                // seconds the coach was calling BELOW or ABOVE as In Target.
-                                if (zoneBandOf(currentBpm, currentSettings) == ZoneBand.IN) {
-                                    sessionInTargetZoneSeconds += 1
+                                // Banked by band, not by zone number: zone 1 and 5 chart wider
+                                // than they band (see zoneBandOf), so at those targets zone
+                                // arithmetic would bank seconds the coach called BELOW or ABOVE
+                                // as In Target, and would find no zone above a target of 5.
+                                when (zoneBandOf(currentBpm, currentSettings)) {
+                                    ZoneBand.IN -> sessionInTargetZoneSeconds += 1
+                                    ZoneBand.ABOVE -> sessionAboveTargetSeconds += 1
+                                    else -> {}
                                 }
                             } else {
                                 sessionNoDataSeconds += 1
@@ -1229,6 +1232,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             baselineHr = null
             lastDriftCueTime = 0L
             sessionInTargetZoneSeconds = 0
+            sessionAboveTargetSeconds = 0
             lastRecordedSecond = -1
             
             // Mission 3: Reset Zone Timers

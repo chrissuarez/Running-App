@@ -1300,7 +1300,7 @@ fun SettingsScreen(
                     modifier = Modifier.weight(1f)
                 )
                 Text(
-                    "${zoneRangeLabel(zone, maxHrForZones)} BPM",
+                    "${targetRangeLabel(zone, maxHrForZones)} BPM",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
