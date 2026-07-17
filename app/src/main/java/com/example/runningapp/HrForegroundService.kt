@@ -161,7 +161,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // Mission 4: Location
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var locationTracker: LocationTracker? = null
-    private var lastNotificationZone = -1
+    private var lastNotificationZone: HrZone? = null
     private var lastNotificationPhase = SessionPhase.WARM_UP
     
     // Mission: Resilient Tracking Loop
@@ -192,6 +192,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var sessionNoDataSeconds = 0L
     private var sessionSampleCount = 0
     private var sessionInTargetZoneSeconds = 0L
+    private var sessionAboveTargetSeconds = 0L
     private var lastRecordedSecond = -1L
     
     // Mission 3: In-Memory Zone Tracking
@@ -206,8 +207,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // Pair<Timestamp, Bpm>
     private val bpmHistory = LinkedList<Pair<Long, Int>>()
     
-    private enum class Zone { LOW, TARGET, HIGH, UNKNOWN }
-    private var currentZone = Zone.UNKNOWN
+    // Below/on/above target comes from HrZones.kt — the coach and the live UI cannot disagree.
+    private var currentZone = ZoneBand.UNKNOWN
     private var zoneEnterTime = 0L
     
     private var lastCueTime = 0L
@@ -345,9 +346,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         actualDurationSeconds = actualDurationSeconds.coerceAtLeast(0),
         avgBpm = avgBpm,
         maxBpm = maxBpm,
-        // For easy sessions, time above the easy cap is simply time above Zone 2.
-        timeAboveEasyCapSeconds = ((sessionZoneTimes[3] ?: 0L) + (sessionZoneTimes[4] ?: 0L) + (sessionZoneTimes[5] ?: 0L))
-            .toInt(),
+        // For easy sessions the easy cap is the target zone, so this is time above it. Counted
+        // by band: at a target of 5 there is no zone with a higher number, but there is still
+        // time above the cap.
+        timeAboveEasyCapSeconds = sessionAboveTargetSeconds.toInt(),
         noDataSeconds = sessionNoDataSeconds,
         samples = database.sampleDao().getSamplesForSessionOnce(sessionId)
     )
@@ -778,10 +780,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             sessionBpmSum += currentBpm
                             sessionSampleCount += 1
                             
-                            val zone = calculateZone(currentBpm, currentSettings)
-                            if (zone in 1..5) {
-                                sessionZoneTimes[zone] = (sessionZoneTimes[zone] ?: 0L) + 1
-                                if (zone == 2) sessionInTargetZoneSeconds += 1
+                            val zone = hrZoneOf(currentBpm, currentSettings)
+                            if (zone != null) {
+                                sessionZoneTimes[zone.number] = (sessionZoneTimes[zone.number] ?: 0L) + 1
+                                // Banked by band, not by zone number: zone 1 and 5 chart wider
+                                // than they band (see zoneBandOf), so at those targets zone
+                                // arithmetic would bank seconds the coach called BELOW or ABOVE
+                                // as In Target, and would find no zone above a target of 5.
+                                when (zoneBandOf(currentBpm, currentSettings)) {
+                                    ZoneBand.IN -> sessionInTargetZoneSeconds += 1
+                                    ZoneBand.ABOVE -> sessionAboveTargetSeconds += 1
+                                    else -> {}
+                                }
                             } else {
                                 sessionNoDataSeconds += 1
                             }
@@ -1222,6 +1232,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             baselineHr = null
             lastDriftCueTime = 0L
             sessionInTargetZoneSeconds = 0
+            sessionAboveTargetSeconds = 0
             lastRecordedSecond = -1
             
             // Mission 3: Reset Zone Timers
@@ -1447,8 +1458,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         
         // Critical State Detection
         val currentState = _hrState.value
-        val currentZone = calculateZone(currentState.bpm, currentSettings)
-        val zoneChanged = currentZone != lastNotificationZone
+        val notificationZone = hrZoneOf(currentState.bpm, currentSettings)
+        val zoneChanged = notificationZone != lastNotificationZone
         val phaseChanged = currentPhase != lastNotificationPhase
         
         val isCritical = forceUpdate || zoneChanged || phaseChanged
@@ -1459,7 +1470,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         
         lastNotificationTime = now
-        lastNotificationZone = currentZone
+        lastNotificationZone = notificationZone
         lastNotificationPhase = currentPhase
         
         val defaultContent = buildNotificationContent(currentState)
@@ -1762,7 +1773,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         synchronized(bpmHistory) {
             bpmHistory.clear()
         }
-        currentZone = Zone.UNKNOWN
+        currentZone = ZoneBand.UNKNOWN
         isStructuredWorkout = false
         hasStructuredWorkoutStarted = false
         phaseTimeRemainingSeconds = 0
@@ -1942,25 +1953,23 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         
         val isRunWalk = currentSettings.runWalkCoachEnabled && currentSessionType == SESSION_TYPE_RUN_WALK
-        
+
+        val targetZone = currentSettings.targetHrZone
+        val targetLow = zoneLowerBpm(targetZone, currentSettings.maxHr)
+        val targetHigh = zoneUpperBpm(targetZone, currentSettings.maxHr)
+
         val newZone = when {
             isRunWalk -> {
                 // MISSION: Wider Hysteresis for Run/Walk
                 // Recover as soon as HR drops to the MIDPOINT of the target zone
-                val recoveryPoint = currentSettings.zone2Low + ((currentSettings.zone2High - currentSettings.zone2Low) / 2)
-                if (currentZone == Zone.LOW) {
-                    if (avgBpm >= recoveryPoint) Zone.TARGET else Zone.LOW
-                } else if (avgBpm < currentSettings.zone2Low) {
-                    Zone.LOW
-                } else if (avgBpm > currentSettings.zone2High) {
-                    Zone.HIGH
+                val recoveryPoint = targetLow + ((targetHigh - targetLow) / 2)
+                if (currentZone == ZoneBand.BELOW) {
+                    if (avgBpm >= recoveryPoint) ZoneBand.IN else ZoneBand.BELOW
                 } else {
-                    Zone.TARGET
+                    zoneBandOf(avgBpm, currentSettings)
                 }
             }
-            avgBpm < currentSettings.zone2Low -> Zone.LOW
-            avgBpm > currentSettings.zone2High -> Zone.HIGH
-            else -> Zone.TARGET
+            else -> zoneBandOf(avgBpm, currentSettings)
         }
         
         if (newZone != currentZone) {
@@ -1973,19 +1982,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val cooldownRemaining = (lastCueTime + cooldownMs) - now
         
         val isBufferActive = sessionSecondsRunning < currentWarmupDuration && !isWarmupSkipped
-        val criticalThreshold = currentSettings.zone2High + 15
+        val criticalThreshold = targetHigh + 15
         val isRunWalkRecoveryScope = isRunWalk &&
             currentPhase == SessionPhase.MAIN &&
             isStructuredWorkout &&
             structuredWorkoutPhase == StructuredWorkoutPhase.RUN
-        val recoveryThresholdReached = avgBpm <= currentSettings.zone2Low
+        val recoveryThresholdReached = avgBpm <= targetLow
 
         if (isRunWalkRecoveryScope && wasInHighZoneSinceRunIntervalStart && recoveryThresholdReached) {
             if (recoveryCueEligibleSinceMs == 0L) {
                 recoveryCueEligibleSinceMs = now
                 Log.d(
                     TAG,
-                    "Recovery threshold reached in RUN interval. avgBpm=$avgBpm threshold=${currentSettings.zone2Low}"
+                    "Recovery threshold reached in RUN interval. avgBpm=$avgBpm threshold=$targetLow"
                 )
             }
             lastRecoveryCueBpm = avgBpm
@@ -2006,13 +2015,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
              val persistenceHighMs = currentSettings.persistenceHighSeconds * 1000L
              val persistenceLowMs = currentSettings.persistenceLowSeconds * 1000L
 
-             if (currentZone == Zone.HIGH && timeInCurrentZone >= persistenceHighMs) {
+             if (currentZone == ZoneBand.ABOVE && timeInCurrentZone >= persistenceHighMs) {
                  // MISSION: Cardiac Drift Detection - > 20m, <= baseline + 12
                  val isDrifting = sessionSecondsRunning > 1200 && 
                                  baselineHr != null && 
                                  avgBpm <= (baselineHr!! + 12)
 
-                 if (isDrifting && avgBpm > currentSettings.zone2High) {
+                 if (isDrifting && avgBpm > targetHigh) {
                     val driftCooldownMs = 300_000L // 5 mins
                     if (now - lastDriftCueTime >= driftCooldownMs) {
                         if (isRunWalkRecoveryScope) wasInHighZoneSinceRunIntervalStart = true
@@ -2081,10 +2090,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                      recordRunWalkRecoveryCueEvent()
                      Log.d(
                          TAG,
-                         "Recovery cue fired in RUN interval. avgBpm=$lastRecoveryCueBpm threshold=${currentSettings.zone2Low}"
+                         "Recovery cue fired in RUN interval. avgBpm=$lastRecoveryCueBpm threshold=$targetLow"
                      )
                  }
-             } else if (!isRunWalk && currentZone == Zone.LOW && timeInCurrentZone >= persistenceLowMs) {
+             } else if (!isRunWalk && currentZone == ZoneBand.BELOW && timeInCurrentZone >= persistenceLowMs) {
                  // MISSION: Total Silence during Warm-up Buffer for LOW cues too
                  if (isBufferActive) {
                      Log.d(TAG, "Warm-up Buffer Active: Muting Low HR cue (Time: ${sessionSecondsRunning}s)")
@@ -2116,24 +2125,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val cooldownRem = ((lastCueTime + cooldownMs) - now).coerceAtLeast(0) / 1000
         val statusStr = if (cooldownRem > 0) "Cool: ${cooldownRem}s" else "Ready"
         return DebugInfo(avg, zoneStr, "${timeInZone}s", statusStr)
-    }
-
-    private fun calculateZone(bpm: Int, settings: UserSettings): Int {
-        val maxHr = settings.maxHr
-        if (maxHr <= 0 || bpm <= 0) return 0
-        
-        // 1. Zone 2 is defined by user settings (Target)
-        if (bpm >= settings.zone2Low && bpm <= settings.zone2High) return 2
-        
-        // 2. Derive other zones relative to Zone 2 and Max HR
-        val percent = (bpm.toFloat() / maxHr * 100).toInt()
-        
-        return when {
-            bpm < settings.zone2Low -> 1
-            bpm > settings.zone2High && percent < 80 -> 3
-            percent < 90 -> 4
-            else -> 5
-        }
     }
 
     private fun updateSimulationData() {

@@ -22,6 +22,7 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.tooling.preview.Preview
 import kotlin.math.roundToInt
+import com.example.runningapp.HrZone
 import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.IntervalCompletionBand
@@ -612,7 +613,7 @@ fun ZoneBarChart(session: RunnerSession) {
     Column(modifier = Modifier.fillMaxWidth()) {
         zones.forEachIndexed { index, seconds ->
             val zoneNum = index + 1
-            val label = if (zoneNum <= 5) "Zone $zoneNum" else "No Data"
+            val label = HrZone.ofNumber(zoneNum)?.let { "Z${it.number} ${it.zoneName}" } ?: "No Data"
             val percentage = if (maxSeconds > 0) seconds.toFloat() / maxSeconds else 0f
             val timeStr = formatDurationLarge(seconds) // Reusing existing formatter
 
@@ -622,7 +623,7 @@ fun ZoneBarChart(session: RunnerSession) {
             ) {
                 Text(
                     text = label, 
-                    modifier = Modifier.width(70.dp), // Increased width for "No Data"
+                    modifier = Modifier.width(96.dp), // Fits the longest zone name
                     style = MaterialTheme.typography.bodySmall, 
                     fontWeight = FontWeight.Bold
                 )

@@ -1,6 +1,6 @@
 # Running App - Heart Rate Monitor & Coach
 
-A robust Android application designed to track heart rate (HR) during runs and provide real-time audio coaching to keep you in your target heart rate zones (specifically optimized for Zone 2 training).
+A robust Android application designed to track heart rate (HR) during runs and provide real-time audio coaching to keep you in your target heart rate zone.
 
 ## 🆕 New Features & Fixes (February 25 - March 7, 2026)
 
@@ -17,7 +17,7 @@ A robust Android application designed to track heart rate (HR) during runs and p
     - Expanded Gemini context with structured Run/Walk adaptation metrics (graded completion rates, clean interval rate, drift slope, completion ratio, trigger/recovery stats).
     - Added a deterministic progression safety clamp: AI-generated next workout load is limited to 110% of the runner's max completed load in the last 30 days.
 - **Coaching/Audio Reliability Fixes**:
-    - Fixed run/walk recovery cue timing so RUN-interval recovery cues fire at the Zone 2 low threshold.
+    - Fixed run/walk recovery cue timing so RUN-interval recovery cues fire at the target zone low threshold.
     - Hardened audio ducking cleanup to always release cue audio focus after spoken coaching cues.
 
 ## 🆕 UI Redesign Update (March 8, 2026)
@@ -42,7 +42,7 @@ A robust Android application designed to track heart rate (HR) during runs and p
 - **Real-time Monitoring**: Connects to BLE heart rate monitors (using standard HRS GATT services).
 - **Foreground Service**: Continuous tracking even when the screen is off or the app is minimized, using a persistent notification.
 - **Adaptive Coaching**:
-    - **Zone 2 Emphasis**: Alerts you when you are above or below your target heart rate.
+    - **Target Zone Emphasis**: Alerts you when you are above or below your target zone. All five zones (Endurance, Moderate, Tempo, Threshold, Anaerobic) are fixed slices of your Max HR at 50/60/70/80/90%; you pick which one to train in, and Moderate (Zone 2) is the default.
     - **Warm-up Coaching Buffer**: Total audio silence for the first **8 minutes** of a session to allow physiological steady-state. Includes a safety override (Target High + 15 BPM).
     - **Cardiac Drift Detection**: Detects slow physiological HR rise after 20 minutes using a 10-minute baseline. Plays specialized "Steady Effort" cues with a 5-minute anti-nag cooldown.
     - **Run/Walk Coach Mode**: Specialized mode for beginner training with tailored interval cues ("Walk until breathing settles", "Transition to a light jog") and wider recovery hysteresis.

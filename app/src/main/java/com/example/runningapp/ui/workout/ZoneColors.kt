@@ -3,6 +3,7 @@ package com.example.runningapp.ui.workout
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import com.example.runningapp.ZoneBand
 
 @Composable
 fun zoneBandColor(zoneBand: ZoneBand): Color = when (zoneBand) {

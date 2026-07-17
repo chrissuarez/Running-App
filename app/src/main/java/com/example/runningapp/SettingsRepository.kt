@@ -16,8 +16,7 @@ data class SavedDevice(
 
 data class UserSettings(
     val maxHr: Int = 190,
-    val zone2Low: Int = 120,
-    val zone2High: Int = 140,
+    val targetZone: Int = HrZone.DEFAULT_TARGET.number,
     val cooldownSeconds: Int = 75,
     val persistenceHighSeconds: Int = 30,
     val persistenceLowSeconds: Int = 45,
@@ -47,8 +46,7 @@ class SettingsRepository(private val context: Context) {
 
     private object PreferencesKeys {
         val MAX_HR = intPreferencesKey("max_hr")
-        val ZONE2_LOW = intPreferencesKey("zone2_low")
-        val ZONE2_HIGH = intPreferencesKey("zone2_high")
+        val TARGET_ZONE = intPreferencesKey("target_zone")
         val COOLDOWN_SECONDS = intPreferencesKey("cooldown_seconds")
         val PERSISTENCE_HIGH_SECONDS = intPreferencesKey("persistence_high_seconds")
         val PERSISTENCE_LOW_SECONDS = intPreferencesKey("persistence_low_seconds")
@@ -84,8 +82,7 @@ class SettingsRepository(private val context: Context) {
 
             UserSettings(
                 maxHr = preferences[PreferencesKeys.MAX_HR] ?: 190,
-                zone2Low = preferences[PreferencesKeys.ZONE2_LOW] ?: 120,
-                zone2High = preferences[PreferencesKeys.ZONE2_HIGH] ?: 140,
+                targetZone = HrZone.ofNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE]).number,
                 cooldownSeconds = preferences[PreferencesKeys.COOLDOWN_SECONDS] ?: 75,
                 persistenceHighSeconds = preferences[PreferencesKeys.PERSISTENCE_HIGH_SECONDS] ?: 30,
                 persistenceLowSeconds = preferences[PreferencesKeys.PERSISTENCE_LOW_SECONDS] ?: 45,
@@ -115,8 +112,7 @@ class SettingsRepository(private val context: Context) {
     suspend fun updateSettings(settings: UserSettings) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.MAX_HR] = settings.maxHr
-            preferences[PreferencesKeys.ZONE2_LOW] = settings.zone2Low
-            preferences[PreferencesKeys.ZONE2_HIGH] = settings.zone2High
+            preferences[PreferencesKeys.TARGET_ZONE] = HrZone.ofNumberOrDefault(settings.targetZone).number
             preferences[PreferencesKeys.COOLDOWN_SECONDS] = settings.cooldownSeconds
             preferences[PreferencesKeys.PERSISTENCE_HIGH_SECONDS] = settings.persistenceHighSeconds
             preferences[PreferencesKeys.PERSISTENCE_LOW_SECONDS] = settings.persistenceLowSeconds
