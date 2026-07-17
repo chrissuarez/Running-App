@@ -1449,8 +1449,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         
         // Critical State Detection
         val currentState = _hrState.value
-        val currentZone = hrZoneOf(currentState.bpm, currentSettings)
-        val zoneChanged = currentZone != lastNotificationZone
+        val notificationZone = hrZoneOf(currentState.bpm, currentSettings)
+        val zoneChanged = notificationZone != lastNotificationZone
         val phaseChanged = currentPhase != lastNotificationPhase
         
         val isCritical = forceUpdate || zoneChanged || phaseChanged
@@ -1461,7 +1461,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         
         lastNotificationTime = now
-        lastNotificationZone = currentZone
+        lastNotificationZone = notificationZone
         lastNotificationPhase = currentPhase
         
         val defaultContent = buildNotificationContent(currentState)

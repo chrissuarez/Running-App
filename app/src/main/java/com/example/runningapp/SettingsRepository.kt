@@ -82,7 +82,7 @@ class SettingsRepository(private val context: Context) {
 
             UserSettings(
                 maxHr = preferences[PreferencesKeys.MAX_HR] ?: 190,
-                targetZone = HrZone.ofNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE] ?: HrZone.DEFAULT_TARGET.number).number,
+                targetZone = HrZone.ofNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE]).number,
                 cooldownSeconds = preferences[PreferencesKeys.COOLDOWN_SECONDS] ?: 75,
                 persistenceHighSeconds = preferences[PreferencesKeys.PERSISTENCE_HIGH_SECONDS] ?: 30,
                 persistenceLowSeconds = preferences[PreferencesKeys.PERSISTENCE_LOW_SECONDS] ?: 45,

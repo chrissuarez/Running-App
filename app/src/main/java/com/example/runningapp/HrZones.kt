@@ -20,7 +20,8 @@ enum class HrZone(val number: Int, val zoneName: String, val lowerPercentOfMaxHr
         fun ofNumber(number: Int): HrZone? = entries.firstOrNull { it.number == number }
 
         /** For stored values, which may predate this zone model or be absent entirely. */
-        fun ofNumberOrDefault(number: Int): HrZone = ofNumber(number) ?: DEFAULT_TARGET
+        fun ofNumberOrDefault(number: Int?): HrZone =
+            number?.let { ofNumber(it) } ?: DEFAULT_TARGET
     }
 }
 
