@@ -124,6 +124,36 @@ class HrZonesTest {
     }
 
     @Test
+    fun `every target has an outside, so high-HR cues stay reachable`() {
+        // The high-HR branch — the safety override included — only fires on ABOVE. A target with
+        // no ABOVE silences it. Zone 5 is the case that matters: its chart slice is open-ended.
+        assertEquals(ZoneBand.ABOVE, zoneBandOf(maxHr + 1, maxHr, HrZone.ANAEROBIC))
+        assertEquals(ZoneBand.ABOVE, zoneBandOf(maxHr + 15, maxHr, HrZone.ANAEROBIC))
+        assertEquals(ZoneBand.IN, zoneBandOf(maxHr, maxHr, HrZone.ANAEROBIC))
+
+        // Zone 1 is the mirror: its slice swallows everything below 50%, the band must not.
+        assertEquals(ZoneBand.BELOW, zoneBandOf(40, maxHr, HrZone.ENDURANCE))
+        assertEquals(ZoneBand.IN, zoneBandOf(100, maxHr, HrZone.ENDURANCE))
+    }
+
+    @Test
+    fun `no max hr leaves any target trapped in a single band`() {
+        for (candidate in -50..400) {
+            for (target in HrZone.entries) {
+                val bands = (1..500).map { zoneBandOf(it, candidate, target) }.toSet()
+                assertTrue(
+                    "maxHr=$candidate target=$target never reads ABOVE",
+                    bands.contains(ZoneBand.ABOVE)
+                )
+                assertTrue(
+                    "maxHr=$candidate target=$target never reads IN",
+                    bands.contains(ZoneBand.IN)
+                )
+            }
+        }
+    }
+
+    @Test
     fun `zone range labels read the way the table does`() {
         assertEquals("up to 113", zoneRangeLabel(HrZone.ENDURANCE, maxHr))
         assertEquals("114-132", zoneRangeLabel(HrZone.MODERATE, maxHr))

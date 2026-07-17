@@ -65,12 +65,19 @@ fun hrZoneOf(bpm: Int, maxHr: Int): HrZone? {
     return HrZone.entries.lastOrNull { bpm >= zoneLowerBpm(it, maxHr) } ?: HrZone.ENDURANCE
 }
 
-/** Below, on, or above target — the only definition of those words in the app. */
+/**
+ * Below, on, or above target — the only definition of those words in the app.
+ *
+ * Banding compares [bpm] to the target zone's edges rather than to the zone it charts as, so
+ * every target has an outside. Zone 5's chart slice is open-ended and Zone 1's swallows
+ * everything beneath it, but a target must be escapable in both directions: the high-HR cues,
+ * including the safety override, only fire on [ZoneBand.ABOVE].
+ */
 fun zoneBandOf(bpm: Int, maxHr: Int, targetZone: HrZone): ZoneBand {
-    val zone = hrZoneOf(bpm, maxHr) ?: return ZoneBand.UNKNOWN
+    if (bpm <= 0) return ZoneBand.UNKNOWN
     return when {
-        zone.number < targetZone.number -> ZoneBand.BELOW
-        zone.number > targetZone.number -> ZoneBand.ABOVE
+        bpm < zoneLowerBpm(targetZone, maxHr) -> ZoneBand.BELOW
+        bpm > zoneUpperBpm(targetZone, maxHr) -> ZoneBand.ABOVE
         else -> ZoneBand.IN
     }
 }
