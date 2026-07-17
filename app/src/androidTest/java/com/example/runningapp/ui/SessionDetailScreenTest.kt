@@ -33,7 +33,7 @@ class SessionDetailScreenTest {
                         durationSeconds = 2286,
                         avgBpm = 119,
                         maxBpm = 142,
-                        timeInTargetZoneSeconds = 1940,
+                        targetZone = 2,
                         zone1Seconds = 53,
                         zone2Seconds = 1940,
                         zone3Seconds = 277,

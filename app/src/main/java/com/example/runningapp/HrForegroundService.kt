@@ -191,7 +191,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var sessionBpmSum = 0L
     private var sessionNoDataSeconds = 0L
     private var sessionSampleCount = 0
-    private var sessionInTargetZoneSeconds = 0L
     private var sessionAboveTargetSeconds = 0L
     private var lastRecordedSecond = -1L
     
@@ -783,14 +782,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             val zone = hrZoneOf(currentBpm, currentSettings)
                             if (zone != null) {
                                 sessionZoneTimes[zone.number] = (sessionZoneTimes[zone.number] ?: 0L) + 1
-                                // Banked by band, not by zone number: zone 1 and 5 chart wider
-                                // than they band (see zoneBandOf), so at those targets zone
-                                // arithmetic would bank seconds the coach called BELOW or ABOVE
-                                // as In Target, and would find no zone above a target of 5.
-                                when (zoneBandOf(currentBpm, currentSettings)) {
-                                    ZoneBand.IN -> sessionInTargetZoneSeconds += 1
-                                    ZoneBand.ABOVE -> sessionAboveTargetSeconds += 1
-                                    else -> {}
+                                // Time above the easy cap is banked by band, not by zone number:
+                                // zone 5 charts wider than it bands (see zoneBandOf), so zone
+                                // arithmetic would find no zone above a target of 5. In-target
+                                // time is no longer banked here at all — it is the target zone's
+                                // own total, derived on read (see RunnerSession.inTargetZoneSeconds).
+                                if (zoneBandOf(currentBpm, currentSettings) == ZoneBand.ABOVE) {
+                                    sessionAboveTargetSeconds += 1
                                 }
                             } else {
                                 sessionNoDataSeconds += 1
@@ -1219,6 +1217,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
             val session = RunnerSession(
                 startTime = System.currentTimeMillis(),
+                // Captured at the start, alongside runMode: this records the target the run was
+                // actually coached against, so changing the global mid-run cannot rewrite it.
+                targetZone = currentSettings.targetHrZone.number,
                 runMode = currentSettings.runMode,
                 sessionType = currentSessionType,
                 includeInAiTraining = currentSessionIncludeInAiTraining
@@ -1231,7 +1232,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             sessionSampleCount = 0
             baselineHr = null
             lastDriftCueTime = 0L
-            sessionInTargetZoneSeconds = 0
             sessionAboveTargetSeconds = 0
             lastRecordedSecond = -1
             
@@ -1358,7 +1358,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             durationSeconds = finalSecondsRunning,
                             avgBpm = avgBpm,
                             maxBpm = sessionMaxBpm,
-                            timeInTargetZoneSeconds = sessionInTargetZoneSeconds,
                             distanceKm = finalDistanceKm,
                             avgPaceMinPerKm = finalAvgPace,
                             startLatitude = finalStartLocation?.latitude,

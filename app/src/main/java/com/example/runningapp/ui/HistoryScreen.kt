@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.data.inTargetZoneSeconds
 import kotlin.math.roundToInt
 import java.text.SimpleDateFormat
 import java.util.*
@@ -197,7 +198,7 @@ fun SessionItem(
                     val pStr = if (p > 0) "%d:%02d".format(p.toInt(), ((p - p.toInt()) * 60).roundToInt()) else "--:--"
                     StatSmall(label = "Pace", value = pStr)
                 }
-                StatSmall(label = "Target", value = formatDuration(session.timeInTargetZoneSeconds))
+                StatSmall(label = "Target", value = formatDuration(session.inTargetZoneSeconds))
             }
         }
     }
