@@ -103,4 +103,15 @@ object TrainingPlanProvider {
 
     fun getAllPlans(): List<TrainingPlan> = plans
     fun getPlanById(id: String) = plans.find { it.id == id }
+
+    /**
+     * The base workout queued for a plan/stage: the active stage's first workout, falling back to
+     * the plan's first stage. Returns null when no plan is attached or nothing is queued. One home
+     * for the plan → stage → workout walk that the service and analytics both need (#107).
+     */
+    fun resolveBaseWorkout(planId: String?, stageId: String?): WorkoutTemplate? {
+        val plan = planId?.let { getPlanById(it) } ?: return null
+        val stage = plan.stages.firstOrNull { it.id == stageId } ?: plan.stages.firstOrNull()
+        return stage?.workouts?.firstOrNull()
+    }
 }

@@ -12,9 +12,11 @@ import kotlinx.coroutines.flow.map
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
-// The historical session-type label kept on the `sessions` table (#107 retired the concept but the
-// column stays for history). AI training context still keys interval metrics off it for past runs.
-private const val HISTORICAL_RUN_WALK_LABEL = "Run/Walk"
+// Labels describing a run to the AI coach (#107). Structure comes only from a plan, so the one
+// distinction the coach needs is whether the run followed a run/walk workout; these are derived
+// from RunnerSession.isRunWalkMode, not from any user-selected mode.
+private const val AI_LABEL_RUN_WALK = "Run/Walk"
+private const val AI_LABEL_OPEN_RUN = "Open Run"
 
 data class AiRunWalkMetrics(
     val severeBreakdownRatePercent: Int,
@@ -169,7 +171,10 @@ class SessionRepository(
             ?: throw IllegalArgumentException("Stage not found for id: $stageId")
 
         val recentRuns = sessionDao.getLast3AiEligibleCompletedSessions().map { session ->
-            val runWalkMetrics = if (session.sessionType == HISTORICAL_RUN_WALK_LABEL) {
+            // A structured run/walk workout is the only run the coach can adjust intervals from
+            // (#107). isRunWalkMode records that per run, so it replaces the retired session-type
+            // column both as the gate and as the label the coach sees.
+            val runWalkMetrics = if (session.isRunWalkMode) {
                 buildRunWalkMetrics(session.id)
             } else {
                 null
@@ -178,7 +183,7 @@ class SessionRepository(
                 durationSeconds = session.durationSeconds,
                 avgHr = session.avgBpm,
                 walkBreaksCount = session.walkBreaksCount,
-                sessionType = session.sessionType,
+                sessionType = if (session.isRunWalkMode) AI_LABEL_RUN_WALK else AI_LABEL_OPEN_RUN,
                 timestamp = session.startTime,
                 runWalkMetrics = runWalkMetrics
             )
@@ -209,11 +214,11 @@ class SessionRepository(
                 )
                 return
             }
-            // Keep interval-based AI prescriptions scoped to structured Run/Walk only.
-            if (latestFinalizedSession?.sessionType != HISTORICAL_RUN_WALK_LABEL) {
+            // Keep interval-based AI prescriptions scoped to structured run/walk runs only.
+            if (latestFinalizedSession?.isRunWalkMode != true) {
                 Log.d(
                     "AiCoach",
-                    "Skipping AI evaluation: latestSessionType=${latestFinalizedSession?.sessionType ?: "none"} stageId=$stageId"
+                    "Skipping AI evaluation: latest run was not a structured run/walk. stageId=$stageId"
                 )
                 return
             }
@@ -224,12 +229,10 @@ class SessionRepository(
             val response = coachClient.evaluateProgress(context)
             // Warm-up/cool-down now live on the workout (#107); the load clamp accounts for the
             // active workout's envelope so the estimated total stays comparable to real sessions.
-            val activeWorkout = settings.activePlanId?.let { planId ->
-                TrainingPlanProvider.getPlanById(planId)?.let { plan ->
-                    (plan.stages.firstOrNull { it.id == settings.activeStageId } ?: plan.stages.firstOrNull())
-                        ?.workouts?.firstOrNull()
-                }
-            }
+            val activeWorkout = TrainingPlanProvider.resolveBaseWorkout(
+                settings.activePlanId,
+                settings.activeStageId
+            )
             val clampedResponse = clampAiResponseByRecentLoad(
                 response,
                 warmUpSeconds = activeWorkout?.warmUpSeconds ?: 0,

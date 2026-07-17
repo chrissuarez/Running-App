@@ -327,10 +327,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         completedRunIntervalStats.clear()
     }
 
-    // The main phase is open-ended (#107): an unplanned run goes until the user stops, and a
-    // structured run's intervals drive their own transitions. There is no fixed main-phase timer.
-    private val mainPhaseLimitSeconds: Int = Int.MAX_VALUE
-
     private data class StructuredProgressUiState(
         val totalRepeats: Int = 0,
         val currentIntervalPlannedSeconds: Int = 0,
@@ -682,7 +678,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     
                     val phaseLimit = when (currentPhase) {
                         SessionPhase.WARM_UP -> currentWarmupDuration
-                        SessionPhase.MAIN -> mainPhaseLimitSeconds
+                        // The main phase is open-ended (#107): an unplanned run goes until the user
+                        // stops and a structured run's intervals self-terminate, so nothing here ends it.
+                        SessionPhase.MAIN -> Int.MAX_VALUE
                         SessionPhase.COOL_DOWN -> currentCooldownDuration
                     }
                     
@@ -795,10 +793,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         isSimulating = isSimulationEnabled,
                         currentPhase = currentPhase,
                         phaseSecondsRemaining = when (currentPhase) {
-                            SessionPhase.MAIN -> {
-                                val mainLimit = mainPhaseLimitSeconds
-                                if (mainLimit == Int.MAX_VALUE) 0 else (mainLimit - phaseSecondsRunning).toInt().coerceAtLeast(0)
-                            }
+                            SessionPhase.MAIN -> 0
                             else -> {
                             val limit = when (currentPhase) {
                                 SessionPhase.WARM_UP -> currentWarmupDuration
@@ -835,10 +830,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         lastHrAgeSeconds = hrAge,
                         currentPhase = currentPhase,
                         phaseSecondsRemaining = when (currentPhase) {
-                            SessionPhase.MAIN -> {
-                                val mainLimit = mainPhaseLimitSeconds
-                                if (mainLimit == Int.MAX_VALUE) 0 else (mainLimit - phaseSecondsRunning).toInt().coerceAtLeast(0)
-                            }
+                            SessionPhase.MAIN -> 0
                             else -> {
                             val limit = when (currentPhase) {
                                 SessionPhase.WARM_UP -> currentWarmupDuration
@@ -913,10 +905,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun resolveActiveWorkoutTemplate(): WorkoutTemplate? {
-        val planId = currentSettings.activePlanId ?: return null
-        val plan = TrainingPlanProvider.getPlanById(planId) ?: return null
-        val stage = plan.stages.firstOrNull { it.id == currentSettings.activeStageId } ?: plan.stages.firstOrNull()
-        val baseWorkout = stage?.workouts?.firstOrNull() ?: return null
+        val baseWorkout = TrainingPlanProvider.resolveBaseWorkout(
+            currentSettings.activePlanId,
+            currentSettings.activeStageId
+        ) ?: return null
         if (currentSettings.testingModeEnabled) return baseWorkout
         val run = currentSettings.aiRunIntervalSeconds
         val walk = currentSettings.aiWalkIntervalSeconds
@@ -1238,10 +1230,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 currentState.copy(
                     currentPhase = currentPhase,
                 phaseSecondsRemaining = when (currentPhase) {
-                    SessionPhase.MAIN -> {
-                        val mainLimit = mainPhaseLimitSeconds
-                        if (mainLimit == Int.MAX_VALUE) 0 else (mainLimit - phaseSecondsRunning).toInt().coerceAtLeast(0)
-                    }
+                    SessionPhase.MAIN -> 0
                     else -> {
                         val limit = when (currentPhase) {
                             SessionPhase.WARM_UP -> currentWarmupDuration
