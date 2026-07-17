@@ -30,6 +30,9 @@ import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.classifyIntervalCompletionBand
 import com.example.runningapp.data.computeRunWalkIntervalAnalytics
+import com.example.runningapp.data.inTargetZoneSeconds
+import com.example.runningapp.data.secondsInZone
+import com.example.runningapp.ui.workout.zoneChartColor
 import java.text.SimpleDateFormat
 import java.util.*
  
@@ -152,7 +155,7 @@ fun SummaryStats(session: RunnerSession) {
             
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 StatLarge(label = "Max HR", value = "${session.maxBpm}")
-                StatLarge(label = "In Target", value = formatDurationLarge(session.timeInTargetZoneSeconds))
+                StatLarge(label = "In Target", value = formatDurationLarge(session.inTargetZoneSeconds))
             }
 
             if (session.runMode == "outdoor") {
@@ -593,36 +596,37 @@ fun PreviewHrChart() {
                 .padding(16.dp)
         )
     }
-}@Composable
+}
+
+/** One bar of [ZoneBarChart]. A null [color] means the bar sits outside the zone scale. */
+private data class ZoneBar(val label: String, val seconds: Long, val color: Color?)
+
+@Composable
 fun ZoneBarChart(session: RunnerSession) {
-    val zones = listOf(
-        session.zone1Seconds,
-        session.zone2Seconds,
-        session.zone3Seconds,
-        session.zone4Seconds,
-        session.zone5Seconds,
-        session.noDataSeconds
-    )
-    val maxSeconds = zones.maxOrNull() ?: 0L
-    
+    // No Data rides along as a bar but is not a zone: it is the run's unclassifiable seconds, so
+    // it carries no place on the cool-to-hot scale and stays deliberately colourless.
+    val bars = HrZone.entries.map { zone ->
+        ZoneBar("Z${zone.number} ${zone.zoneName}", session.secondsInZone(zone), zoneChartColor(zone))
+    } + ZoneBar("No Data", session.noDataSeconds, color = null)
+
+    val maxSeconds = bars.maxOfOrNull { it.seconds } ?: 0L
+
     if (maxSeconds == 0L) {
         Text("No zone data available for this session.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        zones.forEachIndexed { index, seconds ->
-            val zoneNum = index + 1
-            val label = HrZone.ofNumber(zoneNum)?.let { "Z${it.number} ${it.zoneName}" } ?: "No Data"
-            val percentage = if (maxSeconds > 0) seconds.toFloat() / maxSeconds else 0f
-            val timeStr = formatDurationLarge(seconds) // Reusing existing formatter
+        bars.forEach { bar ->
+            val percentage = if (maxSeconds > 0) bar.seconds.toFloat() / maxSeconds else 0f
+            val timeStr = formatDurationLarge(bar.seconds) // Reusing existing formatter
 
             Row(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = label, 
+                    text = bar.label,
                     modifier = Modifier.width(96.dp), // Fits the longest zone name
                     style = MaterialTheme.typography.bodySmall, 
                     fontWeight = FontWeight.Bold
@@ -637,16 +641,7 @@ fun ZoneBarChart(session: RunnerSession) {
                         modifier = Modifier
                             .fillMaxWidth(percentage)
                             .fillMaxHeight()
-                            .background(
-                                when (zoneNum) {
-                                    1 -> Color.Gray
-                                    2 -> Color.Blue
-                                    3 -> Color.Green
-                                    4 -> Color(0xFFFFA500) // Orange
-                                    5 -> Color.Red
-                                    else -> Color.LightGray // For No Data
-                                }
-                            )
+                            .background(bar.color ?: MaterialTheme.colorScheme.onSurfaceVariant)
                     )
                 }
                 

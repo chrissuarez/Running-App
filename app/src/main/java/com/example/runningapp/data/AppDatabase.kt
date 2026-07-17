@@ -3,6 +3,9 @@ package com.example.runningapp.data
 import androidx.room.*
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.runningapp.HrZone
+import com.example.runningapp.effectiveMaxHr
+import com.example.runningapp.hrZoneOf
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "sessions")
@@ -13,7 +16,9 @@ data class RunnerSession(
     val durationSeconds: Long = 0,
     val avgBpm: Int = 0,
     val maxBpm: Int = 0,
-    val timeInTargetZoneSeconds: Long = 0,
+    // The target this run actually had, so in-target time survives a later change to the global
+    // (#97). Written from the global today; the workout becomes its source in #107.
+    val targetZone: Int = HrZone.DEFAULT_TARGET.number,
     val zone1Seconds: Long = 0,
     val zone2Seconds: Long = 0,
     val zone3Seconds: Long = 0,
@@ -52,6 +57,26 @@ data class RunnerSession(
     val weatherWindSpeedKmh: Double? = null,
     val weatherConditionCode: Int? = null
 )
+
+/** The five zone columns, reachable by zone rather than by name. */
+fun RunnerSession.secondsInZone(zone: HrZone): Long = when (zone) {
+    HrZone.ENDURANCE -> zone1Seconds
+    HrZone.MODERATE -> zone2Seconds
+    HrZone.TEMPO -> zone3Seconds
+    HrZone.THRESHOLD -> zone4Seconds
+    HrZone.ANAEROBIC -> zone5Seconds
+}
+
+/**
+ * Time on target: exactly the target zone's own seconds.
+ *
+ * Derived rather than stored. The old `timeInTargetZoneSeconds` column banked by *band* while
+ * the five zone columns banked by *zone*, so it could only ever disagree with the numbers beside
+ * it (#106). Now that a target is a zone, "in target" means "in zone N" and there is nothing
+ * left to store.
+ */
+val RunnerSession.inTargetZoneSeconds: Long
+    get() = secondsInZone(HrZone.ofNumberOrDefault(targetZone))
 
 @Entity(
     tableName = "hr_samples",
@@ -266,7 +291,7 @@ interface RunWalkIntervalStatDao {
 
 @Database(
     entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class, TrackPoint::class],
-    version = 12,
+    version = 13,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -279,7 +304,12 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
-        fun getDatabase(context: android.content.Context): AppDatabase {
+        /**
+         * [maxHrProvider] feeds the v12 → v13 zone recompute, which needs a Max HR that lives in
+         * DataStore rather than in the database. It is read lazily, from inside the migration, so
+         * the settings read happens on Room's own thread and only on the one launch that migrates.
+         */
+        fun getDatabase(context: android.content.Context, maxHrProvider: () -> Int): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
@@ -297,7 +327,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_8_9,
                     MIGRATION_9_10,
                     MIGRATION_10_11,
-                    MIGRATION_11_12
+                    MIGRATION_11_12,
+                    migration12To13(maxHrProvider)
                 )
                 .build()
                 INSTANCE = instance
@@ -493,5 +524,176 @@ private fun backfillTrackPointsFromHrSamples(database: SupportSQLiteDatabase) {
             lastLatitude = latitude
             lastLongitude = longitude
         }
+    }
+}
+
+/**
+ * Drops `timeInTargetZoneSeconds`, adds `targetZone`, and recomputes every run's zone times under
+ * the Max-HR-derived zone model (#93).
+ *
+ * Zone times were frozen at save under the old hybrid model, so **every** run in the database
+ * carries wrong numbers — most visibly Zone 3 time mis-filed as Zone 4, which the old model's
+ * invertible Zone 3 window produced whenever `zone2High >= 0.8 × maxHr`. The recompute is silent
+ * by design (#97): it runs against a Max HR already in effect, so there is nothing to decide.
+ *
+ * This is a one-shot correction, not a freeze. #112 recomputes again on the first *deliberate*
+ * Max HR set — the point at which the number stops being a placeholder — and every change after
+ * that is future-only.
+ *
+ * [maxHrProvider] is called here rather than closed over at construction so the DataStore read
+ * happens on Room's own thread, and only on the launch that actually migrates.
+ */
+fun migration12To13(maxHrProvider: () -> Int) = object : Migration(12, 13) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        // SQLite gained ALTER TABLE ... DROP COLUMN in 3.35, but minSdk 26 devices ship far older,
+        // so dropping a column means rebuilding the table. Safe despite hr_samples, track_points
+        // and run_walk_interval_stats all carrying FKs to sessions: Room runs migrations before it
+        // turns foreign_keys on, and with the pragma off SQLite leaves other tables' REFERENCES
+        // clauses untouched across the DROP/RENAME. Same shape Room's own auto-migrations emit.
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `sessions_new` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `startTime` INTEGER NOT NULL,
+                `endTime` INTEGER NOT NULL,
+                `durationSeconds` INTEGER NOT NULL,
+                `avgBpm` INTEGER NOT NULL,
+                `maxBpm` INTEGER NOT NULL,
+                `targetZone` INTEGER NOT NULL,
+                `zone1Seconds` INTEGER NOT NULL,
+                `zone2Seconds` INTEGER NOT NULL,
+                `zone3Seconds` INTEGER NOT NULL,
+                `zone4Seconds` INTEGER NOT NULL,
+                `zone5Seconds` INTEGER NOT NULL,
+                `runMode` TEXT NOT NULL,
+                `distanceKm` REAL NOT NULL,
+                `avgPaceMinPerKm` REAL NOT NULL,
+                `noDataSeconds` INTEGER NOT NULL,
+                `walkBreaksCount` INTEGER NOT NULL,
+                `isRunWalkMode` INTEGER NOT NULL,
+                `sessionType` TEXT NOT NULL,
+                `includeInAiTraining` INTEGER NOT NULL,
+                `easyPlannedDurationSeconds` INTEGER,
+                `easyActualDurationSeconds` INTEGER,
+                `easyTotalJogSeconds` INTEGER,
+                `easyTotalWalkSeconds` INTEGER,
+                `easyJogPercent` INTEGER,
+                `easyLongestJogBoutSeconds` INTEGER,
+                `easyWalkInterruptions` INTEGER,
+                `easyHrSummary` TEXT,
+                `easyTimeAboveCapSeconds` INTEGER,
+                `easyDataQualitySummary` TEXT,
+                `perceivedEffort` INTEGER,
+                `sessionNote` TEXT,
+                `startLatitude` REAL,
+                `startLongitude` REAL,
+                `weatherTempC` REAL,
+                `weatherFeelsLikeC` REAL,
+                `weatherHumidityPercent` INTEGER,
+                `weatherWindSpeedKmh` REAL,
+                `weatherConditionCode` INTEGER
+            )
+            """.trimIndent()
+        )
+        // Every past run is declared targetZone = 2: their target was a BPM band, not a zone, so
+        // the real value is unreconstructible — but the old default band (120-140) was aiming at
+        // easy/Z2 anyway (#97). A literal, not HrZone.DEFAULT_TARGET: this is a statement about
+        // history, which must not move if the default ever does.
+        database.execSQL(
+            """
+            INSERT INTO `sessions_new` (
+                id, startTime, endTime, durationSeconds, avgBpm, maxBpm, targetZone,
+                zone1Seconds, zone2Seconds, zone3Seconds, zone4Seconds, zone5Seconds,
+                runMode, distanceKm, avgPaceMinPerKm, noDataSeconds, walkBreaksCount,
+                isRunWalkMode, sessionType, includeInAiTraining,
+                easyPlannedDurationSeconds, easyActualDurationSeconds, easyTotalJogSeconds,
+                easyTotalWalkSeconds, easyJogPercent, easyLongestJogBoutSeconds,
+                easyWalkInterruptions, easyHrSummary, easyTimeAboveCapSeconds,
+                easyDataQualitySummary, perceivedEffort, sessionNote, startLatitude,
+                startLongitude, weatherTempC, weatherFeelsLikeC, weatherHumidityPercent,
+                weatherWindSpeedKmh, weatherConditionCode
+            )
+            SELECT
+                id, startTime, endTime, durationSeconds, avgBpm, maxBpm, 2,
+                zone1Seconds, zone2Seconds, zone3Seconds, zone4Seconds, zone5Seconds,
+                runMode, distanceKm, avgPaceMinPerKm, noDataSeconds, walkBreaksCount,
+                isRunWalkMode, sessionType, includeInAiTraining,
+                easyPlannedDurationSeconds, easyActualDurationSeconds, easyTotalJogSeconds,
+                easyTotalWalkSeconds, easyJogPercent, easyLongestJogBoutSeconds,
+                easyWalkInterruptions, easyHrSummary, easyTimeAboveCapSeconds,
+                easyDataQualitySummary, perceivedEffort, sessionNote, startLatitude,
+                startLongitude, weatherTempC, weatherFeelsLikeC, weatherHumidityPercent,
+                weatherWindSpeedKmh, weatherConditionCode
+            FROM `sessions`
+            """.trimIndent()
+        )
+        database.execSQL("DROP TABLE `sessions`")
+        database.execSQL("ALTER TABLE `sessions_new` RENAME TO `sessions`")
+
+        recomputeZoneSecondsFromHrSamples(database, maxHrProvider())
+    }
+}
+
+/**
+ * Re-tallies each session's zone seconds from its stored `hr_samples` rows.
+ *
+ * The tally is exact rather than an estimate: the recorder writes exactly one sample per second
+ * of the run, and only when BPM > 0 — the same condition under which it banked a second of zone
+ * time. So counting samples per zone reproduces what the run would have recorded had the new
+ * model been in force. Seconds with no HR signal have no row and gain no zone time, leaving the
+ * existing `noDataSeconds` figure meaningful and unfabricated.
+ *
+ * Walks a Cursor and derives in Kotlin rather than binning in SQL, following
+ * [backfillTrackPointsFromHrSamples]: this keeps [hrZoneOf] the app's one classifier, and the
+ * arithmetic off SQLite versions that predate window functions.
+ */
+private fun recomputeZoneSecondsFromHrSamples(database: SupportSQLiteDatabase, maxHr: Int) {
+    val clampedMaxHr = effectiveMaxHr(maxHr)
+    // Zero first so the tally below is a replacement rather than a correction: a run whose samples
+    // are all gone must end up with no zone time, not with its old numbers left standing.
+    database.execSQL(
+        "UPDATE sessions SET zone1Seconds = 0, zone2Seconds = 0, zone3Seconds = 0, zone4Seconds = 0, zone5Seconds = 0"
+    )
+    val cursor = database.query(
+        """
+        SELECT sessionId, rawBpm
+        FROM hr_samples
+        ORDER BY sessionId ASC
+        """.trimIndent()
+    )
+    val updateStatement = database.compileStatement(
+        """
+        UPDATE sessions
+        SET zone1Seconds = ?, zone2Seconds = ?, zone3Seconds = ?, zone4Seconds = ?, zone5Seconds = ?
+        WHERE id = ?
+        """.trimIndent()
+    )
+
+    fun flush(sessionId: Long, zoneSeconds: LongArray) {
+        zoneSeconds.forEachIndexed { index, seconds ->
+            updateStatement.bindLong(index + 1, seconds)
+        }
+        updateStatement.bindLong(6, sessionId)
+        updateStatement.executeUpdateDelete()
+        updateStatement.clearBindings()
+    }
+
+    cursor.use { c ->
+        var currentSessionId: Long? = null
+        val zoneSeconds = LongArray(5)
+        while (c.moveToNext()) {
+            val sessionId = c.getLong(0)
+            if (sessionId != currentSessionId) {
+                currentSessionId?.let { flush(it, zoneSeconds) }
+                currentSessionId = sessionId
+                zoneSeconds.fill(0L)
+            }
+            val zone = hrZoneOf(c.getInt(1), clampedMaxHr)
+            if (zone != null) {
+                val index = zone.number - 1
+                zoneSeconds[index] = zoneSeconds[index] + 1L
+            }
+        }
+        currentSessionId?.let { flush(it, zoneSeconds) }
     }
 }
