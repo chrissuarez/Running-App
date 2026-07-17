@@ -35,8 +35,6 @@ import com.example.runningapp.data.secondsInZone
 import com.example.runningapp.ui.workout.zoneChartColor
 import java.text.SimpleDateFormat
 import java.util.*
- 
-private const val SESSION_TYPE_RUN_WALK = "Run/Walk"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,7 +82,9 @@ fun SessionDetailScreen(
                 SummaryStats(session)
                 Spacer(modifier = Modifier.height(24.dp))
 
-                if (session.sessionType == SESSION_TYPE_RUN_WALK && intervalStats.isNotEmpty()) {
+                // Interval stats exist only for structured run/walk workouts, so their presence is
+                // the signal to show the interval cards (#107 retired the session-type gate).
+                if (intervalStats.isNotEmpty()) {
                     RunWalkIntervalSummaryCard(intervalStats = intervalStats)
                     Spacer(modifier = Modifier.height(24.dp))
                     RunWalkIntervalRawDataCard(intervalStats = intervalStats)

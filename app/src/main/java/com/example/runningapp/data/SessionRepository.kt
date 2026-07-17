@@ -12,7 +12,9 @@ import kotlinx.coroutines.flow.map
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
-private const val SESSION_TYPE_RUN_WALK = "Run/Walk"
+// The historical session-type label kept on the `sessions` table (#107 retired the concept but the
+// column stays for history). AI training context still keys interval metrics off it for past runs.
+private const val HISTORICAL_RUN_WALK_LABEL = "Run/Walk"
 
 data class AiRunWalkMetrics(
     val severeBreakdownRatePercent: Int,
@@ -167,7 +169,7 @@ class SessionRepository(
             ?: throw IllegalArgumentException("Stage not found for id: $stageId")
 
         val recentRuns = sessionDao.getLast3AiEligibleCompletedSessions().map { session ->
-            val runWalkMetrics = if (session.sessionType == SESSION_TYPE_RUN_WALK) {
+            val runWalkMetrics = if (session.sessionType == HISTORICAL_RUN_WALK_LABEL) {
                 buildRunWalkMetrics(session.id)
             } else {
                 null
@@ -208,7 +210,7 @@ class SessionRepository(
                 return
             }
             // Keep interval-based AI prescriptions scoped to structured Run/Walk only.
-            if (latestFinalizedSession?.sessionType != SESSION_TYPE_RUN_WALK) {
+            if (latestFinalizedSession?.sessionType != HISTORICAL_RUN_WALK_LABEL) {
                 Log.d(
                     "AiCoach",
                     "Skipping AI evaluation: latestSessionType=${latestFinalizedSession?.sessionType ?: "none"} stageId=$stageId"
@@ -220,7 +222,19 @@ class SessionRepository(
             val context = getAiTrainingContext(stageId)
             Log.d("AiCoach", "Sending prompt to Gemini with ${context.recentRuns.size} recent runs.")
             val response = coachClient.evaluateProgress(context)
-            val clampedResponse = clampAiResponseByRecentLoad(response, settingsRepo)
+            // Warm-up/cool-down now live on the workout (#107); the load clamp accounts for the
+            // active workout's envelope so the estimated total stays comparable to real sessions.
+            val activeWorkout = settings.activePlanId?.let { planId ->
+                TrainingPlanProvider.getPlanById(planId)?.let { plan ->
+                    (plan.stages.firstOrNull { it.id == settings.activeStageId } ?: plan.stages.firstOrNull())
+                        ?.workouts?.firstOrNull()
+                }
+            }
+            val clampedResponse = clampAiResponseByRecentLoad(
+                response,
+                warmUpSeconds = activeWorkout?.warmUpSeconds ?: 0,
+                coolDownSeconds = activeWorkout?.coolDownSeconds ?: 0
+            )
             Log.d(
                 "AiCoach",
                 "Gemini response received! Adjusted intervals: ${clampedResponse.nextRunDurationSeconds}s Run / " +
@@ -255,11 +269,11 @@ class SessionRepository(
     @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
     internal suspend fun clampAiResponseByRecentLoad(
         response: AiCoachResponse,
-        settingsRepo: SettingsRepository
+        warmUpSeconds: Int,
+        coolDownSeconds: Int
     ): AiCoachResponse {
-        val settings = settingsRepo.userSettingsFlow.first()
-        val warmupSeconds = settings.warmUpDurationSeconds.coerceAtLeast(0)
-        val cooldownSeconds = settings.coolDownDurationSeconds.coerceAtLeast(0)
+        val warmupSeconds = warmUpSeconds.coerceAtLeast(0)
+        val cooldownSeconds = coolDownSeconds.coerceAtLeast(0)
         val max30d = getMaxSessionLoadLast30Days()
         if (max30d.maxDurationSeconds <= 0L) return response
 

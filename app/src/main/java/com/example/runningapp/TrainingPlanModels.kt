@@ -22,7 +22,12 @@ data class WorkoutTemplate(
     val targetZone: Int, // e.g., 2
     val runDurationSeconds: Int,
     val walkDurationSeconds: Int,
-    val totalRepeats: Int
+    val totalRepeats: Int,
+    // Warm-up/cool-down are structure, so they live on the workout (#107): a plan can prescribe a
+    // longer warm-up before a hard day, and an unplanned run has neither. The 480/180 defaults
+    // preserve the pre-#107 global envelope for every real workout that doesn't override them.
+    val warmUpSeconds: Int = 480,
+    val coolDownSeconds: Int = 180
 )
 
 object TrainingPlanProvider {
@@ -86,7 +91,9 @@ object TrainingPlanProvider {
                             targetZone = 2,
                             runDurationSeconds = 10,
                             walkDurationSeconds = 10,
-                            totalRepeats = 2
+                            totalRepeats = 2,
+                            warmUpSeconds = 0,
+                            coolDownSeconds = 0
                         )
                     )
                 )

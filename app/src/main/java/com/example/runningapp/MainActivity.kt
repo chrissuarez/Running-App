@@ -70,12 +70,6 @@ import com.example.runningapp.ui.workout.TimelineSegmentType
 import com.example.runningapp.ui.workout.mapWorkoutPlayerUiState
 import com.example.runningapp.ui.workout.zoneBandColor
 
-private const val SESSION_TYPE_RUN_WALK = "Run/Walk"
-private const val SESSION_TYPE_EASY_FIXED_DURATION = "Easy Fixed Duration"
-private const val SESSION_TYPE_ZONE2_WALK = "Zone 2 Walk"
-private const val SESSION_TYPE_FREE_TRACK = "Free Track"
-private const val EASY_FIXED_DURATION_MINUTES = 30
-
 class MainActivity : ComponentActivity() {
 
     private var hrService by mutableStateOf<HrForegroundService?>(null)
@@ -174,10 +168,10 @@ class MainActivity : ComponentActivity() {
                                 userSettings = userSettings,
                                 sessionRepository = sessionRepository,
                                 onRequestPermissions = { checkAndRequestPermissions() },
-                                onStartService = { selectedSessionType ->
+                                onStartService = { skipPlan ->
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         this.action = HrForegroundService.ACTION_START_FOREGROUND
-                                        putExtra(HrForegroundService.EXTRA_SESSION_TYPE, selectedSessionType)
+                                        putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
@@ -203,12 +197,12 @@ class MainActivity : ComponentActivity() {
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
-                                onConnectToDevice = { address, selectedSessionType ->
+                                onConnectToDevice = { address, skipPlan ->
                                     Log.d("MainActivity", "User tapped device: $address")
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
-                                        putExtra(HrForegroundService.EXTRA_SESSION_TYPE, selectedSessionType)
+                                        putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.connectToDevice(address)
@@ -231,20 +225,15 @@ class MainActivity : ComponentActivity() {
                                 onOpenFullScreenMap = {
                                     navigateTo(Routes.MAP)
                                 },
-                                onToggleSimulation = { simulationEnabled, sessionType ->
+                                onToggleSimulation = { simulationEnabled, skipPlan ->
                                     scope.launch(Dispatchers.IO) {
                                         settingsRepository.setSimulationEnabled(simulationEnabled)
                                         val simulationIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                             action = HrForegroundService.ACTION_SET_SIMULATION
                                             putExtra(HrForegroundService.EXTRA_SIMULATION_ENABLED, simulationEnabled)
-                                            putExtra(HrForegroundService.EXTRA_SESSION_TYPE, sessionType)
+                                            putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
                                         }
                                         ContextCompat.startForegroundService(this@MainActivity, simulationIntent)
-                                    }
-                                },
-                                onSessionTypeChange = { sessionType ->
-                                    scope.launch(Dispatchers.IO) {
-                                        settingsRepository.updateSettings(userSettings.copy(lastSessionType = sessionType))
                                     }
                                 },
                                 onToggleTestingMode = { enabled ->
@@ -290,7 +279,7 @@ class MainActivity : ComponentActivity() {
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
-                                        putExtra(HrForegroundService.EXTRA_SESSION_TYPE, userSettings.lastSessionType)
+                                        putExtra(HrForegroundService.EXTRA_SKIP_PLAN, false)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.connectToDevice(address)
@@ -466,33 +455,24 @@ fun MainScreen(
     sessionRepository: SessionRepository,
     paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
-    onStartService: (String) -> Unit,
+    onStartService: (Boolean) -> Unit,
     onForceScan: () -> Unit,
     onTogglePause: () -> Unit,
     onStopSession: () -> Unit,
-    onConnectToDevice: (String, String) -> Unit,
+    onConnectToDevice: (String, Boolean) -> Unit,
     onTestCue: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenManageDevices: () -> Unit,
     onOpenTrainingPlan: () -> Unit,
     onOpenFullScreenMap: () -> Unit,
-    onToggleSimulation: (Boolean, String) -> Unit,
-    onSessionTypeChange: (String) -> Unit,
+    onToggleSimulation: (Boolean, Boolean) -> Unit,
     onToggleTestingMode: (Boolean) -> Unit,
     onRunModeChange: (String) -> Unit
 ) {
-    val sessionTypeOptions = listOf(
-        SESSION_TYPE_RUN_WALK,
-        SESSION_TYPE_EASY_FIXED_DURATION,
-        SESSION_TYPE_ZONE2_WALK,
-        SESSION_TYPE_FREE_TRACK
-    )
-    var selectedSessionType by rememberSaveable { mutableStateOf(userSettings.lastSessionType) }
-
-    LaunchedEffect(userSettings.lastSessionType) {
-        selectedSessionType = userSettings.lastSessionType
-    }
+    // Skip today's plan (#107): a today-only choice that runs open-ended without touching the plan.
+    // Defaults off every time the screen loads, so the plan is always queued unless actively skipped.
+    var skipPlanToday by rememberSaveable { mutableStateOf(false) }
 
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
@@ -638,7 +618,7 @@ fun MainScreen(
                                 Text(activeDevice.address, style = MaterialTheme.typography.bodySmall)
                             }
                             Button(
-                                onClick = { onConnectToDevice(activeDevice.address, selectedSessionType) },
+                                onClick = { onConnectToDevice(activeDevice.address, skipPlanToday) },
                                 modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget)
                             ) {
                                 Text("Connect")
@@ -658,18 +638,27 @@ fun MainScreen(
             }
         }
 
-        if (!isSessionActive && selectedSessionType == SESSION_TYPE_RUN_WALK) {
-            if (activePlan != null && activeStage != null && todaysWorkout != null) {
+        if (!isSessionActive) {
+            val stage = activeStage
+            val plannedWorkout = todaysWorkout
+            if (activePlan != null && stage != null && plannedWorkout != null) {
+                val stageTitle = stage.title
                 item {
-                    TodaysWorkoutCard(
-                        stageTitle = activeStage.title,
-                        workout = todaysWorkout
-                    )
+                    if (skipPlanToday) {
+                        SkippedPlanCard()
+                    } else {
+                        TodaysWorkoutCard(stageTitle = stageTitle, workout = plannedWorkout)
+                    }
+                }
+                item {
+                    TextButton(onClick = { skipPlanToday = !skipPlanToday }) {
+                        Text(if (skipPlanToday) "Run today's plan instead" else "Skip today's plan (open run)")
+                    }
                 }
             } else if (userSettings.activePlanId == null) {
                 item {
                     TextButton(onClick = onOpenTrainingPlan) {
-                        Text("No active plan - tap to view plans")
+                        Text("No active plan — this will be an open run. Tap to view plans.")
                     }
                 }
             }
@@ -695,84 +684,6 @@ fun MainScreen(
                     }
                 }
             }
-        } else if (!isSessionActive && selectedSessionType == SESSION_TYPE_EASY_FIXED_DURATION) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f))
-                ) {
-                    Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
-                        Text(
-                            text = "$EASY_FIXED_DURATION_MINUTES min easy session",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "self-adjust jog/walk",
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
-                }
-            }
-        } else if (!isSessionActive && selectedSessionType == SESSION_TYPE_ZONE2_WALK) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f))
-                ) {
-                    Text(
-                        text = "Zone 2 Walk Mode: Aerobic volume. HR safety cues only.",
-                        modifier = Modifier.padding(RunningUiTokens.CardPadding),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
-        } else if (!isSessionActive && selectedSessionType == SESSION_TYPE_FREE_TRACK) {
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f))
-                ) {
-                    Text(
-                        text = "Free Track Mode: Pure data logging. No audio cues.",
-                        modifier = Modifier.padding(RunningUiTokens.CardPadding),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
-        }
-
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
-                    Text(
-                        text = "Session Type",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    sessionTypeOptions.forEach { option ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            RadioButton(
-                                selected = selectedSessionType == option,
-                                onClick = {
-                                    selectedSessionType = option
-                                    onSessionTypeChange(option)
-                                }
-                            )
-                            Text(
-                                text = option,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
-                }
-            }
         }
 
         item {
@@ -784,7 +695,7 @@ fun MainScreen(
                         if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
                             Button(
                                 onClick = {
-                                    if (hrService == null) onStartService(selectedSessionType) else onForceScan()
+                                    if (hrService == null) onStartService(skipPlanToday) else onForceScan()
                                 },
                                 modifier = Modifier
                                     .weight(1f)
@@ -845,7 +756,7 @@ fun MainScreen(
                     Text("Permissions")
                 }
                 Button(
-                    onClick = { onToggleSimulation(!state.isSimulating, selectedSessionType) },
+                    onClick = { onToggleSimulation(!state.isSimulating, skipPlanToday) },
                     colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer) else ButtonDefaults.buttonColors(),
                     modifier = Modifier
                         .weight(1f)
@@ -865,10 +776,7 @@ fun MainScreen(
         }
 
         item {
-            SettingsSummaryCard(
-                settings = state.userSettings,
-                selectedSessionType = selectedSessionType
-            )
+            SettingsSummaryCard(settings = state.userSettings)
         }
 
             if (state.connectionStatus == "Scanning...") {
@@ -878,7 +786,7 @@ fun MainScreen(
                 items(state.scannedDevices) { device ->
                     DeviceListItem(
                         device = device,
-                        onClick = { onConnectToDevice(device.address, selectedSessionType) }
+                        onClick = { onConnectToDevice(device.address, skipPlanToday) }
                     )
                 }
             } else if (isSessionActive) {
@@ -969,6 +877,27 @@ private fun MainBottomBar(
 }
 
 @Composable
+fun SkippedPlanCard() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+    ) {
+        Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
+            Text(
+                text = "Plan skipped for today",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = "Just an open run — no steps or structure. Cue switches still apply. Your plan is untouched and queued again tomorrow.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+    }
+}
+
+@Composable
 fun TodaysWorkoutCard(
     stageTitle: String,
     workout: WorkoutTemplate
@@ -1005,8 +934,7 @@ fun TodaysWorkoutCard(
 
 @Composable
 fun SettingsSummaryCard(
-    settings: UserSettings,
-    selectedSessionType: String
+    settings: UserSettings
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1026,19 +954,6 @@ fun SettingsSummaryCard(
                 )
                 val modeLabel = if (settings.runMode == "outdoor") "Outdoor Run" else "Treadmill Run"
                 Text("Mode: $modeLabel | Cooldown: ${settings.cooldownSeconds}s", style = MaterialTheme.typography.bodySmall)
-                val sessionTypeSummary = when (selectedSessionType) {
-                    SESSION_TYPE_RUN_WALK -> "RUN/WALK COACH ACTIVE" to Color(0xFFFFA500)
-                    SESSION_TYPE_EASY_FIXED_DURATION -> "EASY FIXED DURATION (30 MIN)" to MaterialTheme.colorScheme.primary
-                    SESSION_TYPE_ZONE2_WALK -> "ZONE 2 WALK (Volume Only)" to MaterialTheme.colorScheme.primary
-                    SESSION_TYPE_FREE_TRACK -> "FREE TRACK (Silent Logging)" to MaterialTheme.colorScheme.outline
-                    else -> "RUN/WALK COACH ACTIVE" to Color(0xFFFFA500)
-                }
-                Text(
-                    text = sessionTypeSummary.first,
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Black,
-                    color = sessionTypeSummary.second
-                )
             }
             Text(
                 if (settings.coachingEnabled) "Coaching ON" else "Coaching OFF",
@@ -1119,14 +1034,9 @@ fun WorkoutView(state: HrState, sessionRepository: SessionRepository, onOpenFull
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(10.dp)) {
-                        Text(
-                            if (uiState.isEasyFixedDurationMode) "Easy cues" else "Coach",
-                            style = MaterialTheme.typography.labelMedium
-                        )
+                        Text("Coach", style = MaterialTheme.typography.labelMedium)
                         Text(cue.message, style = MaterialTheme.typography.bodyMedium)
-                        if (!uiState.isEasyFixedDurationMode) {
-                            Text("Reason: ${cue.reasonTag}", style = MaterialTheme.typography.labelSmall)
-                        }
+                        Text("Reason: ${cue.reasonTag}", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
@@ -1213,13 +1123,7 @@ fun WorkoutView(state: HrState, sessionRepository: SessionRepository, onOpenFull
             Spacer(modifier = Modifier.height(8.dp))
             Text("Connection: ${state.connectionStatus}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text(
-                if (uiState.isEasyFixedDurationMode) {
-                    // Keep the debug line neutral for the fixed-duration mode instead of exposing
-                    // phase wording that reads like a structured interval workout.
-                    "Debug state: ${state.sessionStatus}"
-                } else {
-                    "Debug state: ${state.sessionStatus} • ${state.currentPhase}"
-                },
+                "Debug state: ${state.sessionStatus} • ${state.currentPhase}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1246,21 +1150,8 @@ fun SettingsScreen(
     var coachingEnabled by remember { mutableStateOf(settings.coachingEnabled) }
     var aiDataSharingEnabled by remember { mutableStateOf(settings.aiDataSharingEnabled) }
     var testingModeEnabled by remember { mutableStateOf(settings.testingModeEnabled) }
-    var runMode by remember { mutableStateOf(settings.runMode) }
     var splitAudio by remember { mutableStateOf(settings.splitAnnouncementsEnabled) }
     var autoPause by remember { mutableStateOf(settings.autoPauseEnabled) }
-    var runWalkCoach by remember { mutableStateOf(settings.runWalkCoachEnabled) }
-    
-    // Warm-up Selection
-    var warmUpSelection by remember { mutableStateOf(if (settings.warmUpDurationSeconds == 480) "recommended" else "custom") }
-    
-    // Warm-up Min/Sec
-    var warmUpMin by remember { mutableStateOf((settings.warmUpDurationSeconds / 60).toString()) }
-    var warmUpSec by remember { mutableStateOf((settings.warmUpDurationSeconds % 60).toString()) }
-    
-    // Cool-down Min/Sec
-    var coolDownMin by remember { mutableStateOf((settings.coolDownDurationSeconds / 60).toString()) }
-    var coolDownSec by remember { mutableStateOf((settings.coolDownDurationSeconds % 60).toString()) }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -1358,18 +1249,6 @@ fun SettingsScreen(
             }
         }
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).background(if (runWalkCoach) Color(0xFFFFA500).copy(alpha = 0.1f) else Color.Transparent).padding(4.dp)
-        ) {
-            Switch(checked = runWalkCoach, onCheckedChange = { runWalkCoach = it })
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
-                Text("Run/Walk Coach Mode", fontWeight = FontWeight.Bold)
-                Text("Special cues for beginner Z2 training", style = MaterialTheme.typography.labelSmall)
-            }
-        }
-
         OutlinedTextField(value = cooldown, onValueChange = { cooldown = it }, label = { Text("Cue Cooldown (s)") }, modifier = Modifier.fillMaxWidth())
         
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1388,17 +1267,8 @@ fun SettingsScreen(
         }
 
         Spacer(modifier = Modifier.height(24.dp))
-        Text("Mission 4: Run Configuration", style = MaterialTheme.typography.titleMedium)
-        
-        Text("Running Mode:")
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(selected = runMode == "treadmill", onClick = { runMode = "treadmill" })
-            Text("Treadmill")
-            Spacer(modifier = Modifier.width(16.dp))
-            RadioButton(selected = runMode == "outdoor", onClick = { runMode = "outdoor" })
-            Text("Outdoor (GPS)")
-        }
-        
+        Text("Cue Preferences", style = MaterialTheme.typography.titleMedium)
+
         Row(verticalAlignment = Alignment.CenterVertically) {
             Checkbox(checked = splitAudio, onCheckedChange = { splitAudio = it })
             Text("1km Split Audio Announcements")
@@ -1419,49 +1289,8 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
-        Text("Session Phases", style = MaterialTheme.typography.titleMedium)
-        
-        Text("Warm-up Duration", style = MaterialTheme.typography.titleSmall)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(selected = warmUpSelection == "recommended", onClick = { warmUpSelection = "recommended" })
-            Text("Recommended (8 mins)")
-            Spacer(modifier = Modifier.width(16.dp))
-            RadioButton(selected = warmUpSelection == "custom", onClick = { warmUpSelection = "custom" })
-            Text("Custom")
-        }
-        
-        if (warmUpSelection == "custom") {
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = warmUpMin, 
-                    onValueChange = { warmUpMin = it }, 
-                    label = { Text("Minutes") }, 
-                    modifier = Modifier.weight(1f),
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
-                )
-                Text(":")
-                OutlinedTextField(
-                    value = warmUpSec, 
-                    onValueChange = { warmUpSec = it }, 
-                    label = { Text("Seconds") }, 
-                    modifier = Modifier.weight(1f),
-                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)
-                )
-            }
-        }
-        
-        Spacer(modifier = Modifier.height(12.dp))
-        
-        Text("Cool-down Duration", style = MaterialTheme.typography.labelMedium)
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(value = coolDownMin, onValueChange = { coolDownMin = it }, label = { Text("Min") }, modifier = Modifier.weight(1f))
-            Text(":")
-            OutlinedTextField(value = coolDownSec, onValueChange = { coolDownSec = it }, label = { Text("Sec") }, modifier = Modifier.weight(1f))
-        }
-
         Spacer(modifier = Modifier.height(32.dp))
-        
+
         Button(onClick = {
             onSave(settings.copy(
                 maxHr = effectiveMaxHr(maxHr.toIntOrNull() ?: settings.maxHr),
@@ -1472,14 +1301,8 @@ fun SettingsScreen(
                 voiceStyle = voiceStyle,
                 coachingEnabled = coachingEnabled,
                 aiDataSharingEnabled = if (testingModeEnabled) false else aiDataSharingEnabled,
-                runMode = runMode,
                 splitAnnouncementsEnabled = splitAudio,
                 autoPauseEnabled = autoPause,
-                runWalkCoachEnabled = runWalkCoach,
-                warmUpDurationSeconds = if (warmUpSelection == "recommended") 480 else {
-                    (warmUpMin.toIntOrNull() ?: 0) * 60 + (warmUpSec.toIntOrNull() ?: 0)
-                },
-                coolDownDurationSeconds = (coolDownMin.toIntOrNull() ?: 0) * 60 + (coolDownSec.toIntOrNull() ?: 0),
                 testingModeEnabled = testingModeEnabled,
                 latestCoachMessage = if (testingModeEnabled) null else settings.latestCoachMessage,
                 aiRunIntervalSeconds = if (testingModeEnabled) null else settings.aiRunIntervalSeconds,

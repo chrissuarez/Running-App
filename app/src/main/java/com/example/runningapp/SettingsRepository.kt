@@ -23,12 +23,9 @@ data class UserSettings(
     val voiceStyle: String = "detailed", // "short" or "detailed"
     val coachingEnabled: Boolean = true,
     val aiDataSharingEnabled: Boolean = true,
-    val warmUpDurationSeconds: Int = 480,
-    val coolDownDurationSeconds: Int = 180,
     val runMode: String = "treadmill", // "treadmill" or "outdoor"
     val splitAnnouncementsEnabled: Boolean = true,
     val autoPauseEnabled: Boolean = true,
-    val runWalkCoachEnabled: Boolean = false,
     val savedDevices: List<SavedDevice> = emptyList(),
     val activeDeviceAddress: String? = null,
     val activePlanId: String? = null,
@@ -38,7 +35,6 @@ data class UserSettings(
     val aiWalkIntervalSeconds: Int? = null,
     val aiRepeats: Int? = null,
     val simulationEnabled: Boolean = false,
-    val lastSessionType: String = "Run/Walk",
     val testingModeEnabled: Boolean = false
 )
 
@@ -53,12 +49,9 @@ class SettingsRepository(private val context: Context) {
         val VOICE_STYLE = stringPreferencesKey("voice_style")
         val COACHING_ENABLED = booleanPreferencesKey("coaching_enabled")
         val AI_DATA_SHARING_ENABLED = booleanPreferencesKey("ai_data_sharing_enabled")
-        val WARM_UP_DURATION = intPreferencesKey("warm_up_duration")
-        val COOL_DOWN_DURATION = intPreferencesKey("cool_down_duration")
         val RUN_MODE = stringPreferencesKey("run_mode")
         val SPLIT_ANNOUNCEMENTS_ENABLED = booleanPreferencesKey("split_announcements_enabled")
         val AUTO_PAUSE_ENABLED = booleanPreferencesKey("auto_pause_enabled")
-        val RUN_WALK_COACH_ENABLED = booleanPreferencesKey("run_walk_coach_enabled")
         val SAVED_DEVICES = stringSetPreferencesKey("saved_devices")
         val ACTIVE_DEVICE_ADDRESS = stringPreferencesKey("active_device_address")
         val ACTIVE_PLAN_ID = stringPreferencesKey("active_plan_id")
@@ -68,7 +61,6 @@ class SettingsRepository(private val context: Context) {
         val AI_WALK_INTERVAL_SECONDS = intPreferencesKey("ai_walk_interval_seconds")
         val AI_REPEATS = intPreferencesKey("ai_repeats")
         val SIMULATION_ENABLED = booleanPreferencesKey("simulation_enabled")
-        val LAST_SESSION_TYPE = stringPreferencesKey("last_session_type")
         val TESTING_MODE_ENABLED = booleanPreferencesKey("testing_mode_enabled")
     }
 
@@ -89,12 +81,9 @@ class SettingsRepository(private val context: Context) {
                 voiceStyle = preferences[PreferencesKeys.VOICE_STYLE] ?: "detailed",
                 coachingEnabled = preferences[PreferencesKeys.COACHING_ENABLED] ?: true,
                 aiDataSharingEnabled = preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] ?: true,
-                warmUpDurationSeconds = preferences[PreferencesKeys.WARM_UP_DURATION] ?: 480,
-                coolDownDurationSeconds = preferences[PreferencesKeys.COOL_DOWN_DURATION] ?: 180,
                 runMode = preferences[PreferencesKeys.RUN_MODE] ?: "treadmill",
                 splitAnnouncementsEnabled = preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] ?: true,
                 autoPauseEnabled = preferences[PreferencesKeys.AUTO_PAUSE_ENABLED] ?: true,
-                runWalkCoachEnabled = preferences[PreferencesKeys.RUN_WALK_COACH_ENABLED] ?: false,
                 savedDevices = savedDevices,
                 activeDeviceAddress = preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS],
                 activePlanId = preferences[PreferencesKeys.ACTIVE_PLAN_ID],
@@ -104,7 +93,6 @@ class SettingsRepository(private val context: Context) {
                 aiWalkIntervalSeconds = preferences[PreferencesKeys.AI_WALK_INTERVAL_SECONDS],
                 aiRepeats = preferences[PreferencesKeys.AI_REPEATS],
                 simulationEnabled = preferences[PreferencesKeys.SIMULATION_ENABLED] ?: false,
-                lastSessionType = preferences[PreferencesKeys.LAST_SESSION_TYPE] ?: "Run/Walk",
                 testingModeEnabled = preferences[PreferencesKeys.TESTING_MODE_ENABLED] ?: false
             )
         }
@@ -119,12 +107,9 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.VOICE_STYLE] = settings.voiceStyle
             preferences[PreferencesKeys.COACHING_ENABLED] = settings.coachingEnabled
             preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] = settings.aiDataSharingEnabled
-            preferences[PreferencesKeys.WARM_UP_DURATION] = settings.warmUpDurationSeconds
-            preferences[PreferencesKeys.COOL_DOWN_DURATION] = settings.coolDownDurationSeconds
             preferences[PreferencesKeys.RUN_MODE] = settings.runMode
             preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] = settings.splitAnnouncementsEnabled
             preferences[PreferencesKeys.AUTO_PAUSE_ENABLED] = settings.autoPauseEnabled
-            preferences[PreferencesKeys.RUN_WALK_COACH_ENABLED] = settings.runWalkCoachEnabled
             preferences[PreferencesKeys.SAVED_DEVICES] = settings.savedDevices.map { "${it.address}|${it.name}" }.toSet()
             if (settings.activeDeviceAddress != null) {
                 preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS] = settings.activeDeviceAddress
@@ -168,7 +153,6 @@ class SettingsRepository(private val context: Context) {
                 preferences.remove(PreferencesKeys.AI_REPEATS)
             }
             preferences[PreferencesKeys.SIMULATION_ENABLED] = settings.simulationEnabled
-            preferences[PreferencesKeys.LAST_SESSION_TYPE] = settings.lastSessionType
             preferences[PreferencesKeys.TESTING_MODE_ENABLED] = settings.testingModeEnabled
         }
     }

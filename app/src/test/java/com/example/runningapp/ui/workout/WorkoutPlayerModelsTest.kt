@@ -120,26 +120,4 @@ class WorkoutPlayerModelsTest {
         assertEquals("01:33", ui.countdownText)
         assertEquals("Main", ui.intervalLabel)
     }
-
-    @Test
-    fun `mapWorkoutPlayerUiState shows easy fixed duration copy without interval targets`() {
-        val state = HrState(
-            sessionType = "Easy Fixed Duration",
-            currentPhase = SessionPhase.MAIN,
-            isStructuredWorkout = false,
-            phaseSecondsElapsed = 900,
-            phaseSecondsRemaining = 900,
-            sessionStatus = SessionStatus.RUNNING
-        )
-
-        val ui = mapWorkoutPlayerUiState(state)
-
-        assertEquals(true, ui.isEasyFixedDurationMode)
-        assertEquals("EASY SESSION", ui.phaseLabel)
-        assertEquals("30 min easy session", ui.intervalLabel)
-        assertEquals("15:00", ui.countdownText)
-        assertEquals("self-adjust jog/walk", ui.nextLabel)
-        assertEquals("50%", ui.progressLabel)
-        assertEquals(null, ui.timeline)
-    }
 }
