@@ -1,6 +1,7 @@
 package com.example.runningapp.ui.workout
 
 import com.example.runningapp.HrState
+import com.example.runningapp.HrZone
 import com.example.runningapp.SessionPhase
 import com.example.runningapp.SessionStatus
 import com.example.runningapp.StructuredWorkoutPhase
@@ -29,6 +30,15 @@ class WorkoutPlayerModelsTest {
 
         // Same heart rate, different target.
         assertEquals(ZoneBand.IN, mapWorkoutPlayerUiState(stateWithHr(140, targetZone = 3)).zoneBand)
+    }
+
+    @Test
+    fun `the frozen run target wins over a global changed mid-run`() {
+        // Global was moved to Z3 mid-run, but the run started against Z2. 140 bpm is ABOVE Z2 and
+        // IN Z3 — the label and band must both stay with the frozen Z2, matching the coach.
+        val state = stateWithHr(140, targetZone = 3).copy(activeTargetZone = HrZone.MODERATE)
+        assertEquals("Z2 114-132", mapWorkoutPlayerUiState(state).zoneLabel)
+        assertEquals(ZoneBand.ABOVE, mapWorkoutPlayerUiState(state).zoneBand)
     }
 
     @Test

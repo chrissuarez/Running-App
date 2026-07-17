@@ -119,9 +119,12 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
         SessionPhase.COOL_DOWN -> "COOL-DOWN"
     }
 
+    // The run's target is frozen at its start (activeTargetZone); fall back to the live global
+    // only when idle. This keeps the label and band in step with the coach if the global target
+    // is changed mid-run.
+    val targetZone = state.activeTargetZone ?: state.userSettings.targetHrZone
     val hasSignal = state.bpm > 0 || state.avgBpm > 0
-    val zoneBand = if (hasSignal) zoneBandOf(state.avgBpm, state.userSettings) else ZoneBand.UNKNOWN
-    val targetZone = state.userSettings.targetHrZone
+    val zoneBand = if (hasSignal) zoneBandOf(state.avgBpm, state.userSettings.maxHr, targetZone) else ZoneBand.UNKNOWN
 
     val timeline = if (isStructuredMain) mapIntervalTimelineUiState(state) else null
     val cue = mapCoachCueUiState(state)

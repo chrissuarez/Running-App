@@ -119,6 +119,11 @@ data class HrState(
     // Mission 2: Settings Summary
     val userSettings: UserSettings = UserSettings(),
 
+    // The target frozen for the active run (null when idle). The live screen prefers this over
+    // userSettings.targetHrZone so its zone label and band match what the coach is actually
+    // coaching, even if the global target is changed mid-run.
+    val activeTargetZone: HrZone? = null,
+
     val walkBreaksCount: Int = 0,
 
     // Post-run "How did that feel?" sheet: DB row id for the session the UI should prompt about
@@ -193,6 +198,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var sessionSampleCount = 0
     private var sessionAboveTargetSeconds = 0L
     private var lastRecordedSecond = -1L
+    // The target this run is coached against, frozen at the start. The coach and the recorded
+    // RunnerSession.targetZone both read this, so a mid-run change to the global target zone can
+    // neither redirect the live coaching nor make "In Target" disagree with what was coached; it
+    // takes effect on the next run. currentSettings still updates live for everything else.
+    private var activeTargetZone: HrZone = HrZone.DEFAULT_TARGET
     
     // Mission 3: In-Memory Zone Tracking
     private val sessionZoneTimes = mutableMapOf(1 to 0L, 2 to 0L, 3 to 0L, 4 to 0L, 5 to 0L)
@@ -787,7 +797,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                 // arithmetic would find no zone above a target of 5. In-target
                                 // time is no longer banked here at all — it is the target zone's
                                 // own total, derived on read (see RunnerSession.inTargetZoneSeconds).
-                                if (zoneBandOf(currentBpm, currentSettings) == ZoneBand.ABOVE) {
+                                if (zoneBandOf(currentBpm, currentSettings.maxHr, activeTargetZone) == ZoneBand.ABOVE) {
                                     sessionAboveTargetSeconds += 1
                                 }
                             } else {
@@ -1215,17 +1225,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 activeDbSessionId = null
             )}
 
+            // Freeze the target for the whole run: the coach reads activeTargetZone every second,
+            // so recording from it keeps "In Target" and the live coaching in agreement even if
+            // the global target zone is changed mid-run.
+            activeTargetZone = currentSettings.targetHrZone
             val session = RunnerSession(
                 startTime = System.currentTimeMillis(),
-                // Captured at the start, alongside runMode: this records the target the run was
-                // actually coached against, so changing the global mid-run cannot rewrite it.
-                targetZone = currentSettings.targetHrZone.number,
+                targetZone = activeTargetZone.number,
                 runMode = currentSettings.runMode,
                 sessionType = currentSessionType,
                 includeInAiTraining = currentSessionIncludeInAiTraining
             )
             currentSessionId = database.sessionDao().insertSession(session)
-            _hrState.update { it.copy(activeDbSessionId = currentSessionId) }
+            _hrState.update { it.copy(activeDbSessionId = currentSessionId, activeTargetZone = activeTargetZone) }
             startSessionTimerLoop()
             sessionMaxBpm = 0
             sessionBpmSum = 0
@@ -1318,7 +1330,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     fun stopSession() {
-        _hrState.update { it.copy(sessionStatus = SessionStatus.STOPPING) }
+        _hrState.update { it.copy(sessionStatus = SessionStatus.STOPPING, activeTargetZone = null) }
         stopScanning()
         
         // FIX: Capture final counters BEFORE disconnect() resets BLE state
@@ -1953,7 +1965,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         
         val isRunWalk = currentSettings.runWalkCoachEnabled && currentSessionType == SESSION_TYPE_RUN_WALK
 
-        val targetZone = currentSettings.targetHrZone
+        val targetZone = activeTargetZone
         val targetLow = zoneLowerBpm(targetZone, currentSettings.maxHr)
         val targetHigh = zoneUpperBpm(targetZone, currentSettings.maxHr)
 
@@ -1965,10 +1977,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 if (currentZone == ZoneBand.BELOW) {
                     if (avgBpm >= recoveryPoint) ZoneBand.IN else ZoneBand.BELOW
                 } else {
-                    zoneBandOf(avgBpm, currentSettings)
+                    zoneBandOf(avgBpm, currentSettings.maxHr, activeTargetZone)
                 }
             }
-            else -> zoneBandOf(avgBpm, currentSettings)
+            else -> zoneBandOf(avgBpm, currentSettings.maxHr, activeTargetZone)
         }
         
         if (newZone != currentZone) {
