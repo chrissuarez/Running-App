@@ -201,7 +201,10 @@ fun mapCoachCueUiState(state: HrState): CoachCueUiState? {
         staleSignal -> CUE_REASON_SENSOR_LOST
         state.hrCapExceededInCurrentInterval || reasonLower.contains("hr") || reasonLower.contains("cap") -> CUE_REASON_HR_HIGH
         reasonLower.contains("recover") || reasonLower.contains("resume") -> CUE_REASON_HR_RECOVERED
-        reasonLower.contains("planned") -> CUE_REASON_PLANNED
+        // "Planned transition" only means something on a structured workout. On an open run
+        // currentWalkReason is still its default "Planned", so without this gate the coach card
+        // would tell an open-run user to "follow the interval" that doesn't exist (#107).
+        state.isStructuredWorkout && reasonLower.contains("planned") -> CUE_REASON_PLANNED
         else -> CUE_REASON_UNKNOWN
     }
 

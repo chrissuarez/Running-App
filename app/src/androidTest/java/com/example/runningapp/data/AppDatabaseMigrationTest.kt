@@ -74,7 +74,7 @@ class AppDatabaseMigrationTest {
         // migration between the file's version and today's. It does not disturb what this test
         // asserts — it touches sessions, never track_points.
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(MIGRATION_11_12, migration12To13 { 190 })
+            .addMigrations(MIGRATION_11_12, migration12To13 { 190 }, MIGRATION_13_14)
             .build()
 
         val sessionATrackPoints = runBlockingGet { migratedDb.trackPointDao().getTrackPointsForSessionOnce(1) }
@@ -145,7 +145,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { 190 })
+            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14)
             .build()
         val session1 = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val session2 = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
@@ -172,6 +172,36 @@ class AppDatabaseMigrationTest {
         // nothing to reconstruct — and in-target now derives from that.
         listOf(session1, session2, session3).forEach { assertEquals(2, it.targetZone) }
         assertEquals(1L, session2.inTargetZoneSeconds)
+    }
+
+    @Test
+    fun migrate13To14_promotesIsRunWalkModeForSessionsWithIntervalStats_leavesOthersUntouched() {
+        val rawDb = openLegacyDatabase()
+
+        // Session 1: recorded run/walk intervals but its flag was never set (the pre-#107 flag came
+        // from a separate coach toggle). Must be promoted so the AI coach still sees its evidence.
+        insertLegacySession(rawDb, id = 1)
+        rawDb.execSQL(
+            "INSERT INTO run_walk_interval_stats (sessionId, intervalIndex, plannedDurationSeconds, " +
+                "actualRunningDurationBeforeHrTriggerSeconds, hrTriggerEvents, " +
+                "totalTimeSpentWalkingDuringRunIntervalSeconds) VALUES (1, 0, 180, 180, 0, 0)"
+        )
+
+        // Session 2: no interval stats — an open or continuous run. Must stay isRunWalkMode = 0.
+        insertLegacySession(rawDb, id = 2)
+
+        rawDb.version = 12
+        rawDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14)
+            .build()
+        val session1 = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
+        val session2 = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
+        migratedDb.close()
+
+        assertEquals(true, session1.isRunWalkMode)
+        assertEquals(false, session2.isRunWalkMode)
     }
 
     /**

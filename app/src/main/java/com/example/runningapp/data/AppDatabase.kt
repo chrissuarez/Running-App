@@ -291,7 +291,7 @@ interface RunWalkIntervalStatDao {
 
 @Database(
     entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class, TrackPoint::class],
-    version = 13,
+    version = 14,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -328,7 +328,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_9_10,
                     MIGRATION_10_11,
                     MIGRATION_11_12,
-                    migration12To13(maxHrProvider)
+                    migration12To13(maxHrProvider),
+                    MIGRATION_13_14
                 )
                 .build()
                 INSTANCE = instance
@@ -695,5 +696,35 @@ private fun recomputeZoneSecondsFromHrSamples(database: SupportSQLiteDatabase, m
             }
         }
         currentSessionId?.let { flush(it, zoneSeconds) }
+    }
+}
+
+/**
+ * Backfills [RunnerSession.isRunWalkMode] for runs recorded before it became the run's own
+ * run/walk flag (#107).
+ *
+ * Before #107 the durable "this was a run/walk workout" signal lived in the now-retired
+ * `sessionType` column, while `isRunWalkMode` was written from the separate `runWalkCoachEnabled`
+ * setting — so on upgraded databases the flag the AI coach now reads can be wrong. Left alone, a
+ * genuine run/walk run whose flag was never set would be sent to the coach as an Open Run and its
+ * interval evidence dropped (`buildRunWalkMetrics` gates on this flag).
+ *
+ * The repair keys off hard evidence rather than the polluted `sessionType` default: a session has
+ * `run_walk_interval_stats` rows only if it actually ran run/walk intervals. So any session with
+ * interval stats is promoted to `isRunWalkMode = 1`. This direction is provably safe — you cannot
+ * have interval stats without being a run/walk run — and it never disturbs open or continuous
+ * runs, which have no stats. The reverse case (a plain run left flagged from the old coach toggle)
+ * is harmless: `buildRunWalkMetrics` finds no stats and returns null. Dropping the dead
+ * `sessionType`/`easy*` columns and the fuller analytics reconciliation stay with #113.
+ */
+val MIGRATION_13_14 = object : Migration(13, 14) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            UPDATE sessions
+            SET isRunWalkMode = 1
+            WHERE id IN (SELECT DISTINCT sessionId FROM run_walk_interval_stats)
+            """.trimIndent()
+        )
     }
 }
