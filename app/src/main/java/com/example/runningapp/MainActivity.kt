@@ -274,12 +274,12 @@ class MainActivity : ComponentActivity() {
                                         settingsRepository.removeDevice(address)
                                     }
                                 },
-                                onConnect = { address ->
+                                onConnect = { address, skipPlan ->
                                     Log.d("MainActivity", "User tapped device in ManageDevices: $address")
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
-                                        putExtra(HrForegroundService.EXTRA_SKIP_PLAN, false)
+                                        putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     hrService?.connectToDevice(address)
@@ -1323,9 +1323,18 @@ fun ManageDevicesScreen(
     connectionStatus: String,
     onSetActive: (String) -> Unit,
     onRemove: (String) -> Unit,
-    onConnect: (String) -> Unit,
+    onConnect: (String, Boolean) -> Unit,
     onBack: () -> Unit
 ) {
+    // Connecting a saved sensor here starts a run, so mirror the main screen's today-only skip
+    // choice (#107): with a plan queued the user can still opt into an open run. Defaults off every
+    // time the screen loads, so the plan is queued unless actively skipped.
+    var skipPlanToday by rememberSaveable { mutableStateOf(false) }
+    val hasPlannedWorkout = TrainingPlanProvider.resolveBaseWorkout(
+        settings.activePlanId,
+        settings.activeStageId
+    ) != null
+
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Manage Devices", style = MaterialTheme.typography.headlineMedium)
@@ -1336,6 +1345,11 @@ fun ManageDevicesScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
         Text("Status: $connectionStatus", style = MaterialTheme.typography.bodySmall)
+        if (hasPlannedWorkout) {
+            TextButton(onClick = { skipPlanToday = !skipPlanToday }) {
+                Text(if (skipPlanToday) "Run today's plan instead" else "Skip today's plan (open run)")
+            }
+        }
         Spacer(modifier = Modifier.height(16.dp))
 
         if (settings.savedDevices.isEmpty()) {
@@ -1351,7 +1365,7 @@ fun ManageDevicesScreen(
                         isActive = isActive,
                         onSetActive = { onSetActive(device.address) },
                         onRemove = { onRemove(device.address) },
-                        onConnect = { onConnect(device.address) }
+                        onConnect = { onConnect(device.address, skipPlanToday) }
                     )
                 }
             }
