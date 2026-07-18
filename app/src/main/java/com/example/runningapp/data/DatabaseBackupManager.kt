@@ -2,7 +2,6 @@ package com.example.runningapp.data
 
 import android.content.ContentValues
 import android.content.Context
-import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -42,15 +41,21 @@ object DatabaseBackupManager {
     private val isSupported: Boolean
         get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
-    /** Snapshots the live database to Downloads. Safe to call from any background thread. */
-    fun backup(context: Context) {
+    /**
+     * Snapshots the live database to Downloads. Safe to call from any background thread.
+     *
+     * Takes the open [database] so the WAL checkpoint runs on Room's own connection — the one
+     * holding the log. Folding it there guarantees the copied `.db` includes the run that just
+     * finished; a checkpoint issued from a second connection can silently no-op under Room's lock.
+     */
+    fun backup(context: Context, database: AppDatabase) {
         if (!isSupported) return
         try {
             val dbFile = context.getDatabasePath(DATABASE_NAME)
             if (!dbFile.exists()) return
-            // Fold the write-ahead log into the main file first, otherwise a copy of just the .db
-            // could miss the most recent run.
-            checkpointWal(dbFile)
+            database.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(TRUNCATE)").use {
+                it.moveToFirst()
+            }
             val bytes = dbFile.readBytes()
             writeBackupBytes(context, bytes)
             Log.d(TAG, "Backed up ${bytes.size} bytes of run history to Downloads/$BACKUP_SUBDIR")
@@ -80,23 +85,6 @@ object DatabaseBackupManager {
         } catch (e: Exception) {
             Log.w(TAG, "History restore failed (non-fatal)", e)
             false
-        }
-    }
-
-    /**
-     * Opens a throwaway connection purely to run a TRUNCATE checkpoint, folding committed WAL frames
-     * into the main file. Room's own connection stays open; a second connection checkpointing shared
-     * committed data is a supported SQLite operation.
-     */
-    private fun checkpointWal(dbFile: File) {
-        var db: SQLiteDatabase? = null
-        try {
-            db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READWRITE)
-            db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { it.moveToFirst() }
-        } catch (e: Exception) {
-            Log.w(TAG, "WAL checkpoint before backup failed; backing up main file as-is", e)
-        } finally {
-            db?.close()
         }
     }
 

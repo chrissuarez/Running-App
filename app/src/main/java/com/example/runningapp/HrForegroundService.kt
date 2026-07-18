@@ -1403,7 +1403,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         // "Clear storage". Fire-and-forget on weatherFetchScope (not cancelled by
                         // onDestroy) so stopping from the background can't skip it.
                         weatherFetchScope.launch {
-                            DatabaseBackupManager.backup(applicationContext)
+                            DatabaseBackupManager.backup(applicationContext, database)
                         }
 
                         // Weather snapshot: fire-and-forget on weatherFetchScope, which is not

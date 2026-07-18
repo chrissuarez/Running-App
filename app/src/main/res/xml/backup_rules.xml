@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android Auto Backup allowlist (API 23-30). Explicitly name the domains that hold user data so the
+  run database is actually included: `domain="root"` alone does NOT cover the database/sharedpref/
+  file sub-domains, which is how run history sat unprotected and was lost on a reinstall. Backing up
+  the whole `database` domain captures the -wal/-shm siblings too, so a restore is self-consistent.
+-->
 <full-backup-content>
-    <include domain="root" />
+    <include domain="database" path="." />
+    <include domain="sharedpref" path="." />
+    <include domain="file" path="." />
 </full-backup-content>
