@@ -49,6 +49,7 @@ import java.util.LinkedList
 import kotlin.math.roundToInt
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.AiCoachClient
+import com.example.runningapp.data.DatabaseBackupManager
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
@@ -1397,6 +1398,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         database.sessionDao().updateSession(updatedSession)
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
                         persistRunIntervalStats(sessionId)
+
+                        // Snapshot run history to Downloads so it survives a reinstall or
+                        // "Clear storage". Fire-and-forget on weatherFetchScope (not cancelled by
+                        // onDestroy) so stopping from the background can't skip it.
+                        weatherFetchScope.launch {
+                            DatabaseBackupManager.backup(applicationContext)
+                        }
 
                         // Weather snapshot: fire-and-forget on weatherFetchScope, which is not
                         // cancelled by onDestroy(), so stopping from the background can't skip

@@ -1,0 +1,147 @@
+package com.example.runningapp.data
+
+import android.content.ContentValues
+import android.content.Context
+import android.database.sqlite.SQLiteDatabase
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Log
+import java.io.File
+
+/**
+ * Keeps a spare copy of the run database in the phone's public Downloads folder so run history
+ * survives a reinstall or "Clear storage" — the app's own private database directory does not
+ * (both wipe it). This is the safety net for the way the app is actually installed during testing.
+ *
+ * - [backup] runs after each finished run: it snapshots the live database into
+ *   `Downloads/RunningApp/` (overwriting the previous snapshot).
+ * - [restoreIfDatabaseMissing] runs once at startup, *before Room opens*, and only when the app has
+ *   no database of its own yet — a fresh or freshly-cleared install. It never overwrites a database
+ *   that already exists, so it can only ever add history back, never replace live data.
+ *
+ * Everything here is best-effort: any failure is logged and swallowed, because losing a backup must
+ * never crash a run or block launch.
+ *
+ * The Downloads collection is writable without a runtime permission only from API 29 (scoped
+ * storage). Below that the feature is a no-op — the app's minSdk-26 devices simply go unprotected
+ * rather than dragging in a `WRITE_EXTERNAL_STORAGE` permission prompt.
+ */
+object DatabaseBackupManager {
+    private const val TAG = "DbBackup"
+
+    /** Must match the name passed to Room in [AppDatabase.getDatabase]. */
+    const val DATABASE_NAME = "running_app_db"
+
+    private const val BACKUP_DISPLAY_NAME = "running_app_history_backup.db"
+    private const val BACKUP_SUBDIR = "RunningApp"
+    private const val BACKUP_MIME = "application/octet-stream"
+    private val RELATIVE_PATH = "${Environment.DIRECTORY_DOWNLOADS}/$BACKUP_SUBDIR"
+
+    private val isSupported: Boolean
+        get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+
+    /** Snapshots the live database to Downloads. Safe to call from any background thread. */
+    fun backup(context: Context) {
+        if (!isSupported) return
+        try {
+            val dbFile = context.getDatabasePath(DATABASE_NAME)
+            if (!dbFile.exists()) return
+            // Fold the write-ahead log into the main file first, otherwise a copy of just the .db
+            // could miss the most recent run.
+            checkpointWal(dbFile)
+            val bytes = dbFile.readBytes()
+            writeBackupBytes(context, bytes)
+            Log.d(TAG, "Backed up ${bytes.size} bytes of run history to Downloads/$BACKUP_SUBDIR")
+        } catch (e: Exception) {
+            Log.w(TAG, "History backup failed (non-fatal)", e)
+        }
+    }
+
+    /**
+     * Restores the database from Downloads when the app has none of its own. Returns true if a file
+     * was written into place. Call this before Room first opens the database.
+     */
+    fun restoreIfDatabaseMissing(context: Context): Boolean {
+        if (!isSupported) return false
+        return try {
+            val dbFile = context.getDatabasePath(DATABASE_NAME)
+            if (dbFile.exists()) return false // never overwrite a live database
+            val bytes = readBackupBytes(context) ?: return false
+            dbFile.parentFile?.mkdirs()
+            dbFile.writeBytes(bytes)
+            // A restored file is already checkpointed; drop any stale WAL/SHM siblings so SQLite
+            // reads exactly what we wrote rather than replaying an old, unrelated log.
+            File("${dbFile.path}-wal").delete()
+            File("${dbFile.path}-shm").delete()
+            Log.d(TAG, "Restored ${bytes.size} bytes of run history from Downloads/$BACKUP_SUBDIR")
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "History restore failed (non-fatal)", e)
+            false
+        }
+    }
+
+    /**
+     * Opens a throwaway connection purely to run a TRUNCATE checkpoint, folding committed WAL frames
+     * into the main file. Room's own connection stays open; a second connection checkpointing shared
+     * committed data is a supported SQLite operation.
+     */
+    private fun checkpointWal(dbFile: File) {
+        var db: SQLiteDatabase? = null
+        try {
+            db = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READWRITE)
+            db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { it.moveToFirst() }
+        } catch (e: Exception) {
+            Log.w(TAG, "WAL checkpoint before backup failed; backing up main file as-is", e)
+        } finally {
+            db?.close()
+        }
+    }
+
+    private fun writeBackupBytes(context: Context, bytes: ByteArray) {
+        val resolver = context.contentResolver
+        // Replace any previous snapshot rather than letting MediaStore mint "…(1).db" duplicates.
+        deleteExistingBackup(context)
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, BACKUP_DISPLAY_NAME)
+            put(MediaStore.Downloads.MIME_TYPE, BACKUP_MIME)
+            put(MediaStore.Downloads.RELATIVE_PATH, RELATIVE_PATH)
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: throw IllegalStateException("MediaStore insert returned no URI")
+        resolver.openOutputStream(uri)?.use { it.write(bytes) }
+            ?: throw IllegalStateException("Could not open output stream for backup")
+        val done = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+        resolver.update(uri, done, null, null)
+    }
+
+    private fun readBackupBytes(context: Context): ByteArray? {
+        val uri = findBackupUri(context) ?: return null
+        return context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+    }
+
+    private fun deleteExistingBackup(context: Context) {
+        val uri = findBackupUri(context) ?: return
+        context.contentResolver.delete(uri, null, null)
+    }
+
+    /** Locates the current backup entry in Downloads by relative path + display name, or null. */
+    private fun findBackupUri(context: Context): Uri? {
+        val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        val projection = arrayOf(MediaStore.Downloads._ID)
+        val selection =
+            "${MediaStore.Downloads.RELATIVE_PATH} LIKE ? AND ${MediaStore.Downloads.DISPLAY_NAME} = ?"
+        // RELATIVE_PATH comes back with a trailing slash, so match on a prefix.
+        val args = arrayOf("$RELATIVE_PATH%", BACKUP_DISPLAY_NAME)
+        context.contentResolver.query(collection, projection, selection, args, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID))
+                return android.content.ContentUris.withAppendedId(collection, id)
+            }
+        }
+        return null
+    }
+}

@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.example.runningapp.data.AiCoachClient
 import com.example.runningapp.data.AppDatabase
+import com.example.runningapp.data.DatabaseBackupManager
 import com.example.runningapp.data.OpenMeteoWeatherClient
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.WeatherClient
@@ -30,6 +31,10 @@ class AppContainer(context: Context) {
     }
 
     val database: AppDatabase by lazy {
+        // If this install has no database of its own yet — a fresh or freshly-cleared install —
+        // bring run history back from the Downloads backup before Room opens. No-ops (and never
+        // overwrites) when a live database already exists.
+        DatabaseBackupManager.restoreIfDatabaseMissing(appContext)
         // The v12 -> v13 zone recompute needs Max HR, which lives in DataStore rather than the
         // database. Room only invokes this from inside the migration, on its own background
         // thread, so the blocking read never lands on the main thread.
