@@ -1824,8 +1824,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     // The elapsed clock, distance, pace and the plan's intervals keep advancing;
                     // only the (HR-driven) coaching goes quiet until the strap reconnects. We keep
                     // retrying in the background, but a lost strap never freezes or ends the run.
+                    //
+                    // Zero the live HR so the outage isn't banked as data: pulseSession() records a
+                    // sample and banks zone/above-cap seconds every second while bpm > 0, so a stale
+                    // last reading held across the whole dropout would fabricate HR and skew zone
+                    // totals and downstream coaching/AI. bpm returns when a fresh packet arrives.
                     _hrState.update { it.copy(
-                        connectionStatus = "Disconnected (Retrying)"
+                        connectionStatus = "Disconnected (Retrying)",
+                        bpm = 0,
+                        avgBpm = 0
                     ) }
 
                     serviceScope.launch(Dispatchers.IO) {
