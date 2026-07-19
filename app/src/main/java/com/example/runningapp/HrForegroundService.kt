@@ -258,6 +258,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // the terminal "Strap not found" state (each attempt already costs a ~30s connectGatt timeout
     // plus backoff). Mid-run reconnects are uncapped by design (#110).
     private val PRE_RUN_RECONNECT_MAX_ATTEMPTS = 3
+    // A discovery scan with no user selection stops itself after this long (nothing ever
+    // auto-connects from a scan, so an abandoned one would otherwise run forever).
+    private val SCAN_TIMEOUT_MS = 60_000L
+    // Bumped on every startScanning()/stopScanning(); lets the scan-timeout coroutine tell
+    // whether ITS scan is still the live one.
+    @Volatile private var scanEpoch = 0
 
     // Auto-pause on standstill (#39). Distinguishes a PAUSED session that SessionRecorder itself
     // triggered from a manual pause, so togglePause()/pauseSession() take precedence and GPS
@@ -1787,6 +1793,25 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         stopSelf()
     }
 
+    /**
+     * Demote when the foreground state serves only a bare sensor (#110: the run owns the
+     * foreground; a sensor doesn't). Pairing/connecting a strap from Manage Devices promotes the
+     * service, and post-#110 that connect no longer starts a run — without this, a pre-run pair
+     * left a persistent notification and a 10-hour wake lock until Stop Workout. The activity's
+     * binding keeps the service (and the GATT) alive while the app is on screen; backgrounding
+     * the app with no run then releases everything, and START re-promotes.
+     */
+    private fun demoteForegroundIfSensorOnly(reason: String) {
+        val status = _hrState.value.sessionStatus
+        val runActive = status == SessionStatus.RUNNING || status == SessionStatus.PAUSED
+        val sessionInFlight = synchronized(sessionCreationLock) {
+            isCreatingSession || currentSessionId != null
+        }
+        if (runActive || sessionInFlight) return
+        Log.d(TAG, "Demoting foreground ($reason) - sensor only, no run")
+        demoteForeground()
+    }
+
     private fun stopForegroundService() {
         Log.d(TAG, "stopForegroundService called - Kill Switch")
         stopScanning() 
@@ -1886,12 +1911,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         Log.d(TAG, "startScanning() - Resetting connection state and starting fresh scan")
         logBleDecision("scan_reset", "Clearing reconnect target and scanned device list before scan")
-        
-        // ABORT any current connection attempts or reconnect loops
+
+        // ABORT any current connection attempts or reconnect loops. Supersede any queued
+        // connect and close under the connect lock (see disconnect()).
         isReconnecting = false
         targetDeviceAddress = null
-        bluetoothGatt?.close()
-        bluetoothGatt = null
+        synchronized(gattConnectLock) {
+            ++connectRequestSeq
+            bluetoothGatt?.close()
+            bluetoothGatt = null
+        }
 
         _hrState.update { it.copy(connectionStatus = "Scanning...", scannedDevices = emptyList()) }
 
@@ -1908,9 +1937,26 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         } catch (e: Exception) {
             Log.w(TAG, "Stop scan failed during reset: ${e.message}")
         }
-        
+
         scanner.startScan(scanCallback)
         Log.d(TAG, "startScanning() - BLE scan started")
+
+        // A scan has no natural end: nothing auto-connects from it, so an abandoned one would
+        // burn the scanner — and the foreground/wake lock its intent promoted — indefinitely.
+        // Time-box it; the epoch guard cancels the timeout when a tap/connect stops this scan
+        // and possibly starts another.
+        val myEpoch = ++scanEpoch
+        serviceScope.launch {
+            delay(SCAN_TIMEOUT_MS)
+            if (myEpoch == scanEpoch &&
+                _hrState.value.connectionStatus.contains("Scanning", ignoreCase = true)
+            ) {
+                Log.d(TAG, "Scan timed out after ${SCAN_TIMEOUT_MS / 1000}s with no selection")
+                stopScanning()
+                _hrState.update { it.copy(connectionStatus = "Disconnected") }
+                demoteForegroundIfSensorOnly("scan timeout")
+            }
+        }
     }
 
     private val scanCallback = object : android.bluetooth.le.ScanCallback() {
@@ -2005,6 +2051,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
     
     private fun stopScanning() {
+         ++scanEpoch // cancels any pending scan-timeout for the scan being stopped
          if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
              bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
              Log.d(TAG, "stopScanning() - stopScan invoked")
@@ -2070,6 +2117,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
              targetDeviceAddress = null
              isReconnecting = false
              _hrState.update { it.copy(connectionStatus = "Strap not found") }
+             // The chase is over and no run ever joined: release the foreground/wake lock the
+             // connect intent promoted (on main — this can run on a binder/IO thread).
+             serviceScope.launch { demoteForegroundIfSensorOnly("strap not found") }
              return
          }
 
@@ -2182,6 +2232,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 
                 gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
                 gatt?.discoverServices()
+
+                // A bare sensor connect (pre-run pairing) doesn't need — or deserve — the
+                // foreground promotion its intent made; only a run does. On the main thread:
+                // this callback runs on a binder thread.
+                serviceScope.launch { demoteForegroundIfSensorOnly("strap connected, no run") }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 if (targetDeviceAddress != null) {
                     // Unexpected disconnect while a run is going.
