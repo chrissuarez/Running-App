@@ -33,9 +33,10 @@ class AppContainer(context: Context) {
     }
 
     val database: AppDatabase by lazy {
-        // If this install has no database of its own yet — a fresh or freshly-cleared install —
-        // bring run history back from the Downloads backup before Room opens. No-ops (and never
-        // overwrites) when a live database already exists.
+        // If this install has no database of its own yet — a freshly-cleared install — bring run
+        // history back from the Downloads copy before Room opens. No-ops (and never overwrites) when
+        // a live database already exists, which includes reinstalls, where Auto Backup has already
+        // restored it.
         DatabaseBackupManager.restoreIfDatabaseMissing(appContext)
         // The v12 -> v13 zone recompute needs Max HR, which lives in DataStore rather than the
         // database. Room only invokes this from inside the migration, on its own background
@@ -61,8 +62,8 @@ class AppContainer(context: Context) {
             settingsRepository = settingsRepository,
             aiCoachClient = aiCoachClient,
             weatherClient = weatherClient,
-            // After a delete, re-snapshot history to Downloads so a later reinstall/clear-storage
-            // can't restore the deleted runs. File IO, so keep it off the caller's (main) thread.
+            // After a delete, re-snapshot history to Downloads so a later Clear-storage restore
+            // can't bring the deleted runs back. File IO, so keep it off the caller's (main) thread.
             refreshHistoryBackup = {
                 withContext(Dispatchers.IO) {
                     DatabaseBackupManager.backup(appContext, database)

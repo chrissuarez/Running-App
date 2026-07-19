@@ -11,15 +11,23 @@ import java.io.File
 
 /**
  * Keeps a spare copy of the run database in the phone's public Downloads folder so run history
- * survives a reinstall or "Clear storage" — the app's own private database directory does not
- * (both wipe it). This is the safety net for the way the app is actually installed during testing.
+ * survives **"Clear storage"** — which wipes the app's private database directory but leaves this
+ * copy behind.
+ *
+ * Scope, deliberately: this covers Clear-storage on the *same* install, not reinstall. Under scoped
+ * storage a reinstalled app is a new owner and can no longer read a `MediaStore.Downloads` entry the
+ * previous install created (that would need a Storage Access Framework grant). **Reinstall recovery
+ * is handled separately by Android Auto Backup**, which restores the Room database at install time,
+ * before this ever runs — so on reinstall the database already exists and [restoreIfDatabaseMissing]
+ * correctly no-ops. The two layers are complementary: Auto Backup for reinstall, this for
+ * Clear-storage.
  *
  * - [backup] runs after each finished run and after a run is deleted: it snapshots the live
  *   database into `Downloads/RunningApp/` (overwriting the previous snapshot). Refreshing on delete
  *   matters as much as on finish — otherwise a stale snapshot would restore deleted runs.
  * - [restoreIfDatabaseMissing] runs once at startup, *before Room opens*, and only when the app has
- *   no database of its own yet — a fresh or freshly-cleared install. It never overwrites a database
- *   that already exists, so it can only ever add history back, never replace live data.
+ *   no database of its own yet — a freshly-cleared install. It reads back the copy this same install
+ *   wrote, never overwrites a database that already exists, so it can only add history back.
  *
  * Everything here is best-effort: any failure is logged and swallowed, because losing a backup must
  * never crash a run or block launch.
@@ -108,8 +116,14 @@ object DatabaseBackupManager {
     }
 
     /**
-     * Restores the database from Downloads when the app has none of its own. Returns true if a file
-     * was written into place. Call this before Room first opens the database.
+     * Restores the database from the Downloads copy this install wrote, when the app has none of its
+     * own — i.e. after "Clear storage". Returns true if a file was written into place. Call this
+     * before Room first opens the database.
+     *
+     * After a reinstall this is a no-op by design: Auto Backup has already restored the database (so
+     * it exists and we return early), and even if it hadn't, the reinstalled app can't read the
+     * previous install's Downloads entry under scoped storage. Reinstall recovery is Auto Backup's
+     * job, not this one's.
      */
     fun restoreIfDatabaseMissing(context: Context): Boolean {
         if (!isSupported) return false

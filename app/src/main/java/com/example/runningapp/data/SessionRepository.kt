@@ -54,7 +54,7 @@ class SessionRepository(
     private val aiCoachClient: AiCoachClient? = null,
     private val weatherClient: WeatherClient? = null,
     // Re-snapshots run history to the Downloads backup after a deletion. Without this a later
-    // reinstall/clear-storage would restore a stale snapshot that still holds the deleted runs, so
+    // Clear-storage restore would bring back a stale snapshot that still holds the deleted runs, so
     // deletes have to invalidate the snapshot too — not just the finish-run path. Null in tests and
     // wherever no backup target is wired.
     private val refreshHistoryBackup: (suspend () -> Unit)? = null
@@ -141,8 +141,8 @@ class SessionRepository(
             val session = sessionDao.getSessionById(sessionId) ?: return
             if (session.endTime > 0) {
                 sessionDao.updateFeelFeedback(sessionId, effort, trimmedNote)
-                // Fold this user-entered history into the Downloads snapshot too, or a
-                // reinstall/clear-storage before the next run would restore the run without it.
+                // Fold this user-entered history into the Downloads snapshot too, or a Clear-storage
+                // restore before the next run would bring the run back without it.
                 refreshHistoryBackup?.invoke()
                 return
             }

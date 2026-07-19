@@ -1399,9 +1399,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
                         persistRunIntervalStats(sessionId)
 
-                        // Snapshot run history to Downloads so it survives a reinstall or
-                        // "Clear storage". Fire-and-forget on weatherFetchScope (not cancelled by
-                        // onDestroy) so stopping from the background can't skip it.
+                        // Snapshot run history to Downloads so it survives "Clear storage"
+                        // (reinstall is covered separately by Auto Backup). Fire-and-forget on
+                        // weatherFetchScope (not cancelled by onDestroy) so stopping from the
+                        // background can't skip it.
                         weatherFetchScope.launch {
                             DatabaseBackupManager.backup(applicationContext, database)
                         }
