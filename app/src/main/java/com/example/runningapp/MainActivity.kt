@@ -290,15 +290,15 @@ class MainActivity : ComponentActivity() {
                                         settingsRepository.removeDevice(address)
                                     }
                                 },
-                                onConnect = { address, skipPlan ->
+                                onConnect = { address ->
                                     Log.d("MainActivity", "User tapped device in ManageDevices: $address")
-                                    // See onConnectToDevice above: the intent path applies the skip choice
-                                    // before connecting, so a direct hrService?.connectToDevice() here would
-                                    // only reintroduce the race that attaches a skipped plan.
+                                    // Connect-only under #110: acquire/save the strap and return to the
+                                    // record screen, where START owns the run and the plan-skip choice.
+                                    // Deliberately no EXTRA_SKIP_PLAN — this action must not touch the
+                                    // service's pending skip state that the eventual START will set.
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
-                                        putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     navigateTo(Routes.MAIN)
@@ -1387,19 +1387,13 @@ fun ManageDevicesScreen(
     isRunActive: Boolean,
     onSetActive: (String) -> Unit,
     onRemove: (String) -> Unit,
-    onConnect: (String, Boolean) -> Unit,
+    onConnect: (String) -> Unit,
     onScan: () -> Unit,
     onBack: () -> Unit
 ) {
-    // Connecting a saved sensor here starts a run, so mirror the main screen's today-only skip
-    // choice (#107): with a plan queued the user can still opt into an open run. Defaults off every
-    // time the screen loads, so the plan is queued unless actively skipped.
-    var skipPlanToday by rememberSaveable { mutableStateOf(false) }
-    val hasPlannedWorkout = TrainingPlanProvider.resolveBaseWorkout(
-        settings.activePlanId,
-        settings.activeStageId
-    ) != null
-
+    // No skip-today's-plan control here: under #110 connecting a strap on this screen only acquires
+    // the sensor and returns to the record screen — it no longer starts a run — so the plan-skip
+    // choice belongs solely to START on the record screen, where the run actually begins.
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Manage Devices", style = MaterialTheme.typography.headlineMedium)
@@ -1410,11 +1404,6 @@ fun ManageDevicesScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
         Text("Status: $connectionStatus", style = MaterialTheme.typography.bodySmall)
-        if (hasPlannedWorkout) {
-            TextButton(onClick = { skipPlanToday = !skipPlanToday }) {
-                Text(if (skipPlanToday) "Run today's plan instead" else "Skip today's plan (open run)")
-            }
-        }
         // Scan is the only way to pair a first strap (#110 removed the record-screen list): find
         // and tap a discovered strap here, and connecting it saves it below. Pairing is a pre-run
         // action — scanning drops the current strap, so it is disabled during an active run to keep
@@ -1457,7 +1446,7 @@ fun ManageDevicesScreen(
                         isActive = isActive,
                         onSetActive = { onSetActive(device.address) },
                         onRemove = { onRemove(device.address) },
-                        onConnect = { onConnect(device.address, skipPlanToday) }
+                        onConnect = { onConnect(device.address) }
                     )
                 }
                 if (newlyDiscovered.isNotEmpty()) {
@@ -1473,7 +1462,7 @@ fun ManageDevicesScreen(
                         // verified) and returns to the record screen where START awaits.
                         DeviceListItem(
                             device = device,
-                            onClick = { onConnect(device.address, skipPlanToday) }
+                            onClick = { onConnect(device.address) }
                         )
                     }
                 }
