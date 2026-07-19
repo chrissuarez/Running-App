@@ -1237,6 +1237,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             lastDriftCueTime = 0L
             sessionAboveTargetSeconds = 0
             lastRecordedSecond = -1
+            // Clear the HR-freshness clock so age is measured within this run, not from a packet in
+            // a previous one. Otherwise a strapless run started after an earlier run that had HR
+            // would inherit a stale timestamp, read as a huge lastHrAgeSeconds, and trip the >= 8s
+            // sensor-lost safety cue — nagging a run the user deliberately started without a strap
+            // (#110). A real packet re-sets this the moment HR arrives.
+            lastHrTimestamp = 0L
             
             // Mission 3: Reset Zone Timers
             sessionZoneTimes.keys.forEach { sessionZoneTimes[it] = 0L }
