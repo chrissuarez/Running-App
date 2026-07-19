@@ -189,6 +189,48 @@ class SessionRepositoryTest {
         assertEquals(emptyList<TrackPoint>(), repository.getTrackPointsForMapFlow(sessionId = 7L).first())
     }
 
+    @Test
+    fun `deleteSession refreshes the history backup after removing the row`() = runTest {
+        var refreshCount = 0
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.deleteSession(sessionId = 7L)
+
+        verify(mockDao).deleteSessionById(7L)
+        assertEquals(1, refreshCount)
+    }
+
+    @Test
+    fun `deleteSessions refreshes the history backup when rows are removed`() = runTest {
+        var refreshCount = 0
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.deleteSessions(listOf(1L, 2L))
+
+        verify(mockDao).deleteSessionsByIds(listOf(1L, 2L))
+        assertEquals(1, refreshCount)
+    }
+
+    @Test
+    fun `deleteSessions does not touch the backup when the id list is empty`() = runTest {
+        var refreshCount = 0
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.deleteSessions(emptyList())
+
+        verify(mockDao, never()).deleteSessionsByIds(any())
+        assertEquals(0, refreshCount)
+    }
+
     private fun trackPoint(sessionId: Long, lon: Double, accuracy: Float?, source: String) = TrackPoint(
         sessionId = sessionId,
         latitude = 0.0,

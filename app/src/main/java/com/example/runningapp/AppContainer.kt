@@ -9,8 +9,10 @@ import com.example.runningapp.data.OpenMeteoWeatherClient
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.WeatherClient
 import com.mapbox.common.MapboxOptions
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -58,7 +60,14 @@ class AppContainer(context: Context) {
             trackPointDao = database.trackPointDao(),
             settingsRepository = settingsRepository,
             aiCoachClient = aiCoachClient,
-            weatherClient = weatherClient
+            weatherClient = weatherClient,
+            // After a delete, re-snapshot history to Downloads so a later reinstall/clear-storage
+            // can't restore the deleted runs. File IO, so keep it off the caller's (main) thread.
+            refreshHistoryBackup = {
+                withContext(Dispatchers.IO) {
+                    DatabaseBackupManager.backup(appContext, database)
+                }
+            }
         )
     }
 }

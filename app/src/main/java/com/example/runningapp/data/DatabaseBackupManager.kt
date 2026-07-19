@@ -14,8 +14,9 @@ import java.io.File
  * survives a reinstall or "Clear storage" — the app's own private database directory does not
  * (both wipe it). This is the safety net for the way the app is actually installed during testing.
  *
- * - [backup] runs after each finished run: it snapshots the live database into
- *   `Downloads/RunningApp/` (overwriting the previous snapshot).
+ * - [backup] runs after each finished run and after a run is deleted: it snapshots the live
+ *   database into `Downloads/RunningApp/` (overwriting the previous snapshot). Refreshing on delete
+ *   matters as much as on finish — otherwise a stale snapshot would restore deleted runs.
  * - [restoreIfDatabaseMissing] runs once at startup, *before Room opens*, and only when the app has
  *   no database of its own yet — a fresh or freshly-cleared install. It never overwrites a database
  *   that already exists, so it can only ever add history back, never replace live data.

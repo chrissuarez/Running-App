@@ -52,10 +52,16 @@ class SessionRepository(
     private val trackPointDao: TrackPointDao? = null,
     private val settingsRepository: SettingsRepository? = null,
     private val aiCoachClient: AiCoachClient? = null,
-    private val weatherClient: WeatherClient? = null
+    private val weatherClient: WeatherClient? = null,
+    // Re-snapshots run history to the Downloads backup after a deletion. Without this a later
+    // reinstall/clear-storage would restore a stale snapshot that still holds the deleted runs, so
+    // deletes have to invalidate the snapshot too — not just the finish-run path. Null in tests and
+    // wherever no backup target is wired.
+    private val refreshHistoryBackup: (suspend () -> Unit)? = null
 ) {
     suspend fun deleteSession(sessionId: Long) {
         sessionDao.deleteSessionById(sessionId)
+        refreshHistoryBackup?.invoke()
     }
 
     /**
@@ -145,6 +151,7 @@ class SessionRepository(
     suspend fun deleteSessions(sessionIds: List<Long>) {
         if (sessionIds.isEmpty()) return
         sessionDao.deleteSessionsByIds(sessionIds)
+        refreshHistoryBackup?.invoke()
     }
 
     suspend fun getMaxSessionLoadLast30Days(
