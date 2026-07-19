@@ -1062,7 +1062,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             ACTION_FORCE_SCAN -> {
                 Log.d(TAG, "ACTION_FORCE_SCAN received")
                 startForegroundService()
-                if (!isSimulationEnabled) {
+                val status = _hrState.value.sessionStatus
+                val runActive = status == SessionStatus.RUNNING || status == SessionStatus.PAUSED
+                if (runActive) {
+                    // Scanning tears down the current strap, and a scan-only disconnect sets STOPPED
+                    // without going through stopSession()'s finalization (see disconnect()) — so a
+                    // scan mid-run would silently drop the active run and orphan its DB row. Pairing
+                    // is a pre-run action; never scan while a run is live.
+                    Log.d(TAG, "Ignoring Force Scan - a run is active (status=$status)")
+                } else if (!isSimulationEnabled) {
                     logBleDecision("force_scan", "User requested a fresh scan; skipping saved-device reconnect")
                     if (_hrState.value.connectionStatus == "Connected") {
                         disconnect()
