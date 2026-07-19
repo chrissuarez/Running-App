@@ -106,25 +106,7 @@ class AppDatabaseMigrationTest {
     @Test
     fun migrate12To13_recomputesZoneSecondsFromHrSamples_andDeclaresHistoryTargetZone2() {
         val rawDb = openLegacyDatabase()
-        rawDb.execSQL(
-            """
-            CREATE TABLE `track_points` (
-                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                `sessionId` INTEGER NOT NULL,
-                `latitude` REAL NOT NULL,
-                `longitude` REAL NOT NULL,
-                `altitudeMeters` REAL,
-                `horizontalAccuracyMeters` REAL,
-                `verticalAccuracyMeters` REAL,
-                `speedMps` REAL,
-                `barometerPressureHpa` REAL,
-                `timestampMillis` INTEGER NOT NULL,
-                `source` TEXT NOT NULL,
-                FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
-            )
-            """.trimIndent()
-        )
-        rawDb.execSQL("CREATE INDEX `index_track_points_sessionId` ON `track_points` (`sessionId`)")
+        createTrackPointsTable(rawDb)
 
         // Session 1: the headline defect — five seconds at 145 bpm, banked as Zone 4 by the old
         // hybrid model. At Max HR 190 the new model puts 133-151 squarely in Zone 3.
@@ -177,6 +159,10 @@ class AppDatabaseMigrationTest {
     @Test
     fun migrate13To14_rebuildsIsRunWalkModeFromDurableSessionType_clearingLegacyToggleNoise() {
         val rawDb = openLegacyDatabase()
+        // A real v12 database already has track_points (created by MIGRATION_11_12). The v12 -> v13
+        // migration comes along for the ride when Room opens, so the table must be present or Room
+        // rejects the post-migration schema.
+        createTrackPointsTable(rawDb)
 
         // Session 1 — false negative: a real Run/Walk run recorded with the coach toggle off, so the
         // pre-#107 flag was never set. The durable sessionType promotes it so the coach keeps its
@@ -305,6 +291,29 @@ class AppDatabaseMigrationTest {
         )
         rawDb.execSQL("CREATE INDEX `index_run_walk_interval_stats_sessionId` ON `run_walk_interval_stats` (`sessionId`)")
         return rawDb
+    }
+
+    /** Builds the track_points table exactly as MIGRATION_11_12 leaves it, for v12+ start states. */
+    private fun createTrackPointsTable(rawDb: SQLiteDatabase) {
+        rawDb.execSQL(
+            """
+            CREATE TABLE `track_points` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `sessionId` INTEGER NOT NULL,
+                `latitude` REAL NOT NULL,
+                `longitude` REAL NOT NULL,
+                `altitudeMeters` REAL,
+                `horizontalAccuracyMeters` REAL,
+                `verticalAccuracyMeters` REAL,
+                `speedMps` REAL,
+                `barometerPressureHpa` REAL,
+                `timestampMillis` INTEGER NOT NULL,
+                `source` TEXT NOT NULL,
+                FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        rawDb.execSQL("CREATE INDEX `index_track_points_sessionId` ON `track_points` (`sessionId`)")
     }
 
     private fun insertLegacySession(
