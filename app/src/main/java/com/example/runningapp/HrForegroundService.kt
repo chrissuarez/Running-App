@@ -300,6 +300,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         const val CHANNEL_ID = "HrServiceChannel"
         const val NOTIFICATION_ID = 1
         const val ACTION_START_FOREGROUND = "ACTION_START_FOREGROUND"
+        // The explicit act of beginning a run (#110). Distinct from ACTION_START_FOREGROUND,
+        // which now only acquires the strap as a sensor: connecting is no longer starting.
+        const val ACTION_START_RUN = "ACTION_START_RUN"
         const val ACTION_STOP_FOREGROUND = "ACTION_STOP_FOREGROUND"
         const val ACTION_PAUSE_SESSION = "ACTION_PAUSE_SESSION"
         const val ACTION_RESUME_SESSION = "ACTION_RESUME_SESSION"
@@ -1026,6 +1029,27 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     Log.d(TAG, "ACTION_START_FOREGROUND received while simulation is active. Skipping hardware startup.")
                 }
             }
+            ACTION_START_RUN -> {
+                // START is the explicit act that begins a run (#110): heart rate is a sensor,
+                // not a gate. The clock, distance, and the plan's intervals begin now; the strap
+                // is acquired alongside, and zone coaching joins if/when HR arrives.
+                val status = _hrState.value.sessionStatus
+                val alreadyActive = status != SessionStatus.IDLE && status != SessionStatus.STOPPED
+                if (alreadyActive) {
+                    Log.d(TAG, "ACTION_START_RUN ignored - a run is already active (status=$status)")
+                } else {
+                    _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING, errorMessage = null) }
+                    // Creates the DB record, starts the 1 Hz tick, and (outdoor) starts location.
+                    startNewDatabaseSession()
+                    // Acquire the strap as a sensor unless we already have it or HR is simulated.
+                    if (!isSimulationEnabled && _hrState.value.connectionStatus != "Connected") {
+                        val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
+                        serviceScope.launch {
+                            startHardwareSession(overrideAddress)
+                        }
+                    }
+                }
+            }
             ACTION_STOP_FOREGROUND -> {
                 stopSession()
             }
@@ -1141,6 +1165,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
             // Mission 4: Reset Location/Pace variables
             locationTracker?.resetSessionState()
+
+            // Outdoor distance/pace must run whether or not a strap ever connects (#110), so
+            // location starts with the run itself rather than waiting for a sensor to connect.
+            if (currentSettings.runMode == "outdoor") {
+                locationTracker?.restartIfNeeded("run_start", currentSettings.runMode, isSimulationEnabled)
+            }
 
             // Mission: Immediate UI State Reset
             _hrState.update { it.copy(
@@ -1763,21 +1793,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 val deviceName = gatt?.device?.name ?: "Unknown"
                 val deviceAddress = gatt?.device?.address ?: ""
                 
+                // The strap is a sensor, not the run's gate (#110): connecting only reports the
+                // sensor, it never starts a run or opens a DB record. START owns that now. A run
+                // that is already going (including reconnecting after a dropout) simply keeps its
+                // status; a bare connect with no run leaves the session IDLE.
                 _hrState.update { it.copy(
-                    connectionStatus = "Connected", 
-                    sessionStatus = SessionStatus.RUNNING,
+                    connectionStatus = "Connected",
                     connectedDeviceName = deviceName,
                     reconnectAttempts = 0,
                     errorMessage = null
                 ) }
 
-                // FIX: Ensure a database session exists immediately upon connection
-                if (currentSessionId == null) {
-                    startNewDatabaseSession()
-                }
-
-                // Mission 4 FIX: Ensure location updates start if in outdoor mode
-                if (currentSettings.runMode == "outdoor") {
+                // Mission 4 FIX: Ensure location updates start if in outdoor mode (only while a
+                // run is active; a bare sensor connect must not spin up GPS on its own).
+                if (currentSettings.runMode == "outdoor" && isRunning()) {
                     locationTracker?.restartIfNeeded("session_start", currentSettings.runMode, isSimulationEnabled)
                 }
                 
@@ -1785,16 +1814,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 gatt?.discoverServices()
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 if (targetDeviceAddress != null) {
-                    // Unexpected disconnect while RUNNING or PAUSED
+                    // Unexpected disconnect while a run is going.
                     if (firstDisconnectTime == 0L) {
                         firstDisconnectTime = System.currentTimeMillis()
                     }
-                    
+
+                    // Heart rate can't gate the middle of a run any more than it gates the start
+                    // (#110): a strap dropout leaves the run RUNNING and merely stops zone cues.
+                    // The elapsed clock, distance, pace and the plan's intervals keep advancing;
+                    // only the (HR-driven) coaching goes quiet until the strap reconnects. We keep
+                    // retrying in the background, but a lost strap never freezes or ends the run.
                     _hrState.update { it.copy(
-                        connectionStatus = "Disconnected (Retrying)",
-                        sessionStatus = if (it.sessionStatus == SessionStatus.RUNNING) SessionStatus.CONNECTING else it.sessionStatus
+                        connectionStatus = "Disconnected (Retrying)"
                     ) }
-                    
+
                     serviceScope.launch(Dispatchers.IO) {
                         gatt?.close()
                         if (bluetoothGatt == gatt) bluetoothGatt = null

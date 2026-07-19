@@ -168,14 +168,17 @@ class MainActivity : ComponentActivity() {
                                 userSettings = userSettings,
                                 sessionRepository = sessionRepository,
                                 onRequestPermissions = { checkAndRequestPermissions() },
-                                onStartService = { skipPlan ->
+                                onStartRun = { skipPlan ->
+                                    // START begins the run regardless of the strap (#110): the
+                                    // service opens the record and starts the clock, then acquires
+                                    // the strap as a sensor alongside.
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
-                                        this.action = HrForegroundService.ACTION_START_FOREGROUND
+                                        this.action = HrForegroundService.ACTION_START_RUN
                                         putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
-                                onForceScan = {
+                                onRetryStrap = {
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         this.action = HrForegroundService.ACTION_FORCE_SCAN
                                     }
@@ -462,8 +465,8 @@ fun MainScreen(
     sessionRepository: SessionRepository,
     paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
-    onStartService: (Boolean) -> Unit,
-    onForceScan: () -> Unit,
+    onStartRun: (Boolean) -> Unit,
+    onRetryStrap: () -> Unit,
     onTogglePause: () -> Unit,
     onStopSession: () -> Unit,
     onConnectToDevice: (String, Boolean) -> Unit,
@@ -501,8 +504,20 @@ fun MainScreen(
         baseWorkout
     }
 
-    val activeDevice = state.userSettings.savedDevices.find { it.address == state.userSettings.activeDeviceAddress }
     val isSessionActive = state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED
+
+    // Reach for the saved strap in the background while the record screen is up (#110): heart
+    // rate is a sensor, so the app connects to it before you start and reports progress on the
+    // sensor line — but it never blocks starting. Fires once per pre-run entry with a saved
+    // device; skipped while simulating (no real strap) or once a run is active.
+    val activeStrapAddress = userSettings.activeDeviceAddress
+    LaunchedEffect(hrService, activeStrapAddress, isSessionActive, state.isSimulating) {
+        if (!isSessionActive && !state.isSimulating && hrService != null &&
+            activeStrapAddress != null && state.connectionStatus == "Disconnected"
+        ) {
+            hrService.connectToDevice(activeStrapAddress)
+        }
+    }
 
     Scaffold(
         modifier = Modifier
@@ -516,293 +531,304 @@ fun MainScreen(
             )
         }
     ) { innerPadding ->
-        LazyColumn(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
-            contentPadding = PaddingValues(RunningUiTokens.PagePadding),
-            verticalArrangement = Arrangement.spacedBy(RunningUiTokens.SectionSpacing),
-            horizontalAlignment = Alignment.Start
+                .padding(innerPadding)
         ) {
-            item {
-                Text(text = "Running App", style = MaterialTheme.typography.headlineMedium)
-            }
-            item {
-                OutlinedButton(
-                    onClick = onOpenTrainingPlan,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = RunningUiTokens.MinTouchTarget)
-                ) {
-                    Text("Open Training Plan")
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentPadding = PaddingValues(RunningUiTokens.PagePadding),
+                verticalArrangement = Arrangement.spacedBy(RunningUiTokens.SectionSpacing),
+                horizontalAlignment = Alignment.Start
+            ) {
+                item {
+                    Text(text = "Running App", style = MaterialTheme.typography.headlineMedium)
                 }
-            }
-
-            item {
-                val sensorSummary = when {
-                    state.connectionStatus.contains("Connected", ignoreCase = true) -> "Connected / ready"
-                    state.connectionStatus.contains("Scanning", ignoreCase = true) -> "Scanning"
-                    else -> "Disconnected / not ready"
+                item {
+                    OutlinedButton(
+                        onClick = onOpenTrainingPlan,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = RunningUiTokens.MinTouchTarget)
+                    ) {
+                        Text("Open Training Plan")
+                    }
                 }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
-                        Text("Run Setup", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(10.dp))
 
-                        Text("Run Mode", style = MaterialTheme.typography.labelLarge)
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = { onRunModeChange("treadmill") },
-                                modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
-                                colors = if (userSettings.runMode == "treadmill") {
-                                    ButtonDefaults.outlinedButtonColors(
-                                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                                    )
-                                } else {
-                                    ButtonDefaults.outlinedButtonColors()
-                                }
-                            ) {
-                                Text("Treadmill")
-                            }
-                            OutlinedButton(
-                                onClick = { onRunModeChange("outdoor") },
-                                modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
-                                colors = if (userSettings.runMode == "outdoor") {
-                                    ButtonDefaults.outlinedButtonColors(
-                                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                                    )
-                                } else {
-                                    ButtonDefaults.outlinedButtonColors()
-                                }
-                            ) {
-                                Text("Outdoor")
+                // Treadmill / Outdoor is the one pre-run choice, pre-filled from last time (#107).
+                if (!isSessionActive) {
+                    item {
+                        RunModeSelector(runMode = userSettings.runMode, onRunModeChange = onRunModeChange)
+                    }
+                }
+
+                if (state.sessionStatus == SessionStatus.ERROR) {
+                    item {
+                        Text(
+                            text = "ERROR: ${state.errorMessage ?: "Unknown"}",
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                if (!isSessionActive) {
+                    val stage = activeStage
+                    val plannedWorkout = todaysWorkout
+                    if (activePlan != null && stage != null && plannedWorkout != null) {
+                        val stageTitle = stage.title
+                        item {
+                            if (skipPlanToday) {
+                                SkippedPlanCard()
+                            } else {
+                                TodaysWorkoutCard(stageTitle = stageTitle, workout = plannedWorkout)
                             }
                         }
+                        item {
+                            TextButton(onClick = { skipPlanToday = !skipPlanToday }) {
+                                Text(if (skipPlanToday) "Run today's plan instead" else "Skip today's plan (open run)")
+                            }
+                        }
+                    } else if (userSettings.activePlanId == null) {
+                        item {
+                            TextButton(onClick = onOpenTrainingPlan) {
+                                Text("No active plan — this will be an open run. Tap to view plans.")
+                            }
+                        }
+                    }
 
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text("Sensor readiness: $sensorSummary", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "Connection: ${state.connectionStatus}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    if (coachMessage != null) {
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                            ) {
+                                Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
+                                    Text(
+                                        text = "AI Coach Debrief",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = coachMessage,
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
 
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            "Testing Mode: ${if (userSettings.testingModeEnabled) "ON" else "OFF"}",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (userSettings.testingModeEnabled) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            "AI progression is excluded while testing mode is enabled.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                // In-run controls stay in the scroll area; the START button below is a pre-run
+                // affordance only, so an active run shows Pause / Skip / Stop here instead.
+                if (isSessionActive) {
+                    item {
+                        Card(modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
+                                Text("Controls", style = MaterialTheme.typography.labelLarge)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+                                    Button(
+                                        onClick = onTogglePause,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = RunningUiTokens.MinTouchTarget)
+                                    ) {
+                                        Text(if (state.sessionStatus == SessionStatus.PAUSED) "Resume" else "Pause")
+                                    }
+                                    Button(
+                                        onClick = { hrService?.skipCurrentPhase() },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = RunningUiTokens.MinTouchTarget)
+                                    ) {
+                                        val label = when (state.currentPhase) {
+                                            SessionPhase.WARM_UP -> "Skip Warmup"
+                                            SessionPhase.MAIN -> "Start Cooldown"
+                                            SessionPhase.COOL_DOWN -> "End Session"
+                                        }
+                                        Text(label)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Button(
+                                    onClick = onStopSession,
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = RunningUiTokens.MinTouchTarget)
+                                ) {
+                                    Text("Force Stop")
+                                }
+                            }
+                        }
+                    }
+                }
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                // Developer / testing tools. Kept off the clean pre-run path but retained because
+                // the phone-first workflow drives runs through Simulate; user settings live behind
+                // the Prefs tab in the bottom bar.
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                         OutlinedButton(
-                            onClick = onOpenSettings,
+                            onClick = onRequestPermissions,
                             modifier = Modifier
-                                .fillMaxWidth()
+                                .weight(1f)
                                 .heightIn(min = RunningUiTokens.MinTouchTarget)
                         ) {
-                            Text("Open Settings")
+                            Text("Permissions")
+                        }
+                        Button(
+                            onClick = { onToggleSimulation(!state.isSimulating, skipPlanToday) },
+                            colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer) else ButtonDefaults.buttonColors(),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = RunningUiTokens.MinTouchTarget)
+                        ) {
+                            Text(if (state.isSimulating) "Stop Sim" else "Simulate")
+                        }
+                        OutlinedButton(
+                            onClick = onTestCue,
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = RunningUiTokens.MinTouchTarget)
+                        ) {
+                            Text("Test Cue")
                         }
                     }
                 }
-            }
 
-            if (activeDevice != null && state.connectionStatus == "Disconnected") {
                 item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
-                    ) {
-                        Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Active Device: ${activeDevice.name}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                Text(activeDevice.address, style = MaterialTheme.typography.bodySmall)
-                            }
-                            Button(
-                                onClick = { onConnectToDevice(activeDevice.address, skipPlanToday) },
-                                modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget)
-                            ) {
-                                Text("Connect")
-                            }
-                        }
+                    SettingsSummaryCard(settings = state.userSettings)
+                }
+
+                if (isSessionActive) {
+                    item {
+                        WorkoutView(state = state, sessionRepository = sessionRepository, onOpenFullScreenMap = onOpenFullScreenMap)
                     }
                 }
             }
 
-        if (state.sessionStatus == SessionStatus.ERROR) {
-            item {
-                Text(
-                    text = "ERROR: ${state.errorMessage ?: "Unknown"}",
-                    color = MaterialTheme.colorScheme.error,
-                    fontWeight = FontWeight.Bold
+            // One sensor line and the always-live START, pinned to the bottom (#110). Pre-run
+            // only: an active run shows its live controls in the scroll area above.
+            if (!isSessionActive) {
+                StartFooter(
+                    connectionStatus = state.connectionStatus,
+                    strapConnected = state.connectionStatus == "Connected",
+                    isSimulating = state.isSimulating,
+                    onStart = { onStartRun(skipPlanToday) },
+                    onRetryStrap = {
+                        val addr = userSettings.activeDeviceAddress
+                        if (addr != null) hrService?.connectToDevice(addr) else onRetryStrap()
+                    }
                 )
             }
         }
+    }
+}
 
-        if (!isSessionActive) {
-            val stage = activeStage
-            val plannedWorkout = todaysWorkout
-            if (activePlan != null && stage != null && plannedWorkout != null) {
-                val stageTitle = stage.title
-                item {
-                    if (skipPlanToday) {
-                        SkippedPlanCard()
-                    } else {
-                        TodaysWorkoutCard(stageTitle = stageTitle, workout = plannedWorkout)
-                    }
-                }
-                item {
-                    TextButton(onClick = { skipPlanToday = !skipPlanToday }) {
-                        Text(if (skipPlanToday) "Run today's plan instead" else "Skip today's plan (open run)")
-                    }
-                }
-            } else if (userSettings.activePlanId == null) {
-                item {
-                    TextButton(onClick = onOpenTrainingPlan) {
-                        Text("No active plan — this will be an open run. Tap to view plans.")
-                    }
-                }
+// Treadmill / Outdoor — the single pre-run choice, pre-filled from last time (#107).
+@Composable
+private fun RunModeSelector(runMode: String, onRunModeChange: (String) -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+        OutlinedButton(
+            onClick = { onRunModeChange("treadmill") },
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = RunningUiTokens.MinTouchTarget),
+            colors = if (runMode == "treadmill") {
+                ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            } else {
+                ButtonDefaults.outlinedButtonColors()
             }
-
-            if (coachMessage != null) {
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-                    ) {
-                        Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
-                            Text(
-                                text = "AI Coach Debrief",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = coachMessage,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
-                }
+        ) {
+            Text("Treadmill")
+        }
+        OutlinedButton(
+            onClick = { onRunModeChange("outdoor") },
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = RunningUiTokens.MinTouchTarget),
+            colors = if (runMode == "outdoor") {
+                ButtonDefaults.outlinedButtonColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            } else {
+                ButtonDefaults.outlinedButtonColors()
             }
+        ) {
+            Text("Outdoor")
         }
+    }
+}
 
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
-                    Text("Controls", style = MaterialTheme.typography.labelLarge)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                        if (state.sessionStatus == SessionStatus.IDLE || state.sessionStatus == SessionStatus.STOPPED || state.sessionStatus == SessionStatus.ERROR) {
-                            Button(
-                                onClick = {
-                                    if (hrService == null) onStartService(skipPlanToday) else onForceScan()
-                                },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .heightIn(min = RunningUiTokens.MinTouchTarget)
-                            ) {
-                                val label = if (hrService == null) "Start Service" else "Scan Devices"
-                                Text(label)
-                            }
-                        } else {
-                            Button(
-                                onClick = onTogglePause,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .heightIn(min = RunningUiTokens.MinTouchTarget)
-                            ) {
-                                Text(if (state.sessionStatus == SessionStatus.PAUSED) "Resume" else "Pause")
-                            }
-                            Button(
-                                onClick = { hrService?.skipCurrentPhase() },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .heightIn(min = RunningUiTokens.MinTouchTarget)
-                            ) {
-                                val label = when (state.currentPhase) {
-                                    SessionPhase.WARM_UP -> "Skip Warmup"
-                                    SessionPhase.MAIN -> "Start Cooldown"
-                                    SessionPhase.COOL_DOWN -> "End Session"
-                                }
-                                Text(label)
-                            }
-                        }
-                    }
+// The bottom of the record screen (#110): one quiet sensor line that states a single fact and
+// vanishes when nothing is wrong, above an always-live START. Heart rate is a sensor, not a
+// gate — START never dies; when there's no strap it says what you'll lose, and starts anyway.
+@Composable
+private fun StartFooter(
+    connectionStatus: String,
+    strapConnected: Boolean,
+    isSimulating: Boolean,
+    onStart: () -> Unit,
+    onRetryStrap: () -> Unit
+) {
+    val looking = !isSimulating && (
+        connectionStatus.contains("Connecting", ignoreCase = true) ||
+            connectionStatus.contains("Reconnecting", ignoreCase = true) ||
+            connectionStatus.contains("Scanning", ignoreCase = true)
+        )
+    val notFound = !isSimulating && connectionStatus.contains("Retrying", ignoreCase = true)
 
-                    if (state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Button(
-                            onClick = onStopSession,
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = RunningUiTokens.MinTouchTarget)
-                        ) {
-                            Text("Force Stop")
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = onRequestPermissions,
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = RunningUiTokens.MinTouchTarget)
-                ) {
-                    Text("Permissions")
-                }
-                Button(
-                    onClick = { onToggleSimulation(!state.isSimulating, skipPlanToday) },
-                    colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer) else ButtonDefaults.buttonColors(),
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = RunningUiTokens.MinTouchTarget)
-                ) {
-                    Text(if (state.isSimulating) "Stop Sim" else "Simulate")
-                }
-                OutlinedButton(
-                    onClick = onTestCue,
-                    modifier = Modifier
-                        .weight(1f)
-                        .heightIn(min = RunningUiTokens.MinTouchTarget)
-                ) {
-                    Text("Test Cue")
-                }
-            }
-        }
-
-        item {
-            SettingsSummaryCard(settings = state.userSettings)
-        }
-
-            if (state.connectionStatus == "Scanning...") {
-                item {
-                    Text("Scanned Devices:", style = MaterialTheme.typography.titleMedium)
-                }
-                items(state.scannedDevices) { device ->
-                    DeviceListItem(
-                        device = device,
-                        onClick = { onConnectToDevice(device.address, skipPlanToday) }
+    Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = RunningUiTokens.PagePadding, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            when {
+                looking -> {
+                    Text(
+                        "Looking for your strap…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-            } else if (isSessionActive) {
-                item {
-                    WorkoutView(state = state, sessionRepository = sessionRepository, onOpenFullScreenMap = onOpenFullScreenMap)
+                notFound -> {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            "Strap not found",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = onRetryStrap) {
+                            Text("Retry")
+                        }
+                    }
                 }
-            } else {
-                item {
-                    Text("Ready to start a session.")
+            }
+
+            Button(
+                onClick = onStart,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 56.dp)
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("START", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    if (!strapConnected && !isSimulating) {
+                        Text(
+                            "Without heart rate — no zone coaching",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                 }
             }
         }
