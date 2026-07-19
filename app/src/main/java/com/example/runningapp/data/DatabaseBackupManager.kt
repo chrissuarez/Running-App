@@ -42,6 +42,11 @@ object DatabaseBackupManager {
     private const val BACKUP_MIME = "application/octet-stream"
     private val RELATIVE_PATH = "${Environment.DIRECTORY_DOWNLOADS}/$BACKUP_SUBDIR"
 
+    // A blocked TRUNCATE checkpoint (busy=1) is transient — a UI query holding a read snapshot —
+    // so retry a few times to ride it out before giving up and copying the file anyway.
+    private const val CHECKPOINT_ATTEMPTS = 4
+    private const val CHECKPOINT_RETRY_DELAY_MS = 50L
+
     private val isSupported: Boolean
         get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
@@ -66,8 +71,11 @@ object DatabaseBackupManager {
             try {
                 val dbFile = context.getDatabasePath(DATABASE_NAME)
                 if (!dbFile.exists()) return
-                database.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(TRUNCATE)").use {
-                    it.moveToFirst()
+                if (!checkpointWal(database)) {
+                    // Couldn't fully fold the WAL — a reader held a snapshot through every retry.
+                    // Copy anyway (better a slightly-stale backup than none), but say so rather than
+                    // logging an unqualified success.
+                    Log.w(TAG, "WAL checkpoint stayed blocked; backup may lag the most recent write")
                 }
                 val bytes = dbFile.readBytes()
                 writeBackupBytes(context, bytes)
@@ -76,6 +84,27 @@ object DatabaseBackupManager {
                 Log.w(TAG, "History backup failed (non-fatal)", e)
             }
         }
+    }
+
+    /**
+     * Folds the WAL into the main `.db` so the copied file includes the latest write. A TRUNCATE
+     * checkpoint reports a blocked run in its result row (busy=1) instead of throwing — e.g. when a
+     * UI query is holding a read snapshot — leaving recent frames only in `-wal`. Retry a few times
+     * to ride out that transient reader. Returns true once a checkpoint completes cleanly.
+     */
+    private fun checkpointWal(database: AppDatabase): Boolean {
+        val db = database.openHelper.writableDatabase
+        repeat(CHECKPOINT_ATTEMPTS) { attempt ->
+            val complete = db.query("PRAGMA wal_checkpoint(TRUNCATE)").use { cursor ->
+                // Row is (busy, logFrames, checkpointedFrames). busy=0 means the checkpoint got the
+                // lock and folded everything it could; an empty row means the db is not in WAL mode.
+                if (!cursor.moveToFirst()) return true
+                cursor.getInt(0) == 0
+            }
+            if (complete) return true
+            if (attempt < CHECKPOINT_ATTEMPTS - 1) Thread.sleep(CHECKPOINT_RETRY_DELAY_MS)
+        }
+        return false
     }
 
     /**
