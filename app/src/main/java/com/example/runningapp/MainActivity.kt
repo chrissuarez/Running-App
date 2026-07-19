@@ -169,13 +169,16 @@ class MainActivity : ComponentActivity() {
                                 userSettings = userSettings,
                                 sessionRepository = sessionRepository,
                                 onRequestPermissions = { checkAndRequestPermissions() },
-                                onStartRun = { skipPlan ->
+                                onStartRun = { skipPlan, runMode ->
                                     // START begins the run regardless of the strap (#110): the
                                     // service opens the record and starts the clock, then acquires
-                                    // the strap as a sensor alongside.
+                                    // the strap as a sensor alongside. The mode travels with the
+                                    // intent so a just-tapped Treadmill/Outdoor choice is honoured
+                                    // even before its settings write lands.
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         this.action = HrForegroundService.ACTION_START_RUN
                                         putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
+                                        putExtra(HrForegroundService.EXTRA_RUN_MODE, runMode)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
@@ -478,7 +481,7 @@ fun MainScreen(
     sessionRepository: SessionRepository,
     paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
-    onStartRun: (Boolean) -> Unit,
+    onStartRun: (Boolean, String) -> Unit,
     onRetryStrap: () -> Unit,
     onTogglePause: () -> Unit,
     onStopSession: () -> Unit,
@@ -496,6 +499,13 @@ fun MainScreen(
     // Skip today's plan (#107): a today-only choice that runs open-ended without touching the plan.
     // Defaults off every time the screen loads, so the plan is always queued unless actively skipped.
     var skipPlanToday by rememberSaveable { mutableStateOf(false) }
+
+    // The selected run mode, held locally so a tap takes effect instantly for both the toggle
+    // highlight and START — the settings write behind onRunModeChange is async, so reading it back
+    // (via userSettings.runMode) would lag a just-made choice. Synced from settings when they change
+    // externally; the toggle updates this and persists in the same tap.
+    var selectedRunMode by rememberSaveable { mutableStateOf(userSettings.runMode) }
+    LaunchedEffect(userSettings.runMode) { selectedRunMode = userSettings.runMode }
 
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
@@ -574,7 +584,13 @@ fun MainScreen(
                 // Treadmill / Outdoor is the one pre-run choice, pre-filled from last time (#107).
                 if (!isSessionActive) {
                     item {
-                        RunModeSelector(runMode = userSettings.runMode, onRunModeChange = onRunModeChange)
+                        RunModeSelector(
+                            runMode = selectedRunMode,
+                            onRunModeChange = { mode ->
+                                selectedRunMode = mode
+                                onRunModeChange(mode)
+                            }
+                        )
                     }
                 }
 
@@ -733,7 +749,7 @@ fun MainScreen(
                     connectionStatus = state.connectionStatus,
                     strapConnected = state.connectionStatus == "Connected",
                     isSimulating = state.isSimulating,
-                    onStart = { onStartRun(skipPlanToday) },
+                    onStart = { onStartRun(skipPlanToday, selectedRunMode) },
                     onRetryStrap = {
                         val addr = userSettings.activeDeviceAddress
                         if (addr != null) hrService?.connectToDevice(addr) else onRetryStrap()

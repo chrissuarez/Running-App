@@ -310,6 +310,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_SET_SIMULATION = "ACTION_SET_SIMULATION"
         const val EXTRA_DEVICE_ADDRESS = "EXTRA_DEVICE_ADDRESS"
         const val EXTRA_SKIP_PLAN = "SKIP_PLAN"
+        // START carries the mode the user has selected right now, so a Treadmill/Outdoor switch made
+        // just before tapping START is honoured even if its async settings write hasn't landed yet.
+        const val EXTRA_RUN_MODE = "EXTRA_RUN_MODE"
         const val EXTRA_SIMULATION_ENABLED = "SIMULATION_ENABLED"
         const val TAG = "HrService"
     }
@@ -1040,7 +1043,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 } else {
                     _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING, errorMessage = null) }
                     // Creates the DB record, starts the 1 Hz tick, and (outdoor) starts location.
-                    startNewDatabaseSession()
+                    // The run mode comes from the START intent when present so a just-tapped
+                    // Treadmill/Outdoor choice wins over a not-yet-persisted settings value.
+                    startNewDatabaseSession(intent.getStringExtra(EXTRA_RUN_MODE))
                     // Acquire the strap as a sensor unless we already have it or HR is simulated.
                     if (!isSimulationEnabled && _hrState.value.connectionStatus != "Connected") {
                         val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
@@ -1147,7 +1152,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         Log.d(TAG, "Session AUTO-RESUMED (movement detected)")
     }
 
-    private fun startNewDatabaseSession() {
+    private fun startNewDatabaseSession(runModeOverride: String? = null) {
         serviceScope.launch(Dispatchers.IO) {
             synchronized(sessionCreationLock) {
                 if (isCreatingSession || currentSessionId != null) {
@@ -1156,6 +1161,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 }
                 isCreatingSession = true
             }
+
+            // The mode the user selected at START (if supplied) wins over currentSettings.runMode,
+            // whose async write from the mode toggle may not have reached the service yet. Everything
+            // downstream in this run — the DB record and whether GPS starts — reads this value.
+            val effectiveRunMode = runModeOverride ?: currentSettings.runMode
 
             try {
             // Mission: Reset Phase Engine for a fresh session
@@ -1176,8 +1186,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
             // Outdoor distance/pace must run whether or not a strap ever connects (#110), so
             // location starts with the run itself rather than waiting for a sensor to connect.
-            if (currentSettings.runMode == "outdoor") {
-                locationTracker?.restartIfNeeded("run_start", currentSettings.runMode, isSimulationEnabled)
+            if (effectiveRunMode == "outdoor") {
+                locationTracker?.restartIfNeeded("run_start", effectiveRunMode, isSimulationEnabled)
             }
 
             // Mission: Immediate UI State Reset
@@ -1215,7 +1225,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             val session = RunnerSession(
                 startTime = System.currentTimeMillis(),
                 targetZone = activeTargetZone.number,
-                runMode = currentSettings.runMode,
+                runMode = effectiveRunMode,
                 includeInAiTraining = currentSessionIncludeInAiTraining
             )
             currentSessionId = database.sessionDao().insertSession(session)
@@ -1239,7 +1249,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             isWarmupSkipped = false
             initializeStructuredWorkoutState()
 
-            Log.d(TAG, "Started DB Session: $currentSessionId (Mode: ${currentSettings.runMode})")
+            Log.d(TAG, "Started DB Session: $currentSessionId (Mode: $effectiveRunMode)")
             } finally {
                 synchronized(sessionCreationLock) {
                     isCreatingSession = false
