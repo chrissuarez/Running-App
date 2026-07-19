@@ -1402,26 +1402,47 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun startForegroundService() {
         val notification = createNotification("Service is running...")
-        
+
         // Mission: Specify foreground service types for Android 14+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID, 
-                notification, 
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            )
+            // Android 14 throws if we claim a foreground-service type whose permission we don't hold,
+            // so claim only the types actually granted. When neither location nor Bluetooth is
+            // granted (simulate mode on a fresh install) fall back to DATA_SYNC — a type that needs
+            // only the normal, auto-granted FOREGROUND_SERVICE_DATA_SYNC permission. The 2-arg
+            // startForeground() is NOT a valid fallback: on 14 it defaults back to the manifest's
+            // protected types and throws the same SecurityException.
+            val granted = grantedForegroundServiceTypes()
+            val types = if (granted != 0) granted else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            startForeground(NOTIFICATION_ID, notification, types)
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
-                NOTIFICATION_ID, 
-                notification, 
+                NOTIFICATION_ID,
+                notification,
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-        
+
         acquireWakeLock()
+    }
+
+    /**
+     * The foreground-service types we may legally claim right now. Android 14 rejects a
+     * startForeground whose declared type lacks its runtime permission, so LOCATION and
+     * CONNECTED_DEVICE are each included only when granted. Returns 0 when neither is held.
+     */
+    private fun grantedForegroundServiceTypes(): Int {
+        var types = 0
+        val hasLocation =
+            ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (hasLocation) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        val hasConnectedDevice =
+            ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED ||
+            ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+        if (hasConnectedDevice) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+        return types
     }
 
     private var wakeLock: PowerManager.WakeLock? = null
