@@ -613,7 +613,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             logTag = TAG,
             playCue = { playCue(it) },
             getSessionStatus = { _hrState.value.sessionStatus },
-            getShouldTrack = { currentSettings.runMode == "outdoor" && !isSimulationEnabled },
             isSplitAnnouncementsEnabled = { currentSettings.splitAnnouncementsEnabled },
             onMetricsUpdated = { distanceKm, paceMinPerKm, lastLocation ->
                 _hrState.update { it.copy(distanceKm = distanceKm, paceMinPerKm = paceMinPerKm) }

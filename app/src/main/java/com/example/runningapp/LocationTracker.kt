@@ -23,7 +23,6 @@ class LocationTracker(
     private val logTag: String,
     playCue: (String) -> Unit,
     private val getSessionStatus: () -> SessionStatus,
-    private val getShouldTrack: () -> Boolean,
     isSplitAnnouncementsEnabled: () -> Boolean,
     onMetricsUpdated: (distanceKm: Double, paceMinPerKm: Double, lastLocation: Location?) -> Unit,
     private val onRawFix: (location: Location, barometerPressureHpa: Float?) -> Unit = { _, _ -> },
@@ -49,8 +48,11 @@ class LocationTracker(
         onAutoResume = onAutoResume,
     )
 
+    // Decide from the passed runMode/isSimulationEnabled, not a captured settings snapshot: START
+    // supplies the just-tapped mode (effectiveRunMode), which can lead the async settings write, so
+    // reading currentSettings here would skip GPS on an outdoor run started right after the switch.
     fun restartIfNeeded(trigger: String, runMode: String, isSimulationEnabled: Boolean) {
-        if (getShouldTrack()) {
+        if (runMode == "outdoor" && !isSimulationEnabled) {
             logDecision("start", "trigger=$trigger runMode=$runMode simulation=$isSimulationEnabled")
             start()
         } else {
