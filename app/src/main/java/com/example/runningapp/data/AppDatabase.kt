@@ -700,27 +700,26 @@ private fun recomputeZoneSecondsFromHrSamples(database: SupportSQLiteDatabase, m
 }
 
 /**
- * Rebuilds [RunnerSession.isRunWalkMode] from the durable truth for runs recorded before it became
- * the run's own run/walk flag (#107).
+ * Rebuilds [RunnerSession.isRunWalkMode] from hard interval evidence for runs recorded before it
+ * became the run's own run/walk flag (#107).
  *
  * Before #107 `isRunWalkMode` was written straight from the separate `runWalkCoachEnabled` setting
  * (`finalIsRunWalkMode = currentSettings.runWalkCoachEnabled`), independent of what the run actually
- * was. The durable "this was a structured run/walk workout" signal lived in the `sessionType`
- * column ("Run/Walk" vs "Zone 2 Walk"/"Free Track"/"Easy Fixed Duration"). So on upgraded databases
- * the flag the AI coach now reads is wrong in both directions:
- *  - False negative: a real Run/Walk run recorded with the coach toggle off has `isRunWalkMode = 0`,
- *    so its interval evidence is dropped and it is sent to Gemini as an Open Run.
- *  - False positive: a Zone 2 Walk / Free Track / Easy run recorded with the toggle on has
- *    `isRunWalkMode = 1`. Because `evaluateAndAdjustPlan` now gates on this flag, if such a row is
- *    the latest finalized session the app would send a non-plan run to Gemini and adjust or graduate
- *    the plan off it.
+ * was. The new code treats the flag as the structured-workout truth for AI context and metrics, so
+ * on upgraded databases it is wrong in both directions:
+ *  - False positive: a run recorded with the coach toggle on but which never ran intervals has
+ *    `isRunWalkMode = 1`. Because `evaluateAndAdjustPlan` now gates on this flag, such a row as the
+ *    latest finalized session would send a non-plan run to Gemini and adjust or graduate the plan.
+ *  - False negative: a real run/walk run recorded with the toggle off has `isRunWalkMode = 0`.
  *
- * The repair recomputes the flag from `sessionType`, which was the durable mode at write time, and
- * corroborates with `run_walk_interval_stats` (present only when real intervals ran). Everything
- * else is cleared to 0, retiring the old toggle's false positives. Because this runs once at the
- * 13→14 upgrade — when every row predates #107 — and new runs set the flag correctly at insert,
- * overwriting the whole column here is safe. Dropping the dead `sessionType`/`easy*` columns and the
- * fuller analytics reconciliation stay with #113.
+ * The one durable, trustworthy signal is `run_walk_interval_stats`: those rows are written only when
+ * a run actually executed run/walk intervals. So the flag is set from their presence and cleared
+ * everywhere else. `sessionType` is deliberately NOT used — its column default backfilled every
+ * pre-column row to "Run/Walk", so keying off that label would promote genuine open runs. A run/walk
+ * run with no interval rows has no interval evidence to preserve anyway (`buildRunWalkMetrics`
+ * returns null), so clearing it is safe. This runs once at the 13→14 upgrade when every row predates
+ * #107, and new runs set the flag correctly at insert. Dropping the dead `sessionType`/`easy*`
+ * columns and the fuller analytics reconciliation stay with #113.
  */
 val MIGRATION_13_14 = object : Migration(13, 14) {
     override fun migrate(database: SupportSQLiteDatabase) {
@@ -728,7 +727,6 @@ val MIGRATION_13_14 = object : Migration(13, 14) {
             """
             UPDATE sessions
             SET isRunWalkMode = CASE
-                WHEN sessionType = 'Run/Walk' THEN 1
                 WHEN id IN (SELECT DISTINCT sessionId FROM run_walk_interval_stats) THEN 1
                 ELSE 0
             END

@@ -157,34 +157,35 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun migrate13To14_rebuildsIsRunWalkModeFromDurableSessionType_clearingLegacyToggleNoise() {
+    fun migrate13To14_rebuildsIsRunWalkModeFromIntervalEvidence_clearingLegacyToggleNoise() {
         val rawDb = openLegacyDatabase()
         // A real v12 database already has track_points (created by MIGRATION_11_12). The v12 -> v13
         // migration comes along for the ride when Room opens, so the table must be present or Room
         // rejects the post-migration schema.
         createTrackPointsTable(rawDb)
 
-        // Session 1 — false negative: a real Run/Walk run recorded with the coach toggle off, so the
-        // pre-#107 flag was never set. The durable sessionType promotes it so the coach keeps its
-        // interval evidence.
+        // Session 1 — false negative: a real run/walk run whose flag was never set (the pre-#107
+        // flag came from a separate coach toggle). Its interval stats are the durable evidence, so
+        // it is promoted and the coach keeps that evidence.
         insertLegacySession(rawDb, id = 1, sessionType = "Run/Walk", isRunWalkMode = 0)
-
-        // Session 2 — false positive: a Zone 2 Walk recorded with the coach toggle on, so the old
-        // flag is set even though this was never a structured workout. Must be cleared, or
-        // evaluateAndAdjustPlan would adjust the plan off a non-plan run.
-        insertLegacySession(rawDb, id = 2, sessionType = "Zone 2 Walk", isRunWalkMode = 1)
-
-        // Session 3: an open/continuous run (Free Track). Not run/walk, no stats — stays 0.
-        insertLegacySession(rawDb, id = 3, sessionType = "Free Track", isRunWalkMode = 0)
-
-        // Session 4 — corroboration branch: durable sessionType is missing/wrong, but the session
-        // has run_walk_interval_stats rows, which only exist for a real run/walk run. Promoted.
-        insertLegacySession(rawDb, id = 4, sessionType = "Easy Fixed Duration", isRunWalkMode = 0)
         rawDb.execSQL(
             "INSERT INTO run_walk_interval_stats (sessionId, intervalIndex, plannedDurationSeconds, " +
                 "actualRunningDurationBeforeHrTriggerSeconds, hrTriggerEvents, " +
-                "totalTimeSpentWalkingDuringRunIntervalSeconds) VALUES (4, 0, 180, 180, 0, 0)"
+                "totalTimeSpentWalkingDuringRunIntervalSeconds) VALUES (1, 0, 180, 180, 0, 0)"
         )
+
+        // Session 2 — false positive: recorded with the coach toggle on but never ran intervals, so
+        // the old flag is set with no evidence behind it. Must be cleared, or evaluateAndAdjustPlan
+        // would adjust the plan off a non-plan run.
+        insertLegacySession(rawDb, id = 2, sessionType = "Zone 2 Walk", isRunWalkMode = 1)
+
+        // Session 3 — the sessionType trap: the column default backfilled old open runs to
+        // "Run/Walk". With no interval stats this is not a structured workout and must stay 0, so the
+        // migration must not key off the label.
+        insertLegacySession(rawDb, id = 3, sessionType = "Run/Walk", isRunWalkMode = 0)
+
+        // Session 4: an open/continuous run (Free Track) left flagged by the toggle. No stats -> 0.
+        insertLegacySession(rawDb, id = 4, sessionType = "Free Track", isRunWalkMode = 1)
 
         rawDb.version = 12
         rawDb.close()
@@ -201,7 +202,7 @@ class AppDatabaseMigrationTest {
         assertEquals(true, session1.isRunWalkMode)
         assertEquals(false, session2.isRunWalkMode)
         assertEquals(false, session3.isRunWalkMode)
-        assertEquals(true, session4.isRunWalkMode)
+        assertEquals(false, session4.isRunWalkMode)
     }
 
     /**
