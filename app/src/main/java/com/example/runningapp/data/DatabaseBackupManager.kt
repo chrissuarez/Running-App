@@ -45,8 +45,16 @@ object DatabaseBackupManager {
     private val isSupported: Boolean
         get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
+    // Serializes concurrent backups. Two can overlap — e.g. the post-run snapshot from
+    // HrForegroundService.stopSession() and the one from SessionRepository.saveFeelFeedback() — and
+    // they share the single BACKUP_TEMP_DISPLAY_NAME entry, so without this the second writer would
+    // delete the first's pending item and corrupt or drop the snapshot. Whichever runs last wins,
+    // and both are complete snapshots, so serializing (rather than skipping) is correct.
+    private val backupLock = Any()
+
     /**
-     * Snapshots the live database to Downloads. Safe to call from any background thread.
+     * Snapshots the live database to Downloads. Safe to call from any background thread; concurrent
+     * calls are serialized on [backupLock].
      *
      * Takes the open [database] so the WAL checkpoint runs on Room's own connection — the one
      * holding the log. Folding it there guarantees the copied `.db` includes the run that just
@@ -54,17 +62,19 @@ object DatabaseBackupManager {
      */
     fun backup(context: Context, database: AppDatabase) {
         if (!isSupported) return
-        try {
-            val dbFile = context.getDatabasePath(DATABASE_NAME)
-            if (!dbFile.exists()) return
-            database.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(TRUNCATE)").use {
-                it.moveToFirst()
+        synchronized(backupLock) {
+            try {
+                val dbFile = context.getDatabasePath(DATABASE_NAME)
+                if (!dbFile.exists()) return
+                database.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(TRUNCATE)").use {
+                    it.moveToFirst()
+                }
+                val bytes = dbFile.readBytes()
+                writeBackupBytes(context, bytes)
+                Log.d(TAG, "Backed up ${bytes.size} bytes of run history to Downloads/$BACKUP_SUBDIR")
+            } catch (e: Exception) {
+                Log.w(TAG, "History backup failed (non-fatal)", e)
             }
-            val bytes = dbFile.readBytes()
-            writeBackupBytes(context, bytes)
-            Log.d(TAG, "Backed up ${bytes.size} bytes of run history to Downloads/$BACKUP_SUBDIR")
-        } catch (e: Exception) {
-            Log.w(TAG, "History backup failed (non-fatal)", e)
         }
     }
 
