@@ -175,20 +175,30 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun migrate13To14_promotesIsRunWalkModeForSessionsWithIntervalStats_leavesOthersUntouched() {
+    fun migrate13To14_rebuildsIsRunWalkModeFromDurableSessionType_clearingLegacyToggleNoise() {
         val rawDb = openLegacyDatabase()
 
-        // Session 1: recorded run/walk intervals but its flag was never set (the pre-#107 flag came
-        // from a separate coach toggle). Must be promoted so the AI coach still sees its evidence.
-        insertLegacySession(rawDb, id = 1)
+        // Session 1 — false negative: a real Run/Walk run recorded with the coach toggle off, so the
+        // pre-#107 flag was never set. The durable sessionType promotes it so the coach keeps its
+        // interval evidence.
+        insertLegacySession(rawDb, id = 1, sessionType = "Run/Walk", isRunWalkMode = 0)
+
+        // Session 2 — false positive: a Zone 2 Walk recorded with the coach toggle on, so the old
+        // flag is set even though this was never a structured workout. Must be cleared, or
+        // evaluateAndAdjustPlan would adjust the plan off a non-plan run.
+        insertLegacySession(rawDb, id = 2, sessionType = "Zone 2 Walk", isRunWalkMode = 1)
+
+        // Session 3: an open/continuous run (Free Track). Not run/walk, no stats — stays 0.
+        insertLegacySession(rawDb, id = 3, sessionType = "Free Track", isRunWalkMode = 0)
+
+        // Session 4 — corroboration branch: durable sessionType is missing/wrong, but the session
+        // has run_walk_interval_stats rows, which only exist for a real run/walk run. Promoted.
+        insertLegacySession(rawDb, id = 4, sessionType = "Easy Fixed Duration", isRunWalkMode = 0)
         rawDb.execSQL(
             "INSERT INTO run_walk_interval_stats (sessionId, intervalIndex, plannedDurationSeconds, " +
                 "actualRunningDurationBeforeHrTriggerSeconds, hrTriggerEvents, " +
-                "totalTimeSpentWalkingDuringRunIntervalSeconds) VALUES (1, 0, 180, 180, 0, 0)"
+                "totalTimeSpentWalkingDuringRunIntervalSeconds) VALUES (4, 0, 180, 180, 0, 0)"
         )
-
-        // Session 2: no interval stats — an open or continuous run. Must stay isRunWalkMode = 0.
-        insertLegacySession(rawDb, id = 2)
 
         rawDb.version = 12
         rawDb.close()
@@ -198,10 +208,14 @@ class AppDatabaseMigrationTest {
             .build()
         val session1 = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val session2 = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
+        val session3 = runBlockingGet { migratedDb.sessionDao().getSessionById(3) }!!
+        val session4 = runBlockingGet { migratedDb.sessionDao().getSessionById(4) }!!
         migratedDb.close()
 
         assertEquals(true, session1.isRunWalkMode)
         assertEquals(false, session2.isRunWalkMode)
+        assertEquals(false, session3.isRunWalkMode)
+        assertEquals(true, session4.isRunWalkMode)
     }
 
     /**
@@ -301,14 +315,16 @@ class AppDatabaseMigrationTest {
         zone3Seconds: Long = 0,
         zone4Seconds: Long = 0,
         zone5Seconds: Long = 0,
-        noDataSeconds: Long = 0
+        noDataSeconds: Long = 0,
+        sessionType: String = "Run/Walk",
+        isRunWalkMode: Int = 0
     ) {
         rawDb.execSQL(
             "INSERT INTO sessions (id, startTime, endTime, durationSeconds, avgBpm, maxBpm, timeInTargetZoneSeconds, " +
                 "zone1Seconds, zone2Seconds, zone3Seconds, zone4Seconds, zone5Seconds, runMode, distanceKm, " +
                 "avgPaceMinPerKm, noDataSeconds, walkBreaksCount, isRunWalkMode, sessionType, includeInAiTraining) " +
                 "VALUES ($id, ${id * 1_000_000}, 0, 0, 0, 0, 0, $zone1Seconds, $zone2Seconds, $zone3Seconds, " +
-                "$zone4Seconds, $zone5Seconds, 'treadmill', 0.0, 0.0, $noDataSeconds, 0, 0, 'Run/Walk', 1)"
+                "$zone4Seconds, $zone5Seconds, 'treadmill', 0.0, 0.0, $noDataSeconds, 0, $isRunWalkMode, '$sessionType', 1)"
         )
     }
 
