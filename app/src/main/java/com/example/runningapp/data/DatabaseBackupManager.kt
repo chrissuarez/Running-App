@@ -176,7 +176,14 @@ object DatabaseBackupManager {
     }
 
     private fun readBackupBytes(context: Context): ByteArray? {
-        val uri = findByDisplayName(context, BACKUP_DISPLAY_NAME) ?: return null
+        // Prefer the promoted backup. If it's missing we may have been killed (or the rename may
+        // have failed) mid-promotion: writeBackupBytes deletes the old copy just before it renames
+        // the temp to the real name, so the completed temp can briefly be the only good snapshot.
+        // Fall back to it — but only when it's finished (IS_PENDING = 0) so a half-written temp from
+        // an interrupted write is never restored.
+        val uri = findByDisplayName(context, BACKUP_DISPLAY_NAME)
+            ?: findByDisplayName(context, BACKUP_TEMP_DISPLAY_NAME, onlyComplete = true)
+            ?: return null
         return context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
     }
 
@@ -185,12 +192,20 @@ object DatabaseBackupManager {
         context.contentResolver.delete(uri, null, null)
     }
 
-    /** Locates a backup entry in Downloads by relative path + display name, or null. */
-    private fun findByDisplayName(context: Context, displayName: String): Uri? {
+    /**
+     * Locates a backup entry in Downloads by relative path + display name, or null. When
+     * [onlyComplete] is set, ignores an entry still marked pending (a half-written temp).
+     */
+    private fun findByDisplayName(
+        context: Context,
+        displayName: String,
+        onlyComplete: Boolean = false,
+    ): Uri? {
         val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
         val projection = arrayOf(MediaStore.Downloads._ID)
-        val selection =
+        var selection =
             "${MediaStore.Downloads.RELATIVE_PATH} LIKE ? AND ${MediaStore.Downloads.DISPLAY_NAME} = ?"
+        if (onlyComplete) selection += " AND ${MediaStore.Downloads.IS_PENDING} = 0"
         // RELATIVE_PATH comes back with a trailing slash, so match on a prefix.
         val args = arrayOf("$RELATIVE_PATH%", displayName)
         context.contentResolver.query(collection, projection, selection, args, null)?.use { cursor ->
