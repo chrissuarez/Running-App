@@ -245,6 +245,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var sessionSecondsPaused = 0L
     private var reconnectAttemptCount = 0
     private var lastHrTimestamp = 0L
+    // The run mode this session actually started with (from EXTRA_RUN_MODE / effectiveRunMode). In-run
+    // decisions that depend on mode — starting GPS on a (re)connect or resume — must read this, not
+    // the live currentSettings.runMode, which can still hold a pre-START value during the async
+    // settings write or be changed mid-run. Null when no run is active.
+    private var activeSessionRunMode: String? = null
     private var firstDisconnectTime = 0L
     private val RECONNECT_TIMEOUT_MS = 120_000L // 2 minutes
 
@@ -1119,7 +1124,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         locationTracker?.clearAutoPauseState()
         _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
         startSessionTimerLoop()
-        locationTracker?.restartIfNeeded("resumeSession", currentSettings.runMode, isSimulationEnabled)
+        // Resume the mode the run started with, not whatever the global setting says now.
+        locationTracker?.restartIfNeeded("resumeSession", activeSessionRunMode ?: currentSettings.runMode, isSimulationEnabled)
         updateNotification(forceUpdate = true)
         Log.d(TAG, "Session RESUMED")
     }
@@ -1165,6 +1171,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // whose async write from the mode toggle may not have reached the service yet. Everything
             // downstream in this run — the DB record and whether GPS starts — reads this value.
             val effectiveRunMode = runModeOverride ?: currentSettings.runMode
+            // Pin it for the run so a strap (re)connecting before the settings write lands doesn't
+            // start GPS off a stale currentSettings.runMode (see the connect/resume callbacks).
+            activeSessionRunMode = effectiveRunMode
 
             try {
             // Mission: Reset Phase Engine for a fresh session
@@ -1243,6 +1252,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // sensor-lost safety cue — nagging a run the user deliberately started without a strap
             // (#110). A real packet re-sets this the moment HR arrives.
             lastHrTimestamp = 0L
+            // Clear the live reading and smoothing history too, in lock-step with the freshness
+            // clock: a pre-run connected strap can leave bpm/avgBpm holding an old packet, and with
+            // lastHrTimestamp reset that stale value would look fresh (age 0) and keep being banked
+            // by pulseSession() if no in-run packet ever arrives (silent stall / non-GATT drop). A
+            // real packet repopulates both within ~1s.
+            synchronized(bpmHistory) { bpmHistory.clear() }
+            _hrState.update { it.copy(bpm = 0, avgBpm = 0) }
             
             // Mission 3: Reset Zone Timers
             sessionZoneTimes.keys.forEach { sessionZoneTimes[it] = 0L }
@@ -1339,7 +1355,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         disconnect()
         locationTracker?.stop()
-        
+        // The run is over; the pinned mode must not leak into a later reconnect/resume.
+        activeSessionRunMode = null
+
         // Finalize DB session
         val sessionId = currentSessionId
         if (sessionId != null) {
@@ -1828,9 +1846,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 ) }
 
                 // Mission 4 FIX: Ensure location updates start if in outdoor mode (only while a
-                // run is active; a bare sensor connect must not spin up GPS on its own).
-                if (currentSettings.runMode == "outdoor" && isRunning()) {
-                    locationTracker?.restartIfNeeded("session_start", currentSettings.runMode, isSimulationEnabled)
+                // run is active; a bare sensor connect must not spin up GPS on its own). Use the
+                // run's pinned mode, not currentSettings.runMode, so a strap that connects during
+                // the async settings write doesn't start GPS for a treadmill run (or vice versa).
+                val sessionRunMode = activeSessionRunMode ?: currentSettings.runMode
+                if (sessionRunMode == "outdoor" && isRunning()) {
+                    locationTracker?.restartIfNeeded("session_start", sessionRunMode, isSimulationEnabled)
                 }
                 
                 gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
