@@ -1496,16 +1496,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         // Mission: Specify foreground service types for Android 14+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            // Android 14 throws if we claim a foreground-service type whose permission we don't hold.
-            // Claim only the types actually granted; in simulate mode on a fresh install (no
-            // Bluetooth or location granted) this is empty, so start a plain foreground service
-            // rather than crash.
-            val types = grantedForegroundServiceTypes()
-            if (types != 0) {
-                startForeground(NOTIFICATION_ID, notification, types)
-            } else {
-                startForeground(NOTIFICATION_ID, notification)
-            }
+            // Android 14 throws if we claim a foreground-service type whose permission we don't hold,
+            // so claim only the types actually granted. When neither location nor Bluetooth is
+            // granted (simulate mode on a fresh install) fall back to DATA_SYNC — a type that needs
+            // only the normal, auto-granted FOREGROUND_SERVICE_DATA_SYNC permission. The 2-arg
+            // startForeground() is NOT a valid fallback: on 14 it defaults back to the manifest's
+            // protected types and throws the same SecurityException.
+            val granted = grantedForegroundServiceTypes()
+            val types = if (granted != 0) granted else ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            startForeground(NOTIFICATION_ID, notification, types)
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
