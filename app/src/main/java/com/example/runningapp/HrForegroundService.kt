@@ -1075,8 +1075,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING, errorMessage = null) }
                     // Creates the DB record, starts the 1 Hz tick, and (outdoor) starts location.
                     startNewDatabaseSession(startRunMode)
-                    // Acquire the strap as a sensor unless we already have it or HR is simulated.
-                    if (!isSimulationEnabled && _hrState.value.connectionStatus != "Connected") {
+                    // Acquire the strap as a sensor unless we already have it, HR is simulated, or a
+                    // connection is already in flight. Kicking off a fresh acquisition mid-connect
+                    // would call startHardwareSession(null) -> startScanning() (no saved address yet
+                    // for a first pairing), tearing down the pending GATT and dropping the strap the
+                    // user just chose in Manage Devices. Let an in-progress connect finish and join
+                    // the run instead.
+                    val connStatus = _hrState.value.connectionStatus
+                    val acquisitionInFlight = connStatus == "Connected" ||
+                        connStatus.contains("Connecting", ignoreCase = true) ||
+                        connStatus.contains("Reconnecting", ignoreCase = true) ||
+                        connStatus.contains("Scanning", ignoreCase = true)
+                    if (!isSimulationEnabled && !acquisitionInFlight) {
                         val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                         serviceScope.launch {
                             startHardwareSession(overrideAddress)
