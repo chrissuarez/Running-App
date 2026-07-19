@@ -132,7 +132,17 @@ object DatabaseBackupManager {
             if (dbFile.exists()) return false // never overwrite a live database
             val bytes = readBackupBytes(context) ?: return false
             dbFile.parentFile?.mkdirs()
-            dbFile.writeBytes(bytes)
+            // Write to a sibling temp file and rename it into place only once the full copy lands.
+            // A direct write to dbFile could be interrupted (process death, storage full) partway,
+            // leaving a truncated file that the next launch mistakes for a live database — Room
+            // would then open a corrupt DB instead of retrying the restore. A same-directory rename
+            // is atomic, so dbFile is only ever the complete snapshot or absent.
+            val tempFile = File("${dbFile.path}.restore.tmp")
+            tempFile.writeBytes(bytes)
+            if (!tempFile.renameTo(dbFile)) {
+                tempFile.delete()
+                throw IllegalStateException("Could not move restored database into place")
+            }
             // A restored file is already checkpointed; drop any stale WAL/SHM siblings so SQLite
             // reads exactly what we wrote rather than replaying an old, unrelated log.
             File("${dbFile.path}-wal").delete()
