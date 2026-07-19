@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -272,6 +273,7 @@ class MainActivity : ComponentActivity() {
                             ManageDevicesScreen(
                                 settings = userSettings,
                                 connectionStatus = serviceState?.value?.connectionStatus ?: "Disconnected",
+                                scannedDevices = serviceState?.value?.scannedDevices ?: emptyList(),
                                 onSetActive = { address ->
                                     scope.launch {
                                         settingsRepository.setActiveDevice(address)
@@ -294,6 +296,14 @@ class MainActivity : ComponentActivity() {
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     navigateTo(Routes.MAIN)
+                                },
+                                onScan = {
+                                    // A fresh scan so a first (or replacement) strap can be discovered
+                                    // and tapped to pair; the discovered list renders on this screen.
+                                    val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                        action = HrForegroundService.ACTION_FORCE_SCAN
+                                    }
+                                    ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
                                 onBack = { navigateTo(Routes.MAIN) }
                             )
@@ -1354,9 +1364,11 @@ fun SettingsScreen(
 fun ManageDevicesScreen(
     settings: UserSettings,
     connectionStatus: String,
+    scannedDevices: List<BluetoothDevice>,
     onSetActive: (String) -> Unit,
     onRemove: (String) -> Unit,
     onConnect: (String, Boolean) -> Unit,
+    onScan: () -> Unit,
     onBack: () -> Unit
 ) {
     // Connecting a saved sensor here starts a run, so mirror the main screen's today-only skip
@@ -1383,11 +1395,28 @@ fun ManageDevicesScreen(
                 Text(if (skipPlanToday) "Run today's plan instead" else "Skip today's plan (open run)")
             }
         }
+        // Scan is the only way to pair a first strap (#110 removed the record-screen list): find
+        // and tap a discovered strap here, and connecting it saves it below.
+        val isScanning = connectionStatus.contains("Scanning", ignoreCase = true)
+        Button(
+            onClick = onScan,
+            enabled = !isScanning,
+            modifier = Modifier.fillMaxWidth().heightIn(min = RunningUiTokens.MinTouchTarget)
+        ) {
+            Text(if (isScanning) "Scanning…" else "Scan for heart-rate strap")
+        }
         Spacer(modifier = Modifier.height(16.dp))
 
-        if (settings.savedDevices.isEmpty()) {
+        // Only surface discovered straps we haven't already saved, so a first pair is unambiguous.
+        val savedAddresses = settings.savedDevices.map { it.address }.toSet()
+        val newlyDiscovered = scannedDevices.filter { it.address !in savedAddresses }
+
+        if (settings.savedDevices.isEmpty() && newlyDiscovered.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text("No saved devices. Scan to add one.")
+                Text(
+                    if (isScanning) "Scanning for straps…" else "No saved devices. Scan to add one.",
+                    textAlign = TextAlign.Center
+                )
             }
         } else {
             LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -1400,6 +1429,23 @@ fun ManageDevicesScreen(
                         onRemove = { onRemove(device.address) },
                         onConnect = { onConnect(device.address, skipPlanToday) }
                     )
+                }
+                if (newlyDiscovered.isNotEmpty()) {
+                    item {
+                        Text(
+                            "Discovered",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+                        )
+                    }
+                    items(newlyDiscovered) { device ->
+                        // Connecting saves the strap (service persists it once the HR service is
+                        // verified) and returns to the record screen where START awaits.
+                        DeviceListItem(
+                            device = device,
+                            onClick = { onConnect(device.address, skipPlanToday) }
+                        )
+                    }
                 }
             }
         }
