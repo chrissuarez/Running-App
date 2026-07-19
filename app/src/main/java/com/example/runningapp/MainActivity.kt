@@ -13,6 +13,7 @@ import android.os.Bundle
 import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.ui.platform.LocalContext
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -170,21 +171,39 @@ class MainActivity : ComponentActivity() {
                                 sessionRepository = sessionRepository,
                                 onRequestPermissions = { checkAndRequestPermissions() },
                                 onStartRun = { skipPlan, runMode ->
-                                    // START begins the run regardless of the strap (#110): the
-                                    // service opens the record and starts the clock, then acquires
-                                    // the strap as a sensor alongside. The mode travels with the
-                                    // intent so a just-tapped Treadmill/Outdoor choice is honoured
-                                    // even before its settings write lands.
-                                    val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
-                                        this.action = HrForegroundService.ACTION_START_RUN
-                                        putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
-                                        putExtra(HrForegroundService.EXTRA_RUN_MODE, runMode)
+                                    // An Outdoor run without location permission would silently
+                                    // record 0 km (LocationTracker just logs and returns): ask
+                                    // first instead of starting blind. The run starts on the next
+                                    // tap once the dialog resolves — START itself never gates on
+                                    // GPS (#110), only on having asked.
+                                    val needsLocation = runMode == "outdoor" &&
+                                        ContextCompat.checkSelfPermission(
+                                            this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION
+                                        ) != PackageManager.PERMISSION_GRANTED
+                                    if (needsLocation) {
+                                        checkAndRequestPermissions()
+                                    } else {
+                                        // START begins the run regardless of the strap (#110): the
+                                        // service opens the record and starts the clock, then acquires
+                                        // the strap as a sensor alongside. The mode travels with the
+                                        // intent so a just-tapped Treadmill/Outdoor choice is honoured
+                                        // even before its settings write lands.
+                                        val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                            this.action = HrForegroundService.ACTION_START_RUN
+                                            putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
+                                            putExtra(HrForegroundService.EXTRA_RUN_MODE, runMode)
+                                        }
+                                        ContextCompat.startForegroundService(this@MainActivity, intent)
                                     }
-                                    ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
                                 onRetryStrap = {
+                                    // Re-acquire, don't scan: a bare scan never auto-connects
+                                    // (results only fill the Discovered list in Manage Devices),
+                                    // so FORCE_SCAN here couldn't bring the strap back. The
+                                    // no-extra START_FOREGROUND path connects the saved strap
+                                    // directly, falling back to a scan only when none is saved.
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
-                                        this.action = HrForegroundService.ACTION_FORCE_SCAN
+                                        this.action = HrForegroundService.ACTION_START_FOREGROUND
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
@@ -286,6 +305,10 @@ class MainActivity : ComponentActivity() {
                                     }
                                 },
                                 onRemove = { address ->
+                                    // Release the live connection too when it's this strap:
+                                    // otherwise the retry loop keeps chasing it and the verify
+                                    // path re-saves (and re-activates) the device just forgotten.
+                                    hrService?.forgetDevice(address)
                                     scope.launch {
                                         settingsRepository.removeDevice(address)
                                     }
@@ -533,12 +556,22 @@ fun MainScreen(
     // rate is a sensor, so the app connects to it before you start and reports progress on the
     // sensor line — but it never blocks starting. Fires once per pre-run entry with a saved
     // device; skipped while simulating (no real strap) or once a run is active.
+    //
+    // Via the service intent, NOT hrService.connectToDevice(): a direct binder call races the
+    // intent-based connects (Manage Devices, START) because it skips the onStartCommand queue —
+    // the same race the onConnectToDevice comment documents. All connects funnel through
+    // ACTION_START_FOREGROUND so they serialize on the service's main thread.
+    val autoConnectContext = LocalContext.current
     val activeStrapAddress = userSettings.activeDeviceAddress
     LaunchedEffect(hrService, activeStrapAddress, isSessionActive, state.isSimulating) {
         if (!isSessionActive && !state.isSimulating && hrService != null &&
             activeStrapAddress != null && state.connectionStatus == "Disconnected"
         ) {
-            hrService.connectToDevice(activeStrapAddress)
+            val intent = Intent(autoConnectContext, HrForegroundService::class.java).apply {
+                action = HrForegroundService.ACTION_START_FOREGROUND
+                putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, activeStrapAddress)
+            }
+            ContextCompat.startForegroundService(autoConnectContext, intent)
         }
     }
 
@@ -750,10 +783,10 @@ fun MainScreen(
                     strapConnected = state.connectionStatus == "Connected",
                     isSimulating = state.isSimulating,
                     onStart = { onStartRun(skipPlanToday, selectedRunMode) },
-                    onRetryStrap = {
-                        val addr = userSettings.activeDeviceAddress
-                        if (addr != null) hrService?.connectToDevice(addr) else onRetryStrap()
-                    }
+                    // The activity-level handler re-acquires via the service intent (saved strap
+                    // first, scan fallback) — no direct binder connect here, which would race the
+                    // intent-based connect paths.
+                    onRetryStrap = onRetryStrap
                 )
             }
         }
@@ -807,9 +840,13 @@ private fun StartFooter(
     val looking = !isSimulating && (
         connectionStatus.contains("Connecting", ignoreCase = true) ||
             connectionStatus.contains("Reconnecting", ignoreCase = true) ||
+            connectionStatus.contains("Retrying", ignoreCase = true) ||
             connectionStatus.contains("Scanning", ignoreCase = true)
         )
-    val notFound = !isSimulating && connectionStatus.contains("Retrying", ignoreCase = true)
+    // The service's terminal give-up state (pre-run reconnect cap). The old key,
+    // contains("Retrying"), matched a status that lives for milliseconds between retry cycles —
+    // this state was designed for the strap-absent case but never actually rendered.
+    val notFound = !isSimulating && connectionStatus == "Strap not found"
 
     Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -852,7 +889,10 @@ private fun StartFooter(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("START", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    if (!strapConnected && !isSimulating) {
+                    // Not while `looking`: the sensor line above says "Looking for your strap…",
+                    // and stating "without heart rate" at the same time contradicts it. The
+                    // subtitle belongs to the settled strapless states (absent / not found).
+                    if (!strapConnected && !isSimulating && !looking) {
                         Text(
                             "Without heart rate — no zone coaching",
                             style = MaterialTheme.typography.bodySmall
