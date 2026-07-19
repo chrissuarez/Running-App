@@ -111,6 +111,36 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `saveFeelFeedback refreshes the history backup after writing feedback`() = runTest {
+        var refreshCount = 0
+        val finalizedSession = RunnerSession(startTime = 1_000L, endTime = 2_000L)
+        whenever(mockDao.getSessionById(42L)).thenReturn(finalizedSession)
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.saveFeelFeedback(sessionId = 42L, effort = 7, note = "Felt good")
+
+        verify(mockDao).updateFeelFeedback(42L, 7, "Felt good")
+        assertEquals(1, refreshCount)
+    }
+
+    @Test
+    fun `saveFeelFeedback does not touch the backup when there is nothing to save`() = runTest {
+        var refreshCount = 0
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.saveFeelFeedback(sessionId = 42L, effort = null, note = "   ")
+
+        verify(mockDao, never()).updateFeelFeedback(any(), anyOrNull(), anyOrNull())
+        assertEquals(0, refreshCount)
+    }
+
+    @Test
     fun `saveFeelFeedback waits until the session is finalized before updating`() = runTest {
         val sessionId = 42L
         val unfinalizedSession = RunnerSession(startTime = 1_000L, endTime = 0L)

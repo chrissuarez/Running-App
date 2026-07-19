@@ -35,6 +35,9 @@ object DatabaseBackupManager {
     const val DATABASE_NAME = "running_app_db"
 
     private const val BACKUP_DISPLAY_NAME = "running_app_history_backup.db"
+    // The in-progress snapshot is written under this name first and only promoted to
+    // BACKUP_DISPLAY_NAME once complete, so a failed write can't destroy the previous good backup.
+    private const val BACKUP_TEMP_DISPLAY_NAME = "running_app_history_backup.tmp.db"
     private const val BACKUP_SUBDIR = "RunningApp"
     private const val BACKUP_MIME = "application/octet-stream"
     private val RELATIVE_PATH = "${Environment.DIRECTORY_DOWNLOADS}/$BACKUP_SUBDIR"
@@ -91,40 +94,52 @@ object DatabaseBackupManager {
 
     private fun writeBackupBytes(context: Context, bytes: ByteArray) {
         val resolver = context.contentResolver
-        // Replace any previous snapshot rather than letting MediaStore mint "…(1).db" duplicates.
-        deleteExistingBackup(context)
+        // Write the replacement under a temp name first. The previous good snapshot is only
+        // removed once the new one is fully written, so an insert/write/finalize failure here
+        // leaves the user's existing backup intact instead of wiping their only copy.
+        deleteByDisplayName(context, BACKUP_TEMP_DISPLAY_NAME) // clear any leftover temp
         val values = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, BACKUP_DISPLAY_NAME)
+            put(MediaStore.Downloads.DISPLAY_NAME, BACKUP_TEMP_DISPLAY_NAME)
             put(MediaStore.Downloads.MIME_TYPE, BACKUP_MIME)
             put(MediaStore.Downloads.RELATIVE_PATH, RELATIVE_PATH)
             put(MediaStore.Downloads.IS_PENDING, 1)
         }
-        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        val tempUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
             ?: throw IllegalStateException("MediaStore insert returned no URI")
-        resolver.openOutputStream(uri)?.use { it.write(bytes) }
-            ?: throw IllegalStateException("Could not open output stream for backup")
-        val done = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
-        resolver.update(uri, done, null, null)
+        try {
+            resolver.openOutputStream(tempUri)?.use { it.write(bytes) }
+                ?: throw IllegalStateException("Could not open output stream for backup")
+            val done = ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+            resolver.update(tempUri, done, null, null)
+        } catch (e: Exception) {
+            // Roll back the half-written temp entry; the old snapshot was never touched.
+            runCatching { resolver.delete(tempUri, null, null) }
+            throw e
+        }
+        // The new snapshot is complete. Retire the old one, then promote temp to the real name.
+        deleteByDisplayName(context, BACKUP_DISPLAY_NAME)
+        val rename = ContentValues().apply { put(MediaStore.Downloads.DISPLAY_NAME, BACKUP_DISPLAY_NAME) }
+        resolver.update(tempUri, rename, null, null)
     }
 
     private fun readBackupBytes(context: Context): ByteArray? {
-        val uri = findBackupUri(context) ?: return null
+        val uri = findByDisplayName(context, BACKUP_DISPLAY_NAME) ?: return null
         return context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
     }
 
-    private fun deleteExistingBackup(context: Context) {
-        val uri = findBackupUri(context) ?: return
+    private fun deleteByDisplayName(context: Context, displayName: String) {
+        val uri = findByDisplayName(context, displayName) ?: return
         context.contentResolver.delete(uri, null, null)
     }
 
-    /** Locates the current backup entry in Downloads by relative path + display name, or null. */
-    private fun findBackupUri(context: Context): Uri? {
+    /** Locates a backup entry in Downloads by relative path + display name, or null. */
+    private fun findByDisplayName(context: Context, displayName: String): Uri? {
         val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
         val projection = arrayOf(MediaStore.Downloads._ID)
         val selection =
             "${MediaStore.Downloads.RELATIVE_PATH} LIKE ? AND ${MediaStore.Downloads.DISPLAY_NAME} = ?"
         // RELATIVE_PATH comes back with a trailing slash, so match on a prefix.
-        val args = arrayOf("$RELATIVE_PATH%", BACKUP_DISPLAY_NAME)
+        val args = arrayOf("$RELATIVE_PATH%", displayName)
         context.contentResolver.query(collection, projection, selection, args, null)?.use { cursor ->
             if (cursor.moveToFirst()) {
                 val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID))

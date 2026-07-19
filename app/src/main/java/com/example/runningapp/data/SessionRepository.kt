@@ -136,16 +136,21 @@ class SessionRepository(
         finalizeWaitStepMillis: Long = 250L
     ) {
         if (effort == null && note.isNullOrBlank()) return
+        val trimmedNote = note?.trim()?.ifEmpty { null }
         repeat(20) {
             val session = sessionDao.getSessionById(sessionId) ?: return
             if (session.endTime > 0) {
-                sessionDao.updateFeelFeedback(sessionId, effort, note?.trim()?.ifEmpty { null })
+                sessionDao.updateFeelFeedback(sessionId, effort, trimmedNote)
+                // Fold this user-entered history into the Downloads snapshot too, or a
+                // reinstall/clear-storage before the next run would restore the run without it.
+                refreshHistoryBackup?.invoke()
                 return
             }
             kotlinx.coroutines.delay(finalizeWaitStepMillis)
         }
         // Finalize never landed (should not happen) — save the user's input rather than drop it.
-        sessionDao.updateFeelFeedback(sessionId, effort, note?.trim()?.ifEmpty { null })
+        sessionDao.updateFeelFeedback(sessionId, effort, trimmedNote)
+        refreshHistoryBackup?.invoke()
     }
 
     suspend fun deleteSessions(sessionIds: List<Long>) {
