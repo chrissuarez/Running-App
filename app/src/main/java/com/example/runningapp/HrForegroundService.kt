@@ -254,6 +254,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var activeSessionRunMode: String? = null
     private var firstDisconnectTime = 0L
     private val RECONNECT_TIMEOUT_MS = 120_000L // 2 minutes
+    // With no run active, stop chasing an unreachable strap after this many attempts and land on
+    // the terminal "Strap not found" state (each attempt already costs a ~30s connectGatt timeout
+    // plus backoff). Mid-run reconnects are uncapped by design (#110).
+    private val PRE_RUN_RECONNECT_MAX_ATTEMPTS = 3
 
     // Auto-pause on standstill (#39). Distinguishes a PAUSED session that SessionRecorder itself
     // triggered from a manual pause, so togglePause()/pauseSession() take precedence and GPS
@@ -909,7 +913,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             else -> _hrState.update { it.copy(lastHrAgeSeconds = hrAge) }
         }
-        updateNotification()
+        // A pulse already mid-execution when STOP runs can reach here after stopForeground()
+        // removed the notification; an unconditional notify() would resurrect it as a zombie
+        // "HR Monitor" notification with no service behind it.
+        val statusNow = _hrState.value.sessionStatus
+        if (statusNow != SessionStatus.STOPPED && statusNow != SessionStatus.IDLE) {
+            updateNotification()
+        }
     }
     
     private fun formatTime(seconds: Long): String {
@@ -1031,6 +1041,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // Mission: Build persistent notification and call startForeground immediately
         startForegroundService()
 
+        if (intent == null) {
+            // START_STICKY restart after process death: the run that justified the foreground
+            // state died with the process (every session field reset with it). Nothing can be
+            // resumed, so don't sit around as an idle notification holding a 10-hour wake lock —
+            // demote and stop. The promote above is still required (the system expects
+            // startForeground after restarting a foreground service).
+            Log.d(TAG, "onStartCommand: null intent (sticky restart) - nothing to resume, stopping")
+            demoteForeground()
+            return START_NOT_STICKY
+        }
+
         // Only session-starting intents carry the skip choice; leave it untouched for pause/resume
         // and other control intents so it survives for the duration of the run.
         if (intent?.hasExtra(EXTRA_SKIP_PLAN) == true) {
@@ -1072,10 +1093,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     // we ignore only because a previous run is still finalizing (currentSessionId
                     // not yet cleared) and no run is live, that promotion would otherwise linger as
                     // an idle notification + wake lock once finalize completes, with START appearing
-                    // to do nothing. Demote it. A genuinely active run keeps the foreground (Codex
-                    // P2 #123).
+                    // to do nothing. Demote it — narrowly: the full stopForegroundService() kill
+                    // switch also runs stopScanning()/disconnect(), which would tear down a strap
+                    // the user just (re)connected from Manage Devices during the finalize window,
+                    // the exact class 63174ed protects. A genuinely active run keeps the foreground
+                    // (Codex P2 #123).
                     if (!alreadyActive) {
-                        stopForegroundService()
+                        demoteForeground()
                     }
                 } else {
                     // Pin the run mode BEFORE publishing RUNNING. startNewDatabaseSession() also sets
@@ -1095,11 +1119,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     // for a first pairing), tearing down the pending GATT and dropping the strap the
                     // user just chose in Manage Devices. Let an in-progress connect finish and join
                     // the run instead.
+                    //
+                    // "Retrying" ("Disconnected (Retrying)") counts as in flight: a reconnect
+                    // coroutine is already scheduled and a parallel connect here would be torn down
+                    // by it. A bare scan does NOT: nothing ever auto-connects from scan results
+                    // (the callback only fills the Discovered list), so deferring to one leaves the
+                    // whole run strapless while the scanner burns battery — let startHardwareSession
+                    // take over (connectToDevice stops the scan first; with no saved strap it just
+                    // rescans, which is where we already were).
                     val connStatus = _hrState.value.connectionStatus
                     val acquisitionInFlight = connStatus == "Connected" ||
                         connStatus.contains("Connecting", ignoreCase = true) ||
                         connStatus.contains("Reconnecting", ignoreCase = true) ||
-                        connStatus.contains("Scanning", ignoreCase = true)
+                        connStatus.contains("Retrying", ignoreCase = true)
                     if (!isSimulationEnabled && !acquisitionInFlight) {
                         val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                         serviceScope.launch {
@@ -1155,6 +1187,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun pauseSession() {
+        // Only a live run can pause. A stale notification action (the shade lags status changes)
+        // landing after STOP must not flip a STOPPED/IDLE service to PAUSED.
+        if (_hrState.value.sessionStatus != SessionStatus.RUNNING) {
+            Log.d(TAG, "pauseSession ignored - status=${_hrState.value.sessionStatus}")
+            return
+        }
         isAutoPaused = false
         _hrState.update { it.copy(sessionStatus = SessionStatus.PAUSED) }
         locationTracker?.stop()
@@ -1163,6 +1201,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun resumeSession() {
+        // Same guard class as ACTION_START_RUN (23babf1): a stale notification Resume tapped after
+        // STOP would otherwise republish RUNNING while finalize still holds currentSessionId —
+        // a ghost run with a ticking timer and no DB session that blocks every later START — or,
+        // after finalize clears the id, silently create a brand-new phantom session.
+        if (_hrState.value.sessionStatus != SessionStatus.PAUSED) {
+            Log.d(TAG, "resumeSession ignored - status=${_hrState.value.sessionStatus}")
+            return
+        }
         if (currentSessionId == null) {
             startNewDatabaseSession()
         }
@@ -1317,13 +1363,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             if (aborted) {
                 Log.d(TAG, "Aborting DB session start: STOP landed during creation (id=$newSessionId)")
                 locationTracker?.stop()
+                // stopSession() cleared the pin, but this coroutine re-set it above after that
+                // clear; the run is dead, so restore the "null when no run is active" invariant.
+                activeSessionRunMode = null
                 database.sessionDao().deleteSessionById(newSessionId)
                 resetRunIntervalTracking()
                 currentSessionIncludeInAiTraining = true
                 return@launch
             }
             _hrState.update { it.copy(activeDbSessionId = currentSessionId, activeTargetZone = activeTargetZone) }
-            startSessionTimerLoop()
             sessionMaxBpm = 0
             sessionBpmSum = 0
             sessionSampleCount = 0
@@ -1360,6 +1408,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             walkBreaksCount = 0
             isWarmupSkipped = false
             initializeStructuredWorkoutState()
+
+            // Start the 1 Hz tick only after EVERY per-session reset above. The timer runs on its
+            // own HandlerThread while this block runs on IO; posting the runnable earlier relied on
+            // the ~2s grace tick to outrun the remaining resets — a timing bet, not an ordering
+            // guarantee (an IO stall mid-block would let the first accounting tick read half-reset
+            // counters). Handler.post() also publishes every write made before it to the timer
+            // thread, which the tail resets otherwise lacked.
+            startSessionTimerLoop()
 
             Log.d(TAG, "Started DB Session: $currentSessionId (Mode: $effectiveRunMode)")
             } finally {
@@ -1429,7 +1485,31 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     fun stopSession() {
-        _hrState.update { it.copy(sessionStatus = SessionStatus.STOPPING, activeTargetZone = null) }
+        // Idempotency: STOP can arrive from three places at once (the Force Stop button, the
+        // notification's always-present Stop action, and the cool-down auto-stop). A second call
+        // after the first already published STOPPED must not launch a second finalize for the same
+        // session — that would double the DB update, the backup, and the AI plan adjustment (two
+        // Gemini calls, nondeterministic second write wins). With no live run left, just honor the
+        // explicit kill switch (a pre-run notification Stop still dismisses the service).
+        val entryStatus = _hrState.value.sessionStatus
+        if (entryStatus == SessionStatus.STOPPED || entryStatus == SessionStatus.IDLE) {
+            Log.d(TAG, "stopSession: no live run (status=$entryStatus) - kill switch only")
+            stopForegroundService()
+            return
+        }
+        _hrState.update { it.copy(
+            sessionStatus = SessionStatus.STOPPING,
+            activeTargetZone = null,
+            // Clear the finished run's id from the UI now. It used to linger until the NEXT run's
+            // creation coroutine reset it, so in the gap after a quick re-START the UI was RUNNING
+            // with the PREVIOUS run's id — and a Force Stop there attached "How did that feel?"
+            // feedback to the wrong session.
+            activeDbSessionId = null
+        ) }
+        // Kill the pending tick immediately. Leaving it queued until stopForegroundService() at
+        // the end widens the window where a mid-execution pulse can repost itself around the
+        // removeCallbacks and bank into (or auto-stop) a run started right after this one.
+        sessionHandler?.removeCallbacks(sessionTimerRunnable)
         stopScanning()
         
         // FIX: Capture final counters BEFORE disconnect() resets BLE state
@@ -1465,7 +1545,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
         }
         if (sessionId != null) {
-            serviceScope.launch(Dispatchers.IO) {
+            // weatherFetchScope, not serviceScope: a background STOP (notification action with the
+            // activity unbound) reaches stopSelf() -> onDestroy -> serviceScope.cancel() on the
+            // next main-loop message, and a launch that hasn't been dequeued by an IO worker yet
+            // dies before its body — the NonCancellable inside can't protect a coroutine that
+            // never starts. weatherFetchScope is detached from the service lifecycle precisely so
+            // finalization work survives destruction.
+            weatherFetchScope.launch {
                 // MISSION: Ensure DB update is not cancelled by service destruction
                 kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                     val session = database.sessionDao().getSessionById(sessionId)
@@ -1525,16 +1611,32 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             }
                         }
 
+                        // Release the session guard BEFORE the awaited AI evaluation. The Gemini
+                        // call can take seconds to tens of seconds, and holding currentSessionId
+                        // through it kept "session busy" true for the whole call — a dead START
+                        // button (and a torn-down strap, pre-demote-fix) after every coached run.
+                        // Everything below reads only locals, captured values, and the DB. Under
+                        // the creation lock: START's reservation reads this field under the same
+                        // lock, and the field isn't volatile — a lock-free clear from this IO
+                        // thread has no guaranteed visibility on the main thread.
+                        synchronized(sessionCreationLock) {
+                            currentSessionId = null
+                        }
+                        currentSessionIncludeInAiTraining = true
+
+                        // finalIsRunWalkMode is sessionWasStructured captured at stop time: now
+                        // that the guard is released above, a new run could start and reset the
+                        // live field while this evaluation is still deciding.
                         val stageId = currentSettings.activeStageId
                         if (stageId != null &&
-                            sessionWasStructured &&
+                            finalIsRunWalkMode &&
                             updatedSession.includeInAiTraining &&
                             !currentSettings.testingModeEnabled
                         ) {
                             Log.d("AiCoach", "Triggering AI evaluation after session finalization for stage: $stageId")
                             sessionRepository.evaluateAndAdjustPlan(stageId)
                         } else if (stageId != null &&
-                            sessionWasStructured &&
+                            finalIsRunWalkMode &&
                             (!updatedSession.includeInAiTraining || currentSettings.testingModeEnabled)
                         ) {
                             Log.d(
@@ -1544,9 +1646,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         }
                     } else {
                         resetRunIntervalTracking()
+                        synchronized(sessionCreationLock) {
+                            currentSessionId = null
+                        }
+                        currentSessionIncludeInAiTraining = true
                     }
-                    currentSessionId = null
-                    currentSessionIncludeInAiTraining = true
                 }
             }
         } else if (!deferToCreation) {
@@ -1660,6 +1764,27 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             wakeLock = null
             Log.d(TAG, "WakeLock released")
         }
+    }
+
+    /**
+     * Narrow counterpart to [stopForegroundService]: drop the notification, wake lock, and
+     * started-state without touching BLE or the timer. For intents that promoted the service but
+     * started no run (ignored START, refused sim toggle, null-intent sticky restart) — the full
+     * kill switch would also stopScanning()/disconnect(), tearing down a strap acquisition the
+     * user may have just kicked off (the class 63174ed protects). stopSelf() is safe mid-finalize:
+     * the activity's binding keeps the service alive while the app is on screen, and the finalize
+     * coroutine runs on a scope that survives destruction anyway.
+     */
+    private fun demoteForeground() {
+        Log.d(TAG, "demoteForeground - dropping notification/wake lock, BLE untouched")
+        releaseWakeLock()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        stopSelf()
     }
 
     private fun stopForegroundService() {
@@ -1815,21 +1940,68 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         
         override fun onScanFailed(errorCode: Int) {
             Log.e(TAG, "BLE scan failed with errorCode=$errorCode")
-            _hrState.update { it.copy(connectionStatus = "Scan Failed: $errorCode") }
+            // Only report the failure if we're still in the scanning state: a late callback
+            // delivered after the user already tapped a discovered strap must not overwrite
+            // "Connecting to X..." and mask a genuinely in-flight GATT connect.
+            _hrState.update {
+                if (it.connectionStatus.contains("Scanning", ignoreCase = true)) {
+                    it.copy(connectionStatus = "Scan Failed: $errorCode")
+                } else {
+                    it
+                }
+            }
         }
     }
     
     fun connectToDevice(address: String) {
         logBleDecision("connect_by_address", "Preparing direct connection to address=$address")
         stopScanning()
-        
+
         // Step 3: Deep Cleanup / State Sanitization
         reconnectAttemptCount = 0
         reconnectDelay = 3000L
-        
+
+        // Every call to this overload traces back to a deliberate choice of THIS strap (a Manage
+        // Devices tap, the record screen's auto-connect of the saved active strap, START). When the
+        // HR service is verified, that intent may promote the strap to active. Background retries
+        // go through the device overload and never set this — so a dropout/reconnect of strap A
+        // can no longer silently steal the active slot back from a user who chose strap B.
+        makeActiveOnVerify = true
         targetDeviceAddress = address
         val device = bluetoothAdapter?.getRemoteDevice(address) ?: return
         connectToDevice(device)
+    }
+
+    /**
+     * Manage Devices "Forget" (#110): if the forgotten strap is the one we're connected to or
+     * chasing, release it — otherwise the retry loop keeps reconnecting it and the verify path
+     * re-saves (and re-activates) a device the user just removed. Deliberately narrower than
+     * [disconnect]: touches only connection state, never the run or workout state, so forgetting
+     * a strap mid-run behaves like a plain dropout (#110: a sensor going away never ends a run).
+     */
+    fun forgetDevice(address: String) {
+        if (targetDeviceAddress != address) return
+        logBleDecision("forget_device", "Releasing forgotten device address=$address")
+        targetDeviceAddress = null
+        isReconnecting = false
+        // Supersede any queued connect and close under the same lock, so an in-flight
+        // connect coroutine can't re-establish the strap right after this teardown.
+        synchronized(gattConnectLock) { ++connectRequestSeq }
+        serviceScope.launch(Dispatchers.IO) {
+            if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+                synchronized(gattConnectLock) {
+                    bluetoothGatt?.disconnect()
+                    bluetoothGatt?.close()
+                    bluetoothGatt = null
+                }
+            }
+        }
+        _hrState.update { it.copy(
+            connectionStatus = "Disconnected",
+            connectedDeviceName = null,
+            bpm = 0,
+            avgBpm = 0
+        ) }
     }
     
     private fun stopScanning() {
@@ -1838,6 +2010,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
              Log.d(TAG, "stopScanning() - stopScan invoked")
          }
     }
+
+    // Serializes the close-old/connect-new handoff and makes the LAST requested connect win.
+    // Two connect requests in quick succession (auto-connect effect vs a Manage Devices tap,
+    // or a double-tap in the device list) each launch an IO coroutine; without this, their
+    // close()/connectGatt() steps can interleave — leaking a live GATT whose callbacks keep
+    // firing for a strap nobody asked for, unreachable by disconnect().
+    private val gattConnectLock = Any()
+    @Volatile private var connectRequestSeq = 0
+
+    // True while the in-flight connect came from a deliberate device choice (String overload);
+    // consumed by onServicesDiscovered to decide whether verification promotes the strap to
+    // active. Background retries leave it false.
+    @Volatile private var makeActiveOnVerify = false
 
     private fun connectToDevice(device: BluetoothDevice) {
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return
@@ -1849,50 +2034,87 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             device.address
         }
         _hrState.update { it.copy(connectionStatus = "Connecting to $deviceName...") }
-        
+
         // Mission: Robust Bluetooth - Close old connection and connect on IO
+        val mySeq = synchronized(gattConnectLock) { ++connectRequestSeq }
         serviceScope.launch(Dispatchers.IO) {
-            bluetoothGatt?.close()
-            bluetoothGatt = null
-            
-            Log.d(TAG, "Connecting to GATT on IO thread...")
-            bluetoothGatt = device.connectGatt(this@HrForegroundService, false, gattCallback)
+            synchronized(gattConnectLock) {
+                if (mySeq != connectRequestSeq) {
+                    Log.d(TAG, "Skipping superseded connect request #$mySeq (latest=$connectRequestSeq)")
+                    return@launch
+                }
+                bluetoothGatt?.close()
+                bluetoothGatt = null
+
+                Log.d(TAG, "Connecting to GATT on IO thread...")
+                // connectGatt() is non-blocking (results arrive on the callback), so holding the
+                // lock across it is safe.
+                bluetoothGatt = device.connectGatt(this@HrForegroundService, false, gattCallback)
+            }
         }
     }
     
     private fun attemptReconnect() {
          if (targetDeviceAddress == null) return
-         
+
+         // A live run retries forever — a dropout never ends or freezes a run (#110). With no run,
+         // the endless loop served no one: a strap left in a drawer kept the record screen on
+         // "Looking for your strap…" indefinitely (the terminal "Strap not found" state existed in
+         // the footer but was keyed to a status string that only lived for milliseconds). Give up
+         // after a few attempts and land on the stable, actionable state instead; the footer's
+         // Retry button and START itself both re-acquire from there.
+         val status = _hrState.value.sessionStatus
+         val runActive = status == SessionStatus.RUNNING || status == SessionStatus.PAUSED
+         if (!runActive && reconnectAttemptCount >= PRE_RUN_RECONNECT_MAX_ATTEMPTS) {
+             Log.d(TAG, "Giving up pre-run reconnect after $reconnectAttemptCount attempts")
+             targetDeviceAddress = null
+             isReconnecting = false
+             _hrState.update { it.copy(connectionStatus = "Strap not found") }
+             return
+         }
+
          isReconnecting = true
          val delayMs = reconnectDelay
-         
+
          reconnectAttemptCount++
          _hrState.update { it.copy(
              connectionStatus = "Reconnecting in ${delayMs/1000}s...",
              reconnectAttempts = reconnectAttemptCount
          ) }
-         
+
          serviceScope.launch {
              delay(delayMs)
              reconnectDelay = (reconnectDelay * 2).coerceAtMost(30000L)
-             if (targetDeviceAddress != null) {
-                 connectToDevice(targetDeviceAddress!!)
+             val addr = targetDeviceAddress
+             if (addr != null) {
+                 // Retry via the device overload directly: the String overload is the fresh-connect
+                 // entry point and zeroes reconnectAttemptCount/reconnectDelay, which made the
+                 // attempt counter reset every cycle — the give-up cap above could never trip.
+                 val device = bluetoothAdapter?.getRemoteDevice(addr)
+                 if (device != null) connectToDevice(device)
              }
          }
     }
 
     fun disconnect() {
-        targetDeviceAddress = null 
+        targetDeviceAddress = null
+        // Supersede any queued connect and close under the same lock (see forgetDevice).
+        synchronized(gattConnectLock) { ++connectRequestSeq }
         serviceScope.launch(Dispatchers.IO) {
             if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                bluetoothGatt?.disconnect()
-                bluetoothGatt?.close()
-                bluetoothGatt = null
+                synchronized(gattConnectLock) {
+                    bluetoothGatt?.disconnect()
+                    bluetoothGatt?.close()
+                    bluetoothGatt = null
+                }
             }
         }
+        // No sessionStatus write here: disconnecting is no longer stopping (#110). Every current
+        // caller runs when no run is live (stopSession sets STOPPED itself; FORCE_SCAN is blocked
+        // mid-run), and the old unconditional STOPPED write was a landmine — any future mid-run
+        // caller would have silently killed the run and orphaned its DB row.
         _hrState.update { it.copy(
             connectionStatus = "Disconnected",
-            sessionStatus = SessionStatus.STOPPED,
             bpm = 0,
             connectedDeviceName = null,
             discoveredServices = emptyList(),
@@ -1989,10 +2211,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         attemptReconnect()
                     }
                 } else {
-                     _hrState.update { it.copy(
-                         connectionStatus = "Disconnected",
-                         sessionStatus = SessionStatus.STOPPED
-                     ) }
+                     // Intentional disconnect (no target to chase). Session status is untouched:
+                     // a sensor going away is never a run ending (#110).
+                     _hrState.update { it.copy(connectionStatus = "Disconnected") }
                      serviceScope.launch(Dispatchers.IO) {
                         gatt?.close()
                         if (bluetoothGatt == gatt) bluetoothGatt = null
@@ -2019,8 +2240,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             device.name ?: "Unknown"
                         } else "Unknown"
                         val deviceAddress = device.address
+                        // Promote to active only when the user chose this strap (or nothing else
+                        // is active / it already is the active one). A background reconnect of a
+                        // non-active strap must not steal the active slot the user just assigned
+                        // to a different device.
+                        val makeActive = makeActiveOnVerify ||
+                            currentSettings.activeDeviceAddress == null ||
+                            currentSettings.activeDeviceAddress == deviceAddress
+                        makeActiveOnVerify = false
                         serviceScope.launch {
-                            settingsRepository.saveDevice(deviceAddress, deviceName)
+                            settingsRepository.saveDevice(deviceAddress, deviceName, makeActive)
                         }
                     }
 
@@ -2329,6 +2558,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // Ensure simulation sessions remain visible/controllable from lock screen.
             startForegroundService()
             val status = _hrState.value.sessionStatus
+            val runActive = status == SessionStatus.RUNNING || status == SessionStatus.PAUSED
+            // Same busy-guard as ACTION_START_RUN: while a previous run is still finalizing (or a
+            // deferred creation is aborting), starting a sim session would either be skipped by
+            // the reservation — leaving the UI wedged RUNNING with no session and no timer — or
+            // resurrect a just-stopped run. Refuse and undo; the toggle works a moment later.
+            val sessionBusy = !runActive && synchronized(sessionCreationLock) {
+                isCreatingSession || currentSessionId != null
+            }
+            if (sessionBusy) {
+                Log.d(TAG, "Simulation enable refused - previous session still finalizing")
+                isSimulationEnabled = false
+                _hrState.update { it.copy(isSimulating = false) }
+                demoteForeground()
+                return
+            }
             if (currentSessionId == null && (status == SessionStatus.IDLE || status == SessionStatus.STOPPED)) {
                 startNewDatabaseSession()
                 _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }

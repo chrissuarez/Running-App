@@ -157,7 +157,7 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    suspend fun saveDevice(address: String, name: String) {
+    suspend fun saveDevice(address: String, name: String, makeActive: Boolean = true) {
         context.dataStore.edit { preferences ->
             val current = preferences[PreferencesKeys.SAVED_DEVICES] ?: emptySet()
             val updated = current.toMutableSet()
@@ -165,7 +165,12 @@ class SettingsRepository(private val context: Context) {
             updated.removeIf { it.startsWith("$address|") }
             updated.add("$address|$name")
             preferences[PreferencesKeys.SAVED_DEVICES] = updated
-            preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS] = address
+            // Only user-chosen connects promote to active (the service passes makeActive=false
+            // for background reconnects, so a dropout can't steal the slot from a newly chosen
+            // strap or resurrect a forgotten one's active status).
+            if (makeActive) {
+                preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS] = address
+            }
         }
     }
 
