@@ -199,13 +199,18 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onConnectToDevice = { address, skipPlan ->
                                     Log.d("MainActivity", "User tapped device: $address")
+                                    // The service's ACTION_START_FOREGROUND handler reads EXTRA_SKIP_PLAN
+                                    // and then connects via the override address, so the skip choice is
+                                    // always applied before session setup. Do NOT also call
+                                    // hrService?.connectToDevice() here: when the service is already bound
+                                    // that direct connect can reach startNewDatabaseSession() before the
+                                    // intent sets skipPlanForToday, attaching the plan the user skipped.
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
                                         putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
-                                    hrService?.connectToDevice(address)
                                 },
                                 onTestCue = {
                                     hrService?.playCue("Target heart rate reached. Keep it up!")
@@ -276,13 +281,15 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onConnect = { address, skipPlan ->
                                     Log.d("MainActivity", "User tapped device in ManageDevices: $address")
+                                    // See onConnectToDevice above: the intent path applies the skip choice
+                                    // before connecting, so a direct hrService?.connectToDevice() here would
+                                    // only reintroduce the race that attaches a skipped plan.
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
                                         putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
-                                    hrService?.connectToDevice(address)
                                     navigateTo(Routes.MAIN)
                                 },
                                 onBack = { navigateTo(Routes.MAIN) }
