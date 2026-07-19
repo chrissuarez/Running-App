@@ -4,12 +4,15 @@ import android.content.Context
 import android.util.Log
 import com.example.runningapp.data.AiCoachClient
 import com.example.runningapp.data.AppDatabase
+import com.example.runningapp.data.DatabaseBackupManager
 import com.example.runningapp.data.OpenMeteoWeatherClient
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.WeatherClient
 import com.mapbox.common.MapboxOptions
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -30,6 +33,11 @@ class AppContainer(context: Context) {
     }
 
     val database: AppDatabase by lazy {
+        // If this install has no database of its own yet — a freshly-cleared install — bring run
+        // history back from the Downloads copy before Room opens. No-ops (and never overwrites) when
+        // a live database already exists, which includes reinstalls, where Auto Backup has already
+        // restored it.
+        DatabaseBackupManager.restoreIfDatabaseMissing(appContext)
         // The v12 -> v13 zone recompute needs Max HR, which lives in DataStore rather than the
         // database. Room only invokes this from inside the migration, on its own background
         // thread, so the blocking read never lands on the main thread.
@@ -53,7 +61,14 @@ class AppContainer(context: Context) {
             trackPointDao = database.trackPointDao(),
             settingsRepository = settingsRepository,
             aiCoachClient = aiCoachClient,
-            weatherClient = weatherClient
+            weatherClient = weatherClient,
+            // After a delete, re-snapshot history to Downloads so a later Clear-storage restore
+            // can't bring the deleted runs back. File IO, so keep it off the caller's (main) thread.
+            refreshHistoryBackup = {
+                withContext(Dispatchers.IO) {
+                    DatabaseBackupManager.backup(appContext, database)
+                }
+            }
         )
     }
 }

@@ -106,6 +106,36 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `saveFeelFeedback refreshes the history backup after writing feedback`() = runTest {
+        var refreshCount = 0
+        val finalizedSession = RunnerSession(startTime = 1_000L, endTime = 2_000L)
+        whenever(mockDao.getSessionById(42L)).thenReturn(finalizedSession)
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.saveFeelFeedback(sessionId = 42L, effort = 7, note = "Felt good")
+
+        verify(mockDao).updateFeelFeedback(42L, 7, "Felt good")
+        assertEquals(1, refreshCount)
+    }
+
+    @Test
+    fun `saveFeelFeedback does not touch the backup when there is nothing to save`() = runTest {
+        var refreshCount = 0
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.saveFeelFeedback(sessionId = 42L, effort = null, note = "   ")
+
+        verify(mockDao, never()).updateFeelFeedback(any(), anyOrNull(), anyOrNull())
+        assertEquals(0, refreshCount)
+    }
+
+    @Test
     fun `saveFeelFeedback waits until the session is finalized before updating`() = runTest {
         val sessionId = 42L
         val unfinalizedSession = RunnerSession(startTime = 1_000L, endTime = 0L)
@@ -182,6 +212,48 @@ class SessionRepositoryTest {
     @Test
     fun `getTrackPointsForMapFlow emits an empty list when no track point dao is configured`() = runTest {
         assertEquals(emptyList<TrackPoint>(), repository.getTrackPointsForMapFlow(sessionId = 7L).first())
+    }
+
+    @Test
+    fun `deleteSession refreshes the history backup after removing the row`() = runTest {
+        var refreshCount = 0
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.deleteSession(sessionId = 7L)
+
+        verify(mockDao).deleteSessionById(7L)
+        assertEquals(1, refreshCount)
+    }
+
+    @Test
+    fun `deleteSessions refreshes the history backup when rows are removed`() = runTest {
+        var refreshCount = 0
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.deleteSessions(listOf(1L, 2L))
+
+        verify(mockDao).deleteSessionsByIds(listOf(1L, 2L))
+        assertEquals(1, refreshCount)
+    }
+
+    @Test
+    fun `deleteSessions does not touch the backup when the id list is empty`() = runTest {
+        var refreshCount = 0
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.deleteSessions(emptyList())
+
+        verify(mockDao, never()).deleteSessionsByIds(any())
+        assertEquals(0, refreshCount)
     }
 
     private fun trackPoint(sessionId: Long, lon: Double, accuracy: Float?, source: String) = TrackPoint(

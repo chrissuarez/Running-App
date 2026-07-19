@@ -56,10 +56,16 @@ class SessionRepository(
     private val trackPointDao: TrackPointDao? = null,
     private val settingsRepository: SettingsRepository? = null,
     private val aiCoachClient: AiCoachClient? = null,
-    private val weatherClient: WeatherClient? = null
+    private val weatherClient: WeatherClient? = null,
+    // Re-snapshots run history to the Downloads backup after a deletion. Without this a later
+    // Clear-storage restore would bring back a stale snapshot that still holds the deleted runs, so
+    // deletes have to invalidate the snapshot too — not just the finish-run path. Null in tests and
+    // wherever no backup target is wired.
+    private val refreshHistoryBackup: (suspend () -> Unit)? = null
 ) {
     suspend fun deleteSession(sessionId: Long) {
         sessionDao.deleteSessionById(sessionId)
+        refreshHistoryBackup?.invoke()
     }
 
     /**
@@ -134,21 +140,27 @@ class SessionRepository(
         finalizeWaitStepMillis: Long = 250L
     ) {
         if (effort == null && note.isNullOrBlank()) return
+        val trimmedNote = note?.trim()?.ifEmpty { null }
         repeat(20) {
             val session = sessionDao.getSessionById(sessionId) ?: return
             if (session.endTime > 0) {
-                sessionDao.updateFeelFeedback(sessionId, effort, note?.trim()?.ifEmpty { null })
+                sessionDao.updateFeelFeedback(sessionId, effort, trimmedNote)
+                // Fold this user-entered history into the Downloads snapshot too, or a Clear-storage
+                // restore before the next run would bring the run back without it.
+                refreshHistoryBackup?.invoke()
                 return
             }
             kotlinx.coroutines.delay(finalizeWaitStepMillis)
         }
         // Finalize never landed (should not happen) — save the user's input rather than drop it.
-        sessionDao.updateFeelFeedback(sessionId, effort, note?.trim()?.ifEmpty { null })
+        sessionDao.updateFeelFeedback(sessionId, effort, trimmedNote)
+        refreshHistoryBackup?.invoke()
     }
 
     suspend fun deleteSessions(sessionIds: List<Long>) {
         if (sessionIds.isEmpty()) return
         sessionDao.deleteSessionsByIds(sessionIds)
+        refreshHistoryBackup?.invoke()
     }
 
     suspend fun getMaxSessionLoadLast30Days(

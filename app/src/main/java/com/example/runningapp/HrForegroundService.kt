@@ -35,6 +35,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,6 +51,7 @@ import java.util.LinkedList
 import kotlin.math.roundToInt
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.AiCoachClient
+import com.example.runningapp.data.DatabaseBackupManager
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
@@ -136,6 +139,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // Detached from serviceScope on purpose: the save-time weather fetch must survive
     // onDestroy() cancelling serviceScope when a run is stopped from the background.
     private val weatherFetchScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // The run's per-sample writes (HR samples, GPS track points) live on their own scope so
+    // stopSession() can wait for exactly these inserts to land before snapshotting the DB to
+    // Downloads — otherwise the backup can race the tail writes and capture a run missing its
+    // final seconds. Like weatherFetchScope, it survives onDestroy() so a background stop still
+    // flushes the tail before the snapshot.
+    private val recorderWriteScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     
     // Exposed state for UI
     private val _hrState = MutableStateFlow(HrState())
@@ -620,7 +630,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         timestampMillis = location.time,
                         source = TrackPointSource.GPS
                     )
-                    serviceScope.launch(Dispatchers.IO) {
+                    recorderWriteScope.launch {
                         database.trackPointDao().insertTrackPoint(trackPoint)
                     }
                 }
@@ -768,7 +778,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                     connectionState = currentState.connectionStatus,
                                     paceMinPerKm = currentState.paceMinPerKm
                                 )
-                                serviceScope.launch(Dispatchers.IO) {
+                                recorderWriteScope.launch {
                                     database.sampleDao().insertSample(sample)
                                 }
                             }
@@ -1307,6 +1317,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         database.sessionDao().updateSession(updatedSession)
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
                         persistRunIntervalStats(sessionId)
+
+                        // Snapshot run history to Downloads so it survives "Clear storage"
+                        // (reinstall is covered separately by Auto Backup). Fire-and-forget on
+                        // weatherFetchScope (not cancelled by onDestroy) so stopping from the
+                        // background can't skip it.
+                        //
+                        // First let any still-queued HR sample / track-point inserts land, so the
+                        // snapshot captures the whole run rather than the finalized session minus
+                        // its final seconds. GPS and the pulse timer are already stopped by now, so
+                        // no new writes start once these drain.
+                        recorderWriteScope.coroutineContext.job.children.toList().joinAll()
+                        weatherFetchScope.launch {
+                            DatabaseBackupManager.backup(applicationContext, database)
+                        }
 
                         // Weather snapshot: fire-and-forget on weatherFetchScope, which is not
                         // cancelled by onDestroy(), so stopping from the background can't skip
