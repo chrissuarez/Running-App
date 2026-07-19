@@ -74,7 +74,7 @@ class AppDatabaseMigrationTest {
         // migration between the file's version and today's. It does not disturb what this test
         // asserts — it touches sessions, never track_points.
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(MIGRATION_11_12, migration12To13 { 190 })
+            .addMigrations(MIGRATION_11_12, migration12To13 { 190 }, MIGRATION_13_14)
             .build()
 
         val sessionATrackPoints = runBlockingGet { migratedDb.trackPointDao().getTrackPointsForSessionOnce(1) }
@@ -106,25 +106,7 @@ class AppDatabaseMigrationTest {
     @Test
     fun migrate12To13_recomputesZoneSecondsFromHrSamples_andDeclaresHistoryTargetZone2() {
         val rawDb = openLegacyDatabase()
-        rawDb.execSQL(
-            """
-            CREATE TABLE `track_points` (
-                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                `sessionId` INTEGER NOT NULL,
-                `latitude` REAL NOT NULL,
-                `longitude` REAL NOT NULL,
-                `altitudeMeters` REAL,
-                `horizontalAccuracyMeters` REAL,
-                `verticalAccuracyMeters` REAL,
-                `speedMps` REAL,
-                `barometerPressureHpa` REAL,
-                `timestampMillis` INTEGER NOT NULL,
-                `source` TEXT NOT NULL,
-                FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
-            )
-            """.trimIndent()
-        )
-        rawDb.execSQL("CREATE INDEX `index_track_points_sessionId` ON `track_points` (`sessionId`)")
+        createTrackPointsTable(rawDb)
 
         // Session 1: the headline defect — five seconds at 145 bpm, banked as Zone 4 by the old
         // hybrid model. At Max HR 190 the new model puts 133-151 squarely in Zone 3.
@@ -145,7 +127,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { 190 })
+            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14)
             .build()
         val session1 = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val session2 = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
@@ -172,6 +154,55 @@ class AppDatabaseMigrationTest {
         // nothing to reconstruct — and in-target now derives from that.
         listOf(session1, session2, session3).forEach { assertEquals(2, it.targetZone) }
         assertEquals(1L, session2.inTargetZoneSeconds)
+    }
+
+    @Test
+    fun migrate13To14_rebuildsIsRunWalkModeFromIntervalEvidence_clearingLegacyToggleNoise() {
+        val rawDb = openLegacyDatabase()
+        // A real v12 database already has track_points (created by MIGRATION_11_12). The v12 -> v13
+        // migration comes along for the ride when Room opens, so the table must be present or Room
+        // rejects the post-migration schema.
+        createTrackPointsTable(rawDb)
+
+        // Session 1 — false negative: a real run/walk run whose flag was never set (the pre-#107
+        // flag came from a separate coach toggle). Its interval stats are the durable evidence, so
+        // it is promoted and the coach keeps that evidence.
+        insertLegacySession(rawDb, id = 1, sessionType = "Run/Walk", isRunWalkMode = 0)
+        rawDb.execSQL(
+            "INSERT INTO run_walk_interval_stats (sessionId, intervalIndex, plannedDurationSeconds, " +
+                "actualRunningDurationBeforeHrTriggerSeconds, hrTriggerEvents, " +
+                "totalTimeSpentWalkingDuringRunIntervalSeconds) VALUES (1, 0, 180, 180, 0, 0)"
+        )
+
+        // Session 2 — false positive: recorded with the coach toggle on but never ran intervals, so
+        // the old flag is set with no evidence behind it. Must be cleared, or evaluateAndAdjustPlan
+        // would adjust the plan off a non-plan run.
+        insertLegacySession(rawDb, id = 2, sessionType = "Zone 2 Walk", isRunWalkMode = 1)
+
+        // Session 3 — the sessionType trap: the column default backfilled old open runs to
+        // "Run/Walk". With no interval stats this is not a structured workout and must stay 0, so the
+        // migration must not key off the label.
+        insertLegacySession(rawDb, id = 3, sessionType = "Run/Walk", isRunWalkMode = 0)
+
+        // Session 4: an open/continuous run (Free Track) left flagged by the toggle. No stats -> 0.
+        insertLegacySession(rawDb, id = 4, sessionType = "Free Track", isRunWalkMode = 1)
+
+        rawDb.version = 12
+        rawDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14)
+            .build()
+        val session1 = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
+        val session2 = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
+        val session3 = runBlockingGet { migratedDb.sessionDao().getSessionById(3) }!!
+        val session4 = runBlockingGet { migratedDb.sessionDao().getSessionById(4) }!!
+        migratedDb.close()
+
+        assertEquals(true, session1.isRunWalkMode)
+        assertEquals(false, session2.isRunWalkMode)
+        assertEquals(false, session3.isRunWalkMode)
+        assertEquals(false, session4.isRunWalkMode)
     }
 
     /**
@@ -263,6 +294,29 @@ class AppDatabaseMigrationTest {
         return rawDb
     }
 
+    /** Builds the track_points table exactly as MIGRATION_11_12 leaves it, for v12+ start states. */
+    private fun createTrackPointsTable(rawDb: SQLiteDatabase) {
+        rawDb.execSQL(
+            """
+            CREATE TABLE `track_points` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `sessionId` INTEGER NOT NULL,
+                `latitude` REAL NOT NULL,
+                `longitude` REAL NOT NULL,
+                `altitudeMeters` REAL,
+                `horizontalAccuracyMeters` REAL,
+                `verticalAccuracyMeters` REAL,
+                `speedMps` REAL,
+                `barometerPressureHpa` REAL,
+                `timestampMillis` INTEGER NOT NULL,
+                `source` TEXT NOT NULL,
+                FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        rawDb.execSQL("CREATE INDEX `index_track_points_sessionId` ON `track_points` (`sessionId`)")
+    }
+
     private fun insertLegacySession(
         rawDb: SQLiteDatabase,
         id: Long,
@@ -271,14 +325,16 @@ class AppDatabaseMigrationTest {
         zone3Seconds: Long = 0,
         zone4Seconds: Long = 0,
         zone5Seconds: Long = 0,
-        noDataSeconds: Long = 0
+        noDataSeconds: Long = 0,
+        sessionType: String = "Run/Walk",
+        isRunWalkMode: Int = 0
     ) {
         rawDb.execSQL(
             "INSERT INTO sessions (id, startTime, endTime, durationSeconds, avgBpm, maxBpm, timeInTargetZoneSeconds, " +
                 "zone1Seconds, zone2Seconds, zone3Seconds, zone4Seconds, zone5Seconds, runMode, distanceKm, " +
                 "avgPaceMinPerKm, noDataSeconds, walkBreaksCount, isRunWalkMode, sessionType, includeInAiTraining) " +
                 "VALUES ($id, ${id * 1_000_000}, 0, 0, 0, 0, 0, $zone1Seconds, $zone2Seconds, $zone3Seconds, " +
-                "$zone4Seconds, $zone5Seconds, 'treadmill', 0.0, 0.0, $noDataSeconds, 0, 0, 'Run/Walk', 1)"
+                "$zone4Seconds, $zone5Seconds, 'treadmill', 0.0, 0.0, $noDataSeconds, 0, $isRunWalkMode, '$sessionType', 1)"
         )
     }
 

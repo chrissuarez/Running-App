@@ -55,7 +55,6 @@ import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointSource
-import com.example.runningapp.data.computeEasyFixedDurationSummary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -68,7 +67,6 @@ enum class StructuredWorkoutPhase { RUN, WALK }
 data class HrState(
     val connectionStatus: String = "Disconnected",
     val sessionStatus: SessionStatus = SessionStatus.IDLE,
-    val sessionType: String = HrForegroundService.SESSION_TYPE_RUN_WALK,
     val bpm: Int = 0,
     val lastUpdateTimestamp: Long = 0,
     val connectedDeviceName: String? = null,
@@ -131,7 +129,6 @@ data class HrState(
 )
 
 class HrForegroundService : Service(), TextToSpeech.OnInitListener {
-    private val easyFixedDurationMainSeconds = 30 * 60
 
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -188,7 +185,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private lateinit var settingsRepository: SettingsRepository
     private lateinit var sessionRepository: SessionRepository
     private var currentSettings = UserSettings()
-    @Volatile private var currentSessionType: String = SESSION_TYPE_RUN_WALK
+    // Skip today's plan (#107): a per-run, today-only choice from the record screen. When set, the
+    // run attaches no workout — an open-ended run with no warm-up/cool-down/intervals. It never
+    // edits the plan, so tomorrow the plan is queued again.
+    @Volatile private var skipPlanForToday: Boolean = false
+    // Whether this run followed a structured plan workout, captured at start. Drives the recorded
+    // RunnerSession.isRunWalkMode and whether the AI coach evaluates the run afterward.
+    @Volatile private var sessionWasStructured: Boolean = false
 
     private lateinit var database: AppDatabase
     private var currentSessionId: Long? = null
@@ -246,7 +249,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var phaseSecondsRunning = 0L
     private var walkBreaksCount = 0
     @Volatile private var isWarmupSkipped = false
-    @Volatile private var currentWarmupDuration = 480
+    // Warm-up/cool-down are sourced from the active workout (#107); 0 for an unplanned/skipped run.
+    @Volatile private var currentWarmupDuration = 0
+    @Volatile private var currentCooldownDuration = 0
     @Volatile private var isStructuredWorkout = false
     @Volatile private var structuredWorkoutPhase = StructuredWorkoutPhase.RUN
     @Volatile private var phaseTimeRemainingSeconds = 0
@@ -291,24 +296,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_FORCE_SCAN = "ACTION_FORCE_SCAN"
         const val ACTION_SET_SIMULATION = "ACTION_SET_SIMULATION"
         const val EXTRA_DEVICE_ADDRESS = "EXTRA_DEVICE_ADDRESS"
-        const val EXTRA_SESSION_TYPE = "SESSION_TYPE"
-        const val LEGACY_EXTRA_SESSION_TYPE = "EXTRA_SESSION_TYPE"
+        const val EXTRA_SKIP_PLAN = "SKIP_PLAN"
         const val EXTRA_SIMULATION_ENABLED = "SIMULATION_ENABLED"
-        const val SESSION_TYPE_RUN_WALK = "Run/Walk"
-        const val SESSION_TYPE_EASY_FIXED_DURATION = "Easy Fixed Duration"
-        const val SESSION_TYPE_ZONE2_WALK = "Zone 2 Walk"
-        const val SESSION_TYPE_FREE_TRACK = "Free Track"
         const val TAG = "HrService"
-    }
-
-    private fun sanitizeSessionType(value: String?): String {
-        return when (value) {
-            SESSION_TYPE_RUN_WALK,
-            SESSION_TYPE_EASY_FIXED_DURATION,
-            SESSION_TYPE_ZONE2_WALK,
-            SESSION_TYPE_FREE_TRACK -> value
-            else -> SESSION_TYPE_RUN_WALK
-        }
     }
 
     private fun logBleDecision(reason: String, detail: String) {
@@ -337,32 +327,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         completedRunIntervalStats.clear()
     }
 
-    private fun getMainPhaseLimitSeconds(): Int {
-        // Easy Fixed Duration is the only non-structured mode with a real main-phase timer.
-        return when (currentSessionType) {
-            SESSION_TYPE_EASY_FIXED_DURATION -> easyFixedDurationMainSeconds
-            else -> Int.MAX_VALUE
-        }
-    }
-
-    private suspend fun buildEasyFixedDurationSummary(
-        sessionId: Long,
-        actualDurationSeconds: Int,
-        avgBpm: Int,
-        maxBpm: Int
-    ) = computeEasyFixedDurationSummary(
-        plannedDurationSeconds = easyFixedDurationMainSeconds,
-        actualDurationSeconds = actualDurationSeconds.coerceAtLeast(0),
-        avgBpm = avgBpm,
-        maxBpm = maxBpm,
-        // For easy sessions the easy cap is the target zone, so this is time above it. Counted
-        // by band: at a target of 5 there is no zone with a higher number, but there is still
-        // time above the cap.
-        timeAboveEasyCapSeconds = sessionAboveTargetSeconds.toInt(),
-        noDataSeconds = sessionNoDataSeconds,
-        samples = database.sampleDao().getSamplesForSessionOnce(sessionId)
-    )
-
     private data class StructuredProgressUiState(
         val totalRepeats: Int = 0,
         val currentIntervalPlannedSeconds: Int = 0,
@@ -386,7 +350,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val workout = activeWorkoutTemplate
         if (currentPhase != SessionPhase.MAIN ||
             !isStructuredWorkout ||
-            currentSessionType != SESSION_TYPE_RUN_WALK ||
             workout == null ||
             workout.totalRepeats <= 0
         ) {
@@ -456,7 +419,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startRunIntervalTracking(intervalIndex: Int, plannedDurationSeconds: Int) {
-        if (currentSessionType != SESSION_TYPE_RUN_WALK || plannedDurationSeconds <= 0) return
+        if (!isStructuredWorkout || plannedDurationSeconds <= 0) return
         if (activeRunIntervalTracker != null) {
             finalizeActiveRunIntervalTracking()
         }
@@ -477,8 +440,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun recordRunWalkHighHrTriggerEvent(avgBpm: Int) {
-        if (currentSessionType != SESSION_TYPE_RUN_WALK ||
-            currentPhase != SessionPhase.MAIN ||
+        if (currentPhase != SessionPhase.MAIN ||
             !isStructuredWorkout ||
             structuredWorkoutPhase != StructuredWorkoutPhase.RUN
         ) {
@@ -508,8 +470,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun recordRunWalkRecoveryCueEvent() {
-        if (currentSessionType != SESSION_TYPE_RUN_WALK ||
-            currentPhase != SessionPhase.MAIN ||
+        if (currentPhase != SessionPhase.MAIN ||
             !isStructuredWorkout ||
             structuredWorkoutPhase != StructuredWorkoutPhase.RUN
         ) {
@@ -716,9 +677,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     phaseSecondsRunning += 1
                     
                     val phaseLimit = when (currentPhase) {
-                        SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
-                        SessionPhase.MAIN -> getMainPhaseLimitSeconds()
-                        SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
+                        SessionPhase.WARM_UP -> currentWarmupDuration
+                        // The main phase is open-ended (#107): an unplanned run goes until the user
+                        // stops and a structured run's intervals self-terminate, so nothing here ends it.
+                        SessionPhase.MAIN -> Int.MAX_VALUE
+                        SessionPhase.COOL_DOWN -> currentCooldownDuration
                     }
                     
                     val remaining = (phaseLimit - phaseSecondsRunning).toInt()
@@ -732,21 +695,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         currentPhase = SessionPhase.MAIN
                         phaseSecondsRunning = 0
                         playCue("Starting main workout")
-                    } else if (
-                        currentPhase == SessionPhase.MAIN &&
-                        currentSessionType == SESSION_TYPE_EASY_FIXED_DURATION &&
-                        phaseSecondsRunning >= phaseLimit
-                    ) {
-                        // Reuse the existing cool-down/stop flow once the fixed 30-minute main block is done.
-                        playCue("Easy session complete, beginning cool down.")
-                        currentPhase = SessionPhase.COOL_DOWN
-                        phaseSecondsRunning = 0
                     } else if (currentPhase == SessionPhase.COOL_DOWN && phaseSecondsRunning >= phaseLimit) {
                         serviceScope.launch { stopSession() }
                         break
                     }
 
-                    if (currentPhase == SessionPhase.MAIN && isStructuredWorkout && currentSessionType == SESSION_TYPE_RUN_WALK) {
+                    if (currentPhase == SessionPhase.MAIN && isStructuredWorkout) {
                         val workout = activeWorkoutTemplate
                         if (workout != null && workout.totalRepeats > 0 &&
                             (isWarmupSkipped || sessionSecondsRunning >= currentWarmupDuration)
@@ -839,14 +793,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         isSimulating = isSimulationEnabled,
                         currentPhase = currentPhase,
                         phaseSecondsRemaining = when (currentPhase) {
-                            SessionPhase.MAIN -> {
-                                val mainLimit = getMainPhaseLimitSeconds()
-                                if (mainLimit == Int.MAX_VALUE) 0 else (mainLimit - phaseSecondsRunning).toInt().coerceAtLeast(0)
-                            }
+                            SessionPhase.MAIN -> 0
                             else -> {
                             val limit = when (currentPhase) {
-                                SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
-                                SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
+                                SessionPhase.WARM_UP -> currentWarmupDuration
+                                SessionPhase.COOL_DOWN -> currentCooldownDuration
                                 else -> 0
                             }
                                 (limit - phaseSecondsRunning).toInt().coerceAtLeast(0)
@@ -879,14 +830,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         lastHrAgeSeconds = hrAge,
                         currentPhase = currentPhase,
                         phaseSecondsRemaining = when (currentPhase) {
-                            SessionPhase.MAIN -> {
-                                val mainLimit = getMainPhaseLimitSeconds()
-                                if (mainLimit == Int.MAX_VALUE) 0 else (mainLimit - phaseSecondsRunning).toInt().coerceAtLeast(0)
-                            }
+                            SessionPhase.MAIN -> 0
                             else -> {
                             val limit = when (currentPhase) {
-                                SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
-                                SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
+                                SessionPhase.WARM_UP -> currentWarmupDuration
+                                SessionPhase.COOL_DOWN -> currentCooldownDuration
                                 else -> 0
                             }
                                 (limit - phaseSecondsRunning).toInt().coerceAtLeast(0)
@@ -948,9 +896,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             val remaining = formatTime(state.phaseTimeRemainingSeconds.coerceAtLeast(0).toLong())
             "Int ${state.currentRepeat}/${state.totalRepeats} • $segment • $remaining left"
-        } else if (state.currentPhase == SessionPhase.MAIN && state.sessionType == SESSION_TYPE_EASY_FIXED_DURATION) {
-            val remaining = formatTime(state.phaseSecondsRemaining.coerceAtLeast(0).toLong())
-            "Easy session • $remaining left"
         } else if (state.currentPhase == SessionPhase.MAIN) {
             "Main elapsed ${formatTime(state.phaseSecondsElapsed.coerceAtLeast(0))}"
         } else {
@@ -960,10 +905,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun resolveActiveWorkoutTemplate(): WorkoutTemplate? {
-        val planId = currentSettings.activePlanId ?: return null
-        val plan = TrainingPlanProvider.getPlanById(planId) ?: return null
-        val stage = plan.stages.firstOrNull { it.id == currentSettings.activeStageId } ?: plan.stages.firstOrNull()
-        val baseWorkout = stage?.workouts?.firstOrNull() ?: return null
+        val baseWorkout = TrainingPlanProvider.resolveBaseWorkout(
+            currentSettings.activePlanId,
+            currentSettings.activeStageId
+        ) ?: return null
         if (currentSettings.testingModeEnabled) return baseWorkout
         val run = currentSettings.aiRunIntervalSeconds
         val walk = currentSettings.aiWalkIntervalSeconds
@@ -980,26 +925,24 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun initializeStructuredWorkoutState() {
-        activeWorkoutTemplate = resolveActiveWorkoutTemplate()
-        isStructuredWorkout = activeWorkoutTemplate != null && currentSessionType == SESSION_TYPE_RUN_WALK
+        // The plan attaches automatically (#107); skipping today is the only thing that detaches it,
+        // and it never edits the plan. Warm-up/cool-down come from the workout, so an unplanned or
+        // skipped run has neither.
+        activeWorkoutTemplate = if (skipPlanForToday) null else resolveActiveWorkoutTemplate()
+        isStructuredWorkout = activeWorkoutTemplate != null
+        sessionWasStructured = isStructuredWorkout
+        currentWarmupDuration = activeWorkoutTemplate?.warmUpSeconds ?: 0
+        currentCooldownDuration = activeWorkoutTemplate?.coolDownSeconds ?: 0
         resetCurrentIntervalTransparencyState()
-        structuredWorkoutPhase = if (currentSessionType == SESSION_TYPE_RUN_WALK) {
-            StructuredWorkoutPhase.RUN
-        } else {
-            StructuredWorkoutPhase.WALK
-        }
-        phaseTimeRemainingSeconds = if (currentSessionType == SESSION_TYPE_RUN_WALK) {
-            activeWorkoutTemplate?.runDurationSeconds ?: 0
-        } else {
-            0
-        }
+        structuredWorkoutPhase = StructuredWorkoutPhase.RUN
+        phaseTimeRemainingSeconds = activeWorkoutTemplate?.runDurationSeconds ?: 0
         currentRepeat = 1
         hasStructuredWorkoutStarted = false
         resetRunIntervalRecoveryCueState()
     }
 
     private fun onStructuredWorkoutPhaseComplete(workout: WorkoutTemplate) {
-        if (currentSessionType != SESSION_TYPE_RUN_WALK) return
+        if (!isStructuredWorkout) return
 
         if (structuredWorkoutPhase == StructuredWorkoutPhase.RUN) {
             finalizeActiveRunIntervalTracking()
@@ -1052,23 +995,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // Mission: Build persistent notification and call startForeground immediately
         startForegroundService()
 
-        val explicitSessionType = intent?.getStringExtra(EXTRA_SESSION_TYPE)
-        val legacySessionType = intent?.getStringExtra(LEGACY_EXTRA_SESSION_TYPE)
-        val sessionTypeSource = when {
-            !explicitSessionType.isNullOrBlank() -> "intent:$EXTRA_SESSION_TYPE"
-            !legacySessionType.isNullOrBlank() -> "intent:$LEGACY_EXTRA_SESSION_TYPE"
-            currentSettings.lastSessionType.isNotBlank() -> "settings:lastSessionType"
-            else -> "service:currentSessionType"
+        // Only session-starting intents carry the skip choice; leave it untouched for pause/resume
+        // and other control intents so it survives for the duration of the run.
+        if (intent?.hasExtra(EXTRA_SKIP_PLAN) == true) {
+            skipPlanForToday = intent.getBooleanExtra(EXTRA_SKIP_PLAN, false)
         }
-        currentSessionType = sanitizeSessionType(
-            explicitSessionType
-                ?: legacySessionType
-                ?: currentSettings.lastSessionType
-        )
-        _hrState.update { it.copy(sessionType = currentSessionType) }
         Log.d(
             TAG,
-            "Service start action=${intent?.action ?: "null"} sessionType=$currentSessionType source=$sessionTypeSource"
+            "Service start action=${intent?.action ?: "null"} skipPlanForToday=$skipPlanForToday"
         )
 
         when (intent?.action) {
@@ -1186,7 +1120,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             currentPhase = SessionPhase.WARM_UP
             phaseSecondsRunning = 0
             isWarmupSkipped = false
-            currentWarmupDuration = currentSettings.warmUpDurationSeconds
             initializeStructuredWorkoutState()
             resetRunIntervalTracking()
             currentSessionIncludeInAiTraining = currentSettings.aiDataSharingEnabled && !currentSettings.testingModeEnabled
@@ -1199,11 +1132,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // Mission 4: Reset Location/Pace variables
             locationTracker?.resetSessionState()
 
-            // Mission: Immediate UI State Reset 
+            // Mission: Immediate UI State Reset
             _hrState.update { it.copy(
-                sessionType = currentSessionType,
                 currentPhase = SessionPhase.WARM_UP,
-                phaseSecondsRemaining = currentSettings.warmUpDurationSeconds,
+                phaseSecondsRemaining = currentWarmupDuration,
                 phaseSecondsElapsed = 0,
                 isStructuredWorkout = isStructuredWorkout,
                 structuredWorkoutPhase = structuredWorkoutPhase,
@@ -1225,15 +1157,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 activeDbSessionId = null
             )}
 
-            // Freeze the target for the whole run: the coach reads activeTargetZone every second,
-            // so recording from it keeps "In Target" and the live coaching in agreement even if
-            // the global target zone is changed mid-run.
-            activeTargetZone = currentSettings.targetHrZone
+            // The workout sets the target when a plan is attached; otherwise the global is the
+            // fallback (#107). Frozen for the whole run: the coach reads activeTargetZone every
+            // second, so recording from it keeps "In Target" and the live coaching in agreement
+            // even if the global target zone is changed mid-run.
+            activeTargetZone = activeWorkoutTemplate
+                ?.let { HrZone.ofNumberOrDefault(it.targetZone) }
+                ?: currentSettings.targetHrZone
             val session = RunnerSession(
                 startTime = System.currentTimeMillis(),
                 targetZone = activeTargetZone.number,
                 runMode = currentSettings.runMode,
-                sessionType = currentSessionType,
                 includeInAiTraining = currentSessionIncludeInAiTraining
             )
             currentSessionId = database.sessionDao().insertSession(session)
@@ -1255,9 +1189,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             phaseSecondsRunning = 0
             walkBreaksCount = 0
             isWarmupSkipped = false
-            currentWarmupDuration = currentSettings.warmUpDurationSeconds
             initializeStructuredWorkoutState()
-            
+
             Log.d(TAG, "Started DB Session: $currentSessionId (Mode: ${currentSettings.runMode})")
             } finally {
                 synchronized(sessionCreationLock) {
@@ -1295,17 +1228,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         _hrState.update { currentState ->
             val structuredProgress = buildStructuredProgressUiState()
                 currentState.copy(
-                    sessionType = currentSessionType,
                     currentPhase = currentPhase,
                 phaseSecondsRemaining = when (currentPhase) {
-                    SessionPhase.MAIN -> {
-                        val mainLimit = getMainPhaseLimitSeconds()
-                        if (mainLimit == Int.MAX_VALUE) 0 else (mainLimit - phaseSecondsRunning).toInt().coerceAtLeast(0)
-                    }
+                    SessionPhase.MAIN -> 0
                     else -> {
                         val limit = when (currentPhase) {
-                            SessionPhase.WARM_UP -> currentSettings.warmUpDurationSeconds
-                            SessionPhase.COOL_DOWN -> currentSettings.coolDownDurationSeconds
+                            SessionPhase.WARM_UP -> currentWarmupDuration
+                            SessionPhase.COOL_DOWN -> currentCooldownDuration
                             else -> 0
                         }
                         (limit - phaseSecondsRunning).toInt().coerceAtLeast(0)
@@ -1340,7 +1269,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val finalAvgPace = locationTracker?.getPaceMinPerKm() ?: 0.0
         val finalStartLocation = locationTracker?.getFirstLocation()
         val finalWalkBreaksCount = walkBreaksCount
-        val finalIsRunWalkMode = currentSettings.runWalkCoachEnabled
+        // The run followed a structured plan workout (#107): drives whether the AI coach evaluates
+        // it and is recorded as the run's run/walk flag.
+        val finalIsRunWalkMode = sessionWasStructured
         finalizeActiveRunIntervalTracking()
 
         disconnect()
@@ -1355,16 +1286,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     val session = database.sessionDao().getSessionById(sessionId)
                     if (session != null) {
                         val avgBpm = if (sessionSampleCount > 0) (sessionBpmSum / sessionSampleCount).toInt() else 0
-                        val easySummary = if (currentSessionType == SESSION_TYPE_EASY_FIXED_DURATION) {
-                            buildEasyFixedDurationSummary(
-                                sessionId = sessionId,
-                                actualDurationSeconds = finalSecondsRunning.toInt(),
-                                avgBpm = avgBpm,
-                                maxBpm = sessionMaxBpm
-                            )
-                        } else {
-                            null
-                        }
                         val updatedSession = session.copy(
                             endTime = System.currentTimeMillis(),
                             durationSeconds = finalSecondsRunning,
@@ -1381,18 +1302,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             zone5Seconds = sessionZoneTimes[5] ?: 0L,
                             noDataSeconds = sessionNoDataSeconds,
                             walkBreaksCount = finalWalkBreaksCount,
-                            isRunWalkMode = finalIsRunWalkMode,
-                            sessionType = currentSessionType,
-                            easyPlannedDurationSeconds = easySummary?.plannedDurationSeconds,
-                            easyActualDurationSeconds = easySummary?.actualDurationSeconds,
-                            easyTotalJogSeconds = easySummary?.totalJogSeconds,
-                            easyTotalWalkSeconds = easySummary?.totalWalkSeconds,
-                            easyJogPercent = easySummary?.jogPercent,
-                            easyLongestJogBoutSeconds = easySummary?.longestJogBoutSeconds,
-                            easyWalkInterruptions = easySummary?.walkInterruptions,
-                            easyHrSummary = easySummary?.hrSummary,
-                            easyTimeAboveCapSeconds = easySummary?.timeAboveEasyCapSeconds,
-                            easyDataQualitySummary = easySummary?.dataQualitySummary
+                            isRunWalkMode = finalIsRunWalkMode
                         )
                         database.sessionDao().updateSession(updatedSession)
                         Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
@@ -1418,14 +1328,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
                         val stageId = currentSettings.activeStageId
                         if (stageId != null &&
-                            currentSessionType == SESSION_TYPE_RUN_WALK &&
+                            sessionWasStructured &&
                             updatedSession.includeInAiTraining &&
                             !currentSettings.testingModeEnabled
                         ) {
                             Log.d("AiCoach", "Triggering AI evaluation after session finalization for stage: $stageId")
                             sessionRepository.evaluateAndAdjustPlan(stageId)
                         } else if (stageId != null &&
-                            currentSessionType == SESSION_TYPE_RUN_WALK &&
+                            sessionWasStructured &&
                             (!updatedSession.includeInAiTraining || currentSettings.testingModeEnabled)
                         ) {
                             Log.d(
@@ -1455,7 +1365,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
     
     fun playCue(text: String) {
-        if (currentSessionType == SESSION_TYPE_FREE_TRACK) return
         audioCueManager?.playCue(text)
     }
 
@@ -1762,11 +1671,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
         }
         _hrState.update { it.copy(
-            connectionStatus = "Disconnected", 
+            connectionStatus = "Disconnected",
             sessionStatus = SessionStatus.STOPPED,
-            sessionType = currentSessionType,
-            bpm = 0, 
-            connectedDeviceName = null, 
+            bpm = 0,
+            connectedDeviceName = null,
             discoveredServices = emptyList(),
             isStructuredWorkout = false,
             phaseSecondsElapsed = 0,
@@ -1963,7 +1871,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             avgBpm = bpmHistory.map { it.second }.average().roundToInt()
         }
         
-        val isRunWalk = currentSettings.runWalkCoachEnabled && currentSessionType == SESSION_TYPE_RUN_WALK
+        // Wider recovery hysteresis is the structured run/walk coaching identity, so it applies
+        // whenever a plan workout is driving the run (#107).
+        val isRunWalk = isStructuredWorkout
 
         val targetZone = activeTargetZone
         val targetLow = zoneLowerBpm(targetZone, currentSettings.maxHr)
@@ -2169,11 +2079,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         ) }
     }
 
-    fun setSimulationEnabled(enabled: Boolean, sessionType: String? = null) {
-        if (sessionType != null && currentSessionId == null) {
-            currentSessionType = sanitizeSessionType(sessionType)
-            _hrState.update { it.copy(sessionType = currentSessionType) }
-        }
+    fun setSimulationEnabled(enabled: Boolean) {
         if (isSimulationEnabled == enabled) {
             _hrState.update { it.copy(isSimulating = isSimulationEnabled) }
             Log.d(

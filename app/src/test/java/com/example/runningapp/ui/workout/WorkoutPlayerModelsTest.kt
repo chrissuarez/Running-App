@@ -107,6 +107,25 @@ class WorkoutPlayerModelsTest {
     }
 
     @Test
+    fun `open run does not surface a planned-interval coach cue`() {
+        // currentWalkReason defaults to "Planned"; on an open run there is no interval to follow,
+        // so the planned-transition cue must not fire (#107). Blanking the zone-coaching passthrough
+        // isolates the gate: with nothing else to say, the open run yields no cue at all.
+        val openRun = HrState(
+            sessionStatus = SessionStatus.RUNNING,
+            currentPhase = SessionPhase.MAIN,
+            isStructuredWorkout = false,
+            currentWalkReason = "Planned",
+            cooldownWithHysteresisString = ""
+        )
+        assertEquals(null, mapCoachCueUiState(openRun))
+
+        // The same reason on a structured workout still coaches the interval.
+        val structured = openRun.copy(isStructuredWorkout = true)
+        assertEquals(CUE_REASON_PLANNED, mapCoachCueUiState(structured)?.reasonTag)
+    }
+
+    @Test
     fun `mapWorkoutPlayerUiState uses elapsed timer for non-structured main sessions`() {
         val state = HrState(
             currentPhase = SessionPhase.MAIN,
@@ -119,27 +138,5 @@ class WorkoutPlayerModelsTest {
 
         assertEquals("01:33", ui.countdownText)
         assertEquals("Main", ui.intervalLabel)
-    }
-
-    @Test
-    fun `mapWorkoutPlayerUiState shows easy fixed duration copy without interval targets`() {
-        val state = HrState(
-            sessionType = "Easy Fixed Duration",
-            currentPhase = SessionPhase.MAIN,
-            isStructuredWorkout = false,
-            phaseSecondsElapsed = 900,
-            phaseSecondsRemaining = 900,
-            sessionStatus = SessionStatus.RUNNING
-        )
-
-        val ui = mapWorkoutPlayerUiState(state)
-
-        assertEquals(true, ui.isEasyFixedDurationMode)
-        assertEquals("EASY SESSION", ui.phaseLabel)
-        assertEquals("30 min easy session", ui.intervalLabel)
-        assertEquals("15:00", ui.countdownText)
-        assertEquals("self-adjust jog/walk", ui.nextLabel)
-        assertEquals("50%", ui.progressLabel)
-        assertEquals(null, ui.timeline)
     }
 }
