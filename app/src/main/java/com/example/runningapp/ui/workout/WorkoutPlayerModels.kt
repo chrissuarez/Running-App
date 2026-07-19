@@ -142,8 +142,18 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
         zoneBand = zoneBand,
         zoneLabel = "Z${targetZone.number} ${targetRangeLabel(targetZone, state.userSettings.maxHr)}",
         secondaryMetrics = secondary,
-        sensorFreshnessText = if (state.lastHrAgeSeconds > 0) "HR age ${state.lastHrAgeSeconds}s" else "HR signal active",
-        sensorStale = state.lastHrAgeSeconds >= 5,
+        // Key freshness off live bpm, not age alone: lastHrAgeSeconds stays 0 both when a packet
+        // just arrived AND when none ever has (a strapless run, or a saved strap left off), so a
+        // no-signal run would otherwise read "HR signal active" all run. bpm is 0 whenever there is
+        // no live reading — a strapless run, or a mid-run dropout (which zeros bpm) — so it cleanly
+        // marks the sensor absent. The >= 8s sensor-lost coach cue still keys off age, so it fires
+        // only for a real dropout (age grows from the last packet) and never nags a chosen no-strap run.
+        sensorFreshnessText = when {
+            state.bpm <= 0 -> "No HR signal"
+            state.lastHrAgeSeconds > 0 -> "HR age ${state.lastHrAgeSeconds}s"
+            else -> "HR signal active"
+        },
+        sensorStale = state.bpm <= 0 || state.lastHrAgeSeconds >= 5,
         timeline = timeline,
         coachCue = cue
     )
