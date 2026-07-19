@@ -1262,6 +1262,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             baselineHr = null
             lastDriftCueTime = 0L
             sessionAboveTargetSeconds = 0
+            // Must be cleared per run now that it actually accumulates: pulseSession() banks a
+            // no-data second whenever bpm is 0 (strapless run / dropout). It was previously dead
+            // (hrZoneOf only returns null for bpm <= 0, never inside the bpm > 0 branch that held
+            // the old increment), so a stale value would otherwise leak into every later run's
+            // finalized RunnerSession and corrupt its No-Data/zone summary.
+            sessionNoDataSeconds = 0L
             lastRecordedSecond = -1
             // Clear the HR-freshness clock so age is measured within this run, not from a packet in
             // a previous one. Otherwise a strapless run started after an earlier run that had HR
