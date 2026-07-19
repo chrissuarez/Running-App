@@ -274,6 +274,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var phaseTimeRemainingSeconds = 0
     @Volatile private var currentRepeat = 1
     @Volatile private var isCreatingSession = false
+    // Set (under sessionCreationLock) when STOP lands while startNewDatabaseSession()'s IO insert
+    // is still queued — currentSessionId isn't set yet, so stopSession() can't finalize the row.
+    // The creating coroutine reads this at its abort points and unwinds (deletes any inserted row,
+    // leaves currentSessionId null) instead of bringing a just-stopped run to life (Codex P2 #123).
+    private var stopDuringSessionCreation = false
     private var activeWorkoutTemplate: WorkoutTemplate? = null
     private var hasStructuredWorkoutStarted = false
     private val sessionCreationLock = Any()
@@ -1200,6 +1205,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     return@launch
                 }
                 isCreatingSession = true
+                stopDuringSessionCreation = false
+            }
+
+            // A STOP can complete on the main thread before this IO coroutine even starts. If one
+            // already did, unwind now — before touching GPS, the timer, or the DB — so a run the
+            // user just stopped isn't brought to life. Matches stopSession()'s idle reset.
+            if (synchronized(sessionCreationLock) { stopDuringSessionCreation }) {
+                Log.d(TAG, "Aborting DB session start: STOP landed before creation began")
+                resetRunIntervalTracking()
+                currentSessionIncludeInAiTraining = true
+                synchronized(sessionCreationLock) { isCreatingSession = false }
+                return@launch
             }
 
             // The mode the user selected at START (if supplied) wins over currentSettings.runMode,
@@ -1271,7 +1288,27 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 runMode = effectiveRunMode,
                 includeInAiTraining = currentSessionIncludeInAiTraining
             )
-            currentSessionId = database.sessionDao().insertSession(session)
+            val newSessionId = database.sessionDao().insertSession(session)
+            // Commit point: adopt the id only if no STOP arrived while we were creating. If one did
+            // (it set stopDuringSessionCreation but couldn't finalize a row that didn't exist yet),
+            // delete the row we just inserted and leave currentSessionId null so the run is fully
+            // gone and the next START isn't blocked. GPS may have been (re)started above, so stop it.
+            val aborted = synchronized(sessionCreationLock) {
+                if (stopDuringSessionCreation) {
+                    true
+                } else {
+                    currentSessionId = newSessionId
+                    false
+                }
+            }
+            if (aborted) {
+                Log.d(TAG, "Aborting DB session start: STOP landed during creation (id=$newSessionId)")
+                locationTracker?.stop()
+                database.sessionDao().deleteSessionById(newSessionId)
+                resetRunIntervalTracking()
+                currentSessionIncludeInAiTraining = true
+                return@launch
+            }
             _hrState.update { it.copy(activeDbSessionId = currentSessionId, activeTargetZone = activeTargetZone) }
             startSessionTimerLoop()
             sessionMaxBpm = 0
@@ -1399,8 +1436,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // The run is over; the pinned mode must not leak into a later reconnect/resume.
         activeSessionRunMode = null
 
-        // Finalize DB session
-        val sessionId = currentSessionId
+        // Finalize DB session. Read the id and the in-flight flag together so a START whose DB
+        // insert is still queued on IO (currentSessionId not yet set) is treated as "creation in
+        // flight", not "idle". Otherwise stopSession() would take the else-branch and the queued
+        // coroutine would later insert an unclosed row and leave currentSessionId set, silently
+        // blocking every later START (Codex P2 #123). When creation is in flight we hand ownership
+        // to that coroutine — it deletes the row it inserts and leaves currentSessionId null.
+        val sessionId: Long?
+        val deferToCreation: Boolean
+        synchronized(sessionCreationLock) {
+            sessionId = currentSessionId
+            deferToCreation = sessionId == null && isCreatingSession
+            if (deferToCreation) {
+                stopDuringSessionCreation = true
+            }
+        }
         if (sessionId != null) {
             serviceScope.launch(Dispatchers.IO) {
                 // MISSION: Ensure DB update is not cancelled by service destruction
@@ -1486,7 +1536,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     currentSessionIncludeInAiTraining = true
                 }
             }
-        } else {
+        } else if (!deferToCreation) {
             resetRunIntervalTracking()
             currentSessionIncludeInAiTraining = true
         }
