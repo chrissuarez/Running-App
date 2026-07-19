@@ -1053,8 +1053,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // is acquired alongside, and zone coaching joins if/when HR arrives.
                 val status = _hrState.value.sessionStatus
                 val alreadyActive = status != SessionStatus.IDLE && status != SessionStatus.STOPPED
-                if (alreadyActive) {
-                    Log.d(TAG, "ACTION_START_RUN ignored - a run is already active (status=$status)")
+                // A previous stop can still be finalizing: stopSession() publishes STOPPED
+                // synchronously but clears currentSessionId only at the end of its async finalize
+                // coroutine. Starting in that window would set RUNNING while startNewDatabaseSession()
+                // bails on the still-set id, stranding the UI in a run with no DB row or timer. Read
+                // both flags under the same lock startNewDatabaseSession() creates the session under.
+                val sessionInFlight = synchronized(sessionCreationLock) {
+                    isCreatingSession || currentSessionId != null
+                }
+                if (alreadyActive || sessionInFlight) {
+                    Log.d(TAG, "ACTION_START_RUN ignored - session busy (status=$status, inFlight=$sessionInFlight)")
                 } else {
                     // Pin the run mode BEFORE publishing RUNNING. startNewDatabaseSession() also sets
                     // it, but on an IO coroutine; a GATT STATE_CONNECTED landing in the gap would see
