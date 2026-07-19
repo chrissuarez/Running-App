@@ -274,6 +274,9 @@ class MainActivity : ComponentActivity() {
                                 settings = userSettings,
                                 connectionStatus = serviceState?.value?.connectionStatus ?: "Disconnected",
                                 scannedDevices = serviceState?.value?.scannedDevices ?: emptyList(),
+                                isRunActive = serviceState?.value?.sessionStatus.let {
+                                    it == SessionStatus.RUNNING || it == SessionStatus.PAUSED
+                                },
                                 onSetActive = { address ->
                                     scope.launch {
                                         settingsRepository.setActiveDevice(address)
@@ -1365,6 +1368,7 @@ fun ManageDevicesScreen(
     settings: UserSettings,
     connectionStatus: String,
     scannedDevices: List<BluetoothDevice>,
+    isRunActive: Boolean,
     onSetActive: (String) -> Unit,
     onRemove: (String) -> Unit,
     onConnect: (String, Boolean) -> Unit,
@@ -1396,14 +1400,24 @@ fun ManageDevicesScreen(
             }
         }
         // Scan is the only way to pair a first strap (#110 removed the record-screen list): find
-        // and tap a discovered strap here, and connecting it saves it below.
+        // and tap a discovered strap here, and connecting it saves it below. Pairing is a pre-run
+        // action — scanning drops the current strap, so it is disabled during an active run to keep
+        // it from dropping the live session (the service ignores a mid-run scan for the same reason).
         val isScanning = connectionStatus.contains("Scanning", ignoreCase = true)
         Button(
             onClick = onScan,
-            enabled = !isScanning,
+            enabled = !isScanning && !isRunActive,
             modifier = Modifier.fillMaxWidth().heightIn(min = RunningUiTokens.MinTouchTarget)
         ) {
             Text(if (isScanning) "Scanning…" else "Scan for heart-rate strap")
+        }
+        if (isRunActive) {
+            Text(
+                "Finish your run to scan for a new strap.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
         Spacer(modifier = Modifier.height(16.dp))
 
