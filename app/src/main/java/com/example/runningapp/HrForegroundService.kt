@@ -248,7 +248,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // The run mode this session actually started with (from EXTRA_RUN_MODE / effectiveRunMode). In-run
     // decisions that depend on mode — starting GPS on a (re)connect or resume — must read this, not
     // the live currentSettings.runMode, which can still hold a pre-START value during the async
-    // settings write or be changed mid-run. Null when no run is active.
+    // settings write or be changed mid-run. Null when no run is active. @Volatile because the GATT
+    // connect callback reads it from a Binder thread while START/session-setup write it.
+    @Volatile
     private var activeSessionRunMode: String? = null
     private var firstDisconnectTime = 0L
     private val RECONNECT_TIMEOUT_MS = 120_000L // 2 minutes
@@ -792,6 +794,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                                     database.sampleDao().insertSample(sample)
                                 }
                             }
+                        } else {
+                            // No live HR this second — a strapless run, or a dropout that zeroed bpm
+                            // (#110). The clock keeps running, so bank the second as "no data" rather
+                            // than dropping it: otherwise a long dropout leaves the summary's zone
+                            // breakdown and its "No Data" bar silently understating the run. (We don't
+                            // write a 0-bpm HrSample: hrZoneOf(0) is null so it adds nothing to the
+                            // zone recompute, and the detail chart scales its Y-axis to the sample
+                            // min, which a 0 would distort.)
+                            sessionNoDataSeconds += 1
                         }
                     }
                 }
@@ -1045,11 +1056,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 if (alreadyActive) {
                     Log.d(TAG, "ACTION_START_RUN ignored - a run is already active (status=$status)")
                 } else {
+                    // Pin the run mode BEFORE publishing RUNNING. startNewDatabaseSession() also sets
+                    // it, but on an IO coroutine; a GATT STATE_CONNECTED landing in the gap would see
+                    // isRunning() true with activeSessionRunMode still null and start GPS off the
+                    // stale currentSettings.runMode. Setting it here, ahead of the RUNNING write,
+                    // closes that window. The run mode comes from the START intent when present so a
+                    // just-tapped Treadmill/Outdoor choice wins over a not-yet-persisted setting.
+                    val startRunMode = intent.getStringExtra(EXTRA_RUN_MODE) ?: currentSettings.runMode
+                    activeSessionRunMode = startRunMode
                     _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING, errorMessage = null) }
                     // Creates the DB record, starts the 1 Hz tick, and (outdoor) starts location.
-                    // The run mode comes from the START intent when present so a just-tapped
-                    // Treadmill/Outdoor choice wins over a not-yet-persisted settings value.
-                    startNewDatabaseSession(intent.getStringExtra(EXTRA_RUN_MODE))
+                    startNewDatabaseSession(startRunMode)
                     // Acquire the strap as a sensor unless we already have it or HR is simulated.
                     if (!isSimulationEnabled && _hrState.value.connectionStatus != "Connected") {
                         val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
