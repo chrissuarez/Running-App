@@ -1068,6 +1068,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 }
                 if (alreadyActive || sessionInFlight) {
                     Log.d(TAG, "ACTION_START_RUN ignored - session busy (status=$status, inFlight=$sessionInFlight)")
+                    // onStartCommand() re-promoted the service to foreground before dispatch. When
+                    // we ignore only because a previous run is still finalizing (currentSessionId
+                    // not yet cleared) and no run is live, that promotion would otherwise linger as
+                    // an idle notification + wake lock once finalize completes, with START appearing
+                    // to do nothing. Demote it. A genuinely active run keeps the foreground (Codex
+                    // P2 #123).
+                    if (!alreadyActive) {
+                        stopForegroundService()
+                    }
                 } else {
                     // Pin the run mode BEFORE publishing RUNNING. startNewDatabaseSession() also sets
                     // it, but on an IO coroutine; a GATT STATE_CONNECTED landing in the gap would see
@@ -1198,24 +1207,29 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun startNewDatabaseSession(runModeOverride: String? = null) {
-        serviceScope.launch(Dispatchers.IO) {
-            synchronized(sessionCreationLock) {
-                if (isCreatingSession || currentSessionId != null) {
-                    Log.d(TAG, "Skipping DB session start: creating=$isCreatingSession sessionId=$currentSessionId")
-                    return@launch
-                }
-                isCreatingSession = true
-                stopDuringSessionCreation = false
+        // Reserve the creation synchronously on the caller's thread. Every caller reaches here from
+        // onStartCommand (the service main thread), and STOP is dispatched on that same thread, so
+        // setting isCreatingSession here guarantees a STOP tapped right after START observes it and
+        // can hand finalization off to this coroutine. If the reservation lived inside the launched
+        // IO coroutine, a STOP that ran before the coroutine was scheduled would see the flag still
+        // false, skip the handoff, and let this coroutine strand a just-stopped run (Codex P2 #123).
+        synchronized(sessionCreationLock) {
+            if (isCreatingSession || currentSessionId != null) {
+                Log.d(TAG, "Skipping DB session start: creating=$isCreatingSession sessionId=$currentSessionId")
+                return
             }
-
-            // A STOP can complete on the main thread before this IO coroutine even starts. If one
-            // already did, unwind now — before touching GPS, the timer, or the DB — so a run the
-            // user just stopped isn't brought to life. Matches stopSession()'s idle reset.
+            isCreatingSession = true
+            stopDuringSessionCreation = false
+        }
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+            // A STOP may already have completed on the main thread before this IO coroutine was
+            // scheduled. If so, unwind before touching GPS, the timer, or the DB — the run is
+            // already stopped. Matches stopSession()'s idle reset.
             if (synchronized(sessionCreationLock) { stopDuringSessionCreation }) {
                 Log.d(TAG, "Aborting DB session start: STOP landed before creation began")
                 resetRunIntervalTracking()
                 currentSessionIncludeInAiTraining = true
-                synchronized(sessionCreationLock) { isCreatingSession = false }
                 return@launch
             }
 
@@ -1227,7 +1241,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // start GPS off a stale currentSettings.runMode (see the connect/resume callbacks).
             activeSessionRunMode = effectiveRunMode
 
-            try {
             // Mission: Reset Phase Engine for a fresh session
             currentPhase = SessionPhase.WARM_UP
             phaseSecondsRunning = 0
