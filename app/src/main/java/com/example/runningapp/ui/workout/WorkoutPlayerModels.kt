@@ -2,6 +2,7 @@ package com.example.runningapp.ui.workout
 
 import com.example.runningapp.HrState
 import com.example.runningapp.SessionPhase
+import com.example.runningapp.SessionStatus
 import com.example.runningapp.StructuredWorkoutPhase
 import com.example.runningapp.ZoneBand
 import com.example.runningapp.hrZoneOf
@@ -111,11 +112,15 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
     // is changed mid-run.
     val targetZone = state.activeTargetZone ?: state.userSettings.targetHrZone
     val hasSignal = state.bpm > 0 || state.avgBpm > 0
-    // Trust avgBpm only while a coach is actually banding off it — then the screen agrees with the
-    // coach's smoothed reading. With coaching off there is no coach: avgBpm is either 0 (never
-    // filled) or frozen at the last sample before the toggle, so show the live bpm instead. This
-    // keeps a strapless-of-coaching runner on a live zone/colour rather than a dash or a stale zone.
-    val displayBpm = if (state.userSettings.coachingEnabled && state.avgBpm > 0) state.avgBpm else state.bpm
+    // Trust avgBpm only while the coach is actively filling its window this packet — then the
+    // screen agrees with the coach's smoothed reading. The coach adds a sample only when running,
+    // in a coached phase (MAIN/WARM_UP), with coaching on; anywhere else — coaching off, cool-down,
+    // paused — avgBpm is stale (0, or frozen at the last main-run value) while bpm keeps changing,
+    // so show the live bpm. That gives a live zone/colour rather than a dash or a frozen zone.
+    val coachSampling = state.sessionStatus == SessionStatus.RUNNING &&
+        (state.currentPhase == SessionPhase.MAIN || state.currentPhase == SessionPhase.WARM_UP) &&
+        state.userSettings.coachingEnabled
+    val displayBpm = if (coachSampling && state.avgBpm > 0) state.avgBpm else state.bpm
     val zoneBand = if (hasSignal) zoneBandOf(displayBpm, state.userSettings.maxHr, targetZone) else ZoneBand.UNKNOWN
     // The screen names the zone you are actually in (not the target) and the action to close the
     // gap to target; band, not zone, picks the action so words and colour agree. See #109.

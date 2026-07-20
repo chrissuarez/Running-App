@@ -87,6 +87,26 @@ class WorkoutPlayerModelsTest {
     }
 
     @Test
+    fun `cool-down and pause track live bpm rather than a frozen coaching average`() {
+        // Coaching on, but the coach has stopped filling its window: cool-down (processCoachingRules
+        // returns before adding) and pause (it isn't called at all) freeze avgBpm at the last
+        // main-run value (175, well above) while bpm keeps arriving (120, recovered into Z2). The
+        // screen must follow the live 120, not the frozen 175.
+        val coolDown = HrState(
+            sessionStatus = SessionStatus.RUNNING,
+            currentPhase = SessionPhase.COOL_DOWN,
+            bpm = 120,
+            avgBpm = 175,
+            userSettings = UserSettings(maxHr = 190, targetZone = 2, coachingEnabled = true)
+        )
+        assertEquals("Moderate — on target", mapWorkoutPlayerUiState(coolDown).zoneStatusText)
+        assertEquals(ZoneBand.IN, mapWorkoutPlayerUiState(coolDown).zoneBand)
+
+        val paused = coolDown.copy(currentPhase = SessionPhase.MAIN, sessionStatus = SessionStatus.PAUSED)
+        assertEquals("Moderate — on target", mapWorkoutPlayerUiState(paused).zoneStatusText)
+    }
+
+    @Test
     fun `coaching on keeps using the smoothed average to agree with the coach`() {
         // With coaching on, the screen bands off avgBpm — the same reading the coach uses — even if
         // the instantaneous bpm has momentarily diverged. avgBpm 140 is Tempo/ABOVE a Z2 target.
