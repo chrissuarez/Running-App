@@ -1315,11 +1315,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // Mission 4: Reset Location/Pace variables
             locationTracker?.resetSessionState()
 
-            // Outdoor distance/pace must run whether or not a strap ever connects (#110), so
-            // location starts with the run itself rather than waiting for a sensor to connect.
-            if (effectiveRunMode == "outdoor") {
-                locationTracker?.restartIfNeeded("run_start", effectiveRunMode, isSimulationEnabled)
-            }
+            // GPS deliberately does NOT start here: it starts after the commit point below has
+            // adopted the session id. onRawFix drops TrackPoints while currentSessionId is null,
+            // and fused location can deliver a cached first fix immediately — starting earlier
+            // clipped the beginning of the route off the map (Codex P2 #123).
 
             // Mission: Immediate UI State Reset
             _hrState.update { it.copy(
@@ -1363,7 +1362,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // Commit point: adopt the id only if no STOP arrived while we were creating. If one did
             // (it set stopDuringSessionCreation but couldn't finalize a row that didn't exist yet),
             // delete the row we just inserted and leave currentSessionId null so the run is fully
-            // gone and the next START isn't blocked. GPS may have been (re)started above, so stop it.
+            // gone and the next START isn't blocked. GPS hasn't started yet (it starts below, after
+            // this commit), so there's nothing location-side to unwind.
             val aborted = synchronized(sessionCreationLock) {
                 if (stopDuringSessionCreation) {
                     true
@@ -1374,7 +1374,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             if (aborted) {
                 Log.d(TAG, "Aborting DB session start: STOP landed during creation (id=$newSessionId)")
-                locationTracker?.stop()
                 // stopSession() cleared the pin, but this coroutine re-set it above after that
                 // clear; the run is dead, so restore the "null when no run is active" invariant.
                 activeSessionRunMode = null
@@ -1382,6 +1381,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 resetRunIntervalTracking()
                 currentSessionIncludeInAiTraining = true
                 return@launch
+            }
+
+            // Outdoor distance/pace must run whether or not a strap ever connects (#110), so
+            // location starts with the run itself — now that the session id is committed, every
+            // fix (including an immediate cached one) lands in a TrackPoint.
+            if (effectiveRunMode == "outdoor") {
+                locationTracker?.restartIfNeeded("run_start", effectiveRunMode, isSimulationEnabled)
             }
             _hrState.update { it.copy(activeDbSessionId = currentSessionId, activeTargetZone = activeTargetZone) }
             sessionMaxBpm = 0
@@ -2325,15 +2331,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             device.name ?: "Unknown"
                         } else "Unknown"
                         val deviceAddress = device.address
-                        // Promote to active only when the user chose THIS strap (or nothing else
-                        // is active / it already is the active one). A background connect of a
-                        // non-active strap must not steal the active slot the user just assigned
-                        // to a different device, so the pending promotion is honoured — and
-                        // consumed — only on an exact address match.
-                        val makeActive = deviceAddress == promoteOnVerifyAddress ||
-                            currentSettings.activeDeviceAddress == null ||
-                            currentSettings.activeDeviceAddress == deviceAddress
-                        if (deviceAddress == promoteOnVerifyAddress) promoteOnVerifyAddress = null
+                        // Promote to active ONLY the strap an explicit Connect tap chose. No
+                        // fallback terms: currentSettings is an async DataStore snapshot that can
+                        // lag the user's latest selection, so "already active" / "nothing active"
+                        // read from it could re-promote a strap the user just replaced or forgot
+                        // (Codex P2 #123). Neither fallback is needed — saveDevice(makeActive =
+                        // false) leaves the active preference untouched for an already-active
+                        // strap, and every first-pairing path is an explicit tap that sets
+                        // promoteOnVerifyAddress.
+                        val makeActive = deviceAddress == promoteOnVerifyAddress
+                        if (makeActive) promoteOnVerifyAddress = null
                         serviceScope.launch {
                             settingsRepository.saveDevice(deviceAddress, deviceName, makeActive)
                         }
