@@ -2021,7 +2021,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // active can no longer steal the active slot back (Codex P2 #123).
         promoteOnVerifyAddress = if (promoteToActive) address else null
         targetDeviceAddress = address
-        val device = bluetoothAdapter?.getRemoteDevice(address) ?: return
+        val device = bluetoothAdapter?.getRemoteDevice(address)
+        if (device == null) {
+            // No adapter (Bluetooth unavailable): same dead-end as the missing-permission
+            // return in the device overload — nothing downstream will demote the foreground.
+            _hrState.update { it.copy(connectionStatus = "Bluetooth Off/Unavailable") }
+            demoteForegroundIfSensorOnly("no bluetooth adapter")
+            return
+        }
         connectToDevice(device)
     }
 
@@ -2079,7 +2086,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var promoteOnVerifyAddress: String? = null
 
     private fun connectToDevice(device: BluetoothDevice) {
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return
+        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            // A silent return here dead-ends the acquisition: no retry, no scan timeout, nothing
+            // that would ever demote the foreground this connect was promoted for — leaving an
+            // idle notification + wake lock (Codex P2 #123). Say why, and drop the foreground
+            // unless a run owns it.
+            _hrState.update { it.copy(connectionStatus = "Permission Missing") }
+            demoteForegroundIfSensorOnly("missing BLUETOOTH_CONNECT")
+            return
+        }
 
         isReconnecting = false
         val deviceName = if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {

@@ -582,7 +582,15 @@ fun MainScreen(
     val autoConnectContext = LocalContext.current
     val activeStrapAddress = userSettings.activeDeviceAddress
     LaunchedEffect(hrService, activeStrapAddress, isSessionActive, state.isSimulating) {
-        if (!isSessionActive && !state.isSimulating && hrService != null &&
+        // Checked at fire time, not as a key: without BLUETOOTH_CONNECT the service's connect
+        // path dead-ends immediately, so promoting it to foreground here would strand an idle
+        // notification + wake lock just from opening the record screen (Codex P2 #123). The
+        // user can still connect explicitly — those taps run the permission prompt flow.
+        val canConnect = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            ContextCompat.checkSelfPermission(
+                autoConnectContext, Manifest.permission.BLUETOOTH_CONNECT
+            ) == PackageManager.PERMISSION_GRANTED
+        if (canConnect && !isSessionActive && !state.isSimulating && hrService != null &&
             activeStrapAddress != null && state.connectionStatus == "Disconnected"
         ) {
             val intent = Intent(autoConnectContext, HrForegroundService::class.java).apply {
