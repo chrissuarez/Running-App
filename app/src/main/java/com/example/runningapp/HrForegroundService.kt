@@ -469,6 +469,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             finalizeActiveRunIntervalTracking()
         }
         resetCurrentIntervalTransparencyState()
+        // Each run interval starts the cue ladder from scratch. The walk-step reset otherwise rides
+        // on onSample(awake = false), so a BLE dropout spanning the whole walk lands no sample and
+        // the next run step would reuse the previous interval's outSince/lastCueTime and fire an
+        // immediate catch-up or return cue. This boundary is timer-driven, not packet-driven, so it
+        // resets regardless of dropouts (Codex #124).
+        cueLadder.reset()
+        currentZone = ZoneBand.UNKNOWN
         activeRunIntervalTracker = RunIntervalTracker(
             intervalIndex = intervalIndex,
             plannedDurationSeconds = plannedDurationSeconds,
