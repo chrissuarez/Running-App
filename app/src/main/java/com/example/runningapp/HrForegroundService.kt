@@ -2302,13 +2302,30 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return
 
             if (newState == BluetoothProfile.STATE_CONNECTED) {
-                reconnectDelay = 3000L 
+                val deviceAddress = gatt?.device?.address ?: ""
+                // A delayed connect from a GATT that forgetDevice()/startScanning()/a superseding
+                // connect already abandoned must not publish "Connected", discover services, or
+                // subscribe — it would keep feeding HR from a strap the user just forgot or
+                // replaced (Codex P2 #123). Those paths clear or repoint targetDeviceAddress
+                // before closing the old GATT, so a mismatch here is always stale: close it and
+                // bail before touching any state. Every legitimate connect sets the target first.
+                if (deviceAddress != targetDeviceAddress) {
+                    Log.d(TAG, "Ignoring stale STATE_CONNECTED for $deviceAddress (target=$targetDeviceAddress)")
+                    serviceScope.launch(Dispatchers.IO) {
+                        synchronized(gattConnectLock) {
+                            gatt?.close()
+                            if (bluetoothGatt == gatt) bluetoothGatt = null
+                        }
+                    }
+                    return
+                }
+
+                reconnectDelay = 3000L
                 isReconnecting = false
                 reconnectAttemptCount = 0
                 firstDisconnectTime = 0
-                
+
                 val deviceName = gatt?.device?.name ?: "Unknown"
-                val deviceAddress = gatt?.device?.address ?: ""
                 
                 // The strap is a sensor, not the run's gate (#110): connecting only reports the
                 // sensor, it never starts a run or opens a DB record. START owns that now. A run
