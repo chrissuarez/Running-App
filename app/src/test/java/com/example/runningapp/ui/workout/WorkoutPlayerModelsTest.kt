@@ -53,6 +53,23 @@ class WorkoutPlayerModelsTest {
     }
 
     @Test
+    fun `zone status falls back to live bpm when the coach has not averaged`() {
+        // Coaching off leaves avgBpm at 0 (the coach never fills its window), but a connected strap
+        // still reports live bpm. The runner must still see a live zone, not a bare dash. 140 bpm is
+        // Tempo (Z3) and ABOVE a Z2 target.
+        val state = HrState(
+            sessionStatus = SessionStatus.RUNNING,
+            currentPhase = SessionPhase.MAIN,
+            bpm = 140,
+            avgBpm = 0,
+            userSettings = UserSettings(maxHr = 190, targetZone = 2)
+        )
+        val ui = mapWorkoutPlayerUiState(state)
+        assertEquals("Tempo — ease off", ui.zoneStatusText)
+        assertEquals(ZoneBand.ABOVE, ui.zoneBand)
+    }
+
+    @Test
     fun `formatStopwatch handles negative and regular values`() {
         assertEquals("00:00", formatStopwatch(-4))
         assertEquals("00:09", formatStopwatch(9))
