@@ -250,6 +250,7 @@ class MainActivity : ComponentActivity() {
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
+                                        putExtra(HrForegroundService.EXTRA_MAKE_ACTIVE, true)
                                         putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
@@ -338,6 +339,7 @@ class MainActivity : ComponentActivity() {
                                     val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_START_FOREGROUND
                                         putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, address)
+                                        putExtra(HrForegroundService.EXTRA_MAKE_ACTIVE, true)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                     navigateTo(Routes.MAIN)
@@ -586,6 +588,8 @@ fun MainScreen(
             val intent = Intent(autoConnectContext, HrForegroundService::class.java).apply {
                 action = HrForegroundService.ACTION_START_FOREGROUND
                 putExtra(HrForegroundService.EXTRA_DEVICE_ADDRESS, activeStrapAddress)
+                // No EXTRA_MAKE_ACTIVE: this is a background attempt, not a user choice — its
+                // verify must not out-promote a strap the user activates while it's in flight.
             }
             ContextCompat.startForegroundService(autoConnectContext, intent)
         }
