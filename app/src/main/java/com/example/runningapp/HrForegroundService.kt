@@ -128,7 +128,13 @@ data class HrState(
     val walkBreaksCount: Int = 0,
 
     // Post-run "How did that feel?" sheet: DB row id for the session the UI should prompt about
-    val activeDbSessionId: Long? = null
+    val activeDbSessionId: Long? = null,
+
+    // The live run's pinned mode ("outdoor"/"treadmill"), published with RUNNING and cleared at
+    // stop. Active-run UI must gate distance/map on this, not userSettings.runMode: the settings
+    // write from a just-tapped mode toggle is async, so an outdoor run started immediately after
+    // the tap would otherwise render as a treadmill run while GPS records underneath.
+    val activeRunMode: String? = null
 )
 
 class HrForegroundService : Service(), TextToSpeech.OnInitListener {
@@ -1124,7 +1130,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     // just-tapped Treadmill/Outdoor choice wins over a not-yet-persisted setting.
                     val startRunMode = intent.getStringExtra(EXTRA_RUN_MODE) ?: currentSettings.runMode
                     activeSessionRunMode = startRunMode
-                    _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING, errorMessage = null) }
+                    // activeRunMode rides along so the live UI gates distance/map on the mode this
+                    // run actually started with, not the possibly-lagging settings value.
+                    _hrState.update { it.copy(
+                        sessionStatus = SessionStatus.RUNNING,
+                        errorMessage = null,
+                        activeRunMode = startRunMode
+                    ) }
                     // Creates the DB record, starts the 1 Hz tick, and (outdoor) starts location.
                     startNewDatabaseSession(startRunMode)
                     // Acquire the strap as a sensor unless we already have it, HR is simulated, or a
@@ -1556,6 +1568,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         _hrState.update { it.copy(
             sessionStatus = SessionStatus.STOPPING,
             activeTargetZone = null,
+            activeRunMode = null,
             // Clear the finished run's id from the UI now. It used to linger until the NEXT run's
             // creation coroutine reset it, so in the gap after a quick re-START the UI was RUNNING
             // with the PREVIOUS run's id — and a Force Stop there attached "How did that feel?"
@@ -2728,7 +2741,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             if (currentSessionId == null && (status == SessionStatus.IDLE || status == SessionStatus.STOPPED)) {
                 startNewDatabaseSession()
-                _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
+                _hrState.update { it.copy(
+                    sessionStatus = SessionStatus.RUNNING,
+                    activeRunMode = currentSettings.runMode
+                ) }
             } else if (status == SessionStatus.RUNNING) {
                 startSessionTimerLoop()
             }
