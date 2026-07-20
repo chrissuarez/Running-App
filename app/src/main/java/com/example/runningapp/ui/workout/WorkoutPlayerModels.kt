@@ -118,7 +118,10 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
     val secondary = mutableListOf(
         "Elapsed" to formatStopwatch(state.secondsRunning)
     )
-    if (state.userSettings.runMode == "outdoor") {
+    // The run's pinned mode, not the live setting: the settings write from a just-tapped mode
+    // toggle is async, and an outdoor run started right after the tap must still show
+    // distance/pace while GPS records.
+    if ((state.activeRunMode ?: state.userSettings.runMode) == "outdoor") {
         secondary += "Distance" to formatDistanceKm(state.distanceKm)
         if (state.paceMinPerKm > 0) {
             secondary += "Pace" to formatPace(state.paceMinPerKm)

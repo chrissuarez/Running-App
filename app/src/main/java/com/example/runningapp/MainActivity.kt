@@ -1272,7 +1272,9 @@ fun WorkoutView(state: HrState, sessionRepository: SessionRepository, onOpenFull
                 }
             }
 
-            if (state.userSettings.runMode == "outdoor") {
+            // The run's pinned mode, not the live setting (see HrState.activeRunMode): an outdoor
+            // run started right after the mode toggle must render its map from the first second.
+            if ((state.activeRunMode ?: state.userSettings.runMode) == "outdoor") {
                 val mapSessionId = state.activeDbSessionId
                 if (mapSessionId != null) {
                     Spacer(modifier = Modifier.height(12.dp))
