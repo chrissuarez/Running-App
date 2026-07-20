@@ -111,10 +111,11 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
     // is changed mid-run.
     val targetZone = state.activeTargetZone ?: state.userSettings.targetHrZone
     val hasSignal = state.bpm > 0 || state.avgBpm > 0
-    // avgBpm is 0 whenever audio coaching is off — the coach never fills its rolling window — so
-    // fall back to the live bpm. A strapped runner with coaching disabled still gets a live zone
-    // and colour instead of a bare dash; when coaching is on, avgBpm wins and nothing changes.
-    val displayBpm = if (state.avgBpm > 0) state.avgBpm else state.bpm
+    // Trust avgBpm only while a coach is actually banding off it — then the screen agrees with the
+    // coach's smoothed reading. With coaching off there is no coach: avgBpm is either 0 (never
+    // filled) or frozen at the last sample before the toggle, so show the live bpm instead. This
+    // keeps a strapless-of-coaching runner on a live zone/colour rather than a dash or a stale zone.
+    val displayBpm = if (state.userSettings.coachingEnabled && state.avgBpm > 0) state.avgBpm else state.bpm
     val zoneBand = if (hasSignal) zoneBandOf(displayBpm, state.userSettings.maxHr, targetZone) else ZoneBand.UNKNOWN
     // The screen names the zone you are actually in (not the target) and the action to close the
     // gap to target; band, not zone, picks the action so words and colour agree. See #109.

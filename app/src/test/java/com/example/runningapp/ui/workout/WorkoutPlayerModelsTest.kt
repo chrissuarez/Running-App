@@ -62,7 +62,40 @@ class WorkoutPlayerModelsTest {
             currentPhase = SessionPhase.MAIN,
             bpm = 140,
             avgBpm = 0,
-            userSettings = UserSettings(maxHr = 190, targetZone = 2)
+            userSettings = UserSettings(maxHr = 190, targetZone = 2, coachingEnabled = false)
+        )
+        val ui = mapWorkoutPlayerUiState(state)
+        assertEquals("Tempo — ease off", ui.zoneStatusText)
+        assertEquals(ZoneBand.ABOVE, ui.zoneBand)
+    }
+
+    @Test
+    fun `coaching off tracks live bpm even when a stale average lingers`() {
+        // Coaching toggled off mid-run: avgBpm freezes at the last coached sample (175, well above)
+        // while fresh bpm packets keep arriving (120, recovered into Z2). Without the coaching gate
+        // the screen would freeze at the pre-toggle zone; it must track the live 120.
+        val state = HrState(
+            sessionStatus = SessionStatus.RUNNING,
+            currentPhase = SessionPhase.MAIN,
+            bpm = 120,
+            avgBpm = 175,
+            userSettings = UserSettings(maxHr = 190, targetZone = 2, coachingEnabled = false)
+        )
+        val ui = mapWorkoutPlayerUiState(state)
+        assertEquals("Moderate — on target", ui.zoneStatusText)
+        assertEquals(ZoneBand.IN, ui.zoneBand)
+    }
+
+    @Test
+    fun `coaching on keeps using the smoothed average to agree with the coach`() {
+        // With coaching on, the screen bands off avgBpm — the same reading the coach uses — even if
+        // the instantaneous bpm has momentarily diverged. avgBpm 140 is Tempo/ABOVE a Z2 target.
+        val state = HrState(
+            sessionStatus = SessionStatus.RUNNING,
+            currentPhase = SessionPhase.MAIN,
+            bpm = 120,
+            avgBpm = 140,
+            userSettings = UserSettings(maxHr = 190, targetZone = 2, coachingEnabled = true)
         )
         val ui = mapWorkoutPlayerUiState(state)
         assertEquals("Tempo — ease off", ui.zoneStatusText)
