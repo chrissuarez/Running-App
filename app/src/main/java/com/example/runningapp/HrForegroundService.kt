@@ -1383,57 +1383,82 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 return@launch
             }
 
-            // Outdoor distance/pace must run whether or not a strap ever connects (#110), so
-            // location starts with the run itself — now that the session id is committed, every
-            // fix (including an immediate cached one) lands in a TrackPoint.
-            if (effectiveRunMode == "outdoor") {
-                locationTracker?.restartIfNeeded("run_start", effectiveRunMode, isSimulationEnabled)
-            }
-            _hrState.update { it.copy(activeDbSessionId = currentSessionId, activeTargetZone = activeTargetZone) }
-            sessionMaxBpm = 0
-            sessionBpmSum = 0
-            sessionSampleCount = 0
-            baselineHr = null
-            lastDriftCueTime = 0L
-            sessionAboveTargetSeconds = 0
-            // Must be cleared per run now that it actually accumulates: pulseSession() banks a
-            // no-data second whenever bpm is 0 (strapless run / dropout). It was previously dead
-            // (hrZoneOf only returns null for bpm <= 0, never inside the bpm > 0 branch that held
-            // the old increment), so a stale value would otherwise leak into every later run's
-            // finalized RunnerSession and corrupt its No-Data/zone summary.
-            sessionNoDataSeconds = 0L
-            lastRecordedSecond = -1
-            // Clear the HR-freshness clock so age is measured within this run, not from a packet in
-            // a previous one. Otherwise a strapless run started after an earlier run that had HR
-            // would inherit a stale timestamp, read as a huge lastHrAgeSeconds, and trip the >= 8s
-            // sensor-lost safety cue — nagging a run the user deliberately started without a strap
-            // (#110). A real packet re-sets this the moment HR arrives.
-            lastHrTimestamp = 0L
-            // Clear the live reading and smoothing history too, in lock-step with the freshness
-            // clock: a pre-run connected strap can leave bpm/avgBpm holding an old packet, and with
-            // lastHrTimestamp reset that stale value would look fresh (age 0) and keep being banked
-            // by pulseSession() if no in-run packet ever arrives (silent stall / non-GATT drop). A
-            // real packet repopulates both within ~1s.
-            synchronized(bpmHistory) { bpmHistory.clear() }
-            _hrState.update { it.copy(bpm = 0, avgBpm = 0) }
-            
-            // Mission 3: Reset Zone Timers
-            sessionZoneTimes.keys.forEach { sessionZoneTimes[it] = 0L }
-            
-            // Mission: Session Phases
-            currentPhase = SessionPhase.WARM_UP
-            phaseSecondsRunning = 0
-            walkBreaksCount = 0
-            isWarmupSkipped = false
-            initializeStructuredWorkoutState()
+            // Scaffold the live run atomically with respect to STOP. stopSession() raises
+            // stopDuringSessionCreation under this lock before any of its teardown, so exactly
+            // one of two orderings exists: the flag is visible here and the whole scaffold is
+            // skipped (the stop finalized the just-committed row and there is nothing to tear
+            // down), or the scaffold completes first and the stop's teardown — timer removal,
+            // GPS stop, UI id clear — runs after it and wins. A STOP in the commit-to-scaffold
+            // window can no longer leave GPS or the timer running for a finalized run (Codex
+            // P2 #123). Everything inside is in-memory or a non-blocking post/request.
+            val stoppedAfterCommit = synchronized(sessionCreationLock) {
+                if (stopDuringSessionCreation) {
+                    true
+                } else {
+                    // Outdoor distance/pace must run whether or not a strap ever connects (#110),
+                    // so location starts with the run itself — now that the session id is
+                    // committed, every fix (including an immediate cached one) lands in a
+                    // TrackPoint.
+                    if (effectiveRunMode == "outdoor") {
+                        locationTracker?.restartIfNeeded("run_start", effectiveRunMode, isSimulationEnabled)
+                    }
+                    _hrState.update { it.copy(activeDbSessionId = currentSessionId, activeTargetZone = activeTargetZone) }
+                    sessionMaxBpm = 0
+                    sessionBpmSum = 0
+                    sessionSampleCount = 0
+                    baselineHr = null
+                    lastDriftCueTime = 0L
+                    sessionAboveTargetSeconds = 0
+                    // Must be cleared per run now that it actually accumulates: pulseSession()
+                    // banks a no-data second whenever bpm is 0 (strapless run / dropout). It was
+                    // previously dead (hrZoneOf only returns null for bpm <= 0, never inside the
+                    // bpm > 0 branch that held the old increment), so a stale value would
+                    // otherwise leak into every later run's finalized RunnerSession and corrupt
+                    // its No-Data/zone summary.
+                    sessionNoDataSeconds = 0L
+                    lastRecordedSecond = -1
+                    // Clear the HR-freshness clock so age is measured within this run, not from a
+                    // packet in a previous one. Otherwise a strapless run started after an earlier
+                    // run that had HR would inherit a stale timestamp, read as a huge
+                    // lastHrAgeSeconds, and trip the >= 8s sensor-lost safety cue — nagging a run
+                    // the user deliberately started without a strap (#110). A real packet re-sets
+                    // this the moment HR arrives.
+                    lastHrTimestamp = 0L
+                    // Clear the live reading and smoothing history too, in lock-step with the
+                    // freshness clock: a pre-run connected strap can leave bpm/avgBpm holding an
+                    // old packet, and with lastHrTimestamp reset that stale value would look fresh
+                    // (age 0) and keep being banked by pulseSession() if no in-run packet ever
+                    // arrives (silent stall / non-GATT drop). A real packet repopulates both
+                    // within ~1s.
+                    synchronized(bpmHistory) { bpmHistory.clear() }
+                    _hrState.update { it.copy(bpm = 0, avgBpm = 0) }
 
-            // Start the 1 Hz tick only after EVERY per-session reset above. The timer runs on its
-            // own HandlerThread while this block runs on IO; posting the runnable earlier relied on
-            // the ~2s grace tick to outrun the remaining resets — a timing bet, not an ordering
-            // guarantee (an IO stall mid-block would let the first accounting tick read half-reset
-            // counters). Handler.post() also publishes every write made before it to the timer
-            // thread, which the tail resets otherwise lacked.
-            startSessionTimerLoop()
+                    // Mission 3: Reset Zone Timers
+                    sessionZoneTimes.keys.forEach { sessionZoneTimes[it] = 0L }
+
+                    // Mission: Session Phases
+                    currentPhase = SessionPhase.WARM_UP
+                    phaseSecondsRunning = 0
+                    walkBreaksCount = 0
+                    isWarmupSkipped = false
+                    initializeStructuredWorkoutState()
+
+                    // Start the 1 Hz tick only after EVERY per-session reset above. The timer runs
+                    // on its own HandlerThread while this block runs on IO; posting the runnable
+                    // earlier relied on the ~2s grace tick to outrun the remaining resets — a
+                    // timing bet, not an ordering guarantee (an IO stall mid-block would let the
+                    // first accounting tick read half-reset counters). Handler.post() also
+                    // publishes every write made before it to the timer thread, which the tail
+                    // resets otherwise lacked.
+                    startSessionTimerLoop()
+                    false
+                }
+            }
+            if (stoppedAfterCommit) {
+                // The stop owned finalization of the committed row; nothing was scaffolded here.
+                Log.d(TAG, "Skipping run scaffold: STOP landed after session commit (id=$newSessionId)")
+                return@launch
+            }
 
             Log.d(TAG, "Started DB Session: $currentSessionId (Mode: $effectiveRunMode)")
             } finally {
@@ -1514,6 +1539,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             Log.d(TAG, "stopSession: no live run (status=$entryStatus) - kill switch only")
             stopForegroundService()
             return
+        }
+        // Raise the stop flag FIRST, before any teardown below. The creation coroutine may be
+        // past its commit point (currentSessionId set) but not yet scaffolded the live run; its
+        // scaffold — GPS start, UI id, timer post — runs under this same lock and checks this
+        // flag. Setting it here guarantees either the scaffold sees it and skips, or the
+        // scaffold completed before this stop proceeds — whose teardown (timer removal, GPS
+        // stop, UI id clear) then runs after it and wins. Without this, a STOP landing in the
+        // commit-to-scaffold window left GPS registered until service destruction (Codex P2
+        // #123). The pre-commit case still also sets it below when deferring finalization.
+        synchronized(sessionCreationLock) {
+            if (isCreatingSession) stopDuringSessionCreation = true
         }
         _hrState.update { it.copy(
             sessionStatus = SessionStatus.STOPPING,
