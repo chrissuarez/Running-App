@@ -1809,11 +1809,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      */
     private fun demoteForegroundIfSensorOnly(reason: String) {
         val status = _hrState.value.sessionStatus
-        val runActive = status == SessionStatus.RUNNING || status == SessionStatus.PAUSED
-        val sessionInFlight = synchronized(sessionCreationLock) {
-            isCreatingSession || currentSessionId != null
-        }
-        if (runActive || sessionInFlight) return
+        val runActive = status == SessionStatus.RUNNING || status == SessionStatus.PAUSED ||
+            status == SessionStatus.STOPPING
+        // Deliberately NOT currentSessionId: after Stop it stays set (status already STOPPED)
+        // until the finalize coroutine drains its writes, and nothing re-checks once it clears —
+        // treating that window as "in flight" left a strap that auto-connected right after Stop
+        // holding an idle notification and wake lock forever (Codex P2 #123). Finalize runs on
+        // detached scopes and needs no foreground; only a live run or a START reservation does.
+        val creatingSession = synchronized(sessionCreationLock) { isCreatingSession }
+        if (runActive || creatingSession) return
         Log.d(TAG, "Demoting foreground ($reason) - sensor only, no run")
         demoteForeground()
     }
@@ -2040,6 +2044,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * a strap mid-run behaves like a plain dropout (#110: a sensor going away never ends a run).
      */
     fun forgetDevice(address: String) {
+        // Before the target check: a pending promotion must never outlive the user forgetting
+        // the strap — a late onServicesDiscovered would otherwise re-save it as active right
+        // after removeDevice (Codex P2 #123).
+        if (promoteOnVerifyAddress == address) promoteOnVerifyAddress = null
         if (targetDeviceAddress != address) return
         logBleDecision("forget_device", "Releasing forgotten device address=$address")
         targetDeviceAddress = null
