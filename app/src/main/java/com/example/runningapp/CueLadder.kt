@@ -27,6 +27,11 @@ enum class CueAction {
  * farm return cues) and an [awake] flag — false during warm-up, walk and cool-down steps, and for
  * an unplanned run's first five minutes. When not awake the ladder resets, so every run step, and
  * the moment the grace lifts, starts silent rather than firing a burst of overdue cues.
+ *
+ * Each rung is timed from the previous cue, not from the moment you left target. Under a steady
+ * 1 Hz sample stream that is the same thing, but it matters when samples pause mid-run (a BLE
+ * dropout that keeps the run active): when packets resume after a long gap the ladder speaks one
+ * catch-up cue and then spaces out again, instead of firing every overdue rung back-to-back.
  */
 class CueLadder(
     private val firstCueMs: Long = 30_000L,
@@ -34,18 +39,24 @@ class CueLadder(
     private val repeatMs: Long = 5 * 60_000L
 ) {
     private var outSince: Long? = null
+    private var lastCueTime: Long? = null
     private var cuesSpoken = 0
 
     fun reset() {
         outSince = null
+        lastCueTime = null
         cuesSpoken = 0
     }
 
-    /** ms after leaving target at which the next (the [cuesSpoken]-th) cue falls due. */
-    private fun nextCueOffsetMs(): Long = when (cuesSpoken) {
+    /**
+     * ms that must elapse since the anchor — the last spoken cue, or leaving target before the
+     * first cue — for the next rung to fall due: 30s to the first cue, 30s more to the second,
+     * then 5 minutes between every cue after that.
+     */
+    private fun nextIntervalMs(): Long = when (cuesSpoken) {
         0 -> firstCueMs
-        1 -> secondCueMs
-        else -> secondCueMs + (cuesSpoken - 1) * repeatMs
+        1 -> secondCueMs - firstCueMs
+        else -> repeatMs
     }
 
     fun onSample(now: Long, band: ZoneBand, awake: Boolean): CueAction {
@@ -55,9 +66,10 @@ class CueLadder(
         }
         return when (band) {
             ZoneBand.ABOVE, ZoneBand.BELOW -> {
-                val since = outSince ?: now.also { outSince = it }
-                if (now - since >= nextCueOffsetMs()) {
+                val anchor = lastCueTime ?: (outSince ?: now.also { outSince = it })
+                if (now - anchor >= nextIntervalMs()) {
                     cuesSpoken += 1
+                    lastCueTime = now
                     CueAction.SPEAK
                 } else {
                     CueAction.SILENT
@@ -77,6 +89,8 @@ class CueLadder(
         outSince?.let { (now - it).coerceAtLeast(0) / 1000 } ?: 0
 
     /** For the debug overlay only: seconds until the next cue is due, 0 when in target. */
-    fun secondsUntilNextCue(now: Long): Long =
-        outSince?.let { ((it + nextCueOffsetMs()) - now).coerceAtLeast(0) / 1000 } ?: 0
+    fun secondsUntilNextCue(now: Long): Long {
+        val anchor = lastCueTime ?: outSince ?: return 0
+        return ((anchor + nextIntervalMs()) - now).coerceAtLeast(0) / 1000
+    }
 }

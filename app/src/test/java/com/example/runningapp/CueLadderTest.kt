@@ -96,6 +96,21 @@ class CueLadderTest {
     }
 
     @Test
+    fun `a long sample gap fires one catch-up cue, not a burst of overdue rungs`() {
+        val ladder = CueLadder()
+        // Out of target at t=0, then HR packets pause (a BLE dropout that keeps the run active).
+        assertEquals(CueAction.SILENT, ladder.onSample(secs(0), ZoneBand.ABOVE, awake = true))
+        // First packet back 10 minutes later: exactly one cue, though 30s/60s/5min are all overdue.
+        assertEquals(CueAction.SPEAK, ladder.onSample(secs(600), ZoneBand.ABOVE, awake = true))
+        // The very next packets must NOT immediately satisfy the 60s and 360s rungs back-to-back.
+        assertEquals(CueAction.SILENT, ladder.onSample(secs(601), ZoneBand.ABOVE, awake = true))
+        assertEquals(CueAction.SILENT, ladder.onSample(secs(602), ZoneBand.ABOVE, awake = true))
+        // The next rung is due 30s after the catch-up cue (at 630s), then it spaces out again.
+        assertEquals(emptyList<Long>(), ladder.sweepOut(603, 629))
+        assertEquals(listOf(630L), ladder.sweepOut(630, 630))
+    }
+
+    @Test
     fun `staying in target never speaks`() {
         val ladder = CueLadder()
         for (s in 0..600L) {
