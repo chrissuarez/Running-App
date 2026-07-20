@@ -1113,7 +1113,7 @@ fun SettingsSummaryCard(
                     fontWeight = FontWeight.Bold
                 )
                 val modeLabel = if (settings.runMode == "outdoor") "Outdoor Run" else "Treadmill Run"
-                Text("Mode: $modeLabel | Cooldown: ${settings.cooldownSeconds}s", style = MaterialTheme.typography.bodySmall)
+                Text("Mode: $modeLabel", style = MaterialTheme.typography.bodySmall)
             }
             Text(
                 if (settings.coachingEnabled) "Coaching ON" else "Coaching OFF",
@@ -1305,9 +1305,6 @@ fun SettingsScreen(
 ) {
     var maxHr by remember { mutableStateOf(settings.maxHr.toString()) }
     var targetZone by remember { mutableStateOf(settings.targetHrZone) }
-    var cooldown by remember { mutableStateOf(settings.cooldownSeconds.toString()) }
-    var persistenceHigh by remember { mutableStateOf(settings.persistenceHighSeconds.toString()) }
-    var persistenceLow by remember { mutableStateOf(settings.persistenceLowSeconds.toString()) }
     var voiceStyle by remember { mutableStateOf(settings.voiceStyle) }
     var coachingEnabled by remember { mutableStateOf(settings.coachingEnabled) }
     var aiDataSharingEnabled by remember { mutableStateOf(settings.aiDataSharingEnabled) }
@@ -1411,13 +1408,6 @@ fun SettingsScreen(
             }
         }
 
-        OutlinedTextField(value = cooldown, onValueChange = { cooldown = it }, label = { Text("Cue Cooldown (s)") }, modifier = Modifier.fillMaxWidth())
-        
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(value = persistenceHigh, onValueChange = { persistenceHigh = it }, label = { Text("High Persistence (s)") }, modifier = Modifier.weight(1f))
-            OutlinedTextField(value = persistenceLow, onValueChange = { persistenceLow = it }, label = { Text("Low Persistence (s)") }, modifier = Modifier.weight(1f))
-        }
-
         Spacer(modifier = Modifier.height(16.dp))
         Text("Voice Style:")
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1457,9 +1447,6 @@ fun SettingsScreen(
             onSave(settings.copy(
                 maxHr = effectiveMaxHr(maxHr.toIntOrNull() ?: settings.maxHr),
                 targetZone = targetZone.number,
-                cooldownSeconds = cooldown.toIntOrNull() ?: settings.cooldownSeconds,
-                persistenceHighSeconds = persistenceHigh.toIntOrNull() ?: settings.persistenceHighSeconds,
-                persistenceLowSeconds = persistenceLow.toIntOrNull() ?: settings.persistenceLowSeconds,
                 voiceStyle = voiceStyle,
                 coachingEnabled = coachingEnabled,
                 aiDataSharingEnabled = if (testingModeEnabled) false else aiDataSharingEnabled,

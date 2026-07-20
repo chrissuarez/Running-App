@@ -83,6 +83,24 @@ fun zoneBandOf(bpm: Int, maxHr: Int, targetZone: HrZone): ZoneBand {
     }
 }
 
+/**
+ * The target band with symmetric midpoint hysteresis (#108): you leave target the instant you
+ * cross an edge, but only count as back IN once you reach the zone's midpoint. That gap is what
+ * makes "the ladder resets on re-entry" safe — a heart rate parked on the boundary can't flip
+ * IN/OUT every sample and farm return cues. The 30-second wait applies equally above and below.
+ */
+fun bandWithHysteresis(previous: ZoneBand, avgBpm: Int, maxHr: Int, targetZone: HrZone): ZoneBand {
+    if (avgBpm <= 0) return ZoneBand.UNKNOWN
+    val low = zoneLowerBpm(targetZone, maxHr)
+    val high = zoneUpperBpm(targetZone, maxHr)
+    val midpoint = low + (high - low) / 2
+    return when (previous) {
+        ZoneBand.ABOVE -> if (avgBpm <= midpoint) ZoneBand.IN else ZoneBand.ABOVE
+        ZoneBand.BELOW -> if (avgBpm >= midpoint) ZoneBand.IN else ZoneBand.BELOW
+        else -> zoneBandOf(avgBpm, maxHr, targetZone)
+    }
+}
+
 val UserSettings.targetHrZone: HrZone get() = HrZone.ofNumberOrDefault(targetZone)
 
 fun hrZoneOf(bpm: Int, settings: UserSettings): HrZone? = hrZoneOf(bpm, settings.maxHr)

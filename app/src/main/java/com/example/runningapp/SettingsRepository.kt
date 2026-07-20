@@ -17,9 +17,6 @@ data class SavedDevice(
 data class UserSettings(
     val maxHr: Int = 190,
     val targetZone: Int = HrZone.DEFAULT_TARGET.number,
-    val cooldownSeconds: Int = 75,
-    val persistenceHighSeconds: Int = 30,
-    val persistenceLowSeconds: Int = 45,
     val voiceStyle: String = "detailed", // "short" or "detailed"
     val coachingEnabled: Boolean = true,
     val aiDataSharingEnabled: Boolean = true,
@@ -43,9 +40,6 @@ class SettingsRepository(private val context: Context) {
     private object PreferencesKeys {
         val MAX_HR = intPreferencesKey("max_hr")
         val TARGET_ZONE = intPreferencesKey("target_zone")
-        val COOLDOWN_SECONDS = intPreferencesKey("cooldown_seconds")
-        val PERSISTENCE_HIGH_SECONDS = intPreferencesKey("persistence_high_seconds")
-        val PERSISTENCE_LOW_SECONDS = intPreferencesKey("persistence_low_seconds")
         val VOICE_STYLE = stringPreferencesKey("voice_style")
         val COACHING_ENABLED = booleanPreferencesKey("coaching_enabled")
         val AI_DATA_SHARING_ENABLED = booleanPreferencesKey("ai_data_sharing_enabled")
@@ -75,9 +69,6 @@ class SettingsRepository(private val context: Context) {
             UserSettings(
                 maxHr = preferences[PreferencesKeys.MAX_HR] ?: 190,
                 targetZone = HrZone.ofNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE]).number,
-                cooldownSeconds = preferences[PreferencesKeys.COOLDOWN_SECONDS] ?: 75,
-                persistenceHighSeconds = preferences[PreferencesKeys.PERSISTENCE_HIGH_SECONDS] ?: 30,
-                persistenceLowSeconds = preferences[PreferencesKeys.PERSISTENCE_LOW_SECONDS] ?: 45,
                 voiceStyle = preferences[PreferencesKeys.VOICE_STYLE] ?: "detailed",
                 coachingEnabled = preferences[PreferencesKeys.COACHING_ENABLED] ?: true,
                 aiDataSharingEnabled = preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] ?: true,
@@ -101,9 +92,6 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.MAX_HR] = settings.maxHr
             preferences[PreferencesKeys.TARGET_ZONE] = HrZone.ofNumberOrDefault(settings.targetZone).number
-            preferences[PreferencesKeys.COOLDOWN_SECONDS] = settings.cooldownSeconds
-            preferences[PreferencesKeys.PERSISTENCE_HIGH_SECONDS] = settings.persistenceHighSeconds
-            preferences[PreferencesKeys.PERSISTENCE_LOW_SECONDS] = settings.persistenceLowSeconds
             preferences[PreferencesKeys.VOICE_STYLE] = settings.voiceStyle
             preferences[PreferencesKeys.COACHING_ENABLED] = settings.coachingEnabled
             preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] = settings.aiDataSharingEnabled
