@@ -2304,8 +2304,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // run is active; a bare sensor connect must not spin up GPS on its own). Use the
                 // run's pinned mode, not currentSettings.runMode, so a strap that connects during
                 // the async settings write doesn't start GPS for a treadmill run (or vice versa).
+                // Also require the session id to be committed: RUNNING is published before the
+                // creation coroutine's DB insert, and onRawFix drops fixes while currentSessionId
+                // is null — a fast connect in that window would start GPS early, turning the
+                // scaffold's own post-commit start into a no-op and clipping the route start off
+                // the map (Codex P2 #123). Mid-run reconnects always have the id set; during
+                // creation the scaffold owns the GPS start.
                 val sessionRunMode = activeSessionRunMode ?: currentSettings.runMode
-                if (sessionRunMode == "outdoor" && isRunning()) {
+                val sessionCommitted = synchronized(sessionCreationLock) { currentSessionId != null }
+                if (sessionRunMode == "outdoor" && isRunning() && sessionCommitted) {
                     locationTracker?.restartIfNeeded("session_start", sessionRunMode, isSimulationEnabled)
                 }
                 
