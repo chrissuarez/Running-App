@@ -179,6 +179,36 @@ class HrZonesTest {
     }
 
     @Test
+    fun `hysteresis holds you out until you reach the midpoint`() {
+        // Target Tempo at maxHr 190: low 133, high 151, midpoint 142.
+        // Coming from ABOVE, you stay ABOVE until the heart rate drops to the midpoint.
+        assertEquals(ZoneBand.ABOVE, bandWithHysteresis(ZoneBand.ABOVE, 150, maxHr, HrZone.TEMPO))
+        assertEquals(ZoneBand.ABOVE, bandWithHysteresis(ZoneBand.ABOVE, 143, maxHr, HrZone.TEMPO))
+        assertEquals(ZoneBand.IN, bandWithHysteresis(ZoneBand.ABOVE, 142, maxHr, HrZone.TEMPO))
+        // Coming from BELOW, you stay BELOW until you climb to the midpoint.
+        assertEquals(ZoneBand.BELOW, bandWithHysteresis(ZoneBand.BELOW, 134, maxHr, HrZone.TEMPO))
+        assertEquals(ZoneBand.IN, bandWithHysteresis(ZoneBand.BELOW, 142, maxHr, HrZone.TEMPO))
+    }
+
+    @Test
+    fun `an overshoot to the far side of the zone is out, not a false recovery`() {
+        // Falling from ABOVE clean through the zone to below the lower edge is BELOW, not IN — the
+        // runner is still out of target, so no "recovered" cue and no ladder reset.
+        assertEquals(ZoneBand.BELOW, bandWithHysteresis(ZoneBand.ABOVE, 120, maxHr, HrZone.TEMPO))
+        // The mirror: climbing from BELOW clean past the upper edge is ABOVE, not IN.
+        assertEquals(ZoneBand.ABOVE, bandWithHysteresis(ZoneBand.BELOW, 160, maxHr, HrZone.TEMPO))
+    }
+
+    @Test
+    fun `with no prior out-of-zone state hysteresis is just the plain band`() {
+        assertEquals(ZoneBand.IN, bandWithHysteresis(ZoneBand.IN, 140, maxHr, HrZone.TEMPO))
+        assertEquals(ZoneBand.IN, bandWithHysteresis(ZoneBand.UNKNOWN, 140, maxHr, HrZone.TEMPO))
+        assertEquals(ZoneBand.ABOVE, bandWithHysteresis(ZoneBand.IN, 160, maxHr, HrZone.TEMPO))
+        assertEquals(ZoneBand.BELOW, bandWithHysteresis(ZoneBand.IN, 120, maxHr, HrZone.TEMPO))
+        assertEquals(ZoneBand.UNKNOWN, bandWithHysteresis(ZoneBand.ABOVE, 0, maxHr, HrZone.TEMPO))
+    }
+
+    @Test
     fun `zone numbers map back to zones`() {
         assertEquals(HrZone.ENDURANCE, HrZone.ofNumber(1))
         assertEquals(HrZone.ANAEROBIC, HrZone.ofNumber(5))

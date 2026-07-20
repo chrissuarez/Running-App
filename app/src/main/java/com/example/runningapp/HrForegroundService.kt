@@ -239,14 +239,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     
     // Below/on/above target comes from HrZones.kt — the coach and the live UI cannot disagree.
     private var currentZone = ZoneBand.UNKNOWN
-    private var zoneEnterTime = 0L
-    
-    private var lastCueTime = 0L
     private var baselineHr: Int? = null
-    private var lastDriftCueTime = 0L
-    private var wasInHighZoneSinceRunIntervalStart = false
-    private var recoveryCueEligibleSinceMs = 0L
-    private var lastRecoveryCueBpm = 0
+    // The one clock for spoken zone cues (#108): silent until 30s out of target, then 30s / 60s /
+    // every 5 min. Re-entry (judged at the zone midpoint) resets it to the top.
+    private val cueLadder = CueLadder()
+    // An unplanned run stays silent for this long before the ladder can speak — the fact that a
+    // plan's warm-up step used to provide, hardcoded for runs that have no steps (#108).
+    private val UNPLANNED_GRACE_SECONDS = 300L
     
     // --- Session Engine State ---
     @Volatile private var sessionSecondsRunning = 0L
@@ -319,11 +318,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     )
     private var activeRunIntervalTracker: RunIntervalTracker? = null
 
-    private fun resetRunIntervalRecoveryCueState() {
-        wasInHighZoneSinceRunIntervalStart = false
-        recoveryCueEligibleSinceMs = 0L
-        lastRecoveryCueBpm = 0
-    }
     private val completedRunIntervalStats = mutableListOf<RunWalkIntervalStat>()
 
     companion object {
@@ -475,6 +469,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             finalizeActiveRunIntervalTracking()
         }
         resetCurrentIntervalTransparencyState()
+        // Each run interval starts the cue ladder from scratch. The walk-step reset otherwise rides
+        // on onSample(awake = false), so a BLE dropout spanning the whole walk lands no sample and
+        // the next run step would reuse the previous interval's outSince/lastCueTime and fire an
+        // immediate catch-up or return cue. This boundary is timer-driven, not packet-driven, so it
+        // resets regardless of dropouts (Codex #124).
+        cueLadder.reset()
+        currentZone = ZoneBand.UNKNOWN
         activeRunIntervalTracker = RunIntervalTracker(
             intervalIndex = intervalIndex,
             plannedDurationSeconds = plannedDurationSeconds,
@@ -1003,7 +1004,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         phaseTimeRemainingSeconds = activeWorkoutTemplate?.runDurationSeconds ?: 0
         currentRepeat = 1
         hasStructuredWorkoutStarted = false
-        resetRunIntervalRecoveryCueState()
     }
 
     private fun onStructuredWorkoutPhaseComplete(workout: WorkoutTemplate) {
@@ -1027,7 +1027,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 } else {
                     structuredWorkoutPhase = StructuredWorkoutPhase.RUN
                     phaseTimeRemainingSeconds = workout.runDurationSeconds
-                    resetRunIntervalRecoveryCueState()
                     startRunIntervalTracking(
                         intervalIndex = currentRepeat,
                         plannedDurationSeconds = workout.runDurationSeconds
@@ -1046,7 +1045,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             } else {
                 structuredWorkoutPhase = StructuredWorkoutPhase.RUN
                 phaseTimeRemainingSeconds = workout.runDurationSeconds
-                resetRunIntervalRecoveryCueState()
                 startRunIntervalTracking(
                     intervalIndex = currentRepeat,
                     plannedDurationSeconds = workout.runDurationSeconds
@@ -1429,7 +1427,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     sessionBpmSum = 0
                     sessionSampleCount = 0
                     baselineHr = null
-                    lastDriftCueTime = 0L
+                    currentZone = ZoneBand.UNKNOWN
+                    cueLadder.reset()
                     sessionAboveTargetSeconds = 0
                     // Must be cleared per run now that it actually accumulates: pulseSession()
                     // banks a no-data second whenever bpm is 0 (strapless run / dropout). It was
@@ -2524,162 +2523,73 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             avgBpm = bpmHistory.map { it.second }.average().roundToInt()
         }
         
-        // Wider recovery hysteresis is the structured run/walk coaching identity, so it applies
-        // whenever a plan workout is driving the run (#107).
-        val isRunWalk = isStructuredWorkout
-
-        val targetZone = activeTargetZone
-        val targetLow = zoneLowerBpm(targetZone, currentSettings.maxHr)
-        val targetHigh = zoneUpperBpm(targetZone, currentSettings.maxHr)
-
-        val newZone = when {
-            isRunWalk -> {
-                // MISSION: Wider Hysteresis for Run/Walk
-                // Recover as soon as HR drops to the MIDPOINT of the target zone
-                val recoveryPoint = targetLow + ((targetHigh - targetLow) / 2)
-                if (currentZone == ZoneBand.BELOW) {
-                    if (avgBpm >= recoveryPoint) ZoneBand.IN else ZoneBand.BELOW
-                } else {
-                    zoneBandOf(avgBpm, currentSettings.maxHr, activeTargetZone)
-                }
-            }
-            else -> zoneBandOf(avgBpm, currentSettings.maxHr, activeTargetZone)
+        // The one gate for spoken zone cues (#108). Awake only during the run steps of a plan, or an
+        // unplanned run once past its 5-minute grace; warm-up, walk and cool-down steps stay silent.
+        val awake = when {
+            currentPhase != SessionPhase.MAIN -> false
+            isStructuredWorkout -> structuredWorkoutPhase == StructuredWorkoutPhase.RUN
+            else -> sessionSecondsRunning >= UNPLANNED_GRACE_SECONDS
         }
-        
-        if (newZone != currentZone) {
-            currentZone = newZone
-            zoneEnterTime = now
-        }
-        
-        val timeInCurrentZone = now - zoneEnterTime
-        val cooldownMs = currentSettings.cooldownSeconds * 1000L
-        val cooldownRemaining = (lastCueTime + cooldownMs) - now
-        
-        val isBufferActive = sessionSecondsRunning < currentWarmupDuration && !isWarmupSkipped
-        val criticalThreshold = targetHigh + 15
-        val isRunWalkRecoveryScope = isRunWalk &&
-            currentPhase == SessionPhase.MAIN &&
-            isStructuredWorkout &&
-            structuredWorkoutPhase == StructuredWorkoutPhase.RUN
-        val recoveryThresholdReached = avgBpm <= targetLow
 
-        if (isRunWalkRecoveryScope && wasInHighZoneSinceRunIntervalStart && recoveryThresholdReached) {
-            if (recoveryCueEligibleSinceMs == 0L) {
-                recoveryCueEligibleSinceMs = now
-                Log.d(
-                    TAG,
-                    "Recovery threshold reached in RUN interval. avgBpm=$avgBpm threshold=$targetLow"
-                )
-            }
-            lastRecoveryCueBpm = avgBpm
+        // One band, one clock. Hysteresis judges re-entry at the zone midpoint; the ladder decides
+        // when to speak; the band below decides what to say. Hysteresis only carries across
+        // consecutive awake samples: while asleep (warm-up, walk, grace) we reset it to UNKNOWN, so
+        // the first awake sample is judged by the plain band. A run step can then never inherit a
+        // stale ABOVE/BELOW and speak over a heart rate that has actually settled into target.
+        val band = if (awake) {
+            bandWithHysteresis(currentZone, avgBpm, currentSettings.maxHr, activeTargetZone)
         } else {
-            if (recoveryCueEligibleSinceMs != 0L && isRunWalk) {
-                val reason = when {
-                    !isRunWalkRecoveryScope -> "scope_inactive"
-                    !wasInHighZoneSinceRunIntervalStart -> "no_prior_high_trigger"
-                    !recoveryThresholdReached -> "above_recovery_threshold"
-                    else -> "reset"
-                }
-                Log.d(TAG, "Recovery eligibility reset: reason=$reason avgBpm=$avgBpm")
+            ZoneBand.UNKNOWN
+        }
+        currentZone = band
+
+        when (cueLadder.onSample(now, band, awake)) {
+            CueAction.SPEAK -> when (band) {
+                ZoneBand.ABOVE -> speakHighCue(avgBpm)
+                ZoneBand.BELOW -> speakLowCue()
+                else -> {}
             }
-            recoveryCueEligibleSinceMs = 0L
+            CueAction.RETURN -> speakReturnCue()
+            CueAction.SILENT -> {}
         }
+    }
 
-        if (cooldownRemaining <= 0) {
-             val persistenceHighMs = currentSettings.persistenceHighSeconds * 1000L
-             val persistenceLowMs = currentSettings.persistenceLowSeconds * 1000L
-
-             if (currentZone == ZoneBand.ABOVE && timeInCurrentZone >= persistenceHighMs) {
-                 // MISSION: Cardiac Drift Detection - > 20m, <= baseline + 12
-                 val isDrifting = sessionSecondsRunning > 1200 && 
-                                 baselineHr != null && 
-                                 avgBpm <= (baselineHr!! + 12)
-
-                 if (isDrifting && avgBpm > targetHigh) {
-                    val driftCooldownMs = 300_000L // 5 mins
-                    if (now - lastDriftCueTime >= driftCooldownMs) {
-                        if (isRunWalkRecoveryScope) wasInHighZoneSinceRunIntervalStart = true
-                        playCue("Heart rate drifting up. Keep effort steady, or take a short walk break.")
-                        lastDriftCueTime = now
-                        lastCueTime = now
-                        if (isRunWalk) recordRunWalkHighHrTriggerEvent(avgBpm)
-                        Log.d(TAG, "Drift Cue Played (Time: ${sessionSecondsRunning}s, Avg: $avgBpm, Base: $baselineHr)")
-                    } else {
-                        Log.d(TAG, "Drift detected but suppressed by anti-nag cooldown")
-                    }
-                 } else if (baselineHr != null && avgBpm > (baselineHr!! + 12)) {
-                     // Danger cue if significantly above baseline (usually after 10m)
-                     val text = if (isRunWalk) "Heart rate high. Walk until your breathing settles." else {
-                         if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
-                     }
-                     if (isRunWalkRecoveryScope) wasInHighZoneSinceRunIntervalStart = true
-                     playCue(text)
-                     lastCueTime = now
-                     Log.d(TAG, "HR above drift ceiling! Playing danger cue. Avg: $avgBpm, Ceiling: ${baselineHr!! + 12}")
-                     if (isRunWalk) {
-                         walkBreaksCount++
-                         recordRunWalkHighHrTriggerEvent(avgBpm)
-                     }
-                 } else if (avgBpm > criticalThreshold) {
-                     // MISSION: Safety Override - Play cue regardless of buffer if HR is in danger zone
-                     val text = if (isRunWalk) "Heart rate high. Walk until your breathing settles." else {
-                         if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
-                     }
-                     if (isRunWalkRecoveryScope) wasInHighZoneSinceRunIntervalStart = true
-                     playCue(text)
-                     lastCueTime = now
-                     Log.d(TAG, "Safety Override Triggered! HR: $avgBpm > Limit: $criticalThreshold")
-                     if (isRunWalk) {
-                         walkBreaksCount++
-                         recordRunWalkHighHrTriggerEvent(avgBpm)
-                     }
-                 } else if (isBufferActive) {
-                     // MISSION: Total Silence during Warm-up Buffer
-                     Log.d(TAG, "Warm-up Buffer Active: Muting High HR cue (Time: ${sessionSecondsRunning}s, Avg: $avgBpm)")
-                 } else {
-                     // Normal HIGH cue
-                     val text = if (isRunWalk) "Heart rate high. Walk until your breathing settles." else {
-                         if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
-                     }
-                     if (isRunWalkRecoveryScope) wasInHighZoneSinceRunIntervalStart = true
-                     playCue(text)
-                     lastCueTime = now
-                     if (isRunWalk) {
-                         walkBreaksCount++
-                         recordRunWalkHighHrTriggerEvent(avgBpm)
-                     }
-                 }
-             } else if (
-                 isRunWalkRecoveryScope &&
-                 wasInHighZoneSinceRunIntervalStart &&
-                 recoveryCueEligibleSinceMs != 0L &&
-                 (now - recoveryCueEligibleSinceMs) >= persistenceLowMs
-             ) {
-                 if (isBufferActive) {
-                     Log.d(TAG, "Warm-up Buffer Active: Muting recovery cue (Time: ${sessionSecondsRunning}s)")
-                 } else {
-                     val text = "Heart rate recovered. Transition to a light jog."
-                     playCue(text)
-                     lastCueTime = now
-                     recordRunWalkRecoveryCueEvent()
-                     Log.d(
-                         TAG,
-                         "Recovery cue fired in RUN interval. avgBpm=$lastRecoveryCueBpm threshold=$targetLow"
-                     )
-                 }
-             } else if (!isRunWalk && currentZone == ZoneBand.BELOW && timeInCurrentZone >= persistenceLowMs) {
-                 // MISSION: Total Silence during Warm-up Buffer for LOW cues too
-                 if (isBufferActive) {
-                     Log.d(TAG, "Warm-up Buffer Active: Muting Low HR cue (Time: ${sessionSecondsRunning}s)")
-                 } else {
-                     val text = if (currentSettings.voiceStyle == "short") "Faster" else "Gently increase pace."
-                     playCue(text)
-                     lastCueTime = now
-                 }
-             }
-        } else if (isRunWalkRecoveryScope && recoveryCueEligibleSinceMs != 0L) {
-            Log.d(TAG, "Recovery cue waiting for cooldown: remainingMs=$cooldownRemaining")
+    /**
+     * The words for an above-target cue — wording only; the ladder already decided it is time to
+     * speak. Drift (above target but within +12 of the 10-minute baseline, past 20 minutes) gets a
+     * gentler sentence and is not counted as a suggested walk break; everything else is the ordinary
+     * high cue. The sentence-picker in #109 replaces this branch.
+     */
+    private fun speakHighCue(avgBpm: Int) {
+        val baseline = baselineHr
+        val isDrifting = sessionSecondsRunning > 1200 && baseline != null && avgBpm <= baseline + 12
+        if (isDrifting) {
+            playCue("Heart rate drifting up. Keep effort steady, or take a short walk break.")
+            recordRunWalkHighHrTriggerEvent(avgBpm)
+            Log.d(TAG, "Drift cue (Time: ${sessionSecondsRunning}s, Avg: $avgBpm, Base: $baseline)")
+        } else {
+            playCue(
+                if (isStructuredWorkout) "Heart rate high. Walk until your breathing settles."
+                else if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
+            )
+            if (isStructuredWorkout) walkBreaksCount++
+            recordRunWalkHighHrTriggerEvent(avgBpm)
         }
+    }
+
+    private fun speakLowCue() {
+        playCue(if (currentSettings.voiceStyle == "short") "Faster" else "Gently increase pace.")
+    }
+
+    /**
+     * The closing bracket of a spoken cue (#108): you were told you had drifted out of target, you
+     * came back past the midpoint, and this tells you you are home so you stop guessing. It fires
+     * only because the ladder saw a cue was actually spoken while out. [recordRunWalkRecoveryCueEvent]
+     * self-guards, closing only a recovery window that an above-target cue actually opened.
+     */
+    private fun speakReturnCue() {
+        playCue("Heart rate recovered. Transition to a light jog.")
+        recordRunWalkRecoveryCueEvent()
     }
     
     private data class DebugInfo(val avg: Int, val zone: String, val timeInZone: String, val cooldown: String)
@@ -2694,11 +2604,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
 
         val zoneStr = currentZone.name
-        val timeInZone = (now - zoneEnterTime) / 1000
-        val cooldownMs = currentSettings.cooldownSeconds * 1000L
-        val cooldownRem = ((lastCueTime + cooldownMs) - now).coerceAtLeast(0) / 1000
-        val statusStr = if (cooldownRem > 0) "Cool: ${cooldownRem}s" else "Ready"
-        return DebugInfo(avg, zoneStr, "${timeInZone}s", statusStr)
+        val timeOut = cueLadder.secondsOutOfTarget(now)
+        val statusStr = when (currentZone) {
+            ZoneBand.IN, ZoneBand.UNKNOWN -> "Ready"
+            else -> "Next: ${cueLadder.secondsUntilNextCue(now)}s"
+        }
+        return DebugInfo(avg, zoneStr, "${timeOut}s", statusStr)
     }
 
     private fun updateSimulationData() {
