@@ -1154,7 +1154,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     // take over (connectToDevice stops the scan first; with no saved strap it just
                     // rescans, which is where we already were).
                     val connStatus = _hrState.value.connectionStatus
-                    val acquisitionInFlight = connStatus == "Connected" ||
+                    // "Connected" completes acquisition only when the connected strap IS the
+                    // active one: Set Active in Manage Devices writes only the settings and
+                    // leaves the old GATT up, so a START after switching straps must re-acquire
+                    // the newly chosen device instead of recording HR from the old one (Codex P2
+                    // #123). With no saved active strap, whatever is connected is the sensor.
+                    val activeAddress = currentSettings.activeDeviceAddress
+                    val connectedActiveStrap = connStatus == "Connected" &&
+                        (activeAddress == null || targetDeviceAddress == activeAddress)
+                    val acquisitionInFlight = connectedActiveStrap ||
                         connStatus.contains("Connecting", ignoreCase = true) ||
                         connStatus.contains("Reconnecting", ignoreCase = true) ||
                         connStatus.contains("Retrying", ignoreCase = true)
