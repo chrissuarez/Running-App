@@ -2556,39 +2556,31 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     /**
      * The words for an above-target cue — wording only; the ladder already decided it is time to
-     * speak. Drift (above target but within +12 of the 10-minute baseline, past 20 minutes) gets a
-     * gentler sentence and is not counted as a suggested walk break; everything else is the ordinary
-     * high cue. The sentence-picker in #109 replaces this branch.
+     * speak. The sentence-picker ([highCueCondition] + [coachingCue], #109) chooses between drift,
+     * the structured walk-break, and the plain ease-off; only the walk-break counts toward a run's
+     * walk breaks. The recovery-window trigger fires for every above-target cue.
      */
     private fun speakHighCue(avgBpm: Int) {
-        val baseline = baselineHr
-        val isDrifting = sessionSecondsRunning > 1200 && baseline != null && avgBpm <= baseline + 12
-        if (isDrifting) {
-            playCue("Heart rate drifting up. Keep effort steady, or take a short walk break.")
-            recordRunWalkHighHrTriggerEvent(avgBpm)
-            Log.d(TAG, "Drift cue (Time: ${sessionSecondsRunning}s, Avg: $avgBpm, Base: $baseline)")
-        } else {
-            playCue(
-                if (isStructuredWorkout) "Heart rate high. Walk until your breathing settles."
-                else if (currentSettings.voiceStyle == "short") "Ease off" else "Ease off slightly."
-            )
-            if (isStructuredWorkout) walkBreaksCount++
-            recordRunWalkHighHrTriggerEvent(avgBpm)
-        }
+        val condition = highCueCondition(sessionSecondsRunning, baselineHr, avgBpm, isStructuredWorkout)
+        coachingCue(condition).spoken?.let { playCue(it) }
+        if (condition == CueCondition.ABOVE_WALK_BREAK) walkBreaksCount++
+        recordRunWalkHighHrTriggerEvent(avgBpm)
     }
 
     private fun speakLowCue() {
-        playCue(if (currentSettings.voiceStyle == "short") "Faster" else "Gently increase pace.")
+        coachingCue(CueCondition.BELOW).spoken?.let { playCue(it) }
     }
 
     /**
      * The closing bracket of a spoken cue (#108): you were told you had drifted out of target, you
      * came back past the midpoint, and this tells you you are home so you stop guessing. It fires
-     * only because the ladder saw a cue was actually spoken while out. [recordRunWalkRecoveryCueEvent]
-     * self-guards, closing only a recovery window that an above-target cue actually opened.
+     * only because the ladder saw a cue was actually spoken while out. The wording is direction-
+     * neutral now (#109) — you can re-enter from above or below, so it no longer says "light jog".
+     * [recordRunWalkRecoveryCueEvent] self-guards, closing only a recovery window an above-target
+     * cue actually opened.
      */
     private fun speakReturnCue() {
-        playCue("Heart rate recovered. Transition to a light jog.")
+        coachingCue(CueCondition.RETURNED).spoken?.let { playCue(it) }
         recordRunWalkRecoveryCueEvent()
     }
     

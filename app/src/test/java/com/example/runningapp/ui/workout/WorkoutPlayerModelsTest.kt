@@ -35,16 +35,91 @@ class WorkoutPlayerModelsTest {
     @Test
     fun `the frozen run target wins over a global changed mid-run`() {
         // Global was moved to Z3 mid-run, but the run started against Z2. 140 bpm is ABOVE Z2 and
-        // IN Z3 — the label and band must both stay with the frozen Z2, matching the coach.
+        // IN Z3 — the band must stay with the frozen Z2, matching the coach, so the action reads
+        // "ease off" (against Z2) even though the zone you are in is Tempo (Z3).
         val state = stateWithHr(140, targetZone = 3).copy(activeTargetZone = HrZone.MODERATE)
-        assertEquals("Z2 114-132", mapWorkoutPlayerUiState(state).zoneLabel)
+        assertEquals("Tempo — ease off", mapWorkoutPlayerUiState(state).zoneStatusText)
         assertEquals(ZoneBand.ABOVE, mapWorkoutPlayerUiState(state).zoneBand)
     }
 
     @Test
-    fun `zone label names the target zone band`() {
-        assertEquals("Z2 114-132", mapWorkoutPlayerUiState(stateWithHr(120, targetZone = 2)).zoneLabel)
-        assertEquals("Z3 133-151", mapWorkoutPlayerUiState(stateWithHr(120, targetZone = 3)).zoneLabel)
+    fun `zone status names the zone you are in then the target-relative action`() {
+        // 120 bpm is Moderate (Z2) and IN the Z2 target.
+        assertEquals("Moderate — on target", mapWorkoutPlayerUiState(stateWithHr(120, targetZone = 2)).zoneStatusText)
+        // Same 120 bpm is still Moderate, but now BELOW a Z3 target.
+        assertEquals("Moderate — pick it up", mapWorkoutPlayerUiState(stateWithHr(120, targetZone = 3)).zoneStatusText)
+        // No signal renders a plain dash.
+        assertEquals("—", mapWorkoutPlayerUiState(stateWithHr(0, targetZone = 2)).zoneStatusText)
+    }
+
+    @Test
+    fun `zone status falls back to live bpm when the coach has not averaged`() {
+        // Coaching off leaves avgBpm at 0 (the coach never fills its window), but a connected strap
+        // still reports live bpm. The runner must still see a live zone, not a bare dash. 140 bpm is
+        // Tempo (Z3) and ABOVE a Z2 target.
+        val state = HrState(
+            sessionStatus = SessionStatus.RUNNING,
+            currentPhase = SessionPhase.MAIN,
+            bpm = 140,
+            avgBpm = 0,
+            userSettings = UserSettings(maxHr = 190, targetZone = 2, coachingEnabled = false)
+        )
+        val ui = mapWorkoutPlayerUiState(state)
+        assertEquals("Tempo — ease off", ui.zoneStatusText)
+        assertEquals(ZoneBand.ABOVE, ui.zoneBand)
+    }
+
+    @Test
+    fun `coaching off tracks live bpm even when a stale average lingers`() {
+        // Coaching toggled off mid-run: avgBpm freezes at the last coached sample (175, well above)
+        // while fresh bpm packets keep arriving (120, recovered into Z2). Without the coaching gate
+        // the screen would freeze at the pre-toggle zone; it must track the live 120.
+        val state = HrState(
+            sessionStatus = SessionStatus.RUNNING,
+            currentPhase = SessionPhase.MAIN,
+            bpm = 120,
+            avgBpm = 175,
+            userSettings = UserSettings(maxHr = 190, targetZone = 2, coachingEnabled = false)
+        )
+        val ui = mapWorkoutPlayerUiState(state)
+        assertEquals("Moderate — on target", ui.zoneStatusText)
+        assertEquals(ZoneBand.IN, ui.zoneBand)
+    }
+
+    @Test
+    fun `cool-down and pause track live bpm rather than a frozen coaching average`() {
+        // Coaching on, but the coach has stopped filling its window: cool-down (processCoachingRules
+        // returns before adding) and pause (it isn't called at all) freeze avgBpm at the last
+        // main-run value (175, well above) while bpm keeps arriving (120, recovered into Z2). The
+        // screen must follow the live 120, not the frozen 175.
+        val coolDown = HrState(
+            sessionStatus = SessionStatus.RUNNING,
+            currentPhase = SessionPhase.COOL_DOWN,
+            bpm = 120,
+            avgBpm = 175,
+            userSettings = UserSettings(maxHr = 190, targetZone = 2, coachingEnabled = true)
+        )
+        assertEquals("Moderate — on target", mapWorkoutPlayerUiState(coolDown).zoneStatusText)
+        assertEquals(ZoneBand.IN, mapWorkoutPlayerUiState(coolDown).zoneBand)
+
+        val paused = coolDown.copy(currentPhase = SessionPhase.MAIN, sessionStatus = SessionStatus.PAUSED)
+        assertEquals("Moderate — on target", mapWorkoutPlayerUiState(paused).zoneStatusText)
+    }
+
+    @Test
+    fun `coaching on keeps using the smoothed average to agree with the coach`() {
+        // With coaching on, the screen bands off avgBpm — the same reading the coach uses — even if
+        // the instantaneous bpm has momentarily diverged. avgBpm 140 is Tempo/ABOVE a Z2 target.
+        val state = HrState(
+            sessionStatus = SessionStatus.RUNNING,
+            currentPhase = SessionPhase.MAIN,
+            bpm = 120,
+            avgBpm = 140,
+            userSettings = UserSettings(maxHr = 190, targetZone = 2, coachingEnabled = true)
+        )
+        val ui = mapWorkoutPlayerUiState(state)
+        assertEquals("Tempo — ease off", ui.zoneStatusText)
+        assertEquals(ZoneBand.ABOVE, ui.zoneBand)
     }
 
     @Test

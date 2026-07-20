@@ -1160,7 +1160,7 @@ fun WorkoutView(state: HrState, sessionRepository: SessionRepository, onOpenFull
                 Column {
                     Text(uiState.hrText, style = MaterialTheme.typography.titleLarge)
                     val zoneColor = zoneBandColor(uiState.zoneBand)
-                    Text("${uiState.zoneBand} • ${uiState.zoneLabel}", color = zoneColor, style = MaterialTheme.typography.bodyMedium)
+                    Text(uiState.zoneStatusText, color = zoneColor, style = MaterialTheme.typography.bodyMedium)
                 }
                 AssistChip(
                     onClick = { },
@@ -1305,7 +1305,6 @@ fun SettingsScreen(
 ) {
     var maxHr by remember { mutableStateOf(settings.maxHr.toString()) }
     var targetZone by remember { mutableStateOf(settings.targetHrZone) }
-    var voiceStyle by remember { mutableStateOf(settings.voiceStyle) }
     var coachingEnabled by remember { mutableStateOf(settings.coachingEnabled) }
     var aiDataSharingEnabled by remember { mutableStateOf(settings.aiDataSharingEnabled) }
     var testingModeEnabled by remember { mutableStateOf(settings.testingModeEnabled) }
@@ -1408,16 +1407,6 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("Voice Style:")
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(selected = voiceStyle == "short", onClick = { voiceStyle = "short" })
-            Text("Short")
-            Spacer(modifier = Modifier.width(16.dp))
-            RadioButton(selected = voiceStyle == "detailed", onClick = { voiceStyle = "detailed" })
-            Text("Detailed")
-        }
-
         Spacer(modifier = Modifier.height(24.dp))
         Text("Cue Preferences", style = MaterialTheme.typography.titleMedium)
 
@@ -1447,7 +1436,6 @@ fun SettingsScreen(
             onSave(settings.copy(
                 maxHr = effectiveMaxHr(maxHr.toIntOrNull() ?: settings.maxHr),
                 targetZone = targetZone.number,
-                voiceStyle = voiceStyle,
                 coachingEnabled = coachingEnabled,
                 aiDataSharingEnabled = if (testingModeEnabled) false else aiDataSharingEnabled,
                 splitAnnouncementsEnabled = splitAudio,
