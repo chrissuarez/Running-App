@@ -2526,12 +2526,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         // One band, one clock. Hysteresis judges re-entry at the zone midpoint; the ladder decides
         // when to speak; the band below decides what to say. Hysteresis only carries across
-        // consecutive awake samples — while asleep (warm-up, walk, grace) we band without it, so a
-        // run step never inherits a stale ABOVE/BELOW and speaks over an in-target heart rate.
+        // consecutive awake samples: while asleep (warm-up, walk, grace) we reset it to UNKNOWN, so
+        // the first awake sample is judged by the plain band. A run step can then never inherit a
+        // stale ABOVE/BELOW and speak over a heart rate that has actually settled into target.
         val band = if (awake) {
             bandWithHysteresis(currentZone, avgBpm, currentSettings.maxHr, activeTargetZone)
         } else {
-            zoneBandOf(avgBpm, currentSettings.maxHr, activeTargetZone)
+            ZoneBand.UNKNOWN
         }
         currentZone = band
 
