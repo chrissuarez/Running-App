@@ -160,7 +160,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private val CLIENT_CHARACTERISTIC_CONFIG_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
     // Reconnection & Rate Limiting State
-    private var targetDeviceAddress: String? = null
+    // Volatile: written on the main thread (connect/forget/scan paths) and read by GATT
+    // callbacks on binder threads to reject stale discoveries.
+    @Volatile private var targetDeviceAddress: String? = null
     private var reconnectDelay = 3000L
     private var isReconnecting = false
     private var isActivityBound = false
@@ -1951,7 +1953,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     fun startScanning() {
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+            // Same dead-end class as the connect-path permission returns: the caller may have
+            // just promoted the service to foreground for this scan, and nothing downstream
+            // would ever demote it (Codex P2 #123).
             _hrState.update { it.copy(connectionStatus = "Permission Missing") }
+            demoteForegroundIfSensorOnly("missing BLUETOOTH_SCAN")
             return
         }
         
@@ -1980,6 +1986,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         if (scanner == null) {
             Log.e(TAG, "startScanning() - Bluetooth scanner unavailable!")
             _hrState.update { it.copy(connectionStatus = "Bluetooth Off/Unavailable") }
+            demoteForegroundIfSensorOnly("no BLE scanner")
             return
         }
 
@@ -2367,6 +2374,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             device.name ?: "Unknown"
                         } else "Unknown"
                         val deviceAddress = device.address
+                        // Persist only the strap still being chased. forgetDevice() and every
+                        // superseding path (a new connect, startScanning) clear or repoint
+                        // targetDeviceAddress before closing the old GATT, but its callbacks can
+                        // still land afterwards — and even a makeActive=false save would re-add a
+                        // just-forgotten strap to the saved list (Codex P2 #123). A closed GATT's
+                        // discovery has no business persisting anything.
+                        if (deviceAddress != targetDeviceAddress) {
+                            Log.d(TAG, "Ignoring stale onServicesDiscovered for $deviceAddress (target=$targetDeviceAddress)")
+                            return@let
+                        }
                         // Promote to active ONLY the strap an explicit Connect tap chose. No
                         // fallback terms: currentSettings is an async DataStore snapshot that can
                         // lag the user's latest selection, so "already active" / "nothing active"

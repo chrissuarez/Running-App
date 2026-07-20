@@ -102,6 +102,11 @@ class MainActivity : ComponentActivity() {
     // dialog resolves, then the run starts from the launcher callback.
     private var pendingStartRun: Pair<Boolean, String>? = null
 
+    // A Manage Devices scan tap that had to ask for BLUETOOTH_SCAN first.
+    // Unlike START (which proceeds even on denial — GPS is a sensor, #110),
+    // a scan without the permission is a pure dead-end, so it only fires on grant.
+    private var pendingScan = false
+
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
             // Resume a START that was waiting on the location dialog. The gate
@@ -111,7 +116,22 @@ class MainActivity : ComponentActivity() {
                 pendingStartRun = null
                 sendStartRun(skipPlan, runMode)
             }
+            if (pendingScan) {
+                pendingScan = false
+                val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+                    ContextCompat.checkSelfPermission(
+                        this, Manifest.permission.BLUETOOTH_SCAN
+                    ) == PackageManager.PERMISSION_GRANTED
+                if (granted) sendForceScan()
+            }
         }
+
+    private fun sendForceScan() {
+        val intent = Intent(this, HrForegroundService::class.java).apply {
+            action = HrForegroundService.ACTION_FORCE_SCAN
+        }
+        ContextCompat.startForegroundService(this, intent)
+    }
 
     private fun sendStartRun(skipPlan: Boolean, runMode: String) {
         // START begins the run regardless of the strap (#110): the service
@@ -347,10 +367,20 @@ class MainActivity : ComponentActivity() {
                                 onScan = {
                                     // A fresh scan so a first (or replacement) strap can be discovered
                                     // and tapped to pair; the discovered list renders on this screen.
-                                    val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
-                                        action = HrForegroundService.ACTION_FORCE_SCAN
+                                    // Without BLUETOOTH_SCAN (API 31+, e.g. a fresh install) the
+                                    // service would go foreground only to dead-end in
+                                    // startScanning()'s permission check — ask first and park the
+                                    // scan; it fires from the permission callback once granted.
+                                    val needsScanPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                                        ContextCompat.checkSelfPermission(
+                                            this@MainActivity, Manifest.permission.BLUETOOTH_SCAN
+                                        ) != PackageManager.PERMISSION_GRANTED
+                                    if (needsScanPermission) {
+                                        pendingScan = true
+                                        checkAndRequestPermissions()
+                                    } else {
+                                        sendForceScan()
                                     }
-                                    ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
                                 onBack = { navigateTo(Routes.MAIN) }
                             )
