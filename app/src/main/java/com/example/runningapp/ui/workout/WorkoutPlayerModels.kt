@@ -4,9 +4,10 @@ import com.example.runningapp.HrState
 import com.example.runningapp.SessionPhase
 import com.example.runningapp.StructuredWorkoutPhase
 import com.example.runningapp.ZoneBand
+import com.example.runningapp.hrZoneOf
+import com.example.runningapp.liveZoneStatus
 import com.example.runningapp.targetHrZone
 import com.example.runningapp.zoneBandOf
-import com.example.runningapp.targetRangeLabel
 
 const val CUE_REASON_PLANNED = "planned_transition"
 const val CUE_REASON_HR_HIGH = "hr_too_high"
@@ -67,7 +68,7 @@ data class WorkoutPlayerUiState(
     val nextLabel: String?,
     val hrText: String,
     val zoneBand: ZoneBand,
-    val zoneLabel: String,
+    val zoneStatusText: String,
     val secondaryMetrics: List<Pair<String, String>>,
     val sensorFreshnessText: String,
     val sensorStale: Boolean,
@@ -111,6 +112,9 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
     val targetZone = state.activeTargetZone ?: state.userSettings.targetHrZone
     val hasSignal = state.bpm > 0 || state.avgBpm > 0
     val zoneBand = if (hasSignal) zoneBandOf(state.avgBpm, state.userSettings.maxHr, targetZone) else ZoneBand.UNKNOWN
+    // The screen names the zone you are actually in (not the target) and the action to close the
+    // gap to target; band, not zone, picks the action so words and colour agree. See #109.
+    val actualZone = if (hasSignal) hrZoneOf(state.avgBpm, state.userSettings.maxHr) else null
 
     val timeline = if (isStructuredMain) mapIntervalTimelineUiState(state) else null
     val cue = mapCoachCueUiState(state)
@@ -143,7 +147,7 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
         },
         hrText = "${state.bpm} bpm",
         zoneBand = zoneBand,
-        zoneLabel = "Z${targetZone.number} ${targetRangeLabel(targetZone, state.userSettings.maxHr)}",
+        zoneStatusText = liveZoneStatus(actualZone?.zoneName, zoneBand),
         secondaryMetrics = secondary,
         // Key freshness off live bpm, not age alone: lastHrAgeSeconds stays 0 both when a packet
         // just arrived AND when none ever has (a strapless run, or a saved strap left off), so a

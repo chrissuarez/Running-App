@@ -17,7 +17,6 @@ data class SavedDevice(
 data class UserSettings(
     val maxHr: Int = 190,
     val targetZone: Int = HrZone.DEFAULT_TARGET.number,
-    val voiceStyle: String = "detailed", // "short" or "detailed"
     val coachingEnabled: Boolean = true,
     val aiDataSharingEnabled: Boolean = true,
     val runMode: String = "treadmill", // "treadmill" or "outdoor"
@@ -40,7 +39,6 @@ class SettingsRepository(private val context: Context) {
     private object PreferencesKeys {
         val MAX_HR = intPreferencesKey("max_hr")
         val TARGET_ZONE = intPreferencesKey("target_zone")
-        val VOICE_STYLE = stringPreferencesKey("voice_style")
         val COACHING_ENABLED = booleanPreferencesKey("coaching_enabled")
         val AI_DATA_SHARING_ENABLED = booleanPreferencesKey("ai_data_sharing_enabled")
         val RUN_MODE = stringPreferencesKey("run_mode")
@@ -69,7 +67,6 @@ class SettingsRepository(private val context: Context) {
             UserSettings(
                 maxHr = preferences[PreferencesKeys.MAX_HR] ?: 190,
                 targetZone = HrZone.ofNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE]).number,
-                voiceStyle = preferences[PreferencesKeys.VOICE_STYLE] ?: "detailed",
                 coachingEnabled = preferences[PreferencesKeys.COACHING_ENABLED] ?: true,
                 aiDataSharingEnabled = preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] ?: true,
                 runMode = preferences[PreferencesKeys.RUN_MODE] ?: "treadmill",
@@ -92,7 +89,6 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.MAX_HR] = settings.maxHr
             preferences[PreferencesKeys.TARGET_ZONE] = HrZone.ofNumberOrDefault(settings.targetZone).number
-            preferences[PreferencesKeys.VOICE_STYLE] = settings.voiceStyle
             preferences[PreferencesKeys.COACHING_ENABLED] = settings.coachingEnabled
             preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] = settings.aiDataSharingEnabled
             preferences[PreferencesKeys.RUN_MODE] = settings.runMode

@@ -13,12 +13,16 @@ import com.example.runningapp.ZoneBand
  * *"what did the run cost?"* on the history chart. They are deliberately different scales, so
  * green never appears on the chart: it is the one colour that means **on target**, and nothing
  * else (#106).
+ *
+ * Target-relative and only that (#109): amber above, green on, blue below. Above target is amber,
+ * not the alarm red of `colorScheme.error` — #108 already retired the "critical" severity, and the
+ * screen is a glance, not an emergency.
  */
 @Composable
 fun zoneBandColor(zoneBand: ZoneBand): Color = when (zoneBand) {
     ZoneBand.BELOW -> Color(0xFF8FD0FF)
     ZoneBand.IN -> Color(0xFF9CF7AD)
-    ZoneBand.ABOVE -> MaterialTheme.colorScheme.error
+    ZoneBand.ABOVE -> Color(0xFFF2C037)
     ZoneBand.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 

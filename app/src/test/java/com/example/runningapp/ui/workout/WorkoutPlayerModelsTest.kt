@@ -35,16 +35,21 @@ class WorkoutPlayerModelsTest {
     @Test
     fun `the frozen run target wins over a global changed mid-run`() {
         // Global was moved to Z3 mid-run, but the run started against Z2. 140 bpm is ABOVE Z2 and
-        // IN Z3 — the label and band must both stay with the frozen Z2, matching the coach.
+        // IN Z3 — the band must stay with the frozen Z2, matching the coach, so the action reads
+        // "ease off" (against Z2) even though the zone you are in is Tempo (Z3).
         val state = stateWithHr(140, targetZone = 3).copy(activeTargetZone = HrZone.MODERATE)
-        assertEquals("Z2 114-132", mapWorkoutPlayerUiState(state).zoneLabel)
+        assertEquals("Tempo — ease off", mapWorkoutPlayerUiState(state).zoneStatusText)
         assertEquals(ZoneBand.ABOVE, mapWorkoutPlayerUiState(state).zoneBand)
     }
 
     @Test
-    fun `zone label names the target zone band`() {
-        assertEquals("Z2 114-132", mapWorkoutPlayerUiState(stateWithHr(120, targetZone = 2)).zoneLabel)
-        assertEquals("Z3 133-151", mapWorkoutPlayerUiState(stateWithHr(120, targetZone = 3)).zoneLabel)
+    fun `zone status names the zone you are in then the target-relative action`() {
+        // 120 bpm is Moderate (Z2) and IN the Z2 target.
+        assertEquals("Moderate — on target", mapWorkoutPlayerUiState(stateWithHr(120, targetZone = 2)).zoneStatusText)
+        // Same 120 bpm is still Moderate, but now BELOW a Z3 target.
+        assertEquals("Moderate — pick it up", mapWorkoutPlayerUiState(stateWithHr(120, targetZone = 3)).zoneStatusText)
+        // No signal renders a plain dash.
+        assertEquals("—", mapWorkoutPlayerUiState(stateWithHr(0, targetZone = 2)).zoneStatusText)
     }
 
     @Test
