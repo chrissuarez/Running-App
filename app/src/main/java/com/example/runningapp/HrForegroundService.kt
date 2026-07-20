@@ -331,6 +331,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_FORCE_SCAN = "ACTION_FORCE_SCAN"
         const val ACTION_SET_SIMULATION = "ACTION_SET_SIMULATION"
         const val EXTRA_DEVICE_ADDRESS = "EXTRA_DEVICE_ADDRESS"
+        // Set only by explicit Connect taps: marks the connect as a user choice whose strap may
+        // be promoted to active on verification. Background auto-connects omit it.
+        const val EXTRA_MAKE_ACTIVE = "EXTRA_MAKE_ACTIVE"
         const val EXTRA_SKIP_PLAN = "SKIP_PLAN"
         // START carries the mode the user has selected right now, so a Treadmill/Outdoor switch made
         // just before tapping START is honoured even if its async settings write hasn't landed yet.
@@ -343,17 +346,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         Log.d(TAG, "BLE decision: $reason | $detail")
     }
 
-    private fun startHardwareSession(overrideAddress: String?) {
+    private fun startHardwareSession(overrideAddress: String?, promoteOnVerify: Boolean = false) {
         if (overrideAddress != null) {
             logBleDecision("direct_connect", "Using override device address=$overrideAddress")
-            connectToDevice(overrideAddress)
+            connectToDevice(overrideAddress, promoteOnVerify)
             return
         }
 
         val savedAddress = currentSettings.activeDeviceAddress
         if (savedAddress != null) {
+            // Reconnecting the already-active strap: verification promotes it anyway via the
+            // activeDeviceAddress == deviceAddress term, no explicit promotion needed.
             logBleDecision("saved_device_reconnect", "Using saved activeDeviceAddress=$savedAddress")
-            connectToDevice(savedAddress)
+            connectToDevice(savedAddress, promoteToActive = false)
         } else {
             logBleDecision("fresh_scan", "No saved device available; starting BLE scan")
             startScanning()
@@ -1071,9 +1076,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         when (intent?.action) {
             ACTION_START_FOREGROUND -> {
                 val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
+                val makeActive = intent.getBooleanExtra(EXTRA_MAKE_ACTIVE, false)
                 if (!isSimulationEnabled) {
                     serviceScope.launch {
-                        startHardwareSession(overrideAddress)
+                        startHardwareSession(overrideAddress, makeActive)
                     }
                 } else {
                     Log.d(TAG, "ACTION_START_FOREGROUND received while simulation is active. Skipping hardware startup.")
@@ -1999,20 +2005,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
     
-    fun connectToDevice(address: String) {
-        logBleDecision("connect_by_address", "Preparing direct connection to address=$address")
+    fun connectToDevice(address: String, promoteToActive: Boolean = true) {
+        logBleDecision("connect_by_address", "Preparing direct connection to address=$address promote=$promoteToActive")
         stopScanning()
 
         // Step 3: Deep Cleanup / State Sanitization
         reconnectAttemptCount = 0
         reconnectDelay = 3000L
 
-        // Every call to this overload traces back to a deliberate choice of THIS strap (a Manage
-        // Devices tap, the record screen's auto-connect of the saved active strap, START). When the
-        // HR service is verified, that intent may promote the strap to active. Background retries
-        // go through the device overload and never set this — so a dropout/reconnect of strap A
-        // can no longer silently steal the active slot back from a user who chose strap B.
-        makeActiveOnVerify = true
+        // Only an explicit user tap (EXTRA_MAKE_ACTIVE on the connect intent) may promote the
+        // strap to active on verification — and only THIS strap: the pending promotion is
+        // address-typed, so a stale verify of some other strap can never consume it. Background
+        // paths (record-screen auto-connect, saved-strap reconnect, retries via the device
+        // overload) clear it instead, so auto-connecting strap A while the user makes strap B
+        // active can no longer steal the active slot back (Codex P2 #123).
+        promoteOnVerifyAddress = if (promoteToActive) address else null
         targetDeviceAddress = address
         val device = bluetoothAdapter?.getRemoteDevice(address) ?: return
         connectToDevice(device)
@@ -2066,10 +2073,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private val gattConnectLock = Any()
     @Volatile private var connectRequestSeq = 0
 
-    // True while the in-flight connect came from a deliberate device choice (String overload);
-    // consumed by onServicesDiscovered to decide whether verification promotes the strap to
-    // active. Background retries leave it false.
-    @Volatile private var makeActiveOnVerify = false
+    // Address of the strap an explicit user tap chose, pending promotion to active when its HR
+    // service verifies; consumed by onServicesDiscovered only on an exact address match.
+    // Background connects (auto-connect, reconnects, retries) null it rather than set it.
+    @Volatile private var promoteOnVerifyAddress: String? = null
 
     private fun connectToDevice(device: BluetoothDevice) {
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return
@@ -2295,14 +2302,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                             device.name ?: "Unknown"
                         } else "Unknown"
                         val deviceAddress = device.address
-                        // Promote to active only when the user chose this strap (or nothing else
-                        // is active / it already is the active one). A background reconnect of a
+                        // Promote to active only when the user chose THIS strap (or nothing else
+                        // is active / it already is the active one). A background connect of a
                         // non-active strap must not steal the active slot the user just assigned
-                        // to a different device.
-                        val makeActive = makeActiveOnVerify ||
+                        // to a different device, so the pending promotion is honoured — and
+                        // consumed — only on an exact address match.
+                        val makeActive = deviceAddress == promoteOnVerifyAddress ||
                             currentSettings.activeDeviceAddress == null ||
                             currentSettings.activeDeviceAddress == deviceAddress
-                        makeActiveOnVerify = false
+                        if (deviceAddress == promoteOnVerifyAddress) promoteOnVerifyAddress = null
                         serviceScope.launch {
                             settingsRepository.saveDevice(deviceAddress, deviceName, makeActive)
                         }
