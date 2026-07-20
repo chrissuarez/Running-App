@@ -98,10 +98,34 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // A START tap that had to ask for location first parks here until the
+    // dialog resolves, then the run starts from the launcher callback.
+    private var pendingStartRun: Pair<Boolean, String>? = null
+
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
-            // Handle permission results if needed
+            // Resume a START that was waiting on the location dialog. The gate
+            // was only "having asked" (#110) — the run starts whether or not
+            // the dialog was granted; denied just means no GPS this run.
+            pendingStartRun?.let { (skipPlan, runMode) ->
+                pendingStartRun = null
+                sendStartRun(skipPlan, runMode)
+            }
         }
+
+    private fun sendStartRun(skipPlan: Boolean, runMode: String) {
+        // START begins the run regardless of the strap (#110): the service
+        // opens the record and starts the clock, then acquires the strap as a
+        // sensor alongside. The mode travels with the intent so a just-tapped
+        // Treadmill/Outdoor choice is honoured even before its settings write
+        // lands.
+        val intent = Intent(this, HrForegroundService::class.java).apply {
+            action = HrForegroundService.ACTION_START_RUN
+            putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
+            putExtra(HrForegroundService.EXTRA_RUN_MODE, runMode)
+        }
+        ContextCompat.startForegroundService(this, intent)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -173,27 +197,19 @@ class MainActivity : ComponentActivity() {
                                 onStartRun = { skipPlan, runMode ->
                                     // An Outdoor run without location permission would silently
                                     // record 0 km (LocationTracker just logs and returns): ask
-                                    // first instead of starting blind. The run starts on the next
-                                    // tap once the dialog resolves — START itself never gates on
-                                    // GPS (#110), only on having asked.
+                                    // first instead of starting blind. The tap is parked in
+                                    // pendingStartRun and the run starts from the permission
+                                    // callback once the dialog resolves — START itself never
+                                    // gates on GPS (#110), only on having asked.
                                     val needsLocation = runMode == "outdoor" &&
                                         ContextCompat.checkSelfPermission(
                                             this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION
                                         ) != PackageManager.PERMISSION_GRANTED
                                     if (needsLocation) {
+                                        pendingStartRun = skipPlan to runMode
                                         checkAndRequestPermissions()
                                     } else {
-                                        // START begins the run regardless of the strap (#110): the
-                                        // service opens the record and starts the clock, then acquires
-                                        // the strap as a sensor alongside. The mode travels with the
-                                        // intent so a just-tapped Treadmill/Outdoor choice is honoured
-                                        // even before its settings write lands.
-                                        val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
-                                            this.action = HrForegroundService.ACTION_START_RUN
-                                            putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
-                                            putExtra(HrForegroundService.EXTRA_RUN_MODE, runMode)
-                                        }
-                                        ContextCompat.startForegroundService(this@MainActivity, intent)
+                                        sendStartRun(skipPlan, runMode)
                                     }
                                 },
                                 onRetryStrap = {
