@@ -975,19 +975,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             currentSettings.activePlanId,
             currentSettings.activeStageId
         ) ?: return null
-        if (currentSettings.testingModeEnabled) return baseWorkout
-        val run = currentSettings.aiRunIntervalSeconds
-        val walk = currentSettings.aiWalkIntervalSeconds
-        val repeats = currentSettings.aiRepeats
-        return if (run != null && walk != null && repeats != null) {
-            baseWorkout.copy(
-                runDurationSeconds = run,
-                walkDurationSeconds = walk,
-                totalRepeats = repeats
-            )
-        } else {
-            baseWorkout
-        }
+        // Shared with the record screen's card, so what it promises is what this runs (#111).
+        return baseWorkout.withCoachAdaptation(currentSettings)
     }
 
     private fun initializeStructuredWorkoutState() {

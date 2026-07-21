@@ -30,6 +30,23 @@ data class WorkoutTemplate(
     val coolDownSeconds: Int = 180
 )
 
+/**
+ * Today's workout as it will actually be run: the base workout with the AI coach's adaptation
+ * applied. One home for that rule (#111), because the record-screen card promises the numbers you
+ * are about to run — a card adapting on a looser condition than the service would show a shape the
+ * run never takes.
+ *
+ * The coach writes run, walk and repeats together or not at all, so a partial adjustment is
+ * incoherent and is ignored. Testing mode runs the plan exactly as written.
+ */
+fun WorkoutTemplate.withCoachAdaptation(settings: UserSettings): WorkoutTemplate {
+    if (settings.testingModeEnabled) return this
+    val run = settings.aiRunIntervalSeconds ?: return this
+    val walk = settings.aiWalkIntervalSeconds ?: return this
+    val repeats = settings.aiRepeats ?: return this
+    return copy(runDurationSeconds = run, walkDurationSeconds = walk, totalRepeats = repeats)
+}
+
 object TrainingPlanProvider {
     val plans = listOf(
         TrainingPlan(
