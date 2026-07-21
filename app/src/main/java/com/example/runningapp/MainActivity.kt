@@ -1024,12 +1024,11 @@ private fun MainBottomBar(
 }
 
 /**
- * The one thing on the record screen that changes each morning (#111).
+ * Renders [TodayCardUiState] — which is where what this card is and why lives.
  *
- * An open run gets the same solid card as a planned workout — never a dashed outline, never an
- * empty box — so *skipped today* and *no plan at all* are the same screen bar the link. The link is
- * a text link inside the card, bottom-right: it reads as an edit to the card it sits in, not as an
- * alternative to starting, and undo lands in the exact slot skip vacated.
+ * The one shape decision that belongs here: the link is a text link inside the card, bottom-right,
+ * so it reads as an edit to the card it sits in rather than an alternative to starting — and undo
+ * lands in the exact slot skip vacated, because the slot is the same one either way.
  */
 @Composable
 fun TodayCard(
@@ -1076,13 +1075,15 @@ fun TodayCard(
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
                     text = state.link.label,
                     style = MaterialTheme.typography.bodySmall,
                     textDecoration = TextDecoration.Underline,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.End,
                     modifier = Modifier
                         .clickable(role = Role.Button) {
                             when (state.link.kind) {
@@ -1091,9 +1092,11 @@ fun TodayCard(
                                 TodayCardLinkKind.CHOOSE_PLAN -> onChoosePlan()
                             }
                         }
-                        // The link is small by design, so the tap target is padded to reach the
-                        // minimum rather than the text being grown into a button.
-                        .padding(vertical = 12.dp, horizontal = 4.dp)
+                        // The link stays small type by design, so the tap target is grown to the
+                        // shared minimum around it rather than the text being made into a button.
+                        .heightIn(min = RunningUiTokens.MinTouchTarget)
+                        .wrapContentHeight(Alignment.CenterVertically)
+                        .padding(horizontal = 4.dp)
                 )
             }
         }

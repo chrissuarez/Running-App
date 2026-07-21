@@ -44,8 +44,6 @@ enum class TodayCardLinkKind {
 
 data class TodayCardLink(val kind: TodayCardLinkKind, val label: String)
 
-const val OPEN_RUN_TITLE = "Open run"
-
 /**
  * The card's full state for one morning.
  *
@@ -65,7 +63,7 @@ fun todayCardUiState(
     if (planned == null || skippedToday) {
         return TodayCardUiState(
             eyebrow = "TODAY",
-            title = OPEN_RUN_TITLE,
+            title = "Open run",
             detailLine = openRunPromise(settings, runMode),
             // The workout's target is irrelevant on a day you aren't running it; an open run aims
             // at the global default.
