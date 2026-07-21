@@ -41,6 +41,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlin.jvm.Volatile
@@ -58,6 +60,9 @@ import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointSource
+import com.example.runningapp.foreground.ForegroundPromotion
+import com.example.runningapp.foreground.PromotionHost
+import com.example.runningapp.foreground.isAcquiringStrap
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -135,7 +140,16 @@ data class HrState(
     // write from a just-tapped mode toggle is async, so an outdoor run started immediately after
     // the tap would otherwise render as a treadmill run while GPS records underneath.
     val activeRunMode: String? = null
-)
+) {
+    /**
+     * Is an Acquisition in flight — scanning, connecting, or retrying a Strap?
+     *
+     * Derived, so it cannot go stale, and named once so the three things that need it (the START
+     * guard, the record screen's spinner, and Promotion) cannot drift apart. They already had:
+     * the service's copy of this test omitted "Scanning".
+     */
+    val acquiringStrap: Boolean get() = isAcquiringStrap(connectionStatus)
+}
 
 class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
@@ -630,7 +644,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 _hrState.update { it.copy(userSettings = settings) }
             }
         }
-        
+
+        // Promotion, derived. This is the whole of it: no code anywhere else promotes or demotes,
+        // so there is no release to forget. distinctUntilChanged is load-bearing — demote() ends
+        // in stopSelf(), and this sees every published state change, including each per-second
+        // heartbeat. See docs/adr/0001-promotion-is-derived-not-claimed.md.
+        serviceScope.launch {
+            _hrState
+                .map { it.sessionStatus to it.acquiringStrap }
+                .distinctUntilChanged()
+                .collect { (sessionStatus, acquiringStrap) ->
+                    promotion.reconcile(sessionStatus, acquiringStrap)
+                }
+        }
+
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
         
@@ -933,13 +960,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             else -> _hrState.update { it.copy(lastHrAgeSeconds = hrAge) }
         }
-        // A pulse already mid-execution when STOP runs can reach here after stopForeground()
-        // removed the notification; an unconditional notify() would resurrect it as a zombie
-        // "HR Monitor" notification with no service behind it.
-        val statusNow = _hrState.value.sessionStatus
-        if (statusNow != SessionStatus.STOPPED && statusNow != SessionStatus.IDLE) {
-            updateNotification()
-        }
+        // A pulse already mid-execution when STOP runs can reach here after the notification was
+        // removed. It used to need a status check to avoid resurrecting a zombie "HR Monitor"
+        // notification with no service behind it — one more thing for a caller to remember.
+        // Promotion drops text it has nowhere to put, so this is now just a call.
+        updateNotification()
     }
     
     private fun formatTime(seconds: Long): String {
@@ -1044,17 +1069,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Mission: Build persistent notification and call startForeground immediately
-        startForegroundService()
+        // Android gives us roughly five seconds from startForegroundService() to startForeground(),
+        // whatever this intent turns out to want — so promote before we know. The reconcile at the
+        // tail takes it back if nothing earned it.
+        promotion.promoteForStartCommand()
 
         if (intent == null) {
             // START_STICKY restart after process death: the run that justified the foreground
             // state died with the process (every session field reset with it). Nothing can be
-            // resumed, so don't sit around as an idle notification holding a 10-hour wake lock —
-            // demote and stop. The promote above is still required (the system expects
-            // startForeground after restarting a foreground service).
+            // resumed, so don't sit around as an idle notification holding a 10-hour wake lock.
+            // The promote above is still required (the system expects startForeground after
+            // restarting a foreground service); state says IDLE, so the reconcile drops it.
             Log.d(TAG, "onStartCommand: null intent (sticky restart) - nothing to resume, stopping")
-            demoteForeground()
+            reconcileForegroundPromotion()
             return START_NOT_STICKY
         }
 
@@ -1073,9 +1100,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                 val makeActive = intent.getBooleanExtra(EXTRA_MAKE_ACTIVE, false)
                 if (!isSimulationEnabled) {
-                    serviceScope.launch {
-                        startHardwareSession(overrideAddress, makeActive)
-                    }
+                    // Called inline, not launched: serviceScope is Dispatchers.Main, so a launch
+                    // here would run after onStartCommand returned — and the reconcile at the tail
+                    // would see an idle connection status and demote the acquisition it just
+                    // started. startHardwareSession publishes "Scanning"/"Connecting" synchronously
+                    // and only the GATT connect itself goes to IO, so inline is both safe and true.
+                    startHardwareSession(overrideAddress, makeActive)
                 } else {
                     Log.d(TAG, "ACTION_START_FOREGROUND received while simulation is active. Skipping hardware startup.")
                 }
@@ -1096,18 +1126,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 }
                 if (alreadyActive || sessionInFlight) {
                     Log.d(TAG, "ACTION_START_RUN ignored - session busy (status=$status, inFlight=$sessionInFlight)")
-                    // onStartCommand() re-promoted the service to foreground before dispatch. When
-                    // we ignore only because a previous run is still finalizing (currentSessionId
-                    // not yet cleared) and no run is live, that promotion would otherwise linger as
-                    // an idle notification + wake lock once finalize completes, with START appearing
-                    // to do nothing. Demote it — narrowly: the full stopForegroundService() kill
-                    // switch also runs stopScanning()/disconnect(), which would tear down a strap
-                    // the user just (re)connected from Manage Devices during the finalize window,
-                    // the exact class 63174ed protects. A genuinely active run keeps the foreground
-                    // (Codex P2 #123).
-                    if (!alreadyActive) {
-                        demoteForeground()
-                    }
+                    // Nothing to undo. onStartCommand promoted before dispatch, and the reconcile
+                    // at the tail takes that back on its own if no run is live — which is exactly
+                    // the leak d335ef3 had to patch by hand here. A genuinely active run keeps the
+                    // promotion, for the same reason and without a second code path.
                 } else {
                     // Pin the run mode BEFORE publishing RUNNING. startNewDatabaseSession() also sets
                     // it, but on an IO coroutine; a GATT STATE_CONNECTED landing in the gap would see
@@ -1149,15 +1171,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     val activeAddress = currentSettings.activeDeviceAddress
                     val connectedActiveStrap = connStatus == "Connected" &&
                         (activeAddress == null || targetDeviceAddress == activeAddress)
+                    // A bare scan deliberately does NOT count (see above), so this is the shared
+                    // Acquisition test minus scanning — not a fourth hand-rolled copy of it.
                     val acquisitionInFlight = connectedActiveStrap ||
-                        connStatus.contains("Connecting", ignoreCase = true) ||
-                        connStatus.contains("Reconnecting", ignoreCase = true) ||
-                        connStatus.contains("Retrying", ignoreCase = true)
+                        (_hrState.value.acquiringStrap &&
+                            !connStatus.contains("Scanning", ignoreCase = true))
                     if (!isSimulationEnabled && !acquisitionInFlight) {
                         val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
-                        serviceScope.launch {
-                            startHardwareSession(overrideAddress)
-                        }
+                        // Inline for the same reason as ACTION_START_FOREGROUND above: the
+                        // connection status must be true before the tail reconcile reads it.
+                        startHardwareSession(overrideAddress)
                     }
                 }
             }
@@ -1172,7 +1195,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             ACTION_FORCE_SCAN -> {
                 Log.d(TAG, "ACTION_FORCE_SCAN received")
-                startForegroundService()
                 val status = _hrState.value.sessionStatus
                 val runActive = status == SessionStatus.RUNNING || status == SessionStatus.PAUSED
                 if (runActive) {
@@ -1196,6 +1218,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 setSimulationEnabled(enabled)
             }
         }
+        // Take back the eager promotion above if the dispatch earned nothing. An intent that
+        // changes no state publishes nothing for the subscription in onCreate() to react to, so
+        // this call is not redundant with it.
+        reconcileForegroundPromotion()
         return START_STICKY
     }
     
@@ -1546,8 +1572,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // explicit kill switch (a pre-run notification Stop still dismisses the service).
         val entryStatus = _hrState.value.sessionStatus
         if (entryStatus == SessionStatus.STOPPED || entryStatus == SessionStatus.IDLE) {
-            Log.d(TAG, "stopSession: no live run (status=$entryStatus) - kill switch only")
-            stopForegroundService()
+            Log.d(TAG, "stopSession: no live run (status=$entryStatus) - release the strap only")
+            releaseStrapAndTimer()
             return
         }
         // Raise the stop flag FIRST, before any teardown below. The creation coroutine may be
@@ -1724,8 +1750,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
 
         audioCueManager?.releaseForSessionStop()
+        // Publishing STOPPED is what ends the Promotion; releasing the strap is a separate act.
         _hrState.update { it.copy(sessionStatus = SessionStatus.STOPPED) }
-        stopForegroundService()
+        releaseStrapAndTimer()
     }
     
     override fun onInit(status: Int) {
@@ -1762,15 +1789,60 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         lastNotificationPhase = currentPhase
         
         val defaultContent = buildNotificationContent(currentState)
-        val notification = createNotification(overrideText ?: defaultContent)
-        
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, notification)
+        // Deciding what to say stays here, where zones and phases are known. Posting it belongs
+        // to Promotion, which drops the text when there is no notification to put it on — without
+        // that, an update landing just after a demotion posts one nothing owns and nothing clears.
+        promotion.showNotification(overrideText ?: defaultContent)
     }
 
-    private fun startForegroundService() {
-        val notification = createNotification("Service is running...")
+    /**
+     * The Android half of Promotion. Every call the platform needs lives here; the decision to
+     * make them lives in [ForegroundPromotion], which is why the decision has tests and this
+     * doesn't. Nothing else in the app may call these.
+     */
+    private val promotionHost = object : PromotionHost {
+        override fun promote(): Boolean {
+            val notification = createNotification("Service is running...")
+            try {
+                startForegroundInternal(notification)
+            } catch (e: Exception) {
+                // Promotion is now derived, so it can be requested at moments the old
+                // caller-driven code never reached — a pre-run reconnect starting on its own
+                // while the app is backgrounded, say. Android 12+ answers that with
+                // ForegroundServiceStartNotAllowedException. Losing the notification is a
+                // degraded run; crashing the service mid-run is not a trade worth making.
+                // Reporting false matters: claiming success would have us posting run updates
+                // to a notification the platform never created.
+                Log.w(TAG, "Foreground promotion refused: ${e.message}")
+                return false
+            }
+            acquireWakeLock()
+            return true
+        }
 
+        override fun demote() {
+            Log.d(TAG, "demote - dropping notification/wake lock, BLE untouched")
+            releaseWakeLock()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } else {
+                @Suppress("DEPRECATION")
+                stopForeground(true)
+            }
+            // Safe mid-finalize: the activity's binding keeps the service alive while the app is
+            // on screen, and the finalize coroutine runs on a scope that survives destruction.
+            stopSelf()
+        }
+
+        override fun showNotification(text: String) {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.notify(NOTIFICATION_ID, createNotification(text))
+        }
+    }
+
+    private val promotion = ForegroundPromotion(promotionHost)
+
+    private fun startForegroundInternal(notification: Notification) {
         // Mission: Specify foreground service types for Android 14+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             // Android 14 throws if we claim a foreground-service type whose permission we don't hold,
@@ -1791,8 +1863,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-
-        acquireWakeLock()
     }
 
     /**
@@ -1832,68 +1902,32 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     /**
-     * Narrow counterpart to [stopForegroundService]: drop the notification, wake lock, and
-     * started-state without touching BLE or the timer. For intents that promoted the service but
-     * started no run (ignored START, refused sim toggle, null-intent sticky restart) — the full
-     * kill switch would also stopScanning()/disconnect(), tearing down a strap acquisition the
-     * user may have just kicked off (the class 63174ed protects). stopSelf() is safe mid-finalize:
-     * the activity's binding keeps the service alive while the app is on screen, and the finalize
-     * coroutine runs on a scope that survives destruction anyway.
+     * Let go of the Strap: what "Stop Workout" means once the Run itself is already over.
+     *
+     * This used to also drop the foreground, which made it the second owner of Promotion. It no
+     * longer touches it: disconnect() publishes "Disconnected", the Acquisition ends, and — if no
+     * Run is live — [reconcileForegroundPromotion] demotes in response. The notification clears a
+     * beat later than it did, rather than in the same instant.
      */
-    private fun demoteForeground() {
-        Log.d(TAG, "demoteForeground - dropping notification/wake lock, BLE untouched")
-        releaseWakeLock()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
-        stopSelf()
+    private fun releaseStrapAndTimer() {
+        Log.d(TAG, "releaseStrapAndTimer - letting go of the strap")
+        stopScanning()
+        disconnect()
+
+        // Mission: Stop the zombie timer loop immediately
+        sessionHandler?.removeCallbacks(sessionTimerRunnable)
     }
 
     /**
-     * Demote when the foreground state serves only a bare sensor (#110: the run owns the
-     * foreground; a sensor doesn't). Pairing/connecting a strap from Manage Devices promotes the
-     * service, and post-#110 that connect no longer starts a run — without this, a pre-run pair
-     * left a persistent notification and a 10-hour wake lock until Stop Workout. The activity's
-     * binding keeps the service (and the GATT) alive while the app is on screen; backgrounding
-     * the app with no run then releases everything, and START re-promotes.
+     * The one place Promotion is re-decided. Subscribed once in [onCreate] and called once more
+     * at the tail of [onStartCommand] — an intent that changes no state (an ignored START) emits
+     * nothing for the subscription to see, and its eager promotion still has to be taken back.
      */
-    private fun demoteForegroundIfSensorOnly(reason: String) {
-        val status = _hrState.value.sessionStatus
-        val runActive = status == SessionStatus.RUNNING || status == SessionStatus.PAUSED ||
-            status == SessionStatus.STOPPING
-        // Deliberately NOT currentSessionId: after Stop it stays set (status already STOPPED)
-        // until the finalize coroutine drains its writes, and nothing re-checks once it clears —
-        // treating that window as "in flight" left a strap that auto-connected right after Stop
-        // holding an idle notification and wake lock forever (Codex P2 #123). Finalize runs on
-        // detached scopes and needs no foreground; only a live run or a START reservation does.
-        val creatingSession = synchronized(sessionCreationLock) { isCreatingSession }
-        if (runActive || creatingSession) return
-        Log.d(TAG, "Demoting foreground ($reason) - sensor only, no run")
-        demoteForeground()
+    private fun reconcileForegroundPromotion() {
+        val state = _hrState.value
+        promotion.reconcile(state.sessionStatus, state.acquiringStrap)
     }
 
-    private fun stopForegroundService() {
-        Log.d(TAG, "stopForegroundService called - Kill Switch")
-        stopScanning() 
-        disconnect() 
-        releaseWakeLock()
-        
-        // Mission: Stop the zombie timer loop immediately
-        sessionHandler?.removeCallbacks(sessionTimerRunnable)
-        
-        // Mission: Explicit Kill Switch - ensure notification vanishes
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
-        stopSelf()
-    }
-    
     private fun createNotification(content: String): Notification {
         val stopIntent = Intent(this, HrForegroundService::class.java).apply {
             action = ACTION_STOP_FOREGROUND
@@ -1962,11 +1996,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     fun startScanning() {
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
-            // Same dead-end class as the connect-path permission returns: the caller may have
-            // just promoted the service to foreground for this scan, and nothing downstream
-            // would ever demote it (Codex P2 #123).
+            // Publishing the terminal status IS the release: the Acquisition is over, so
+            // Promotion is no longer earned. Nothing to demote by hand (0beef0f).
             _hrState.update { it.copy(connectionStatus = "Permission Missing") }
-            demoteForegroundIfSensorOnly("missing BLUETOOTH_SCAN")
             return
         }
         
@@ -1995,7 +2027,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         if (scanner == null) {
             Log.e(TAG, "startScanning() - Bluetooth scanner unavailable!")
             _hrState.update { it.copy(connectionStatus = "Bluetooth Off/Unavailable") }
-            demoteForegroundIfSensorOnly("no BLE scanner")
             return
         }
 
@@ -2010,7 +2041,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         Log.d(TAG, "startScanning() - BLE scan started")
 
         // A scan has no natural end: nothing auto-connects from it, so an abandoned one would
-        // burn the scanner — and the foreground/wake lock its intent promoted — indefinitely.
+        // burn the scanner — and the Promotion it earns as an Acquisition — indefinitely.
         // Time-box it; the epoch guard cancels the timeout when a tap/connect stops this scan
         // and possibly starts another.
         val myEpoch = ++scanEpoch
@@ -2022,7 +2053,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 Log.d(TAG, "Scan timed out after ${SCAN_TIMEOUT_MS / 1000}s with no selection")
                 stopScanning()
                 _hrState.update { it.copy(connectionStatus = "Disconnected") }
-                demoteForegroundIfSensorOnly("scan timeout")
             }
         }
     }
@@ -2085,10 +2115,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         targetDeviceAddress = address
         val device = bluetoothAdapter?.getRemoteDevice(address)
         if (device == null) {
-            // No adapter (Bluetooth unavailable): same dead-end as the missing-permission
-            // return in the device overload — nothing downstream will demote the foreground.
+            // No adapter (Bluetooth unavailable): a dead-end, so say so. Ending the Acquisition
+            // is what releases the Promotion (0beef0f).
             _hrState.update { it.copy(connectionStatus = "Bluetooth Off/Unavailable") }
-            demoteForegroundIfSensorOnly("no bluetooth adapter")
             return
         }
         connectToDevice(device)
@@ -2153,12 +2182,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun connectToDevice(device: BluetoothDevice) {
         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            // A silent return here dead-ends the acquisition: no retry, no scan timeout, nothing
-            // that would ever demote the foreground this connect was promoted for — leaving an
-            // idle notification + wake lock (Codex P2 #123). Say why, and drop the foreground
-            // unless a run owns it.
+            // A silent return here would dead-end the Acquisition without ending it: no retry, no
+            // scan timeout, and a status still reading "Connecting" — so Promotion would stay
+            // earned forever (0beef0f). Say why; that publish is the release.
             _hrState.update { it.copy(connectionStatus = "Permission Missing") }
-            demoteForegroundIfSensorOnly("missing BLUETOOTH_CONNECT")
             return
         }
 
@@ -2204,10 +2231,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
              Log.d(TAG, "Giving up pre-run reconnect after $reconnectAttemptCount attempts")
              targetDeviceAddress = null
              isReconnecting = false
+             // The chase is over. Publishing the terminal status ends the Acquisition, which is
+             // what releases the Promotion — no thread hop needed, unlike the hand-rolled demote
+             // this replaces (4fe74cd).
              _hrState.update { it.copy(connectionStatus = "Strap not found") }
-             // The chase is over and no run ever joined: release the foreground/wake lock the
-             // connect intent promoted (on main — this can run on a binder/IO thread).
-             serviceScope.launch { demoteForegroundIfSensorOnly("strap not found") }
              return
          }
 
@@ -2345,10 +2372,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
                 gatt?.discoverServices()
 
-                // A bare sensor connect (pre-run pairing) doesn't need — or deserve — the
-                // foreground promotion its intent made; only a run does. On the main thread:
-                // this callback runs on a binder thread.
-                serviceScope.launch { demoteForegroundIfSensorOnly("strap connected, no run") }
+                // A bare sensor connect (pre-run pairing) doesn't need — or deserve — a
+                // Promotion; only a Run does. Publishing "Connected" above ends the Acquisition
+                // and says so (4fe74cd).
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 if (targetDeviceAddress != null) {
                     // Unexpected disconnect while a run is going.
@@ -2638,8 +2664,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         _hrState.update { it.copy(isSimulating = isSimulationEnabled) }
         
         if (isSimulationEnabled) {
-            // Ensure simulation sessions remain visible/controllable from lock screen.
-            startForegroundService()
+            // No promotion here. Simulation is not a reason to hold one — the Run it starts is,
+            // and that Run earns it below. Promoting for simulation itself would strand the
+            // notification and wake lock after every simulated run, because isSimulationEnabled
+            // is never cleared by STOP.
             val status = _hrState.value.sessionStatus
             val runActive = status == SessionStatus.RUNNING || status == SessionStatus.PAUSED
             // Same busy-guard as ACTION_START_RUN: while a previous run is still finalizing (or a
@@ -2653,15 +2681,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 Log.d(TAG, "Simulation enable refused - previous session still finalizing")
                 isSimulationEnabled = false
                 _hrState.update { it.copy(isSimulating = false) }
-                demoteForeground()
                 return
             }
             if (currentSessionId == null && (status == SessionStatus.IDLE || status == SessionStatus.STOPPED)) {
-                startNewDatabaseSession()
+                // Publish RUNNING BEFORE creating the row, matching the order ACTION_START_RUN
+                // already uses. The other way round leaves a window where a Run is being created
+                // but nothing published says so — and Promotion, derived from published state,
+                // would demote (stopSelf included) in the middle of session creation.
                 _hrState.update { it.copy(
                     sessionStatus = SessionStatus.RUNNING,
                     activeRunMode = currentSettings.runMode
                 ) }
+                startNewDatabaseSession()
             } else if (status == SessionStatus.RUNNING) {
                 startSessionTimerLoop()
             }
@@ -2698,7 +2729,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         sessionHandlerThread = null
         
         locationTracker?.shutdown()
-        
+
+        // The one wake-lock release outside Promotion, and deliberately so: destruction can be
+        // system-initiated, arriving without any demotion having happened. A wake lock must never
+        // outlive the service that took it, so this is a last-resort safety net, not a second
+        // owner of the decision. acquire/release are idempotent, so a preceding demote is fine.
         releaseWakeLock()
         audioCueManager?.shutdown()
         Log.d(TAG, "Service destroyed")

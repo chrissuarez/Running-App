@@ -52,6 +52,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import com.example.runningapp.data.SessionRepository
+import com.example.runningapp.foreground.isAcquiringStrap
 import com.example.runningapp.navigation.Routes
 import com.example.runningapp.ui.FeelFeedbackSheet
 import com.example.runningapp.ui.HistoryScreen
@@ -882,12 +883,9 @@ private fun StartFooter(
     onStart: () -> Unit,
     onRetryStrap: () -> Unit
 ) {
-    val looking = !isSimulating && (
-        connectionStatus.contains("Connecting", ignoreCase = true) ||
-            connectionStatus.contains("Reconnecting", ignoreCase = true) ||
-            connectionStatus.contains("Retrying", ignoreCase = true) ||
-            connectionStatus.contains("Scanning", ignoreCase = true)
-        )
+    // "Looking for your strap…" is exactly an Acquisition in flight. One definition, shared with
+    // the service's START guard and with Promotion — this used to be its own copy of the test.
+    val looking = !isSimulating && isAcquiringStrap(connectionStatus)
     // The service's terminal give-up state (pre-run reconnect cap). The old key,
     // contains("Retrying"), matched a status that lives for milliseconds between retry cycles —
     // this state was designed for the strap-absent case but never actually rendered.
