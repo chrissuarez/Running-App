@@ -85,21 +85,24 @@ class ForegroundPromotion(private val host: PromotionHost) {
      * startForeground() on an already-foreground service just refreshes the notification.
      */
     fun promoteForStartCommand() {
-        isPromoted = host.promote()
-        if (!isPromoted) startNeedsUnwinding = true
+        // The one thing this entry point knows that [reconcile] doesn't: a start is waiting on
+        // the answer, so a refusal here leaves a stop owed.
+        if (!attemptPromote()) startNeedsUnwinding = true
     }
 
     /**
-     * Re-decide. Edge-triggered: acts only when the answer changes.
+     * Re-decide. Edge-triggered: acts only when the answer changes — with one exception, below.
      *
      * That is a correctness requirement, not an optimisation. [demote] ends in stopSelf(), and
      * this runs on every published state change — including each per-second heartbeat while a
      * bare Strap sits connected with no Run.
      *
-     * A refused promotion leaves [isPromoted] false, so the next published state change tries
-     * again — the rule heals itself rather than latching into a lie. What it must not do is let
-     * that refusal pass unanswered forever: if nothing ends up earning the Promotion, the start
-     * that asked for it is still owed a stop. See [startNeedsUnwinding].
+     * A refused promotion leaves [isPromoted] false, so the next state change that moves the
+     * answer tries again — the rule heals itself rather than latching into a lie. What it must
+     * not do is let that refusal pass unanswered forever: if nothing ends up earning the
+     * Promotion, the start that asked for it is still owed a stop. That is the exception — an
+     * unchanged answer of "not promoted" still unwinds an outstanding start, once. See
+     * [startNeedsUnwinding].
      */
     fun reconcile(sessionStatus: SessionStatus, acquiringStrap: Boolean) {
         val earned = isEarned(sessionStatus, acquiringStrap)
@@ -107,16 +110,25 @@ class ForegroundPromotion(private val host: PromotionHost) {
             if (!earned && startNeedsUnwinding) unwind()
             return
         }
-        isPromoted = if (earned) {
-            host.promote().also { granted -> if (granted) startNeedsUnwinding = false }
-        } else {
-            unwind()
-            false
-        }
+        if (earned) attemptPromote() else unwind()
+    }
+
+    /**
+     * Ask the platform, and record what it said.
+     *
+     * A granted Promotion answers whatever start was outstanding, whichever entry point asked for
+     * it — so the settling lives here rather than at the two call sites, where the two halves of
+     * that invariant could drift apart.
+     */
+    private fun attemptPromote(): Boolean {
+        isPromoted = host.promote()
+        if (isPromoted) startNeedsUnwinding = false
+        return isPromoted
     }
 
     /** Hand the service back: drop whatever was taken, and stop what was started. */
     private fun unwind() {
+        isPromoted = false
         startNeedsUnwinding = false
         host.demote()
     }

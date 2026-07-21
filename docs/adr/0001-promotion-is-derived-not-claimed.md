@@ -36,7 +36,9 @@ so the state needed to decide was already there.
   would demote (and `stopSelf()`) mid-creation.
 - **The rule is edge-triggered.** It acts only when its answer changes. Level-
   triggering it would call `stopSelf()` on every heartbeat update while a bare
-  Strap is connected.
+  Strap is connected. One exception, below: an unchanged answer of "not promoted"
+  still unwinds an outstanding start — once, because the unwind clears the debt
+  that armed it.
 - **Only the module touches notification ID 1.** It exposes "show this text" and
   ignores the call when not promoted, so a notification that nothing owns cannot
   be posted. What the text *says* stays with the Run.

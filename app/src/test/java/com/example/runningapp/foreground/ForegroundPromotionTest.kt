@@ -309,22 +309,14 @@ class UnpromotedStartTest {
 
     @Test
     fun `a refused start-command promotion stops the service once nothing earns it`() {
+        // Also onStartCommand's null-intent path: promote for the deadline, find nothing to
+        // resume, and stop. Before the unwind existed, a refusal there logged "stopping" and
+        // left the service running forever.
         val host = RecordingHost(platformGrantsIt = false)
         val promotion = ForegroundPromotion(host)
         promotion.promoteForStartCommand()
         promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false)
         assertEquals(listOf("promote", "demote"), host.calls)
-    }
-
-    @Test
-    fun `the sticky restart with nothing to resume stops the service even when refused`() {
-        // onStartCommand's null-intent path: promote for the deadline, find nothing to resume,
-        // and stop. Before the unwind existed, a refusal there left the service running forever.
-        val host = RecordingHost(platformGrantsIt = false)
-        val promotion = ForegroundPromotion(host)
-        promotion.promoteForStartCommand()
-        promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false)
-        assertTrue(host.calls.contains("demote"))
     }
 
     @Test
