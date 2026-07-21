@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -69,6 +70,9 @@ import com.example.runningapp.ui.workout.FullScreenMapScreen
 import com.example.runningapp.ui.workout.MapCard
 import com.example.runningapp.ui.workout.TimelineMarkerType
 import com.example.runningapp.ui.workout.TimelineSegmentType
+import com.example.runningapp.ui.workout.TodayCardLinkKind
+import com.example.runningapp.ui.workout.TodayCardUiState
+import com.example.runningapp.ui.workout.todayCardUiState
 import com.example.runningapp.ui.workout.mapWorkoutPlayerUiState
 import com.example.runningapp.ui.workout.zoneBandColor
 
@@ -584,19 +588,15 @@ fun MainScreen(
     val baseWorkout = activeStage?.workouts?.firstOrNull()
     val coachMessage = userSettings.latestCoachMessage
         ?.takeIf { it.isNotBlank() && !userSettings.testingModeEnabled }
-    val todaysWorkout = if (
-        baseWorkout != null &&
-        userSettings.aiRunIntervalSeconds != null &&
-        !userSettings.testingModeEnabled
-    ) {
-        baseWorkout.copy(
-            runDurationSeconds = userSettings.aiRunIntervalSeconds,
-            walkDurationSeconds = userSettings.aiWalkIntervalSeconds ?: baseWorkout.walkDurationSeconds,
-            totalRepeats = userSettings.aiRepeats ?: baseWorkout.totalRepeats
-        )
-    } else {
-        baseWorkout
-    }
+    // The card resolves today's workout itself (adaptation included) so the screen and the run
+    // read the same numbers — see withCoachAdaptation (#111).
+    val todayCard = todayCardUiState(
+        stageTitle = activeStage?.title,
+        baseWorkout = baseWorkout,
+        settings = userSettings,
+        runMode = selectedRunMode,
+        skippedToday = skipPlanToday
+    )
 
     val isSessionActive = state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED
 
@@ -696,31 +696,18 @@ fun MainScreen(
                 }
 
                 if (!isSessionActive) {
-                    val stage = activeStage
-                    val plannedWorkout = todaysWorkout
-                    if (activePlan != null && stage != null && plannedWorkout != null) {
-                        val stageTitle = stage.title
-                        item {
-                            if (skipPlanToday) {
-                                SkippedPlanCard()
-                            } else {
-                                TodaysWorkoutCard(stageTitle = stageTitle, workout = plannedWorkout)
-                            }
-                        }
-                        item {
-                            TextButton(onClick = { skipPlanToday = !skipPlanToday }) {
-                                Text(if (skipPlanToday) "Run today's plan instead" else "Skip today's plan (open run)")
-                            }
-                        }
-                    } else if (userSettings.activePlanId == null) {
-                        item {
-                            TextButton(onClick = onOpenTrainingPlan) {
-                                Text("No active plan — this will be an open run. Tap to view plans.")
-                            }
-                        }
+                    item {
+                        TodayCard(
+                            state = todayCard,
+                            onSkipToday = { skipPlanToday = true },
+                            onUndoSkip = { skipPlanToday = false },
+                            onChoosePlan = onOpenTrainingPlan
+                        )
                     }
 
-                    if (coachMessage != null) {
+                    // The coach's reason lives inside the card whenever it edited today's numbers;
+                    // the standalone debrief is for a message with no adaptation behind it.
+                    if (coachMessage != null && todayCard.coachNote == null) {
                         item {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1036,31 +1023,20 @@ private fun MainBottomBar(
     }
 }
 
+/**
+ * The one thing on the record screen that changes each morning (#111).
+ *
+ * An open run gets the same solid card as a planned workout — never a dashed outline, never an
+ * empty box — so *skipped today* and *no plan at all* are the same screen bar the link. The link is
+ * a text link inside the card, bottom-right: it reads as an edit to the card it sits in, not as an
+ * alternative to starting, and undo lands in the exact slot skip vacated.
+ */
 @Composable
-fun SkippedPlanCard() {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-    ) {
-        Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
-            Text(
-                text = "Plan skipped for today",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "Just an open run — no steps or structure. Cue switches still apply. Your plan is untouched and queued again tomorrow.",
-                style = MaterialTheme.typography.bodyMedium
-            )
-        }
-    }
-}
-
-@Composable
-fun TodaysWorkoutCard(
-    stageTitle: String,
-    workout: WorkoutTemplate
+fun TodayCard(
+    state: TodayCardUiState,
+    onSkipToday: () -> Unit,
+    onUndoSkip: () -> Unit,
+    onChoosePlan: () -> Unit
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1068,27 +1044,73 @@ fun TodaysWorkoutCard(
     ) {
         Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
             Text(
-                text = "Today's Workout",
-                style = MaterialTheme.typography.titleMedium,
+                text = state.eyebrow,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = state.title,
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = stageTitle,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                text = workout.title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold
-            )
+            Text(text = state.detailLine, style = MaterialTheme.typography.bodyMedium)
             Spacer(modifier = Modifier.height(8.dp))
-            Text("Target HR Zone: Z${workout.targetZone}", style = MaterialTheme.typography.bodyMedium)
-            Text("Run: ${formatSecondsToMinutes(workout.runDurationSeconds)}", style = MaterialTheme.typography.bodyMedium)
-            Text("Walk: ${formatSecondsToMinutes(workout.walkDurationSeconds)}", style = MaterialTheme.typography.bodyMedium)
-            Text("Repeats: ${workout.totalRepeats}", style = MaterialTheme.typography.bodyMedium)
+            TargetPill(text = state.targetPill)
+            state.envelopeLine?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            state.coachNote?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.secondary
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End
+            ) {
+                Text(
+                    text = state.link.label,
+                    style = MaterialTheme.typography.bodySmall,
+                    textDecoration = TextDecoration.Underline,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .clickable(role = Role.Button) {
+                            when (state.link.kind) {
+                                TodayCardLinkKind.SKIP -> onSkipToday()
+                                TodayCardLinkKind.UNDO -> onUndoSkip()
+                                TodayCardLinkKind.CHOOSE_PLAN -> onChoosePlan()
+                            }
+                        }
+                        // The link is small by design, so the tap target is padded to reach the
+                        // minimum rather than the text being grown into a button.
+                        .padding(vertical = 12.dp, horizontal = 4.dp)
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun TargetPill(text: String) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+        )
     }
 }
 
@@ -1584,12 +1606,6 @@ fun SavedDeviceListItem(
             }
         }
     }
-}
-
-private fun formatSecondsToMinutes(totalSeconds: Int): String {
-    val m = totalSeconds / 60
-    val s = totalSeconds % 60
-    return "${m}m ${s}s"
 }
 
 private fun formatTime(seconds: Long): String {
