@@ -1821,6 +1821,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
 
         override fun demote() {
+            // Reached with nothing promoted too, when a refused promotion's start has to be
+            // handed back: releaseWakeLock and stopForeground are both no-ops in that case, and
+            // stopSelf is the whole point of the call.
             Log.d(TAG, "demote - dropping notification/wake lock, BLE untouched")
             releaseWakeLock()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {

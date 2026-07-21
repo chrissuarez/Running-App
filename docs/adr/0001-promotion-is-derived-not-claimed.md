@@ -51,3 +51,10 @@ so the state needed to decide was already there.
   would post run updates to a notification that was never created, and
   `stopForeground(REMOVE)` would not clear them. A refusal leaves the rule
   un-promoted, so the next state change retries.
+- **A refused promotion still owes a stop.** The `startForegroundService()` that
+  asked for it lands whether or not the platform grants it, and `demote()` —
+  `stopSelf()` included — is the only thing in the app that stops the service. So
+  the rule remembers an unpromoted start and unwinds it the moment nothing earns
+  the Promotion, rather than leaving a started service with no notification. A
+  live Run is never stopped this way: a run without its notification is degraded,
+  a run without its service is over.

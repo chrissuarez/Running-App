@@ -36,7 +36,12 @@ interface PromotionHost {
      */
     fun promote(): Boolean
 
-    /** Release the wake lock, drop the notification, and stopSelf(). */
+    /**
+     * Release the wake lock, drop the notification, and stopSelf().
+     *
+     * Also how a start that was never promoted is handed back, so every call here must be safe
+     * when there was no Promotion to begin with — none of the three may assume one.
+     */
     fun demote()
 
     /** Post [text] to the Promotion's notification. */
@@ -59,6 +64,17 @@ class ForegroundPromotion(private val host: PromotionHost) {
         private set
 
     /**
+     * A startForegroundService() we took delivery of and never promoted.
+     *
+     * The start lands whether or not the platform then grants the Promotion, and [demote] — which
+     * ends in stopSelf() — is the only thing in the app that stops the service. So a refusal that
+     * is merely recorded leaves a started service with no notification, waiting on Android's
+     * start-up watchdog and reachable by nothing. It stays set until a promotion is granted or the
+     * start is unwound.
+     */
+    private var startNeedsUnwinding: Boolean = false
+
+    /**
      * Android gives roughly five seconds from startForegroundService() to startForeground(),
      * whatever the intent turns out to want — so onStartCommand promotes unconditionally through
      * here, before it knows. [reconcile] at the tail of dispatch takes it back if nothing earned
@@ -70,6 +86,7 @@ class ForegroundPromotion(private val host: PromotionHost) {
      */
     fun promoteForStartCommand() {
         isPromoted = host.promote()
+        if (!isPromoted) startNeedsUnwinding = true
     }
 
     /**
@@ -80,17 +97,28 @@ class ForegroundPromotion(private val host: PromotionHost) {
      * bare Strap sits connected with no Run.
      *
      * A refused promotion leaves [isPromoted] false, so the next published state change tries
-     * again — the rule heals itself rather than latching into a lie.
+     * again — the rule heals itself rather than latching into a lie. What it must not do is let
+     * that refusal pass unanswered forever: if nothing ends up earning the Promotion, the start
+     * that asked for it is still owed a stop. See [startNeedsUnwinding].
      */
     fun reconcile(sessionStatus: SessionStatus, acquiringStrap: Boolean) {
         val earned = isEarned(sessionStatus, acquiringStrap)
-        if (earned == isPromoted) return
+        if (earned == isPromoted) {
+            if (!earned && startNeedsUnwinding) unwind()
+            return
+        }
         isPromoted = if (earned) {
-            host.promote()
+            host.promote().also { granted -> if (granted) startNeedsUnwinding = false }
         } else {
-            host.demote()
+            unwind()
             false
         }
+    }
+
+    /** Hand the service back: drop whatever was taken, and stop what was started. */
+    private fun unwind() {
+        startNeedsUnwinding = false
+        host.demote()
     }
 
     /**

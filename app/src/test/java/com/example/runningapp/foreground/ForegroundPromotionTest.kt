@@ -9,7 +9,7 @@ import org.junit.Test
 /**
  * Records what the host was asked to do, so the decision can be checked without a device.
  */
-private class RecordingHost(private val platformGrantsIt: Boolean = true) : PromotionHost {
+private class RecordingHost(var platformGrantsIt: Boolean = true) : PromotionHost {
     val calls = mutableListOf<String>()
     override fun promote(): Boolean { calls += "promote"; return platformGrantsIt }
     override fun demote() { calls += "demote" }
@@ -281,8 +281,9 @@ class RefusedPromotionTest {
     }
 
     @Test
-    fun `a refused promotion is never demoted`() {
-        // There is nothing to tear down, and demote() ends in stopSelf().
+    fun `a refused promotion with no start to unwind is never demoted`() {
+        // Mid-life refusal: no startForegroundService() is waiting on an answer, so there is
+        // nothing to tear down — and demote() ends in stopSelf().
         val host = RecordingHost(platformGrantsIt = false)
         val promotion = ForegroundPromotion(host)
         promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false)
@@ -296,6 +297,88 @@ class RefusedPromotionTest {
         val promotion = ForegroundPromotion(host)
         promotion.promoteForStartCommand()
         assertFalse(promotion.isPromoted)
+    }
+}
+
+/**
+ * A startForegroundService() the platform then refuses to promote. The service is started
+ * either way, and only [ForegroundPromotion] ever stops it — so a refusal that is simply
+ * dropped leaves a started service with no notification and no way out.
+ */
+class UnpromotedStartTest {
+
+    @Test
+    fun `a refused start-command promotion stops the service once nothing earns it`() {
+        val host = RecordingHost(platformGrantsIt = false)
+        val promotion = ForegroundPromotion(host)
+        promotion.promoteForStartCommand()
+        promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false)
+        assertEquals(listOf("promote", "demote"), host.calls)
+    }
+
+    @Test
+    fun `the sticky restart with nothing to resume stops the service even when refused`() {
+        // onStartCommand's null-intent path: promote for the deadline, find nothing to resume,
+        // and stop. Before the unwind existed, a refusal there left the service running forever.
+        val host = RecordingHost(platformGrantsIt = false)
+        val promotion = ForegroundPromotion(host)
+        promotion.promoteForStartCommand()
+        promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false)
+        assertTrue(host.calls.contains("demote"))
+    }
+
+    @Test
+    fun `the unwind happens once`() {
+        // demote() ends in stopSelf(); the heartbeat must not keep calling it.
+        val host = RecordingHost(platformGrantsIt = false)
+        val promotion = ForegroundPromotion(host)
+        promotion.promoteForStartCommand()
+        repeat(5) { promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false) }
+        assertEquals(listOf("promote", "demote"), host.calls)
+    }
+
+    @Test
+    fun `a live run is not stopped just because its promotion was refused`() {
+        // A degraded run — no notification — still beats a run whose service is killed.
+        val host = RecordingHost(platformGrantsIt = false)
+        val promotion = ForegroundPromotion(host)
+        promotion.promoteForStartCommand()
+        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = true)
+        assertEquals(listOf("promote", "promote"), host.calls)
+    }
+
+    @Test
+    fun `a run that was never promoted still unwinds its start when it ends`() {
+        val host = RecordingHost(platformGrantsIt = false)
+        val promotion = ForegroundPromotion(host)
+        promotion.promoteForStartCommand()
+        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false) // retried, refused again
+        promotion.reconcile(SessionStatus.STOPPED, acquiringStrap = false)
+        assertEquals(listOf("promote", "promote", "demote"), host.calls)
+    }
+
+    @Test
+    fun `a promotion granted on the retry leaves nothing owing`() {
+        // The granted promote satisfies the start, so the eventual demote is the ordinary one —
+        // not a second stop on top of it.
+        val host = RecordingHost(platformGrantsIt = false)
+        val promotion = ForegroundPromotion(host)
+        promotion.promoteForStartCommand()
+        host.platformGrantsIt = true
+        promotion.reconcile(SessionStatus.RUNNING, acquiringStrap = false)
+        promotion.reconcile(SessionStatus.STOPPED, acquiringStrap = false)
+        assertEquals(listOf("promote", "promote", "demote"), host.calls)
+        assertFalse(promotion.isPromoted)
+    }
+
+    @Test
+    fun `a granted start-command promotion owes no unwind of its own`() {
+        val host = RecordingHost()
+        val promotion = ForegroundPromotion(host)
+        promotion.promoteForStartCommand()
+        promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false)
+        promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false)
+        assertEquals(listOf("promote", "demote"), host.calls)
     }
 }
 
