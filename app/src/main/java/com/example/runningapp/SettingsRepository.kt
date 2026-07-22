@@ -158,6 +158,18 @@ internal fun coachWriteAllowed(
         activePlanId == scope.planId &&
         activeStageId == scope.stageId
 
+/**
+ * Everything the coach left behind, dropped together (#113).
+ *
+ * The debrief explains the prescription, so the two are one thing to invalidate — keeping the text
+ * after the numbers are gone leaves the runner reading about a workout that is not what is queued.
+ * Named once so the settings that invalidate the coach's work cannot drop half of it.
+ */
+internal fun MutablePreferences.clearCoachWork() {
+    clearCoachPrescription()
+    remove(PreferencesKeys.LATEST_COACH_MESSAGE)
+}
+
 class SettingsRepository(private val context: Context) {
 
     val userSettingsFlow: Flow<UserSettings> = context.dataStore.data
@@ -258,8 +270,7 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.TESTING_MODE_ENABLED] = enabled
             if (enabled) {
                 preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] = false
-                preferences.remove(PreferencesKeys.LATEST_COACH_MESSAGE)
-                preferences.clearCoachPrescription()
+                preferences.clearCoachWork()
             }
         }
     }
@@ -308,16 +319,27 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
-     * Attaching a plan drops the coach's prescription along with it, in the same write.
+     * Attaching a plan drops the coach's prescription **and its debrief** along with it, in the
+     * same write.
      *
      * Those numbers were reasoned about against the plan being left. Carried across, they would
      * overwrite day one of the plan just chosen — target zone included — which is the one workout
      * the runner picked the plan *for*. Same rule as [advanceStageAndClearPrescription], since
      * "the stage under it changed" is the same event either way.
+     *
+     * The debrief goes because it exists to explain the prescription, so it cannot outlive one:
+     * left behind it narrates intervals the new plan is not running. That also makes the coach's
+     * two writes safe to land separately — each is refused once the plan has moved
+     * (`editCoachWrite`), and a debrief that got in just before the change is taken by this. So
+     * there is no ordering between them to get right, which is the only reason they need not share
+     * a single edit.
+     *
+     * Graduating is the exception and keeps its message: [advanceStageAndClearPrescription] is the
+     * coach moving the runner on, and "you have finished this stage" is the one thing it had to say.
      */
     suspend fun setActivePlan(planId: String?, stageId: String?) {
         context.dataStore.edit { preferences ->
-            preferences.clearCoachPrescription()
+            preferences.clearCoachWork()
             if (planId != null) {
                 preferences[PreferencesKeys.ACTIVE_PLAN_ID] = planId
             } else {

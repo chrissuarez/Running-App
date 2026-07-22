@@ -55,7 +55,11 @@ private const val MAX_AGE_MILLIS = COACH_PRESCRIPTION_MAX_AGE_DAYS * 24L * 60L *
 fun CoachPrescription.isFreshAt(nowEpochMillis: Long): Boolean =
     nowEpochMillis - prescribedAtEpochMillis <= MAX_AGE_MILLIS
 
-private object CoachPrescriptionKeys {
+/**
+ * `internal` rather than private so a test can assert on the stored keys without a second copy of
+ * the key strings — same reason [PreferencesKeys] is. One spelling of a key, one meaning.
+ */
+internal object CoachPrescriptionKeys {
     val TARGET_ZONE = intPreferencesKey("coach_target_zone")
     val RUN_SECONDS = intPreferencesKey("coach_run_seconds")
     val WALK_SECONDS = intPreferencesKey("coach_walk_seconds")
