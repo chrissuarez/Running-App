@@ -102,11 +102,17 @@ class SessionRepository(
     }
 
     /**
-     * Re-tallies every run's zone seconds from its stored samples, one run at a time so a long
-     * history never holds more than a single run's beats in memory.
+     * Re-tallies every *finished* run's zone seconds from its stored samples, one run at a time so
+     * a long history never holds more than a single run's beats in memory.
+     *
+     * Settings is reachable mid-run, so a run in progress can be sitting in `sessions` while this
+     * executes. It is left alone: the recorder finalizes it from its own in-memory counters and
+     * would overwrite anything written here, so retallying it would spend the one-shot flag on a
+     * row that ends up disagreeing with it. The live run keeps the zone times it accumulated as it
+     * was heard — the next run is the first to be measured against the stated number.
      */
     private suspend fun recomputeZoneSecondsForAllRuns(samples: SampleDao, maxHr: Int) {
-        sessionDao.getAllSessionIds().forEach { sessionId ->
+        sessionDao.getFinalizedSessionIds().forEach { sessionId ->
             val tally = tallyZoneSeconds(samples.getRawBpmsForSession(sessionId), maxHr)
             sessionDao.updateZoneSeconds(
                 sessionId = sessionId,

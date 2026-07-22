@@ -146,7 +146,11 @@ fun SettingsScreen(
             SettingsSwitchRow(
                 label = "AI training data sharing",
                 checked = settings.aiDataSharingEnabled,
-                onCheckedChange = onAiDataSharingChange
+                onCheckedChange = onAiDataSharingChange,
+                // Testing mode forces sharing off and holds it there, so the row says so rather
+                // than accepting a tap the store would refuse.
+                subtitle = "Off while Testing mode is on.".takeIf { settings.testingModeEnabled },
+                enabled = !settings.testingModeEnabled
             )
             SettingsSwitchRow(
                 label = "Testing mode",
@@ -337,18 +341,39 @@ private fun SettingsRow(
 private fun SettingsSwitchRow(
     label: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    subtitle: String? = null,
+    enabled: Boolean = true
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = RunningUiTokens.MinTouchTarget)
-            .clickable { onCheckedChange(!checked) }
+            .clickable(enabled = enabled) { onCheckedChange(!checked) }
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyLarge,
+                // Greyed with the switch, so a row that will not respond doesn't read as one that
+                // is simply switched off.
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            )
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }
 

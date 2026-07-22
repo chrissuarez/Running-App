@@ -238,8 +238,15 @@ interface SessionDao {
     )
     suspend fun getMaxSessionLoadLast30Days(cutoffEpochMillis: Long): MaxSessionLoad30dProjection
 
-    @Query("SELECT id FROM sessions")
-    suspend fun getAllSessionIds(): List<Long>
+    /**
+     * Finished runs only — `endTime > 0` is what finalized means here, as in the queries above.
+     *
+     * A run in progress must stay out of the one-shot retally (#112): the recorder finalizes it
+     * from its own in-memory zone counters, so a retallied row would be overwritten anyway, and
+     * the flag would be spent on a run that ends up inconsistent with it.
+     */
+    @Query("SELECT id FROM sessions WHERE endTime > 0")
+    suspend fun getFinalizedSessionIds(): List<Long>
 
     @Query(
         """

@@ -39,6 +39,21 @@ data class UserSettings(
     val testingModeEnabled: Boolean = false
 )
 
+/**
+ * Whether a write setting AI training data sharing to [enabled] may land.
+ *
+ * Testing mode outranks the setting: while it is on, sharing cannot be turned back on. The
+ * recording side already reads the pair as `aiDataSharingEnabled && !testingModeEnabled`, so a
+ * `true` stored underneath testing mode never feeds the coach *during* testing — the damage is
+ * what it leaves behind. Turning testing mode off would resume sharing off the back of a tap made
+ * while it was suppressed, with no fresh opt-in. Refusing the write is what keeps consent
+ * something the runner stated in a state where it meant anything.
+ *
+ * Turning sharing *off* is always allowed: no state makes withdrawing consent invalid.
+ */
+fun aiSharingChangeAllowed(enabled: Boolean, testingModeEnabled: Boolean): Boolean =
+    !enabled || !testingModeEnabled
+
 class SettingsRepository(private val context: Context) {
 
     private object PreferencesKeys {
@@ -131,8 +146,21 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setAutoPauseEnabled(enabled: Boolean) = put(PreferencesKeys.AUTO_PAUSE_ENABLED, enabled)
 
-    suspend fun setAiDataSharingEnabled(enabled: Boolean) =
-        put(PreferencesKeys.AI_DATA_SHARING_ENABLED, enabled)
+    /**
+     * Guarded by [aiSharingChangeAllowed]. [setTestingModeEnabled] forces sharing off, but that
+     * only holds the rule at the instant testing mode is switched on; this holds it for as long as
+     * testing mode stays on, which is what the removed save path used to do.
+     *
+     * Read inside the same `edit` as the write, so the check cannot be raced by testing mode being
+     * switched on between deciding and storing.
+     */
+    suspend fun setAiDataSharingEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            val testingModeEnabled = preferences[PreferencesKeys.TESTING_MODE_ENABLED] == true
+            if (!aiSharingChangeAllowed(enabled, testingModeEnabled)) return@edit
+            preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] = enabled
+        }
+    }
 
     /**
      * Turning testing mode on also stops this device feeding the AI coach and drops the

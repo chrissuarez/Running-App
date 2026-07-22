@@ -268,7 +268,7 @@ class SessionRepositoryTest {
             settingsRepository = mockSettingsRepo
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(maxHrEverSet = false)))
-        whenever(mockDao.getAllSessionIds()).thenReturn(listOf(7L, 8L))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L, 8L))
         // At Max HR 181 the Zone 2 floor is 109 and the Zone 3 floor is 127.
         whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(120, 121, 130))
         whenever(mockSampleDao.getRawBpmsForSession(8L)).thenReturn(emptyList())
@@ -310,7 +310,7 @@ class SessionRepositoryTest {
             settingsRepository = mockSettingsRepo
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(maxHrEverSet = false)))
-        whenever(mockDao.getAllSessionIds()).thenReturn(listOf(7L))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
         whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(120))
 
         repositoryWithSamples.setMaxHr(181)
@@ -336,7 +336,7 @@ class SessionRepositoryTest {
         repositoryWithSamples.setMaxHr(195)
 
         verify(mockSettingsRepo).setMaxHrDeliberately(195)
-        verify(mockDao, never()).getAllSessionIds()
+        verify(mockDao, never()).getFinalizedSessionIds()
         verify(mockDao, never()).updateZoneSeconds(any(), any(), any(), any(), any(), any())
     }
 
