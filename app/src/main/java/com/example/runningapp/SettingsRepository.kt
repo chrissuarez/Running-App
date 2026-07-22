@@ -16,6 +16,11 @@ data class SavedDevice(
 
 data class UserSettings(
     val maxHr: Int = 190,
+    // Whether Max HR has ever been deliberately set, as opposed to standing at the default. The
+    // first deliberate set recomputes all history against the true number (#112); every change
+    // after it is future-only. Distinct from any dismissal flag: keeping the current value is
+    // still a deliberate set, dismissing a card is not.
+    val maxHrEverSet: Boolean = false,
     val targetZone: Int = HrZone.DEFAULT_TARGET.number,
     val coachingEnabled: Boolean = true,
     val aiDataSharingEnabled: Boolean = true,
@@ -38,6 +43,7 @@ class SettingsRepository(private val context: Context) {
 
     private object PreferencesKeys {
         val MAX_HR = intPreferencesKey("max_hr")
+        val MAX_HR_EVER_SET = booleanPreferencesKey("max_hr_ever_set")
         val TARGET_ZONE = intPreferencesKey("target_zone")
         val COACHING_ENABLED = booleanPreferencesKey("coaching_enabled")
         val AI_DATA_SHARING_ENABLED = booleanPreferencesKey("ai_data_sharing_enabled")
@@ -66,7 +72,10 @@ class SettingsRepository(private val context: Context) {
 
             UserSettings(
                 maxHr = preferences[PreferencesKeys.MAX_HR] ?: 190,
-                targetZone = HrZone.ofNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE]).number,
+                maxHrEverSet = preferences[PreferencesKeys.MAX_HR_EVER_SET] ?: false,
+                // Sanitized on read, not only on write: an edge-zone target stored before #117
+                // closed the picker would otherwise keep overstating "In Target" forever.
+                targetZone = HrZone.coachingTargetOfNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE]).number,
                 coachingEnabled = preferences[PreferencesKeys.COACHING_ENABLED] ?: true,
                 aiDataSharingEnabled = preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] ?: true,
                 runMode = preferences[PreferencesKeys.RUN_MODE] ?: "treadmill",
@@ -85,59 +94,76 @@ class SettingsRepository(private val context: Context) {
             )
         }
 
-    suspend fun updateSettings(settings: UserSettings) {
+    /**
+     * Records a deliberate Max HR, and that one has now been made.
+     *
+     * The point of the flag is that `190` is a placeholder nobody chose, so history sitting on it
+     * is stranded until someone states the real number. Nothing should call this directly: go
+     * through `SessionRepository.setMaxHr`, the one door where stating the number and recomputing
+     * the history it invalidates happen together. A surface that trips the flag on its own is a
+     * back door stranding history on the placeholder forever (#103).
+     *
+     * Setting the value it already holds still counts: the runner has confirmed the number, which
+     * is exactly the statement the flag records.
+     */
+    suspend fun setMaxHrDeliberately(maxHr: Int) {
         context.dataStore.edit { preferences ->
-            preferences[PreferencesKeys.MAX_HR] = settings.maxHr
-            preferences[PreferencesKeys.TARGET_ZONE] = HrZone.ofNumberOrDefault(settings.targetZone).number
-            preferences[PreferencesKeys.COACHING_ENABLED] = settings.coachingEnabled
-            preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] = settings.aiDataSharingEnabled
-            preferences[PreferencesKeys.RUN_MODE] = settings.runMode
-            preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] = settings.splitAnnouncementsEnabled
-            preferences[PreferencesKeys.AUTO_PAUSE_ENABLED] = settings.autoPauseEnabled
-            preferences[PreferencesKeys.SAVED_DEVICES] = settings.savedDevices.map { "${it.address}|${it.name}" }.toSet()
-            if (settings.activeDeviceAddress != null) {
-                preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS] = settings.activeDeviceAddress
-            } else {
-                preferences.remove(PreferencesKeys.ACTIVE_DEVICE_ADDRESS)
-            }
-            
-            if (settings.activePlanId != null) {
-                preferences[PreferencesKeys.ACTIVE_PLAN_ID] = settings.activePlanId
-            } else {
-                preferences.remove(PreferencesKeys.ACTIVE_PLAN_ID)
-            }
+            preferences[PreferencesKeys.MAX_HR] = effectiveMaxHr(maxHr)
+            preferences[PreferencesKeys.MAX_HR_EVER_SET] = true
+        }
+    }
 
-            if (settings.activeStageId != null) {
-                preferences[PreferencesKeys.ACTIVE_STAGE_ID] = settings.activeStageId
-            } else {
-                preferences.remove(PreferencesKeys.ACTIVE_STAGE_ID)
-            }
+    suspend fun setTargetZone(zone: HrZone) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.TARGET_ZONE] = zone.number
+        }
+    }
 
-            if (settings.latestCoachMessage != null) {
-                preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = settings.latestCoachMessage
-            } else {
+    suspend fun setCoachingEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.COACHING_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setSplitAnnouncementsEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setAutoPauseEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.AUTO_PAUSE_ENABLED] = enabled
+        }
+    }
+
+    suspend fun setAiDataSharingEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] = enabled
+        }
+    }
+
+    /**
+     * Turning testing mode on also stops this device feeding the AI coach and drops the
+     * adjustments it has already made, so a test run can't shape the next real one.
+     */
+    suspend fun setTestingModeEnabled(enabled: Boolean) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.TESTING_MODE_ENABLED] = enabled
+            if (enabled) {
+                preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] = false
                 preferences.remove(PreferencesKeys.LATEST_COACH_MESSAGE)
-            }
-
-            if (settings.aiRunIntervalSeconds != null) {
-                preferences[PreferencesKeys.AI_RUN_INTERVAL_SECONDS] = settings.aiRunIntervalSeconds
-            } else {
                 preferences.remove(PreferencesKeys.AI_RUN_INTERVAL_SECONDS)
-            }
-
-            if (settings.aiWalkIntervalSeconds != null) {
-                preferences[PreferencesKeys.AI_WALK_INTERVAL_SECONDS] = settings.aiWalkIntervalSeconds
-            } else {
                 preferences.remove(PreferencesKeys.AI_WALK_INTERVAL_SECONDS)
-            }
-
-            if (settings.aiRepeats != null) {
-                preferences[PreferencesKeys.AI_REPEATS] = settings.aiRepeats
-            } else {
                 preferences.remove(PreferencesKeys.AI_REPEATS)
             }
-            preferences[PreferencesKeys.SIMULATION_ENABLED] = settings.simulationEnabled
-            preferences[PreferencesKeys.TESTING_MODE_ENABLED] = settings.testingModeEnabled
+        }
+    }
+
+    /** Storage, not a setting (#112): how the record screen's toggle pre-fills next time. */
+    suspend fun setRunMode(runMode: String) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.RUN_MODE] = runMode
         }
     }
 

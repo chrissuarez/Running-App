@@ -238,6 +238,29 @@ interface SessionDao {
     )
     suspend fun getMaxSessionLoadLast30Days(cutoffEpochMillis: Long): MaxSessionLoad30dProjection
 
+    @Query("SELECT id FROM sessions")
+    suspend fun getAllSessionIds(): List<Long>
+
+    @Query(
+        """
+        UPDATE sessions
+        SET zone1Seconds = :zone1,
+            zone2Seconds = :zone2,
+            zone3Seconds = :zone3,
+            zone4Seconds = :zone4,
+            zone5Seconds = :zone5
+        WHERE id = :sessionId
+        """
+    )
+    suspend fun updateZoneSeconds(
+        sessionId: Long,
+        zone1: Long,
+        zone2: Long,
+        zone3: Long,
+        zone4: Long,
+        zone5: Long
+    )
+
     @Query("DELETE FROM sessions WHERE id = :sessionId")
     suspend fun deleteSessionById(sessionId: Long)
 
@@ -255,6 +278,11 @@ interface SampleDao {
 
     @Query("SELECT * FROM hr_samples WHERE sessionId = :sessionId ORDER BY elapsedSeconds ASC")
     suspend fun getSamplesForSessionOnce(sessionId: Long): List<HrSample>
+
+    // Just the beats, for re-tallying zone seconds one run at a time (#112) — the full rows would
+    // be an order of magnitude more memory for a number that only needs the BPM.
+    @Query("SELECT rawBpm FROM hr_samples WHERE sessionId = :sessionId")
+    suspend fun getRawBpmsForSession(sessionId: Long): List<Int>
 }
 
 @Dao

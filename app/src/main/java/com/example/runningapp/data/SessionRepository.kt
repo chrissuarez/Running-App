@@ -4,6 +4,8 @@ import android.util.Log
 import androidx.annotation.VisibleForTesting
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.TrainingPlanProvider
+import com.example.runningapp.effectiveMaxHr
+import com.example.runningapp.tallyZoneSeconds
 import com.example.runningapp.recording.SessionRecorder
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -52,6 +54,7 @@ data class Max30dLoad(
 
 class SessionRepository(
     private val sessionDao: SessionDao,
+    private val sampleDao: SampleDao? = null,
     private val runWalkIntervalStatDao: RunWalkIntervalStatDao? = null,
     private val trackPointDao: TrackPointDao? = null,
     private val settingsRepository: SettingsRepository? = null,
@@ -65,6 +68,52 @@ class SessionRepository(
 ) {
     suspend fun deleteSession(sessionId: Long) {
         sessionDao.deleteSessionById(sessionId)
+        refreshHistoryBackup?.invoke()
+    }
+
+    /**
+     * The one door for setting Max HR — every surface that offers the number should come through
+     * here, or history can be stranded on a placeholder forever (#112, #103).
+     *
+     * The **first** deliberate set recomputes all history against the true number: until someone
+     * states it, every run's zone times sit on the default `190` that nobody chose. Every change
+     * after that is future-only, so a later correction can't quietly rewrite runs the runner has
+     * already read. This is Strava's rule read literally: only the first time you *set* zones.
+     *
+     * Silent by design — there is nothing to decide, and confirming a correction is nagging.
+     *
+     * The recompute runs *before* the flag is set, so an interruption is retried rather than
+     * remembered as done: a half-finished recompute leaves the flag clear and the old Max HR on
+     * screen, and the next set redoes the whole thing (the tally is a pure re-derivation, so
+     * repeating it costs nothing). Setting the flag first would strand history permanently
+     * half-converted, with nothing on screen to say so.
+     */
+    suspend fun setMaxHr(maxHr: Int) {
+        val settings = settingsRepository ?: return
+        val clampedMaxHr = effectiveMaxHr(maxHr)
+        if (!settings.userSettingsFlow.first().maxHrEverSet) {
+            recomputeZoneSecondsForAllRuns(clampedMaxHr)
+        }
+        settings.setMaxHrDeliberately(clampedMaxHr)
+    }
+
+    /**
+     * Re-tallies every run's zone seconds from its stored samples, one run at a time so a long
+     * history never holds more than a single run's beats in memory.
+     */
+    private suspend fun recomputeZoneSecondsForAllRuns(maxHr: Int) {
+        val samples = sampleDao ?: return
+        sessionDao.getAllSessionIds().forEach { sessionId ->
+            val tally = tallyZoneSeconds(samples.getRawBpmsForSession(sessionId), maxHr)
+            sessionDao.updateZoneSeconds(
+                sessionId = sessionId,
+                zone1 = tally.zone1,
+                zone2 = tally.zone2,
+                zone3 = tally.zone3,
+                zone4 = tally.zone4,
+                zone5 = tally.zone5
+            )
+        }
         refreshHistoryBackup?.invoke()
     }
 

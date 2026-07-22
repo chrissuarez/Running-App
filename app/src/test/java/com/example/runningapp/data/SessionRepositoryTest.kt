@@ -1,6 +1,8 @@
 package com.example.runningapp.data
 
+import com.example.runningapp.MAX_MAX_HR
 import com.example.runningapp.SettingsRepository
+import com.example.runningapp.UserSettings
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
@@ -9,6 +11,7 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.inOrder
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
@@ -254,6 +257,81 @@ class SessionRepositoryTest {
 
         verify(mockDao, never()).deleteSessionsByIds(any())
         assertEquals(0, refreshCount)
+    }
+
+    @Test
+    fun `the first deliberate max hr set recomputes every run's zone seconds`() = runTest {
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(maxHrEverSet = false)))
+        whenever(mockDao.getAllSessionIds()).thenReturn(listOf(7L, 8L))
+        // At Max HR 181 the Zone 2 floor is 109 and the Zone 3 floor is 127.
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(120, 121, 130))
+        whenever(mockSampleDao.getRawBpmsForSession(8L)).thenReturn(emptyList())
+
+        repositoryWithSamples.setMaxHr(181)
+
+        verify(mockDao).updateZoneSeconds(7L, 0, 2, 1, 0, 0)
+        verify(mockDao).updateZoneSeconds(8L, 0, 0, 0, 0, 0)
+        verify(mockSettingsRepo).setMaxHrDeliberately(181)
+    }
+
+    @Test
+    fun `the flag is only set once the recompute it pays for has finished`() = runTest {
+        // An interrupted recompute must be retried, not remembered as done — so the flag lands
+        // last. Ordering, not decoration: the other way round strands history half-converted.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(maxHrEverSet = false)))
+        whenever(mockDao.getAllSessionIds()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(120))
+
+        repositoryWithSamples.setMaxHr(181)
+
+        inOrder(mockDao, mockSettingsRepo) {
+            verify(mockDao).updateZoneSeconds(7L, 0, 1, 0, 0, 0)
+            verify(mockSettingsRepo).setMaxHrDeliberately(181)
+        }
+    }
+
+    @Test
+    fun `later max hr changes are future-only, leaving history frozen`() = runTest {
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(maxHrEverSet = true)))
+
+        repositoryWithSamples.setMaxHr(195)
+
+        verify(mockSettingsRepo).setMaxHrDeliberately(195)
+        verify(mockDao, never()).getAllSessionIds()
+        verify(mockDao, never()).updateZoneSeconds(any(), any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `an unusable max hr is clamped before it reaches storage or the recompute`() = runTest {
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(maxHrEverSet = true)))
+
+        repositoryWithSamples.setMaxHr(999)
+
+        verify(mockSettingsRepo).setMaxHrDeliberately(MAX_MAX_HR)
     }
 
     private fun trackPoint(sessionId: Long, lon: Double, accuracy: Float?, source: String) = TrackPoint(
