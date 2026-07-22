@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.annotation.VisibleForTesting
 import com.example.runningapp.CoachPrescription
 import com.example.runningapp.CoachPrescriptionRepository
+import com.example.runningapp.CoachWriteScope
 import com.example.runningapp.HrZone
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.TrainingPlanProvider
@@ -343,7 +344,12 @@ class SessionRepository(
                     "${clampedResponse.nextWalkDurationSeconds}s Walk. Message: ${clampedResponse.coachMessage}"
             )
 
-            settingsRepo.setLatestCoachMessage(clampedResponse.coachMessage)
+            // Everything below was reasoned about against this plan and stage, read before a
+            // network round trip that takes seconds. Carried into each write so the write itself
+            // can refuse if the runner changed plans meanwhile — see CoachWriteScope.
+            val scope = CoachWriteScope(settings.activePlanId, settings.activeStageId)
+
+            settingsRepo.setLatestCoachMessage(clampedResponse.coachMessage, scope)
 
             if (clampedResponse.graduatedToNextStage) {
                 val plan = TrainingPlanProvider
@@ -359,7 +365,7 @@ class SessionRepository(
                 // No prescription on a graduation: it would be intervals for the stage just left,
                 // and writing one only to clear it in the next breath leaves a window where a run
                 // could start on the new stage carrying the old one's numbers.
-                settingsRepo.advanceStageAndClearPrescription(nextStageId)
+                settingsRepo.advanceStageAndClearPrescription(nextStageId, scope)
             } else {
                 coachPrescriptionRepository?.prescribe(
                     CoachPrescription(
@@ -372,7 +378,8 @@ class SessionRepository(
                         walkDurationSeconds = clampedResponse.nextWalkDurationSeconds,
                         totalRepeats = clampedResponse.nextRepeats,
                         prescribedAtEpochMillis = System.currentTimeMillis()
-                    )
+                    ),
+                    scope
                 )
             }
         } catch (e: Exception) {

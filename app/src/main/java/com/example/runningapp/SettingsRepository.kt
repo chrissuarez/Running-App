@@ -97,20 +97,66 @@ internal object PreferencesKeys {
 }
 
 /**
- * Everything the AI coach writes, gated on testing mode in one place (#113).
- *
- * The check reads testing mode inside the same `edit` as the write, so it cannot be raced by
- * testing mode being switched on between deciding and storing: an evaluation already in flight
- * would otherwise land just after the erase that was meant to stop it. Both of the coach's writes —
- * its prescription and its debrief — go through here, so "the coach may not write while testing
- * mode is on" is one rule with one implementation rather than a habit each new write has to copy.
+ * The plan and stage an evaluation reasoned about, carried so its writes can be refused if the
+ * ground moved while the coach was thinking (#113).
  */
-internal suspend fun DataStore<Preferences>.editCoachWrite(block: (MutablePreferences) -> Unit) {
+data class CoachWriteScope(val planId: String?, val stageId: String?)
+
+/**
+ * Everything the AI coach writes, gated in one place (#113).
+ *
+ * Asking the coach is a network round trip — seconds, not milliseconds — so anything read before
+ * it is a snapshot that can be stale by the time the reply lands. Both conditions are therefore
+ * re-checked inside the same `edit` as the write, where nothing can change between the check and
+ * the store:
+ *
+ * - **Testing mode**, which erases the coach's work and forbids more of it. An evaluation already
+ *   in flight would otherwise land just after the erase that was meant to stop it.
+ * - **The plan and stage the evaluation was about.** Choosing a different plan clears the outgoing
+ *   prescription ([SettingsRepository.setActivePlan]), but a reply still in flight would land after
+ *   that and overwrite day one of the plan just chosen — the one workout the runner picked the plan
+ *   *for* — with intervals reasoned about against the plan they left.
+ *
+ * A reply that fails either check is discarded whole rather than partly applied: the debrief
+ * narrates the prescription, so storing one without the other would leave the runner reading about
+ * a change that never happened.
+ *
+ * Every write the coach makes goes through here, so this is one rule with one implementation rather
+ * than a habit each new write has to copy.
+ */
+internal suspend fun DataStore<Preferences>.editCoachWrite(
+    scope: CoachWriteScope,
+    block: (MutablePreferences) -> Unit
+) {
     edit { preferences ->
-        if (preferences[PreferencesKeys.TESTING_MODE_ENABLED] == true) return@edit
-        block(preferences)
+        val allowed = coachWriteAllowed(
+            testingModeEnabled = preferences[PreferencesKeys.TESTING_MODE_ENABLED],
+            activePlanId = preferences[PreferencesKeys.ACTIVE_PLAN_ID],
+            activeStageId = preferences[PreferencesKeys.ACTIVE_STAGE_ID],
+            scope = scope
+        )
+        if (allowed) block(preferences)
     }
 }
+
+/**
+ * Whether the coach's reply may still be written, given what is stored *now*.
+ *
+ * Pure and separate from [editCoachWrite] so the rule can be read and tested without a DataStore —
+ * same reason [aiSharingChangeAllowed] and [maxHrEverSet] are. The caller supplies the stored
+ * values from inside its own `edit`, which is what makes the decision unraceable.
+ *
+ * An unset testing-mode key is off, not unknown: absent means never turned on.
+ */
+internal fun coachWriteAllowed(
+    testingModeEnabled: Boolean?,
+    activePlanId: String?,
+    activeStageId: String?,
+    scope: CoachWriteScope
+): Boolean =
+    testingModeEnabled != true &&
+        activePlanId == scope.planId &&
+        activeStageId == scope.stageId
 
 class SettingsRepository(private val context: Context) {
 
@@ -287,8 +333,8 @@ class SettingsRepository(private val context: Context) {
     }
 
     /** The coach's debrief of the run just finished — displayed text, never a knob. */
-    suspend fun setLatestCoachMessage(message: String) {
-        context.dataStore.editCoachWrite { preferences ->
+    suspend fun setLatestCoachMessage(message: String, scope: CoachWriteScope) {
+        context.dataStore.editCoachWrite(scope) { preferences ->
             preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = message
         }
     }
@@ -297,9 +343,13 @@ class SettingsRepository(private val context: Context) {
      * Moves the plan on, dropping the coach's prescription with it: those numbers were written for
      * the stage just left, and the new stage's own workout is where the next progression starts.
      * One write, so no run can start against the new stage carrying the old stage's intervals.
+     *
+     * Graduating is the coach moving the runner on, so it goes through [editCoachWrite] like its
+     * other writes: [scope] is the stage it decided to graduate *from*, and a runner who changed
+     * plans while it was thinking must not be advanced to a stage of the plan they left.
      */
-    suspend fun advanceStageAndClearPrescription(nextStageId: String?) {
-        context.dataStore.edit { preferences ->
+    suspend fun advanceStageAndClearPrescription(nextStageId: String?, scope: CoachWriteScope) {
+        context.dataStore.editCoachWrite(scope) { preferences ->
             if (nextStageId != null) {
                 preferences[PreferencesKeys.ACTIVE_STAGE_ID] = nextStageId
             }

@@ -2,6 +2,7 @@ package com.example.runningapp.data
 
 import com.example.runningapp.CoachPrescription
 import com.example.runningapp.CoachPrescriptionRepository
+import com.example.runningapp.CoachWriteScope
 import com.example.runningapp.MAX_MAX_HR
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.UserSettings
@@ -14,6 +15,7 @@ import org.junit.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.inOrder
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
@@ -400,6 +402,9 @@ class SessionRepositoryTest {
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
             flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
         )
+        // What the evaluation reasoned about — every coach write has to carry it, so a plan
+        // chosen while Gemini was still thinking can be refused at the write itself.
+        val activeScope = CoachWriteScope("5k_sub_25", "base_builder")
         whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
             RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
         )
@@ -420,10 +425,10 @@ class SessionRepositoryTest {
 
         repo.evaluateAndAdjustPlan("base_builder")
 
-        verify(mockSettingsRepo).advanceStageAndClearPrescription("sub_30_bridge")
-        verify(mockPrescriptions, never()).prescribe(any())
+        verify(mockSettingsRepo).advanceStageAndClearPrescription("sub_30_bridge", activeScope)
+        verify(mockPrescriptions, never()).prescribe(any(), any())
         // The debrief is about the run just finished, so it survives the graduation.
-        verify(mockSettingsRepo).setLatestCoachMessage("Stage complete.")
+        verify(mockSettingsRepo).setLatestCoachMessage("Stage complete.", activeScope)
     }
 
     @Test
@@ -439,6 +444,9 @@ class SessionRepositoryTest {
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
             flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
         )
+        // What the evaluation reasoned about — every coach write has to carry it, so a plan
+        // chosen while Gemini was still thinking can be refused at the write itself.
+        val activeScope = CoachWriteScope("5k_sub_25", "base_builder")
         whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
             RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
         )
@@ -460,13 +468,13 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder")
 
         val prescribed = argumentCaptor<CoachPrescription>()
-        verify(mockPrescriptions).prescribe(prescribed.capture())
+        verify(mockPrescriptions).prescribe(prescribed.capture(), eq(activeScope))
         assertEquals(360, prescribed.firstValue.runDurationSeconds)
         assertEquals(60, prescribed.firstValue.walkDurationSeconds)
         assertEquals(5, prescribed.firstValue.totalRepeats)
         assertEquals(3, prescribed.firstValue.targetZone)
-        verify(mockSettingsRepo).setLatestCoachMessage("Good session.")
-        verify(mockSettingsRepo, never()).advanceStageAndClearPrescription(anyOrNull())
+        verify(mockSettingsRepo).setLatestCoachMessage("Good session.", activeScope)
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescription(anyOrNull(), any())
         verify(mockSettingsRepo, never()).setCoachingEnabled(any())
         verify(mockSettingsRepo, never()).setTargetZone(any())
         verify(mockSettingsRepo, never()).setMaxHrDeliberately(any())

@@ -26,6 +26,80 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `the coach may write when nothing moved while it was thinking`() {
+        assertTrue(
+            coachWriteAllowed(
+                testingModeEnabled = false,
+                activePlanId = "5k_sub_25",
+                activeStageId = "base_builder",
+                scope = CoachWriteScope("5k_sub_25", "base_builder")
+            )
+        )
+    }
+
+    @Test
+    fun `an absent testing-mode key is off, not unknown`() {
+        assertTrue(
+            coachWriteAllowed(
+                testingModeEnabled = null,
+                activePlanId = null,
+                activeStageId = null,
+                scope = CoachWriteScope(null, null)
+            )
+        )
+    }
+
+    @Test
+    fun `testing mode switched on mid-evaluation refuses the write`() {
+        assertFalse(
+            coachWriteAllowed(
+                testingModeEnabled = true,
+                activePlanId = "5k_sub_25",
+                activeStageId = "base_builder",
+                scope = CoachWriteScope("5k_sub_25", "base_builder")
+            )
+        )
+    }
+
+    @Test
+    fun `a plan chosen mid-evaluation refuses the write`() {
+        // The reply is intervals reasoned about against the plan just left; landing it here would
+        // overwrite day one of the plan the runner picked while the coach was thinking.
+        assertFalse(
+            coachWriteAllowed(
+                testingModeEnabled = false,
+                activePlanId = "10k_sub_55",
+                activeStageId = "base_builder",
+                scope = CoachWriteScope("5k_sub_25", "base_builder")
+            )
+        )
+    }
+
+    @Test
+    fun `a stage advanced mid-evaluation refuses the write`() {
+        assertFalse(
+            coachWriteAllowed(
+                testingModeEnabled = false,
+                activePlanId = "5k_sub_25",
+                activeStageId = "sub_30_bridge",
+                scope = CoachWriteScope("5k_sub_25", "base_builder")
+            )
+        )
+    }
+
+    @Test
+    fun `detaching the plan entirely refuses the write`() {
+        assertFalse(
+            coachWriteAllowed(
+                testingModeEnabled = false,
+                activePlanId = null,
+                activeStageId = null,
+                scope = CoachWriteScope("5k_sub_25", "base_builder")
+            )
+        )
+    }
+
+    @Test
     fun `a Max HR chosen before the flag existed still counts as deliberately set`() {
         // Upgrading from a build with a Save button: they typed their number, the flag didn't
         // exist to record it. Reading that as "never set" would let their next edit rewrite

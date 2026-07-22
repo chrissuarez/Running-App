@@ -97,9 +97,14 @@ class CoachPrescriptionRepository(private val context: Context) {
         )
     }
 
-    /** Records what the coach wants run next, replacing anything it wrote before. */
-    suspend fun prescribe(prescription: CoachPrescription) {
-        context.dataStore.editCoachWrite { preferences ->
+    /**
+     * Records what the coach wants run next, replacing anything it wrote before.
+     *
+     * [scope] is the plan and stage the prescription was reasoned about against; the write is
+     * refused if they are no longer the active ones. See `editCoachWrite`.
+     */
+    suspend fun prescribe(prescription: CoachPrescription, scope: CoachWriteScope) {
+        context.dataStore.editCoachWrite(scope) { preferences ->
             preferences[CoachPrescriptionKeys.TARGET_ZONE] = prescription.targetZone
             preferences[CoachPrescriptionKeys.RUN_SECONDS] = prescription.runDurationSeconds
             preferences[CoachPrescriptionKeys.WALK_SECONDS] = prescription.walkDurationSeconds
