@@ -60,6 +60,14 @@ interface PromotionHost {
  */
 class ForegroundPromotion(private val host: PromotionHost) {
 
+    /**
+     * Written only from the main thread, but read from the session timer's own thread: a pulse
+     * already in flight when a Run stops calls [showNotification] from there. This is the guard
+     * that stops it reposting notification ID 1 over a Promotion that has just been dropped, and
+     * a guard the reader can't see the current value of guards nothing — hence volatile. The
+     * check it replaced read a StateFlow, which carried that visibility for free.
+     */
+    @Volatile
     var isPromoted: Boolean = false
         private set
 
@@ -126,7 +134,13 @@ class ForegroundPromotion(private val host: PromotionHost) {
         return isPromoted
     }
 
-    /** Hand the service back: drop whatever was taken, and stop what was started. */
+    /**
+     * Hand the service back: drop whatever was taken, and stop what was started.
+     *
+     * [isPromoted] falls before [demote] runs, not after. A session pulse on the timer thread may
+     * be between its guard and its notify() right now; closing the gate first is what keeps it
+     * from posting over a notification stopForeground is about to remove.
+     */
     private fun unwind() {
         isPromoted = false
         startNeedsUnwinding = false
