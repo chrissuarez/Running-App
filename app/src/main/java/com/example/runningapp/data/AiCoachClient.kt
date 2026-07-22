@@ -34,8 +34,13 @@ class AiCoachClient {
      * Null rather than a stand-in response: the fallback this replaces prescribed 60s/30s × 6 —
      * numbers no coach chose — under a message saying the coach was unavailable. Harmless-looking
      * while those numbers were settings nobody read as a promise; not harmless now that they are a
-     * prescription the run and the card both follow (#113). A coach that could not be reached says
-     * nothing, and the plan runs as written.
+     * prescription the run and the card both follow (#113).
+     *
+     * Null means the coach said nothing, not that it withdrew what it said before: a standing
+     * prescription is left alone and keeps applying until something supersedes it or it ages out
+     * (see `COACH_PRESCRIPTION_MAX_AGE_DAYS`). Erasing it here would let one unreachable evaluation
+     * — a gym with no signal — throw a runner back to the plan's generic numbers, discarding the
+     * last thing the coach actually said. With no standing prescription, the plan runs as written.
      */
     suspend fun evaluateProgress(context: AiTrainingContext): AiCoachResponse? {
         require(apiKey.isNotBlank()) { "Gemini API key is missing" }

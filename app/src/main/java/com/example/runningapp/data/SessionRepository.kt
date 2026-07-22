@@ -322,7 +322,8 @@ class SessionRepository(
             Log.d("AiCoach", "Sending prompt to Gemini with ${context.recentRuns.size} recent runs.")
             val response = coachClient.evaluateProgress(context)
             if (response == null) {
-                Log.d("AiCoach", "No prescription: the coach could not be reached. stageId=$stageId")
+                // Any standing prescription is deliberately left alone — see evaluateProgress.
+                Log.d("AiCoach", "No new prescription: the coach could not be reached. stageId=$stageId")
                 return
             }
             // Warm-up/cool-down now live on the workout (#107); the load clamp accounts for the
