@@ -154,6 +154,38 @@ class TodayCardModelsTest {
     }
 
     @Test
+    fun `only the debrief's first sentence reaches the card`() {
+        val state = card(
+            settings = settings.copy(
+                latestCoachMessage = "Shortened after Tuesday. Your heart rate drifted in the last " +
+                    "two intervals, and the final one was cut short.\n\nWe will build back up next week."
+            ),
+            prescription = prescription()
+        )
+        assertEquals("Coach: Shortened after Tuesday.", state.coachNote)
+    }
+
+    @Test
+    fun `the coach's own decimals do not cut the sentence in half`() {
+        val state = card(
+            settings = settings.copy(
+                latestCoachMessage = "Your pace was 5.30 min/km, so today eases off. And then more."
+            ),
+            prescription = prescription()
+        )
+        assertEquals("Coach: Your pace was 5.30 min/km, so today eases off.", state.coachNote)
+    }
+
+    @Test
+    fun `a debrief with no sentence end is shown whole rather than guessed at`() {
+        val state = card(
+            settings = settings.copy(latestCoachMessage = "Easing off today"),
+            prescription = prescription()
+        )
+        assertEquals("Coach: Easing off today", state.coachNote)
+    }
+
+    @Test
     fun `an adaptation without a message still names that something changed`() {
         assertEquals(
             "Coach: Today's intervals were adjusted for you.",

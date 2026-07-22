@@ -719,9 +719,13 @@ fun MainScreen(
                         )
                     }
 
-                    // The coach's reason lives inside the card whenever it edited today's numbers;
-                    // the standalone debrief is for a message with no adaptation behind it.
-                    if (coachMessage != null && todayCard.coachNote == null) {
+                    // Always shown when there is a debrief, adaptation or not. The card's note is
+                    // only the debrief's first sentence (#113), so this is the one place the
+                    // coach's full reasoning can be read — suppressing it when the card carried a
+                    // note, as this used to, left the numbers changed and the reasoning nowhere.
+                    // The two no longer duplicate each other: one line of what changed on the
+                    // card, the whole argument here.
+                    if (coachMessage != null) {
                         item {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),

@@ -137,6 +137,11 @@ private fun totalMinutes(workout: WorkoutTemplate): Int {
  * Prescribed numbers are shown directly, plus one line naming the change and why — never the
  * original numbers, and never a silent edit. Falls back to a plain statement when the coach changed
  * the numbers without leaving a reason.
+ *
+ * Only the debrief's [firstSentence] appears here. The debrief is written to be read whole and runs
+ * to several paragraphs; dropped into the card entire it pushed the skip link and everything under
+ * it off the screen (#113, found on a device — the coach has to be reachable to see it). The full
+ * text still shows in its own slot on the screen when there is no prescription for it to explain.
  */
 private fun coachNote(
     baseWorkout: WorkoutTemplate,
@@ -146,7 +151,25 @@ private fun coachNote(
     if (planned == baseWorkout) return null
     val message = settings.latestCoachMessage?.takeIf { it.isNotBlank() }
         ?: return "Coach: Today's intervals were adjusted for you."
-    return "Coach: $message"
+    return "Coach: ${firstSentence(message)}"
+}
+
+/**
+ * Up to and including the first `.`, `!` or `?` that ends a word.
+ *
+ * The terminator has to be followed by a space or the end of the text, or the coach's own numbers
+ * would cut the sentence in half — "your pace was 5.30" ends at "5." otherwise. Text with no
+ * terminator at all is returned whole rather than guessed at.
+ */
+private fun firstSentence(text: String): String {
+    val trimmed = text.trim()
+    trimmed.forEachIndexed { i, c ->
+        if (c == '.' || c == '!' || c == '?') {
+            val next = trimmed.getOrNull(i + 1)
+            if (next == null || next.isWhitespace()) return trimmed.substring(0, i + 1)
+        }
+    }
+    return trimmed
 }
 
 /** "5 min", "10 s", "1 min 30 s" — whole minutes wherever a workout has them. */
