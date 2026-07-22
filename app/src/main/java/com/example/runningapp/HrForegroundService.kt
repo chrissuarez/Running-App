@@ -215,6 +215,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
     
     private lateinit var settingsRepository: SettingsRepository
+    // The coach's standing prescription for today's workout, if any. Read once at START, like the
+    // workout it adapts — a prescription arriving mid-run must not reshape a run in progress.
+    @Volatile private var currentPrescription: CoachPrescription? = null
     private lateinit var sessionRepository: SessionRepository
     private var currentSettings = UserSettings()
     // Skip today's plan (#107): a per-run, today-only choice from the record screen. When set, the
@@ -645,6 +648,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
         }
 
+        serviceScope.launch {
+            appContainer.coachPrescriptionRepository.prescriptionFlow.collect {
+                currentPrescription = it
+            }
+        }
+
         // Promotion, derived. This is the whole of it: no code anywhere else promotes or demotes,
         // so there is no release to forget. distinctUntilChanged is load-bearing — demote() ends
         // in stopSelf(), and this sees every published state change, including each per-second
@@ -1001,7 +1010,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             currentSettings.activeStageId
         ) ?: return null
         // Shared with the record screen's card, so what it promises is what this runs (#111).
-        return baseWorkout.withCoachAdaptation(currentSettings)
+        return baseWorkout.withCoachPrescription(currentPrescription, System.currentTimeMillis())
     }
 
     private fun initializeStructuredWorkoutState() {

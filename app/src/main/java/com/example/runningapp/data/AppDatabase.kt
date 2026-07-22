@@ -30,18 +30,7 @@ data class RunnerSession(
     val noDataSeconds: Long = 0L,
     val walkBreaksCount: Int = 0,
     val isRunWalkMode: Boolean = false,
-    val sessionType: String = "Run/Walk",
     val includeInAiTraining: Boolean = true,
-    val easyPlannedDurationSeconds: Int? = null,
-    val easyActualDurationSeconds: Int? = null,
-    val easyTotalJogSeconds: Int? = null,
-    val easyTotalWalkSeconds: Int? = null,
-    val easyJogPercent: Int? = null,
-    val easyLongestJogBoutSeconds: Int? = null,
-    val easyWalkInterruptions: Int? = null,
-    val easyHrSummary: String? = null,
-    val easyTimeAboveCapSeconds: Int? = null,
-    val easyDataQualitySummary: String? = null,
     // Post-run "How did that feel?" feedback. Context only — must never feed
     // the Effort/TRIMP or Fitness/Fatigue/Form math (#60).
     val perceivedEffort: Int? = null,
@@ -326,7 +315,7 @@ interface RunWalkIntervalStatDao {
 
 @Database(
     entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class, TrackPoint::class],
-    version = 14,
+    version = 15,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -364,7 +353,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_10_11,
                     MIGRATION_11_12,
                     migration12To13(maxHrProvider),
-                    MIGRATION_13_14
+                    MIGRATION_13_14,
+                    MIGRATION_14_15
                 )
                 .build()
                 INSTANCE = instance
@@ -754,7 +744,8 @@ private fun recomputeZoneSecondsFromHrSamples(database: SupportSQLiteDatabase, m
  * run with no interval rows has no interval evidence to preserve anyway (`buildRunWalkMetrics`
  * returns null), so clearing it is safe. This runs once at the 13→14 upgrade when every row predates
  * #107, and new runs set the flag correctly at insert. Dropping the dead `sessionType`/`easy*`
- * columns and the fuller analytics reconciliation stay with #113.
+ * columns lands in [MIGRATION_14_15]; the fuller analytics reconciliation stays with the analytics
+ * cluster.
  */
 val MIGRATION_13_14 = object : Migration(13, 14) {
     override fun migrate(database: SupportSQLiteDatabase) {
@@ -767,5 +758,82 @@ val MIGRATION_13_14 = object : Migration(13, 14) {
             END
             """.trimIndent()
         )
+    }
+}
+
+/**
+ * Drops `sessionType` and the ten `easy*` columns — the last physical remains of the four session
+ * types (#107), carried here by #113.
+ *
+ * Both were dead before this: `sessionType` was replaced as the run/walk truth by `isRunWalkMode`
+ * in [MIGRATION_13_14], which also records *why* the label could never be trusted, and the `easy*`
+ * columns belonged to Easy Fixed Duration, a mode that no longer exists. Nothing reads either.
+ * Leaving them would keep a column that says "Run/Walk" beside runs the app now knows were open
+ * runs — a stored contradiction waiting to be believed by whatever reads the table next.
+ *
+ * A table rebuild for the same reason [migration12To13] needed one: minSdk 26 devices ship SQLite
+ * older than 3.35, so `ALTER TABLE ... DROP COLUMN` is not available. Same shape, same safety
+ * argument about the three tables holding foreign keys into `sessions` — Room runs migrations with
+ * `foreign_keys` off, so their REFERENCES clauses survive the DROP/RENAME untouched. Every
+ * surviving column is copied value-for-value: this migration only removes, it computes nothing.
+ */
+val MIGRATION_14_15 = object : Migration(14, 15) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `sessions_new` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `startTime` INTEGER NOT NULL,
+                `endTime` INTEGER NOT NULL,
+                `durationSeconds` INTEGER NOT NULL,
+                `avgBpm` INTEGER NOT NULL,
+                `maxBpm` INTEGER NOT NULL,
+                `targetZone` INTEGER NOT NULL,
+                `zone1Seconds` INTEGER NOT NULL,
+                `zone2Seconds` INTEGER NOT NULL,
+                `zone3Seconds` INTEGER NOT NULL,
+                `zone4Seconds` INTEGER NOT NULL,
+                `zone5Seconds` INTEGER NOT NULL,
+                `runMode` TEXT NOT NULL,
+                `distanceKm` REAL NOT NULL,
+                `avgPaceMinPerKm` REAL NOT NULL,
+                `noDataSeconds` INTEGER NOT NULL,
+                `walkBreaksCount` INTEGER NOT NULL,
+                `isRunWalkMode` INTEGER NOT NULL,
+                `includeInAiTraining` INTEGER NOT NULL,
+                `perceivedEffort` INTEGER,
+                `sessionNote` TEXT,
+                `startLatitude` REAL,
+                `startLongitude` REAL,
+                `weatherTempC` REAL,
+                `weatherFeelsLikeC` REAL,
+                `weatherHumidityPercent` INTEGER,
+                `weatherWindSpeedKmh` REAL,
+                `weatherConditionCode` INTEGER
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            """
+            INSERT INTO `sessions_new` (
+                id, startTime, endTime, durationSeconds, avgBpm, maxBpm, targetZone,
+                zone1Seconds, zone2Seconds, zone3Seconds, zone4Seconds, zone5Seconds,
+                runMode, distanceKm, avgPaceMinPerKm, noDataSeconds, walkBreaksCount,
+                isRunWalkMode, includeInAiTraining, perceivedEffort, sessionNote,
+                startLatitude, startLongitude, weatherTempC, weatherFeelsLikeC,
+                weatherHumidityPercent, weatherWindSpeedKmh, weatherConditionCode
+            )
+            SELECT
+                id, startTime, endTime, durationSeconds, avgBpm, maxBpm, targetZone,
+                zone1Seconds, zone2Seconds, zone3Seconds, zone4Seconds, zone5Seconds,
+                runMode, distanceKm, avgPaceMinPerKm, noDataSeconds, walkBreaksCount,
+                isRunWalkMode, includeInAiTraining, perceivedEffort, sessionNote,
+                startLatitude, startLongitude, weatherTempC, weatherFeelsLikeC,
+                weatherHumidityPercent, weatherWindSpeedKmh, weatherConditionCode
+            FROM `sessions`
+            """.trimIndent()
+        )
+        database.execSQL("DROP TABLE `sessions`")
+        database.execSQL("ALTER TABLE `sessions_new` RENAME TO `sessions`")
     }
 }

@@ -1,5 +1,8 @@
 package com.example.runningapp.data
 
+import com.example.runningapp.CoachPrescription
+import com.example.runningapp.CoachPrescriptionRepository
+import com.example.runningapp.CoachWriteScope
 import com.example.runningapp.MAX_MAX_HR
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.UserSettings
@@ -11,6 +14,8 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.inOrder
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
@@ -353,6 +358,126 @@ class SessionRepositoryTest {
         repositoryWithSamples.setMaxHr(999)
 
         verify(mockSettingsRepo).setMaxHrDeliberately(MAX_MAX_HR)
+    }
+
+    // --- What the coach may prescribe (#113) ---
+
+    @Test
+    fun `an omitted target zone leaves the workout's own target alone`() {
+        // "Aerobic Foundation" is a Zone 2 workout; the coach adjusting only the intervals must not
+        // silently move the target it never spoke about.
+        assertEquals(2, coachTargetZone(requested = null, workoutTargetZone = 2, settingsTargetZone = 4))
+        assertEquals(4, coachTargetZone(requested = 9, workoutTargetZone = 4, settingsTargetZone = 2))
+    }
+
+    @Test
+    fun `with no plan attached an omitted target zone falls back to the global`() {
+        assertEquals(3, coachTargetZone(requested = null, workoutTargetZone = null, settingsTargetZone = 3))
+    }
+
+    @Test
+    fun `the coach can move the target inside the coaching range`() {
+        assertEquals(2, coachTargetZone(requested = 2, workoutTargetZone = 4, settingsTargetZone = 4))
+        assertEquals(4, coachTargetZone(requested = 4, workoutTargetZone = 2, settingsTargetZone = 2))
+    }
+
+    @Test
+    fun `an edge zone is snapped, so the coach cannot re-open the overstated in-target bug`() {
+        // Zone 1 and Zone 5 overstate time in target (#117). The picker is closed to them; the
+        // coach must not be the back door.
+        assertEquals(2, coachTargetZone(requested = 1, workoutTargetZone = 4, settingsTargetZone = 4))
+        assertEquals(4, coachTargetZone(requested = 5, workoutTargetZone = 2, settingsTargetZone = 2))
+    }
+
+    @Test
+    fun `a graduation clears the prescription instead of writing one for the stage just left`() = runTest {
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        // What the evaluation reasoned about — every coach write has to carry it, so a plan
+        // chosen while Gemini was still thinking can be refused at the write itself.
+        val activeScope = CoachWriteScope("5k_sub_25", "base_builder")
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                nextTargetZone = 3,
+                graduatedToNextStage = true,
+                coachMessage = "Stage complete."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder")
+
+        verify(mockSettingsRepo).advanceStageAndClearPrescription("sub_30_bridge", activeScope)
+        verify(mockPrescriptions, never()).prescribe(any(), any())
+        // The debrief is about the run just finished, so it survives the graduation.
+        verify(mockSettingsRepo).setLatestCoachMessage("Stage complete.", activeScope)
+    }
+
+    @Test
+    fun `a normal evaluation writes one prescription and touches no setting but the debrief`() = runTest {
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        // What the evaluation reasoned about — every coach write has to carry it, so a plan
+        // chosen while Gemini was still thinking can be refused at the write itself.
+        val activeScope = CoachWriteScope("5k_sub_25", "base_builder")
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                nextTargetZone = 3,
+                graduatedToNextStage = false,
+                coachMessage = "Good session."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder")
+
+        val prescribed = argumentCaptor<CoachPrescription>()
+        verify(mockPrescriptions).prescribe(prescribed.capture(), eq(activeScope))
+        assertEquals(360, prescribed.firstValue.runDurationSeconds)
+        assertEquals(60, prescribed.firstValue.walkDurationSeconds)
+        assertEquals(5, prescribed.firstValue.totalRepeats)
+        assertEquals(3, prescribed.firstValue.targetZone)
+        verify(mockSettingsRepo).setLatestCoachMessage("Good session.", activeScope)
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescription(anyOrNull(), any())
+        verify(mockSettingsRepo, never()).setCoachingEnabled(any())
+        verify(mockSettingsRepo, never()).setTargetZone(any())
+        verify(mockSettingsRepo, never()).setMaxHrDeliberately(any())
     }
 
     private fun trackPoint(sessionId: Long, lon: Double, accuracy: Float?, source: String) = TrackPoint(

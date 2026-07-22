@@ -2,6 +2,10 @@ package com.example.runningapp.data
 
 import android.util.Log
 import androidx.annotation.VisibleForTesting
+import com.example.runningapp.CoachPrescription
+import com.example.runningapp.CoachPrescriptionRepository
+import com.example.runningapp.CoachWriteScope
+import com.example.runningapp.HrZone
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.effectiveMaxHr
@@ -52,12 +56,33 @@ data class Max30dLoad(
     val maxDurationSeconds: Long
 )
 
+/**
+ * The target zone a prescription is allowed to carry.
+ *
+ * [requested] is whatever the model returned, so it is sanitized rather than trusted: an omitted or
+ * unrecognisable zone is the coach declining to move the target, and the workout's own zone stands
+ * (falling back to the global only when no plan is attached). A recognisable one is snapped to a
+ * coaching target — Zone 1 and Zone 5 are excluded from whole-run targets because they overstate
+ * time in target (#117), and the coach must not be the one door that re-opens that.
+ */
+@VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+internal fun coachTargetZone(
+    requested: Int?,
+    workoutTargetZone: Int?,
+    settingsTargetZone: Int
+): Int {
+    val recognised = requested?.let { HrZone.ofNumber(it) }
+        ?: return workoutTargetZone ?: settingsTargetZone
+    return HrZone.coachingTargetOfNumberOrDefault(recognised.number).number
+}
+
 class SessionRepository(
     private val sessionDao: SessionDao,
     private val sampleDao: SampleDao? = null,
     private val runWalkIntervalStatDao: RunWalkIntervalStatDao? = null,
     private val trackPointDao: TrackPointDao? = null,
     private val settingsRepository: SettingsRepository? = null,
+    private val coachPrescriptionRepository: CoachPrescriptionRepository? = null,
     private val aiCoachClient: AiCoachClient? = null,
     private val weatherClient: WeatherClient? = null,
     // Re-snapshots run history to the Downloads backup after a deletion. Without this a later
@@ -297,6 +322,11 @@ class SessionRepository(
             val context = getAiTrainingContext(stageId)
             Log.d("AiCoach", "Sending prompt to Gemini with ${context.recentRuns.size} recent runs.")
             val response = coachClient.evaluateProgress(context)
+            if (response == null) {
+                // Any standing prescription is deliberately left alone — see evaluateProgress.
+                Log.d("AiCoach", "No new prescription: the coach could not be reached. stageId=$stageId")
+                return
+            }
             // Warm-up/cool-down now live on the workout (#107); the load clamp accounts for the
             // active workout's envelope so the estimated total stays comparable to real sessions.
             val activeWorkout = TrainingPlanProvider.resolveBaseWorkout(
@@ -314,12 +344,12 @@ class SessionRepository(
                     "${clampedResponse.nextWalkDurationSeconds}s Walk. Message: ${clampedResponse.coachMessage}"
             )
 
-            settingsRepo.setAiAdjustments(
-                latestCoachMessage = clampedResponse.coachMessage,
-                aiRunIntervalSeconds = clampedResponse.nextRunDurationSeconds,
-                aiWalkIntervalSeconds = clampedResponse.nextWalkDurationSeconds,
-                aiRepeats = clampedResponse.nextRepeats
-            )
+            // Everything below was reasoned about against this plan and stage, read before a
+            // network round trip that takes seconds. Carried into each write so the write itself
+            // can refuse if the runner changed plans meanwhile — see CoachWriteScope.
+            val scope = CoachWriteScope(settings.activePlanId, settings.activeStageId)
+
+            settingsRepo.setLatestCoachMessage(clampedResponse.coachMessage, scope)
 
             if (clampedResponse.graduatedToNextStage) {
                 val plan = TrainingPlanProvider
@@ -332,7 +362,25 @@ class SessionRepository(
                     ?.takeIf { it >= 0 }
                     ?.let { index -> plan.stages.getOrNull(index + 1)?.id }
 
-                settingsRepo.advanceStageAndClearAiIntervals(nextStageId)
+                // No prescription on a graduation: it would be intervals for the stage just left,
+                // and writing one only to clear it in the next breath leaves a window where a run
+                // could start on the new stage carrying the old one's numbers.
+                settingsRepo.advanceStageAndClearPrescription(nextStageId, scope)
+            } else {
+                coachPrescriptionRepository?.prescribe(
+                    CoachPrescription(
+                        targetZone = coachTargetZone(
+                            requested = clampedResponse.nextTargetZone,
+                            workoutTargetZone = activeWorkout?.targetZone,
+                            settingsTargetZone = settings.targetZone
+                        ),
+                        runDurationSeconds = clampedResponse.nextRunDurationSeconds,
+                        walkDurationSeconds = clampedResponse.nextWalkDurationSeconds,
+                        totalRepeats = clampedResponse.nextRepeats,
+                        prescribedAtEpochMillis = System.currentTimeMillis()
+                    ),
+                    scope
+                )
             }
         } catch (e: Exception) {
             Log.e("AiCoach", "Failed to evaluate progress", e)

@@ -2,6 +2,7 @@ package com.example.runningapp
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -11,40 +12,61 @@ import org.junit.Test
 class TrainingPlanModelsTest {
 
     private val base = WorkoutTemplate("w1_s2", "Aerobic Foundation", 2, 300, 60, 5)
-    private val settings = UserSettings()
+    private val now = 1_700_000_000_000L
+
+    private fun prescription(
+        targetZone: Int = 2,
+        run: Int = 240,
+        walk: Int = 90,
+        repeats: Int = 4,
+        prescribedAt: Long = now
+    ) = CoachPrescription(targetZone, run, walk, repeats, prescribedAt)
+
+    private fun daysBefore(days: Long) = now - days * 24L * 60L * 60L * 1000L
 
     @Test
-    fun `with no coach adjustment the base workout is what runs`() {
-        assertSame(base, base.withCoachAdaptation(settings))
+    fun `with no prescription the base workout is what runs`() {
+        assertSame(base, base.withCoachPrescription(null, now))
     }
 
     @Test
-    fun `a complete coach adjustment replaces run, walk and repeats`() {
-        val adapted = base.withCoachAdaptation(
-            settings.copy(aiRunIntervalSeconds = 240, aiWalkIntervalSeconds = 90, aiRepeats = 4)
-        )
+    fun `a prescription replaces target, run, walk and repeats`() {
+        val adapted = base.withCoachPrescription(prescription(targetZone = 3), now)
+        assertEquals(3, adapted.targetZone)
         assertEquals(240, adapted.runDurationSeconds)
         assertEquals(90, adapted.walkDurationSeconds)
         assertEquals(4, adapted.totalRepeats)
-        // Structure the coach doesn't write is left alone.
+    }
+
+    @Test
+    fun `identity and the envelope stay the plan's — the coach prescribes work, not the workout`() {
+        val adapted = base.withCoachPrescription(prescription(), now)
+        assertEquals(base.id, adapted.id)
+        assertEquals(base.title, adapted.title)
         assertEquals(base.warmUpSeconds, adapted.warmUpSeconds)
-        assertEquals(base.targetZone, adapted.targetZone)
+        assertEquals(base.coolDownSeconds, adapted.coolDownSeconds)
     }
 
     @Test
-    fun `a partial coach adjustment is ignored rather than half-applied`() {
-        assertSame(base, base.withCoachAdaptation(settings.copy(aiRunIntervalSeconds = 240)))
-        assertSame(base, base.withCoachAdaptation(settings.copy(aiRunIntervalSeconds = 240, aiRepeats = 4)))
+    fun `a prescription still applies days later, since runs are days apart`() {
+        val adapted = base.withCoachPrescription(prescription(prescribedAt = daysBefore(5)), now)
+        assertEquals(240, adapted.runDurationSeconds)
     }
 
     @Test
-    fun `testing mode runs the plan as written`() {
-        val adapted = settings.copy(
-            aiRunIntervalSeconds = 240,
-            aiWalkIntervalSeconds = 90,
-            aiRepeats = 4,
-            testingModeEnabled = true
-        )
-        assertSame(base, base.withCoachAdaptation(adapted))
+    fun `a prescription older than the cutoff is not applied`() {
+        val stale = prescription(prescribedAt = daysBefore(COACH_PRESCRIPTION_MAX_AGE_DAYS + 1L))
+        assertSame(base, base.withCoachPrescription(stale, now))
+    }
+
+    @Test
+    fun `the cutoff day itself still counts as fresh`() {
+        val onTheEdge = prescription(prescribedAt = daysBefore(COACH_PRESCRIPTION_MAX_AGE_DAYS.toLong()))
+        assertTrue(onTheEdge.isFreshAt(now))
+    }
+
+    @Test
+    fun `a clock that moved backwards does not throw away a real prescription`() {
+        assertTrue(prescription(prescribedAt = now + 60_000).isFreshAt(now))
     }
 }

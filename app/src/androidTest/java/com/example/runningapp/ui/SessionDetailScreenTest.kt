@@ -39,8 +39,7 @@ class SessionDetailScreenTest {
                         zone3Seconds = 277,
                         zone4Seconds = 16,
                         walkBreaksCount = 22,
-                        isRunWalkMode = true,
-                        sessionType = "Run/Walk"
+                        isRunWalkMode = true
                     ),
                     samples = listOf(
                         HrSample(sessionId = 1L, elapsedSeconds = 0, rawBpm = 101, smoothedBpm = 101, connectionState = "Connected"),

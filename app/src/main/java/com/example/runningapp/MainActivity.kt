@@ -184,6 +184,8 @@ class MainActivity : ComponentActivity() {
                     val appContainer = remember { this@MainActivity.runningAppContainer() }
                     val settingsRepository = remember { appContainer.settingsRepository }
                     val userSettings by settingsRepository.userSettingsFlow.collectAsState(initial = UserSettings())
+                    val coachPrescription by appContainer.coachPrescriptionRepository
+                        .prescriptionFlow.collectAsState(initial = null)
 
                     val database = remember { appContainer.database }
                     val sessionRepository = remember { appContainer.sessionRepository }
@@ -218,6 +220,7 @@ class MainActivity : ComponentActivity() {
                             MainScreen(
                                 hrService = hrService,
                                 userSettings = userSettings,
+                                coachPrescription = coachPrescription,
                                 sessionRepository = sessionRepository,
                                 onRequestPermissions = { checkAndRequestPermissions() },
                                 onStartRun = { skipPlan, runMode ->
@@ -561,6 +564,7 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(
     hrService: HrForegroundService?,
     userSettings: UserSettings,
+    coachPrescription: CoachPrescription?,
     sessionRepository: SessionRepository,
     paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
@@ -593,14 +597,17 @@ fun MainScreen(
     val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
     val activeStage = activePlan?.stages?.firstOrNull { it.id == userSettings.activeStageId } ?: activePlan?.stages?.firstOrNull()
     val baseWorkout = activeStage?.workouts?.firstOrNull()
-    val coachMessage = userSettings.latestCoachMessage
-        ?.takeIf { it.isNotBlank() && !userSettings.testingModeEnabled }
+    // No testing-mode check: turning testing mode on erases the debrief, and the coach is refused
+    // the write while it stays on, so there is nothing left to filter out on read (#113).
+    val coachMessage = userSettings.latestCoachMessage?.takeIf { it.isNotBlank() }
     // The card resolves today's workout itself (adaptation included) so the screen and the run
-    // read the same numbers — see withCoachAdaptation (#111).
+    // read the same numbers — see withCoachPrescription (#111).
     val todayCard = todayCardUiState(
         stageTitle = activeStage?.title,
         baseWorkout = baseWorkout,
         settings = userSettings,
+        prescription = coachPrescription,
+        nowEpochMillis = System.currentTimeMillis(),
         runMode = selectedRunMode,
         skippedToday = skipPlanToday
     )
@@ -712,9 +719,13 @@ fun MainScreen(
                         )
                     }
 
-                    // The coach's reason lives inside the card whenever it edited today's numbers;
-                    // the standalone debrief is for a message with no adaptation behind it.
-                    if (coachMessage != null && todayCard.coachNote == null) {
+                    // Always shown when there is a debrief, adaptation or not. The card's note is
+                    // only the debrief's first sentence (#113), so this is the one place the
+                    // coach's full reasoning can be read — suppressing it when the card carried a
+                    // note, as this used to, left the numbers changed and the reasoning nowhere.
+                    // The two no longer duplicate each other: one line of what changed on the
+                    // card, the whole argument here.
+                    if (coachMessage != null) {
                         item {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
