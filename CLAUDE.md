@@ -15,3 +15,5 @@ Default vocabulary — the five canonical roles (`needs-triage`, `needs-info`, `
 ### Domain docs
 
 Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root (created lazily by `/domain-modeling`). See `docs/agents/domain.md`.
+
+When reporting information to me, be extremely concise and sacrifice grammar for sake of concision.
