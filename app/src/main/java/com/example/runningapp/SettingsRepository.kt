@@ -15,7 +15,7 @@ data class SavedDevice(
 )
 
 data class UserSettings(
-    val maxHr: Int = 190,
+    val maxHr: Int = DEFAULT_MAX_HR,
     // Whether Max HR has ever been deliberately set, as opposed to standing at the default. The
     // first deliberate set recomputes all history against the true number (#112); every change
     // after it is future-only. Distinct from any dismissal flag: keeping the current value is
@@ -54,6 +54,25 @@ data class UserSettings(
 fun aiSharingChangeAllowed(enabled: Boolean, testingModeEnabled: Boolean): Boolean =
     !enabled || !testingModeEnabled
 
+/**
+ * Whether Max HR counts as deliberately set, for a store that may predate the flag recording it.
+ *
+ * The flag arrived with #112; before it, Max HR was a field on a screen with a Save button. So an
+ * upgrading runner who typed their number has [storedMaxHr] and no [flag], and reading that as
+ * "never set" would let their next edit rewrite history that was already recorded against the
+ * number they chose — the opposite of the future-only rule.
+ *
+ * The evidence is the value, not the key: the old Save wrote Max HR on every save, whether or not
+ * it had been touched, so the key is present for anyone who ever changed any setting. A stored
+ * value *differing* from [DEFAULT_MAX_HR] is the part nobody gets by accident.
+ *
+ * This leaves one gap by choice: someone who deliberately set exactly [DEFAULT_MAX_HR] before the
+ * flag existed still reads as unset. Indistinguishable from the placeholder by construction, and
+ * the cost is one retally against a number that produces the same tally anyway.
+ */
+fun maxHrEverSet(flag: Boolean?, storedMaxHr: Int?): Boolean =
+    flag ?: (storedMaxHr != null && storedMaxHr != DEFAULT_MAX_HR)
+
 class SettingsRepository(private val context: Context) {
 
     private object PreferencesKeys {
@@ -86,8 +105,11 @@ class SettingsRepository(private val context: Context) {
             }
 
             UserSettings(
-                maxHr = preferences[PreferencesKeys.MAX_HR] ?: 190,
-                maxHrEverSet = preferences[PreferencesKeys.MAX_HR_EVER_SET] ?: false,
+                maxHr = preferences[PreferencesKeys.MAX_HR] ?: DEFAULT_MAX_HR,
+                maxHrEverSet = maxHrEverSet(
+                    flag = preferences[PreferencesKeys.MAX_HR_EVER_SET],
+                    storedMaxHr = preferences[PreferencesKeys.MAX_HR]
+                ),
                 // Sanitized on read, not only on write: an edge-zone target stored before #117
                 // closed the picker would otherwise keep overstating "In Target" forever.
                 targetZone = HrZone.coachingTargetOfNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE]).number,

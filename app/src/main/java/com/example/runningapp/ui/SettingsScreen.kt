@@ -1,5 +1,6 @@
 package com.example.runningapp.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -31,11 +32,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -81,13 +81,27 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     var showTargetZonePicker by remember { mutableStateOf(false) }
+    val maxHrState = rememberMaxHrFieldState(settings.maxHr)
+
+    // Leaving commits the Max HR field, and an unusable entry holds the screen open once so the
+    // error is readable — see [MaxHrFieldState.onLeaveAttempt]. Both ways out go through it: the
+    // top bar arrow and the system back button/gesture, the latter intercepted via [BackHandler]
+    // so it cannot dispose the screen behind the check.
+    //
+    // Intercepting also repairs where the system back went from here, as on [FullScreenMapScreen]:
+    // `navigateTo` clears the back stack, so an unhandled back popped the only destination and
+    // left the app rather than returning to the main screen.
+    fun leave() {
+        if (maxHrState.onLeaveAttempt(onMaxHrCommit)) onBack()
+    }
+    BackHandler(onBack = ::leave)
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("Settings") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(onClick = ::leave) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
                     }
                 }
@@ -103,7 +117,7 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             SettingsSectionHeader("Your zones")
-            MaxHrField(maxHr = settings.maxHr, onCommit = onMaxHrCommit)
+            MaxHrField(state = maxHrState, onCommit = onMaxHrCommit)
             SettingsRow(
                 label = "Target zone",
                 // Load-bearing: the workout sets the target and this is only the fallback, so
@@ -174,32 +188,45 @@ fun SettingsScreen(
 }
 
 /**
- * The single input the whole zone model hangs off, so the one place a silent failure would cost
- * the most: an unusable entry is refused where you can see it and the field keeps what you typed.
- * It never quietly reverts to the old number.
+ * What the Max HR field knows: what has been typed, whether it was refused, and whether leaving
+ * the screen is allowed yet.
  *
- * Commits on blur rather than per keystroke, because typing "190" passes through "1" and "19" —
- * both of which are invalid, and neither of which is a mistake.
+ * Split out from the composable because the rules it holds are the ones worth being sure about —
+ * when a commit happens, when it doesn't, and what Back does with an entry that can't be stored —
+ * and none of them are testable while they live inside a `@Composable`.
  */
-@Composable
-private fun MaxHrField(maxHr: Int, onCommit: (Int) -> Unit) {
-    // Keyed on the stored value so an outside change (the #65 card, once it lands) shows up here.
-    var typed by remember(maxHr) { mutableStateOf(maxHr.toString()) }
-    var refused by remember(maxHr) { mutableStateOf(false) }
+@Stable
+class MaxHrFieldState(storedMaxHr: Int) {
+    var typed by mutableStateOf(storedMaxHr.toString())
+        private set
+    var refused by mutableStateOf(false)
+        private set
+
     // Commit needs a keystroke, not just a visit. Retyping the number it already holds still
     // counts as a deliberate set — that is the point of the flag — but tapping the field by
     // accident and tapping away must not: that would spend the one-shot history recompute on the
-    // placeholder 190, which is the exact outcome the flag exists to prevent. The explicit
+    // placeholder Max HR, which is the exact outcome the flag exists to prevent. The explicit
     // "keep the current value" gesture belongs to #65's confirmation card.
-    var edited by remember(maxHr) { mutableStateOf(false) }
-    val focusManager = LocalFocusManager.current
+    private var edited = false
 
-    fun commitIfEdited() {
+    // Whether Back has already been refused once for the entry currently in the field.
+    private var leaveRefused = false
+
+    fun onTyped(text: String) {
+        typed = text
+        edited = true
+        refused = false
+        leaveRefused = false
+    }
+
+    /**
+     * Blur, or Done on the keyboard. An unusable entry is refused where you can see it, keeping
+     * what you typed — the old field kept the *previous* number instead and said nothing.
+     */
+    fun onCommitAttempt(onCommit: (Int) -> Unit) {
         if (!edited) return
         val parsed = parseMaxHr(typed)
         if (parsed == null) {
-            // Refused where you can see it, keeping what you typed. The old field kept the
-            // previous number instead and said nothing.
             refused = true
         } else {
             refused = false
@@ -208,26 +235,58 @@ private fun MaxHrField(maxHr: Int, onCommit: (Int) -> Unit) {
         }
     }
 
-    // Leaving the screen commits too. Back doesn't blur the field in touch mode, so hanging the
-    // commit on focus alone would drop a typed number on the way out — the same silent discard
-    // this screen exists to delete, just moved one gesture along.
-    val commitOnLeaving by rememberUpdatedState(::commitIfEdited)
-    DisposableEffect(Unit) {
-        onDispose { commitOnLeaving() }
+    /**
+     * Whether Back may proceed, committing a valid pending edit on the way out.
+     *
+     * Back doesn't blur the field in touch mode, so a typed number would otherwise be dropped on
+     * the way out — the same silent discard this screen exists to delete, moved one gesture along.
+     *
+     * An *unusable* entry can't be committed and mustn't vanish quietly either, so the first Back
+     * stays put and shows the error rather than disposing the screen before it can be read. A
+     * second Back leaves anyway: refusing once makes the refusal visible, refusing forever would
+     * trap the runner behind a number they may have no way to make valid.
+     */
+    fun onLeaveAttempt(onCommit: (Int) -> Unit): Boolean {
+        if (!edited) return true
+        val parsed = parseMaxHr(typed)
+        if (parsed != null) {
+            refused = false
+            edited = false
+            onCommit(parsed)
+            return true
+        }
+        if (leaveRefused) return true
+        refused = true
+        leaveRefused = true
+        return false
     }
+}
+
+@Composable
+private fun rememberMaxHrFieldState(storedMaxHr: Int): MaxHrFieldState =
+    // Keyed on the stored value so an outside change (the #65 card, once it lands) shows up here.
+    remember(storedMaxHr) { MaxHrFieldState(storedMaxHr) }
+
+/**
+ * The single input the whole zone model hangs off, so the one place a silent failure would cost
+ * the most: an unusable entry is refused where you can see it and the field keeps what you typed.
+ * It never quietly reverts to the old number.
+ *
+ * Commits on blur rather than per keystroke, because typing "190" passes through "1" and "19" —
+ * both of which are invalid, and neither of which is a mistake.
+ */
+@Composable
+private fun MaxHrField(state: MaxHrFieldState, onCommit: (Int) -> Unit) {
+    val focusManager = LocalFocusManager.current
 
     OutlinedTextField(
-        value = typed,
-        onValueChange = {
-            typed = it
-            edited = true
-            refused = false
-        },
+        value = state.typed,
+        onValueChange = state::onTyped,
         label = { Text("Max HR") },
         singleLine = true,
-        isError = refused,
+        isError = state.refused,
         supportingText = {
-            if (refused) Text("Enter a heart rate between $MIN_MAX_HR and $MAX_MAX_HR")
+            if (state.refused) Text("Enter a heart rate between $MIN_MAX_HR and $MAX_MAX_HR")
         },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
         // Done clears focus rather than committing directly, so both ways of finishing with the
@@ -236,7 +295,7 @@ private fun MaxHrField(maxHr: Int, onCommit: (Int) -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .onFocusChanged { focusState ->
-                if (!focusState.isFocused) commitIfEdited()
+                if (!focusState.isFocused) state.onCommitAttempt(onCommit)
             }
     )
 }

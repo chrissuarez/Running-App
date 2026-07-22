@@ -67,6 +67,15 @@ enum class ZoneBand {
 const val MIN_MAX_HR = 100
 const val MAX_MAX_HR = 230
 
+/**
+ * The Max HR the app assumes until someone states theirs.
+ *
+ * Load-bearing rather than cosmetic: it is the value #112 treats as "nobody has chosen yet", so
+ * history sitting on it is stranded and a stored number *differing* from it is evidence of a
+ * deliberate set. Both readings break if this drifts from [UserSettings.maxHr]'s default.
+ */
+const val DEFAULT_MAX_HR = 190
+
 fun effectiveMaxHr(maxHr: Int): Int = maxHr.coerceIn(MIN_MAX_HR, MAX_MAX_HR)
 
 /**
