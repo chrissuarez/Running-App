@@ -601,7 +601,7 @@ fun MainScreen(
     // the write while it stays on, so there is nothing left to filter out on read (#113).
     val coachMessage = userSettings.latestCoachMessage?.takeIf { it.isNotBlank() }
     // The card resolves today's workout itself (adaptation included) so the screen and the run
-    // read the same numbers — see withCoachAdaptation (#111).
+    // read the same numbers — see withCoachPrescription (#111).
     val todayCard = todayCardUiState(
         stageTitle = activeStage?.title,
         baseWorkout = baseWorkout,

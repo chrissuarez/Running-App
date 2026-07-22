@@ -26,12 +26,12 @@ class TrainingPlanModelsTest {
 
     @Test
     fun `with no prescription the base workout is what runs`() {
-        assertSame(base, base.withCoachAdaptation(null, now))
+        assertSame(base, base.withCoachPrescription(null, now))
     }
 
     @Test
     fun `a prescription replaces target, run, walk and repeats`() {
-        val adapted = base.withCoachAdaptation(prescription(targetZone = 3), now)
+        val adapted = base.withCoachPrescription(prescription(targetZone = 3), now)
         assertEquals(3, adapted.targetZone)
         assertEquals(240, adapted.runDurationSeconds)
         assertEquals(90, adapted.walkDurationSeconds)
@@ -40,7 +40,7 @@ class TrainingPlanModelsTest {
 
     @Test
     fun `identity and the envelope stay the plan's — the coach prescribes work, not the workout`() {
-        val adapted = base.withCoachAdaptation(prescription(), now)
+        val adapted = base.withCoachPrescription(prescription(), now)
         assertEquals(base.id, adapted.id)
         assertEquals(base.title, adapted.title)
         assertEquals(base.warmUpSeconds, adapted.warmUpSeconds)
@@ -49,14 +49,14 @@ class TrainingPlanModelsTest {
 
     @Test
     fun `a prescription still applies days later, since runs are days apart`() {
-        val adapted = base.withCoachAdaptation(prescription(prescribedAt = daysBefore(5)), now)
+        val adapted = base.withCoachPrescription(prescription(prescribedAt = daysBefore(5)), now)
         assertEquals(240, adapted.runDurationSeconds)
     }
 
     @Test
     fun `a prescription older than the cutoff is not applied`() {
         val stale = prescription(prescribedAt = daysBefore(COACH_PRESCRIPTION_MAX_AGE_DAYS + 1L))
-        assertSame(base, base.withCoachAdaptation(stale, now))
+        assertSame(base, base.withCoachPrescription(stale, now))
     }
 
     @Test

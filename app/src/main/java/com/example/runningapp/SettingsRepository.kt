@@ -74,8 +74,9 @@ fun maxHrEverSet(flag: Boolean?, storedMaxHr: Int?): Boolean =
 
 /**
  * File-level and `internal` rather than private to the repository so the coach's prescription store
- * — a different thing sharing one DataStore — can read [PreferencesKeys.TESTING_MODE_ENABLED] in
- * its own writes without a second copy of the key string. One spelling of a key, one meaning.
+ * — a different thing sharing one DataStore — can reach [PreferencesKeys.TESTING_MODE_ENABLED]
+ * through [editUnlessTestingMode] without a second copy of the key string. One spelling of a key,
+ * one meaning.
  */
 internal object PreferencesKeys {
     val MAX_HR = intPreferencesKey("max_hr")
@@ -93,6 +94,22 @@ internal object PreferencesKeys {
     val LATEST_COACH_MESSAGE = stringPreferencesKey("latest_coach_message")
     val SIMULATION_ENABLED = booleanPreferencesKey("simulation_enabled")
     val TESTING_MODE_ENABLED = booleanPreferencesKey("testing_mode_enabled")
+}
+
+/**
+ * Everything the AI coach writes, gated on testing mode in one place (#113).
+ *
+ * The check reads testing mode inside the same `edit` as the write, so it cannot be raced by
+ * testing mode being switched on between deciding and storing: an evaluation already in flight
+ * would otherwise land just after the erase that was meant to stop it. Both of the coach's writes —
+ * its prescription and its debrief — go through here, so "the coach may not write while testing
+ * mode is on" is one rule with one implementation rather than a habit each new write has to copy.
+ */
+internal suspend fun DataStore<Preferences>.editCoachWrite(block: (MutablePreferences) -> Unit) {
+    edit { preferences ->
+        if (preferences[PreferencesKeys.TESTING_MODE_ENABLED] == true) return@edit
+        block(preferences)
+    }
 }
 
 class SettingsRepository(private val context: Context) {
@@ -244,8 +261,17 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /**
+     * Attaching a plan drops the coach's prescription along with it, in the same write.
+     *
+     * Those numbers were reasoned about against the plan being left. Carried across, they would
+     * overwrite day one of the plan just chosen — target zone included — which is the one workout
+     * the runner picked the plan *for*. Same rule as [advanceStageAndClearPrescription], since
+     * "the stage under it changed" is the same event either way.
+     */
     suspend fun setActivePlan(planId: String?, stageId: String?) {
         context.dataStore.edit { preferences ->
+            preferences.clearCoachPrescription()
             if (planId != null) {
                 preferences[PreferencesKeys.ACTIVE_PLAN_ID] = planId
             } else {
@@ -260,16 +286,9 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    /**
-     * The coach's debrief of the run just finished — displayed text, never a knob.
-     *
-     * Refused under testing mode for the same reason [CoachPrescriptionRepository.prescribe] is,
-     * and checked inside the same `edit`: an evaluation already in flight when testing mode came on
-     * would otherwise leave a debrief behind that the erase was meant to take.
-     */
+    /** The coach's debrief of the run just finished — displayed text, never a knob. */
     suspend fun setLatestCoachMessage(message: String) {
-        context.dataStore.edit { preferences ->
-            if (preferences[PreferencesKeys.TESTING_MODE_ENABLED] == true) return@edit
+        context.dataStore.editCoachWrite { preferences ->
             preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = message
         }
     }

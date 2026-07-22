@@ -36,14 +36,14 @@ data class WorkoutTemplate(
  * are about to run — a card adapting on a looser condition than the service would show a shape the
  * run never takes.
  *
- * The prescription carries all four fields together, so there is no half-applied adaptation to
- * guard against; a stale one is no adaptation at all. Identity, title and the warm-up/cool-down
+ * A prescription carries all four fields together, so there is no half-applied one to guard
+ * against, and a stale one applies nothing. Identity, title and the warm-up/cool-down
  * envelope stay the plan's — the coach prescribes work, not the whole workout (#113).
  *
  * No testing-mode branch: testing mode erases the prescription and blocks the coach from writing
  * one, so under it there is simply nothing here to apply.
  */
-fun WorkoutTemplate.withCoachAdaptation(
+fun WorkoutTemplate.withCoachPrescription(
     prescription: CoachPrescription?,
     nowEpochMillis: Long
 ): WorkoutTemplate {

@@ -2,7 +2,6 @@ package com.example.runningapp
 
 import android.content.Context
 import androidx.datastore.preferences.core.MutablePreferences
-import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import kotlinx.coroutines.flow.Flow
@@ -34,7 +33,7 @@ data class CoachPrescription(
 )
 
 /**
- * How long a prescription stands before it stops being about you.
+ * How long a prescription stands before it stops being about you (#113).
  *
  * The coach writes after a run and the next run is days away, so a prescription has to survive the
  * gap between runs — expiring at midnight would mean it almost never applied. But a plan's own
@@ -98,17 +97,9 @@ class CoachPrescriptionRepository(private val context: Context) {
         )
     }
 
-    /**
-     * Records what the coach wants run next, replacing anything it wrote before.
-     *
-     * Refused under testing mode, and the check reads testing mode inside the same `edit` as the
-     * write — same reason [aiSharingChangeAllowed] is applied that way. An evaluation already in
-     * flight when testing mode is switched on would otherwise land its prescription just after the
-     * erase that was supposed to stop it.
-     */
+    /** Records what the coach wants run next, replacing anything it wrote before. */
     suspend fun prescribe(prescription: CoachPrescription) {
-        context.dataStore.edit { preferences ->
-            if (preferences[PreferencesKeys.TESTING_MODE_ENABLED] == true) return@edit
+        context.dataStore.editCoachWrite { preferences ->
             preferences[CoachPrescriptionKeys.TARGET_ZONE] = prescription.targetZone
             preferences[CoachPrescriptionKeys.RUN_SECONDS] = prescription.runDurationSeconds
             preferences[CoachPrescriptionKeys.WALK_SECONDS] = prescription.walkDurationSeconds

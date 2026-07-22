@@ -5,7 +5,7 @@ import com.example.runningapp.HrZone
 import com.example.runningapp.UserSettings
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.targetHrZone
-import com.example.runningapp.withCoachAdaptation
+import com.example.runningapp.withCoachPrescription
 
 /**
  * The one thing on the record screen that changes each morning (#111).
@@ -48,7 +48,7 @@ data class TodayCardLink(val kind: TodayCardLinkKind, val label: String)
 /**
  * The card's full state for one morning.
  *
- * [baseWorkout] is the plan's queued workout *before* the coach's adaptation — this applies it, so
+ * [baseWorkout] is the plan's queued workout *before* the coach's prescription — this applies it, so
  * the card and the run resolve today's numbers through the same function. A null [baseWorkout] (no
  * plan) and [skippedToday] both produce the open-run card; only [link] tells them apart.
  */
@@ -61,7 +61,7 @@ fun todayCardUiState(
     runMode: String,
     skippedToday: Boolean
 ): TodayCardUiState {
-    val planned = baseWorkout?.withCoachAdaptation(prescription, nowEpochMillis)
+    val planned = baseWorkout?.withCoachPrescription(prescription, nowEpochMillis)
 
     if (planned == null || skippedToday) {
         return TodayCardUiState(
@@ -134,9 +134,9 @@ private fun totalMinutes(workout: WorkoutTemplate): Int {
 }
 
 /**
- * Adapted numbers are shown directly, plus one line naming the change and why — never the original
- * numbers, and never a silent edit. Falls back to a plain statement when the coach adjusted the
- * numbers without leaving a reason.
+ * Prescribed numbers are shown directly, plus one line naming the change and why — never the
+ * original numbers, and never a silent edit. Falls back to a plain statement when the coach changed
+ * the numbers without leaving a reason.
  */
 private fun coachNote(
     baseWorkout: WorkoutTemplate,

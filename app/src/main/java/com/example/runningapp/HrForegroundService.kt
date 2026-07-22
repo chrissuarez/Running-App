@@ -1010,7 +1010,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             currentSettings.activeStageId
         ) ?: return null
         // Shared with the record screen's card, so what it promises is what this runs (#111).
-        return baseWorkout.withCoachAdaptation(currentPrescription, System.currentTimeMillis())
+        return baseWorkout.withCoachPrescription(currentPrescription, System.currentTimeMillis())
     }
 
     private fun initializeStructuredWorkoutState() {
