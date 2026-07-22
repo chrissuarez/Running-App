@@ -43,4 +43,18 @@ class AiCoachClientTest {
         assertTrue(prompt.contains("Do not describe a session as perfect, stellar, or textbook"))
         assertTrue(prompt.contains("\"strongCompletionRatePercent\":30"))
     }
+
+    @Test
+    fun `the schema offers the target zone as the coach's, and only as an option`() {
+        val prompt = buildEvaluationPrompt(
+            AiTrainingContext(
+                currentStageTitle = "Base Builder",
+                graduationRequirement = "Complete run-walk sessions consistently",
+                recentRuns = emptyList()
+            )
+        )
+
+        assertTrue(prompt.contains("\"nextTargetZone\": Int (optional, 1-5)"))
+        assertTrue(prompt.contains("Omit nextTargetZone to leave the workout's own target zone alone."))
+    }
 }

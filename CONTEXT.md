@@ -16,6 +16,12 @@ The planned shape a Run may follow — its intervals, durations, and targets —
 taken from the training plan.
 _Avoid_: session, plan (the Plan is the whole schedule of Workouts)
 
+**Prescription**:
+What the AI coach writes after a Run: the intervals and target zone for the next
+Workout, and nothing else. Dated, replaceable, and never a setting — the coach
+prescribes work, it does not configure the app.
+_Avoid_: AI adjustments, AI intervals
+
 **Strap**:
 The Bluetooth heart-rate sensor worn on the chest. A sensor the Run reads, not a
 gate the Run waits on.

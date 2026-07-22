@@ -32,6 +32,10 @@ class AppContainer(context: Context) {
         SettingsRepository(appContext)
     }
 
+    val coachPrescriptionRepository: CoachPrescriptionRepository by lazy {
+        CoachPrescriptionRepository(appContext)
+    }
+
     val database: AppDatabase by lazy {
         // If this install has no database of its own yet — a freshly-cleared install — bring run
         // history back from the Downloads copy before Room opens. No-ops (and never overwrites) when
@@ -61,6 +65,7 @@ class AppContainer(context: Context) {
             runWalkIntervalStatDao = database.runWalkIntervalStatDao(),
             trackPointDao = database.trackPointDao(),
             settingsRepository = settingsRepository,
+            coachPrescriptionRepository = coachPrescriptionRepository,
             aiCoachClient = aiCoachClient,
             weatherClient = weatherClient,
             // After a delete, re-snapshot history to Downloads so a later Clear-storage restore

@@ -31,20 +31,29 @@ data class WorkoutTemplate(
 )
 
 /**
- * Today's workout as it will actually be run: the base workout with the AI coach's adaptation
+ * Today's workout as it will actually be run: the base workout with the AI coach's prescription
  * applied. One home for that rule (#111), because the record-screen card promises the numbers you
  * are about to run — a card adapting on a looser condition than the service would show a shape the
  * run never takes.
  *
- * The coach writes run, walk and repeats together or not at all, so a partial adjustment is
- * incoherent and is ignored. Testing mode runs the plan exactly as written.
+ * The prescription carries all four fields together, so there is no half-applied adaptation to
+ * guard against; a stale one is no adaptation at all. Identity, title and the warm-up/cool-down
+ * envelope stay the plan's — the coach prescribes work, not the whole workout (#113).
+ *
+ * No testing-mode branch: testing mode erases the prescription and blocks the coach from writing
+ * one, so under it there is simply nothing here to apply.
  */
-fun WorkoutTemplate.withCoachAdaptation(settings: UserSettings): WorkoutTemplate {
-    if (settings.testingModeEnabled) return this
-    val run = settings.aiRunIntervalSeconds ?: return this
-    val walk = settings.aiWalkIntervalSeconds ?: return this
-    val repeats = settings.aiRepeats ?: return this
-    return copy(runDurationSeconds = run, walkDurationSeconds = walk, totalRepeats = repeats)
+fun WorkoutTemplate.withCoachAdaptation(
+    prescription: CoachPrescription?,
+    nowEpochMillis: Long
+): WorkoutTemplate {
+    if (prescription == null || !prescription.isFreshAt(nowEpochMillis)) return this
+    return copy(
+        targetZone = prescription.targetZone,
+        runDurationSeconds = prescription.runDurationSeconds,
+        walkDurationSeconds = prescription.walkDurationSeconds,
+        totalRepeats = prescription.totalRepeats
+    )
 }
 
 object TrainingPlanProvider {

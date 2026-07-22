@@ -1,5 +1,6 @@
 package com.example.runningapp.ui.workout
 
+import com.example.runningapp.CoachPrescription
 import com.example.runningapp.UserSettings
 import com.example.runningapp.WorkoutTemplate
 import org.junit.Assert.assertEquals
@@ -15,13 +16,27 @@ class TodayCardModelsTest {
         WorkoutTemplate("w1_s2", "Aerobic Foundation", 2, 300, 60, 5, warmUpSeconds = 480, coolDownSeconds = 180)
     private val settings = UserSettings()
 
+    private val now = 1_700_000_000_000L
+
+    private fun prescription(
+        targetZone: Int = 2,
+        run: Int = 240,
+        walk: Int = 90,
+        repeats: Int = 4,
+        prescribedAt: Long = now
+    ) = CoachPrescription(targetZone, run, walk, repeats, prescribedAt)
+
     private fun card(
         stageTitle: String? = "Stage 1: Base Builder",
         workout: WorkoutTemplate? = aerobicFoundation,
         settings: UserSettings = this.settings,
+        prescription: CoachPrescription? = null,
+        nowEpochMillis: Long = now,
         runMode: String = "outdoor",
         skippedToday: Boolean = false
-    ) = todayCardUiState(stageTitle, workout, settings, runMode, skippedToday)
+    ) = todayCardUiState(
+        stageTitle, workout, settings, prescription, nowEpochMillis, runMode, skippedToday
+    )
 
     @Test
     fun `the planned card shows stage, title, shape, target and the envelope with a total`() {
@@ -123,13 +138,12 @@ class TodayCardModelsTest {
 
     @Test
     fun `an adapted workout shows the adapted numbers and one line naming the change`() {
-        val adapted = settings.copy(
-            aiRunIntervalSeconds = 240,
-            aiWalkIntervalSeconds = 90,
-            aiRepeats = 4,
-            latestCoachMessage = "Shortened after Tuesday — your heart rate drifted in the last two intervals."
+        val state = card(
+            settings = settings.copy(
+                latestCoachMessage = "Shortened after Tuesday — your heart rate drifted in the last two intervals."
+            ),
+            prescription = prescription()
         )
-        val state = card(settings = adapted)
         assertEquals("4 × (4 min run / 1 min 30 s walk)", state.detailLine)
         assertEquals(
             "Coach: Shortened after Tuesday — your heart rate drifted in the last two intervals.",
@@ -141,8 +155,26 @@ class TodayCardModelsTest {
 
     @Test
     fun `an adaptation without a message still names that something changed`() {
-        val adapted = settings.copy(aiRunIntervalSeconds = 240, aiWalkIntervalSeconds = 90, aiRepeats = 4)
-        assertEquals("Coach: Today's intervals were adjusted for you.", card(settings = adapted).coachNote)
+        assertEquals(
+            "Coach: Today's intervals were adjusted for you.",
+            card(prescription = prescription()).coachNote
+        )
+    }
+
+    @Test
+    fun `the coach can drop today's target, and the pill follows it`() {
+        val threshold = WorkoutTemplate("w3_s1", "Threshold Intervals", 4, 300, 120, 5)
+        val eased = card(workout = threshold, prescription = prescription(targetZone = 2))
+        assertEquals("Target: Moderate", eased.targetPill)
+    }
+
+    @Test
+    fun `a stale prescription leaves the card showing the plan as written`() {
+        val staleByOneDay = now - (com.example.runningapp.COACH_PRESCRIPTION_MAX_AGE_DAYS + 1) *
+            24L * 60L * 60L * 1000L
+        val state = card(prescription = prescription(prescribedAt = staleByOneDay))
+        assertEquals("5 × (5 min run / 1 min walk)", state.detailLine)
+        assertNull(state.coachNote)
     }
 
     @Test

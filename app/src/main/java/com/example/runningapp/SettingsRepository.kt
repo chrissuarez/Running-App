@@ -31,10 +31,9 @@ data class UserSettings(
     val activeDeviceAddress: String? = null,
     val activePlanId: String? = null,
     val activeStageId: String? = null,
+    // The coach's debrief of the run just finished — text the app renders and nothing reads. Its
+    // prescription for the *next* run is not here and is not a setting; see [CoachPrescription].
     val latestCoachMessage: String? = null,
-    val aiRunIntervalSeconds: Int? = null,
-    val aiWalkIntervalSeconds: Int? = null,
-    val aiRepeats: Int? = null,
     val simulationEnabled: Boolean = false,
     val testingModeEnabled: Boolean = false
 )
@@ -73,28 +72,30 @@ fun aiSharingChangeAllowed(enabled: Boolean, testingModeEnabled: Boolean): Boole
 fun maxHrEverSet(flag: Boolean?, storedMaxHr: Int?): Boolean =
     flag ?: (storedMaxHr != null && storedMaxHr != DEFAULT_MAX_HR)
 
-class SettingsRepository(private val context: Context) {
+/**
+ * File-level and `internal` rather than private to the repository so the coach's prescription store
+ * — a different thing sharing one DataStore — can read [PreferencesKeys.TESTING_MODE_ENABLED] in
+ * its own writes without a second copy of the key string. One spelling of a key, one meaning.
+ */
+internal object PreferencesKeys {
+    val MAX_HR = intPreferencesKey("max_hr")
+    val MAX_HR_EVER_SET = booleanPreferencesKey("max_hr_ever_set")
+    val TARGET_ZONE = intPreferencesKey("target_zone")
+    val COACHING_ENABLED = booleanPreferencesKey("coaching_enabled")
+    val AI_DATA_SHARING_ENABLED = booleanPreferencesKey("ai_data_sharing_enabled")
+    val RUN_MODE = stringPreferencesKey("run_mode")
+    val SPLIT_ANNOUNCEMENTS_ENABLED = booleanPreferencesKey("split_announcements_enabled")
+    val AUTO_PAUSE_ENABLED = booleanPreferencesKey("auto_pause_enabled")
+    val SAVED_DEVICES = stringSetPreferencesKey("saved_devices")
+    val ACTIVE_DEVICE_ADDRESS = stringPreferencesKey("active_device_address")
+    val ACTIVE_PLAN_ID = stringPreferencesKey("active_plan_id")
+    val ACTIVE_STAGE_ID = stringPreferencesKey("active_stage_id")
+    val LATEST_COACH_MESSAGE = stringPreferencesKey("latest_coach_message")
+    val SIMULATION_ENABLED = booleanPreferencesKey("simulation_enabled")
+    val TESTING_MODE_ENABLED = booleanPreferencesKey("testing_mode_enabled")
+}
 
-    private object PreferencesKeys {
-        val MAX_HR = intPreferencesKey("max_hr")
-        val MAX_HR_EVER_SET = booleanPreferencesKey("max_hr_ever_set")
-        val TARGET_ZONE = intPreferencesKey("target_zone")
-        val COACHING_ENABLED = booleanPreferencesKey("coaching_enabled")
-        val AI_DATA_SHARING_ENABLED = booleanPreferencesKey("ai_data_sharing_enabled")
-        val RUN_MODE = stringPreferencesKey("run_mode")
-        val SPLIT_ANNOUNCEMENTS_ENABLED = booleanPreferencesKey("split_announcements_enabled")
-        val AUTO_PAUSE_ENABLED = booleanPreferencesKey("auto_pause_enabled")
-        val SAVED_DEVICES = stringSetPreferencesKey("saved_devices")
-        val ACTIVE_DEVICE_ADDRESS = stringPreferencesKey("active_device_address")
-        val ACTIVE_PLAN_ID = stringPreferencesKey("active_plan_id")
-        val ACTIVE_STAGE_ID = stringPreferencesKey("active_stage_id")
-        val LATEST_COACH_MESSAGE = stringPreferencesKey("latest_coach_message")
-        val AI_RUN_INTERVAL_SECONDS = intPreferencesKey("ai_run_interval_seconds")
-        val AI_WALK_INTERVAL_SECONDS = intPreferencesKey("ai_walk_interval_seconds")
-        val AI_REPEATS = intPreferencesKey("ai_repeats")
-        val SIMULATION_ENABLED = booleanPreferencesKey("simulation_enabled")
-        val TESTING_MODE_ENABLED = booleanPreferencesKey("testing_mode_enabled")
-    }
+class SettingsRepository(private val context: Context) {
 
     val userSettingsFlow: Flow<UserSettings> = context.dataStore.data
         .map { preferences ->
@@ -123,9 +124,6 @@ class SettingsRepository(private val context: Context) {
                 activePlanId = preferences[PreferencesKeys.ACTIVE_PLAN_ID],
                 activeStageId = preferences[PreferencesKeys.ACTIVE_STAGE_ID],
                 latestCoachMessage = preferences[PreferencesKeys.LATEST_COACH_MESSAGE],
-                aiRunIntervalSeconds = preferences[PreferencesKeys.AI_RUN_INTERVAL_SECONDS],
-                aiWalkIntervalSeconds = preferences[PreferencesKeys.AI_WALK_INTERVAL_SECONDS],
-                aiRepeats = preferences[PreferencesKeys.AI_REPEATS],
                 simulationEnabled = preferences[PreferencesKeys.SIMULATION_ENABLED] ?: false,
                 testingModeEnabled = preferences[PreferencesKeys.TESTING_MODE_ENABLED] ?: false
             )
@@ -185,8 +183,12 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
-     * Turning testing mode on also stops this device feeding the AI coach and drops the
-     * adjustments it has already made, so a test run can't shape the next real one.
+     * Turning testing mode on also stops this device feeding the AI coach and drops what the coach
+     * has already written, so a test run can't shape the next real one.
+     *
+     * The prescription is *erased*, not ignored on read: with nothing stored and
+     * [CoachPrescriptionRepository.prescribe] refusing to write while testing mode is on, no reader
+     * needs a testing-mode branch to run the plan as written (#113).
      */
     suspend fun setTestingModeEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences ->
@@ -194,9 +196,7 @@ class SettingsRepository(private val context: Context) {
             if (enabled) {
                 preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] = false
                 preferences.remove(PreferencesKeys.LATEST_COACH_MESSAGE)
-                preferences.remove(PreferencesKeys.AI_RUN_INTERVAL_SECONDS)
-                preferences.remove(PreferencesKeys.AI_WALK_INTERVAL_SECONDS)
-                preferences.remove(PreferencesKeys.AI_REPEATS)
+                preferences.clearCoachPrescription()
             }
         }
     }
@@ -260,47 +260,31 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    suspend fun setAiAdjustments(
-        latestCoachMessage: String?,
-        aiRunIntervalSeconds: Int?,
-        aiWalkIntervalSeconds: Int?,
-        aiRepeats: Int?
-    ) {
+    /**
+     * The coach's debrief of the run just finished — displayed text, never a knob.
+     *
+     * Refused under testing mode for the same reason [CoachPrescriptionRepository.prescribe] is,
+     * and checked inside the same `edit`: an evaluation already in flight when testing mode came on
+     * would otherwise leave a debrief behind that the erase was meant to take.
+     */
+    suspend fun setLatestCoachMessage(message: String) {
         context.dataStore.edit { preferences ->
-            if (latestCoachMessage != null) {
-                preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = latestCoachMessage
-            } else {
-                preferences.remove(PreferencesKeys.LATEST_COACH_MESSAGE)
-            }
-
-            if (aiRunIntervalSeconds != null) {
-                preferences[PreferencesKeys.AI_RUN_INTERVAL_SECONDS] = aiRunIntervalSeconds
-            } else {
-                preferences.remove(PreferencesKeys.AI_RUN_INTERVAL_SECONDS)
-            }
-
-            if (aiWalkIntervalSeconds != null) {
-                preferences[PreferencesKeys.AI_WALK_INTERVAL_SECONDS] = aiWalkIntervalSeconds
-            } else {
-                preferences.remove(PreferencesKeys.AI_WALK_INTERVAL_SECONDS)
-            }
-
-            if (aiRepeats != null) {
-                preferences[PreferencesKeys.AI_REPEATS] = aiRepeats
-            } else {
-                preferences.remove(PreferencesKeys.AI_REPEATS)
-            }
+            if (preferences[PreferencesKeys.TESTING_MODE_ENABLED] == true) return@edit
+            preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = message
         }
     }
 
-    suspend fun advanceStageAndClearAiIntervals(nextStageId: String?) {
+    /**
+     * Moves the plan on, dropping the coach's prescription with it: those numbers were written for
+     * the stage just left, and the new stage's own workout is where the next progression starts.
+     * One write, so no run can start against the new stage carrying the old stage's intervals.
+     */
+    suspend fun advanceStageAndClearPrescription(nextStageId: String?) {
         context.dataStore.edit { preferences ->
             if (nextStageId != null) {
                 preferences[PreferencesKeys.ACTIVE_STAGE_ID] = nextStageId
             }
-            preferences.remove(PreferencesKeys.AI_RUN_INTERVAL_SECONDS)
-            preferences.remove(PreferencesKeys.AI_WALK_INTERVAL_SECONDS)
-            preferences.remove(PreferencesKeys.AI_REPEATS)
+            preferences.clearCoachPrescription()
         }
     }
 

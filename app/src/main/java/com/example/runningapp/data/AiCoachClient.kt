@@ -9,6 +9,12 @@ data class AiCoachResponse(
     val nextRunDurationSeconds: Int,
     val nextWalkDurationSeconds: Int,
     val nextRepeats: Int,
+    /**
+     * The zone the next run should aim at, so the coach can say "today is easier, drop to Z2" and
+     * not only "run for longer" (#113). Null — including when the model omits the field — means it
+     * left the target alone, and the workout's own zone stands.
+     */
+    val nextTargetZone: Int? = null,
     val graduatedToNextStage: Boolean,
     val coachMessage: String
 )
@@ -22,7 +28,16 @@ class AiCoachClient {
         apiKey = apiKey
     )
 
-    suspend fun evaluateProgress(context: AiTrainingContext): AiCoachResponse {
+    /**
+     * What the coach wants run next, or null when it could not be asked.
+     *
+     * Null rather than a stand-in response: the fallback this replaces prescribed 60s/30s × 6 —
+     * numbers no coach chose — under a message saying the coach was unavailable. Harmless-looking
+     * while those numbers were settings nobody read as a promise; not harmless now that they are a
+     * prescription the run and the card both follow (#113). A coach that could not be reached says
+     * nothing, and the plan runs as written.
+     */
+    suspend fun evaluateProgress(context: AiTrainingContext): AiCoachResponse? {
         require(apiKey.isNotBlank()) { "Gemini API key is missing" }
 
         val prompt = buildEvaluationPrompt(context, gson)
@@ -37,13 +52,7 @@ class AiCoachClient {
             gson.fromJson(cleanJson, AiCoachResponse::class.java)
         } catch (e: Exception) {
             Log.e("AiCoach", "Failed to evaluate progress with Gemini", e)
-            AiCoachResponse(
-                nextRunDurationSeconds = 60,
-                nextWalkDurationSeconds = 30,
-                nextRepeats = 6,
-                graduatedToNextStage = false,
-                coachMessage = "Coach update unavailable right now. Keep going."
-            )
+            null
         }
     }
 }
@@ -81,6 +90,8 @@ internal fun buildEvaluationPrompt(
     appendLine("Use this combined context to generate the exact intervals for their NEXT run.")
     appendLine("If they meet the requirement easily, set graduatedToNextStage to true.")
     appendLine("Otherwise, adjust their run/walk intervals safely to build endurance.")
+    appendLine("You may also set nextTargetZone (1-5) to prescribe an easier or harder target for that run.")
+    appendLine("Omit nextTargetZone to leave the workout's own target zone alone.")
     appendLine("Return ONLY a valid, raw JSON object.")
     appendLine("Do not include markdown formatting like ```json.")
     appendLine("Your response must be parseable directly into this schema:")
@@ -88,6 +99,7 @@ internal fun buildEvaluationPrompt(
     appendLine("  \"nextRunDurationSeconds\": Int,")
     appendLine("  \"nextWalkDurationSeconds\": Int,")
     appendLine("  \"nextRepeats\": Int,")
+    appendLine("  \"nextTargetZone\": Int (optional, 1-5),")
     appendLine("  \"graduatedToNextStage\": Boolean,")
     appendLine("  \"coachMessage\": String")
     appendLine("}")

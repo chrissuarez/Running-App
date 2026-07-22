@@ -1,5 +1,6 @@
 package com.example.runningapp.ui.workout
 
+import com.example.runningapp.CoachPrescription
 import com.example.runningapp.HrZone
 import com.example.runningapp.UserSettings
 import com.example.runningapp.WorkoutTemplate
@@ -55,10 +56,12 @@ fun todayCardUiState(
     stageTitle: String?,
     baseWorkout: WorkoutTemplate?,
     settings: UserSettings,
+    prescription: CoachPrescription?,
+    nowEpochMillis: Long,
     runMode: String,
     skippedToday: Boolean
 ): TodayCardUiState {
-    val planned = baseWorkout?.withCoachAdaptation(settings)
+    val planned = baseWorkout?.withCoachAdaptation(prescription, nowEpochMillis)
 
     if (planned == null || skippedToday) {
         return TodayCardUiState(

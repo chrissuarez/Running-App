@@ -74,7 +74,7 @@ class AppDatabaseMigrationTest {
         // migration between the file's version and today's. It does not disturb what this test
         // asserts — it touches sessions, never track_points.
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(MIGRATION_11_12, migration12To13 { 190 }, MIGRATION_13_14)
+            .addMigrations(MIGRATION_11_12, migration12To13 { 190 }, MIGRATION_13_14, MIGRATION_14_15)
             .build()
 
         val sessionATrackPoints = runBlockingGet { migratedDb.trackPointDao().getTrackPointsForSessionOnce(1) }
@@ -127,7 +127,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14)
+            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14, MIGRATION_14_15)
             .build()
         val session1 = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val session2 = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
@@ -191,7 +191,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14)
+            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14, MIGRATION_14_15)
             .build()
         val session1 = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val session2 = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
@@ -203,6 +203,68 @@ class AppDatabaseMigrationTest {
         assertEquals(false, session2.isRunWalkMode)
         assertEquals(false, session3.isRunWalkMode)
         assertEquals(false, session4.isRunWalkMode)
+    }
+
+    @Test
+    fun migrate14To15_dropsTheDeadSessionTypeAndEasyColumns_carryingEveryRealValueForward() {
+        val rawDb = openLegacyDatabase()
+        createTrackPointsTable(rawDb)
+
+        // One run with something in every kind of surviving column — required, optional, and the
+        // late-added weather block — since a rebuild that mis-orders the SELECT would still produce
+        // a schema Room accepts while silently shuffling values between columns.
+        rawDb.execSQL(
+            "INSERT INTO sessions (id, startTime, endTime, durationSeconds, avgBpm, maxBpm, " +
+                "timeInTargetZoneSeconds, zone1Seconds, zone2Seconds, zone3Seconds, zone4Seconds, " +
+                "zone5Seconds, runMode, distanceKm, avgPaceMinPerKm, noDataSeconds, walkBreaksCount, " +
+                "isRunWalkMode, sessionType, includeInAiTraining, easyPlannedDurationSeconds, " +
+                "easyHrSummary, perceivedEffort, sessionNote, startLatitude, startLongitude, " +
+                "weatherTempC, weatherHumidityPercent, weatherConditionCode) " +
+                "VALUES (1, 5000, 9000, 4000, 128, 171, 0, 11, 22, 33, 44, 55, 'outdoor', 7.25, 5.5, " +
+                "12, 3, 1, 'Zone 2 Walk', 0, 1800, 'summary', 4, 'felt strong', 51.5, -0.12, " +
+                "14.5, 71, 3)"
+        )
+        // The interval rows both keep session 1 flagged through 13 -> 14 and prove the foreign key
+        // survives the table rebuild — they cascade-delete, so a broken FK shows up as a lost row.
+        rawDb.execSQL(
+            "INSERT INTO run_walk_interval_stats (sessionId, intervalIndex, plannedDurationSeconds, " +
+                "actualRunningDurationBeforeHrTriggerSeconds, hrTriggerEvents, " +
+                "totalTimeSpentWalkingDuringRunIntervalSeconds) VALUES (1, 0, 180, 180, 0, 0)"
+        )
+
+        rawDb.version = 12
+        rawDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14, MIGRATION_14_15)
+            .build()
+        // Opening through Room is itself the assertion that the dead columns are gone: Room refuses
+        // a database whose column set does not match the entity, and RunnerSession no longer
+        // declares sessionType or any easy* field.
+        val session = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
+        val intervals = runBlockingGet { migratedDb.runWalkIntervalStatDao().getIntervalStatsForSession(1) }
+        migratedDb.close()
+
+        assertEquals(5000L, session.startTime)
+        assertEquals(9000L, session.endTime)
+        assertEquals(4000L, session.durationSeconds)
+        assertEquals(128, session.avgBpm)
+        assertEquals(171, session.maxBpm)
+        assertEquals("outdoor", session.runMode)
+        assertEquals(7.25, session.distanceKm, 0.0001)
+        assertEquals(5.5, session.avgPaceMinPerKm, 0.0001)
+        assertEquals(12L, session.noDataSeconds)
+        assertEquals(3, session.walkBreaksCount)
+        assertEquals(true, session.isRunWalkMode)
+        assertEquals(false, session.includeInAiTraining)
+        assertEquals(4, session.perceivedEffort)
+        assertEquals("felt strong", session.sessionNote)
+        assertEquals(51.5, session.startLatitude!!, 0.0001)
+        assertEquals(-0.12, session.startLongitude!!, 0.0001)
+        assertEquals(14.5, session.weatherTempC!!, 0.0001)
+        assertEquals(71, session.weatherHumidityPercent)
+        assertEquals(3, session.weatherConditionCode)
+        assertEquals(1, intervals.size)
     }
 
     /**
