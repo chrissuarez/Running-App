@@ -17,11 +17,38 @@ enum class HrZone(val number: Int, val zoneName: String, val lowerPercentOfMaxHr
     companion object {
         val DEFAULT_TARGET = MODERATE
 
+        /**
+         * The zones a whole run may aim at (#117).
+         *
+         * Zones 1 and 5 are the two where the chart bucket and the target band diverge — the
+         * bucket is open-ended in one direction, the band is not — so a run targeting either
+         * would have its "In Target" total overstated, that total being derived on read as the
+         * target zone's own seconds (#106). Sustained coaching to recovery or to maximal isn't a
+         * meaningful whole-run target anyway, so excluding them costs nothing and keeps the
+         * derivation exact.
+         */
+        val COACHING_TARGETS = listOf(MODERATE, TEMPO, THRESHOLD)
+
         fun ofNumber(number: Int): HrZone? = entries.firstOrNull { it.number == number }
 
         /** For stored values, which may predate this zone model or be absent entirely. */
         fun ofNumberOrDefault(number: Int?): HrZone =
             number?.let { ofNumber(it) } ?: DEFAULT_TARGET
+
+        /**
+         * The same, for a value that has to be a coaching target: a stored edge zone — settable
+         * before #117 closed the picker — lands on the nearest zone that is one, since the reason
+         * it is excluded is that it is not a meaningful *whole-run* target, not that the runner
+         * aimed nowhere near it.
+         */
+        fun coachingTargetOfNumberOrDefault(number: Int?): HrZone {
+            val zone = number?.let { ofNumber(it) } ?: return DEFAULT_TARGET
+            return when {
+                zone.number < MODERATE.number -> MODERATE
+                zone.number > THRESHOLD.number -> THRESHOLD
+                else -> zone
+            }
+        }
     }
 }
 
@@ -40,7 +67,25 @@ enum class ZoneBand {
 const val MIN_MAX_HR = 100
 const val MAX_MAX_HR = 230
 
+/**
+ * The Max HR the app assumes until someone states theirs.
+ *
+ * Load-bearing rather than cosmetic: it is the value #112 treats as "nobody has chosen yet", so
+ * history sitting on it is stranded and a stored number *differing* from it is evidence of a
+ * deliberate set. Both readings break if this drifts from [UserSettings.maxHr]'s default.
+ */
+const val DEFAULT_MAX_HR = 190
+
 fun effectiveMaxHr(maxHr: Int): Int = maxHr.coerceIn(MIN_MAX_HR, MAX_MAX_HR)
+
+/**
+ * A typed Max HR, or null if it is not a whole number inside the settable range.
+ *
+ * Deliberately not [effectiveMaxHr]: storage clamps because it must never hold an unusable
+ * number, but a *typed* value out of range is a mistake, and silently keeping some other number
+ * is the failure this replaces. Null is the caller's cue to refuse visibly.
+ */
+fun parseMaxHr(text: String): Int? = text.trim().toIntOrNull()?.takeIf { it in MIN_MAX_HR..MAX_MAX_HR }
 
 /** Lowest BPM that counts as [zone]. Zone 1 also swallows everything below it — see [hrZoneOf]. */
 fun zoneLowerBpm(zone: HrZone, maxHr: Int): Int {
@@ -113,7 +158,44 @@ fun bandWithHysteresis(previous: ZoneBand, avgBpm: Int, maxHr: Int, targetZone: 
     }
 }
 
-val UserSettings.targetHrZone: HrZone get() = HrZone.ofNumberOrDefault(targetZone)
+/** Seconds a run spent in each zone. */
+data class ZoneSeconds(
+    val zone1: Long = 0,
+    val zone2: Long = 0,
+    val zone3: Long = 0,
+    val zone4: Long = 0,
+    val zone5: Long = 0
+)
+
+/**
+ * Re-tallies zone seconds from a run's stored heart-rate samples.
+ *
+ * Exact rather than an estimate: the recorder writes exactly one sample per second of the run and
+ * only when BPM > 0 — the same condition under which it banked a second of zone time. So counting
+ * samples per zone reproduces what the run would have recorded under [maxHr]. Seconds with no
+ * signal have no sample and gain no zone time, leaving `noDataSeconds` meaningful and unfabricated.
+ *
+ * The v12 → v13 migration does this same tally in SQL against a raw database, where none of this
+ * is reachable; the two must stay in step.
+ */
+fun tallyZoneSeconds(bpms: Iterable<Int>, maxHr: Int): ZoneSeconds {
+    val clamped = effectiveMaxHr(maxHr)
+    val seconds = LongArray(HrZone.entries.size)
+    bpms.forEach { bpm ->
+        hrZoneOf(bpm, clamped)?.let { seconds[it.number - 1]++ }
+    }
+    return ZoneSeconds(seconds[0], seconds[1], seconds[2], seconds[3], seconds[4])
+}
+
+/**
+ * The zone an open run aims at.
+ *
+ * Always a coaching target, whatever is stored: a settings target that isn't one overstates time
+ * on target (#117), and there must be exactly one answer to "what is this run aiming at" — not
+ * one for storage and another for whoever reads the settings object. A run's *recorded* target is
+ * a different question and stays as recorded; see [com.example.runningapp.data.inTargetZoneSeconds].
+ */
+val UserSettings.targetHrZone: HrZone get() = HrZone.coachingTargetOfNumberOrDefault(targetZone)
 
 fun hrZoneOf(bpm: Int, settings: UserSettings): HrZone? = hrZoneOf(bpm, settings.maxHr)
 

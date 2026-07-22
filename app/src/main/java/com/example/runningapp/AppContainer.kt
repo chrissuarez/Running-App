@@ -57,6 +57,7 @@ class AppContainer(context: Context) {
     val sessionRepository: SessionRepository by lazy {
         SessionRepository(
             sessionDao = database.sessionDao(),
+            sampleDao = database.sampleDao(),
             runWalkIntervalStatDao = database.runWalkIntervalStatDao(),
             trackPointDao = database.trackPointDao(),
             settingsRepository = settingsRepository,

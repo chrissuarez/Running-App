@@ -229,4 +229,99 @@ class HrZonesTest {
         assertEquals(HrZone.MODERATE, UserSettings().targetHrZone)
         assertEquals(2, UserSettings().targetZone)
     }
+
+    @Test
+    fun `a settings target is always a coaching target, whatever is stored`() {
+        assertEquals(HrZone.THRESHOLD, UserSettings(targetZone = 5).targetHrZone)
+        assertEquals(HrZone.MODERATE, UserSettings(targetZone = 1).targetHrZone)
+        assertEquals(HrZone.TEMPO, UserSettings(targetZone = 3).targetHrZone)
+    }
+
+    @Test
+    fun `coaching targets are the interior zones only`() {
+        assertEquals(listOf(HrZone.MODERATE, HrZone.TEMPO, HrZone.THRESHOLD), HrZone.COACHING_TARGETS)
+    }
+
+    @Test
+    fun `for every coaching target, the chart bucket and the band agree`() {
+        // This is why the target is restricted (#117): "In Target" is derived on read as the
+        // target zone's own seconds, which is only exact where bucket and band coincide.
+        for (maxHr in MIN_MAX_HR..MAX_MAX_HR) {
+            for (target in HrZone.COACHING_TARGETS) {
+                for (bpm in 1..300) {
+                    val inBucket = hrZoneOf(bpm, maxHr) == target
+                    val inBand = zoneBandOf(bpm, maxHr, target) == ZoneBand.IN
+                    assertEquals("maxHr=$maxHr target=$target bpm=$bpm", inBucket, inBand)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `the excluded edge zones are excluded because bucket and band diverge`() {
+        // Zone 5's bucket is open-ended upward and Zone 1's swallows everything beneath it, but a
+        // target must have an outside — so above Max HR and far below Zone 1 the two disagree.
+        assertEquals(HrZone.ANAEROBIC, hrZoneOf(205, maxHr))
+        assertEquals(ZoneBand.ABOVE, zoneBandOf(205, maxHr, HrZone.ANAEROBIC))
+
+        assertEquals(HrZone.ENDURANCE, hrZoneOf(60, maxHr))
+        assertEquals(ZoneBand.BELOW, zoneBandOf(60, maxHr, HrZone.ENDURANCE))
+    }
+
+    @Test
+    fun `a stored edge-zone target lands on the nearest coaching target`() {
+        assertEquals(HrZone.MODERATE, HrZone.coachingTargetOfNumberOrDefault(1))
+        assertEquals(HrZone.THRESHOLD, HrZone.coachingTargetOfNumberOrDefault(5))
+        assertEquals(HrZone.TEMPO, HrZone.coachingTargetOfNumberOrDefault(3))
+        assertEquals(HrZone.DEFAULT_TARGET, HrZone.coachingTargetOfNumberOrDefault(null))
+        assertEquals(HrZone.DEFAULT_TARGET, HrZone.coachingTargetOfNumberOrDefault(9))
+    }
+
+    @Test
+    fun `a typed max hr is accepted only inside the settable range`() {
+        assertEquals(100, parseMaxHr("100"))
+        assertEquals(190, parseMaxHr("190"))
+        assertEquals(230, parseMaxHr("230"))
+        assertEquals(185, parseMaxHr(" 185 "))
+    }
+
+    @Test
+    fun `a typed max hr outside the range is refused rather than clamped`() {
+        // effectiveMaxHr clamps because storage must never hold an unusable number; typing is the
+        // opposite case — a refusal the runner can see beats a number they did not choose.
+        assertNull(parseMaxHr("99"))
+        assertNull(parseMaxHr("231"))
+        assertNull(parseMaxHr("0"))
+        assertNull(parseMaxHr("-190"))
+    }
+
+    @Test
+    fun `a max hr that is not a whole number is refused`() {
+        assertNull(parseMaxHr(""))
+        assertNull(parseMaxHr("   "))
+        assertNull(parseMaxHr("abc"))
+        assertNull(parseMaxHr("19"))    // mid-typing "190"
+        assertNull(parseMaxHr("190.5"))
+    }
+
+    @Test
+    fun `zone seconds are tallied one second per sample`() {
+        assertEquals(
+            ZoneSeconds(zone1 = 1, zone2 = 2, zone3 = 1, zone4 = 1, zone5 = 1),
+            tallyZoneSeconds(listOf(100, 120, 120, 140, 160, 175), maxHr)
+        )
+    }
+
+    @Test
+    fun `samples with no heart rate bank no zone time`() {
+        // The recorder writes one row per second and only when BPM > 0, so seconds with no signal
+        // have no row — they must stay unfabricated rather than land in Zone 1.
+        assertEquals(ZoneSeconds(), tallyZoneSeconds(listOf(0, -1), maxHr))
+        assertEquals(ZoneSeconds(), tallyZoneSeconds(emptyList(), maxHr))
+    }
+
+    @Test
+    fun `the tally clamps max hr the same way the zone edges do`() {
+        assertEquals(tallyZoneSeconds(listOf(150), MAX_MAX_HR), tallyZoneSeconds(listOf(150), 999))
+    }
 }

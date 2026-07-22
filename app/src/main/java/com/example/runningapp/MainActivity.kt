@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -61,7 +60,9 @@ import com.example.runningapp.ui.HistoryViewModelFactory
 import com.example.runningapp.ui.SessionDetailScreen
 import com.example.runningapp.ui.SessionDetailViewModel
 import com.example.runningapp.ui.SessionDetailViewModelFactory
+import com.example.runningapp.ui.SettingsScreen
 import com.example.runningapp.ui.TrainingPlanScreen
+import com.example.runningapp.ui.strapRowSummary
 import com.example.runningapp.ui.theme.RunningAppTheme
 import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.ui.workout.CUE_REASON_HR_HIGH
@@ -309,26 +310,9 @@ class MainActivity : ComponentActivity() {
                                         ContextCompat.startForegroundService(this@MainActivity, simulationIntent)
                                     }
                                 },
-                                onToggleTestingMode = { enabled ->
-                                    scope.launch(Dispatchers.IO) {
-                                        val clearedAiSettings = if (enabled) {
-                                            userSettings.copy(
-                                                testingModeEnabled = true,
-                                                aiDataSharingEnabled = false,
-                                                latestCoachMessage = null,
-                                                aiRunIntervalSeconds = null,
-                                                aiWalkIntervalSeconds = null,
-                                                aiRepeats = null
-                                            )
-                                        } else {
-                                            userSettings.copy(testingModeEnabled = false)
-                                        }
-                                        settingsRepository.updateSettings(clearedAiSettings)
-                                    }
-                                },
                                 onRunModeChange = { runMode ->
                                     scope.launch(Dispatchers.IO) {
-                                        settingsRepository.updateSettings(userSettings.copy(runMode = runMode))
+                                        settingsRepository.setRunMode(runMode)
                                     }
                                 }
                             )
@@ -393,12 +377,35 @@ class MainActivity : ComponentActivity() {
                         composable(Routes.SETTINGS) {
                             SettingsScreen(
                                 settings = userSettings,
-                                onSave = { updatedSettings ->
-                                    scope.launch {
-                                        settingsRepository.updateSettings(updatedSettings)
-                                        navigateTo(Routes.MAIN)
-                                    }
+                                strapSummary = strapRowSummary(
+                                    userSettings,
+                                    serviceState?.value?.connectionStatus ?: "Disconnected"
+                                ),
+                                // Max HR goes through the repository rather than DataStore
+                                // directly: the first deliberate set recomputes all history, and
+                                // that must not be something a surface can forget to do (#112).
+                                onMaxHrCommit = { maxHr ->
+                                    scope.launch(Dispatchers.IO) { sessionRepository.setMaxHr(maxHr) }
                                 },
+                                onTargetZoneChange = { zone ->
+                                    scope.launch(Dispatchers.IO) { settingsRepository.setTargetZone(zone) }
+                                },
+                                onCoachingEnabledChange = { enabled ->
+                                    scope.launch(Dispatchers.IO) { settingsRepository.setCoachingEnabled(enabled) }
+                                },
+                                onSplitAnnouncementsChange = { enabled ->
+                                    scope.launch(Dispatchers.IO) { settingsRepository.setSplitAnnouncementsEnabled(enabled) }
+                                },
+                                onAutoPauseChange = { enabled ->
+                                    scope.launch(Dispatchers.IO) { settingsRepository.setAutoPauseEnabled(enabled) }
+                                },
+                                onAiDataSharingChange = { enabled ->
+                                    scope.launch(Dispatchers.IO) { settingsRepository.setAiDataSharingEnabled(enabled) }
+                                },
+                                onTestingModeChange = { enabled ->
+                                    scope.launch(Dispatchers.IO) { settingsRepository.setTestingModeEnabled(enabled) }
+                                },
+                                onManageStrap = { navigateTo(Routes.MANAGE_DEVICES) },
                                 onBack = { navigateTo(Routes.MAIN) }
                             )
                         }
@@ -569,7 +576,6 @@ fun MainScreen(
     onOpenTrainingPlan: () -> Unit,
     onOpenFullScreenMap: () -> Unit,
     onToggleSimulation: (Boolean, Boolean) -> Unit,
-    onToggleTestingMode: (Boolean) -> Unit,
     onRunModeChange: (String) -> Unit
 ) {
     // Skip today's plan (#107): a today-only choice that runs open-ended without touching the plan.
@@ -1317,163 +1323,6 @@ fun WorkoutView(state: HrState, sessionRepository: SessionRepository, onOpenFull
                 Text("Safety cue active", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
             }
         }
-    }
-}
-
-@Composable
-fun SettingsScreen(
-    settings: UserSettings,
-    onSave: (UserSettings) -> Unit,
-    onBack: () -> Unit
-) {
-    var maxHr by remember { mutableStateOf(settings.maxHr.toString()) }
-    var targetZone by remember { mutableStateOf(settings.targetHrZone) }
-    var coachingEnabled by remember { mutableStateOf(settings.coachingEnabled) }
-    var aiDataSharingEnabled by remember { mutableStateOf(settings.aiDataSharingEnabled) }
-    var testingModeEnabled by remember { mutableStateOf(settings.testingModeEnabled) }
-    var splitAudio by remember { mutableStateOf(settings.splitAnnouncementsEnabled) }
-    var autoPause by remember { mutableStateOf(settings.autoPauseEnabled) }
-
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Settings", style = MaterialTheme.typography.headlineMedium)
-            Button(onClick = onBack, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)) {
-                Text("Back")
-            }
-        }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Basic Info
-        OutlinedTextField(value = maxHr, onValueChange = { maxHr = it }, label = { Text("Max HR") }, modifier = Modifier.fillMaxWidth())
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Zones are fixed slices of Max HR, so the target is a choice of zone, never a typed band.
-        val maxHrForZones = maxHr.toIntOrNull() ?: settings.maxHr
-        Text("Target Zone", style = MaterialTheme.typography.titleMedium)
-        HrZone.entries.forEach { zone ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .selectable(
-                        selected = targetZone == zone,
-                        onClick = { targetZone = zone },
-                        role = Role.RadioButton
-                    )
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                RadioButton(selected = targetZone == zone, onClick = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    "${zone.number} · ${zone.zoneName}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.weight(1f)
-                )
-                Text(
-                    "${targetRangeLabel(zone, maxHrForZones)} BPM",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-        Text("Coaching Preferences", style = MaterialTheme.typography.titleMedium)
-        
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = coachingEnabled, onCheckedChange = { coachingEnabled = it })
-            Text("Enable Coaching Cues")
-        }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp)
-        ) {
-            Switch(
-                checked = aiDataSharingEnabled,
-                onCheckedChange = { aiDataSharingEnabled = it }
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
-                Text("AI Training Data Sharing", fontWeight = FontWeight.Bold)
-                Text(
-                    "Send this session data to AI Coach / contribute to training",
-                    style = MaterialTheme.typography.labelSmall
-                )
-            }
-        }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-        ) {
-            Switch(
-                checked = testingModeEnabled,
-                onCheckedChange = {
-                    testingModeEnabled = it
-                    if (it) {
-                        aiDataSharingEnabled = false
-                    }
-                }
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
-                Text("Testing Mode", fontWeight = FontWeight.Bold)
-                Text(
-                    "Exclude runs from AI progression and ignore AI-adjusted intervals.",
-                    style = MaterialTheme.typography.labelSmall
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(24.dp))
-        Text("Cue Preferences", style = MaterialTheme.typography.titleMedium)
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Checkbox(checked = splitAudio, onCheckedChange = { splitAudio = it })
-            Text("1km Split Audio Announcements")
-        }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-        ) {
-            Switch(checked = autoPause, onCheckedChange = { autoPause = it })
-            Spacer(modifier = Modifier.width(12.dp))
-            Column {
-                Text("Auto-Pause on Standstill", fontWeight = FontWeight.Bold)
-                Text(
-                    "Pause automatically at traffic lights and other stops; resume on movement",
-                    style = MaterialTheme.typography.labelSmall
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(32.dp))
-
-        Button(onClick = {
-            onSave(settings.copy(
-                maxHr = effectiveMaxHr(maxHr.toIntOrNull() ?: settings.maxHr),
-                targetZone = targetZone.number,
-                coachingEnabled = coachingEnabled,
-                aiDataSharingEnabled = if (testingModeEnabled) false else aiDataSharingEnabled,
-                splitAnnouncementsEnabled = splitAudio,
-                autoPauseEnabled = autoPause,
-                testingModeEnabled = testingModeEnabled,
-                latestCoachMessage = if (testingModeEnabled) null else settings.latestCoachMessage,
-                aiRunIntervalSeconds = if (testingModeEnabled) null else settings.aiRunIntervalSeconds,
-                aiWalkIntervalSeconds = if (testingModeEnabled) null else settings.aiWalkIntervalSeconds,
-                aiRepeats = if (testingModeEnabled) null else settings.aiRepeats
-            ))
-        }, modifier = Modifier.fillMaxWidth()) {
-            Text("Save Settings")
-        }
-        
-        Spacer(modifier = Modifier.height(32.dp))
     }
 }
 
