@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -30,9 +31,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -111,7 +114,7 @@ fun SettingsScreen(
                 onClick = { showTargetZonePicker = true }
             )
 
-            Spacer(modifier = Modifier.padding(top = RunningUiTokens.SectionSpacing))
+            Spacer(modifier = Modifier.height(RunningUiTokens.SectionSpacing))
             SettingsSectionHeader("During a run")
             SettingsSwitchRow(
                 label = "Zone coaching",
@@ -129,7 +132,7 @@ fun SettingsScreen(
                 onCheckedChange = onAutoPauseChange
             )
 
-            Spacer(modifier = Modifier.padding(top = RunningUiTokens.SectionSpacing))
+            Spacer(modifier = Modifier.height(RunningUiTokens.SectionSpacing))
             SettingsSectionHeader("Heart rate strap")
             SettingsRow(
                 label = strapSummary,
@@ -138,7 +141,7 @@ fun SettingsScreen(
                 onClick = onManageStrap
             )
 
-            Spacer(modifier = Modifier.padding(top = RunningUiTokens.SectionSpacing))
+            Spacer(modifier = Modifier.height(RunningUiTokens.SectionSpacing))
             SettingsSectionHeader("Advanced")
             SettingsSwitchRow(
                 label = "AI training data sharing",
@@ -187,6 +190,28 @@ private fun MaxHrField(maxHr: Int, onCommit: (Int) -> Unit) {
     var edited by remember(maxHr) { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
 
+    fun commitIfEdited() {
+        if (!edited) return
+        val parsed = parseMaxHr(typed)
+        if (parsed == null) {
+            // Refused where you can see it, keeping what you typed. The old field kept the
+            // previous number instead and said nothing.
+            refused = true
+        } else {
+            refused = false
+            edited = false
+            onCommit(parsed)
+        }
+    }
+
+    // Leaving the screen commits too. Back doesn't blur the field in touch mode, so hanging the
+    // commit on focus alone would drop a typed number on the way out — the same silent discard
+    // this screen exists to delete, just moved one gesture along.
+    val commitOnLeaving by rememberUpdatedState(::commitIfEdited)
+    DisposableEffect(Unit) {
+        onDispose { commitOnLeaving() }
+    }
+
     OutlinedTextField(
         value = typed,
         onValueChange = {
@@ -207,16 +232,7 @@ private fun MaxHrField(maxHr: Int, onCommit: (Int) -> Unit) {
         modifier = Modifier
             .fillMaxWidth()
             .onFocusChanged { focusState ->
-                if (focusState.isFocused || !edited) return@onFocusChanged
-                val parsed = parseMaxHr(typed)
-                if (parsed == null) {
-                    // Refused where you can see it, keeping what you typed. The old field kept
-                    // the previous number instead and said nothing.
-                    refused = true
-                } else {
-                    refused = false
-                    onCommit(parsed)
-                }
+                if (!focusState.isFocused) commitIfEdited()
             }
     )
 }

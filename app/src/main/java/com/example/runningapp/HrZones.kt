@@ -43,7 +43,11 @@ enum class HrZone(val number: Int, val zoneName: String, val lowerPercentOfMaxHr
          */
         fun coachingTargetOfNumberOrDefault(number: Int?): HrZone {
             val zone = number?.let { ofNumber(it) } ?: return DEFAULT_TARGET
-            return COACHING_TARGETS.minByOrNull { kotlin.math.abs(it.number - zone.number) }!!
+            return when {
+                zone.number < MODERATE.number -> MODERATE
+                zone.number > THRESHOLD.number -> THRESHOLD
+                else -> zone
+            }
         }
     }
 }
@@ -174,7 +178,15 @@ fun tallyZoneSeconds(bpms: Iterable<Int>, maxHr: Int): ZoneSeconds {
     return ZoneSeconds(seconds[0], seconds[1], seconds[2], seconds[3], seconds[4])
 }
 
-val UserSettings.targetHrZone: HrZone get() = HrZone.ofNumberOrDefault(targetZone)
+/**
+ * The zone an open run aims at.
+ *
+ * Always a coaching target, whatever is stored: a settings target that isn't one overstates time
+ * on target (#117), and there must be exactly one answer to "what is this run aiming at" — not
+ * one for storage and another for whoever reads the settings object. A run's *recorded* target is
+ * a different question and stays as recorded; see [com.example.runningapp.data.inTargetZoneSeconds].
+ */
+val UserSettings.targetHrZone: HrZone get() = HrZone.coachingTargetOfNumberOrDefault(targetZone)
 
 fun hrZoneOf(bpm: Int, settings: UserSettings): HrZone? = hrZoneOf(bpm, settings.maxHr)
 

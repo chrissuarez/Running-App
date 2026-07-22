@@ -275,9 +275,28 @@ class SessionRepositoryTest {
 
         repositoryWithSamples.setMaxHr(181)
 
-        verify(mockDao).updateZoneSeconds(7L, 0, 2, 1, 0, 0)
-        verify(mockDao).updateZoneSeconds(8L, 0, 0, 0, 0, 0)
+        verify(mockDao).updateZoneSeconds(
+            sessionId = 7L, zone1 = 0, zone2 = 2, zone3 = 1, zone4 = 0, zone5 = 0
+        )
+        verify(mockDao).updateZoneSeconds(
+            sessionId = 8L, zone1 = 0, zone2 = 0, zone3 = 0, zone4 = 0, zone5 = 0
+        )
         verify(mockSettingsRepo).setMaxHrDeliberately(181)
+    }
+
+    @Test
+    fun `with no samples to recompute from, the one-shot flag is left unspent`() = runTest {
+        // Setting the flag without the recompute it pays for would strand history on the
+        // placeholder Max HR forever, with nothing left to trigger a second attempt.
+        val repositoryWithoutSamples = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(maxHrEverSet = false)))
+
+        repositoryWithoutSamples.setMaxHr(181)
+
+        verify(mockSettingsRepo, never()).setMaxHrDeliberately(any())
     }
 
     @Test
@@ -297,7 +316,9 @@ class SessionRepositoryTest {
         repositoryWithSamples.setMaxHr(181)
 
         inOrder(mockDao, mockSettingsRepo) {
-            verify(mockDao).updateZoneSeconds(7L, 0, 1, 0, 0, 0)
+            verify(mockDao).updateZoneSeconds(
+                sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0
+            )
             verify(mockSettingsRepo).setMaxHrDeliberately(181)
         }
     }

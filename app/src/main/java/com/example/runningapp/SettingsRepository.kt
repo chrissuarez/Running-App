@@ -113,35 +113,26 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    suspend fun setTargetZone(zone: HrZone) {
-        context.dataStore.edit { preferences ->
-            preferences[PreferencesKeys.TARGET_ZONE] = zone.number
-        }
+    /**
+     * One setting, written on its own. Settings apply the moment they are touched (#112), so a
+     * write must never carry a snapshot of everything else along with it — that is how one
+     * screen's stale copy overwrites a change made somewhere else.
+     */
+    private suspend fun <T> put(key: Preferences.Key<T>, value: T) {
+        context.dataStore.edit { preferences -> preferences[key] = value }
     }
 
-    suspend fun setCoachingEnabled(enabled: Boolean) {
-        context.dataStore.edit { preferences ->
-            preferences[PreferencesKeys.COACHING_ENABLED] = enabled
-        }
-    }
+    suspend fun setTargetZone(zone: HrZone) = put(PreferencesKeys.TARGET_ZONE, zone.number)
 
-    suspend fun setSplitAnnouncementsEnabled(enabled: Boolean) {
-        context.dataStore.edit { preferences ->
-            preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] = enabled
-        }
-    }
+    suspend fun setCoachingEnabled(enabled: Boolean) = put(PreferencesKeys.COACHING_ENABLED, enabled)
 
-    suspend fun setAutoPauseEnabled(enabled: Boolean) {
-        context.dataStore.edit { preferences ->
-            preferences[PreferencesKeys.AUTO_PAUSE_ENABLED] = enabled
-        }
-    }
+    suspend fun setSplitAnnouncementsEnabled(enabled: Boolean) =
+        put(PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED, enabled)
 
-    suspend fun setAiDataSharingEnabled(enabled: Boolean) {
-        context.dataStore.edit { preferences ->
-            preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] = enabled
-        }
-    }
+    suspend fun setAutoPauseEnabled(enabled: Boolean) = put(PreferencesKeys.AUTO_PAUSE_ENABLED, enabled)
+
+    suspend fun setAiDataSharingEnabled(enabled: Boolean) =
+        put(PreferencesKeys.AI_DATA_SHARING_ENABLED, enabled)
 
     /**
      * Turning testing mode on also stops this device feeding the AI coach and drops the
@@ -161,11 +152,7 @@ class SettingsRepository(private val context: Context) {
     }
 
     /** Storage, not a setting (#112): how the record screen's toggle pre-fills next time. */
-    suspend fun setRunMode(runMode: String) {
-        context.dataStore.edit { preferences ->
-            preferences[PreferencesKeys.RUN_MODE] = runMode
-        }
-    }
+    suspend fun setRunMode(runMode: String) = put(PreferencesKeys.RUN_MODE, runMode)
 
     suspend fun saveDevice(address: String, name: String, makeActive: Boolean = true) {
         context.dataStore.edit { preferences ->

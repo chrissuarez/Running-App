@@ -231,6 +231,13 @@ class HrZonesTest {
     }
 
     @Test
+    fun `a settings target is always a coaching target, whatever is stored`() {
+        assertEquals(HrZone.THRESHOLD, UserSettings(targetZone = 5).targetHrZone)
+        assertEquals(HrZone.MODERATE, UserSettings(targetZone = 1).targetHrZone)
+        assertEquals(HrZone.TEMPO, UserSettings(targetZone = 3).targetHrZone)
+    }
+
+    @Test
     fun `coaching targets are the interior zones only`() {
         assertEquals(listOf(HrZone.MODERATE, HrZone.TEMPO, HrZone.THRESHOLD), HrZone.COACHING_TARGETS)
     }

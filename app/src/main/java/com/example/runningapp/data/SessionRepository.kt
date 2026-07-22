@@ -92,7 +92,11 @@ class SessionRepository(
         val settings = settingsRepository ?: return
         val clampedMaxHr = effectiveMaxHr(maxHr)
         if (!settings.userSettingsFlow.first().maxHrEverSet) {
-            recomputeZoneSecondsForAllRuns(clampedMaxHr)
+            // No samples to recompute from is a reason to do nothing at all, not a reason to
+            // record the set anyway: the flag is one-shot, so spending it here would strand
+            // history on the placeholder with no way back.
+            val samples = sampleDao ?: return
+            recomputeZoneSecondsForAllRuns(samples, clampedMaxHr)
         }
         settings.setMaxHrDeliberately(clampedMaxHr)
     }
@@ -101,8 +105,7 @@ class SessionRepository(
      * Re-tallies every run's zone seconds from its stored samples, one run at a time so a long
      * history never holds more than a single run's beats in memory.
      */
-    private suspend fun recomputeZoneSecondsForAllRuns(maxHr: Int) {
-        val samples = sampleDao ?: return
+    private suspend fun recomputeZoneSecondsForAllRuns(samples: SampleDao, maxHr: Int) {
         sessionDao.getAllSessionIds().forEach { sessionId ->
             val tally = tallyZoneSeconds(samples.getRawBpmsForSession(sessionId), maxHr)
             sessionDao.updateZoneSeconds(
