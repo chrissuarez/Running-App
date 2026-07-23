@@ -37,6 +37,11 @@ object Run {
         // next sample is judged under the new one, so coaching turned off goes quiet at once.
         is RunEvent.ControlsChanged -> RunOutcome(state.copy(controls = event.controls))
         is RunEvent.PauseToggled -> pauseToggled(state)
+        // A named direction, so a button the shade has not caught up with asks for nothing.
+        is RunEvent.PauseRequested ->
+            if (state.lifecycle == RunLifecycle.RUNNING) pauseToggled(state) else RunOutcome(state)
+        is RunEvent.ResumeRequested ->
+            if (state.lifecycle == RunLifecycle.PAUSED) pauseToggled(state) else RunOutcome(state)
         is RunEvent.AutoPauseRequested -> autoPause(state)
         is RunEvent.AutoResumeRequested -> autoResume(state)
         is RunEvent.PhaseSkipped -> phaseSkipped(state, event)

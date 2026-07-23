@@ -692,6 +692,41 @@ class RunPauseTest {
     }
 
     @Test
+    fun `the shade's pause and resume do what the button does`() {
+        val driver = Driver()
+        driver.start()
+
+        driver.on(RunEvent.PauseRequested(driver.nowMillis))
+        assertEquals(RunLifecycle.PAUSED, driver.state.lifecycle)
+
+        driver.on(RunEvent.ResumeRequested(driver.nowMillis))
+        assertEquals(RunLifecycle.RUNNING, driver.state.lifecycle)
+    }
+
+    @Test
+    fun `a stale resume from the shade does not pause a running run`() {
+        val driver = Driver()
+        driver.start()
+
+        val effects = driver.on(RunEvent.ResumeRequested(driver.nowMillis))
+
+        assertTrue(effects.isEmpty())
+        assertEquals(RunLifecycle.RUNNING, driver.state.lifecycle)
+    }
+
+    @Test
+    fun `a stale pause from the shade does not resume a paused run`() {
+        val driver = Driver()
+        driver.start()
+        driver.on(RunEvent.PauseToggled(driver.nowMillis))
+
+        val effects = driver.on(RunEvent.PauseRequested(driver.nowMillis))
+
+        assertTrue(effects.isEmpty())
+        assertEquals(RunLifecycle.PAUSED, driver.state.lifecycle)
+    }
+
+    @Test
     fun `a paused run stops with the seconds it actually ran`() {
         val driver = Driver()
         driver.start()

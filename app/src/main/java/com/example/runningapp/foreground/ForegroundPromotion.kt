@@ -161,9 +161,9 @@ class ForegroundPromotion(private val host: PromotionHost) {
         /**
          * Promotion is earned by a live Run or an in-flight Acquisition, and by nothing else.
          *
-         * STOPPING counts: stopSession() publishes it synchronously and it holds until the
-         * finalize coroutine publishes STOPPED. STOPPED does not — finalize runs on detached
-         * scopes and needs no foreground (3bd4d3e).
+         * STOPPING counts: it is the Run that has been stopped but whose database row does not
+         * exist yet, and it holds until the id lands and the Run publishes STOPPED. STOPPED does
+         * not — finalization runs on detached scopes and needs no foreground (3bd4d3e).
          *
          * Simulation is deliberately absent. It always produces a Run, so the Run covers it — and
          * because isSimulationEnabled is never cleared by STOP, treating it as a reason of its own
