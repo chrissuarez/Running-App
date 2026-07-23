@@ -8,13 +8,29 @@ words the code and the issues should use for that.
 
 **Run**:
 One recorded outing, from the moment the runner presses START until it is
-stopped or auto-stops.
+stopped or auto-stops. A live thing before it is a saved one: it holds the
+clock, the Phase it is in, and everything counted so far.
 _Avoid_: session, activity
 
 **Workout**:
 The planned shape a Run may follow — its intervals, durations, and targets —
 taken from the training plan.
 _Avoid_: session, plan (the Plan is the whole schedule of Workouts)
+
+**Phase**:
+Which of a Run's three stretches it is in: warm-up, main, or cool-down. Every
+Run has all three in that order; only the main one is open-ended.
+_Avoid_: stage (a Stage is a block of the training Plan), segment
+
+**Interval**:
+One run or walk stretch inside the main Phase, repeated as the Workout
+prescribes. Only a Run following a Workout has any.
+_Avoid_: rep, segment, split (a Split is a kilometre of distance)
+
+**Split**:
+One completed kilometre of a Run, and the pace it was covered at. Measured by
+distance, unlike an Interval, which is measured by time.
+_Avoid_: lap, mile
 
 **Prescription**:
 What the AI coach writes after a Run: the intervals and target zone for the next
