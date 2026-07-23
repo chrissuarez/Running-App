@@ -1,5 +1,7 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.WorkoutTemplate
+
 /**
  * The Run: a rulebook, not an actor.
  *
@@ -132,8 +134,8 @@ object Run {
                 secondsRunning = current.secondsRunning + 1,
                 phaseSecondsElapsed = current.phaseSecondsElapsed + 1,
             )
-            // Intervals, zone accounting and the coach's cue decisions belong on this second too.
-            // They are the next two tickets; this is where they land.
+            // Zone accounting and the coach's cue decisions belong on this second too. They are
+            // the next ticket; this is where they land.
             val limit = current.phaseLimitSeconds
             val remaining = limit - current.phaseSecondsElapsed
 
@@ -156,6 +158,13 @@ object Run {
                 ended = true
                 break
             }
+
+            // The Workout's Intervals, on the same second and after the handover, so the second
+            // the warm-up ends is also the second the first Interval begins — the runner hears
+            // "Starting main workout" and then "Start running, interval 1 of 6" without a gap.
+            val stepped = advanceIntervalSecond(current)
+            current = stepped.state
+            effects += stepped.effects
         }
 
         // One refresh per pulse, however many seconds it accounted for, and none for a Run that
@@ -164,6 +173,164 @@ object Run {
         // an Android fact the Run has no way of knowing and no reason to.
         if (!ended) effects += RunEffect.Notify(notificationText(current))
         return RunOutcome(current, effects)
+    }
+
+    /**
+     * One second of the Workout's Intervals.
+     *
+     * A Run with no Workout never gets here, and neither does one whose Intervals are behind it —
+     * which matters more than it looks, because finishing the Workout does not move the Run out of
+     * the main Phase. Without [RunState.intervalsFinished] the next second would start the whole
+     * Workout over.
+     */
+    private fun advanceIntervalSecond(state: RunState): RunOutcome {
+        val config = state.config ?: return RunOutcome(state)
+        val workout = config.workout ?: return RunOutcome(state)
+        if (state.phase != RunPhase.MAIN || state.intervalsFinished) return RunOutcome(state)
+        if (workout.totalRepeats <= 0) return RunOutcome(state)
+
+        var current = state
+        val effects = mutableListOf<RunEffect>()
+
+        if (current.intervals == null) {
+            // The Intervals wait out the warm-up — unless the runner skipped it, in which case
+            // they begin the moment the main Phase does.
+            if (!current.warmUpSkipped && current.secondsRunning < config.warmUpSeconds) {
+                return RunOutcome(state)
+            }
+            val begun = beginRunInterval(current, workout, repeat = 1)
+            current = begun.state
+            effects += begun.effects
+        }
+
+        // A Workout prescribing intervals of no length has nothing to count down, and stays where
+        // it is rather than spinning through its repeats in a single second.
+        val intervals = current.intervals ?: return RunOutcome(current, effects)
+        if (intervals.secondsRemaining <= 0) return RunOutcome(current, effects)
+
+        current = current.copy(
+            intervals = intervals.copy(secondsRemaining = intervals.secondsRemaining - 1),
+            // Only a run Interval is being measured; a walk one has no tracker to advance.
+            intervalTracker = current.intervalTracker?.tick(),
+        )
+
+        if (current.intervals?.secondsRemaining == 0) {
+            val completed = completeInterval(current, workout)
+            current = completed.state
+            effects += completed.effects
+        }
+        return RunOutcome(current, effects)
+    }
+
+    /** The runner is sent running: a fresh Interval, and a fresh set of numbers to measure it by. */
+    private fun beginRunInterval(
+        state: RunState,
+        workout: WorkoutTemplate,
+        repeat: Int,
+    ): RunOutcome {
+        val runSeconds = workout.runDurationSeconds
+        val begun = state.copy(
+            intervals = RunIntervals(
+                kind = IntervalKind.RUN,
+                repeat = repeat,
+                totalRepeats = workout.totalRepeats,
+                runSeconds = runSeconds,
+                walkSeconds = workout.walkDurationSeconds.coerceAtLeast(0),
+                secondsRemaining = runSeconds,
+            ),
+            // An Interval of no length measures nothing, so there is nothing to save for it.
+            intervalTracker =
+                if (runSeconds > 0) IntervalTracker(repeat, runSeconds) else null,
+        )
+        // What else belongs on this boundary is the coach's, and so #142's: the cue ladder and the
+        // zone start again from scratch here, and the reason the last walk was taken is forgotten.
+        // That reset is timer-driven rather than packet-driven on purpose — a Strap dropout
+        // spanning a whole walk used to leave the next Interval reusing the last one's ladder and
+        // firing an immediate catch-up cue (Codex #124).
+        return RunOutcome(
+            begun,
+            listOf(
+                RunEffect.Speak(
+                    "Start running, interval $repeat of ${workout.totalRepeats}.",
+                ),
+            ),
+        )
+    }
+
+    /**
+     * An Interval reached its prescribed length.
+     *
+     * A run hands over to its walk if the Workout prescribes one; a walk — or a run in a Workout
+     * with no walk — advances the repeat. The last one hands the Run back to the main Phase, which
+     * is where an unplanned Run has been all along.
+     */
+    private fun completeInterval(state: RunState, workout: WorkoutTemplate): RunOutcome {
+        val intervals = state.intervals ?: return RunOutcome(state)
+        var current = state
+        val effects = mutableListOf<RunEffect>()
+
+        if (intervals.kind == IntervalKind.RUN) {
+            val saved = saveRunInterval(current)
+            current = saved.state
+            effects += saved.effects
+            if (intervals.walkSeconds > 0) {
+                return RunOutcome(
+                    current.copy(
+                        intervals = intervals.copy(
+                            kind = IntervalKind.WALK,
+                            secondsRemaining = intervals.walkSeconds,
+                        ),
+                    ),
+                    effects + RunEffect.Speak(
+                        "Transition to walking, ${intervals.walkSeconds} seconds.",
+                    ),
+                )
+            }
+        }
+
+        val nextRepeat = intervals.repeat + 1
+        return if (nextRepeat > intervals.totalRepeats) {
+            RunOutcome(
+                current.copy(intervals = null, intervalsFinished = true),
+                effects + RunEffect.Speak("Main workout complete, beginning cool down."),
+            )
+        } else {
+            val begun = beginRunInterval(current, workout, nextRepeat)
+            RunOutcome(begun.state, effects + begun.effects)
+        }
+    }
+
+    /**
+     * Bank the run Interval that just ended, however it ended — prescribed length reached, main
+     * Phase skipped, or the Run stopped part-way through one. The seconds were run either way.
+     *
+     * An Interval that ends before the row id has arrived is held rather than dropped. Only a
+     * Workout with no warm-up can manage it, but that is precisely the Run whose first Interval
+     * the old `if (sessionId != null)` used to throw away.
+     */
+    private fun saveRunInterval(state: RunState): RunOutcome {
+        val tracker = state.intervalTracker ?: return RunOutcome(state)
+        return emitOrHold(
+            state.copy(intervalTracker = null),
+            PendingRowWork.SaveIntervalStat(tracker.toStat()),
+        )
+    }
+
+    /**
+     * Work addressed to the Run's row: sent now if the row exists, and kept in order if it does
+     * not.
+     *
+     * Every kind of held work goes through here, so nothing the Run produces can be dropped by a
+     * new call site forgetting to ask whether the id had arrived — which is precisely how the
+     * early seconds of a Run used to be lost.
+     */
+    private fun emitOrHold(state: RunState, work: PendingRowWork): RunOutcome {
+        val runRowId = state.runRowId
+        return if (runRowId != null) {
+            RunOutcome(state, listOf(work.toEffect(runRowId)))
+        } else {
+            RunOutcome(state.copy(pendingRowEffects = state.pendingRowEffects + work))
+        }
     }
 
     /** The pause/resume button. Only a live Run can be paused, and only a paused one resumed. */
@@ -232,10 +399,18 @@ object Run {
                 )
             }
             RunPhase.MAIN -> {
-                val skipped = state.copy(phase = RunPhase.COOL_DOWN, phaseSecondsElapsed = 0)
+                // Skipping the main Phase abandons whatever is left of the Workout, but not the
+                // Interval the runner was part-way through: those seconds were run.
+                val saved = saveRunInterval(state)
+                val skipped = saved.state.copy(
+                    phase = RunPhase.COOL_DOWN,
+                    phaseSecondsElapsed = 0,
+                    intervals = null,
+                    intervalsFinished = true,
+                )
                 RunOutcome(
                     skipped,
-                    listOf(
+                    saved.effects + listOf(
                         RunEffect.Speak("Starting cool down."),
                         RunEffect.Notify(notificationText(skipped)),
                     ),
@@ -264,37 +439,43 @@ object Run {
      * and the post-commit gate were spelling between them.
      */
     private fun finish(state: RunState, nowMillis: Long): RunOutcome {
+        // A Run stopped mid-Interval still banks it, and it is banked before the Run's own totals
+        // so the two arrive in the order they happened.
+        val saved = saveRunInterval(state)
+        val current = saved.state
         val totals = RunTotals(
-            durationSeconds = state.secondsRunning,
-            pausedSeconds = state.secondsPaused,
+            durationSeconds = current.secondsRunning,
+            pausedSeconds = current.secondsPaused,
             endedAtMillis = nowMillis,
-            isRunWalkMode = state.config?.isRunWalkMode ?: false,
+            isRunWalkMode = current.config?.isRunWalkMode ?: false,
         )
-        val runRowId = state.runRowId
-        return if (runRowId != null) {
-            RunOutcome(
-                state.copy(lifecycle = RunLifecycle.STOPPED),
-                listOf(RunEffect.StopGps, RunEffect.FinalizeRun(runRowId, totals)),
-            )
-        } else {
-            RunOutcome(
-                state.copy(
-                    lifecycle = RunLifecycle.STOPPING,
-                    pendingRowEffects = state.pendingRowEffects + PendingRowWork.Finalize(totals),
-                ),
-                listOf(RunEffect.StopGps),
-            )
-        }
+        val finalized = emitOrHold(current, PendingRowWork.Finalize(totals))
+        val stopped =
+            if (current.runRowId != null) RunLifecycle.STOPPED else RunLifecycle.STOPPING
+        return RunOutcome(
+            finalized.state.copy(lifecycle = stopped),
+            saved.effects + RunEffect.StopGps + finalized.effects,
+        )
     }
 
     /**
      * What the locked phone says about the Run.
      *
      * The wording belongs to the Run (ADR 0001), so the notification cannot describe a Run the
-     * accounting disagrees with. The Interval line — "Int 3/6 • RUN • 01:20 left" — lands here
-     * with the Intervals themselves.
+     * accounting disagrees with. An Interval outranks the Phase: while the Workout is running, the
+     * Interval is what the runner wants off a locked screen.
      */
-    private fun notificationText(state: RunState): String =
+    private fun notificationText(state: RunState): String {
+        val intervals = state.intervals
+        if (intervals != null && intervals.totalRepeats > 0) {
+            return "Int ${intervals.repeat}/${intervals.totalRepeats} • " +
+                "${intervals.kind.notificationName} • " +
+                "${formatTime(intervals.secondsRemaining.coerceAtLeast(0).toLong())} left"
+        }
+        return phaseNotificationText(state)
+    }
+
+    private fun phaseNotificationText(state: RunState): String =
         if (state.phase == RunPhase.MAIN) {
             "${state.phase.notificationName} elapsed ${formatTime(state.phaseSecondsElapsed)}"
         } else {

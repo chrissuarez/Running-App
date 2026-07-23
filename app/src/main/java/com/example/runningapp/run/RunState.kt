@@ -71,6 +71,28 @@ data class RunState(
     val warmUpSkipped: Boolean = false,
 
     /**
+     * The Interval the Run is in, or null when there is not one: before the Workout's Intervals
+     * begin, after they finish, and for the whole of a Run that has no Workout. See [RunIntervals].
+     */
+    val intervals: RunIntervals? = null,
+
+    /**
+     * Whether this Run's Intervals are behind it — the last one completed, or the main Phase
+     * skipped past them.
+     *
+     * Needed because [intervals] is null both before and after, and because finishing the Workout
+     * does not on its own move the Run out of the main Phase: without this the next second would
+     * start the whole Workout again.
+     */
+    val intervalsFinished: Boolean = false,
+
+    /**
+     * The run Interval being measured, if the Run is in one. Bookkeeping, like [pendingRowEffects]
+     * — the screen reads [intervals]. Null through every walk Interval: see [IntervalTracker].
+     */
+    val intervalTracker: IntervalTracker? = null,
+
+    /**
      * Whether the current pause was the Run's own doing rather than a tap. Auto-pause reuses
      * [RunLifecycle.PAUSED] so the clock freezes identically, but it must not stop GPS — movement
      * is how it finds out to resume — and only an auto-pause may be auto-resumed.
@@ -133,6 +155,16 @@ sealed interface PendingRowWork {
 
     data class Finalize(val totals: RunTotals) : PendingRowWork {
         override fun toEffect(runRowId: Long): RunEffect = RunEffect.FinalizeRun(runRowId, totals)
+    }
+
+    /**
+     * A run Interval that ended before the id arrived. Only reachable for a Workout with no
+     * warm-up, whose first Interval can be over inside the first second of the Run — which is
+     * exactly the case the old `if (sessionId != null)` threw away.
+     */
+    data class SaveIntervalStat(val stat: IntervalStat) : PendingRowWork {
+        override fun toEffect(runRowId: Long): RunEffect =
+            RunEffect.SaveIntervalStat(runRowId, stat)
     }
 }
 
