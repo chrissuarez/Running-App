@@ -1,7 +1,6 @@
 package com.example.runningapp.run
 
 import com.example.runningapp.HrZone
-import com.example.runningapp.WorkoutTemplate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -17,95 +16,9 @@ import org.junit.Test
  *
  * The interleavings that broke `HrForegroundService` repeatedly get a named test each, so the next
  * rewrite cannot undo them silently.
+ *
+ * The [Driver] and the fixtures live in `RunTestHarness.kt`, shared with the Interval tests.
  */
-private const val T0 = 1_700_000_000_000L
-
-private val PLANNED_WORKOUT = WorkoutTemplate(
-    id = "w_test",
-    title = "Test Workout",
-    targetZone = 2,
-    runDurationSeconds = 180,
-    walkDurationSeconds = 60,
-    totalRepeats = 6,
-    warmUpSeconds = 60,
-    coolDownSeconds = 30,
-)
-
-private fun config(
-    workout: WorkoutTemplate? = PLANNED_WORKOUT,
-    runMode: RunMode = RunMode.TREADMILL,
-    maxHr: Int = 190,
-    targetZone: HrZone = HrZone.MODERATE,
-    includeInAiTraining: Boolean = true,
-) = RunConfig(
-    maxHr = maxHr,
-    targetZone = targetZone,
-    runMode = runMode,
-    workout = workout,
-    includeInAiTraining = includeInAiTraining,
-)
-
-/**
- * Feeds events through the entry point and keeps the returned state, the way the service will.
- * It holds no rules of its own — every decision under test is the Run's.
- */
-private class Driver(var state: RunState = RunState.IDLE) {
-    var nowMillis: Long = T0
-
-    fun on(event: RunEvent): List<RunEffect> {
-        val outcome = Run.onEvent(state, event)
-        state = outcome.state
-        return outcome.effects
-    }
-
-    /** START, plus the row id, unless [withRow] says to leave the Run waiting for it. */
-    fun start(
-        config: RunConfig = config(),
-        controls: RunControls = RunControls(),
-        withRow: Boolean = true,
-        runRowId: Long = 7L,
-    ): List<RunEffect> {
-        val effects = on(RunEvent.Started(config, controls, nowMillis)).toMutableList()
-        if (withRow) effects += on(RunEvent.RunRowCreated(runRowId, nowMillis))
-        return effects
-    }
-
-    /** One tick per second, as the live app pulses. */
-    fun advance(seconds: Int): List<RunEffect> {
-        val effects = mutableListOf<RunEffect>()
-        repeat(seconds) {
-            nowMillis += 1_000
-            effects += on(RunEvent.Tick(nowMillis))
-        }
-        return effects
-    }
-
-    /** One tick, arriving [seconds] late — the pulse the phone forgot to deliver. */
-    fun advanceInOneTick(seconds: Int): List<RunEffect> {
-        nowMillis += seconds * 1_000L
-        return on(RunEvent.Tick(nowMillis))
-    }
-
-    fun stop(): List<RunEffect> = on(RunEvent.Stopped(nowMillis))
-
-    fun skipPhase(): List<RunEffect> = on(RunEvent.PhaseSkipped(nowMillis))
-
-    fun rowCreated(runRowId: Long = 7L): List<RunEffect> =
-        on(RunEvent.RunRowCreated(runRowId, nowMillis))
-}
-
-private inline fun <reified T : RunEffect> List<RunEffect>.only(): T {
-    val matches = filterIsInstance<T>()
-    assertEquals("expected exactly one ${T::class.simpleName} in $this", 1, matches.size)
-    return matches.first()
-}
-
-private inline fun <reified T : RunEffect> List<RunEffect>.count(): Int =
-    filterIsInstance<T>().size
-
-private fun List<RunEffect>.spoken(): List<String> =
-    filterIsInstance<RunEffect.Speak>().map { it.text }
-
 class RunStartTest {
 
     @Test
@@ -478,7 +391,11 @@ class RunPhaseTest {
         val effects = driver.advanceInOneTick(65)
 
         assertEquals(
-            listOf("10 seconds of warm up remaining", "Starting main workout"),
+            listOf(
+                "10 seconds of warm up remaining",
+                "Starting main workout",
+                "Start running, interval 1 of 6.",
+            ),
             effects.spoken(),
         )
         assertEquals(RunPhase.MAIN, driver.state.phase)
@@ -910,10 +827,10 @@ class RunNotificationTest {
     }
 
     @Test
-    fun `the main notification counts up`() {
+    fun `the main notification counts up for a run with no workout`() {
         val driver = Driver()
-        driver.start()
-        driver.advance(60)
+        driver.start(config(workout = null))
+        driver.advance(1)
 
         val effects = driver.advanceInOneTick(10)
 
@@ -923,9 +840,9 @@ class RunNotificationTest {
     @Test
     fun `the notification follows the run into its next phase`() {
         val driver = Driver()
-        driver.start()
+        driver.start(config(workout = null))
 
-        val effects = driver.advance(59) + driver.advance(1)
+        val effects = driver.advance(1)
 
         assertEquals("Main elapsed 00:00", effects.filterIsInstance<RunEffect.Notify>().last().text)
     }

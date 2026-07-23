@@ -42,6 +42,18 @@ sealed interface RunEffect {
         val totals: RunTotals,
     ) : RunEffect
 
+    /**
+     * Write one completed run Interval's numbers against the Run's row.
+     *
+     * Emitted as each Interval ends rather than as one batch when the Run finishes, so a Run that
+     * dies mid-workout still has everything it got through on disk. Like finalization, it needs an
+     * id, so an Interval that ends before the id arrives is held rather than dropped.
+     */
+    data class SaveIntervalStat(
+        val runRowId: Long,
+        val stat: IntervalStat,
+    ) : RunEffect
+
     /** Say this out loud. */
     data class Speak(val text: String) : RunEffect
 
