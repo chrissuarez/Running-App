@@ -34,63 +34,104 @@ enum class CueAction {
  * catch-up cue and then spaces out again, instead of firing every overdue rung back-to-back.
  */
 class CueLadder(
-    private val firstCueMs: Long = 30_000L,
-    private val secondCueMs: Long = 60_000L,
-    private val repeatMs: Long = 5 * 60_000L
+    firstCueMs: Long = CueLadderRungs.DEFAULT.firstCueMs,
+    secondCueMs: Long = CueLadderRungs.DEFAULT.secondCueMs,
+    repeatMs: Long = CueLadderRungs.DEFAULT.repeatMs
 ) {
-    private var outSince: Long? = null
-    private var lastCueTime: Long? = null
-    private var cuesSpoken = 0
+    private val rungs = CueLadderRungs(firstCueMs, secondCueMs, repeatMs)
+    private var state = CueLadderState()
 
     fun reset() {
-        outSince = null
-        lastCueTime = null
-        cuesSpoken = 0
+        state = CueLadderState()
     }
 
+    fun onSample(now: Long, band: ZoneBand, awake: Boolean): CueAction {
+        val step = state.onSample(now, band, awake, rungs)
+        state = step.ladder
+        return step.action
+    }
+
+    /** For the debug overlay only: seconds continuously out of target, 0 when in. */
+    fun secondsOutOfTarget(now: Long): Long = state.secondsOutOfTarget(now)
+
+    /** For the debug overlay only: seconds until the next cue is due, 0 when in target. */
+    fun secondsUntilNextCue(now: Long): Long = state.secondsUntilNextCue(now, rungs)
+}
+
+/**
+ * How far apart the rungs are: 30s to the first cue, 60s to the second, then one every 5 minutes.
+ *
+ * Separate from the ladder's position on them so the position can be a value the caller holds.
+ */
+data class CueLadderRungs(
+    val firstCueMs: Long = 30_000L,
+    val secondCueMs: Long = 60_000L,
+    val repeatMs: Long = 5 * 60_000L
+) {
     /**
      * ms that must elapse since the anchor — the last spoken cue, or leaving target before the
-     * first cue — for the next rung to fall due: 30s to the first cue, 30s more to the second,
-     * then 5 minutes between every cue after that.
+     * first cue — for the next rung to fall due.
      */
-    private fun nextIntervalMs(): Long = when (cuesSpoken) {
+    fun nextIntervalMs(cuesSpoken: Int): Long = when (cuesSpoken) {
         0 -> firstCueMs
         1 -> secondCueMs - firstCueMs
         else -> repeatMs
     }
 
-    fun onSample(now: Long, band: ZoneBand, awake: Boolean): CueAction {
-        if (!awake) {
-            reset()
-            return CueAction.SILENT
-        }
+    companion object {
+        val DEFAULT = CueLadderRungs()
+    }
+}
+
+/** Where the ladder currently stands, and what one sample does to it. */
+data class CueLadderStep(val ladder: CueLadderState, val action: CueAction)
+
+/**
+ * The ladder's whole position, as a value.
+ *
+ * [CueLadder] is a mutable holder of one of these, kept for the service, which owns the ladder as a
+ * field. The Run cannot: it is a rulebook with no mutable field of its own (ADR 0002), so it holds
+ * this in its state and takes the [CueLadderStep] back. The rules are here, once, and both callers
+ * get exactly the same ones.
+ */
+data class CueLadderState(
+    val outSince: Long? = null,
+    val lastCueTime: Long? = null,
+    val cuesSpoken: Int = 0
+) {
+    fun onSample(
+        now: Long,
+        band: ZoneBand,
+        awake: Boolean,
+        rungs: CueLadderRungs = CueLadderRungs.DEFAULT
+    ): CueLadderStep {
+        if (!awake) return CueLadderStep(CueLadderState(), CueAction.SILENT)
         return when (band) {
             ZoneBand.ABOVE, ZoneBand.BELOW -> {
-                val anchor = lastCueTime ?: (outSince ?: now.also { outSince = it })
-                if (now - anchor >= nextIntervalMs()) {
-                    cuesSpoken += 1
-                    lastCueTime = now
-                    CueAction.SPEAK
+                val out = outSince ?: now
+                val anchor = lastCueTime ?: out
+                if (now - anchor >= rungs.nextIntervalMs(cuesSpoken)) {
+                    CueLadderStep(
+                        copy(outSince = out, lastCueTime = now, cuesSpoken = cuesSpoken + 1),
+                        CueAction.SPEAK
+                    )
                 } else {
-                    CueAction.SILENT
+                    CueLadderStep(copy(outSince = out), CueAction.SILENT)
                 }
             }
-            ZoneBand.IN -> {
-                val spoke = cuesSpoken > 0
-                reset()
-                if (spoke) CueAction.RETURN else CueAction.SILENT
-            }
-            ZoneBand.UNKNOWN -> CueAction.SILENT
+            ZoneBand.IN -> CueLadderStep(
+                CueLadderState(),
+                if (cuesSpoken > 0) CueAction.RETURN else CueAction.SILENT
+            )
+            ZoneBand.UNKNOWN -> CueLadderStep(this, CueAction.SILENT)
         }
     }
 
-    /** For the debug overlay only: seconds continuously out of target, 0 when in. */
     fun secondsOutOfTarget(now: Long): Long =
         outSince?.let { (now - it).coerceAtLeast(0) / 1000 } ?: 0
 
-    /** For the debug overlay only: seconds until the next cue is due, 0 when in target. */
-    fun secondsUntilNextCue(now: Long): Long {
+    fun secondsUntilNextCue(now: Long, rungs: CueLadderRungs = CueLadderRungs.DEFAULT): Long {
         val anchor = lastCueTime ?: outSince ?: return 0
-        return ((anchor + nextIntervalMs()) - now).coerceAtLeast(0) / 1000
+        return ((anchor + rungs.nextIntervalMs(cuesSpoken)) - now).coerceAtLeast(0) / 1000
     }
 }

@@ -838,6 +838,18 @@ class RunNotificationTest {
     }
 
     @Test
+    fun `the cool-down notification counts down`() {
+        val driver = Driver()
+        driver.start()
+        driver.skipPhase()
+        driver.skipPhase()
+
+        val effects = driver.advanceInOneTick(5)
+
+        assertEquals("Cooldown • 00:25 left", effects.only<RunEffect.Notify>().text)
+    }
+
+    @Test
     fun `the notification follows the run into its next phase`() {
         val driver = Driver()
         driver.start(config(workout = null))
@@ -879,4 +891,9 @@ private fun Driver.totalsOf(
     pausedSeconds = pausedSeconds,
     endedAtMillis = nowMillis,
     isRunWalkMode = state.config?.isRunWalkMode ?: false,
+    averageBpm = state.tally.averageBpm,
+    maxBpm = state.tally.maxBpm,
+    zoneSeconds = state.tally.zoneSeconds,
+    noDataSeconds = state.tally.noDataSeconds,
+    walkBreaks = state.walkBreaks,
 )

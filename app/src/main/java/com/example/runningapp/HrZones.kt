@@ -168,6 +168,20 @@ data class ZoneSeconds(
 )
 
 /**
+ * One more second in [zone].
+ *
+ * Banking a second is a `when` over five fields wherever it happens; having it in one place is what
+ * stops a sixth zone, or a typo, from being spelled twice.
+ */
+fun ZoneSeconds.plusSecondIn(zone: HrZone): ZoneSeconds = when (zone) {
+    HrZone.ENDURANCE -> copy(zone1 = zone1 + 1)
+    HrZone.MODERATE -> copy(zone2 = zone2 + 1)
+    HrZone.TEMPO -> copy(zone3 = zone3 + 1)
+    HrZone.THRESHOLD -> copy(zone4 = zone4 + 1)
+    HrZone.ANAEROBIC -> copy(zone5 = zone5 + 1)
+}
+
+/**
  * Re-tallies zone seconds from a run's stored heart-rate samples.
  *
  * Exact rather than an estimate: the recorder writes exactly one sample per second of the run and

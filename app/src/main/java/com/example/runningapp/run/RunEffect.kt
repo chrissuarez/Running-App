@@ -1,5 +1,7 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.ZoneSeconds
+
 /**
  * The numbers a finished Run is saved with.
  *
@@ -12,6 +14,26 @@ data class RunTotals(
     val endedAtMillis: Long,
     /** Whether the Run followed a Workout. Drives the record's flag and whether the coach looks. */
     val isRunWalkMode: Boolean,
+    val averageBpm: Int,
+    val maxBpm: Int,
+    val zoneSeconds: ZoneSeconds,
+    val noDataSeconds: Long,
+    /** How many times the coach sent the runner walking because their heart rate was high. */
+    val walkBreaks: Int,
+)
+
+/**
+ * One second of a Run, as it is to be saved.
+ *
+ * The columns the Run knows about, and no others: the row's own id and the Run's arrive with
+ * [RunEffect.SaveHrSample], and the pace comes from GPS, which the Run starts and stops but does
+ * not read. The service fills those in as it maps this onto its database entity.
+ */
+data class HrSampleReading(
+    val elapsedSeconds: Long,
+    val rawBpm: Int,
+    val smoothedBpm: Int,
+    val connectionStatus: String,
 )
 
 /**
@@ -52,6 +74,18 @@ sealed interface RunEffect {
     data class SaveIntervalStat(
         val runRowId: Long,
         val stat: IntervalStat,
+    ) : RunEffect
+
+    /**
+     * Write one second of heart rate against the Run's row.
+     *
+     * Only seconds that had a reading produce one: a no-data second is counted in the Run's totals
+     * but writes no sample, because a zero would add nothing to the zone recompute and would drag
+     * the detail chart's axis down to it.
+     */
+    data class SaveHrSample(
+        val runRowId: Long,
+        val sample: HrSampleReading,
     ) : RunEffect
 
     /** Say this out loud. */
