@@ -62,8 +62,21 @@ sealed interface RunEvent {
         override val nowMillis: Long,
     ) : RunEvent
 
-    /** The pause/resume button. */
+    /** The pause/resume button, which is one control and so asks for whichever it is not. */
     data class PauseToggled(override val nowMillis: Long) : RunEvent
+
+    /**
+     * The notification's Pause action, which is one of two buttons rather than a toggle.
+     *
+     * Separate from [PauseToggled] because the shade lags the Run: the Resume button can still be
+     * on screen after the Run resumed itself, and tapping it must do nothing rather than pause a
+     * Run the runner is watching. Asking for a named direction is what makes that impossible —
+     * a published-status check at the call site would be racing the very lag it is guarding.
+     */
+    data class PauseRequested(override val nowMillis: Long) : RunEvent
+
+    /** The notification's Resume action. See [PauseRequested]. */
+    data class ResumeRequested(override val nowMillis: Long) : RunEvent
 
     /** A sustained standstill was detected (#39). */
     data class AutoPauseRequested(override val nowMillis: Long) : RunEvent

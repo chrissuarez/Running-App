@@ -49,8 +49,16 @@ import kotlin.jvm.Volatile
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import java.util.UUID
-import java.util.LinkedList
-import kotlin.math.roundToInt
+import com.example.runningapp.run.IntervalKind
+import com.example.runningapp.run.Run
+import com.example.runningapp.run.RunConfig
+import com.example.runningapp.run.RunControls
+import com.example.runningapp.run.RunEffect
+import com.example.runningapp.run.RunEvent
+import com.example.runningapp.run.RunLifecycle
+import com.example.runningapp.run.RunMode
+import com.example.runningapp.run.RunPhase
+import com.example.runningapp.run.RunState
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.AiCoachClient
 import com.example.runningapp.data.DatabaseBackupManager
@@ -161,7 +169,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private val weatherFetchScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     // The run's per-sample writes (HR samples, GPS track points) live on their own scope so
-    // stopSession() can wait for exactly these inserts to land before snapshotting the DB to
+    // stopRun() can wait for exactly these inserts to land before snapshotting the DB to
     // Downloads — otherwise the backup can race the tail writes and capture a run missing its
     // final seconds. Like weatherFetchScope, it survives onDestroy() so a background stop still
     // flushes the tail before the snapshot.
@@ -197,23 +205,40 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var locationTracker: LocationTracker? = null
     private var lastNotificationZone: HrZone? = null
     private var lastNotificationPhase = SessionPhase.WARM_UP
-    
-    // Mission: Resilient Tracking Loop
+    private var lastNotificationStatus = SessionStatus.IDLE
+
+    // --- The Run ---
+    //
+    // The Run itself is a rulebook (ADR 0002): events in, whole state and a list of effects out.
+    // What lives here is only the translation — this field, the thread that owns it, the one write
+    // that publishes it, and a mapping from each effect to one Android call.
+    //
+    // Touched ONLY on [sessionHandlerThread]. That is the whole of the thread discipline: not a
+    // lock, not a @Volatile, but the fact that Bluetooth callbacks, GPS callbacks, taps and the
+    // per-second pulse all reach it through [postRunEvent] and never directly.
+    private var runState = RunState.IDLE
+
+    // Mission: Resilient Tracking Loop — now the Run's single inbox, kept off main so a busy UI
+    // cannot stall the Run's clock.
     private var sessionHandlerThread: HandlerThread? = null
     private var sessionHandler: Handler? = null
     private val sessionTimerRunnable = object : Runnable {
         override fun run() {
-            pulseSession()
-            // Mission: Stop the zombie loop if status is STOPPED or IDLE
-            val status = _hrState.value.sessionStatus
-            if (status != SessionStatus.STOPPED && status != SessionStatus.IDLE) {
+            // Simulation feeds the Run ordinary heart-rate events, so it and a real Strap drive
+            // identical code — there is no simulated branch anywhere inside the Run.
+            if (isSimulationEnabled) updateSimulationData()
+            dispatchRunEvent(RunEvent.Tick(System.currentTimeMillis()))
+            val lifecycle = runState.lifecycle
+            // A Run that is over stops the pulse; STOP itself also drops the pending one, so this
+            // is the belt to that braces — a Run cannot end and leave a tick still arriving.
+            if (lifecycle != RunLifecycle.IDLE && lifecycle != RunLifecycle.STOPPED) {
                 sessionHandler?.postDelayed(this, 1000)
             } else {
-                Log.d(TAG, "Timer loop exiting - status is $status")
+                Log.d(TAG, "Timer loop exiting - lifecycle is $lifecycle")
             }
         }
     }
-    
+
     private lateinit var settingsRepository: SettingsRepository
     // The coach's standing prescription for today's workout, if any. Read once at START, like the
     // workout it adapts — a prescription arriving mid-run must not reshape a run in progress.
@@ -224,60 +249,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // run attaches no workout — an open-ended run with no warm-up/cool-down/intervals. It never
     // edits the plan, so tomorrow the plan is queued again.
     @Volatile private var skipPlanForToday: Boolean = false
-    // Whether this run followed a structured plan workout, captured at start. Drives the recorded
-    // RunnerSession.isRunWalkMode and whether the AI coach evaluates the run afterward.
-    @Volatile private var sessionWasStructured: Boolean = false
 
     private lateinit var database: AppDatabase
-    private var currentSessionId: Long? = null
-    private var sessionMaxBpm = 0
-    private var sessionBpmSum = 0L
-    private var sessionNoDataSeconds = 0L
-    private var sessionSampleCount = 0
-    private var sessionAboveTargetSeconds = 0L
-    private var lastRecordedSecond = -1L
-    // The target this run is coached against, frozen at the start. The coach and the recorded
-    // RunnerSession.targetZone both read this, so a mid-run change to the global target zone can
-    // neither redirect the live coaching nor make "In Target" disagree with what was coached; it
-    // takes effect on the next run. currentSettings still updates live for everything else.
-    private var activeTargetZone: HrZone = HrZone.DEFAULT_TARGET
-    
-    // Mission 3: In-Memory Zone Tracking
-    private val sessionZoneTimes = mutableMapOf(1 to 0L, 2 to 0L, 3 to 0L, 4 to 0L, 5 to 0L)
-    private var isSimulationEnabled = false
+
+    // Both written on main (or a Binder thread) and read on the session thread, which is the Run's
+    // inbox: the pulse asks whether to feed the Run a simulated reading, and the published state
+    // reports how stale the Strap's last packet is.
+    @Volatile private var isSimulationEnabled = false
     private var simulationBpm = 70
     private var simulationDirection = 1
 
-    // --- Coaching Rules Engine State ---
-    private val HISTORY_WINDOW_MS = 5000L
-    
-    // Pair<Timestamp, Bpm>
-    private val bpmHistory = LinkedList<Pair<Long, Int>>()
-    
-    // Below/on/above target comes from HrZones.kt — the coach and the live UI cannot disagree.
-    private var currentZone = ZoneBand.UNKNOWN
-    private var baselineHr: Int? = null
-    // The one clock for spoken zone cues (#108): silent until 30s out of target, then 30s / 60s /
-    // every 5 min. Re-entry (judged at the zone midpoint) resets it to the top.
-    private val cueLadder = CueLadder()
-    // An unplanned run stays silent for this long before the ladder can speak — the fact that a
-    // plan's warm-up step used to provide, hardcoded for runs that have no steps (#108).
-    private val UNPLANNED_GRACE_SECONDS = 300L
-    
-    // --- Session Engine State ---
-    @Volatile private var sessionSecondsRunning = 0L
-    private var sessionSecondsPaused = 0L
     private var reconnectAttemptCount = 0
-    private var lastHrTimestamp = 0L
-    // The run mode this session actually started with (from EXTRA_RUN_MODE / effectiveRunMode). In-run
-    // decisions that depend on mode — starting GPS on a (re)connect or resume — must read this, not
-    // the live currentSettings.runMode, which can still hold a pre-START value during the async
-    // settings write or be changed mid-run. Null when no run is active. @Volatile because the GATT
-    // connect callback reads it from a Binder thread while START/session-setup write it.
-    @Volatile
-    private var activeSessionRunMode: String? = null
-    private var firstDisconnectTime = 0L
-    private val RECONNECT_TIMEOUT_MS = 120_000L // 2 minutes
+    @Volatile private var lastHrTimestamp = 0L
     // With no run active, stop chasing an unreachable strap after this many attempts and land on
     // the terminal "Strap not found" state (each attempt already costs a ~30s connectGatt timeout
     // plus backoff). Mid-run reconnects are uncapped by design (#110).
@@ -288,54 +271,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // Bumped on every startScanning()/stopScanning(); lets the scan-timeout coroutine tell
     // whether ITS scan is still the live one.
     @Volatile private var scanEpoch = 0
-
-    // Auto-pause on standstill (#39). Distinguishes a PAUSED session that SessionRecorder itself
-    // triggered from a manual pause, so togglePause()/pauseSession() take precedence and GPS
-    // (which must keep running at 1 Hz through an auto-pause to detect resume) is only stopped
-    // on a manual pause.
-    @Volatile private var isAutoPaused = false
-    
-    // Mission: Session Phases
-    @Volatile private var currentPhase = SessionPhase.WARM_UP
-    private var phaseSecondsRunning = 0L
-    private var walkBreaksCount = 0
-    @Volatile private var isWarmupSkipped = false
-    // Warm-up/cool-down are sourced from the active workout (#107); 0 for an unplanned/skipped run.
-    @Volatile private var currentWarmupDuration = 0
-    @Volatile private var currentCooldownDuration = 0
-    @Volatile private var isStructuredWorkout = false
-    @Volatile private var structuredWorkoutPhase = StructuredWorkoutPhase.RUN
-    @Volatile private var phaseTimeRemainingSeconds = 0
-    @Volatile private var currentRepeat = 1
-    @Volatile private var isCreatingSession = false
-    // Set (under sessionCreationLock) when STOP lands while startNewDatabaseSession()'s IO insert
-    // is still queued — currentSessionId isn't set yet, so stopSession() can't finalize the row.
-    // The creating coroutine reads this at its abort points and unwinds (deletes any inserted row,
-    // leaves currentSessionId null) instead of bringing a just-stopped run to life (Codex P2 #123).
-    private var stopDuringSessionCreation = false
-    private var activeWorkoutTemplate: WorkoutTemplate? = null
-    private var hasStructuredWorkoutStarted = false
-    private val sessionCreationLock = Any()
-    private var currentSessionIncludeInAiTraining = true
-    private data class RunIntervalTracker(
-        val intervalIndex: Int,
-        val plannedDurationSeconds: Int,
-        val startSessionSecond: Long,
-        var elapsedSeconds: Int = 0,
-        var firstHrTriggerSecondIntoInterval: Int? = null,
-        var actualRunningDurationBeforeHrTriggerSeconds: Int? = null,
-        var hrTriggerEvents: Int = 0,
-        var walkingRecoverySeconds: Int = 0,
-        var isInRecoveryWindow: Boolean = false,
-        var triggerHrSum: Double = 0.0,
-        var triggerHrCount: Int = 0,
-        var recoveryDurationSumSeconds: Int = 0,
-        var recoveryEventCount: Int = 0,
-        var activeRecoveryStartSecond: Int? = null
-    )
-    private var activeRunIntervalTracker: RunIntervalTracker? = null
-
-    private val completedRunIntervalStats = mutableListOf<RunWalkIntervalStat>()
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
@@ -384,228 +319,373 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun resetRunIntervalTracking() {
-        activeRunIntervalTracker = null
-        completedRunIntervalStats.clear()
+    // ------------------------------------------------------------------------------------------
+    // The Run: events in, one published state out, effects performed.
+    //
+    // This is the whole of what the service knows about a Run. It decides nothing — [Run] does —
+    // and it holds nothing the Run holds. See docs/adr/0002-the-run-is-a-rulebook-not-a-service.md.
+    // ------------------------------------------------------------------------------------------
+
+    /**
+     * Hand something that happened to the Run.
+     *
+     * Bluetooth callbacks on a Binder thread, GPS callbacks on the location thread, taps on main
+     * and the per-second pulse all arrive this way and only this way, so there is a single ordering
+     * of everything that happens to a Run and a single thread that touches its state. That is why
+     * nothing inside the module needs a lock or a `@Volatile`.
+     *
+     * The event carries the time it happened rather than the time it is handled: a heart-rate
+     * packet's own timestamp is what the cue ladder reasons about, and a queue hop must not move it.
+     */
+    private fun postRunEvent(event: RunEvent) {
+        sessionHandler?.post { dispatchRunEvent(event) }
     }
 
-    private data class StructuredProgressUiState(
-        val totalRepeats: Int = 0,
-        val currentIntervalPlannedSeconds: Int = 0,
-        val nextIntervalType: StructuredWorkoutPhase? = null,
-        val nextIntervalDurationSeconds: Int = 0,
-        val workoutProgressPercent: Int = 0,
-        val currentIntervalElapsedSeconds: Int = 0
-    )
-
-    private var currentWalkReasonState = "Planned"
-    private var hrCapExceededInCurrentIntervalState = false
-    private var hrCapExceededAtSecondState: Int? = null
-
-    private fun resetCurrentIntervalTransparencyState() {
-        currentWalkReasonState = "Planned"
-        hrCapExceededInCurrentIntervalState = false
-        hrCapExceededAtSecondState = null
+    /**
+     * The Run's inbox. [sessionHandlerThread] only — either posted here by [postRunEvent] or called
+     * directly by the pulse, which already runs on it.
+     *
+     * Publish first, then perform: the notification's own actions are built from the published
+     * state, so an effect must never be carried out against a state the app has not been told about.
+     */
+    private fun dispatchRunEvent(event: RunEvent) {
+        val outcome = Run.onEvent(runState, event)
+        runState = outcome.state
+        publishRun(runState, event.nowMillis)
+        outcome.effects.forEach(::perform)
     }
 
-    private fun buildStructuredProgressUiState(): StructuredProgressUiState {
-        val workout = activeWorkoutTemplate
-        if (currentPhase != SessionPhase.MAIN ||
-            !isStructuredWorkout ||
-            workout == null ||
-            workout.totalRepeats <= 0
-        ) {
-            return StructuredProgressUiState()
-        }
+    /**
+     * The one write of the Run into [HrState] (#130), replacing some thirty scattered updates.
+     *
+     * The Run returns its whole state, so there is nothing to decide here beyond naming: which of
+     * the Run's fields each of the screen's older names is. The Strap's own writes are untouched,
+     * and no UI file is modified.
+     *
+     * The rule for a Run that is not live: the published state describes a Run in progress, so with
+     * none in progress it describes nothing in progress. The totals a finished Run leaves behind
+     * stay, exactly as they did.
+     */
+    private fun publishRun(run: RunState, nowMillis: Long) {
+        val live = run.lifecycle.isLive
+        val intervals = run.intervals?.takeIf { live }
+        val debug = coachingDebug(run, nowMillis)
+        val hrAge = if (lastHrTimestamp > 0) (nowMillis - lastHrTimestamp) / 1000 else 0
+        _hrState.update {
+            it.copy(
+                sessionStatus = run.lifecycle.asSessionStatus(),
+                secondsRunning = run.secondsRunning,
+                secondsPaused = run.secondsPaused,
+                zoneTimes = run.tally.zoneSeconds.asZoneTimes(),
+                walkBreaksCount = run.walkBreaks,
+                lastHrAgeSeconds = hrAge,
+                isSimulating = isSimulationEnabled,
 
-        val totalRepeats = workout.totalRepeats
-        val walkSeconds = workout.walkDurationSeconds.coerceAtLeast(0)
-        val currentPlannedSeconds = when (structuredWorkoutPhase) {
-            StructuredWorkoutPhase.RUN -> workout.runDurationSeconds.coerceAtLeast(0)
-            StructuredWorkoutPhase.WALK -> walkSeconds
-        }
+                avgBpm = run.heartRate.smoothedBpm,
+                currentZone = debug.zone,
+                timeInZoneString = debug.timeInZone,
+                cooldownWithHysteresisString = debug.cooldown,
 
-        val remainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0)
-        val elapsedSeconds = (currentPlannedSeconds - remainingSeconds).coerceIn(0, currentPlannedSeconds)
+                currentPhase = run.phase.asSessionPhase(),
+                phaseSecondsElapsed = if (live) run.phaseSecondsElapsed else 0,
+                phaseSecondsRemaining = if (live) run.phaseSecondsRemaining else 0,
 
-        val (nextType, nextDurationSeconds) = when (structuredWorkoutPhase) {
-            StructuredWorkoutPhase.RUN -> {
-                if (walkSeconds > 0) {
-                    StructuredWorkoutPhase.WALK to walkSeconds
-                } else if (currentRepeat < totalRepeats) {
-                    StructuredWorkoutPhase.RUN to workout.runDurationSeconds.coerceAtLeast(0)
-                } else {
-                    null to 0
-                }
-            }
-            StructuredWorkoutPhase.WALK -> {
-                if (currentRepeat < totalRepeats) {
-                    StructuredWorkoutPhase.RUN to workout.runDurationSeconds.coerceAtLeast(0)
-                } else {
-                    null to 0
-                }
-            }
-        }
+                // True for the whole of a Workout's Run — including its warm-up, before the first
+                // Interval opens — and false again once the Intervals are behind it, which is what
+                // the field has always meant. Whether there is an Interval to show is [intervals].
+                isStructuredWorkout = live && run.config?.isRunWalkMode == true && !run.intervalsFinished,
+                // With no Interval in progress the label keeps whatever it last said, which is what
+                // a screen still showing the finished Workout's last step says today. A Run that is
+                // over publishes RUN, so the next one cannot inherit it.
+                structuredWorkoutPhase = intervals?.kind?.asStructuredPhase()
+                    ?: if (live) it.structuredWorkoutPhase else StructuredWorkoutPhase.RUN,
+                phaseTimeRemainingSeconds = intervals?.secondsRemaining?.coerceAtLeast(0) ?: 0,
+                currentRepeat = intervals?.repeat ?: 1,
+                totalRepeats = intervals?.totalRepeats ?: 0,
+                currentIntervalPlannedSeconds = intervals?.plannedSeconds ?: 0,
+                nextIntervalType = intervals?.nextKind?.asStructuredPhase(),
+                nextIntervalDurationSeconds = intervals?.nextSeconds ?: 0,
+                workoutProgressPercent = intervals?.progressPercent ?: 0,
+                currentIntervalElapsedSeconds = intervals?.secondsElapsed ?: 0,
+                currentWalkReason = run.walkDecision.reason.label,
+                hrCapExceededInCurrentInterval = run.walkDecision.hrCapExceededInInterval,
+                hrCapExceededAtSecond = run.walkDecision.hrCapExceededAtSecond,
 
-        val totalSegments = if (walkSeconds > 0) totalRepeats * 2 else totalRepeats
-        val completedSegmentsBeforeCurrent = when (structuredWorkoutPhase) {
-            StructuredWorkoutPhase.RUN -> {
-                if (walkSeconds > 0) (currentRepeat - 1).coerceAtLeast(0) * 2
-                else (currentRepeat - 1).coerceAtLeast(0)
-            }
-            StructuredWorkoutPhase.WALK -> ((currentRepeat - 1).coerceAtLeast(0) * 2) + 1
-        }.coerceAtLeast(0)
-
-        val segmentFraction = if (currentPlannedSeconds > 0) {
-            elapsedSeconds.toDouble() / currentPlannedSeconds.toDouble()
-        } else {
-            0.0
-        }
-
-        val workoutProgressPercent = if (totalSegments > 0) {
-            (((completedSegmentsBeforeCurrent.toDouble() + segmentFraction) / totalSegments.toDouble()) * 100.0)
-                .roundToInt()
-                .coerceIn(0, 100)
-        } else {
-            0
-        }
-
-        return StructuredProgressUiState(
-            totalRepeats = totalRepeats,
-            currentIntervalPlannedSeconds = currentPlannedSeconds,
-            nextIntervalType = nextType,
-            nextIntervalDurationSeconds = nextDurationSeconds,
-            workoutProgressPercent = workoutProgressPercent,
-            currentIntervalElapsedSeconds = elapsedSeconds
-        )
-    }
-
-    private fun startRunIntervalTracking(intervalIndex: Int, plannedDurationSeconds: Int) {
-        if (!isStructuredWorkout || plannedDurationSeconds <= 0) return
-        if (activeRunIntervalTracker != null) {
-            finalizeActiveRunIntervalTracking()
-        }
-        resetCurrentIntervalTransparencyState()
-        // Each run interval starts the cue ladder from scratch. The walk-step reset otherwise rides
-        // on onSample(awake = false), so a BLE dropout spanning the whole walk lands no sample and
-        // the next run step would reuse the previous interval's outSince/lastCueTime and fire an
-        // immediate catch-up or return cue. This boundary is timer-driven, not packet-driven, so it
-        // resets regardless of dropouts (Codex #124).
-        cueLadder.reset()
-        currentZone = ZoneBand.UNKNOWN
-        activeRunIntervalTracker = RunIntervalTracker(
-            intervalIndex = intervalIndex,
-            plannedDurationSeconds = plannedDurationSeconds,
-            startSessionSecond = sessionSecondsRunning
-        )
-    }
-
-    private fun recordRunIntervalSecond() {
-        val tracker = activeRunIntervalTracker ?: return
-        tracker.elapsedSeconds += 1
-        if (tracker.isInRecoveryWindow) {
-            tracker.walkingRecoverySeconds += 1
-        }
-    }
-
-    private fun recordRunWalkHighHrTriggerEvent(avgBpm: Int) {
-        if (currentPhase != SessionPhase.MAIN ||
-            !isStructuredWorkout ||
-            structuredWorkoutPhase != StructuredWorkoutPhase.RUN
-        ) {
-            return
-        }
-        val tracker = activeRunIntervalTracker ?: return
-        val elapsedAtTrigger = maxOf(
-            tracker.elapsedSeconds,
-            (sessionSecondsRunning - tracker.startSessionSecond).coerceAtLeast(0).toInt()
-        )
-        if (tracker.firstHrTriggerSecondIntoInterval == null) {
-            tracker.firstHrTriggerSecondIntoInterval = elapsedAtTrigger
-            tracker.actualRunningDurationBeforeHrTriggerSeconds = elapsedAtTrigger
-        }
-        if (!hrCapExceededInCurrentIntervalState) {
-            hrCapExceededInCurrentIntervalState = true
-            hrCapExceededAtSecondState = elapsedAtTrigger
-        }
-        currentWalkReasonState = "HR-triggered"
-        tracker.hrTriggerEvents += 1
-        tracker.triggerHrSum += avgBpm.toDouble()
-        tracker.triggerHrCount += 1
-        tracker.isInRecoveryWindow = true
-        if (tracker.activeRecoveryStartSecond == null) {
-            tracker.activeRecoveryStartSecond = elapsedAtTrigger
-        }
-    }
-
-    private fun recordRunWalkRecoveryCueEvent() {
-        if (currentPhase != SessionPhase.MAIN ||
-            !isStructuredWorkout ||
-            structuredWorkoutPhase != StructuredWorkoutPhase.RUN
-        ) {
-            return
-        }
-        val tracker = activeRunIntervalTracker ?: return
-        val elapsedAtRecovery = maxOf(
-            tracker.elapsedSeconds,
-            (sessionSecondsRunning - tracker.startSessionSecond).coerceAtLeast(0).toInt()
-        )
-        closeActiveRecoveryWindow(tracker, elapsedAtRecovery)
-        tracker.isInRecoveryWindow = false
-    }
-
-    private fun closeActiveRecoveryWindow(
-        tracker: RunIntervalTracker,
-        endElapsedSeconds: Int
-    ) {
-        val start = tracker.activeRecoveryStartSecond ?: return
-        val duration = (endElapsedSeconds - start).coerceAtLeast(0)
-        tracker.recoveryDurationSumSeconds += duration
-        tracker.recoveryEventCount += 1
-        tracker.activeRecoveryStartSecond = null
-    }
-
-    private fun finalizeActiveRunIntervalTracking() {
-        val tracker = activeRunIntervalTracker ?: return
-        val sessionId = currentSessionId
-        closeActiveRecoveryWindow(tracker, tracker.elapsedSeconds)
-        val actualBeforeTrigger = tracker.actualRunningDurationBeforeHrTriggerSeconds
-            ?: tracker.elapsedSeconds
-        val avgHrAtTrigger = if (tracker.triggerHrCount > 0) {
-            tracker.triggerHrSum / tracker.triggerHrCount.toDouble()
-        } else {
-            null
-        }
-        val avgRecoverySeconds = if (tracker.recoveryEventCount > 0) {
-            tracker.recoveryDurationSumSeconds.toDouble() / tracker.recoveryEventCount.toDouble()
-        } else {
-            null
-        }
-        if (sessionId != null) {
-            completedRunIntervalStats += RunWalkIntervalStat(
-                sessionId = sessionId,
-                intervalIndex = tracker.intervalIndex,
-                plannedDurationSeconds = tracker.plannedDurationSeconds,
-                actualRunningDurationBeforeHrTriggerSeconds = actualBeforeTrigger,
-                timeIntoIntervalWhenHrExceededCapSeconds = tracker.firstHrTriggerSecondIntoInterval,
-                hrTriggerEvents = tracker.hrTriggerEvents,
-                totalTimeSpentWalkingDuringRunIntervalSeconds = tracker.walkingRecoverySeconds,
-                avgHrAtTriggerInInterval = avgHrAtTrigger,
-                avgRecoverySecondsAfterTriggerInInterval = avgRecoverySeconds
+                // The three the screen must only ever read off a live Run: its pinned target, its
+                // pinned mode, and the row the feedback sheet will be attached to.
+                activeTargetZone = if (live) run.config?.targetZone else null,
+                activeRunMode = if (live) run.config?.runMode?.settingValue else null,
+                activeDbSessionId = if (live) run.runRowId else null,
             )
         }
-        activeRunIntervalTracker = null
     }
 
-    private suspend fun persistRunIntervalStats(sessionId: Long) {
-        if (completedRunIntervalStats.isEmpty()) return
-        val statsToPersist = completedRunIntervalStats
-            .filter { it.sessionId == sessionId }
-        if (statsToPersist.isNotEmpty()) {
-            database.runWalkIntervalStatDao().insertIntervalStats(statsToPersist)
-            Log.d(TAG, "Persisted ${statsToPersist.size} run interval stats for session $sessionId")
+    private fun RunLifecycle.asSessionStatus(): SessionStatus = when (this) {
+        RunLifecycle.IDLE -> SessionStatus.IDLE
+        RunLifecycle.RUNNING -> SessionStatus.RUNNING
+        RunLifecycle.PAUSED -> SessionStatus.PAUSED
+        RunLifecycle.STOPPING -> SessionStatus.STOPPING
+        RunLifecycle.STOPPED -> SessionStatus.STOPPED
+    }
+
+    private fun RunPhase.asSessionPhase(): SessionPhase = when (this) {
+        RunPhase.WARM_UP -> SessionPhase.WARM_UP
+        RunPhase.MAIN -> SessionPhase.MAIN
+        RunPhase.COOL_DOWN -> SessionPhase.COOL_DOWN
+    }
+
+    private fun IntervalKind.asStructuredPhase(): StructuredWorkoutPhase = when (this) {
+        IntervalKind.RUN -> StructuredWorkoutPhase.RUN
+        IntervalKind.WALK -> StructuredWorkoutPhase.WALK
+    }
+
+    private fun ZoneSeconds.asZoneTimes(): Map<Int, Long> =
+        mapOf(1 to zone1, 2 to zone2, 3 to zone3, 4 to zone4, 5 to zone5)
+
+    private data class CoachingDebug(val zone: String, val timeInZone: String, val cooldown: String)
+
+    /**
+     * The developer overlay's three strings, and — through the last of them — the live screen's
+     * fallback coach line. Reproduced from the Run's own coaching state rather than recomputed, so
+     * the read-out cannot describe a coach the Run is not running.
+     */
+    private fun coachingDebug(run: RunState, nowMillis: Long): CoachingDebug = when {
+        run.heartRate.recent.isEmpty() -> CoachingDebug("Init", "0s", "Ready")
+        !run.controls.coachingEnabled -> CoachingDebug("Disabled", "--", "Off")
+        else -> {
+            val ladder = run.coaching.ladder
+            CoachingDebug(
+                zone = run.coaching.band.name,
+                timeInZone = "${ladder.secondsOutOfTarget(nowMillis)}s",
+                cooldown = when (run.coaching.band) {
+                    ZoneBand.IN, ZoneBand.UNKNOWN -> "Ready"
+                    else -> "Next: ${ladder.secondsUntilNextCue(nowMillis)}s"
+                },
+            )
         }
-        completedRunIntervalStats.clear()
+    }
+
+    /**
+     * Everything the Run asked for, each mapped to one call.
+     *
+     * No branching and no state of its own, deliberately: if this ever needs a decision, the
+     * decision belongs in [Run], where it can be tested. That is why this has no seam of its own
+     * and is verified on the phone instead.
+     */
+    private fun perform(effect: RunEffect) {
+        when (effect) {
+            is RunEffect.CreateRunRow -> createRunRow(effect)
+            is RunEffect.FinalizeRun -> finalizeRun(effect)
+            is RunEffect.SaveHrSample -> saveHrSample(effect)
+            is RunEffect.SaveIntervalStat -> saveIntervalStat(effect)
+            is RunEffect.Speak -> playCue(effect.text)
+            is RunEffect.Notify -> updateNotification(effect.text)
+            RunEffect.StartGps -> startGps()
+            RunEffect.StopGps -> locationTracker?.stop()
+        }
+    }
+
+    /**
+     * Insert the Run's row and post its id back.
+     *
+     * The Run buffers everything it produces until that id lands, so this is asynchronous without
+     * anything being dropped or any flag being needed to describe the window (#123's
+     * `sessionCreationLock`, `stopDuringSessionCreation` and post-commit gate are gone).
+     */
+    private fun createRunRow(effect: RunEffect.CreateRunRow) {
+        // Emitted once per Run and by nothing else, which makes it the one place the things a Run
+        // needs zeroed but does not own can be zeroed: GPS's distance and pace, and the Strap's
+        // last reading and the clock that ages it.
+        locationTracker?.resetSessionState()
+        // Clear the HR-freshness clock so age is measured within this Run. A strapless Run started
+        // after one that had HR would otherwise inherit a stale timestamp, read as a huge
+        // lastHrAgeSeconds, and trip the screen's sensor-lost warning on a Run deliberately started
+        // without a Strap (#110). The live reading goes with it, in lock-step: with the clock reset
+        // a stale packet would look fresh. A real packet repopulates both within a second.
+        lastHrTimestamp = 0L
+        _hrState.update { it.copy(bpm = 0, distanceKm = 0.0, paceMinPerKm = 0.0) }
+        recorderWriteScope.launch {
+            val runRowId = database.sessionDao().insertSession(
+                RunnerSession(
+                    startTime = effect.startedAtMillis,
+                    targetZone = effect.targetZoneNumber,
+                    runMode = effect.runModeSettingValue,
+                    includeInAiTraining = effect.includeInAiTraining,
+                )
+            )
+            Log.d(TAG, "Started DB Session: $runRowId (Mode: ${effect.runModeSettingValue})")
+            postRunEvent(RunEvent.RunRowCreated(runRowId, System.currentTimeMillis()))
+        }
+    }
+
+    private fun saveHrSample(effect: RunEffect.SaveHrSample) {
+        val sample = HrSample(
+            sessionId = effect.runRowId,
+            elapsedSeconds = effect.sample.elapsedSeconds,
+            rawBpm = effect.sample.rawBpm,
+            smoothedBpm = effect.sample.smoothedBpm,
+            connectionState = effect.sample.connectionStatus,
+            // Pace is GPS's, which the Run starts and stops but never reads.
+            paceMinPerKm = _hrState.value.paceMinPerKm,
+        )
+        recorderWriteScope.launch { database.sampleDao().insertSample(sample) }
+    }
+
+    private fun saveIntervalStat(effect: RunEffect.SaveIntervalStat) {
+        val stat = effect.stat
+        val row = RunWalkIntervalStat(
+            sessionId = effect.runRowId,
+            intervalIndex = stat.intervalIndex,
+            plannedDurationSeconds = stat.plannedDurationSeconds,
+            actualRunningDurationBeforeHrTriggerSeconds = stat.actualRunningDurationBeforeHrTriggerSeconds,
+            timeIntoIntervalWhenHrExceededCapSeconds = stat.timeIntoIntervalWhenHrExceededCapSeconds,
+            hrTriggerEvents = stat.hrTriggerEvents,
+            totalTimeSpentWalkingDuringRunIntervalSeconds = stat.totalTimeSpentWalkingDuringRunIntervalSeconds,
+            avgHrAtTriggerInInterval = stat.avgHrAtTriggerInInterval,
+            avgRecoverySecondsAfterTriggerInInterval = stat.avgRecoverySecondsAfterTriggerInInterval,
+        )
+        recorderWriteScope.launch { database.runWalkIntervalStatDao().insertIntervalStats(listOf(row)) }
+    }
+
+    private fun startGps() {
+        // GPS was never stopped through an auto-pause, so the recorder's own flag has had no
+        // stop()/discardLastFix() to clear it; a resume must say so explicitly (#39).
+        locationTracker?.clearAutoPauseState()
+        // The Run asks for GPS only on an outdoor Run. Simulation's veto stays with the tracker,
+        // which is where it was: a simulated run records the mode it chose but no route.
+        locationTracker?.restartIfNeeded("run", RunMode.OUTDOOR.settingValue, isSimulationEnabled)
+    }
+
+    /**
+     * Write the finished Run's totals, then everything that hangs off a Run being over: the
+     * Downloads snapshot, the weather look-up and the coach's evaluation.
+     *
+     * The totals come from the module, which watched them accrue — no reading the row back and
+     * patching it. What is still read from the outside is what the Run never had: distance, pace
+     * and the start position, which are GPS's.
+     */
+    private fun finalizeRun(effect: RunEffect.FinalizeRun) {
+        val runRowId = effect.runRowId
+        val totals = effect.totals
+        val distanceKm = locationTracker?.getDistanceKm() ?: 0.0
+        val avgPace = locationTracker?.getPaceMinPerKm() ?: 0.0
+        val startLocation = locationTracker?.getFirstLocation()
+
+        // weatherFetchScope, not serviceScope: a background STOP (a notification action with the
+        // activity unbound) reaches stopSelf() -> onDestroy -> serviceScope.cancel() on the next
+        // main-loop message, and a launch not yet dequeued dies before its body — NonCancellable
+        // cannot protect a coroutine that never starts.
+        weatherFetchScope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                val session = database.sessionDao().getSessionById(runRowId)
+                if (session == null) {
+                    Log.w(TAG, "Finalize found no row $runRowId")
+                    return@withContext
+                }
+                val updatedSession = session.copy(
+                    endTime = totals.endedAtMillis,
+                    durationSeconds = totals.durationSeconds,
+                    avgBpm = totals.averageBpm,
+                    maxBpm = totals.maxBpm,
+                    distanceKm = distanceKm,
+                    avgPaceMinPerKm = avgPace,
+                    startLatitude = startLocation?.latitude,
+                    startLongitude = startLocation?.longitude,
+                    zone1Seconds = totals.zoneSeconds.zone1,
+                    zone2Seconds = totals.zoneSeconds.zone2,
+                    zone3Seconds = totals.zoneSeconds.zone3,
+                    zone4Seconds = totals.zoneSeconds.zone4,
+                    zone5Seconds = totals.zoneSeconds.zone5,
+                    noDataSeconds = totals.noDataSeconds,
+                    walkBreaksCount = totals.walkBreaks,
+                    isRunWalkMode = totals.isRunWalkMode,
+                )
+                database.sessionDao().updateSession(updatedSession)
+                Log.d(TAG, "Finalized DB Session: $runRowId. Evidence: duration=${updatedSession.durationSeconds}")
+
+                // Snapshot run history to Downloads so it survives "Clear storage" (reinstall is
+                // covered separately by Auto Backup). First let the Run's still-queued sample and
+                // track-point inserts land, so the snapshot captures the whole Run rather than the
+                // finalized row minus its final seconds.
+                recorderWriteScope.coroutineContext.job.children.toList().joinAll()
+                weatherFetchScope.launch {
+                    DatabaseBackupManager.backup(applicationContext, database)
+                }
+
+                // Not awaited, so a slow or unreachable weather service cannot hold anything up;
+                // missed fetches are retried at next launch.
+                val startLatitude = updatedSession.startLatitude
+                val startLongitude = updatedSession.startLongitude
+                if (updatedSession.runMode == RunMode.OUTDOOR.settingValue &&
+                    startLatitude != null && startLongitude != null
+                ) {
+                    weatherFetchScope.launch {
+                        sessionRepository.fetchAndSaveWeather(
+                            sessionId = runRowId,
+                            latitude = startLatitude,
+                            longitude = startLongitude,
+                            atEpochMillis = updatedSession.startTime,
+                        )
+                    }
+                }
+
+                val stageId = currentSettings.activeStageId
+                if (stageId != null && totals.isRunWalkMode) {
+                    if (updatedSession.includeInAiTraining && !currentSettings.testingModeEnabled) {
+                        Log.d("AiCoach", "Triggering AI evaluation after session finalization for stage: $stageId")
+                        sessionRepository.evaluateAndAdjustPlan(stageId)
+                    } else {
+                        Log.d(
+                            "AiCoach",
+                            "Skipping AI evaluation: session opted out or testing mode enabled for stage=$stageId"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Everything the Run is given at START and never asks about again (#131).
+     *
+     * Read once, here, on the thread the tap arrived on. A Run is recorded entirely under the
+     * settings that were in force when it began — Max HR most of all, which used to be read live on
+     * every second of zone accounting while Settings stayed reachable mid-Run.
+     */
+    private fun pinRunConfig(runMode: RunMode): RunConfig {
+        val settings = currentSettings
+        // The plan attaches automatically (#107); skipping today is the only thing that detaches
+        // it, and it never edits the plan. Warm-up and cool-down come from the Workout, so an
+        // unplanned or skipped Run has neither.
+        val workout = if (skipPlanForToday) null else resolveActiveWorkoutTemplate()
+        return RunConfig(
+            maxHr = settings.maxHr,
+            // The Workout sets the target when a plan is attached; otherwise the global is the
+            // fallback (#107).
+            targetZone = workout?.let { HrZone.ofNumberOrDefault(it.targetZone) } ?: settings.targetHrZone,
+            runMode = runMode,
+            workout = workout,
+            includeInAiTraining = settings.aiDataSharingEnabled && !settings.testingModeEnabled,
+        )
+    }
+
+    /** The settings the runner may still change mid-Run, delivered as events rather than read. */
+    private fun controlsFrom(settings: UserSettings) = RunControls(
+        coachingEnabled = settings.coachingEnabled,
+        autoPauseEnabled = settings.autoPauseEnabled,
+        splitAnnouncementsEnabled = settings.splitAnnouncementsEnabled,
+    )
+
+    /**
+     * Begin a Run: the pinned configuration goes to the Run, and the pulse starts.
+     *
+     * The Run itself decides whether there is one to begin — a START arriving while one is live is
+     * ignored by the module, so there is no second guard here to keep in step with it.
+     */
+    private fun startRun(runMode: RunMode) {
+        val now = System.currentTimeMillis()
+        postRunEvent(RunEvent.Started(pinRunConfig(runMode), controlsFrom(currentSettings), now))
+        startSessionTimerLoop()
     }
 
     inner class LocalBinder : Binder() {
@@ -645,6 +725,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             settingsRepository.userSettingsFlow.collect { settings ->
                 currentSettings = settings
                 _hrState.update { it.copy(userSettings = settings) }
+                // Coaching, auto-pause and Split announcements are controls the runner flips
+                // mid-Run, so they reach the Run as events rather than being read out of a
+                // settings object. Obeyed from the moment they arrive, which is the point (#109).
+                postRunEvent(RunEvent.ControlsChanged(controlsFrom(settings), System.currentTimeMillis()))
             }
         }
 
@@ -690,10 +774,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 _hrState.update { it.copy(distanceKm = distanceKm, paceMinPerKm = paceMinPerKm) }
             },
             isAutoPauseEnabled = { currentSettings.autoPauseEnabled },
-            onAutoPause = { serviceScope.launch { autoPauseSession() } },
-            onAutoResume = { serviceScope.launch { autoResumeSession() } },
+            onAutoPause = { postRunEvent(RunEvent.AutoPauseRequested(System.currentTimeMillis())) },
+            onAutoResume = { postRunEvent(RunEvent.AutoResumeRequested(System.currentTimeMillis())) },
             onRawFix = { location, barometerPressureHpa ->
-                val sessionId = currentSessionId
+                // The Run's row id off its published state: the tracker's thread has no business
+                // reading the Run, and the Run has no business knowing what a fix is.
+                val sessionId = _hrState.value.activeDbSessionId
                 if (sessionId != null) {
                     val trackPoint = TrackPoint(
                         sessionId = sessionId,
@@ -721,287 +807,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         createNotificationChannel()
     }
 
+    /**
+     * (Re)start the per-second pulse — the Run's own clock, and the only thing that speaks to it
+     * without being asked to.
+     *
+     * The pulse carries the wall-clock time rather than the fact that it arrived, so a janky screen
+     * or a dozing phone costs the Run no seconds: a tick five seconds late advances five seconds.
+     */
     private fun startSessionTimerLoop() {
         sessionHandler?.removeCallbacks(sessionTimerRunnable)
-        lastPulseTime = 0L
         sessionHandler?.post(sessionTimerRunnable)
-    }
-
-    private var lastPulseTime = 0L
-    private fun pulseSession() {
-        val now = System.currentTimeMillis()
-        if (lastPulseTime == 0L) {
-            lastPulseTime = now
-            return
-        }
-        val deltaSeconds = (now - lastPulseTime) / 1000
-        if (deltaSeconds < 1) return 
-        lastPulseTime = now
-
-        if (isSimulationEnabled) {
-            updateSimulationData()
-        }
-
-        val currentState = _hrState.value
-        val hrAge = if (lastHrTimestamp > 0) (now - lastHrTimestamp) / 1000 else 0
-        
-        // Mission: 1Hz Heartbeat for log verification
-        Log.d(TAG, "Timer heartbeat: running=${sessionSecondsRunning}s, age=${hrAge}s, status=${currentState.sessionStatus}")
-        Log.d(
-            TAG,
-            "Phase debug: phase=$currentPhase phaseElapsed=${phaseSecondsRunning}s totalElapsed=${sessionSecondsRunning}s " +
-                "repeat=$currentRepeat structured=$isStructuredWorkout " +
-                "segment=${if (isStructuredWorkout) structuredWorkoutPhase else "NONE"} segmentRemaining=${phaseTimeRemainingSeconds}s"
-        )
-
-        when (currentState.sessionStatus) {
-            SessionStatus.RUNNING -> {
-                val startSecond = sessionSecondsRunning
-                val endSecond = sessionSecondsRunning + deltaSeconds
-                
-                for (sec in (startSecond + 1)..endSecond) {
-                    sessionSecondsRunning = sec
-                    phaseSecondsRunning += 1
-                    
-                    val phaseLimit = when (currentPhase) {
-                        SessionPhase.WARM_UP -> currentWarmupDuration
-                        // The main phase is open-ended (#107): an unplanned run goes until the user
-                        // stops and a structured run's intervals self-terminate, so nothing here ends it.
-                        SessionPhase.MAIN -> Int.MAX_VALUE
-                        SessionPhase.COOL_DOWN -> currentCooldownDuration
-                    }
-                    
-                    val remaining = (phaseLimit - phaseSecondsRunning).toInt()
-                    
-                    if (currentPhase != SessionPhase.MAIN && remaining == 10) {
-                        val phaseName = if (currentPhase == SessionPhase.WARM_UP) "warm up" else "cool down"
-                        playCue("10 seconds of $phaseName remaining")
-                    }
-                    
-                    if (currentPhase == SessionPhase.WARM_UP && phaseSecondsRunning >= phaseLimit) {
-                        currentPhase = SessionPhase.MAIN
-                        phaseSecondsRunning = 0
-                        playCue("Starting main workout")
-                    } else if (currentPhase == SessionPhase.COOL_DOWN && phaseSecondsRunning >= phaseLimit) {
-                        serviceScope.launch { stopSession() }
-                        break
-                    }
-
-                    if (currentPhase == SessionPhase.MAIN && isStructuredWorkout) {
-                        val workout = activeWorkoutTemplate
-                        if (workout != null && workout.totalRepeats > 0 &&
-                            (isWarmupSkipped || sessionSecondsRunning >= currentWarmupDuration)
-                        ) {
-                            if (!hasStructuredWorkoutStarted) {
-                                hasStructuredWorkoutStarted = true
-                                structuredWorkoutPhase = StructuredWorkoutPhase.RUN
-                                if (phaseTimeRemainingSeconds <= 0) {
-                                    phaseTimeRemainingSeconds = workout.runDurationSeconds
-                                }
-                                startRunIntervalTracking(
-                                    intervalIndex = currentRepeat,
-                                    plannedDurationSeconds = workout.runDurationSeconds
-                                )
-                                playCue("Start running, interval $currentRepeat of ${workout.totalRepeats}.")
-                            }
-
-                            if (hasStructuredWorkoutStarted && phaseTimeRemainingSeconds > 0) {
-                                phaseTimeRemainingSeconds -= 1
-                                if (structuredWorkoutPhase == StructuredWorkoutPhase.RUN) {
-                                    recordRunIntervalSecond()
-                                }
-                                if (phaseTimeRemainingSeconds <= 0) {
-                                    onStructuredWorkoutPhaseComplete(workout)
-                                }
-                            }
-                        }
-                    }
-
-                    if (sec == 600L && currentState.bpm > 0) {
-                        baselineHr = currentState.bpm
-                        Log.d(TAG, "Drift Baseline captured at 10m: $baselineHr")
-                    }
-
-                    if (sessionSecondsRunning > lastRecordedSecond) {
-                        lastRecordedSecond = sessionSecondsRunning
-                        val currentBpm = currentState.bpm
-                        if (currentBpm > 0) {
-                            sessionMaxBpm = maxOf(sessionMaxBpm, currentBpm)
-                            sessionBpmSum += currentBpm
-                            sessionSampleCount += 1
-                            
-                            val zone = hrZoneOf(currentBpm, currentSettings)
-                            if (zone != null) {
-                                sessionZoneTimes[zone.number] = (sessionZoneTimes[zone.number] ?: 0L) + 1
-                                // Time above the easy cap is banked by band, not by zone number:
-                                // zone 5 charts wider than it bands (see zoneBandOf), so zone
-                                // arithmetic would find no zone above a target of 5. In-target
-                                // time is no longer banked here at all — it is the target zone's
-                                // own total, derived on read (see RunnerSession.inTargetZoneSeconds).
-                                if (zoneBandOf(currentBpm, currentSettings.maxHr, activeTargetZone) == ZoneBand.ABOVE) {
-                                    sessionAboveTargetSeconds += 1
-                                }
-                            } else {
-                                sessionNoDataSeconds += 1
-                            }
-                            
-                            val sessionId = currentSessionId
-                            if (sessionId != null) {
-                                val sample = HrSample(
-                                    sessionId = sessionId,
-                                    elapsedSeconds = sessionSecondsRunning,
-                                    rawBpm = currentBpm,
-                                    smoothedBpm = currentState.avgBpm,
-                                    connectionState = currentState.connectionStatus,
-                                    paceMinPerKm = currentState.paceMinPerKm
-                                )
-                                recorderWriteScope.launch {
-                                    database.sampleDao().insertSample(sample)
-                                }
-                            }
-                        } else {
-                            // No live HR this second — a strapless run, or a dropout that zeroed bpm
-                            // (#110). The clock keeps running, so bank the second as "no data" rather
-                            // than dropping it: otherwise a long dropout leaves the summary's zone
-                            // breakdown and its "No Data" bar silently understating the run. (We don't
-                            // write a 0-bpm HrSample: hrZoneOf(0) is null so it adds nothing to the
-                            // zone recompute, and the detail chart scales its Y-axis to the sample
-                            // min, which a 0 would distort.)
-                            sessionNoDataSeconds += 1
-                        }
-                    }
-                }
-
-                // Mission: Throttled Notification Updates (10s in background)
-                val statusChanged = currentPhase != currentState.currentPhase || 
-                                   currentState.connectionStatus.contains("Failed")
-                
-                if (sessionSecondsRunning % 10L == 0L || deltaSeconds > 1 || statusChanged) {
-                    updateNotification(forceUpdate = statusChanged)
-                }
-
-                _hrState.update { 
-                    val structuredProgress = buildStructuredProgressUiState()
-                    it.copy(
-                        secondsRunning = sessionSecondsRunning,
-                        lastHrAgeSeconds = hrAge,
-                        zoneTimes = sessionZoneTimes.toMap(),
-                        isSimulating = isSimulationEnabled,
-                        currentPhase = currentPhase,
-                        phaseSecondsRemaining = when (currentPhase) {
-                            SessionPhase.MAIN -> 0
-                            else -> {
-                            val limit = when (currentPhase) {
-                                SessionPhase.WARM_UP -> currentWarmupDuration
-                                SessionPhase.COOL_DOWN -> currentCooldownDuration
-                                else -> 0
-                            }
-                                (limit - phaseSecondsRunning).toInt().coerceAtLeast(0)
-                            }
-                        },
-                        phaseSecondsElapsed = phaseSecondsRunning,
-                        isStructuredWorkout = isStructuredWorkout,
-                        structuredWorkoutPhase = structuredWorkoutPhase,
-                        phaseTimeRemainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0),
-                        currentRepeat = currentRepeat,
-                        totalRepeats = structuredProgress.totalRepeats,
-                        currentIntervalPlannedSeconds = structuredProgress.currentIntervalPlannedSeconds,
-                        nextIntervalType = structuredProgress.nextIntervalType,
-                        nextIntervalDurationSeconds = structuredProgress.nextIntervalDurationSeconds,
-                        workoutProgressPercent = structuredProgress.workoutProgressPercent,
-                        currentIntervalElapsedSeconds = structuredProgress.currentIntervalElapsedSeconds,
-                        currentWalkReason = currentWalkReasonState,
-                        hrCapExceededInCurrentInterval = hrCapExceededInCurrentIntervalState,
-                        hrCapExceededAtSecond = hrCapExceededAtSecondState,
-                        walkBreaksCount = walkBreaksCount
-                    )
-                }
-            }
-            SessionStatus.PAUSED -> {
-                sessionSecondsPaused += deltaSeconds
-                _hrState.update { 
-                    val structuredProgress = buildStructuredProgressUiState()
-                    it.copy(
-                        secondsPaused = sessionSecondsPaused,
-                        lastHrAgeSeconds = hrAge,
-                        currentPhase = currentPhase,
-                        phaseSecondsRemaining = when (currentPhase) {
-                            SessionPhase.MAIN -> 0
-                            else -> {
-                            val limit = when (currentPhase) {
-                                SessionPhase.WARM_UP -> currentWarmupDuration
-                                SessionPhase.COOL_DOWN -> currentCooldownDuration
-                                else -> 0
-                            }
-                                (limit - phaseSecondsRunning).toInt().coerceAtLeast(0)
-                            }
-                        },
-                        phaseSecondsElapsed = phaseSecondsRunning,
-                        isStructuredWorkout = isStructuredWorkout,
-                        structuredWorkoutPhase = structuredWorkoutPhase,
-                        phaseTimeRemainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0),
-                        currentRepeat = currentRepeat,
-                        totalRepeats = structuredProgress.totalRepeats,
-                        currentIntervalPlannedSeconds = structuredProgress.currentIntervalPlannedSeconds,
-                        nextIntervalType = structuredProgress.nextIntervalType,
-                        nextIntervalDurationSeconds = structuredProgress.nextIntervalDurationSeconds,
-                        workoutProgressPercent = structuredProgress.workoutProgressPercent,
-                        currentIntervalElapsedSeconds = structuredProgress.currentIntervalElapsedSeconds,
-                        currentWalkReason = currentWalkReasonState,
-                        hrCapExceededInCurrentInterval = hrCapExceededInCurrentIntervalState,
-                        hrCapExceededAtSecond = hrCapExceededAtSecondState,
-                        walkBreaksCount = walkBreaksCount
-                    )
-                }
-            }
-            SessionStatus.CONNECTING -> {
-                if (firstDisconnectTime > 0 && (now - firstDisconnectTime > RECONNECT_TIMEOUT_MS)) {
-                    _hrState.update { 
-                        it.copy(
-                            sessionStatus = SessionStatus.ERROR,
-                            errorMessage = "Reconnect Timeout (2m)",
-                            lastHrAgeSeconds = hrAge
-                        )
-                    }
-                } else {
-                    _hrState.update { it.copy(lastHrAgeSeconds = hrAge) }
-                }
-            }
-            else -> _hrState.update { it.copy(lastHrAgeSeconds = hrAge) }
-        }
-        // A pulse already mid-execution when STOP runs can reach here after the notification was
-        // removed. It used to need a status check to avoid resurrecting a zombie "HR Monitor"
-        // notification with no service behind it — one more thing for a caller to remember.
-        // Promotion drops text it has nowhere to put, so this is now just a call.
-        updateNotification()
-    }
-    
-    private fun formatTime(seconds: Long): String {
-        val mins = seconds / 60
-        val secs = seconds % 60
-        return "%02d:%02d".format(mins, secs)
-    }
-
-    private fun buildNotificationContent(state: HrState): String {
-        val phaseName = when (state.currentPhase) {
-            SessionPhase.WARM_UP -> "Warm-up"
-            SessionPhase.MAIN -> "Main"
-            SessionPhase.COOL_DOWN -> "Cooldown"
-        }
-
-        return if (state.isStructuredWorkout && state.totalRepeats > 0) {
-            val segment = when (state.structuredWorkoutPhase) {
-                StructuredWorkoutPhase.RUN -> "RUN"
-                StructuredWorkoutPhase.WALK -> "WALK"
-            }
-            val remaining = formatTime(state.phaseTimeRemainingSeconds.coerceAtLeast(0).toLong())
-            "Int ${state.currentRepeat}/${state.totalRepeats} • $segment • $remaining left"
-        } else if (state.currentPhase == SessionPhase.MAIN) {
-            "Main elapsed ${formatTime(state.phaseSecondsElapsed.coerceAtLeast(0))}"
-        } else {
-            val remaining = formatTime(state.phaseSecondsRemaining.coerceAtLeast(0).toLong())
-            "$phaseName • $remaining left"
-        }
     }
 
     private fun resolveActiveWorkoutTemplate(): WorkoutTemplate? {
@@ -1013,75 +828,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         return baseWorkout.withCoachPrescription(currentPrescription, System.currentTimeMillis())
     }
 
-    private fun initializeStructuredWorkoutState() {
-        // The plan attaches automatically (#107); skipping today is the only thing that detaches it,
-        // and it never edits the plan. Warm-up/cool-down come from the workout, so an unplanned or
-        // skipped run has neither.
-        activeWorkoutTemplate = if (skipPlanForToday) null else resolveActiveWorkoutTemplate()
-        isStructuredWorkout = activeWorkoutTemplate != null
-        sessionWasStructured = isStructuredWorkout
-        currentWarmupDuration = activeWorkoutTemplate?.warmUpSeconds ?: 0
-        currentCooldownDuration = activeWorkoutTemplate?.coolDownSeconds ?: 0
-        resetCurrentIntervalTransparencyState()
-        structuredWorkoutPhase = StructuredWorkoutPhase.RUN
-        phaseTimeRemainingSeconds = activeWorkoutTemplate?.runDurationSeconds ?: 0
-        currentRepeat = 1
-        hasStructuredWorkoutStarted = false
-    }
-
-    private fun onStructuredWorkoutPhaseComplete(workout: WorkoutTemplate) {
-        if (!isStructuredWorkout) return
-
-        if (structuredWorkoutPhase == StructuredWorkoutPhase.RUN) {
-            finalizeActiveRunIntervalTracking()
-            if (workout.walkDurationSeconds > 0) {
-                currentWalkReasonState = if (hrCapExceededInCurrentIntervalState) "HR-triggered" else "Planned"
-                structuredWorkoutPhase = StructuredWorkoutPhase.WALK
-                phaseTimeRemainingSeconds = workout.walkDurationSeconds
-                playCue("Transition to walking, ${workout.walkDurationSeconds} seconds.")
-            } else {
-                currentRepeat += 1
-                if (currentRepeat > workout.totalRepeats) {
-                    resetCurrentIntervalTransparencyState()
-                    playCue("Main workout complete, beginning cool down.")
-                    isStructuredWorkout = false
-                    hasStructuredWorkoutStarted = false
-                    phaseTimeRemainingSeconds = 0
-                } else {
-                    structuredWorkoutPhase = StructuredWorkoutPhase.RUN
-                    phaseTimeRemainingSeconds = workout.runDurationSeconds
-                    startRunIntervalTracking(
-                        intervalIndex = currentRepeat,
-                        plannedDurationSeconds = workout.runDurationSeconds
-                    )
-                    playCue("Start running, interval $currentRepeat of ${workout.totalRepeats}.")
-                }
-            }
-        } else {
-            currentRepeat += 1
-            if (currentRepeat > workout.totalRepeats) {
-                resetCurrentIntervalTransparencyState()
-                playCue("Main workout complete, beginning cool down.")
-                isStructuredWorkout = false
-                hasStructuredWorkoutStarted = false
-                phaseTimeRemainingSeconds = 0
-            } else {
-                structuredWorkoutPhase = StructuredWorkoutPhase.RUN
-                phaseTimeRemainingSeconds = workout.runDurationSeconds
-                startRunIntervalTracking(
-                    intervalIndex = currentRepeat,
-                    plannedDurationSeconds = workout.runDurationSeconds
-                )
-                playCue("Start running, interval $currentRepeat of ${workout.totalRepeats}.")
-            }
-        }
-    }
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // Android gives us roughly five seconds from startForegroundService() to startForeground(),
         // whatever this intent turns out to want — so promote before we know. The reconcile at the
         // tail takes it back if nothing earned it.
         promotion.promoteForStartCommand()
+        // Unless the intent asked for a Run. The Run publishes from its own thread, so the tail
+        // reconcile would run first, read a state where nothing has started yet, and demote.
+        var deferReconcileToRun = false
 
         if (intent == null) {
             // START_STICKY restart after process death: the run that justified the foreground
@@ -1123,84 +877,67 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // START is the explicit act that begins a run (#110): heart rate is a sensor,
                 // not a gate. The clock, distance, and the plan's intervals begin now; the strap
                 // is acquired alongside, and zone coaching joins if/when HR arrives.
-                val status = _hrState.value.sessionStatus
-                val alreadyActive = status != SessionStatus.IDLE && status != SessionStatus.STOPPED
-                // A previous stop can still be finalizing: stopSession() publishes STOPPED
-                // synchronously but clears currentSessionId only at the end of its async finalize
-                // coroutine. Starting in that window would set RUNNING while startNewDatabaseSession()
-                // bails on the still-set id, stranding the UI in a run with no DB row or timer. Read
-                // both flags under the same lock startNewDatabaseSession() creates the session under.
-                val sessionInFlight = synchronized(sessionCreationLock) {
-                    isCreatingSession || currentSessionId != null
-                }
-                if (alreadyActive || sessionInFlight) {
-                    Log.d(TAG, "ACTION_START_RUN ignored - session busy (status=$status, inFlight=$sessionInFlight)")
-                    // Nothing to undo. onStartCommand promoted before dispatch, and the reconcile
-                    // at the tail takes that back on its own if no run is live — which is exactly
-                    // the leak d335ef3 had to patch by hand here. A genuinely active run keeps the
-                    // promotion, for the same reason and without a second code path.
-                } else {
-                    // Pin the run mode BEFORE publishing RUNNING. startNewDatabaseSession() also sets
-                    // it, but on an IO coroutine; a GATT STATE_CONNECTED landing in the gap would see
-                    // isRunning() true with activeSessionRunMode still null and start GPS off the
-                    // stale currentSettings.runMode. Setting it here, ahead of the RUNNING write,
-                    // closes that window. The run mode comes from the START intent when present so a
-                    // just-tapped Treadmill/Outdoor choice wins over a not-yet-persisted setting.
-                    val startRunMode = intent.getStringExtra(EXTRA_RUN_MODE) ?: currentSettings.runMode
-                    activeSessionRunMode = startRunMode
-                    // activeRunMode rides along so the live UI gates distance/map on the mode this
-                    // run actually started with, not the possibly-lagging settings value.
-                    _hrState.update { it.copy(
-                        sessionStatus = SessionStatus.RUNNING,
-                        errorMessage = null,
-                        activeRunMode = startRunMode
-                    ) }
-                    // Creates the DB record, starts the 1 Hz tick, and (outdoor) starts location.
-                    startNewDatabaseSession(startRunMode)
-                    // Acquire the strap as a sensor unless we already have it, HR is simulated, or a
-                    // connection is already in flight. Kicking off a fresh acquisition mid-connect
-                    // would call startHardwareSession(null) -> startScanning() (no saved address yet
-                    // for a first pairing), tearing down the pending GATT and dropping the strap the
-                    // user just chose in Manage Devices. Let an in-progress connect finish and join
-                    // the run instead.
-                    //
-                    // "Retrying" ("Disconnected (Retrying)") counts as in flight: a reconnect
-                    // coroutine is already scheduled and a parallel connect here would be torn down
-                    // by it. A bare scan does NOT: nothing ever auto-connects from scan results
-                    // (the callback only fills the Discovered list), so deferring to one leaves the
-                    // whole run strapless while the scanner burns battery — let startHardwareSession
-                    // take over (connectToDevice stops the scan first; with no saved strap it just
-                    // rescans, which is where we already were).
-                    val connStatus = _hrState.value.connectionStatus
-                    // "Connected" completes acquisition only when the connected strap IS the
-                    // active one: Set Active in Manage Devices writes only the settings and
-                    // leaves the old GATT up, so a START after switching straps must re-acquire
-                    // the newly chosen device instead of recording HR from the old one (Codex P2
-                    // #123). With no saved active strap, whatever is connected is the sensor.
-                    val activeAddress = currentSettings.activeDeviceAddress
-                    val connectedActiveStrap = connStatus == "Connected" &&
-                        (activeAddress == null || targetDeviceAddress == activeAddress)
-                    // A bare scan deliberately does NOT count (see above), so this is the shared
-                    // Acquisition test minus scanning — not a fourth hand-rolled copy of it.
-                    val acquisitionInFlight = connectedActiveStrap ||
-                        (_hrState.value.acquiringStrap &&
-                            !connStatus.contains("Scanning", ignoreCase = true))
-                    if (!isSimulationEnabled && !acquisitionInFlight) {
-                        val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
-                        // Inline for the same reason as ACTION_START_FOREGROUND above: the
-                        // connection status must be true before the tail reconcile reads it.
-                        startHardwareSession(overrideAddress)
-                    }
+                //
+                // Whether there is a Run to begin is the Run's own question — it ignores a START
+                // that arrives while one is live or is still waiting on its row id, so the three
+                // flags that used to spell that window out here are gone with it.
+                //
+                // The run mode comes from the START intent when present so a just-tapped
+                // Treadmill/Outdoor choice wins over a not-yet-persisted setting.
+                startRun(
+                    RunMode.ofSettingValue(
+                        intent.getStringExtra(EXTRA_RUN_MODE) ?: currentSettings.runMode
+                    )
+                )
+                // The Run publishes RUNNING from its own thread, a moment after this returns, so
+                // the tail reconcile below would read IDLE and demote — stopSelf and all — the
+                // Promotion this Run has just earned. The subscription in onCreate() takes it from
+                // here: a Run that starts publishes, and a START the Run ignores was refused
+                // because a Run is already live, which earns the Promotion anyway.
+                deferReconcileToRun = true
+                // Acquire the strap as a sensor unless we already have it, HR is simulated, or a
+                // connection is already in flight. Kicking off a fresh acquisition mid-connect
+                // would call startHardwareSession(null) -> startScanning() (no saved address yet
+                // for a first pairing), tearing down the pending GATT and dropping the strap the
+                // user just chose in Manage Devices. Let an in-progress connect finish and join
+                // the run instead.
+                //
+                // "Retrying" ("Disconnected (Retrying)") counts as in flight: a reconnect
+                // coroutine is already scheduled and a parallel connect here would be torn down
+                // by it. A bare scan does NOT: nothing ever auto-connects from scan results
+                // (the callback only fills the Discovered list), so deferring to one leaves the
+                // whole run strapless while the scanner burns battery — let startHardwareSession
+                // take over (connectToDevice stops the scan first; with no saved strap it just
+                // rescans, which is where we already were).
+                val connStatus = _hrState.value.connectionStatus
+                // "Connected" completes acquisition only when the connected strap IS the
+                // active one: Set Active in Manage Devices writes only the settings and
+                // leaves the old GATT up, so a START after switching straps must re-acquire
+                // the newly chosen device instead of recording HR from the old one (Codex P2
+                // #123). With no saved active strap, whatever is connected is the sensor.
+                val activeAddress = currentSettings.activeDeviceAddress
+                val connectedActiveStrap = connStatus == "Connected" &&
+                    (activeAddress == null || targetDeviceAddress == activeAddress)
+                // A bare scan deliberately does NOT count (see above), so this is the shared
+                // Acquisition test minus scanning — not a fourth hand-rolled copy of it.
+                val acquisitionInFlight = connectedActiveStrap ||
+                    (_hrState.value.acquiringStrap &&
+                        !connStatus.contains("Scanning", ignoreCase = true))
+                if (!isSimulationEnabled && !acquisitionInFlight) {
+                    val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
+                    // Inline for the same reason as ACTION_START_FOREGROUND above: the
+                    // connection status must be true before the tail reconcile reads it.
+                    startHardwareSession(overrideAddress)
                 }
             }
             ACTION_STOP_FOREGROUND -> {
-                stopSession()
+                stopRun()
             }
             ACTION_PAUSE_SESSION -> {
-                pauseSession()
+                pauseFromShade()
             }
             ACTION_RESUME_SESSION -> {
-                resumeSession()
+                resumeFromShade()
             }
             ACTION_FORCE_SCAN -> {
                 Log.d(TAG, "ACTION_FORCE_SCAN received")
@@ -1208,7 +945,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 val runActive = status == SessionStatus.RUNNING || status == SessionStatus.PAUSED
                 if (runActive) {
                     // Scanning tears down the current strap, and a scan-only disconnect sets STOPPED
-                    // without going through stopSession()'s finalization (see disconnect()) — so a
+                    // without going through stopRun()'s finalization (see disconnect()) — so a
                     // scan mid-run would silently drop the active run and orphan its DB row. Pairing
                     // is a pre-run action; never scan while a run is live.
                     Log.d(TAG, "Ignoring Force Scan - a run is active (status=$status)")
@@ -1224,546 +961,58 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             ACTION_SET_SIMULATION -> {
                 val enabled = intent.getBooleanExtra(EXTRA_SIMULATION_ENABLED, isSimulationEnabled)
-                setSimulationEnabled(enabled)
+                // Simulation starts a Run of its own, so the same deferral applies.
+                val simulationStartedRun = setSimulationEnabled(enabled)
+                deferReconcileToRun = simulationStartedRun
             }
         }
         // Take back the eager promotion above if the dispatch earned nothing. An intent that
         // changes no state publishes nothing for the subscription in onCreate() to react to, so
         // this call is not redundant with it.
-        reconcileForegroundPromotion()
+        if (!deferReconcileToRun) reconcileForegroundPromotion()
         return START_STICKY
     }
     
+    /** The live screen's pause/resume button — one control, so it asks for whichever it is not. */
     fun togglePause() {
-        if (_hrState.value.sessionStatus == SessionStatus.RUNNING) {
-            pauseSession()
-        } else if (_hrState.value.sessionStatus == SessionStatus.PAUSED) {
-            resumeSession()
-        }
-    }
-
-    private fun pauseSession() {
-        // Only a live run can pause. A stale notification action (the shade lags status changes)
-        // landing after STOP must not flip a STOPPED/IDLE service to PAUSED.
-        if (_hrState.value.sessionStatus != SessionStatus.RUNNING) {
-            Log.d(TAG, "pauseSession ignored - status=${_hrState.value.sessionStatus}")
-            return
-        }
-        isAutoPaused = false
-        _hrState.update { it.copy(sessionStatus = SessionStatus.PAUSED) }
-        locationTracker?.stop()
-        updateNotification(forceUpdate = true)
-        Log.d(TAG, "Session PAUSED")
-    }
-
-    private fun resumeSession() {
-        // Same guard class as ACTION_START_RUN (23babf1): a stale notification Resume tapped after
-        // STOP would otherwise republish RUNNING while finalize still holds currentSessionId —
-        // a ghost run with a ticking timer and no DB session that blocks every later START — or,
-        // after finalize clears the id, silently create a brand-new phantom session.
-        if (_hrState.value.sessionStatus != SessionStatus.PAUSED) {
-            Log.d(TAG, "resumeSession ignored - status=${_hrState.value.sessionStatus}")
-            return
-        }
-        if (currentSessionId == null) {
-            startNewDatabaseSession()
-        }
-        // A manual resume always wins, including when the session is currently auto-paused (GPS
-        // was never stopped in that case, so there's no stop()/discardLastFix() call to clear
-        // SessionRecorder's own auto-pause flag - do it explicitly instead) (#39).
-        isAutoPaused = false
-        locationTracker?.clearAutoPauseState()
-        _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
-        startSessionTimerLoop()
-        // Resume the mode the run started with, not whatever the global setting says now.
-        locationTracker?.restartIfNeeded("resumeSession", activeSessionRunMode ?: currentSettings.runMode, isSimulationEnabled)
-        updateNotification(forceUpdate = true)
-        Log.d(TAG, "Session RESUMED")
+        postRunEvent(RunEvent.PauseToggled(System.currentTimeMillis()))
     }
 
     /**
-     * Called from [SessionRecorder]'s auto-pause callback (via [LocationTracker], off the main
-     * thread - hence [serviceScope].launch at the call site) once a sustained standstill is
-     * detected (#39). Reuses [SessionStatus.PAUSED] so [pulseSession]'s existing RUNNING/PAUSED
-     * branching freezes the session clock and interval timers exactly like a manual pause, but -
-     * unlike [pauseSession] - deliberately leaves GPS running so movement can still be detected.
+     * The notification's Pause and Resume actions, which are two buttons rather than a toggle.
+     *
+     * They ask for a named direction because the shade lags the Run: a Resume still on screen after
+     * the Run resumed itself must do nothing, not pause a Run the runner is watching. The Run
+     * refuses them from its own state, so nothing here races the lag it is guarding against.
      */
-    private fun autoPauseSession() {
-        if (_hrState.value.sessionStatus != SessionStatus.RUNNING) return
-        isAutoPaused = true
-        _hrState.update { it.copy(sessionStatus = SessionStatus.PAUSED) }
-        updateNotification(forceUpdate = true)
-        playCue("Auto-paused.")
-        Log.d(TAG, "Session AUTO-PAUSED (standstill)")
+    private fun pauseFromShade() {
+        postRunEvent(RunEvent.PauseRequested(System.currentTimeMillis()))
     }
 
-    /** Counterpart to [autoPauseSession] - fired once [SessionRecorder] detects movement again. */
-    private fun autoResumeSession() {
-        if (_hrState.value.sessionStatus != SessionStatus.PAUSED || !isAutoPaused) return
-        isAutoPaused = false
-        _hrState.update { it.copy(sessionStatus = SessionStatus.RUNNING) }
-        startSessionTimerLoop()
-        updateNotification(forceUpdate = true)
-        playCue("Resuming.")
-        Log.d(TAG, "Session AUTO-RESUMED (movement detected)")
+    private fun resumeFromShade() {
+        postRunEvent(RunEvent.ResumeRequested(System.currentTimeMillis()))
     }
 
-    private fun startNewDatabaseSession(runModeOverride: String? = null) {
-        // Reserve the creation synchronously on the caller's thread. Every caller reaches here from
-        // onStartCommand (the service main thread), and STOP is dispatched on that same thread, so
-        // setting isCreatingSession here guarantees a STOP tapped right after START observes it and
-        // can hand finalization off to this coroutine. If the reservation lived inside the launched
-        // IO coroutine, a STOP that ran before the coroutine was scheduled would see the flag still
-        // false, skip the handoff, and let this coroutine strand a just-stopped run (Codex P2 #123).
-        synchronized(sessionCreationLock) {
-            if (isCreatingSession || currentSessionId != null) {
-                Log.d(TAG, "Skipping DB session start: creating=$isCreatingSession sessionId=$currentSessionId")
-                return
-            }
-            isCreatingSession = true
-            stopDuringSessionCreation = false
-        }
-        serviceScope.launch(Dispatchers.IO) {
-            try {
-            // A STOP may already have completed on the main thread before this IO coroutine was
-            // scheduled. If so, unwind before touching GPS, the timer, or the DB — the run is
-            // already stopped. Matches stopSession()'s idle reset.
-            if (synchronized(sessionCreationLock) { stopDuringSessionCreation }) {
-                Log.d(TAG, "Aborting DB session start: STOP landed before creation began")
-                resetRunIntervalTracking()
-                currentSessionIncludeInAiTraining = true
-                return@launch
-            }
-
-            // The mode the user selected at START (if supplied) wins over currentSettings.runMode,
-            // whose async write from the mode toggle may not have reached the service yet. Everything
-            // downstream in this run — the DB record and whether GPS starts — reads this value.
-            val effectiveRunMode = runModeOverride ?: currentSettings.runMode
-            // Pin it for the run so a strap (re)connecting before the settings write lands doesn't
-            // start GPS off a stale currentSettings.runMode (see the connect/resume callbacks).
-            activeSessionRunMode = effectiveRunMode
-
-            // Mission: Reset Phase Engine for a fresh session
-            currentPhase = SessionPhase.WARM_UP
-            phaseSecondsRunning = 0
-            isWarmupSkipped = false
-            initializeStructuredWorkoutState()
-            resetRunIntervalTracking()
-            currentSessionIncludeInAiTraining = currentSettings.aiDataSharingEnabled && !currentSettings.testingModeEnabled
-            
-            // Reset session-level counters only when a new database session begins
-            sessionSecondsRunning = 0
-            sessionSecondsPaused = 0
-            isAutoPaused = false
-
-            // Mission 4: Reset Location/Pace variables
-            locationTracker?.resetSessionState()
-
-            // GPS deliberately does NOT start here: it starts after the commit point below has
-            // adopted the session id. onRawFix drops TrackPoints while currentSessionId is null,
-            // and fused location can deliver a cached first fix immediately — starting earlier
-            // clipped the beginning of the route off the map (Codex P2 #123).
-
-            // Mission: Immediate UI State Reset
-            _hrState.update { it.copy(
-                currentPhase = SessionPhase.WARM_UP,
-                phaseSecondsRemaining = currentWarmupDuration,
-                phaseSecondsElapsed = 0,
-                isStructuredWorkout = isStructuredWorkout,
-                structuredWorkoutPhase = structuredWorkoutPhase,
-                phaseTimeRemainingSeconds = phaseTimeRemainingSeconds,
-                currentRepeat = currentRepeat,
-                totalRepeats = 0,
-                currentIntervalPlannedSeconds = 0,
-                nextIntervalType = null,
-                nextIntervalDurationSeconds = 0,
-                workoutProgressPercent = 0,
-                currentIntervalElapsedSeconds = 0,
-                currentWalkReason = "Planned",
-                hrCapExceededInCurrentInterval = false,
-                hrCapExceededAtSecond = null,
-                secondsRunning = 0,
-                secondsPaused = 0,
-                distanceKm = 0.0,
-                paceMinPerKm = 0.0,
-                activeDbSessionId = null
-            )}
-
-            // The workout sets the target when a plan is attached; otherwise the global is the
-            // fallback (#107). Frozen for the whole run: the coach reads activeTargetZone every
-            // second, so recording from it keeps "In Target" and the live coaching in agreement
-            // even if the global target zone is changed mid-run.
-            activeTargetZone = activeWorkoutTemplate
-                ?.let { HrZone.ofNumberOrDefault(it.targetZone) }
-                ?: currentSettings.targetHrZone
-            val session = RunnerSession(
-                startTime = System.currentTimeMillis(),
-                targetZone = activeTargetZone.number,
-                runMode = effectiveRunMode,
-                includeInAiTraining = currentSessionIncludeInAiTraining
-            )
-            val newSessionId = database.sessionDao().insertSession(session)
-            // Commit point: adopt the id only if no STOP arrived while we were creating. If one did
-            // (it set stopDuringSessionCreation but couldn't finalize a row that didn't exist yet),
-            // delete the row we just inserted and leave currentSessionId null so the run is fully
-            // gone and the next START isn't blocked. GPS hasn't started yet (it starts below, after
-            // this commit), so there's nothing location-side to unwind.
-            val aborted = synchronized(sessionCreationLock) {
-                if (stopDuringSessionCreation) {
-                    true
-                } else {
-                    currentSessionId = newSessionId
-                    false
-                }
-            }
-            if (aborted) {
-                Log.d(TAG, "Aborting DB session start: STOP landed during creation (id=$newSessionId)")
-                // stopSession() cleared the pin, but this coroutine re-set it above after that
-                // clear; the run is dead, so restore the "null when no run is active" invariant.
-                activeSessionRunMode = null
-                database.sessionDao().deleteSessionById(newSessionId)
-                resetRunIntervalTracking()
-                currentSessionIncludeInAiTraining = true
-                return@launch
-            }
-
-            // Scaffold the live run atomically with respect to STOP. stopSession() raises
-            // stopDuringSessionCreation under this lock before any of its teardown, so exactly
-            // one of two orderings exists: the flag is visible here and the whole scaffold is
-            // skipped (the stop finalized the just-committed row and there is nothing to tear
-            // down), or the scaffold completes first and the stop's teardown — timer removal,
-            // GPS stop, UI id clear — runs after it and wins. A STOP in the commit-to-scaffold
-            // window can no longer leave GPS or the timer running for a finalized run (Codex
-            // P2 #123). Everything inside is in-memory or a non-blocking post/request.
-            val stoppedAfterCommit = synchronized(sessionCreationLock) {
-                if (stopDuringSessionCreation) {
-                    true
-                } else {
-                    // Outdoor distance/pace must run whether or not a strap ever connects (#110),
-                    // so location starts with the run itself — now that the session id is
-                    // committed, every fix (including an immediate cached one) lands in a
-                    // TrackPoint.
-                    if (effectiveRunMode == "outdoor") {
-                        locationTracker?.restartIfNeeded("run_start", effectiveRunMode, isSimulationEnabled)
-                    }
-                    _hrState.update { it.copy(activeDbSessionId = currentSessionId, activeTargetZone = activeTargetZone) }
-                    sessionMaxBpm = 0
-                    sessionBpmSum = 0
-                    sessionSampleCount = 0
-                    baselineHr = null
-                    currentZone = ZoneBand.UNKNOWN
-                    cueLadder.reset()
-                    sessionAboveTargetSeconds = 0
-                    // Must be cleared per run now that it actually accumulates: pulseSession()
-                    // banks a no-data second whenever bpm is 0 (strapless run / dropout). It was
-                    // previously dead (hrZoneOf only returns null for bpm <= 0, never inside the
-                    // bpm > 0 branch that held the old increment), so a stale value would
-                    // otherwise leak into every later run's finalized RunnerSession and corrupt
-                    // its No-Data/zone summary.
-                    sessionNoDataSeconds = 0L
-                    lastRecordedSecond = -1
-                    // Clear the HR-freshness clock so age is measured within this run, not from a
-                    // packet in a previous one. Otherwise a strapless run started after an earlier
-                    // run that had HR would inherit a stale timestamp, read as a huge
-                    // lastHrAgeSeconds, and trip the >= 8s sensor-lost safety cue — nagging a run
-                    // the user deliberately started without a strap (#110). A real packet re-sets
-                    // this the moment HR arrives.
-                    lastHrTimestamp = 0L
-                    // Clear the live reading and smoothing history too, in lock-step with the
-                    // freshness clock: a pre-run connected strap can leave bpm/avgBpm holding an
-                    // old packet, and with lastHrTimestamp reset that stale value would look fresh
-                    // (age 0) and keep being banked by pulseSession() if no in-run packet ever
-                    // arrives (silent stall / non-GATT drop). A real packet repopulates both
-                    // within ~1s.
-                    synchronized(bpmHistory) { bpmHistory.clear() }
-                    _hrState.update { it.copy(bpm = 0, avgBpm = 0) }
-
-                    // Mission 3: Reset Zone Timers
-                    sessionZoneTimes.keys.forEach { sessionZoneTimes[it] = 0L }
-
-                    // Mission: Session Phases
-                    currentPhase = SessionPhase.WARM_UP
-                    phaseSecondsRunning = 0
-                    walkBreaksCount = 0
-                    isWarmupSkipped = false
-                    initializeStructuredWorkoutState()
-
-                    // Start the 1 Hz tick only after EVERY per-session reset above. The timer runs
-                    // on its own HandlerThread while this block runs on IO; posting the runnable
-                    // earlier relied on the ~2s grace tick to outrun the remaining resets — a
-                    // timing bet, not an ordering guarantee (an IO stall mid-block would let the
-                    // first accounting tick read half-reset counters). Handler.post() also
-                    // publishes every write made before it to the timer thread, which the tail
-                    // resets otherwise lacked.
-                    startSessionTimerLoop()
-                    false
-                }
-            }
-            if (stoppedAfterCommit) {
-                // The stop owned finalization of the committed row; nothing was scaffolded here.
-                Log.d(TAG, "Skipping run scaffold: STOP landed after session commit (id=$newSessionId)")
-                return@launch
-            }
-
-            Log.d(TAG, "Started DB Session: $currentSessionId (Mode: $effectiveRunMode)")
-            } finally {
-                synchronized(sessionCreationLock) {
-                    isCreatingSession = false
-                }
-            }
-        }
-    }
-
+    /** The skip button: warm-up hands over to main, main to cool-down, cool-down ends the Run. */
     fun skipCurrentPhase() {
-        when (currentPhase) {
-            SessionPhase.WARM_UP -> {
-                currentPhase = SessionPhase.MAIN
-                phaseSecondsRunning = 0
-                isWarmupSkipped = true
-                Log.d(TAG, "Skip Warm-up: isWarmupSkipped set to true. Buffer should now be disabled.")
-                playCue("Warm up skipped. Starting workout.")
-            }
-            SessionPhase.MAIN -> {
-                finalizeActiveRunIntervalTracking()
-                currentPhase = SessionPhase.COOL_DOWN
-                phaseSecondsRunning = 0
-                isStructuredWorkout = false
-                hasStructuredWorkoutStarted = false
-                resetCurrentIntervalTransparencyState()
-                phaseTimeRemainingSeconds = 0
-                playCue("Starting cool down.")
-            }
-            SessionPhase.COOL_DOWN -> {
-                stopSession()
-            }
-        }
-
-        // Mission: Immediate UI Sync
-        _hrState.update { currentState ->
-            val structuredProgress = buildStructuredProgressUiState()
-                currentState.copy(
-                    currentPhase = currentPhase,
-                phaseSecondsRemaining = when (currentPhase) {
-                    SessionPhase.MAIN -> 0
-                    else -> {
-                        val limit = when (currentPhase) {
-                            SessionPhase.WARM_UP -> currentWarmupDuration
-                            SessionPhase.COOL_DOWN -> currentCooldownDuration
-                            else -> 0
-                        }
-                        (limit - phaseSecondsRunning).toInt().coerceAtLeast(0)
-                    }
-                },
-                phaseSecondsElapsed = phaseSecondsRunning,
-                isStructuredWorkout = isStructuredWorkout,
-                structuredWorkoutPhase = structuredWorkoutPhase,
-                phaseTimeRemainingSeconds = phaseTimeRemainingSeconds.coerceAtLeast(0),
-                currentRepeat = currentRepeat,
-                totalRepeats = structuredProgress.totalRepeats,
-                currentIntervalPlannedSeconds = structuredProgress.currentIntervalPlannedSeconds,
-                nextIntervalType = structuredProgress.nextIntervalType,
-                nextIntervalDurationSeconds = structuredProgress.nextIntervalDurationSeconds,
-                workoutProgressPercent = structuredProgress.workoutProgressPercent,
-                currentIntervalElapsedSeconds = structuredProgress.currentIntervalElapsedSeconds,
-                currentWalkReason = currentWalkReasonState,
-                hrCapExceededInCurrentInterval = hrCapExceededInCurrentIntervalState,
-                hrCapExceededAtSecond = hrCapExceededAtSecondState
-            )
-        }
+        postRunEvent(RunEvent.PhaseSkipped(System.currentTimeMillis()))
     }
 
-    fun stopSession() {
-        // Idempotency: STOP can arrive from three places at once (the Force Stop button, the
-        // notification's always-present Stop action, and the cool-down auto-stop). A second call
-        // after the first already published STOPPED must not launch a second finalize for the same
-        // session — that would double the DB update, the backup, and the AI plan adjustment (two
-        // Gemini calls, nondeterministic second write wins). With no live run left, just honor the
-        // explicit kill switch (a pre-run notification Stop still dismisses the service).
-        val entryStatus = _hrState.value.sessionStatus
-        if (entryStatus == SessionStatus.STOPPED || entryStatus == SessionStatus.IDLE) {
-            Log.d(TAG, "stopSession: no live run (status=$entryStatus) - release the strap only")
-            releaseStrapAndTimer()
-            return
-        }
-        // Raise the stop flag FIRST, before any teardown below. The creation coroutine may be
-        // past its commit point (currentSessionId set) but not yet scaffolded the live run; its
-        // scaffold — GPS start, UI id, timer post — runs under this same lock and checks this
-        // flag. Setting it here guarantees either the scaffold sees it and skips, or the
-        // scaffold completed before this stop proceeds — whose teardown (timer removal, GPS
-        // stop, UI id clear) then runs after it and wins. Without this, a STOP landing in the
-        // commit-to-scaffold window left GPS registered until service destruction (Codex P2
-        // #123). The pre-commit case still also sets it below when deferring finalization.
-        synchronized(sessionCreationLock) {
-            if (isCreatingSession) stopDuringSessionCreation = true
-        }
-        _hrState.update { it.copy(
-            sessionStatus = SessionStatus.STOPPING,
-            activeTargetZone = null,
-            activeRunMode = null,
-            // Clear the finished run's id from the UI now. It used to linger until the NEXT run's
-            // creation coroutine reset it, so in the gap after a quick re-START the UI was RUNNING
-            // with the PREVIOUS run's id — and a Force Stop there attached "How did that feel?"
-            // feedback to the wrong session.
-            activeDbSessionId = null
-        ) }
-        // Kill the pending tick immediately. Leaving it queued until stopForegroundService() at
-        // the end widens the window where a mid-execution pulse can repost itself around the
-        // removeCallbacks and bank into (or auto-stop) a run started right after this one.
-        sessionHandler?.removeCallbacks(sessionTimerRunnable)
-        stopScanning()
-        
-        // FIX: Capture final counters BEFORE disconnect() resets BLE state
-        val finalSecondsRunning = sessionSecondsRunning
-        val finalSecondsPaused = sessionSecondsPaused
-        val finalDistanceKm = locationTracker?.getDistanceKm() ?: 0.0
-        val finalAvgPace = locationTracker?.getPaceMinPerKm() ?: 0.0
-        val finalStartLocation = locationTracker?.getFirstLocation()
-        val finalWalkBreaksCount = walkBreaksCount
-        // The run followed a structured plan workout (#107): drives whether the AI coach evaluates
-        // it and is recorded as the run's run/walk flag.
-        val finalIsRunWalkMode = sessionWasStructured
-        finalizeActiveRunIntervalTracking()
-
-        disconnect()
-        locationTracker?.stop()
-        // The run is over; the pinned mode must not leak into a later reconnect/resume.
-        activeSessionRunMode = null
-
-        // Finalize DB session. Read the id and the in-flight flag together so a START whose DB
-        // insert is still queued on IO (currentSessionId not yet set) is treated as "creation in
-        // flight", not "idle". Otherwise stopSession() would take the else-branch and the queued
-        // coroutine would later insert an unclosed row and leave currentSessionId set, silently
-        // blocking every later START (Codex P2 #123). When creation is in flight we hand ownership
-        // to that coroutine — it deletes the row it inserts and leaves currentSessionId null.
-        val sessionId: Long?
-        val deferToCreation: Boolean
-        synchronized(sessionCreationLock) {
-            sessionId = currentSessionId
-            deferToCreation = sessionId == null && isCreatingSession
-            if (deferToCreation) {
-                stopDuringSessionCreation = true
-            }
-        }
-        if (sessionId != null) {
-            // weatherFetchScope, not serviceScope: a background STOP (notification action with the
-            // activity unbound) reaches stopSelf() -> onDestroy -> serviceScope.cancel() on the
-            // next main-loop message, and a launch that hasn't been dequeued by an IO worker yet
-            // dies before its body — the NonCancellable inside can't protect a coroutine that
-            // never starts. weatherFetchScope is detached from the service lifecycle precisely so
-            // finalization work survives destruction.
-            weatherFetchScope.launch {
-                // MISSION: Ensure DB update is not cancelled by service destruction
-                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                    val session = database.sessionDao().getSessionById(sessionId)
-                    if (session != null) {
-                        val avgBpm = if (sessionSampleCount > 0) (sessionBpmSum / sessionSampleCount).toInt() else 0
-                        val updatedSession = session.copy(
-                            endTime = System.currentTimeMillis(),
-                            durationSeconds = finalSecondsRunning,
-                            avgBpm = avgBpm,
-                            maxBpm = sessionMaxBpm,
-                            distanceKm = finalDistanceKm,
-                            avgPaceMinPerKm = finalAvgPace,
-                            startLatitude = finalStartLocation?.latitude,
-                            startLongitude = finalStartLocation?.longitude,
-                            zone1Seconds = sessionZoneTimes[1] ?: 0L,
-                            zone2Seconds = sessionZoneTimes[2] ?: 0L,
-                            zone3Seconds = sessionZoneTimes[3] ?: 0L,
-                            zone4Seconds = sessionZoneTimes[4] ?: 0L,
-                            zone5Seconds = sessionZoneTimes[5] ?: 0L,
-                            noDataSeconds = sessionNoDataSeconds,
-                            walkBreaksCount = finalWalkBreaksCount,
-                            isRunWalkMode = finalIsRunWalkMode
-                        )
-                        database.sessionDao().updateSession(updatedSession)
-                        Log.d(TAG, "Finalized DB Session: $sessionId. Evidence: duration=${updatedSession.durationSeconds}")
-                        persistRunIntervalStats(sessionId)
-
-                        // Snapshot run history to Downloads so it survives "Clear storage"
-                        // (reinstall is covered separately by Auto Backup). Fire-and-forget on
-                        // weatherFetchScope (not cancelled by onDestroy) so stopping from the
-                        // background can't skip it.
-                        //
-                        // First let any still-queued HR sample / track-point inserts land, so the
-                        // snapshot captures the whole run rather than the finalized session minus
-                        // its final seconds. GPS and the pulse timer are already stopped by now, so
-                        // no new writes start once these drain.
-                        recorderWriteScope.coroutineContext.job.children.toList().joinAll()
-                        weatherFetchScope.launch {
-                            DatabaseBackupManager.backup(applicationContext, database)
-                        }
-
-                        // Weather snapshot: fire-and-forget on weatherFetchScope, which is not
-                        // cancelled by onDestroy(), so stopping from the background can't skip
-                        // it. Not awaited, so a slow/unreachable weather service can't delay
-                        // currentSessionId being cleared below. Missed fetches are retried at
-                        // next launch.
-                        val startLatitude = updatedSession.startLatitude
-                        val startLongitude = updatedSession.startLongitude
-                        if (updatedSession.runMode == "outdoor" && startLatitude != null && startLongitude != null) {
-                            weatherFetchScope.launch {
-                                sessionRepository.fetchAndSaveWeather(
-                                    sessionId = sessionId,
-                                    latitude = startLatitude,
-                                    longitude = startLongitude,
-                                    atEpochMillis = updatedSession.startTime
-                                )
-                            }
-                        }
-
-                        // Release the session guard BEFORE the awaited AI evaluation. The Gemini
-                        // call can take seconds to tens of seconds, and holding currentSessionId
-                        // through it kept "session busy" true for the whole call — a dead START
-                        // button (and a torn-down strap, pre-demote-fix) after every coached run.
-                        // Everything below reads only locals, captured values, and the DB. Under
-                        // the creation lock: START's reservation reads this field under the same
-                        // lock, and the field isn't volatile — a lock-free clear from this IO
-                        // thread has no guaranteed visibility on the main thread.
-                        synchronized(sessionCreationLock) {
-                            currentSessionId = null
-                        }
-                        currentSessionIncludeInAiTraining = true
-
-                        // finalIsRunWalkMode is sessionWasStructured captured at stop time: now
-                        // that the guard is released above, a new run could start and reset the
-                        // live field while this evaluation is still deciding.
-                        val stageId = currentSettings.activeStageId
-                        if (stageId != null &&
-                            finalIsRunWalkMode &&
-                            updatedSession.includeInAiTraining &&
-                            !currentSettings.testingModeEnabled
-                        ) {
-                            Log.d("AiCoach", "Triggering AI evaluation after session finalization for stage: $stageId")
-                            sessionRepository.evaluateAndAdjustPlan(stageId)
-                        } else if (stageId != null &&
-                            finalIsRunWalkMode &&
-                            (!updatedSession.includeInAiTraining || currentSettings.testingModeEnabled)
-                        ) {
-                            Log.d(
-                                "AiCoach",
-                                "Skipping AI evaluation: session opted out or testing mode enabled for stage=$stageId"
-                            )
-                        }
-                    } else {
-                        resetRunIntervalTracking()
-                        synchronized(sessionCreationLock) {
-                            currentSessionId = null
-                        }
-                        currentSessionIncludeInAiTraining = true
-                    }
-                }
-            }
-        } else if (!deferToCreation) {
-            resetRunIntervalTracking()
-            currentSessionIncludeInAiTraining = true
-        }
-
+    /**
+     * STOP, from the button, the notification's action, or the Run's own cool-down.
+     *
+     * Two separate acts, which is why they are two lines. Ending the Run is the Run's: a second
+     * STOP finalizes nothing, and a STOP that lands before the Run's row id exists is remembered
+     * and finalized when it arrives, so nothing here needs to know which of those it is. Letting
+     * go of the Strap is the service's, and happens even when there was no Run to end — a pre-run
+     * notification Stop still dismisses the service.
+     */
+    fun stopRun() {
+        postRunEvent(RunEvent.Stopped(System.currentTimeMillis()))
         audioCueManager?.releaseForSessionStop()
-        // Publishing STOPPED is what ends the Promotion; releasing the strap is a separate act.
-        _hrState.update { it.copy(sessionStatus = SessionStatus.STOPPED) }
         releaseStrapAndTimer()
     }
-    
+
     override fun onInit(status: Int) {
         audioCueManager?.onTtsInit(status)
     }
@@ -1776,32 +1025,41 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var lastNotificationTime = 0L
     private val NOTIFICATION_THROTTLE_MS = 10_000L // 10 seconds in background
     
-    private fun updateNotification(forceUpdate: Boolean = false, overrideText: String? = null) {
+    /**
+     * Put the Run's own words on the notification, subject to the background throttle.
+     *
+     * What it says is the Run's (ADR 0001) and arrives as [RunEffect.Notify]. What is left here is
+     * when to post it: every refresh in the foreground, at most one every ten seconds in the
+     * background — except that a zone crossing, a Phase change or a change of the Run's status is
+     * worth waking the shade for. Status counts because it changes the notification's own buttons.
+     */
+    private fun updateNotification(text: String) {
         val now = System.currentTimeMillis()
         val isBackground = !isActivityBound
-        
-        // Critical State Detection
+
         val currentState = _hrState.value
         val notificationZone = hrZoneOf(currentState.bpm, currentSettings)
         val zoneChanged = notificationZone != lastNotificationZone
-        val phaseChanged = currentPhase != lastNotificationPhase
-        
-        val isCritical = forceUpdate || zoneChanged || phaseChanged
-        
+        val phaseChanged = currentState.currentPhase != lastNotificationPhase
+        val statusChanged = currentState.sessionStatus != lastNotificationStatus
+
+        val isCritical = zoneChanged || phaseChanged || statusChanged ||
+            currentState.connectionStatus.contains("Failed")
+
         if (!isCritical && isBackground && (now - lastNotificationTime < NOTIFICATION_THROTTLE_MS)) {
             // Skip non-critical update while in background to save system resources
             return
         }
-        
+
         lastNotificationTime = now
         lastNotificationZone = notificationZone
-        lastNotificationPhase = currentPhase
-        
-        val defaultContent = buildNotificationContent(currentState)
-        // Deciding what to say stays here, where zones and phases are known. Posting it belongs
-        // to Promotion, which drops the text when there is no notification to put it on — without
-        // that, an update landing just after a demotion posts one nothing owns and nothing clears.
-        promotion.showNotification(overrideText ?: defaultContent)
+        lastNotificationPhase = currentState.currentPhase
+        lastNotificationStatus = currentState.sessionStatus
+
+        // Posting belongs to Promotion, which drops the text when there is no notification to put
+        // it on — without that, an update landing just after a demotion posts one nothing owns and
+        // nothing clears.
+        promotion.showNotification(text)
     }
 
     /**
@@ -2167,10 +1425,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             connectionStatus = "Disconnected",
             connectedDeviceName = null,
             bpm = 0,
-            avgBpm = 0
         ) }
+        // The smoothed reading is the Run's, so it is told the Strap is gone rather than having
+        // the number taken out from under it.
+        postRunEvent(RunEvent.HeartRateLost("Disconnected", System.currentTimeMillis()))
     }
-    
+
     private fun stopScanning() {
          ++scanEpoch // cancels any pending scan-timeout for the scan being stopped
          if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
@@ -2287,41 +1547,23 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
         }
         // No sessionStatus write here: disconnecting is no longer stopping (#110). Every current
-        // caller runs when no run is live (stopSession sets STOPPED itself; FORCE_SCAN is blocked
+        // caller runs when no run is live (STOP ends the Run itself; FORCE_SCAN is blocked
         // mid-run), and the old unconditional STOPPED write was a landmine — any future mid-run
         // caller would have silently killed the run and orphaned its DB row.
+        //
+        // Nor any of the Run's fields, which this used to blank as well. They belong to the Run and
+        // reach the published state through one write; a Run that is over publishes the blanks
+        // itself, and a Run that is not over must not have them taken from underneath it.
         _hrState.update { it.copy(
             connectionStatus = "Disconnected",
             bpm = 0,
             connectedDeviceName = null,
             discoveredServices = emptyList(),
-            isStructuredWorkout = false,
-            phaseSecondsElapsed = 0,
-            phaseTimeRemainingSeconds = 0,
-            totalRepeats = 0,
-            currentIntervalPlannedSeconds = 0,
-            nextIntervalType = null,
-            nextIntervalDurationSeconds = 0,
-            workoutProgressPercent = 0,
-            currentIntervalElapsedSeconds = 0,
-            currentWalkReason = "Planned",
-            hrCapExceededInCurrentInterval = false,
-            hrCapExceededAtSecond = null
         ) }
-        synchronized(bpmHistory) {
-            bpmHistory.clear()
-        }
-        currentZone = ZoneBand.UNKNOWN
-        isStructuredWorkout = false
-        hasStructuredWorkoutStarted = false
-        phaseTimeRemainingSeconds = 0
-        currentRepeat = 1
-        resetCurrentIntervalTransparencyState()
-        activeWorkoutTemplate = null
-        
-        // Counters are now reset in startNewDatabaseSession() to persist until stopSession() finishes
+        // The Strap is gone, so the coach must not keep reasoning about its last reading.
+        postRunEvent(RunEvent.HeartRateLost("Disconnected", System.currentTimeMillis()))
+
         reconnectAttemptCount = 0
-        firstDisconnectTime = 0
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
@@ -2350,7 +1592,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 reconnectDelay = 3000L
                 isReconnecting = false
                 reconnectAttemptCount = 0
-                firstDisconnectTime = 0
 
                 val deviceName = gatt?.device?.name ?: "Unknown"
                 
@@ -2365,22 +1606,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     errorMessage = null
                 ) }
 
-                // Mission 4 FIX: Ensure location updates start if in outdoor mode (only while a
-                // run is active; a bare sensor connect must not spin up GPS on its own). Use the
-                // run's pinned mode, not currentSettings.runMode, so a strap that connects during
-                // the async settings write doesn't start GPS for a treadmill run (or vice versa).
-                // Also require the session id to be committed: RUNNING is published before the
-                // creation coroutine's DB insert, and onRawFix drops fixes while currentSessionId
-                // is null — a fast connect in that window would start GPS early, turning the
-                // scaffold's own post-commit start into a no-op and clipping the route start off
-                // the map (Codex P2 #123). Mid-run reconnects always have the id set; during
-                // creation the scaffold owns the GPS start.
-                val sessionRunMode = activeSessionRunMode ?: currentSettings.runMode
-                val sessionCommitted = synchronized(sessionCreationLock) { currentSessionId != null }
-                if (sessionRunMode == "outdoor" && isRunning() && sessionCommitted) {
-                    locationTracker?.restartIfNeeded("session_start", sessionRunMode, isSimulationEnabled)
-                }
-                
+                // GPS is not started here any more. It is the Run's to ask for, and the Run asks
+                // once its row id has landed — which is exactly the ordering this had to spell out
+                // by hand (mode pinned at START, and the id committed, or a fast connect would
+                // start GPS early and clip the route's beginning off the map, Codex P2 #123).
+                // A reconnect mid-Run finds location already running; LocationTracker.start() is a
+                // no-op when it is.
+
                 gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
                 gatt?.discoverServices()
 
@@ -2389,26 +1621,22 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // and says so (4fe74cd).
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 if (targetDeviceAddress != null) {
-                    // Unexpected disconnect while a run is going.
-                    if (firstDisconnectTime == 0L) {
-                        firstDisconnectTime = System.currentTimeMillis()
-                    }
-
                     // Heart rate can't gate the middle of a run any more than it gates the start
                     // (#110): a strap dropout leaves the run RUNNING and merely stops zone cues.
                     // The elapsed clock, distance, pace and the plan's intervals keep advancing;
                     // only the (HR-driven) coaching goes quiet until the strap reconnects. We keep
                     // retrying in the background, but a lost strap never freezes or ends the run.
                     //
-                    // Zero the live HR so the outage isn't banked as data: pulseSession() records a
-                    // sample and banks zone/above-cap seconds every second while bpm > 0, so a stale
-                    // last reading held across the whole dropout would fabricate HR and skew zone
-                    // totals and downstream coaching/AI. bpm returns when a fresh packet arrives.
+                    // The Run is told the reading is gone rather than sent a zero, so the outage is
+                    // banked as no-data instead of being fabricated from the last packet — and so a
+                    // dropout can never be mistaken for something the coach should reason about.
                     _hrState.update { it.copy(
                         connectionStatus = "Disconnected (Retrying)",
                         bpm = 0,
-                        avgBpm = 0
                     ) }
+                    postRunEvent(
+                        RunEvent.HeartRateLost("Disconnected (Retrying)", System.currentTimeMillis())
+                    )
 
                     serviceScope.launch(Dispatchers.IO) {
                         gatt?.close()
@@ -2510,125 +1738,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val formattedTime = sdf.format(Date(timestamp))
         val formatString = if (is16Bit) "16-bit (UINT16)" else "8-bit (UINT8)"
         
-        // --- PROCESSS COACHING RULES (Session must be RUNNING) ---
-        if (_hrState.value.sessionStatus == SessionStatus.RUNNING) {
-            processCoachingRules(bpm, timestamp)
-        }
-        
-        val debugInfo = getCoachingDebugInfo(timestamp)
-
         _hrState.update { currentState ->
             currentState.copy(
-                bpm = bpm, 
+                bpm = bpm,
                 lastUpdateTimestamp = timestamp,
                 lastPacketTimeFormatted = formattedTime,
                 dataBits = formatString,
-                avgBpm = debugInfo.avg,
-                currentZone = debugInfo.zone,
-                timeInZoneString = debugInfo.timeInZone,
-                cooldownWithHysteresisString = debugInfo.cooldown
-            ) 
+            )
         }
-    }
-    
-    private fun processCoachingRules(bpm: Int, now: Long) {
-        // MISSION: Block coaching cues outside WARM_UP and MAIN phase
-        if (currentPhase != SessionPhase.MAIN && currentPhase != SessionPhase.WARM_UP) {
-            _hrState.update { it.copy(currentZone = "NONE", timeInZoneString = "N/A") }
-            return
-        }
-
-        if (!currentSettings.coachingEnabled) return
-
-        var avgBpm = 0
-        synchronized(bpmHistory) {
-            bpmHistory.add(Pair(now, bpm))
-            while (bpmHistory.isNotEmpty() && (now - bpmHistory.first.first > HISTORY_WINDOW_MS)) {
-                bpmHistory.removeFirst()
-            }
-            if (bpmHistory.isEmpty()) return
-            avgBpm = bpmHistory.map { it.second }.average().roundToInt()
-        }
-        
-        // The one gate for spoken zone cues (#108). Awake only during the run steps of a plan, or an
-        // unplanned run once past its 5-minute grace; warm-up, walk and cool-down steps stay silent.
-        val awake = when {
-            currentPhase != SessionPhase.MAIN -> false
-            isStructuredWorkout -> structuredWorkoutPhase == StructuredWorkoutPhase.RUN
-            else -> sessionSecondsRunning >= UNPLANNED_GRACE_SECONDS
-        }
-
-        // One band, one clock. Hysteresis judges re-entry at the zone midpoint; the ladder decides
-        // when to speak; the band below decides what to say. Hysteresis only carries across
-        // consecutive awake samples: while asleep (warm-up, walk, grace) we reset it to UNKNOWN, so
-        // the first awake sample is judged by the plain band. A run step can then never inherit a
-        // stale ABOVE/BELOW and speak over a heart rate that has actually settled into target.
-        val band = if (awake) {
-            bandWithHysteresis(currentZone, avgBpm, currentSettings.maxHr, activeTargetZone)
-        } else {
-            ZoneBand.UNKNOWN
-        }
-        currentZone = band
-
-        when (cueLadder.onSample(now, band, awake)) {
-            CueAction.SPEAK -> when (band) {
-                ZoneBand.ABOVE -> speakHighCue(avgBpm)
-                ZoneBand.BELOW -> speakLowCue()
-                else -> {}
-            }
-            CueAction.RETURN -> speakReturnCue()
-            CueAction.SILENT -> {}
-        }
-    }
-
-    /**
-     * The words for an above-target cue — wording only; the ladder already decided it is time to
-     * speak. The sentence-picker ([highCueCondition] + [coachingCue], #109) chooses between drift,
-     * the structured walk-break, and the plain ease-off; only the walk-break counts toward a run's
-     * walk breaks. The recovery-window trigger fires for every above-target cue.
-     */
-    private fun speakHighCue(avgBpm: Int) {
-        val condition = highCueCondition(sessionSecondsRunning, baselineHr, avgBpm, isStructuredWorkout)
-        coachingCue(condition).spoken?.let { playCue(it) }
-        if (condition == CueCondition.ABOVE_WALK_BREAK) walkBreaksCount++
-        recordRunWalkHighHrTriggerEvent(avgBpm)
-    }
-
-    private fun speakLowCue() {
-        coachingCue(CueCondition.BELOW).spoken?.let { playCue(it) }
-    }
-
-    /**
-     * The closing bracket of a spoken cue (#108): you were told you had drifted out of target, you
-     * came back past the midpoint, and this tells you you are home so you stop guessing. It fires
-     * only because the ladder saw a cue was actually spoken while out. The wording is direction-
-     * neutral now (#109) — you can re-enter from above or below, so it no longer says "light jog".
-     * [recordRunWalkRecoveryCueEvent] self-guards, closing only a recovery window an above-target
-     * cue actually opened.
-     */
-    private fun speakReturnCue() {
-        coachingCue(CueCondition.RETURNED).spoken?.let { playCue(it) }
-        recordRunWalkRecoveryCueEvent()
-    }
-    
-    private data class DebugInfo(val avg: Int, val zone: String, val timeInZone: String, val cooldown: String)
-    
-    private fun getCoachingDebugInfo(now: Long): DebugInfo {
-        var avg = 0
-        synchronized(bpmHistory) {
-            if (bpmHistory.isEmpty()) return DebugInfo(0, "Init", "0s", "Ready")
-            if (!currentSettings.coachingEnabled) return DebugInfo(bpmHistory.last().second, "Disabled", "--", "Off")
-
-            avg = bpmHistory.map { it.second }.average().roundToInt()
-        }
-
-        val zoneStr = currentZone.name
-        val timeOut = cueLadder.secondsOutOfTarget(now)
-        val statusStr = when (currentZone) {
-            ZoneBand.IN, ZoneBand.UNKNOWN -> "Ready"
-            else -> "Next: ${cueLadder.secondsUntilNextCue(now)}s"
-        }
-        return DebugInfo(avg, zoneStr, "${timeOut}s", statusStr)
+        // The reading itself is the Strap's to publish; what it means is the Run's. Every packet
+        // goes to the Run, whether or not one is live — the Run's own guards decide whether the
+        // coach so much as looks at it.
+        postRunEvent(RunEvent.HeartRateSampled(bpm, _hrState.value.connectionStatus, timestamp))
     }
 
     private fun updateSimulationData() {
@@ -2640,81 +1761,62 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         handleHeartRateForSimulation(simulationBpm)
     }
 
+    /**
+     * A simulated reading, delivered exactly as a real one is.
+     *
+     * Simulation stays outside the Run and feeds it ordinary heart-rate events, so the developer
+     * mode and a real Strap drive identical code — there is no simulated branch anywhere inside.
+     * Called from the pulse, which is already the Run's thread, so it dispatches directly.
+     */
     private fun handleHeartRateForSimulation(bpm: Int) {
         val timestamp = System.currentTimeMillis()
         lastHrTimestamp = timestamp
-        
-        // Use a simpler version of handleHeartRate for simulated data
-        if (_hrState.value.sessionStatus == SessionStatus.RUNNING) {
-            processCoachingRules(bpm, timestamp)
-        }
-        
-        val debugInfo = getCoachingDebugInfo(timestamp)
+
         _hrState.update { it.copy(
             bpm = bpm,
             lastUpdateTimestamp = timestamp,
             lastPacketTimeFormatted = "SIMULATED",
             dataBits = "Simulation Mode",
-            avgBpm = debugInfo.avg,
-            currentZone = debugInfo.zone,
-            timeInZoneString = debugInfo.timeInZone,
-            cooldownWithHysteresisString = debugInfo.cooldown
         ) }
+        dispatchRunEvent(RunEvent.HeartRateSampled(bpm, _hrState.value.connectionStatus, timestamp))
     }
 
-    fun setSimulationEnabled(enabled: Boolean) {
+    /**
+     * Turn the simulated Strap on or off.
+     *
+     * Returns whether a Run was started here, so [onStartCommand] knows to leave the eager
+     * Promotion in place for the Run to justify rather than reconciling it away before the Run has
+     * had a chance to publish.
+     */
+    fun setSimulationEnabled(enabled: Boolean): Boolean {
         if (isSimulationEnabled == enabled) {
             _hrState.update { it.copy(isSimulating = isSimulationEnabled) }
-            Log.d(
-                TAG,
-                "Simulation unchanged: enabled=$isSimulationEnabled sessionId=$currentSessionId status=${_hrState.value.sessionStatus} phase=$currentPhase running=${sessionSecondsRunning}s"
-            )
-            return
+            Log.d(TAG, "Simulation unchanged: enabled=$isSimulationEnabled status=${_hrState.value.sessionStatus}")
+            return false
         }
 
         isSimulationEnabled = enabled
         _hrState.update { it.copy(isSimulating = isSimulationEnabled) }
-        
-        if (isSimulationEnabled) {
-            // No promotion here. Simulation is not a reason to hold one — the Run it starts is,
-            // and that Run earns it below. Promoting for simulation itself would strand the
-            // notification and wake lock after every simulated run, because isSimulationEnabled
-            // is never cleared by STOP.
-            val status = _hrState.value.sessionStatus
-            val runActive = status == SessionStatus.RUNNING || status == SessionStatus.PAUSED
-            // Same busy-guard as ACTION_START_RUN: while a previous run is still finalizing (or a
-            // deferred creation is aborting), starting a sim session would either be skipped by
-            // the reservation — leaving the UI wedged RUNNING with no session and no timer — or
-            // resurrect a just-stopped run. Refuse and undo; the toggle works a moment later.
-            val sessionBusy = !runActive && synchronized(sessionCreationLock) {
-                isCreatingSession || currentSessionId != null
-            }
-            if (sessionBusy) {
-                Log.d(TAG, "Simulation enable refused - previous session still finalizing")
-                isSimulationEnabled = false
-                _hrState.update { it.copy(isSimulating = false) }
-                return
-            }
-            if (currentSessionId == null && (status == SessionStatus.IDLE || status == SessionStatus.STOPPED)) {
-                // Publish RUNNING BEFORE creating the row, matching the order ACTION_START_RUN
-                // already uses. The other way round leaves a window where a Run is being created
-                // but nothing published says so — and Promotion, derived from published state,
-                // would demote (stopSelf included) in the middle of session creation.
-                _hrState.update { it.copy(
-                    sessionStatus = SessionStatus.RUNNING,
-                    activeRunMode = currentSettings.runMode
-                ) }
-                startNewDatabaseSession()
-            } else if (status == SessionStatus.RUNNING) {
-                startSessionTimerLoop()
-            }
-        } else {
+
+        if (!isSimulationEnabled) {
             Log.d(TAG, "Simulation Mode DISABLED")
+            return false
         }
-        Log.d(
-            TAG,
-            "Simulation toggled: enabled=$isSimulationEnabled sessionId=$currentSessionId status=${_hrState.value.sessionStatus} phase=$currentPhase running=${sessionSecondsRunning}s"
-        )
+
+        // No promotion here. Simulation is not a reason to hold one — the Run it starts is, and
+        // that Run earns it below. Promoting for simulation itself would strand the notification
+        // and wake lock after every simulated run, because isSimulationEnabled is never cleared
+        // by STOP.
+        val status = _hrState.value.sessionStatus
+        if (status == SessionStatus.RUNNING || status == SessionStatus.PAUSED) {
+            // A Run is already going; it simply gains a simulated Strap.
+            return false
+        }
+        // Whether there is a Run to begin is the Run's question, exactly as it is at START — and
+        // one it can answer without the reservation flags this used to have to consult.
+        startRun(RunMode.ofSettingValue(currentSettings.runMode))
+        Log.d(TAG, "Simulation Mode ENABLED - started a run")
+        return true
     }
 
     fun toggleSimulation() {

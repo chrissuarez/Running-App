@@ -59,7 +59,7 @@ object DatabaseBackupManager {
         get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
 
     // Serializes concurrent backups. Two can overlap — e.g. the post-run snapshot from
-    // HrForegroundService.stopSession() and the one from SessionRepository.saveFeelFeedback() — and
+    // the Run's finalization and the one from SessionRepository.saveFeelFeedback() — and
     // they share the single BACKUP_TEMP_DISPLAY_NAME entry, so without this the second writer would
     // delete the first's pending item and corrupt or drop the snapshot. Whichever runs last wins,
     // and both are complete snapshots, so serializing (rather than skipping) is correct.

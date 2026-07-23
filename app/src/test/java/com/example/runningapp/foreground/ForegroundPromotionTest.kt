@@ -92,8 +92,8 @@ class PromotionEarnedTest {
 
     @Test
     fun `a stopping run still earns promotion`() {
-        // STOPPING is published synchronously by stopSession() and holds until the finalize
-        // coroutine publishes STOPPED. Demoting here would stopSelf() mid-teardown.
+        // STOPPING is a Run stopped before its row id arrived, and holds until the id lands and
+        // the Run publishes STOPPED. Demoting here would stopSelf() mid-teardown.
         assertTrue(ForegroundPromotion.isEarned(SessionStatus.STOPPING, acquiringStrap = false))
     }
 
