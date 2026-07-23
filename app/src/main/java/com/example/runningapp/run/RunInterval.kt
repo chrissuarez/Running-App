@@ -123,8 +123,8 @@ data class IntervalStat(
  * Interval ends, however it ends: prescribed length reached, main Phase skipped, or the Run
  * stopped mid-Interval. All three go through [toStat].
  *
- * The heart-rate fields are read here and written by the coach's cue decisions, which are #142's.
- * Until then every Interval saves as a clean one, which is what a Run with no cues is.
+ * The heart-rate fields are written by the coach's cue decisions and by nothing else, so an
+ * Interval the coach never spoke into saves as a clean one — which is what it was.
  *
  * The old tracker took each trigger's second as `max(elapsed, sessionSecond - startSecond)`,
  * because the Bluetooth callback that recorded it and the timer that advanced `elapsed` were
@@ -152,6 +152,31 @@ data class IntervalTracker(
         walkingRecoverySeconds =
             if (inRecoveryWindow) walkingRecoverySeconds + 1 else walkingRecoverySeconds,
     )
+
+    /**
+     * The coach told the runner their heart rate was high, [secondIntoInterval] seconds in.
+     *
+     * The first such second is the one that answers "how long did they hold the run before their
+     * heart rate stopped them", so later triggers in the same Interval do not overwrite it. Each
+     * one opens a recovery window if one is not already open — the runner is walking it off from
+     * here until they are told they are back on target, or until the Interval ends.
+     */
+    fun hrTriggered(secondIntoInterval: Int, atBpm: Int): IntervalTracker = copy(
+        firstHrTriggerSecond = firstHrTriggerSecond ?: secondIntoInterval,
+        hrTriggerEvents = hrTriggerEvents + 1,
+        triggerHrSum = triggerHrSum + atBpm,
+        triggerHrCount = triggerHrCount + 1,
+        inRecoveryWindow = true,
+        activeRecoveryStartSecond = activeRecoveryStartSecond ?: secondIntoInterval,
+    )
+
+    /**
+     * The runner is back on target. Closes the recovery a trigger opened, and only that: a return
+     * cue with no trigger behind it — the runner drifted *below* target and came back — has no
+     * recovery to close and leaves the numbers alone.
+     */
+    fun recovered(secondIntoInterval: Int): IntervalTracker =
+        closeRecoveryWindow(secondIntoInterval).copy(inRecoveryWindow = false)
 
     /** The Interval is over. Any recovery still open is closed at the second it ended on. */
     fun toStat(): IntervalStat {

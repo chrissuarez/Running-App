@@ -1,6 +1,13 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.CueAction
+import com.example.runningapp.CueCondition
 import com.example.runningapp.WorkoutTemplate
+import com.example.runningapp.ZoneBand
+import com.example.runningapp.bandWithHysteresis
+import com.example.runningapp.coachingCue
+import com.example.runningapp.highCueCondition
+import com.example.runningapp.hrZoneOf
 
 /**
  * The Run: a rulebook, not an actor.
@@ -22,6 +29,12 @@ object Run {
         is RunEvent.Started -> started(state, event)
         is RunEvent.RunRowCreated -> rowCreated(state, event)
         is RunEvent.Tick -> tick(state, event)
+        is RunEvent.HeartRateSampled -> heartRateSampled(state, event)
+        is RunEvent.HeartRateLost -> RunOutcome(
+            state.copy(heartRate = state.heartRate.lost(event.connectionStatus)),
+        )
+        // Obeyed from the moment it arrives, which is the whole point of a control (#109): the very
+        // next sample is judged under the new one, so coaching turned off goes quiet at once.
         is RunEvent.ControlsChanged -> RunOutcome(state.copy(controls = event.controls))
         is RunEvent.PauseToggled -> pauseToggled(state)
         is RunEvent.AutoPauseRequested -> autoPause(state)
@@ -134,8 +147,6 @@ object Run {
                 secondsRunning = current.secondsRunning + 1,
                 phaseSecondsElapsed = current.phaseSecondsElapsed + 1,
             )
-            // Zone accounting and the coach's cue decisions belong on this second too. They are
-            // the next ticket; this is where they land.
             val limit = current.phaseLimitSeconds
             val remaining = limit - current.phaseSecondsElapsed
 
@@ -165,6 +176,18 @@ object Run {
             val stepped = advanceIntervalSecond(current)
             current = stepped.state
             effects += stepped.effects
+
+            // Ten minutes in, on a Run that has a reading to pin. What "drifting up" is measured
+            // against for the rest of the Run — see [highCueCondition].
+            if (current.secondsRunning == DRIFT_BASELINE_SECOND && current.heartRate.bpm > 0) {
+                current = current.copy(
+                    coaching = current.coaching.copy(baselineHr = current.heartRate.bpm),
+                )
+            }
+
+            val banked = bankSecond(current)
+            current = banked.state
+            effects += banked.effects
         }
 
         // One refresh per pulse, however many seconds it accounted for, and none for a Run that
@@ -173,6 +196,150 @@ object Run {
         // an Android fact the Run has no way of knowing and no reason to.
         if (!ended) effects += RunEffect.Notify(notificationText(current))
         return RunOutcome(current, effects)
+    }
+
+    /**
+     * Bank one second of the Run against the reading that stands at this moment.
+     *
+     * The reading, not a fresh one: a Run banks a second whether or not a packet arrived for it, and
+     * a late pulse catching up on five seconds banks all five against the one reading it has. That
+     * is what makes a dropout honest — the seconds are counted as no-data rather than fabricated
+     * from a stale last reading, and rather than dropped, which used to leave a long outage
+     * silently missing from the summary's zone breakdown (#110).
+     *
+     * Every zone edge is measured against the Max HR pinned at START, never against Settings as it
+     * stands now.
+     */
+    private fun bankSecond(state: RunState): RunOutcome {
+        val config = state.config ?: return RunOutcome(state)
+        val bpm = state.heartRate.bpm
+        // One question, asked once: was there a reading? Zone 1 swallows everything beneath it, so
+        // hrZoneOf answers null for exactly the seconds that had none. #115's second branch — a
+        // no-data second banked from inside a positive-reading guard, which nothing could reach —
+        // has nowhere here to be written.
+        val zone = hrZoneOf(bpm, config.maxHr)
+            ?: return RunOutcome(state.copy(tally = state.tally.bankNoData()))
+        return emitOrHold(
+            state.copy(tally = state.tally.bank(zone, bpm, config.maxHr, config.targetZone)),
+            PendingRowWork.SaveHrSample(
+                HrSampleReading(
+                    elapsedSeconds = state.secondsRunning,
+                    rawBpm = bpm,
+                    smoothedBpm = state.heartRate.smoothedBpm,
+                    connectionStatus = state.heartRate.connectionStatus,
+                ),
+            ),
+        )
+    }
+
+    /**
+     * A reading arrived from the Strap, and with it the coach's one chance to speak.
+     *
+     * The reading is always kept — it is what the next second banks as. Whether the coach so much
+     * as looks at it is three separate questions, in this order: is the Run actually running, is it
+     * somewhere cues are allowed at all (never the cool-down), and has the runner left coaching on.
+     * A "no" to any of them leaves the rolling average standing still as well as the coach silent.
+     */
+    private fun heartRateSampled(state: RunState, event: RunEvent.HeartRateSampled): RunOutcome {
+        val config = state.config
+        val listening = state.lifecycle == RunLifecycle.RUNNING &&
+            state.phase != RunPhase.COOL_DOWN &&
+            state.controls.coachingEnabled
+        if (config == null || !listening) {
+            return RunOutcome(
+                state.copy(
+                    heartRate = state.heartRate.read(
+                        bpm = event.bpm,
+                        connectionStatus = event.connectionStatus,
+                        coachingEnabled = state.controls.coachingEnabled,
+                    ),
+                ),
+            )
+        }
+
+        // One band, one clock. Hysteresis judges re-entry at the target zone's midpoint, so a heart
+        // rate parked on an edge cannot farm return cues; the ladder decides when to speak; the
+        // band decides what is said. Hysteresis carries only across consecutive awake samples —
+        // asleep, the band is UNKNOWN, so a run Interval can never inherit a stale ABOVE and speak
+        // over a heart rate that has since settled into target.
+        val heard = state.heartRate.heard(event.bpm, event.connectionStatus, event.nowMillis)
+        val awake = state.coachingAwake
+        val band =
+            if (awake) {
+                bandWithHysteresis(state.coaching.band, heard.smoothedBpm, config.maxHr, config.targetZone)
+            } else {
+                ZoneBand.UNKNOWN
+            }
+        val step = state.coaching.ladder.onSample(event.nowMillis, band, awake)
+        val current = state.copy(
+            heartRate = heard,
+            coaching = state.coaching.copy(band = band, ladder = step.ladder),
+        )
+
+        return when (step.action) {
+            CueAction.SPEAK -> when (band) {
+                ZoneBand.ABOVE -> highCue(current, heard.smoothedBpm)
+                ZoneBand.BELOW -> RunOutcome(current, spoken(CueCondition.BELOW))
+                else -> RunOutcome(current)
+            }
+            CueAction.RETURN -> returnCue(current)
+            CueAction.SILENT -> RunOutcome(current)
+        }
+    }
+
+    /**
+     * The words for an above-target cue, the ladder having already decided it is time to speak.
+     *
+     * Drift outranks the walk break, which outranks the plain ease-off. Only the walk break counts
+     * toward the Run's walk breaks — the other two ask for a change of effort, not for a walk. No
+     * spoken cue names a zone (#109): the voice asks for a change, and the screen reports the state.
+     */
+    private fun highCue(state: RunState, smoothedBpm: Int): RunOutcome {
+        val condition = highCueCondition(
+            secondsRunning = state.secondsRunning,
+            baselineHr = state.coaching.baselineHr,
+            avgBpm = smoothedBpm,
+            isStructured = state.config?.isRunWalkMode ?: false,
+        )
+        val counted =
+            if (condition == CueCondition.ABOVE_WALK_BREAK) state.copy(walkBreaks = state.walkBreaks + 1)
+            else state
+        return RunOutcome(recordHighHrTrigger(counted, smoothedBpm), spoken(condition))
+    }
+
+    /**
+     * The closing bracket of a spoken cue (#108): the runner was told they had drifted out, they
+     * came back past the midpoint, and this tells them they are home so they stop guessing.
+     *
+     * It fires only because the ladder saw a cue actually spoken while they were out, and the
+     * wording is direction-neutral because they can re-enter from either side.
+     */
+    private fun returnCue(state: RunState): RunOutcome =
+        RunOutcome(recordRecovery(state), spoken(CueCondition.RETURNED))
+
+    private fun spoken(condition: CueCondition): List<RunEffect> =
+        listOfNotNull(coachingCue(condition).spoken?.let(RunEffect::Speak))
+
+    /**
+     * The runner's heart rate sent them walking. What the Interval is measuring, and what makes a
+     * walk explicable afterwards rather than a mystery.
+     *
+     * Only a run Interval has a number for it — an unplanned Run, a walk Interval and the stretch
+     * after the Workout's last Interval all record nothing, so the coach can still speak there
+     * without inventing an Interval to hang the trigger on.
+     */
+    private fun recordHighHrTrigger(state: RunState, smoothedBpm: Int): RunState {
+        val tracker = state.runIntervalTracker ?: return state
+        return state.copy(
+            intervalTracker = tracker.hrTriggered(tracker.secondsElapsed, smoothedBpm),
+            walkDecision = state.walkDecision.triggered(tracker.secondsElapsed),
+        )
+    }
+
+    /** Back on target after a trigger: the recovery it opened closes here, at this second. */
+    private fun recordRecovery(state: RunState): RunState {
+        val tracker = state.runIntervalTracker ?: return state
+        return state.copy(intervalTracker = tracker.recovered(tracker.secondsElapsed))
     }
 
     /**
@@ -241,12 +408,20 @@ object Run {
             // An Interval of no length measures nothing, so there is nothing to save for it.
             intervalTracker =
                 if (runSeconds > 0) IntervalTracker(repeat, runSeconds) else null,
+            // Every run Interval starts the coach from scratch — a fresh ladder, no band carried
+            // in — and forgets why the last walk was taken, since the last Interval's high heart
+            // rate does not explain this one's walk. The reset is timer-driven rather than
+            // packet-driven on purpose: the walk's own reset rides on a sample arriving while the
+            // coach is asleep, so a Strap dropout spanning a whole walk lands none, and the next
+            // Interval would reuse the last one's ladder and fire an immediate catch-up cue
+            // (Codex #124). The drift baseline is the Run's rather than the Interval's and stays.
+            //
+            // Tied to there being an Interval to measure, which is what the service ties it to.
+            // A Workout prescribing runs of no length therefore leaves the coach exactly as it
+            // was — reproduced rather than chosen, and unreachable by any Workout the app writes.
+            coaching = if (runSeconds > 0) state.coaching.startAgain() else state.coaching,
+            walkDecision = if (runSeconds > 0) WalkDecision() else state.walkDecision,
         )
-        // What else belongs on this boundary is the coach's, and so #142's: the cue ladder and the
-        // zone start again from scratch here, and the reason the last walk was taken is forgotten.
-        // That reset is timer-driven rather than packet-driven on purpose — a Strap dropout
-        // spanning a whole walk used to leave the next Interval reusing the last one's ladder and
-        // firing an immediate catch-up cue (Codex #124).
         return RunOutcome(
             begun,
             listOf(
@@ -280,6 +455,10 @@ object Run {
                             kind = IntervalKind.WALK,
                             secondsRemaining = intervals.walkSeconds,
                         ),
+                        // The walk starts, and why it was taken is settled now: the runner's own
+                        // heart rate if it went above target during the run, and the Workout
+                        // itself if it did not.
+                        walkDecision = current.walkDecision.atHandover(),
                     ),
                     effects + RunEffect.Speak(
                         "Transition to walking, ${intervals.walkSeconds} seconds.",
@@ -291,7 +470,12 @@ object Run {
         val nextRepeat = intervals.repeat + 1
         return if (nextRepeat > intervals.totalRepeats) {
             RunOutcome(
-                current.copy(intervals = null, intervalsFinished = true),
+                current.copy(
+                    intervals = null,
+                    intervalsFinished = true,
+                    // No Interval left to explain.
+                    walkDecision = WalkDecision(),
+                ),
                 effects + RunEffect.Speak("Main workout complete, beginning cool down."),
             )
         } else {
@@ -407,6 +591,7 @@ object Run {
                     phaseSecondsElapsed = 0,
                     intervals = null,
                     intervalsFinished = true,
+                    walkDecision = WalkDecision(),
                 )
                 RunOutcome(
                     skipped,
@@ -448,6 +633,11 @@ object Run {
             pausedSeconds = current.secondsPaused,
             endedAtMillis = nowMillis,
             isRunWalkMode = current.config?.isRunWalkMode ?: false,
+            averageBpm = current.tally.averageBpm,
+            maxBpm = current.tally.maxBpm,
+            zoneSeconds = current.tally.zoneSeconds,
+            noDataSeconds = current.tally.noDataSeconds,
+            walkBreaks = current.walkBreaks,
         )
         val finalized = emitOrHold(current, PendingRowWork.Finalize(totals))
         val stopped =

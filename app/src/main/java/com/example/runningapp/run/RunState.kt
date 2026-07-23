@@ -92,6 +92,24 @@ data class RunState(
      */
     val intervalTracker: IntervalTracker? = null,
 
+    /** Everything the Run has counted: zone seconds, no-data seconds, and the heart-rate totals. */
+    val tally: RunTally = RunTally(),
+
+    /** What the Strap is saying, and the rolling average taken from it. See [RunHeartRate]. */
+    val heartRate: RunHeartRate = RunHeartRate(),
+
+    /** What the coach is holding between samples: the band, the ladder, the drift baseline. */
+    val coaching: RunCoaching = RunCoaching(),
+
+    /**
+     * Why the runner is walking, and whether their heart rate has been above target during the run
+     * Interval in progress. Written only by the coach's cue decisions. See [WalkDecision].
+     */
+    val walkDecision: WalkDecision = WalkDecision(),
+
+    /** How many times this Run's coach has sent the runner walking. Saved with the Run. */
+    val walkBreaks: Int = 0,
+
     /**
      * Whether the current pause was the Run's own doing rather than a tap. Auto-pause reuses
      * [RunLifecycle.PAUSED] so the clock freezes identically, but it must not stop GPS — movement
@@ -132,6 +150,40 @@ data class RunState(
         get() = if (phase == RunPhase.MAIN) 0
         else (phaseLimitSeconds - phaseSecondsElapsed).coerceAtLeast(0).toInt()
 
+    /**
+     * Whether the coach is awake — the gate on *speaking* a zone cue (#108), as distinct from
+     * whether a reading reaches the coach at all, which the Run asks separately.
+     *
+     * Awake only during a Workout's run Intervals, or, on a Run with no Intervals left to run, once
+     * it is past its five-minute grace. The warm-up, every walk Interval and the cool-down are
+     * silent, so nothing is coached while the runner is deliberately not at their target.
+     *
+     * A Workout whose Intervals are behind it leaves the Run open-ended in its main Phase, and from
+     * that moment it is coached like any unplanned Run.
+     */
+    val coachingAwake: Boolean
+        get() = when {
+            phase != RunPhase.MAIN -> false
+            // Not [inRunInterval]: that asks whether there is an Interval to measure, and this asks
+            // whether the runner is meant to be running. Between the two, the seconds before the
+            // first Interval opens are a run — which is what the service's initialised run step
+            // makes them.
+            config?.isRunWalkMode == true && !intervalsFinished ->
+                intervals?.kind != IntervalKind.WALK
+            else -> secondsRunning >= UNPLANNED_GRACE_SECONDS
+        }
+
+    /**
+     * The tracker of the run Interval actually in progress, or null when there is not one.
+     *
+     * The coach's cue decisions write only through this, so a cue spoken during a walk Interval, an
+     * unplanned Run, or the stretch after the Workout's last Interval records nothing rather than
+     * inventing an Interval to hang itself on.
+     */
+    val runIntervalTracker: IntervalTracker?
+        get() = intervalTracker
+            ?.takeIf { phase == RunPhase.MAIN && intervals?.kind == IntervalKind.RUN }
+
     companion object {
         /** No Run. Every Run begins by replacing this wholesale, so nothing carries over. */
         val IDLE = RunState()
@@ -165,6 +217,14 @@ sealed interface PendingRowWork {
     data class SaveIntervalStat(val stat: IntervalStat) : PendingRowWork {
         override fun toEffect(runRowId: Long): RunEffect =
             RunEffect.SaveIntervalStat(runRowId, stat)
+    }
+
+    /**
+     * A second of heart rate banked before the id arrived. Every Run has a few: the row is created
+     * asynchronously, and the seconds before it comes back were run like any others.
+     */
+    data class SaveHrSample(val sample: HrSampleReading) : PendingRowWork {
+        override fun toEffect(runRowId: Long): RunEffect = RunEffect.SaveHrSample(runRowId, sample)
     }
 }
 

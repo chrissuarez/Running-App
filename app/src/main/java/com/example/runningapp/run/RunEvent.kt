@@ -31,6 +31,31 @@ sealed interface RunEvent {
     /** The per-second pulse. The Run reads the time on it, not the fact that it arrived. */
     data class Tick(override val nowMillis: Long) : RunEvent
 
+    /**
+     * A reading arrived from the Strap.
+     *
+     * Separate from the per-second [Tick] because it is: a Strap sends when it sends, and a Run
+     * banks a second whether one arrived or not. [connectionStatus] rides along because it is what
+     * a saved sample records the second as having been taken under.
+     */
+    data class HeartRateSampled(
+        val bpm: Int,
+        val connectionStatus: String,
+        override val nowMillis: Long,
+    ) : RunEvent
+
+    /**
+     * The Strap went away (#110).
+     *
+     * Not a Run ending, and not a pause — the clock keeps running and the seconds bank as no-data.
+     * It arrives as its own event rather than as a reading of zero so that a dropout can never be
+     * mistaken for a packet the coach should reason about.
+     */
+    data class HeartRateLost(
+        val connectionStatus: String,
+        override val nowMillis: Long,
+    ) : RunEvent
+
     /** The runner changed a live control mid-Run. */
     data class ControlsChanged(
         val controls: RunControls,
