@@ -1,6 +1,7 @@
 package com.example.runningapp.run
 
 import com.example.runningapp.HrZone
+import com.example.runningapp.WorkoutTemplate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -19,6 +20,23 @@ import org.junit.Test
  *
  * The [Driver] and the fixtures live in `RunTestHarness.kt`, shared with the Interval tests.
  */
+
+/**
+ * A Workout small enough to run end to end in a test and reach its cool-down: two 2-second run
+ * Intervals with no walk between them, a 2-second warm-up, and a 30-second cool-down. Completing
+ * the last Interval lands at the fifth second; the cool-down then runs to the thirty-fifth.
+ */
+private val COOLDOWN_WORKOUT = WorkoutTemplate(
+    id = "w_cooldown",
+    title = "Cool-down",
+    targetZone = 2,
+    runDurationSeconds = 2,
+    walkDurationSeconds = 0,
+    totalRepeats = 2,
+    warmUpSeconds = 2,
+    coolDownSeconds = 30,
+)
+
 class RunStartTest {
 
     @Test
@@ -261,6 +279,54 @@ class RunRowHandshakeTest {
 
         assertEquals(0, effects.count<RunEffect.StartGps>())
     }
+
+    @Test
+    fun `a run paused before its row id arrives does not start GPS when the id lands`() {
+        val driver = Driver()
+        driver.start(config(runMode = RunMode.OUTDOOR), withRow = false)
+        driver.on(RunEvent.PauseToggled(driver.nowMillis))
+
+        val effects = driver.rowCreated()
+
+        assertEquals(0, effects.count<RunEffect.StartGps>())
+    }
+
+    @Test
+    fun `that paused run starts GPS when it is resumed`() {
+        val driver = Driver()
+        driver.start(config(runMode = RunMode.OUTDOOR), withRow = false)
+        driver.on(RunEvent.PauseToggled(driver.nowMillis))
+        driver.rowCreated()
+
+        val resumed = driver.on(RunEvent.PauseToggled(driver.nowMillis))
+
+        assertEquals(1, resumed.count<RunEffect.StartGps>())
+    }
+
+    @Test
+    fun `a run resumed before its row id arrives starts GPS once, when the id lands`() {
+        val driver = Driver()
+        driver.start(config(runMode = RunMode.OUTDOOR), withRow = false)
+        driver.on(RunEvent.PauseToggled(driver.nowMillis))
+
+        val resumed = driver.on(RunEvent.PauseToggled(driver.nowMillis))
+        val idEffects = driver.rowCreated()
+
+        assertEquals("no GPS with nowhere to put it", 0, resumed.count<RunEffect.StartGps>())
+        assertEquals("started once, when the id lands", 1, idEffects.count<RunEffect.StartGps>())
+    }
+
+    @Test
+    fun `a treadmill run starts no GPS through any pause and resume in the row window`() {
+        val driver = Driver()
+        driver.start(config(runMode = RunMode.TREADMILL), withRow = false)
+
+        val paused = driver.on(RunEvent.PauseToggled(driver.nowMillis))
+        val resumed = driver.on(RunEvent.PauseToggled(driver.nowMillis))
+        val idEffects = driver.rowCreated()
+
+        assertEquals(0, (paused + resumed + idEffects).count<RunEffect.StartGps>())
+    }
 }
 
 class RunClockTest {
@@ -307,19 +373,52 @@ class RunClockTest {
     }
 
     @Test
-    fun `a pulse banks whole seconds and drops the remainder, as it always has`() {
+    fun `the clock carries the sub-second remainder instead of dropping it`() {
         val driver = Driver()
         driver.start()
 
-        // Ten pulses of 1,100ms is eleven seconds of wall clock but ten seconds of Run: each
-        // pulse banks one second and forgets the other 100ms. Carrying the remainder would be a
-        // change to every recorded duration, so it is not made here.
-        repeat(10) {
-            driver.nowMillis += 1_100
-            driver.on(RunEvent.Tick(driver.nowMillis))
-        }
+        // A single pulse of 1,900ms advances one second and keeps the leftover 900ms owed, so the
+        // next 100ms pulse crosses the second line the old clock would have thrown away.
+        driver.tickAfter(1_900)
+        assertEquals(1L, driver.state.secondsRunning)
 
-        assertEquals(10L, driver.state.secondsRunning)
+        driver.tickAfter(100)
+        assertEquals(2L, driver.state.secondsRunning)
+    }
+
+    @Test
+    fun `slightly-over-a-second ticks accumulate to the wall clock with no drift`() {
+        val driver = Driver()
+        driver.start(config(workout = null))
+
+        // The pulses land a shade over a second apart. A hundred of them at 1,100ms is 110 seconds
+        // of wall clock; the Run's clock now matches it rather than reading 100 and running slow.
+        repeat(100) { driver.tickAfter(1_100) }
+
+        assertEquals(110L, driver.state.secondsRunning)
+    }
+
+    @Test
+    fun `a tick arriving several seconds late still advances exactly that many seconds`() {
+        val driver = Driver()
+        driver.start()
+
+        // Carrying the remainder does not blur the catch-up: a late pulse still advances whole
+        // seconds, one at a time.
+        driver.tickAfter(5_400)
+
+        assertEquals(5L, driver.state.secondsRunning)
+    }
+
+    @Test
+    fun `paused seconds carry the remainder on the same basis as running seconds`() {
+        val driver = Driver()
+        driver.start()
+        driver.on(RunEvent.PauseToggled(driver.nowMillis))
+
+        repeat(100) { driver.tickAfter(1_100) }
+
+        assertEquals(110L, driver.state.secondsPaused)
     }
 
     @Test
@@ -538,6 +637,60 @@ class RunPhaseTest {
         driver.skipPhase()
 
         val effects = driver.skipPhase()
+
+        assertEquals(1, effects.count<RunEffect.FinalizeRun>())
+        assertEquals(RunLifecycle.STOPPED, driver.state.lifecycle)
+    }
+
+    @Test
+    fun `completing the last interval hands the run into its cool-down`() {
+        val driver = Driver()
+        driver.start(config(workout = COOLDOWN_WORKOUT))
+
+        val effects = driver.advance(5)
+
+        assertEquals(RunPhase.COOL_DOWN, driver.state.phase)
+        assertEquals(RunLifecycle.RUNNING, driver.state.lifecycle)
+        assertTrue(driver.state.intervalsFinished)
+        assertTrue(effects.spoken().contains("Main workout complete, beginning cool down."))
+    }
+
+    @Test
+    fun `the cool-down entered from the last interval says cool-down from that moment`() {
+        val driver = Driver()
+        driver.start(config(workout = COOLDOWN_WORKOUT))
+
+        val effects = driver.advance(5)
+
+        // The screen and the notification match what the coach just said, on the same second.
+        assertEquals(
+            "Cooldown • 00:30 left",
+            effects.filterIsInstance<RunEffect.Notify>().last().text,
+        )
+    }
+
+    @Test
+    fun `a planned run cools down and ends itself without a skip`() {
+        val driver = Driver()
+        driver.start(config(workout = COOLDOWN_WORKOUT))
+
+        driver.advance(5)
+        val warning = driver.advance(20)
+        val ending = driver.advance(10)
+
+        assertEquals(listOf("10 seconds of cool down remaining"), warning.spoken())
+        assertEquals(1, ending.count<RunEffect.FinalizeRun>())
+        assertEquals(RunLifecycle.STOPPED, driver.state.lifecycle)
+    }
+
+    @Test
+    fun `a workout with a nought-second cool-down ends rather than stranding the run`() {
+        val driver = Driver()
+        driver.start(config(workout = COOLDOWN_WORKOUT.copy(coolDownSeconds = 0)))
+
+        driver.advance(5)
+        assertEquals(RunPhase.COOL_DOWN, driver.state.phase)
+        val effects = driver.advance(2)
 
         assertEquals(1, effects.count<RunEffect.FinalizeRun>())
         assertEquals(RunLifecycle.STOPPED, driver.state.lifecycle)
@@ -786,6 +939,69 @@ class RunTotalsTest {
         assertEquals(10L, finalize.totals.pausedSeconds)
         assertEquals(driver.nowMillis, finalize.totals.endedAtMillis)
         assertTrue(finalize.totals.isRunWalkMode)
+    }
+
+    @Test
+    fun `a cool-down's final second is banked, so the bands sum to the duration`() {
+        val driver = Driver()
+        driver.start()
+        driver.advance(60)
+        driver.skipPhase()
+
+        val finalize = driver.advance(30).only<RunEffect.FinalizeRun>()
+
+        // 90 strapless seconds: the zone totals plus the no-data seconds equal the saved duration,
+        // including the terminating second that used to be counted but never banked.
+        val zones = finalize.totals.zoneSeconds
+        val banked = zones.zone1 + zones.zone2 + zones.zone3 + zones.zone4 + zones.zone5 +
+            finalize.totals.noDataSeconds
+        assertEquals(finalize.totals.durationSeconds, banked)
+        assertEquals(90L, finalize.totals.noDataSeconds)
+    }
+
+    @Test
+    fun `a strapless thirty-second cool-down saves thirty no-data seconds, not twenty-nine`() {
+        val driver = Driver()
+        driver.start(config(workout = COOLDOWN_WORKOUT))
+
+        val finalize = (driver.advance(5) + driver.advance(30)).only<RunEffect.FinalizeRun>()
+
+        // Five strapless seconds to reach the cool-down, then a 30-second strapless cool-down whose
+        // last second now counts: 35 no-data seconds, equal to the whole duration rather than one
+        // short of it.
+        assertEquals(35L, finalize.totals.durationSeconds)
+        assertEquals(35L, finalize.totals.noDataSeconds)
+    }
+
+    @Test
+    fun `the cool-down's final second writes an HR sample when a reading stands`() {
+        val driver = Driver()
+        driver.start()
+        driver.advance(60)
+        driver.skipPhase()
+
+        val cooldown = driver.advanceWith(30, IN_TARGET)
+
+        // One sample per second of the cool-down, the terminating second included.
+        assertEquals(30, cooldown.count<RunEffect.SaveHrSample>())
+    }
+
+    @Test
+    fun `a late tick over the cool-down line ends on the second it counted, not its own reading`() {
+        val driver = Driver()
+        driver.start()
+        driver.skipPhase()
+        driver.skipPhase()
+        driver.advance(25)
+
+        // The pulse that carries the Run over the 30-second line arrives 30 seconds late. It counts
+        // the five seconds it had left and stamps the end time at the second it ended on — T0 plus
+        // thirty seconds — rather than at its own reading, T0 plus fifty-five.
+        val finalize = driver.advanceInOneTick(30).only<RunEffect.FinalizeRun>()
+
+        assertEquals(30L, finalize.totals.durationSeconds)
+        assertEquals(T0 + 30_000, finalize.totals.endedAtMillis)
+        assertEquals(30L, finalize.totals.noDataSeconds)
     }
 
     @Test

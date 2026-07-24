@@ -201,6 +201,25 @@ class WorkoutPlayerModelsTest {
     }
 
     @Test
+    fun `the interval panel shows the phase, not an interval, before the first interval opens`() {
+        // Skipping the warm-up moves the Run into the main Phase a second before its first Interval
+        // opens: for that second the Run publishes a structured Workout with no Interval yet, so
+        // totalRepeats is 0. The panel must read "Main" rather than an interval that has not begun
+        // (#149).
+        val gap = HrState(
+            sessionStatus = SessionStatus.RUNNING,
+            currentPhase = SessionPhase.MAIN,
+            isStructuredWorkout = true,
+            totalRepeats = 0,
+            phaseSecondsElapsed = 0,
+        )
+
+        val ui = mapWorkoutPlayerUiState(gap)
+
+        assertEquals("Main", ui.intervalLabel)
+    }
+
+    @Test
     fun `mapWorkoutPlayerUiState uses elapsed timer for non-structured main sessions`() {
         val state = HrState(
             currentPhase = SessionPhase.MAIN,
