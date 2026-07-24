@@ -482,6 +482,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             is RunEffect.Notify -> updateNotification(effect.text)
             RunEffect.StartGps -> startGps()
             RunEffect.StopGps -> locationTracker?.stop()
+            RunEffect.ReleaseStrap -> {
+                audioCueManager?.releaseForSessionStop()
+                releaseStrapAndTimer()
+            }
         }
     }
 
@@ -1009,6 +1013,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      */
     fun stopRun() {
         postRunEvent(RunEvent.Stopped(System.currentTimeMillis()))
+        // Kept here for the STOP that ends no live Run — a pre-run notification Stop, or a second
+        // STOP after the Run already finished itself — where the Run emits no effect to release
+        // by. A STOP that does end a live Run also gets RunEffect.ReleaseStrap; both acts are
+        // idempotent, so the overlap is harmless. See the effect's own note.
         audioCueManager?.releaseForSessionStop()
         releaseStrapAndTimer()
     }
