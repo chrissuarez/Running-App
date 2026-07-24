@@ -125,6 +125,12 @@ internal class Driver(var state: RunState = RunState.IDLE) {
         return on(RunEvent.Tick(nowMillis))
     }
 
+    /** One tick [millis] after the last, for exercising the clock's sub-second arithmetic. */
+    fun tickAfter(millis: Long): List<RunEffect> {
+        nowMillis += millis
+        return on(RunEvent.Tick(nowMillis))
+    }
+
     fun stop(): List<RunEffect> = on(RunEvent.Stopped(nowMillis))
 
     fun skipPhase(): List<RunEffect> = on(RunEvent.PhaseSkipped(nowMillis))

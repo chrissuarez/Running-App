@@ -100,7 +100,10 @@ object Run {
         }
         val effects = mutableListOf<RunEffect>()
         val stopping = state.lifecycle == RunLifecycle.STOPPING
-        if (!stopping && state.config?.runMode == RunMode.OUTDOOR) {
+        // Location runs only while the Run is running *and* has its row id. A Run paused inside the
+        // row-creation window must not have GPS started for it when the id lands — the screen would
+        // say paused while the route kept drawing. A resume is what starts it (#146).
+        if (state.lifecycle == RunLifecycle.RUNNING && state.config?.runMode == RunMode.OUTDOOR) {
             effects += RunEffect.StartGps
         }
         state.pendingRowEffects.forEach { effects += it.toEffect(event.runRowId) }
@@ -121,20 +124,25 @@ object Run {
      * janky screen or a dozing phone costs the Run no seconds: a tick arriving five seconds late
      * advances five seconds.
      *
-     * The sub-second remainder is dropped rather than carried, which is what the pulse it replaces
-     * did. Carrying it would make the Run's clock track the wall slightly more closely, and that is
-     * a change to every recorded duration — not this move's to make.
+     * The sub-second remainder is carried rather than dropped: the clock advances by the whole
+     * seconds elapsed and keeps the leftover milliseconds against the next tick, so the Run's clock
+     * tracks the wall instead of shedding a slice on every pulse. The pulses land a shade over a
+     * second apart, so dropping the remainder leaked steadily in one direction — about half a
+     * percent slow, a dozen-odd seconds short over a long run (#147).
      */
     private fun tick(state: RunState, event: RunEvent.Tick): RunOutcome {
         if (!state.lifecycle.isLive) return RunOutcome(state)
         val elapsedSeconds = (event.nowMillis - state.lastTickMillis) / 1000
         if (elapsedSeconds < 1) return RunOutcome(state)
-        val accounted = state.copy(lastTickMillis = event.nowMillis)
+        // Advance by whole seconds only; the remainder stays owed against the next tick, which
+        // measures from here rather than from this pulse's exact arrival.
+        val previousTickMillis = state.lastTickMillis
+        val accounted = state.copy(lastTickMillis = previousTickMillis + elapsedSeconds * 1000)
         return when (accounted.lifecycle) {
             RunLifecycle.PAUSED -> RunOutcome(
                 accounted.copy(secondsPaused = accounted.secondsPaused + elapsedSeconds),
             )
-            else -> advanceRunningSeconds(accounted, elapsedSeconds, event.nowMillis)
+            else -> advanceRunningSeconds(accounted, elapsedSeconds, previousTickMillis)
         }
     }
 
@@ -142,7 +150,7 @@ object Run {
      * The per-second accounting, one second at a time even when catching up, so a Phase boundary
      * that falls inside the gap is honoured at the second it belongs to rather than jumped over.
      */
-    private fun advanceRunningSeconds(state: RunState, seconds: Long, nowMillis: Long): RunOutcome {
+    private fun advanceRunningSeconds(state: RunState, seconds: Long, previousTickMillis: Long): RunOutcome {
         var current = state
         val effects = mutableListOf<RunEffect>()
         var ended = false
@@ -166,9 +174,18 @@ object Run {
                 current = current.copy(phase = RunPhase.MAIN, phaseSecondsElapsed = 0)
                 effects += RunEffect.Speak("Starting main workout")
             } else if (current.phase == RunPhase.COOL_DOWN && current.phaseSecondsElapsed >= limit) {
+                // Bank the terminating second before ending on it. The Run counts it toward its
+                // duration, so its zone (or no-data) total must count it too, and it writes its HR
+                // sample like any other second — otherwise the bands beneath the duration are one
+                // second short of it on every planned Run (#152).
+                val banked = bankSecond(current)
+                current = banked.state
+                effects += banked.effects
                 // The Run ends itself. Nothing calls back in to stop it — that round trip was one
-                // more ordering for the service to get right.
-                val end = finish(current, nowMillis)
+                // more ordering for the service to get right. The end time is the second the Run
+                // actually ended on, counted along this loop, not the clock reading of a tick that
+                // may have arrived long after the phone woke — those two used to disagree (#146).
+                val end = finish(current, previousTickMillis + i * 1000)
                 current = end.state
                 effects += end.effects
                 ended = true
@@ -480,6 +497,14 @@ object Run {
                     intervalsFinished = true,
                     // No Interval left to explain.
                     walkDecision = WalkDecision(),
+                    // The Workout's last Interval hands the Run into its cool-down, the way the
+                    // warm-up hands it into the main Phase — so the sentence the coach speaks here
+                    // becomes true. From this second the cool-down's ten-second warning and its own
+                    // auto-stop start firing (#150). A Workout with a nought-second cool-down ends
+                    // on the next tick, exactly as skipping the main Phase into one already does; an
+                    // unplanned Run has no Interval to complete and never reaches here.
+                    phase = RunPhase.COOL_DOWN,
+                    phaseSecondsElapsed = 0,
                 ),
                 effects + RunEffect.Speak("Main workout complete, beginning cool down."),
             )
@@ -532,8 +557,13 @@ object Run {
         RunLifecycle.PAUSED -> {
             val resumed = state.copy(lifecycle = RunLifecycle.RUNNING, autoPaused = false)
             val effects = buildList {
-                // The mode the Run started with, not whatever the setting says now.
-                if (state.config?.runMode == RunMode.OUTDOOR) add(RunEffect.StartGps)
+                // The mode the Run started with, not whatever the setting says now — and only once
+                // the row id has arrived. A Run resumed inside the row-creation window starts no
+                // location; the id landing, with the Run now running, is what starts it, exactly
+                // once (#146).
+                if (state.config?.runMode == RunMode.OUTDOOR && state.runRowId != null) {
+                    add(RunEffect.StartGps)
+                }
                 add(RunEffect.Notify(notificationText(resumed)))
             }
             RunOutcome(resumed, effects)

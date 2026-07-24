@@ -75,6 +75,25 @@ class RunIntervalStartTest {
     }
 
     @Test
+    fun `skipping the warm-up speaks the first interval cue once, and not before the skip`() {
+        val driver = Driver()
+        driver.start()
+
+        val skip = driver.skipPhase()
+        val tick = driver.advance(1)
+        val spoken = skip.spoken() + tick.spoken()
+
+        // "Warm up skipped. Starting workout." on the tap; "Start running..." only on the next
+        // pulse, exactly once, so the skip does not stack two cues nor open an Interval early (#149).
+        assertEquals(1, spoken.count { it == "Start running, interval 1 of 6." })
+        assertTrue(
+            "the skip is announced before the interval cue",
+            spoken.indexOf("Warm up skipped. Starting workout.") <
+                spoken.indexOf("Start running, interval 1 of 6."),
+        )
+    }
+
+    @Test
     fun `the first interval's first second is counted, not spent announcing it`() {
         val driver = Driver()
         driver.start(config(workout = SHORT_WORKOUT))
@@ -438,14 +457,16 @@ class RunIntervalNotificationTest {
     }
 
     @Test
-    fun `a finished workout hands the notification back to the phase`() {
+    fun `a finished workout hands the notification into the cool-down`() {
         val driver = Driver()
         driver.start(config(workout = SHORT_WORKOUT))
         driver.advance(WHOLE_WORKOUT_SECONDS)
 
         val effects = driver.advance(1)
 
-        assertEquals("Main elapsed 00:12", effects.only<RunEffect.Notify>().text)
+        // The last Interval hands the Run into its cool-down rather than leaving it climbing in the
+        // main Phase, so the notification counts the cool-down down (#150).
+        assertEquals("Cooldown • 00:04 left", effects.only<RunEffect.Notify>().text)
     }
 
     @Test
