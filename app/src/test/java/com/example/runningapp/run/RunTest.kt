@@ -422,6 +422,26 @@ class RunClockTest {
     }
 
     @Test
+    fun `a pause landing between ticks does not bank the running remainder as paused`() {
+        val driver = Driver()
+        driver.start()
+
+        // A 1,900ms running tick banks one second and leaves 900ms owed — all of it run.
+        driver.tickAfter(1_900)
+        assertEquals(1L, driver.state.secondsRunning)
+
+        // Pausing 100ms later, then a tick a further 100ms on. Without settling the remainder the
+        // next tick would measure 1,000ms from the old boundary and bank a paused second that was
+        // 900ms run. Settled, that whole owed fraction is left with the second it was run in.
+        driver.nowMillis += 100
+        driver.on(RunEvent.PauseToggled(driver.nowMillis))
+        driver.tickAfter(100)
+
+        assertEquals(0L, driver.state.secondsPaused)
+        assertEquals(1L, driver.state.secondsRunning)
+    }
+
+    @Test
     fun `ticks before the run starts do nothing`() {
         val driver = Driver()
 

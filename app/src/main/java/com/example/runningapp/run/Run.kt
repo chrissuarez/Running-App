@@ -36,14 +36,14 @@ object Run {
         // Obeyed from the moment it arrives, which is the whole point of a control (#109): the very
         // next sample is judged under the new one, so coaching turned off goes quiet at once.
         is RunEvent.ControlsChanged -> RunOutcome(state.copy(controls = event.controls))
-        is RunEvent.PauseToggled -> pauseToggled(state)
+        is RunEvent.PauseToggled -> pauseToggled(state, event.nowMillis)
         // A named direction, so a button the shade has not caught up with asks for nothing.
         is RunEvent.PauseRequested ->
-            if (state.lifecycle == RunLifecycle.RUNNING) pauseToggled(state) else RunOutcome(state)
+            if (state.lifecycle == RunLifecycle.RUNNING) pauseToggled(state, event.nowMillis) else RunOutcome(state)
         is RunEvent.ResumeRequested ->
-            if (state.lifecycle == RunLifecycle.PAUSED) pauseToggled(state) else RunOutcome(state)
-        is RunEvent.AutoPauseRequested -> autoPause(state)
-        is RunEvent.AutoResumeRequested -> autoResume(state)
+            if (state.lifecycle == RunLifecycle.PAUSED) pauseToggled(state, event.nowMillis) else RunOutcome(state)
+        is RunEvent.AutoPauseRequested -> autoPause(state, event.nowMillis)
+        is RunEvent.AutoResumeRequested -> autoResume(state, event.nowMillis)
         is RunEvent.PhaseSkipped -> phaseSkipped(state, event)
         is RunEvent.Stopped -> stopped(state, event)
     }
@@ -547,15 +547,24 @@ object Run {
         }
     }
 
-    /** The pause/resume button. Only a live Run can be paused, and only a paused one resumed. */
-    private fun pauseToggled(state: RunState): RunOutcome = when (state.lifecycle) {
+    /**
+     * The pause/resume button. Only a live Run can be paused, and only a paused one resumed.
+     *
+     * Settling the carried remainder is the whole reason [nowMillis] rides in here. The clock keeps
+     * the sub-second leftover owed against the next tick (#147), but that leftover accrued under the
+     * *old* lifecycle: if a pause lands 100ms after a 1,900ms running tick, the 900ms still owed was
+     * run, yet the next tick — now paused — would bank the whole second as paused. Moving
+     * [RunState.lastTickMillis] to the moment of the change draws the line where the lifecycle
+     * actually turned, so neither side claims the other's fraction of a second.
+     */
+    private fun pauseToggled(state: RunState, nowMillis: Long): RunOutcome = when (state.lifecycle) {
         RunLifecycle.RUNNING -> RunOutcome(
-            state.copy(lifecycle = RunLifecycle.PAUSED, autoPaused = false),
+            state.copy(lifecycle = RunLifecycle.PAUSED, autoPaused = false, lastTickMillis = nowMillis),
             // A tapped pause stops GPS; an auto-pause deliberately does not.
             listOf(RunEffect.StopGps, RunEffect.Notify(notificationText(state))),
         )
         RunLifecycle.PAUSED -> {
-            val resumed = state.copy(lifecycle = RunLifecycle.RUNNING, autoPaused = false)
+            val resumed = state.copy(lifecycle = RunLifecycle.RUNNING, autoPaused = false, lastTickMillis = nowMillis)
             val effects = buildList {
                 // The mode the Run started with, not whatever the setting says now — and only once
                 // the row id has arrived. A Run resumed inside the row-creation window starts no
@@ -580,9 +589,10 @@ object Run {
      * that watches the fixes, and that is where the toggle is honoured. A request that reaches
      * here has already been decided.
      */
-    private fun autoPause(state: RunState): RunOutcome {
+    private fun autoPause(state: RunState, nowMillis: Long): RunOutcome {
         if (state.lifecycle != RunLifecycle.RUNNING) return RunOutcome(state)
-        val paused = state.copy(lifecycle = RunLifecycle.PAUSED, autoPaused = true)
+        // Settle the carried remainder at the moment of the change — see [pauseToggled].
+        val paused = state.copy(lifecycle = RunLifecycle.PAUSED, autoPaused = true, lastTickMillis = nowMillis)
         return RunOutcome(
             paused,
             listOf(RunEffect.Notify(notificationText(paused)), RunEffect.Speak("Auto-paused.")),
@@ -590,9 +600,10 @@ object Run {
     }
 
     /** Movement again. Only an auto-pause may be undone this way; a tapped pause is the runner's. */
-    private fun autoResume(state: RunState): RunOutcome {
+    private fun autoResume(state: RunState, nowMillis: Long): RunOutcome {
         if (state.lifecycle != RunLifecycle.PAUSED || !state.autoPaused) return RunOutcome(state)
-        val resumed = state.copy(lifecycle = RunLifecycle.RUNNING, autoPaused = false)
+        // Settle the carried remainder at the moment of the change — see [pauseToggled].
+        val resumed = state.copy(lifecycle = RunLifecycle.RUNNING, autoPaused = false, lastTickMillis = nowMillis)
         return RunOutcome(
             resumed,
             listOf(RunEffect.Notify(notificationText(resumed)), RunEffect.Speak("Resuming.")),
