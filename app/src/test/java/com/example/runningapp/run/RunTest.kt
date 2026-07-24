@@ -479,6 +479,33 @@ class RunPhaseTest {
     }
 
     @Test
+    fun `the cool down completing releases the strap`() {
+        // A Run that ends itself does not go through the service's STOP, so releasing the strap
+        // and audio session has to ride out on an effect or it never happens (the leak this guards).
+        val driver = Driver()
+        driver.start()
+        driver.advance(60)
+        driver.skipPhase()
+
+        val effects = driver.advance(30)
+
+        assertEquals(1, effects.count<RunEffect.ReleaseStrap>())
+    }
+
+    @Test
+    fun `a stop releases the strap`() {
+        // The same choke point serves the button and notification STOP, so both end paths let go
+        // of the strap through one effect. Moving release out of finish() breaks this.
+        val driver = Driver()
+        driver.start()
+        driver.advance(5)
+
+        val effects = driver.stop()
+
+        assertEquals(1, effects.count<RunEffect.ReleaseStrap>())
+    }
+
+    @Test
     fun `the cool down ending finalizes with the run's own totals`() {
         val driver = Driver()
         driver.start()
@@ -780,10 +807,14 @@ class RunTotalsTest {
 
         val effects = driver.stop()
 
-        // The whole finalization: hand back GPS, write the totals. Nothing goes looking for the
-        // row to work out what to write.
+        // The whole finalization: hand back GPS, let go of the strap, write the totals. Nothing
+        // goes looking for the row to work out what to write.
         assertEquals(
-            listOf(RunEffect.StopGps, RunEffect.FinalizeRun(7L, driver.totalsOf(durationSeconds = 5))),
+            listOf(
+                RunEffect.StopGps,
+                RunEffect.ReleaseStrap,
+                RunEffect.FinalizeRun(7L, driver.totalsOf(durationSeconds = 5)),
+            ),
             effects,
         )
     }

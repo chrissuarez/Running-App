@@ -99,5 +99,16 @@ sealed interface RunEffect {
 
     /** Stop location updates. */
     data object StopGps : RunEffect
+
+    /**
+     * Let go of the sensor and audio session: the Run has ended and needs neither.
+     *
+     * Emitted whenever the Run finishes, including when it ends *itself* — the cool-down timer
+     * reaching zero or a skip out of cool-down — where nothing calls back in to stop it. The
+     * button and notification STOP release these directly too, so a Run ended that way sees an
+     * idempotent second release; the strap and audio session are #128's and both no-op the repeat.
+     * Symmetric with [StopGps]: the Run does not own the strap, it signals that it is done with it.
+     */
+    data object ReleaseStrap : RunEffect
 }
 

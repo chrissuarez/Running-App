@@ -649,7 +649,7 @@ object Run {
             if (current.runRowId != null) RunLifecycle.STOPPED else RunLifecycle.STOPPING
         return RunOutcome(
             finalized.state.copy(lifecycle = stopped),
-            saved.effects + RunEffect.StopGps + finalized.effects,
+            saved.effects + RunEffect.StopGps + RunEffect.ReleaseStrap + finalized.effects,
         )
     }
 
