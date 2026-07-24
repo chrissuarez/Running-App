@@ -430,15 +430,49 @@ class RunClockTest {
         driver.tickAfter(1_900)
         assertEquals(1L, driver.state.secondsRunning)
 
-        // Pausing 100ms later, then a tick a further 100ms on. Without settling the remainder the
-        // next tick would measure 1,000ms from the old boundary and bank a paused second that was
-        // 900ms run. Settled, that whole owed fraction is left with the second it was run in.
-        driver.nowMillis += 100
+        // Pause on that same pulse, then a tick 100ms on. Without settling, the next tick would
+        // measure 1,000ms from the old boundary and bank a paused second that was 900ms run; the
+        // owed 900ms is set aside against the running stretch, so no paused second is banked.
         driver.on(RunEvent.PauseToggled(driver.nowMillis))
         driver.tickAfter(100)
 
         assertEquals(0L, driver.state.secondsPaused)
         assertEquals(1L, driver.state.secondsRunning)
+    }
+
+    @Test
+    fun `a whole second run before a pause is banked as running, not lost`() {
+        val driver = Driver()
+        driver.start()
+
+        // One second banked, then a full second more elapses before the pause arrives — a pulse the
+        // phone was slow to deliver. That second was run, so pausing must bank it as running.
+        driver.tickAfter(1_000)
+        assertEquals(1L, driver.state.secondsRunning)
+
+        driver.nowMillis += 1_000
+        driver.on(RunEvent.PauseToggled(driver.nowMillis))
+
+        assertEquals(2L, driver.state.secondsRunning)
+        assertEquals(0L, driver.state.secondsPaused)
+    }
+
+    @Test
+    fun `the running remainder survives a pause and completes its second on resume`() {
+        val driver = Driver()
+        driver.start()
+
+        // 900ms owed as running, then a pause, 700ms of pause, a resume, and 100ms more of running.
+        driver.tickAfter(1_900)
+        driver.on(RunEvent.PauseToggled(driver.nowMillis))
+        driver.nowMillis += 700
+        driver.on(RunEvent.PauseToggled(driver.nowMillis))
+        driver.tickAfter(100)
+
+        // The 900ms run before the pause plus the 100ms after it make the second the pause split.
+        assertEquals(2L, driver.state.secondsRunning)
+        // 700ms of pause is under a second, so nothing is banked as paused yet either.
+        assertEquals(0L, driver.state.secondsPaused)
     }
 
     @Test

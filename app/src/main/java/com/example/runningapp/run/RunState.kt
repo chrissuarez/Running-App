@@ -126,6 +126,20 @@ data class RunState(
     val lastTickMillis: Long = 0,
 
     /**
+     * The sub-second wall time each stretch had run up to but not yet banked as a whole second,
+     * held for the stretch that is *not* currently accruing.
+     *
+     * The clock owes itself the leftover milliseconds between ticks (#147). Those milliseconds
+     * belong to whichever stretch was live when they elapsed, so a pause or resume landing between
+     * ticks must set them aside against the stretch it left and hand the next one a clean start —
+     * otherwise the fraction of a running second still owed at a pause is banked as paused, or the
+     * inverse. The live stretch's own leftover stays implicit in [lastTickMillis]; only the
+     * suspended stretch's is parked here, and restored the moment it takes over again.
+     */
+    val runningRemainderMillis: Long = 0,
+    val pausedRemainderMillis: Long = 0,
+
+    /**
      * Work produced before the row id arrived, in the order it was produced.
      *
      * Internal bookkeeping rather than anything the screen reads. It exists so that the early
