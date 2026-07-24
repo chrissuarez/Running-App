@@ -130,9 +130,18 @@ object Run {
      * second apart, so dropping the remainder leaked steadily in one direction — about half a
      * percent slow, a dozen-odd seconds short over a long run (#147).
      */
-    private fun tick(state: RunState, event: RunEvent.Tick): RunOutcome {
+    private fun tick(state: RunState, event: RunEvent.Tick): RunOutcome = accrue(state, event.nowMillis)
+
+    /**
+     * Account the whole seconds elapsed since the last tick under the lifecycle in force.
+     *
+     * The same reckoning a [tick] is, factored out so a pause or resume can settle the clock up to
+     * the instant it changes hands before it changes hands — the seconds already run (or already
+     * paused) at that instant are banked to the stretch they belong to, not to the one taking over.
+     */
+    private fun accrue(state: RunState, nowMillis: Long): RunOutcome {
         if (!state.lifecycle.isLive) return RunOutcome(state)
-        val elapsedSeconds = (event.nowMillis - state.lastTickMillis) / 1000
+        val elapsedSeconds = (nowMillis - state.lastTickMillis) / 1000
         if (elapsedSeconds < 1) return RunOutcome(state)
         // Advance by whole seconds only; the remainder stays owed against the next tick, which
         // measures from here rather than from this pulse's exact arrival.
@@ -550,36 +559,72 @@ object Run {
     /**
      * The pause/resume button. Only a live Run can be paused, and only a paused one resumed.
      *
-     * Settling the carried remainder is the whole reason [nowMillis] rides in here. The clock keeps
-     * the sub-second leftover owed against the next tick (#147), but that leftover accrued under the
-     * *old* lifecycle: if a pause lands 100ms after a 1,900ms running tick, the 900ms still owed was
-     * run, yet the next tick — now paused — would bank the whole second as paused. Moving
-     * [RunState.lastTickMillis] to the moment of the change draws the line where the lifecycle
-     * actually turned, so neither side claims the other's fraction of a second.
+     * Settling the clock up to [nowMillis] is the whole reason the time rides in here. The seconds
+     * already run at the instant of a pause are banked as running before the Run pauses — a pulse
+     * the phone was slow to deliver does not lose them — and the leftover sub-second still owed is
+     * set aside against the running stretch rather than counted as paused. Resuming is the mirror.
+     * See [changeLifecycle] and [RunState.runningRemainderMillis].
      */
     private fun pauseToggled(state: RunState, nowMillis: Long): RunOutcome = when (state.lifecycle) {
-        RunLifecycle.RUNNING -> RunOutcome(
-            state.copy(lifecycle = RunLifecycle.PAUSED, autoPaused = false, lastTickMillis = nowMillis),
+        RunLifecycle.RUNNING -> changeLifecycle(state, nowMillis, RunLifecycle.PAUSED, autoPaused = false) { paused ->
             // A tapped pause stops GPS; an auto-pause deliberately does not.
-            listOf(RunEffect.StopGps, RunEffect.Notify(notificationText(state))),
-        )
-        RunLifecycle.PAUSED -> {
-            val resumed = state.copy(lifecycle = RunLifecycle.RUNNING, autoPaused = false, lastTickMillis = nowMillis)
-            val effects = buildList {
+            listOf(RunEffect.StopGps, RunEffect.Notify(notificationText(paused)))
+        }
+        RunLifecycle.PAUSED -> changeLifecycle(state, nowMillis, RunLifecycle.RUNNING, autoPaused = false) { resumed ->
+            buildList {
                 // The mode the Run started with, not whatever the setting says now — and only once
                 // the row id has arrived. A Run resumed inside the row-creation window starts no
                 // location; the id landing, with the Run now running, is what starts it, exactly
                 // once (#146).
-                if (state.config?.runMode == RunMode.OUTDOOR && state.runRowId != null) {
+                if (resumed.config?.runMode == RunMode.OUTDOOR && resumed.runRowId != null) {
                     add(RunEffect.StartGps)
                 }
                 add(RunEffect.Notify(notificationText(resumed)))
             }
-            RunOutcome(resumed, effects)
         }
         // A stale notification action — the shade lags the Run — must not flip a stopped Run back
         // to paused, nor republish a running one over a Run that is already being finalized.
         else -> RunOutcome(state)
+    }
+
+    /**
+     * Freeze one stretch of the Run and start the next, drawing the line at [nowMillis].
+     *
+     * First the clock is settled: every whole second run (or paused) since the last tick is banked
+     * to the stretch that is ending — with all a running second's own work, so nothing about those
+     * seconds differs from a tick landing at that instant. A settle that ends the Run — a late pulse
+     * that carried it over its cool-down line as it was being paused — is returned as it stands;
+     * there is no stretch left to hand to.
+     *
+     * Then the leftover sub-second still owed is parked against the ending stretch, and the incoming
+     * stretch's own parked leftover is restored into [RunState.lastTickMillis], so each resumes owing
+     * exactly the fraction of a second it left off owing.
+     */
+    private fun changeLifecycle(
+        state: RunState,
+        nowMillis: Long,
+        to: RunLifecycle,
+        autoPaused: Boolean,
+        effects: (RunState) -> List<RunEffect>,
+    ): RunOutcome {
+        val settled = accrue(state, nowMillis)
+        val current = settled.state
+        if (current.lifecycle == to || !current.lifecycle.isLive) return settled
+        val leftoverMillis = nowMillis - current.lastTickMillis
+        val leaving = current.lifecycle
+        val changed = current.copy(
+            lifecycle = to,
+            autoPaused = autoPaused,
+            // Park the leaving stretch's owed fraction; restore the incoming one's into
+            // lastTickMillis, where a live stretch keeps its own, and zero it there.
+            lastTickMillis = nowMillis - when (to) {
+                RunLifecycle.RUNNING -> current.runningRemainderMillis
+                else -> current.pausedRemainderMillis
+            },
+            runningRemainderMillis = if (leaving == RunLifecycle.RUNNING) leftoverMillis else 0,
+            pausedRemainderMillis = if (leaving == RunLifecycle.PAUSED) leftoverMillis else 0,
+        )
+        return RunOutcome(changed, settled.effects + effects(changed))
     }
 
     /**
@@ -591,23 +636,19 @@ object Run {
      */
     private fun autoPause(state: RunState, nowMillis: Long): RunOutcome {
         if (state.lifecycle != RunLifecycle.RUNNING) return RunOutcome(state)
-        // Settle the carried remainder at the moment of the change — see [pauseToggled].
-        val paused = state.copy(lifecycle = RunLifecycle.PAUSED, autoPaused = true, lastTickMillis = nowMillis)
-        return RunOutcome(
-            paused,
-            listOf(RunEffect.Notify(notificationText(paused)), RunEffect.Speak("Auto-paused.")),
-        )
+        // Settles the clock at the moment of the change like a tapped pause — see [changeLifecycle].
+        return changeLifecycle(state, nowMillis, RunLifecycle.PAUSED, autoPaused = true) { paused ->
+            listOf(RunEffect.Notify(notificationText(paused)), RunEffect.Speak("Auto-paused."))
+        }
     }
 
     /** Movement again. Only an auto-pause may be undone this way; a tapped pause is the runner's. */
     private fun autoResume(state: RunState, nowMillis: Long): RunOutcome {
         if (state.lifecycle != RunLifecycle.PAUSED || !state.autoPaused) return RunOutcome(state)
-        // Settle the carried remainder at the moment of the change — see [pauseToggled].
-        val resumed = state.copy(lifecycle = RunLifecycle.RUNNING, autoPaused = false, lastTickMillis = nowMillis)
-        return RunOutcome(
-            resumed,
-            listOf(RunEffect.Notify(notificationText(resumed)), RunEffect.Speak("Resuming.")),
-        )
+        // Settles the clock at the moment of the change like a tapped resume — see [changeLifecycle].
+        return changeLifecycle(state, nowMillis, RunLifecycle.RUNNING, autoPaused = false) { resumed ->
+            listOf(RunEffect.Notify(notificationText(resumed)), RunEffect.Speak("Resuming."))
+        }
     }
 
     /** The skip button. Each Phase hands over to the next; skipping the cool-down ends the Run. */
