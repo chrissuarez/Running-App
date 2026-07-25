@@ -476,6 +476,25 @@ class RunClockTest {
     }
 
     @Test
+    fun `a second run before a skip belongs to the phase being left`() {
+        val driver = Driver()
+        driver.start()
+
+        // A 1,900ms pulse banks one warm-up second and leaves 900ms owed.
+        driver.tickAfter(1_900)
+
+        // The skip lands 100ms later, a full second after the last accounted boundary. Without
+        // settling first, the next tick would measure 2,000ms from that boundary and spend two
+        // seconds on the new phase — one of them run before the skip.
+        driver.nowMillis += 100
+        driver.skipPhase()
+        driver.tickAfter(1_000)
+
+        assertEquals(3L, driver.state.secondsRunning)
+        assertEquals(1L, driver.state.phaseSecondsElapsed)
+    }
+
+    @Test
     fun `ticks before the run starts do nothing`() {
         val driver = Driver()
 
