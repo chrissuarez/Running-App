@@ -495,6 +495,27 @@ class RunClockTest {
     }
 
     @Test
+    fun `a phase entered part-way through a second owes that fraction before its first second`() {
+        val driver = Driver()
+        driver.start()
+
+        // A 1,900ms pulse banks one warm-up second and leaves 900ms owed to the warm-up. Skipping
+        // on that pulse must not spend those 900ms on the main phase.
+        driver.tickAfter(1_900)
+        driver.skipPhase()
+
+        // The next run second falls only 100ms after the skip, so the main phase has yet to run one.
+        driver.tickAfter(1_000)
+        assertEquals(2L, driver.state.secondsRunning)
+        assertEquals(0L, driver.state.phaseSecondsElapsed)
+
+        // A second later it has — the run's clock never stops, only the credit moves.
+        driver.tickAfter(1_000)
+        assertEquals(3L, driver.state.secondsRunning)
+        assertEquals(1L, driver.state.phaseSecondsElapsed)
+    }
+
+    @Test
     fun `ticks before the run starts do nothing`() {
         val driver = Driver()
 

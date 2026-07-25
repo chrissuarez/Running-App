@@ -165,24 +165,30 @@ object Run {
         var ended = false
 
         for (i in 1..seconds) {
+            // The Run banks every second it runs; the Phase banks one only when its own clock
+            // completes a second. The two differ only after a skip taken part-way through a second,
+            // which leaves the new Phase owing that fraction — see [RunState.phaseCarryMillis].
+            val phaseMillis = current.phaseCarryMillis + 1000
+            val phaseSecond = phaseMillis >= 1000
             current = current.copy(
                 secondsRunning = current.secondsRunning + 1,
-                phaseSecondsElapsed = current.phaseSecondsElapsed + 1,
+                phaseSecondsElapsed = current.phaseSecondsElapsed + if (phaseSecond) 1 else 0,
+                phaseCarryMillis = if (phaseSecond) phaseMillis - 1000 else phaseMillis,
             )
             val limit = current.phaseLimitSeconds
             val remaining = limit - current.phaseSecondsElapsed
 
-            if (current.phase != RunPhase.MAIN && remaining == 10L) {
+            if (phaseSecond && current.phase != RunPhase.MAIN && remaining == 10L) {
                 effects += RunEffect.Speak("10 seconds of ${current.phase.spokenName} remaining")
             }
 
             // A Run with no Workout has a nought-second warm-up, so it hands over on its first
             // second — announcing the main workout to a runner who was never told to warm up. That
             // is what the Run does today, and this move is not the place to change what it says.
-            if (current.phase == RunPhase.WARM_UP && current.phaseSecondsElapsed >= limit) {
+            if (phaseSecond && current.phase == RunPhase.WARM_UP && current.phaseSecondsElapsed >= limit) {
                 current = current.copy(phase = RunPhase.MAIN, phaseSecondsElapsed = 0)
                 effects += RunEffect.Speak("Starting main workout")
-            } else if (current.phase == RunPhase.COOL_DOWN && current.phaseSecondsElapsed >= limit) {
+            } else if (phaseSecond && current.phase == RunPhase.COOL_DOWN && current.phaseSecondsElapsed >= limit) {
                 // Bank the terminating second before ending on it. The Run counts it toward its
                 // duration, so its zone (or no-data) total must count it too, and it writes its HR
                 // sample like any other second — otherwise the bands beneath the duration are one
@@ -204,9 +210,14 @@ object Run {
             // The Workout's Intervals, on the same second and after the handover, so the second
             // the warm-up ends is also the second the first Interval begins — the runner hears
             // "Starting main workout" and then "Start running, interval 1 of 6" without a gap.
-            val stepped = advanceIntervalSecond(current)
-            current = stepped.state
-            effects += stepped.effects
+            // The Intervals run on the Phase's clock, not the Run's: they are the main Phase's
+            // seconds, so a skip into it must not spend the fraction owed to the warm-up on the
+            // first Interval.
+            if (phaseSecond) {
+                val stepped = advanceIntervalSecond(current)
+                current = stepped.state
+                effects += stepped.effects
+            }
 
             // Ten minutes in, on a Run that has a reading to pin. What "drifting up" is measured
             // against for the rest of the Run — see [highCueCondition].
@@ -669,13 +680,22 @@ object Run {
         return RunOutcome(outcome.state, settled.effects + outcome.effects)
     }
 
-    /** The skip itself, on a Run whose clock is already settled to the instant of the tap. */
+    /**
+     * The skip itself, on a Run whose clock is already settled to the instant of the tap.
+     *
+     * The fraction of a second still owed at that instant was run under the Phase being left, so
+     * the incoming Phase starts owing it: its first second lands a full second after the tap rather
+     * than on the Run's next whole-second boundary, which would have been a shade early. A paused
+     * Run owes no running fraction — its Phase clock is frozen either way.
+     */
     private fun skipPhase(state: RunState, nowMillis: Long): RunOutcome {
+        val owed = if (state.lifecycle == RunLifecycle.RUNNING) nowMillis - state.lastTickMillis else 0
         return when (state.phase) {
             RunPhase.WARM_UP -> {
                 val skipped = state.copy(
                     phase = RunPhase.MAIN,
                     phaseSecondsElapsed = 0,
+                    phaseCarryMillis = -owed,
                     warmUpSkipped = true,
                 )
                 RunOutcome(
@@ -693,6 +713,7 @@ object Run {
                 val skipped = saved.state.copy(
                     phase = RunPhase.COOL_DOWN,
                     phaseSecondsElapsed = 0,
+                    phaseCarryMillis = -owed,
                     intervals = null,
                     intervalsFinished = true,
                     walkDecision = WalkDecision(),

@@ -140,6 +140,19 @@ data class RunState(
     val pausedRemainderMillis: Long = 0,
 
     /**
+     * How far the current Phase's own clock stands ahead of the Run's whole-second boundaries, in
+     * milliseconds — zero for a Phase that began on one, negative for a Phase entered part-way
+     * through a second.
+     *
+     * A skip lands whenever the runner taps it, which is rarely on a boundary. The fraction already
+     * run at that instant belongs to the Phase being left, so the incoming Phase starts owing it:
+     * its first second completes a full second after the tap, not on the Run's next boundary. The
+     * Run's own clock is untouched — it still banks every second it runs (#147) — so this only
+     * shifts which Phase a second is credited to, and by under a second at that.
+     */
+    val phaseCarryMillis: Long = 0,
+
+    /**
      * Work produced before the row id arrived, in the order it was produced.
      *
      * Internal bookkeeping rather than anything the screen reads. It exists so that the early
