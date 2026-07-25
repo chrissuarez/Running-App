@@ -651,9 +651,26 @@ object Run {
         }
     }
 
-    /** The skip button. Each Phase hands over to the next; skipping the cool-down ends the Run. */
+    /**
+     * The skip button. Each Phase hands over to the next; skipping the cool-down ends the Run.
+     *
+     * The clock is settled up to the tap first, exactly as [changeLifecycle] does: the seconds
+     * already run since the last tick belong to the Phase being left, not the one taking over.
+     * Without that, a late pulse's carried remainder was spent against the new Phase, advancing it
+     * by nearly a second it never ran. A settle that ends the Run — a skip landing as the cool-down
+     * line was crossed — is returned as it stands.
+     */
     private fun phaseSkipped(state: RunState, event: RunEvent.PhaseSkipped): RunOutcome {
         if (!state.lifecycle.isLive) return RunOutcome(state)
+        val settled = accrue(state, event.nowMillis)
+        val current = settled.state
+        if (!current.lifecycle.isLive) return settled
+        val outcome = skipPhase(current, event.nowMillis)
+        return RunOutcome(outcome.state, settled.effects + outcome.effects)
+    }
+
+    /** The skip itself, on a Run whose clock is already settled to the instant of the tap. */
+    private fun skipPhase(state: RunState, nowMillis: Long): RunOutcome {
         return when (state.phase) {
             RunPhase.WARM_UP -> {
                 val skipped = state.copy(
@@ -688,7 +705,7 @@ object Run {
                     ),
                 )
             }
-            RunPhase.COOL_DOWN -> finish(state, event.nowMillis)
+            RunPhase.COOL_DOWN -> finish(state, nowMillis)
         }
     }
 
