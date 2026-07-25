@@ -1,6 +1,12 @@
 package com.example.runningapp.foreground
 
 import com.example.runningapp.SessionStatus
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -371,6 +377,131 @@ class UnpromotedStartTest {
         promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false)
         promotion.reconcile(SessionStatus.IDLE, acquiringStrap = false)
         assertEquals(listOf("promote", "demote"), host.calls)
+    }
+}
+
+/**
+ * The subscription itself — what [ForegroundPromotion.follow] chooses to act on.
+ *
+ * These run on runTest's StandardTestDispatcher on purpose: nothing collects until the scheduler
+ * is advanced, which is what lets a StateFlow conflate two publishes into one the way the real
+ * service does. Collecting eagerly would hide the leak these exist for.
+ */
+@OptIn(ExperimentalCoroutinesApi::class)
+class FollowTest {
+
+    /** The service publishes a session status and a connection status; Promotion reads the pair. */
+    private fun MutableStateFlow<Pair<SessionStatus, String>>.asPromotionState() =
+        map { (status, connectionStatus) -> status to isAcquiringStrap(connectionStatus) }
+
+    @Test
+    fun `a conflated acquisition does not strand the eager start-command promote`() = runTest {
+        // #144, found on a Pixel 8a: opening the app with a saved strap left a wake lock and an
+        // ongoing notification held for minutes with no Run.
+        val host = RecordingHost()
+        val promotion = ForegroundPromotion(host)
+        val published = MutableStateFlow(SessionStatus.IDLE to "Disconnected")
+        val job = launch { promotion.follow(published.asPromotionState()) }
+        runCurrent() // the collector takes up the idle state it starts from
+
+        // onStartCommand: promote for Android's five-second deadline, publish "Connecting..."
+        // inline, then reconcile at the tail while the acquisition is genuinely in flight.
+        promotion.promoteForStartCommand()
+        published.value = SessionStatus.IDLE to "Connecting to Venu 2S..."
+        promotion.reconcile(SessionStatus.IDLE, acquiringStrap = true)
+
+        // The connect to a bonded device lands ~10ms later, before the collector has run at all,
+        // so StateFlow conflates "Connecting..." away and the pair reads unchanged.
+        published.value = SessionStatus.IDLE to "Connected"
+        runCurrent()
+
+        assertEquals(listOf("promote", "demote"), host.calls)
+        assertFalse(promotion.isPromoted)
+        job.cancel()
+    }
+
+    @Test
+    fun `an unchanged state against an unchanged promotion still costs nothing`() = runTest {
+        // What the old dedupe was protecting, and what keying on the Promotion must not lose:
+        // demote() ends in stopSelf(), and this sees every per-second heartbeat.
+        val host = RecordingHost()
+        val promotion = ForegroundPromotion(host)
+        val published = MutableStateFlow(SessionStatus.IDLE to "Connected")
+        val job = launch { promotion.follow(published.asPromotionState()) }
+        runCurrent()
+
+        repeat(5) {
+            published.value = SessionStatus.IDLE to "Connected"
+            runCurrent()
+        }
+
+        assertEquals(emptyList<String>(), host.calls)
+        job.cancel()
+    }
+
+    @Test
+    fun `a run's heartbeat does not re-promote through the subscription`() = runTest {
+        val host = RecordingHost()
+        val promotion = ForegroundPromotion(host)
+        val published = MutableStateFlow(SessionStatus.IDLE to "Disconnected")
+        val job = launch { promotion.follow(published.asPromotionState()) }
+        runCurrent()
+
+        published.value = SessionStatus.RUNNING to "Connected"
+        runCurrent()
+        repeat(5) {
+            published.value = SessionStatus.RUNNING to "Connected"
+            runCurrent()
+        }
+
+        assertEquals(listOf("promote"), host.calls)
+        job.cancel()
+    }
+
+    @Test
+    fun `a full run promotes once and demotes once through the subscription`() = runTest {
+        val host = RecordingHost()
+        val promotion = ForegroundPromotion(host)
+        val published = MutableStateFlow(SessionStatus.IDLE to "Disconnected")
+        val job = launch { promotion.follow(published.asPromotionState()) }
+        runCurrent()
+
+        listOf(
+            SessionStatus.IDLE to "Connecting to Venu 2S...",
+            SessionStatus.RUNNING to "Connected",
+            SessionStatus.PAUSED to "Connected",
+            SessionStatus.RUNNING to "Connected",
+            SessionStatus.STOPPING to "Connected",
+            SessionStatus.STOPPED to "Connected",
+        ).forEach {
+            published.value = it
+            runCurrent()
+        }
+
+        assertEquals(listOf("promote", "demote"), host.calls)
+        assertFalse(promotion.isPromoted)
+        job.cancel()
+    }
+
+    @Test
+    fun `a refused promotion is retried when the state moves, not on every heartbeat`() = runTest {
+        val host = RecordingHost(platformGrantsIt = false)
+        val promotion = ForegroundPromotion(host)
+        val published = MutableStateFlow(SessionStatus.IDLE to "Disconnected")
+        val job = launch { promotion.follow(published.asPromotionState()) }
+        runCurrent()
+
+        published.value = SessionStatus.RUNNING to "Connected"
+        runCurrent()
+        repeat(5) { // refused, and isPromoted stayed false — the key must not churn
+            published.value = SessionStatus.RUNNING to "Connected"
+            runCurrent()
+        }
+        published.value = SessionStatus.RUNNING to "Reconnecting in 3s..."
+        runCurrent()
+
+        assertEquals(listOf("promote", "promote"), host.calls)
+        job.cancel()
     }
 }
 

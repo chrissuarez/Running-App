@@ -1,6 +1,7 @@
 package com.example.runningapp.foreground
 
 import com.example.runningapp.SessionStatus
+import kotlinx.coroutines.flow.Flow
 
 /**
  * Is an Acquisition in flight — is the app scanning for, connecting to, or retrying a Strap?
@@ -119,6 +120,38 @@ class ForegroundPromotion(private val host: PromotionHost) {
             return
         }
         if (earned) attemptPromote() else unwind()
+    }
+
+    /**
+     * Follow published state for as long as the service lives, reconciling against each change.
+     *
+     * The subscription belongs here rather than in the service because of what it has to dedupe
+     * on. The obvious key — the published state — is the wrong one, and was a leak (#144): the
+     * eager [promoteForStartCommand] moves [isPromoted] outside this flow, so a state pair that
+     * reads unchanged since the last emission can still be a state nothing earns. Deduping on
+     * the state alone swallows it and the eager Promotion is never taken back.
+     *
+     * That is not hypothetical timing. Open the app with a saved strap: onStartCommand promotes
+     * for Android's deadline, publishes "Connecting..." inline, and the GATT connect to a bonded
+     * device lands ~10ms later. _hrState is a StateFlow and conflates, so the collector may only
+     * ever see "Connected" — the same pair it held before the intent — while the tail reconcile
+     * ran during the "Connecting" blip and rightly kept the Promotion. Nothing reconciles again,
+     * and a wake lock plus an ongoing notification sit there with no Run. Observed on a Pixel 8a
+     * holding one for minutes at a time.
+     *
+     * Keying on the Promotion as well as the state fixes it without level-triggering: an
+     * unchanged answer against an unchanged Promotion still costs nothing, which is what
+     * [reconcile]'s edge-triggering was protecting — demote() ends in stopSelf(), and this sees
+     * every per-second heartbeat.
+     */
+    suspend fun follow(states: Flow<Pair<SessionStatus, Boolean>>) {
+        var lastSeen: Triple<SessionStatus, Boolean, Boolean>? = null
+        states.collect { (sessionStatus, acquiringStrap) ->
+            val seen = Triple(sessionStatus, acquiringStrap, isPromoted)
+            if (seen == lastSeen) return@collect
+            lastSeen = seen
+            reconcile(sessionStatus, acquiringStrap)
+        }
     }
 
     /**
