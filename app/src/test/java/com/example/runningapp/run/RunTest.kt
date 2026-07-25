@@ -516,6 +516,28 @@ class RunClockTest {
     }
 
     @Test
+    fun `a skip taken while paused still owes the fraction run before the pause`() {
+        val driver = Driver()
+        driver.start()
+
+        // 900ms owed to the warm-up, parked by the pause. Skipping while paused, then resuming,
+        // must leave the main phase owing those 900ms rather than starting on the resumed clock.
+        driver.tickAfter(1_900)
+        driver.on(RunEvent.PauseToggled(driver.nowMillis))
+        driver.skipPhase()
+        driver.nowMillis += 5_000
+        driver.on(RunEvent.PauseToggled(driver.nowMillis))
+
+        // The first running second after the resume comes 100ms on — the fraction the pause parked.
+        driver.tickAfter(100)
+        assertEquals(2L, driver.state.secondsRunning)
+        assertEquals(0L, driver.state.phaseSecondsElapsed)
+
+        driver.tickAfter(1_000)
+        assertEquals(1L, driver.state.phaseSecondsElapsed)
+    }
+
+    @Test
     fun `ticks before the run starts do nothing`() {
         val driver = Driver()
 

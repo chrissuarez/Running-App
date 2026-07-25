@@ -685,11 +685,15 @@ object Run {
      *
      * The fraction of a second still owed at that instant was run under the Phase being left, so
      * the incoming Phase starts owing it: its first second lands a full second after the tap rather
-     * than on the Run's next whole-second boundary, which would have been a shade early. A paused
-     * Run owes no running fraction — its Phase clock is frozen either way.
+     * than on the Run's next whole-second boundary, which would have been a shade early. Skipping
+     * while paused owes the same fraction: the running one parked at the pause, which resuming
+     * restores — not the paused fraction elapsing now, which no Phase clock counts.
      */
     private fun skipPhase(state: RunState, nowMillis: Long): RunOutcome {
-        val owed = if (state.lifecycle == RunLifecycle.RUNNING) nowMillis - state.lastTickMillis else 0
+        val owed = when (state.lifecycle) {
+            RunLifecycle.RUNNING -> nowMillis - state.lastTickMillis
+            else -> state.runningRemainderMillis
+        }
         return when (state.phase) {
             RunPhase.WARM_UP -> {
                 val skipped = state.copy(
