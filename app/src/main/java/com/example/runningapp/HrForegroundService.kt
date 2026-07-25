@@ -743,16 +743,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
 
         // Promotion, derived. This is the whole of it: no code anywhere else promotes or demotes,
-        // so there is no release to forget. distinctUntilChanged is load-bearing — demote() ends
-        // in stopSelf(), and this sees every published state change, including each per-second
-        // heartbeat. See docs/adr/0001-promotion-is-derived-not-claimed.md.
+        // so there is no release to forget. What to skip and what to act on is Promotion's own
+        // question — deduping here on the published state alone stranded the eager start-command
+        // promote (#144), so the subscription lives in follow().
+        // See docs/adr/0001-promotion-is-derived-not-claimed.md.
         serviceScope.launch {
-            _hrState
-                .map { it.sessionStatus to it.acquiringStrap }
-                .distinctUntilChanged()
-                .collect { (sessionStatus, acquiringStrap) ->
-                    promotion.reconcile(sessionStatus, acquiringStrap)
-                }
+            promotion.follow(_hrState.map { it.sessionStatus to it.acquiringStrap })
         }
 
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
