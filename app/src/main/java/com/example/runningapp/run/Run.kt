@@ -670,12 +670,17 @@ object Run {
      * Without that, a late pulse's carried remainder was spent against the new Phase, advancing it
      * by nearly a second it never ran. A settle that ends the Run — a skip landing as the cool-down
      * line was crossed — is returned as it stands.
+     *
+     * The skip is the one the runner saw. If settling carries the Run over a Phase line itself, the
+     * Phase the button named is already over and the tap has nothing left to skip: "Skip Warm Up"
+     * pressed on the warm-up's last second must not go on to skip the whole workout with it.
      */
     private fun phaseSkipped(state: RunState, event: RunEvent.PhaseSkipped): RunOutcome {
         if (!state.lifecycle.isLive) return RunOutcome(state)
+        val tapped = state.phase
         val settled = accrue(state, event.nowMillis)
         val current = settled.state
-        if (!current.lifecycle.isLive) return settled
+        if (!current.lifecycle.isLive || current.phase != tapped) return settled
         val outcome = skipPhase(current, event.nowMillis)
         return RunOutcome(outcome.state, settled.effects + outcome.effects)
     }
@@ -741,7 +746,14 @@ object Run {
         // coach's evaluation. Releasing the Strap is a separate act and stays outside — a STOP
         // with no Run to end still dismisses the service, and the Strap is #128's.
         if (!state.lifecycle.isLive) return RunOutcome(state)
-        return finish(state, event.nowMillis)
+        // Settle the clock to the tap first, as a pause or a skip does: the seconds run since the
+        // last pulse are the runner's, and a STOP landing between ticks used to drop them from the
+        // duration and the bands beneath it. A settle that ends the Run itself — the cool-down line
+        // crossed by the same seconds — has already finalized, so there is nothing left to stop.
+        val settled = accrue(state, event.nowMillis)
+        if (!settled.state.lifecycle.isLive) return settled
+        val ended = finish(settled.state, event.nowMillis)
+        return RunOutcome(ended.state, settled.effects + ended.effects)
     }
 
     /**
