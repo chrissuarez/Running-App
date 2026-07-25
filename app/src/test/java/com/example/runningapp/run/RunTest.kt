@@ -538,6 +538,37 @@ class RunClockTest {
     }
 
     @Test
+    fun `a skip settling past its own phase line does not skip the next phase too`() {
+        val driver = Driver()
+        driver.start()
+
+        // The 60-second warm-up's last second arrives with the tap rather than before it: settling
+        // hands the Run into the main phase, so "Skip Warm Up" has nothing left to skip. Skipping
+        // again from there would abandon the whole workout.
+        driver.advance(59)
+        driver.nowMillis += 1_000
+        driver.skipPhase()
+
+        assertEquals(RunPhase.MAIN, driver.state.phase)
+        assertFalse(driver.state.intervalsFinished)
+    }
+
+    @Test
+    fun `a stop banks the seconds run since the last pulse`() {
+        val driver = Driver()
+        driver.start()
+
+        // One second banked, then a full second more before the STOP — a pulse the phone was slow
+        // to deliver. Those seconds were run, so the saved duration must count them.
+        driver.tickAfter(1_000)
+        driver.nowMillis += 1_000
+
+        val finalize = driver.on(RunEvent.Stopped(driver.nowMillis)).only<RunEffect.FinalizeRun>()
+
+        assertEquals(2L, finalize.totals.durationSeconds)
+    }
+
+    @Test
     fun `ticks before the run starts do nothing`() {
         val driver = Driver()
 
