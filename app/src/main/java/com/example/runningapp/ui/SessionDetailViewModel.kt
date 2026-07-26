@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.runningapp.data.SessionRepository
+import com.example.runningapp.data.isFinished
 import com.example.runningapp.export.GpxFileStore
 import com.example.runningapp.export.GpxShareFile
 import com.example.runningapp.export.GpxWriter
@@ -52,7 +53,10 @@ class SessionDetailViewModel(
             // Track points come through the same #38 accuracy gate as the map, so the file matches
             // the route the runner was shown.
             val trackPoints = session?.let { sessionRepository.getTrackPointsForMap(sessionId) }.orEmpty()
-            if (session == null || trackPoints.isEmpty()) {
+            // Checked again here, not just where the button is offered: the reads below are separate
+            // one-shots, so exporting a run still being recorded would stitch together a file the
+            // runner never ran.
+            if (session == null || !session.isFinished() || trackPoints.isEmpty()) {
                 _gpxShareFailed.emit(Unit)
                 return@launch
             }

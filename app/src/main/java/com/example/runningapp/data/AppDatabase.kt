@@ -47,6 +47,13 @@ data class RunnerSession(
     val weatherConditionCode: Int? = null
 )
 
+/**
+ * Whether the run has been saved with its totals. A row is inserted when the run starts and
+ * stamped with an end time only when it finishes, so a zero here means the run is still being
+ * written to — the state anything reading a run as a whole (the GPX export, #84) must wait for.
+ */
+fun RunnerSession.isFinished(): Boolean = endTime > 0
+
 /** The five zone columns, reachable by zone rather than by name. */
 fun RunnerSession.secondsInZone(zone: HrZone): Long = when (zone) {
     HrZone.ENDURANCE -> zone1Seconds

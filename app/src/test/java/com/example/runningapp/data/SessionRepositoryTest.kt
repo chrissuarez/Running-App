@@ -223,6 +223,34 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `hasTrackFlow offers sharing only once a run with a route has finished`() = runTest {
+        val sessionId = 7L
+        val accurateGps = trackPoint(sessionId, lon = 1.0, accuracy = 15f, source = TrackPointSource.GPS)
+        val mockTrackPointDao: TrackPointDao = mock()
+        whenever(mockTrackPointDao.getTrackPointsForSession(sessionId)).thenReturn(flowOf(listOf(accurateGps)))
+
+        // A run still being recorded: the row exists and points are arriving, but it has no end time.
+        whenever(mockDao.getSessionByIdFlow(sessionId)).thenReturn(flowOf(session(sessionId, endTime = 0L)))
+        val duringRun = SessionRepository(sessionDao = mockDao, trackPointDao = mockTrackPointDao)
+        assertEquals(false, duringRun.hasTrackFlow(sessionId).first())
+
+        whenever(mockDao.getSessionByIdFlow(sessionId)).thenReturn(flowOf(session(sessionId, endTime = 1_000L)))
+        val afterRun = SessionRepository(sessionDao = mockDao, trackPointDao = mockTrackPointDao)
+        assertEquals(true, afterRun.hasTrackFlow(sessionId).first())
+    }
+
+    @Test
+    fun `hasTrackFlow does not offer sharing for a finished run with no route`() = runTest {
+        val sessionId = 7L
+        val mockTrackPointDao: TrackPointDao = mock()
+        whenever(mockTrackPointDao.getTrackPointsForSession(sessionId)).thenReturn(flowOf(emptyList()))
+        whenever(mockDao.getSessionByIdFlow(sessionId)).thenReturn(flowOf(session(sessionId, endTime = 1_000L)))
+        val repositoryWithTrackPoints = SessionRepository(sessionDao = mockDao, trackPointDao = mockTrackPointDao)
+
+        assertEquals(false, repositoryWithTrackPoints.hasTrackFlow(sessionId).first())
+    }
+
+    @Test
     fun `deleteSession refreshes the history backup after removing the row`() = runTest {
         var refreshCount = 0
         val repositoryWithBackup = SessionRepository(
@@ -479,6 +507,16 @@ class SessionRepositoryTest {
         verify(mockSettingsRepo, never()).setTargetZone(any())
         verify(mockSettingsRepo, never()).setMaxHrDeliberately(any())
     }
+
+    private fun session(id: Long, endTime: Long) = RunnerSession(
+        id = id,
+        startTime = 0L,
+        endTime = endTime,
+        durationSeconds = 60,
+        avgBpm = 130,
+        maxBpm = 150,
+        targetZone = 2
+    )
 
     private fun trackPoint(sessionId: Long, lon: Double, accuracy: Float?, source: String) = TrackPoint(
         sessionId = sessionId,

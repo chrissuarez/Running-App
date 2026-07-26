@@ -65,10 +65,17 @@ object RunGpxTrack {
     fun runName(session: RunnerSession, zoneId: ZoneId = ZoneId.systemDefault()): String =
         "Run " + NAME_FORMAT.format(Instant.ofEpochMilli(session.startTime).atZone(zoneId))
 
-    /** Lower-case and hyphenated: it becomes a real file name in Drive, on a laptop, in an email. */
+    /**
+     * Lower-case and hyphenated: it becomes a real file name in Drive, on a laptop, in an email.
+     *
+     * The run's own id closes the name off: exports share one cache directory and a later write to
+     * the same name overwrites the earlier file, which would hand a share still in flight the wrong
+     * run. Two runs can share a local date and minute — back-to-back intervals, or the hour a clock
+     * change repeats — but never an id.
+     */
     fun fileName(session: RunnerSession, zoneId: ZoneId = ZoneId.systemDefault()): String =
         "run-" + FILE_NAME_FORMAT.format(Instant.ofEpochMilli(session.startTime).atZone(zoneId)) +
-            "." + GpxWriter.FILE_EXTENSION
+            "-" + session.id + "." + GpxWriter.FILE_EXTENSION
 
     private fun Map<Long, Int>.nearestBpm(atSecond: Long): Int? {
         for (offset in 0..HR_MATCH_TOLERANCE_SECONDS) {
