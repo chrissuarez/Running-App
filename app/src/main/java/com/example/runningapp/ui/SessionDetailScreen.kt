@@ -7,6 +7,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,11 +44,26 @@ fun SessionDetailScreen(
     samples: List<HrSample>,
     intervalStats: List<RunWalkIntervalStat>,
     onDeleteSession: (Long) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    // A run with no recorded GPS track — a treadmill run, or history from before #37 — has nothing to
+    // put in a GPX file, so Share is left off the bar entirely rather than offered greyed out (#84).
+    canShareGpx: Boolean = false,
+    onShareGpx: (Long) -> Unit = {},
+    shareFailed: Boolean = false,
+    onShareFailureShown: () -> Unit = {}
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(shareFailed) {
+        if (shareFailed) {
+            snackbarHostState.showSnackbar("Couldn't create the GPX file for this run")
+            onShareFailureShown()
+        }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = { Text("Session Summary") },
@@ -57,6 +73,11 @@ fun SessionDetailScreen(
                     }
                 },
                 actions = {
+                    if (session != null && canShareGpx) {
+                        IconButton(onClick = { onShareGpx(session.id) }) {
+                            Icon(Icons.Default.Share, contentDescription = "Share run as GPX")
+                        }
+                    }
                     IconButton(
                         onClick = { showDeleteConfirm = true },
                         enabled = session != null

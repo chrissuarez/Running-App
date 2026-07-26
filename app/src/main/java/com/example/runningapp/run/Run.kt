@@ -193,7 +193,7 @@ object Run {
                 // duration, so its zone (or no-data) total must count it too, and it writes its HR
                 // sample like any other second — otherwise the bands beneath the duration are one
                 // second short of it on every planned Run (#152).
-                val banked = bankSecond(current)
+                val banked = bankSecond(current, previousTickMillis + i * 1000)
                 current = banked.state
                 effects += banked.effects
                 // The Run ends itself. Nothing calls back in to stop it — that round trip was one
@@ -227,7 +227,7 @@ object Run {
                 )
             }
 
-            val banked = bankSecond(current)
+            val banked = bankSecond(current, previousTickMillis + i * 1000)
             current = banked.state
             effects += banked.effects
         }
@@ -252,7 +252,7 @@ object Run {
      * Every zone edge is measured against the Max HR pinned at START, never against Settings as it
      * stands now.
      */
-    private fun bankSecond(state: RunState): RunOutcome {
+    private fun bankSecond(state: RunState, atMillis: Long): RunOutcome {
         val config = state.config ?: return RunOutcome(state)
         val bpm = state.heartRate.bpm
         // One question, asked once: was there a reading? Zone 1 swallows everything beneath it, so
@@ -266,6 +266,7 @@ object Run {
             PendingRowWork.SaveHrSample(
                 HrSampleReading(
                     elapsedSeconds = state.secondsRunning,
+                    atMillis = atMillis,
                     rawBpm = bpm,
                     smoothedBpm = state.heartRate.smoothedBpm,
                     connectionStatus = state.heartRate.connectionStatus,

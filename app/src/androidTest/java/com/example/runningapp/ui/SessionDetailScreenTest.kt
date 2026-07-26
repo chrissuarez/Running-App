@@ -4,7 +4,9 @@ import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -12,6 +14,7 @@ import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.ui.theme.RunningAppTheme
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -83,4 +86,53 @@ class SessionDetailScreenTest {
         composeRule.onNodeWithText("Interval 1").assertIsDisplayed()
         composeRule.onAllNodesWithText("Completion band").assertCountEquals(2)
     }
+
+    @Test
+    fun sessionDetailScreen_offersShareForARunWithAGpsTrack() {
+        var sharedSessionId: Long? = null
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = plainSession(),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = {},
+                    canShareGpx = true,
+                    onShareGpx = { sharedSessionId = it }
+                )
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("Share run as GPX").assertIsDisplayed().performClick()
+        assertEquals(1L, sharedSessionId)
+    }
+
+    @Test
+    fun sessionDetailScreen_hidesShareForARunWithNoGpsTrack() {
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = plainSession(),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = {},
+                    canShareGpx = false
+                )
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("Delete run").assertIsDisplayed()
+        composeRule.onAllNodesWithContentDescription("Share run as GPX").assertCountEquals(0)
+    }
+
+    private fun plainSession() = RunnerSession(
+        id = 1L,
+        startTime = 1_742_000_000_000,
+        durationSeconds = 1800,
+        avgBpm = 130,
+        maxBpm = 150,
+        targetZone = 2
+    )
 }

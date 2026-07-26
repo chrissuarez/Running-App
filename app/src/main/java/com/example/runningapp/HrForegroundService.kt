@@ -492,6 +492,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             rawBpm = effect.sample.rawBpm,
             smoothedBpm = effect.sample.smoothedBpm,
             connectionState = effect.sample.connectionStatus,
+            timestampMillis = effect.sample.atMillis,
             // Pace is GPS's, which the Run starts and stops but never reads.
             paceMinPerKm = _hrState.value.paceMinPerKm,
         )

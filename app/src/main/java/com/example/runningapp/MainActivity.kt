@@ -48,6 +48,7 @@ import androidx.navigation.navArgument
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import com.example.runningapp.data.SessionRepository
+import com.example.runningapp.export.gpxShareChooser
 import com.example.runningapp.foreground.isAcquiringStrap
 import com.example.runningapp.navigation.Routes
 import com.example.runningapp.ui.FeelFeedbackSheet
@@ -190,8 +191,9 @@ class MainActivity : ComponentActivity() {
                         factory = HistoryViewModelFactory(sessionRepository)
                     )
                     val sessionDetailViewModel: SessionDetailViewModel = viewModel(
-                        factory = SessionDetailViewModelFactory(sessionRepository)
+                        factory = SessionDetailViewModelFactory(sessionRepository, appContainer.gpxFileStore)
                     )
+                    var gpxShareFailed by remember { mutableStateOf(false) }
                     val selectedSessionIds by historyViewModel.selectedSessionIds.collectAsState()
                     val historySessions by database.sessionDao().getLast20Sessions().collectAsState(initial = emptyList())
 
@@ -206,6 +208,16 @@ class MainActivity : ComponentActivity() {
                         sessionDetailViewModel.deleteCompleted.collect {
                             navigateTo(Routes.HISTORY)
                         }
+                    }
+
+                    LaunchedEffect(sessionDetailViewModel) {
+                        sessionDetailViewModel.gpxShareReady.collect { file ->
+                            startActivity(gpxShareChooser(file))
+                        }
+                    }
+
+                    LaunchedEffect(sessionDetailViewModel) {
+                        sessionDetailViewModel.gpxShareFailed.collect { gpxShareFailed = true }
                     }
 
                     LaunchedEffect(sessionRepository) {
@@ -444,6 +456,13 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            // Share is only offered for runs that actually recorded a route (#84).
+                            val hasTrack by produceState(initialValue = false, key1 = sessionId) {
+                                sessionId?.let { id ->
+                                    sessionRepository.hasTrackFlow(id).collect { value = it }
+                                }
+                            }
+
                             SessionDetailScreen(
                                 session = selectedSession,
                                 samples = sessionSamples,
@@ -451,7 +470,11 @@ class MainActivity : ComponentActivity() {
                                 onDeleteSession = { id ->
                                     sessionDetailViewModel.deleteSession(id)
                                 },
-                                onBack = { navigateTo(Routes.HISTORY) }
+                                onBack = { navigateTo(Routes.HISTORY) },
+                                canShareGpx = hasTrack,
+                                onShareGpx = { id -> sessionDetailViewModel.shareGpx(id) },
+                                shareFailed = gpxShareFailed,
+                                onShareFailureShown = { gpxShareFailed = false }
                             )
                         }
                         composable(Routes.TRAINING_PLAN) {
@@ -1477,3 +1500,4 @@ fun DeviceListItem(device: BluetoothDevice, onClick: () -> Unit) {
         }
     }
 }
+

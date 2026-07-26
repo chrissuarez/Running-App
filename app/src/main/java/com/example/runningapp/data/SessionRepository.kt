@@ -162,6 +162,13 @@ class SessionRepository(
         return dao.getTrackPointsForSessionOnce(sessionId).filter { it.isAcceptedForMap() }
     }
 
+    /** One-shot read of a finished run, for callers that need it once rather than as a stream. */
+    suspend fun getSession(sessionId: Long): RunnerSession? = sessionDao.getSessionById(sessionId)
+
+    /** One-shot read of a run's heart-rate samples, ordered by elapsed second. */
+    suspend fun getHrSamples(sessionId: Long): List<HrSample> =
+        sampleDao?.getSamplesForSessionOnce(sessionId) ?: emptyList()
+
     /**
      * Live version of [getTrackPointsForMap] (#40): the in-run map card's trail redraws as new
      * points are recorded, filtered by the same #38 accuracy rule.
@@ -170,6 +177,14 @@ class SessionRepository(
         val dao = trackPointDao ?: return flowOf(emptyList())
         return dao.getTrackPointsForSession(sessionId).map { points -> points.filter { it.isAcceptedForMap() } }
     }
+
+    /**
+     * Whether a run has a route worth drawing or exporting (#84) — judged on the same accuracy-gated
+     * points the map and the GPX file are built from, so Share is never offered for a run the export
+     * would find empty. False for a treadmill run, and for history recorded before #37.
+     */
+    fun hasTrackFlow(sessionId: Long): Flow<Boolean> =
+        getTrackPointsForMapFlow(sessionId).map { it.isNotEmpty() }
 
     private fun TrackPoint.isAcceptedForMap(): Boolean = when (source) {
         TrackPointSource.BACKFILL -> true

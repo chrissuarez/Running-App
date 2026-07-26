@@ -8,6 +8,8 @@ import com.example.runningapp.data.DatabaseBackupManager
 import com.example.runningapp.data.OpenMeteoWeatherClient
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.WeatherClient
+import com.example.runningapp.export.FileProviderGpxFileStore
+import com.example.runningapp.export.GpxFileStore
 import com.mapbox.common.MapboxOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -56,6 +58,10 @@ class AppContainer(context: Context) {
 
     val weatherClient: WeatherClient by lazy {
         OpenMeteoWeatherClient()
+    }
+
+    val gpxFileStore: GpxFileStore by lazy {
+        FileProviderGpxFileStore(appContext)
     }
 
     val sessionRepository: SessionRepository by lazy {
