@@ -10,11 +10,8 @@ import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointDao
 import com.example.runningapp.data.TrackPointSource
 import com.example.runningapp.export.GpxFileStore
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -87,40 +84,29 @@ class SessionDetailViewModelGpxTest {
         source = TrackPointSource.GPS
     )
 
-    private fun CoroutineScope.collectFailures(viewModel: SessionDetailViewModel, into: MutableList<Unit>): Job =
-        launch { viewModel.gpxShareFailed.collect { into += it } }
-
     @Test
     fun `a run with no GPS track reports a failed share and never writes a file`() = runTest(dispatcher) {
         val store = RecordingGpxFileStore()
         val viewModel = SessionDetailViewModel(repository(trackPoints = emptyList()), store, dispatcher)
-        val failures = mutableListOf<Unit>()
-        val job = collectFailures(viewModel, failures)
-        advanceUntilIdle()
 
         viewModel.shareGpx(7L)
         advanceUntilIdle()
 
-        assertEquals(1, failures.size)
+        assertTrue(viewModel.gpxShareFailed.value)
         assertEquals(0, store.calls)
         assertNull(store.contents)
-        job.cancel()
     }
 
     @Test
     fun `a deleted run reports a failed share`() = runTest(dispatcher) {
         val store = RecordingGpxFileStore()
         val viewModel = SessionDetailViewModel(repository(session = null), store, dispatcher)
-        val failures = mutableListOf<Unit>()
-        val job = collectFailures(viewModel, failures)
-        advanceUntilIdle()
 
         viewModel.shareGpx(7L)
         advanceUntilIdle()
 
-        assertEquals(1, failures.size)
+        assertTrue(viewModel.gpxShareFailed.value)
         assertEquals(0, store.calls)
-        job.cancel()
     }
 
     @Test
@@ -132,16 +118,12 @@ class SessionDetailViewModelGpxTest {
             store,
             dispatcher
         )
-        val failures = mutableListOf<Unit>()
-        val job = collectFailures(viewModel, failures)
-        advanceUntilIdle()
 
         viewModel.shareGpx(7L)
         advanceUntilIdle()
 
-        assertEquals(1, failures.size)
+        assertTrue(viewModel.gpxShareFailed.value)
         assertEquals(0, store.calls)
-        job.cancel()
     }
 
     @Test
@@ -188,32 +170,42 @@ class SessionDetailViewModelGpxTest {
     }
 
     @Test
+    fun `a written file is kept until the screen has opened the share sheet`() = runTest(dispatcher) {
+        // The export outlives the screen that asked for it: a result announced into thin air while
+        // the activity is being recreated would leave the runner's tap doing nothing at all.
+        val store = RecordingGpxFileStore(uriToReturn = mock<Uri>())
+        val viewModel = SessionDetailViewModel(repository(trackPoints = listOf(gpsPoint(0))), store, dispatcher)
+
+        viewModel.shareGpx(7L)
+        advanceUntilIdle()
+
+        // Named in the device's own time zone, so only the run's id is pinned here.
+        val ready = viewModel.gpxShareReady.value
+        assertTrue("file name was ${ready?.fileName}", ready?.fileName?.endsWith("-7.gpx") == true)
+
+        viewModel.gpxShareHandled()
+        assertNull(viewModel.gpxShareReady.value)
+    }
+
+    @Test
     fun `a store that cannot produce a shareable file reports a failed share`() = runTest(dispatcher) {
         val store = RecordingGpxFileStore(uriToReturn = null)
         val viewModel = SessionDetailViewModel(repository(trackPoints = listOf(gpsPoint(0))), store, dispatcher)
-        val failures = mutableListOf<Unit>()
-        val job = collectFailures(viewModel, failures)
-        advanceUntilIdle()
 
         viewModel.shareGpx(7L)
         advanceUntilIdle()
 
         assertEquals(1, store.calls)
-        assertEquals(1, failures.size)
-        job.cancel()
+        assertTrue(viewModel.gpxShareFailed.value)
     }
 
     @Test
     fun `sharing with no file target wired reports a failed share`() = runTest(dispatcher) {
         val viewModel = SessionDetailViewModel(repository(trackPoints = listOf(gpsPoint(0))), null, dispatcher)
-        val failures = mutableListOf<Unit>()
-        val job = collectFailures(viewModel, failures)
-        advanceUntilIdle()
 
         viewModel.shareGpx(7L)
         advanceUntilIdle()
 
-        assertEquals(1, failures.size)
-        job.cancel()
+        assertTrue(viewModel.gpxShareFailed.value)
     }
 }

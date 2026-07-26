@@ -13,7 +13,9 @@ import com.example.runningapp.export.RunGpxTrack
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -29,11 +31,25 @@ class SessionDetailViewModel(
     private val _deleteCompleted = MutableSharedFlow<Long>(extraBufferCapacity = 1)
     val deleteCompleted = _deleteCompleted.asSharedFlow()
 
-    private val _gpxShareReady = MutableSharedFlow<GpxShareFile>(extraBufferCapacity = 1)
-    val gpxShareReady = _gpxShareReady.asSharedFlow()
+    // Held as state rather than announced once: an export outlives the screen that asked for it,
+    // and if the activity is being recreated when the file is ready there is nobody listening. A
+    // result that is kept until the screen acknowledges it cannot be missed that way — the runner
+    // would otherwise tap Share and watch nothing happen at all.
+    private val _gpxShareReady = MutableStateFlow<GpxShareFile?>(null)
+    val gpxShareReady = _gpxShareReady.asStateFlow()
 
-    private val _gpxShareFailed = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
-    val gpxShareFailed = _gpxShareFailed.asSharedFlow()
+    private val _gpxShareFailed = MutableStateFlow(false)
+    val gpxShareFailed = _gpxShareFailed.asStateFlow()
+
+    /** The share sheet has been opened for the ready file; it is not offered again. */
+    fun gpxShareHandled() {
+        _gpxShareReady.value = null
+    }
+
+    /** The failure has been shown to the runner. */
+    fun gpxShareFailureShown() {
+        _gpxShareFailed.value = false
+    }
 
     fun deleteSession(sessionId: Long) {
         viewModelScope.launch {
@@ -51,7 +67,7 @@ class SessionDetailViewModel(
         viewModelScope.launch {
             val store = gpxFileStore
             if (store == null) {
-                _gpxShareFailed.emit(Unit)
+                _gpxShareFailed.value = true
                 return@launch
             }
             val session = sessionRepository.getSession(sessionId)
@@ -62,7 +78,7 @@ class SessionDetailViewModel(
             // one-shots, so exporting a run still being recorded would stitch together a file the
             // runner never ran.
             if (session == null || !session.isFinished() || trackPoints.isEmpty()) {
-                _gpxShareFailed.emit(Unit)
+                _gpxShareFailed.value = true
                 return@launch
             }
             val hrSamples = sessionRepository.getHrSamples(sessionId)
@@ -84,14 +100,12 @@ class SessionDetailViewModel(
                 null
             }
             if (uri == null) {
-                _gpxShareFailed.emit(Unit)
+                _gpxShareFailed.value = true
             } else {
-                _gpxShareReady.emit(
-                    GpxShareFile(
-                        uri = uri,
-                        fileName = fileName,
-                        runName = track.name
-                    )
+                _gpxShareReady.value = GpxShareFile(
+                    uri = uri,
+                    fileName = fileName,
+                    runName = track.name
                 )
             }
         }
