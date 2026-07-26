@@ -93,7 +93,7 @@ class SessionDetailViewModelGpxTest {
     @Test
     fun `a run with no GPS track reports a failed share and never writes a file`() = runTest(dispatcher) {
         val store = RecordingGpxFileStore()
-        val viewModel = SessionDetailViewModel(repository(trackPoints = emptyList()), store)
+        val viewModel = SessionDetailViewModel(repository(trackPoints = emptyList()), store, dispatcher)
         val failures = mutableListOf<Unit>()
         val job = collectFailures(viewModel, failures)
         advanceUntilIdle()
@@ -110,7 +110,7 @@ class SessionDetailViewModelGpxTest {
     @Test
     fun `a deleted run reports a failed share`() = runTest(dispatcher) {
         val store = RecordingGpxFileStore()
-        val viewModel = SessionDetailViewModel(repository(session = null), store)
+        val viewModel = SessionDetailViewModel(repository(session = null), store, dispatcher)
         val failures = mutableListOf<Unit>()
         val job = collectFailures(viewModel, failures)
         advanceUntilIdle()
@@ -129,7 +129,8 @@ class SessionDetailViewModelGpxTest {
         val store = RecordingGpxFileStore()
         val viewModel = SessionDetailViewModel(
             repository(session = session().copy(endTime = 0), trackPoints = listOf(gpsPoint(0))),
-            store
+            store,
+            dispatcher
         )
         val failures = mutableListOf<Unit>()
         val job = collectFailures(viewModel, failures)
@@ -154,7 +155,8 @@ class SessionDetailViewModelGpxTest {
                     HrSample(sessionId = 7L, elapsedSeconds = 1, rawBpm = 122, smoothedBpm = 100, connectionState = "Connected")
                 )
             ),
-            store
+            store,
+            dispatcher
         )
 
         viewModel.shareGpx(7L)
@@ -175,7 +177,8 @@ class SessionDetailViewModelGpxTest {
             repository(
                 trackPoints = listOf(gpsPoint(0), gpsPoint(1).copy(horizontalAccuracyMeters = 120f))
             ),
-            store
+            store,
+            dispatcher
         )
 
         viewModel.shareGpx(7L)
@@ -187,7 +190,7 @@ class SessionDetailViewModelGpxTest {
     @Test
     fun `a store that cannot produce a shareable file reports a failed share`() = runTest(dispatcher) {
         val store = RecordingGpxFileStore(uriToReturn = null)
-        val viewModel = SessionDetailViewModel(repository(trackPoints = listOf(gpsPoint(0))), store)
+        val viewModel = SessionDetailViewModel(repository(trackPoints = listOf(gpsPoint(0))), store, dispatcher)
         val failures = mutableListOf<Unit>()
         val job = collectFailures(viewModel, failures)
         advanceUntilIdle()
@@ -202,7 +205,7 @@ class SessionDetailViewModelGpxTest {
 
     @Test
     fun `sharing with no file target wired reports a failed share`() = runTest(dispatcher) {
-        val viewModel = SessionDetailViewModel(repository(trackPoints = listOf(gpsPoint(0))), null)
+        val viewModel = SessionDetailViewModel(repository(trackPoints = listOf(gpsPoint(0))), null, dispatcher)
         val failures = mutableListOf<Unit>()
         val job = collectFailures(viewModel, failures)
         advanceUntilIdle()

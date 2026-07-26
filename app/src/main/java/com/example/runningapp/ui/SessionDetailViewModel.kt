@@ -10,15 +10,20 @@ import com.example.runningapp.export.GpxFileStore
 import com.example.runningapp.export.GpxShareFile
 import com.example.runningapp.export.GpxWriter
 import com.example.runningapp.export.RunGpxTrack
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class SessionDetailViewModel(
     private val sessionRepository: SessionRepository,
     // Null wherever no file target is wired (tests): sharing then reports itself unavailable rather
     // than failing silently.
-    private val gpxFileStore: GpxFileStore? = null
+    private val gpxFileStore: GpxFileStore? = null,
+    /** Where a run is turned into XML — injectable so tests can hold that work on their own clock. */
+    private val assemblyDispatcher: CoroutineDispatcher = Dispatchers.Default
 ) : ViewModel() {
 
     private val _deleteCompleted = MutableSharedFlow<Long>(extraBufferCapacity = 1)
@@ -60,14 +65,20 @@ class SessionDetailViewModel(
                 _gpxShareFailed.emit(Unit)
                 return@launch
             }
-            val track = RunGpxTrack.build(
-                session = session,
-                trackPoints = trackPoints,
-                hrSamples = sessionRepository.getHrSamples(sessionId)
-            )
+            val hrSamples = sessionRepository.getHrSamples(sessionId)
+            // Off the main thread: an hour's run is thousands of points, each formatted into XML,
+            // and the runner tapped Share expecting the sheet to open, not the screen to stall.
+            val (track, contents) = withContext(assemblyDispatcher) {
+                val built = RunGpxTrack.build(
+                    session = session,
+                    trackPoints = trackPoints,
+                    hrSamples = hrSamples
+                )
+                built to GpxWriter.write(built)
+            }
             val fileName = RunGpxTrack.fileName(session)
             val uri = try {
-                store.write(fileName, GpxWriter.write(track))
+                store.write(fileName, contents)
             } catch (e: Exception) {
                 Log.e("GpxExport", "Failed to write GPX for sessionId=$sessionId", e)
                 null
