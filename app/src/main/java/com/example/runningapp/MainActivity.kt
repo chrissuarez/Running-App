@@ -193,7 +193,8 @@ class MainActivity : ComponentActivity() {
                     val sessionDetailViewModel: SessionDetailViewModel = viewModel(
                         factory = SessionDetailViewModelFactory(sessionRepository, appContainer.gpxFileStore)
                     )
-                    var gpxShareFailed by remember { mutableStateOf(false) }
+                    val gpxShareReady by sessionDetailViewModel.gpxShareReady.collectAsState()
+                    val gpxShareFailed by sessionDetailViewModel.gpxShareFailed.collectAsState()
                     val selectedSessionIds by historyViewModel.selectedSessionIds.collectAsState()
                     val historySessions by database.sessionDao().getLast20Sessions().collectAsState(initial = emptyList())
 
@@ -210,14 +211,13 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    LaunchedEffect(sessionDetailViewModel) {
-                        sessionDetailViewModel.gpxShareReady.collect { file ->
+                    // Keyed on the file itself, so a result that arrived while this screen was
+                    // being recreated is picked up as soon as it is listening again.
+                    LaunchedEffect(gpxShareReady) {
+                        gpxShareReady?.let { file ->
                             startActivity(gpxShareChooser(file))
+                            sessionDetailViewModel.gpxShareHandled()
                         }
-                    }
-
-                    LaunchedEffect(sessionDetailViewModel) {
-                        sessionDetailViewModel.gpxShareFailed.collect { gpxShareFailed = true }
                     }
 
                     LaunchedEffect(sessionRepository) {
@@ -474,7 +474,7 @@ class MainActivity : ComponentActivity() {
                                 canShareGpx = hasTrack,
                                 onShareGpx = { id -> sessionDetailViewModel.shareGpx(id) },
                                 shareFailed = gpxShareFailed,
-                                onShareFailureShown = { gpxShareFailed = false }
+                                onShareFailureShown = { sessionDetailViewModel.gpxShareFailureShown() }
                             )
                         }
                         composable(Routes.TRAINING_PLAN) {
