@@ -34,14 +34,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -60,7 +58,6 @@ import com.example.runningapp.run.RunMode
 import com.example.runningapp.run.RunPhase
 import com.example.runningapp.run.RunState
 import com.example.runningapp.data.AppDatabase
-import com.example.runningapp.data.AiCoachClient
 import com.example.runningapp.data.DatabaseBackupManager
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.HrSample
@@ -71,11 +68,10 @@ import com.example.runningapp.data.TrackPointSource
 import com.example.runningapp.foreground.ForegroundPromotion
 import com.example.runningapp.foreground.PromotionHost
 import com.example.runningapp.foreground.isAcquiringStrap
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
-enum class SessionStatus { IDLE, CONNECTING, RUNNING, PAUSED, STOPPING, STOPPED, ERROR }
+// Exactly the Run's lifecycle, under the screen's older names — [RunLifecycle.asSessionStatus] is
+// the only thing that writes it, so there is no value here a Run cannot be in.
+enum class SessionStatus { IDLE, RUNNING, PAUSED, STOPPING, STOPPED }
 enum class SessionPhase { WARM_UP, MAIN, COOL_DOWN }
 enum class StructuredWorkoutPhase { RUN, WALK }
 
@@ -84,28 +80,15 @@ data class HrState(
     val connectionStatus: String = "Disconnected",
     val sessionStatus: SessionStatus = SessionStatus.IDLE,
     val bpm: Int = 0,
-    val lastUpdateTimestamp: Long = 0,
-    val connectedDeviceName: String? = null,
     val scannedDevices: List<BluetoothDevice> = emptyList(),
-    val discoveredServices: List<String> = emptyList(),
-    val lastPacketTimeFormatted: String = "--:--:--.---",
-    val dataBits: String = "Unknown",
-    
-    // Coaching Debug Info
+
     val avgBpm: Int = 0,
-    val currentZone: String = "No Data", 
-    val timeInZoneString: String = "0s", 
-    val cooldownWithHysteresisString: String = "Ready",
-    
-    // Session Engine Debug Info
+    // The live screen's fallback coach line: how long until the coach next has something to say.
+    val coachWaitingLine: String = "Ready",
+
     val secondsRunning: Long = 0,
-    val secondsPaused: Long = 0,
-    val reconnectAttempts: Int = 0,
     val lastHrAgeSeconds: Long = 0,
-    val errorMessage: String? = null,
-    
-    // Mission 3: In-Memory Zone Timers
-    val zoneTimes: Map<Int, Long> = mapOf(1 to 0L, 2 to 0L, 3 to 0L, 4 to 0L, 5 to 0L),
+
     val isSimulating: Boolean = false,
 
     val currentPhase: SessionPhase = SessionPhase.WARM_UP,
@@ -128,7 +111,6 @@ data class HrState(
     // Mission 4: Outdoor Running
     val distanceKm: Double = 0.0,
     val paceMinPerKm: Double = 0.0,
-    val runMode: String = "treadmill",
 
     // Mission 2: Settings Summary
     val userSettings: UserSettings = UserSettings(),
@@ -369,22 +351,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun publishRun(run: RunState, nowMillis: Long) {
         val live = run.lifecycle.isLive
         val intervals = run.intervals?.takeIf { live }
-        val debug = coachingDebug(run, nowMillis)
         val hrAge = if (lastHrTimestamp > 0) (nowMillis - lastHrTimestamp) / 1000 else 0
         _hrState.update {
             it.copy(
                 sessionStatus = run.lifecycle.asSessionStatus(),
                 secondsRunning = run.secondsRunning,
-                secondsPaused = run.secondsPaused,
-                zoneTimes = run.tally.zoneSeconds.asZoneTimes(),
                 walkBreaksCount = run.walkBreaks,
                 lastHrAgeSeconds = hrAge,
                 isSimulating = isSimulationEnabled,
 
                 avgBpm = run.heartRate.smoothedBpm,
-                currentZone = debug.zone,
-                timeInZoneString = debug.timeInZone,
-                cooldownWithHysteresisString = debug.cooldown,
+                coachWaitingLine = run.coachWaitingLine(nowMillis),
 
                 currentPhase = run.phase.asSessionPhase(),
                 phaseSecondsElapsed = if (live) run.phaseSecondsElapsed else 0,
@@ -439,30 +416,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         IntervalKind.WALK -> StructuredWorkoutPhase.WALK
     }
 
-    private fun ZoneSeconds.asZoneTimes(): Map<Int, Long> =
-        mapOf(1 to zone1, 2 to zone2, 3 to zone3, 4 to zone4, 5 to zone5)
-
-    private data class CoachingDebug(val zone: String, val timeInZone: String, val cooldown: String)
-
     /**
-     * The developer overlay's three strings, and — through the last of them — the live screen's
-     * fallback coach line. Reproduced from the Run's own coaching state rather than recomputed, so
-     * the read-out cannot describe a coach the Run is not running.
+     * The live screen's fallback coach line: what the coach is waiting on when it has nothing to
+     * say. Read off the Run's own coaching state rather than recomputed, so the line cannot
+     * describe a coach the Run is not running.
      */
-    private fun coachingDebug(run: RunState, nowMillis: Long): CoachingDebug = when {
-        run.heartRate.recent.isEmpty() -> CoachingDebug("Init", "0s", "Ready")
-        !run.controls.coachingEnabled -> CoachingDebug("Disabled", "--", "Off")
-        else -> {
-            val ladder = run.coaching.ladder
-            CoachingDebug(
-                zone = run.coaching.band.name,
-                timeInZone = "${ladder.secondsOutOfTarget(nowMillis)}s",
-                cooldown = when (run.coaching.band) {
-                    ZoneBand.IN, ZoneBand.UNKNOWN -> "Ready"
-                    else -> "Next: ${ladder.secondsUntilNextCue(nowMillis)}s"
-                },
-            )
-        }
+    private fun RunState.coachWaitingLine(nowMillis: Long): String = when {
+        heartRate.recent.isEmpty() -> "Ready"
+        !controls.coachingEnabled -> "Off"
+        coaching.band == ZoneBand.IN || coaching.band == ZoneBand.UNKNOWN -> "Ready"
+        else -> "Next: ${coaching.ladder.secondsUntilNextCue(nowMillis)}s"
     }
 
     /**
@@ -493,8 +456,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * Insert the Run's row and post its id back.
      *
      * The Run buffers everything it produces until that id lands, so this is asynchronous without
-     * anything being dropped or any flag being needed to describe the window (#123's
-     * `sessionCreationLock`, `stopDuringSessionCreation` and post-commit gate are gone).
+     * anything being dropped and without any lock, flag or gate describing the window: see
+     * [Run]'s `finish`.
      */
     private fun createRunRow(effect: RunEffect.CreateRunRow) {
         // Emitted once per Run and by nothing else, which makes it the one place the things a Run
@@ -696,14 +659,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         fun getService(): HrForegroundService = this@HrForegroundService
     }
 
-    fun isRunning(): Boolean {
-        return _hrState.value.sessionStatus == SessionStatus.RUNNING || 
-               _hrState.value.sessionStatus == SessionStatus.PAUSED ||
-               _hrState.value.sessionStatus == SessionStatus.CONNECTING ||
-               _hrState.value.sessionStatus == SessionStatus.ERROR
-    }
-
-    fun isSessionActive(): Boolean = isRunning()
+    fun isSessionActive(): Boolean =
+        _hrState.value.sessionStatus == SessionStatus.RUNNING ||
+            _hrState.value.sessionStatus == SessionStatus.PAUSED
 
     override fun onBind(intent: Intent): IBinder {
         isActivityBound = true
@@ -879,8 +837,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // is acquired alongside, and zone coaching joins if/when HR arrives.
                 //
                 // Whether there is a Run to begin is the Run's own question — it ignores a START
-                // that arrives while one is live or is still waiting on its row id, so the three
-                // flags that used to spell that window out here are gone with it.
+                // that arrives while one is live or is still waiting on its row id, so there is no
+                // guard here to keep in step with it.
                 //
                 // The run mode comes from the START intent when present so a just-tapped
                 // Treadmill/Outdoor choice wins over a not-yet-persisted setting.
@@ -1425,11 +1383,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 }
             }
         }
-        _hrState.update { it.copy(
-            connectionStatus = "Disconnected",
-            connectedDeviceName = null,
-            bpm = 0,
-        ) }
+        _hrState.update { it.copy(connectionStatus = "Disconnected", bpm = 0) }
         // The smoothed reading is the Run's, so it is told the Strap is gone rather than having
         // the number taken out from under it.
         postRunEvent(RunEvent.HeartRateLost("Disconnected", System.currentTimeMillis()))
@@ -1518,10 +1472,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
          val delayMs = reconnectDelay
 
          reconnectAttemptCount++
-         _hrState.update { it.copy(
-             connectionStatus = "Reconnecting in ${delayMs/1000}s...",
-             reconnectAttempts = reconnectAttemptCount
-         ) }
+         _hrState.update { it.copy(connectionStatus = "Reconnecting in ${delayMs/1000}s...") }
 
          serviceScope.launch {
              delay(delayMs)
@@ -1558,12 +1509,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // Nor any of the Run's fields, which this used to blank as well. They belong to the Run and
         // reach the published state through one write; a Run that is over publishes the blanks
         // itself, and a Run that is not over must not have them taken from underneath it.
-        _hrState.update { it.copy(
-            connectionStatus = "Disconnected",
-            bpm = 0,
-            connectedDeviceName = null,
-            discoveredServices = emptyList(),
-        ) }
+        _hrState.update { it.copy(connectionStatus = "Disconnected", bpm = 0) }
         // The Strap is gone, so the coach must not keep reasoning about its last reading.
         postRunEvent(RunEvent.HeartRateLost("Disconnected", System.currentTimeMillis()))
 
@@ -1597,18 +1543,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 isReconnecting = false
                 reconnectAttemptCount = 0
 
-                val deviceName = gatt?.device?.name ?: "Unknown"
-                
                 // The strap is a sensor, not the run's gate (#110): connecting only reports the
                 // sensor, it never starts a run or opens a DB record. START owns that now. A run
                 // that is already going (including reconnecting after a dropout) simply keeps its
                 // status; a bare connect with no run leaves the session IDLE.
-                _hrState.update { it.copy(
-                    connectionStatus = "Connected",
-                    connectedDeviceName = deviceName,
-                    reconnectAttempts = 0,
-                    errorMessage = null
-                ) }
+                _hrState.update { it.copy(connectionStatus = "Connected") }
 
                 // GPS is not started here any more. It is the Run's to ask for, and the Run asks
                 // once its row id has landed — which is exactly the ordering this had to spell out
@@ -1661,12 +1600,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                val servicesList = mutableListOf<String>()
-                gatt?.services?.forEach { service ->
-                    servicesList.add(service.uuid.toString())
-                }
-                _hrState.update { it.copy(discoveredServices = servicesList) }
-
                 val service = gatt?.getService(HEART_RATE_SERVICE_UUID)
                 val characteristic = service?.getCharacteristic(HEART_RATE_MEASUREMENT_UUID)
                 
@@ -1737,19 +1670,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         
         val timestamp = System.currentTimeMillis()
         lastHrTimestamp = timestamp // Track for session engine age
-        
-        val sdf = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
-        val formattedTime = sdf.format(Date(timestamp))
-        val formatString = if (is16Bit) "16-bit (UINT16)" else "8-bit (UINT8)"
-        
-        _hrState.update { currentState ->
-            currentState.copy(
-                bpm = bpm,
-                lastUpdateTimestamp = timestamp,
-                lastPacketTimeFormatted = formattedTime,
-                dataBits = formatString,
-            )
-        }
+
+        _hrState.update { it.copy(bpm = bpm) }
         // The reading itself is the Strap's to publish; what it means is the Run's. Every packet
         // goes to the Run, whether or not one is live — the Run's own guards decide whether the
         // coach so much as looks at it.
@@ -1776,12 +1698,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val timestamp = System.currentTimeMillis()
         lastHrTimestamp = timestamp
 
-        _hrState.update { it.copy(
-            bpm = bpm,
-            lastUpdateTimestamp = timestamp,
-            lastPacketTimeFormatted = "SIMULATED",
-            dataBits = "Simulation Mode",
-        ) }
+        _hrState.update { it.copy(bpm = bpm) }
         dispatchRunEvent(RunEvent.HeartRateSampled(bpm, _hrState.value.connectionStatus, timestamp))
     }
 
@@ -1816,15 +1733,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // A Run is already going; it simply gains a simulated Strap.
             return false
         }
-        // Whether there is a Run to begin is the Run's question, exactly as it is at START — and
-        // one it can answer without the reservation flags this used to have to consult.
+        // Whether there is a Run to begin is the Run's question, exactly as it is at START: it
+        // ignores a Started that arrives while one is live, so there is no guard to keep here.
         startRun(RunMode.ofSettingValue(currentSettings.runMode))
         Log.d(TAG, "Simulation Mode ENABLED - started a run")
         return true
-    }
-
-    fun toggleSimulation() {
-        setSimulationEnabled(!isSimulationEnabled)
     }
 
     override fun onDestroy() {

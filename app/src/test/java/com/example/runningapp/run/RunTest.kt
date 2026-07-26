@@ -120,8 +120,7 @@ class RunStartTest {
 
 /**
  * The creation window — the few hundred milliseconds between START and the row id coming back.
- * This is where `sessionCreationLock`, `stopDuringSessionCreation` and the post-commit gate used
- * to live, and where the #110 review loop found its interleavings.
+ * Every interleaving the #110 review loop found, asserted here rather than guarded by a lock.
  */
 class RunRowHandshakeTest {
 

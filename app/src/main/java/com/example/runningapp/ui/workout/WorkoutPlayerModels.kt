@@ -240,7 +240,7 @@ fun mapCoachCueUiState(state: HrState): CoachCueUiState? {
         CUE_REASON_HR_HIGH -> "Above cap. Walk until HR settles."
         CUE_REASON_HR_RECOVERED -> "Recovered. Resume easy jog."
         CUE_REASON_PLANNED -> "Planned transition. Follow the interval."
-        else -> state.cooldownWithHysteresisString.takeIf { it.isNotBlank() } ?: return null
+        else -> state.coachWaitingLine.takeIf { it.isNotBlank() } ?: return null
     }
 
     val severity = when (reasonTag) {

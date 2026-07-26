@@ -88,10 +88,10 @@ class WorkoutPlayerModelsTest {
 
     @Test
     fun `cool-down and pause track live bpm rather than a frozen coaching average`() {
-        // Coaching on, but the coach has stopped filling its window: cool-down (processCoachingRules
-        // returns before adding) and pause (it isn't called at all) freeze avgBpm at the last
-        // main-run value (175, well above) while bpm keeps arriving (120, recovered into Z2). The
-        // screen must follow the live 120, not the frozen 175.
+        // Coaching on, but the coach has stopped filling its window: through a cool-down and a
+        // pause the Run banks no new readings, so avgBpm stays at the last main-run value (175,
+        // well above) while bpm keeps arriving (120, recovered into Z2). The screen must follow
+        // the live 120, not the frozen 175.
         val coolDown = HrState(
             sessionStatus = SessionStatus.RUNNING,
             currentPhase = SessionPhase.COOL_DOWN,
@@ -191,7 +191,7 @@ class WorkoutPlayerModelsTest {
             currentPhase = SessionPhase.MAIN,
             isStructuredWorkout = false,
             currentWalkReason = "Planned",
-            cooldownWithHysteresisString = ""
+            coachWaitingLine = ""
         )
         assertEquals(null, mapCoachCueUiState(openRun))
 

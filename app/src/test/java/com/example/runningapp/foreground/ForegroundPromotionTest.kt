@@ -112,11 +112,6 @@ class PromotionEarnedTest {
     fun `an acquisition earns promotion with no run`() {
         assertTrue(ForegroundPromotion.isEarned(SessionStatus.IDLE, acquiringStrap = true))
     }
-
-    @Test
-    fun `an errored run earns nothing`() {
-        assertFalse(ForegroundPromotion.isEarned(SessionStatus.ERROR, acquiringStrap = false))
-    }
 }
 
 /**
