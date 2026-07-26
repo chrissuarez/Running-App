@@ -568,14 +568,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     walkBreaksCount = totals.walkBreaks,
                     isRunWalkMode = totals.isRunWalkMode,
                 )
+                // Let the Run's still-queued sample and track-point inserts land before the row is
+                // stamped as finished. An end time is what everything downstream reads as "this Run
+                // is complete" — the history snapshot below, and the GPX export, which offers Share
+                // the moment it sees one (#84). Stamping first would let a runner who shares
+                // straight after stopping export the Run minus its final seconds.
+                recorderWriteScope.coroutineContext.job.children.toList().joinAll()
+
                 database.sessionDao().updateSession(updatedSession)
                 Log.d(TAG, "Finalized DB Session: $runRowId. Evidence: duration=${updatedSession.durationSeconds}")
 
                 // Snapshot run history to Downloads so it survives "Clear storage" (reinstall is
-                // covered separately by Auto Backup). First let the Run's still-queued sample and
-                // track-point inserts land, so the snapshot captures the whole Run rather than the
-                // finalized row minus its final seconds.
-                recorderWriteScope.coroutineContext.job.children.toList().joinAll()
+                // covered separately by Auto Backup).
                 weatherFetchScope.launch {
                     DatabaseBackupManager.backup(applicationContext, database)
                 }
