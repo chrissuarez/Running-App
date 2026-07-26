@@ -42,7 +42,10 @@ object RunGpxTrack {
         // them elapsed seconds are the best available answer — exact for a run that was never paused.
         val bpmByWallSecond = hrSamples.associate { sample ->
             val atMillis = sample.timestampMillis ?: (session.startTime + sample.elapsedSeconds * 1000)
-            atMillis / 1000 to sample.smoothedBpm
+            // The raw reading, not the smoothed one: `<hr>` means the heart rate measured at that
+            // point, and every reader does its own smoothing for display. The smoothed number is a
+            // coaching aid — averaging twice would only flatten the run into something it wasn't.
+            atMillis / 1000 to sample.rawBpm
         }
         return GpxTrack(
             name = runName(session, zoneId),

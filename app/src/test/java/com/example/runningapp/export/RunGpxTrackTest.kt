@@ -36,21 +36,23 @@ class RunGpxTrackTest {
         )
 
     /** A sample as the app writes them today: running seconds *and* the wall clock it was banked at. */
-    private fun sample(elapsedSeconds: Long, smoothedBpm: Int, atOffsetSeconds: Long = elapsedSeconds) = HrSample(
+    private fun sample(elapsedSeconds: Long, rawBpm: Int, atOffsetSeconds: Long = elapsedSeconds) = HrSample(
         sessionId = 1L,
         elapsedSeconds = elapsedSeconds,
-        rawBpm = smoothedBpm + 3,
-        smoothedBpm = smoothedBpm,
+        rawBpm = rawBpm,
+        // Deliberately unlike rawBpm: the export must carry what the strap measured, not the
+        // coach's smoothed number.
+        smoothedBpm = rawBpm - 20,
         connectionState = "Connected",
         timestampMillis = startTime + atOffsetSeconds * 1000
     )
 
     /** A sample from before the v16 timestamp column, where only running seconds were recorded. */
-    private fun legacySample(elapsedSeconds: Long, smoothedBpm: Int) = HrSample(
+    private fun legacySample(elapsedSeconds: Long, rawBpm: Int) = HrSample(
         sessionId = 1L,
         elapsedSeconds = elapsedSeconds,
-        rawBpm = smoothedBpm + 3,
-        smoothedBpm = smoothedBpm,
+        rawBpm = rawBpm,
+        smoothedBpm = rawBpm - 20,
         connectionState = "Connected",
         timestampMillis = null
     )
@@ -118,10 +120,10 @@ class RunGpxTrackTest {
             session = session(),
             trackPoints = listOf(point(0), point(1), point(61), point(62)),
             hrSamples = listOf(
-                sample(elapsedSeconds = 0, smoothedBpm = 120, atOffsetSeconds = 0),
-                sample(elapsedSeconds = 1, smoothedBpm = 121, atOffsetSeconds = 1),
-                sample(elapsedSeconds = 2, smoothedBpm = 118, atOffsetSeconds = 61),
-                sample(elapsedSeconds = 3, smoothedBpm = 124, atOffsetSeconds = 62)
+                sample(elapsedSeconds = 0, rawBpm = 120, atOffsetSeconds = 0),
+                sample(elapsedSeconds = 1, rawBpm = 121, atOffsetSeconds = 1),
+                sample(elapsedSeconds = 2, rawBpm = 118, atOffsetSeconds = 61),
+                sample(elapsedSeconds = 3, rawBpm = 124, atOffsetSeconds = 62)
             ),
             zoneId = utc
         )
