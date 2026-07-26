@@ -20,7 +20,7 @@ class GpxSchemaValidationTest {
                 GpxTrack(
                     name = "Morning Run",
                     startTimeMillis = 1_753_500_000_000,
-                    points = listOf(
+                    segments = oneSegment(
                         GpxTrackPoint(51.5074, -0.1278, 12.3, 1_753_500_000_000, 101),
                         GpxTrackPoint(51.50745, -0.12775, 12.8, 1_753_500_001_000, 104)
                     )
@@ -36,7 +36,7 @@ class GpxSchemaValidationTest {
                 GpxTrack(
                     name = "Run & Walk <test>",
                     startTimeMillis = 1_753_500_000_000,
-                    points = listOf(GpxTrackPoint(-33.8688, 151.2093, null, 1_753_500_000_000, null))
+                    segments = oneSegment(GpxTrackPoint(-33.8688, 151.2093, null, 1_753_500_000_000, null))
                 )
             )
         )
@@ -46,7 +46,7 @@ class GpxSchemaValidationTest {
     fun `an empty track still validates`() {
         validate(
             GpxWriter.write(
-                GpxTrack(name = "Run", startTimeMillis = 1_753_500_000_000, points = emptyList())
+                GpxTrack(name = "Run", startTimeMillis = 1_753_500_000_000, segments = emptyList())
             )
         )
     }
@@ -74,4 +74,7 @@ class GpxSchemaValidationTest {
         // failure than an assertion would be.
         schema.newValidator().validate(StreamSource(ByteArrayInputStream(gpx.toByteArray())))
     }
+
+    /** A run with no break in it: one unbroken stretch of route. */
+    private fun oneSegment(vararg points: GpxTrackPoint) = listOf(GpxTrackSegment(points.toList()))
 }

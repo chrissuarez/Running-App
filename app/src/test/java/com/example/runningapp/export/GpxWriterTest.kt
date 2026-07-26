@@ -16,7 +16,7 @@ class GpxWriterTest {
         val track = GpxTrack(
             name = "Morning Run",
             startTimeMillis = 1_753_500_000_000, // 2025-07-26T03:20:00Z
-            points = listOf(
+            segments = oneSegment(
                 GpxTrackPoint(51.5074, -0.1278, 12.3, 1_753_500_000_000, 101),
                 GpxTrackPoint(51.50745, -0.12775, 12.8, 1_753_500_001_000, 104),
                 GpxTrackPoint(51.5075, -0.1277, 13.0, 1_753_500_002_000, 110)
@@ -31,7 +31,7 @@ class GpxWriterTest {
         val track = GpxTrack(
             name = "Run & Walk <test>",
             startTimeMillis = 1_753_500_000_000,
-            points = listOf(
+            segments = oneSegment(
                 GpxTrackPoint(51.5074, -0.1278, null, 1_753_500_000_000, null),
                 GpxTrackPoint(51.50745, -0.12775, 12.8, 1_753_500_001_000, null),
                 GpxTrackPoint(51.5075, -0.1277, null, 1_753_500_002_000, 110)
@@ -47,7 +47,7 @@ class GpxWriterTest {
             GpxTrack(
                 name = "Run & Walk <test>",
                 startTimeMillis = 1_753_500_000_000,
-                points = listOf(GpxTrackPoint(1.0, 2.0, null, 1_753_500_000_000, null))
+                segments = oneSegment(GpxTrackPoint(1.0, 2.0, null, 1_753_500_000_000, null))
             )
         )
 
@@ -63,7 +63,7 @@ class GpxWriterTest {
                 GpxTrack(
                     name = "Run",
                     startTimeMillis = 1_753_500_000_000,
-                    points = listOf(GpxTrackPoint(51.5074, -0.1278, 12.3, 1_753_500_000_000, 101))
+                    segments = oneSegment(GpxTrackPoint(51.5074, -0.1278, 12.3, 1_753_500_000_000, 101))
                 )
             )
 
@@ -80,7 +80,7 @@ class GpxWriterTest {
             GpxTrack(
                 name = "Run",
                 startTimeMillis = 1_753_500_000_000,
-                points = listOf(GpxTrackPoint(1.0, 2.0, null, 1_753_500_000_000, 120))
+                segments = oneSegment(GpxTrackPoint(1.0, 2.0, null, 1_753_500_000_000, 120))
             )
         )
 
@@ -91,7 +91,41 @@ class GpxWriterTest {
         assertTrue(gpx.contains("<gpxtpx:hr>120</gpxtpx:hr>"))
     }
 
+    @Test
+    fun `writes a paused run as two segments a reader will not join up`() {
+        val gpx = GpxWriter.write(
+            GpxTrack(
+                name = "Run",
+                startTimeMillis = 1_753_500_000_000,
+                segments = listOf(
+                    GpxTrackSegment(listOf(GpxTrackPoint(51.5074, -0.1278, null, 1_753_500_000_000, null))),
+                    GpxTrackSegment(listOf(GpxTrackPoint(51.5090, -0.1250, null, 1_753_500_120_000, null)))
+                )
+            )
+        )
+
+        assertEquals(2, Regex("<trkseg>").findAll(gpx).count())
+        assertEquals(2, Regex("</trkseg>").findAll(gpx).count())
+    }
+
+    @Test
+    fun `writes a fix on the antimeridian as the longitude the schema allows`() {
+        val gpx = GpxWriter.write(
+            GpxTrack(
+                name = "Run",
+                startTimeMillis = 1_753_500_000_000,
+                segments = oneSegment(GpxTrackPoint(-16.5, 180.0, null, 1_753_500_000_000, null))
+            )
+        )
+
+        // 180 is out of bounds for GPX; -180 is the same meridian by a name the schema accepts.
+        assertTrue(gpx, gpx.contains("""lon="-180.0000000""""))
+    }
+
     private fun golden(name: String): String =
         checkNotNull(javaClass.getResourceAsStream("/gpx/$name")) { "Missing golden file gpx/$name" }
             .use { it.readBytes().toString(Charsets.UTF_8) }
+
+    /** A run with no break in it: one unbroken stretch of route. */
+    private fun oneSegment(vararg points: GpxTrackPoint) = listOf(GpxTrackSegment(points.toList()))
 }
