@@ -102,6 +102,20 @@ class RunGpxTrackTest {
     }
 
     @Test
+    fun `covers a drop-out from both ends but leaves the middle of a longer one empty`() {
+        // The strap goes quiet between seconds 0 and 11. Points within five seconds of either real
+        // reading keep one; the second in the middle, six seconds from both, keeps none.
+        val track = RunGpxTrack.build(
+            session = session(),
+            trackPoints = listOf(point(5), point(6), point(20), point(26)),
+            hrSamples = listOf(sample(0, 120), sample(11, 130), sample(20, 140)),
+            zoneId = utc
+        )
+
+        assertEquals(listOf(120, 130, 140, null), track.points.map { it.heartRateBpm })
+    }
+
+    @Test
     fun `leaves heart rate out when the nearest sample is too far away`() {
         val track = RunGpxTrack.build(
             session = session(),
