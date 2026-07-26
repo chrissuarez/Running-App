@@ -17,12 +17,25 @@ data class GpxTrackPoint(
     val heartRateBpm: Int?
 )
 
+/**
+ * An unbroken stretch of a run: points a reader may join up, one to the next.
+ *
+ * A run is a list of these rather than one list of points because a pause tears the route in two.
+ * Nothing was recorded while the runner stood still, and a reader given a single stretch would draw
+ * a straight line across the break and count it as distance run — which the app itself refuses to
+ * do (`SessionRecorder.discardLastFix`).
+ */
+data class GpxTrackSegment(val points: List<GpxTrackPoint>)
+
 /** A whole run, ready to serialise. [startTimeMillis] becomes the file's metadata time. */
 data class GpxTrack(
     val name: String,
     val startTimeMillis: Long,
-    val points: List<GpxTrackPoint>
-)
+    val segments: List<GpxTrackSegment>
+) {
+    /** Every point of the run in order, whichever stretch it belongs to. */
+    val points: List<GpxTrackPoint> get() = segments.flatMap { it.points }
+}
 
 /**
  * Serialises a run as GPX 1.1 with per-point heart rate in the Garmin TrackPointExtension namespace
@@ -65,9 +78,13 @@ object GpxWriter {
             append("  <trk>").append('\n')
             append("    <name>$name</name>").append('\n')
             append("    <type>running</type>").append('\n')
-            append("    <trkseg>").append('\n')
-            track.points.forEach { appendPoint(it) }
-            append("    </trkseg>").append('\n')
+            // One <trkseg> per unbroken stretch: the break between two of them is what tells a
+            // reader the runner was not moving between the last fix of one and the first of the next.
+            track.segments.filter { it.points.isNotEmpty() }.forEach { segment ->
+                append("    <trkseg>").append('\n')
+                segment.points.forEach { appendPoint(it) }
+                append("    </trkseg>").append('\n')
+            }
             append("  </trk>").append('\n')
             append("</gpx>").append('\n')
         }
@@ -75,7 +92,7 @@ object GpxWriter {
 
     private fun StringBuilder.appendPoint(point: GpxTrackPoint) {
         // Element order inside trkpt is fixed by the schema: ele, time, then extensions.
-        append("      <trkpt lat=\"${formatCoordinate(point.latitude)}\" lon=\"${formatCoordinate(point.longitude)}\">").append('\n')
+        append("      <trkpt lat=\"${formatCoordinate(point.latitude)}\" lon=\"${formatLongitude(point.longitude)}\">").append('\n')
         point.elevationMeters?.let {
             append("        <ele>${formatElevation(it)}</ele>").append('\n')
         }
@@ -95,6 +112,16 @@ object GpxWriter {
     // Locale.US throughout: a device set to German would otherwise write "51,5074" and produce a
     // file no reader can parse.
     private fun formatCoordinate(value: Double): String = String.format(Locale.US, "%.7f", value)
+
+    /**
+     * GPX bounds longitude at 180 exclusive, so a fix on the antimeridian must be written as the
+     * same meridian's other name, -180. Rounding to seven places is what makes this reachable at
+     * all: a fix at 179.99999999 formats as 180.0000000, which no strict reader will accept.
+     */
+    private fun formatLongitude(value: Double): String {
+        val formatted = formatCoordinate(value)
+        return if (formatted == "180.0000000") "-180.0000000" else formatted
+    }
 
     private fun formatElevation(value: Double): String = String.format(Locale.US, "%.1f", value)
 

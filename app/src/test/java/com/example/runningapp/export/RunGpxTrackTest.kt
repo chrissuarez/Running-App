@@ -189,6 +189,33 @@ class RunGpxTrackTest {
     }
 
     @Test
+    fun `breaks the route where the run was paused`() {
+        // Fixes stop while the runner is paused and pick up again somewhere else on resume.
+        val track = RunGpxTrack.build(
+            session = session(),
+            trackPoints = listOf(point(0), point(1), point(120), point(121)),
+            hrSamples = emptyList(),
+            zoneId = utc
+        )
+
+        assertEquals(2, track.segments.size)
+        assertEquals(listOf(2, 2), track.segments.map { it.points.size })
+        assertEquals(4, track.points.size)
+    }
+
+    @Test
+    fun `keeps a run with no break in it as a single stretch`() {
+        val track = RunGpxTrack.build(
+            session = session(),
+            trackPoints = listOf(point(0), point(1), point(2)),
+            hrSamples = emptyList(),
+            zoneId = utc
+        )
+
+        assertEquals(1, track.segments.size)
+    }
+
+    @Test
     fun `leaves elevation out when the fix recorded no altitude`() {
         val track = RunGpxTrack.build(
             session = session(),

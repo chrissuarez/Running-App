@@ -29,6 +29,14 @@ object RunGpxTrack {
      */
     private const val HR_MATCH_TOLERANCE_SECONDS = 5L
 
+    /**
+     * How long the route may go unrecorded before it counts as broken rather than sparse. Fixes
+     * arrive about a second apart, and a manual pause costs the pause itself plus re-acquiring GPS
+     * on resume — so twenty seconds sits well above the gaps of a run in progress and well below
+     * any pause a runner actually takes.
+     */
+    private const val ROUTE_BREAK_SECONDS = 20L
+
     private val NAME_FORMAT: DateTimeFormatter =
         DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm", Locale.UK)
 
@@ -61,18 +69,19 @@ object RunGpxTrack {
             // coaching aid — averaging twice would only flatten the run into something it wasn't.
             atMillis / 1000 to sample.rawBpm
         }.toMap()
+        val points = trackPoints.sortedBy { it.timestampMillis }.map { point ->
+            GpxTrackPoint(
+                latitude = point.latitude,
+                longitude = point.longitude,
+                elevationMeters = point.altitudeMeters,
+                timeMillis = point.timestampMillis,
+                heartRateBpm = bpmByWallSecond.nearestBpm(point.timestampMillis / 1000)
+            )
+        }
         return GpxTrack(
             name = runName(session, zoneId),
             startTimeMillis = session.startTime,
-            points = trackPoints.sortedBy { it.timestampMillis }.map { point ->
-                GpxTrackPoint(
-                    latitude = point.latitude,
-                    longitude = point.longitude,
-                    elevationMeters = point.altitudeMeters,
-                    timeMillis = point.timestampMillis,
-                    heartRateBpm = bpmByWallSecond.nearestBpm(point.timestampMillis / 1000)
-                )
-            }
+            segments = points.splitWhereTheRunStopped()
         )
     }
 
@@ -90,6 +99,29 @@ object RunGpxTrack {
     fun fileName(session: RunnerSession, zoneId: ZoneId = ZoneId.systemDefault()): String =
         "run-" + FILE_NAME_FORMAT.format(Instant.ofEpochMilli(session.startTime).atZone(zoneId)) +
             "-" + session.id + "." + GpxWriter.FILE_EXTENSION
+
+    /**
+     * Breaks the route wherever the recording stopped for longer than [ROUTE_BREAK_SECONDS].
+     *
+     * A manual pause tears down the GPS stream, so nothing is recorded between the last fix before
+     * it and the first after the resume — and the runner may be somewhere else by then. Left as one
+     * stretch, a reader joins those two fixes with a straight line and counts it as distance run;
+     * the app deliberately does not (`SessionRecorder.discardLastFix`), and the exported file should
+     * not disagree with the run it describes. A long loss of signal breaks the route here too, for
+     * the same reason: nothing was recorded in between, so nothing should be drawn through it.
+     */
+    private fun List<GpxTrackPoint>.splitWhereTheRunStopped(): List<GpxTrackSegment> {
+        if (isEmpty()) return emptyList()
+        val segments = mutableListOf<MutableList<GpxTrackPoint>>(mutableListOf(first()))
+        zipWithNext { previous, point ->
+            if (point.timeMillis - previous.timeMillis > ROUTE_BREAK_SECONDS * 1000) {
+                segments += mutableListOf(point)
+            } else {
+                segments.last() += point
+            }
+        }
+        return segments.map { GpxTrackSegment(it) }
+    }
 
     /**
      * Whether the run's two clocks agree: running seconds against the wall time it spanned. A pause
