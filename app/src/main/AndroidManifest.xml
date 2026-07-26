@@ -43,6 +43,18 @@
             </intent-filter>
         </activity>
 
+        <!-- Hands a generated GPX file to the share sheet (#84). Not exported: apps only ever read
+             it through the one-shot read grant attached to the share Intent. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/gpx_share_paths" />
+        </provider>
+
         <service
             android:name=".HrForegroundService"
             android:enabled="true"

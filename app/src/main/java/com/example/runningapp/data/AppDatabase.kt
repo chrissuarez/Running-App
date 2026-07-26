@@ -88,7 +88,11 @@ data class HrSample(
     val connectionState: String,
     val latitude: Double? = null,
     val longitude: Double? = null,
-    val paceMinPerKm: Double? = null
+    val paceMinPerKm: Double? = null,
+    // Wall clock of the second this sample was banked. [elapsedSeconds] counts *running* seconds, so
+    // it stops during a pause and no longer says when the reading happened — which is what anything
+    // lining heart rate up against the GPS track needs (#84). Null on rows written before v16.
+    val timestampMillis: Long? = null
 )
 
 @Entity(
@@ -315,7 +319,7 @@ interface RunWalkIntervalStatDao {
 
 @Database(
     entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class, TrackPoint::class],
-    version = 15,
+    version = 16,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -354,7 +358,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_11_12,
                     migration12To13(maxHrProvider),
                     MIGRATION_13_14,
-                    MIGRATION_14_15
+                    MIGRATION_14_15,
+                    MIGRATION_15_16
                 )
                 .build()
                 INSTANCE = instance
@@ -835,5 +840,23 @@ val MIGRATION_14_15 = object : Migration(14, 15) {
         )
         database.execSQL("DROP TABLE `sessions`")
         database.execSQL("ALTER TABLE `sessions_new` RENAME TO `sessions`")
+    }
+}
+
+/**
+ * Records when each heart-rate sample was actually taken (#84).
+ *
+ * `elapsedSeconds` counts the Run's *running* seconds, so it stands still through a pause and can no
+ * longer say what time a reading belongs to. Track points are stamped with the wall clock, so
+ * without this column every point after the first pause — including every auto-pause at a crossing —
+ * lines up against the wrong reading, or none at all.
+ *
+ * Nullable and not backfilled: for a run that was never paused, `startTime + elapsedSeconds` is the
+ * same answer, and readers derive it that way when the column is null. Inventing a stored timestamp
+ * for older paused runs would only record a guess as a fact.
+ */
+val MIGRATION_15_16 = object : Migration(15, 16) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE hr_samples ADD COLUMN timestampMillis INTEGER")
     }
 }

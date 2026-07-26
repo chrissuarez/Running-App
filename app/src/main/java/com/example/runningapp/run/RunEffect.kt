@@ -31,6 +31,10 @@ data class RunTotals(
  */
 data class HrSampleReading(
     val elapsedSeconds: Long,
+    // The wall clock of the second being banked, counted along the Run's own tick rather than read
+    // from the clock when the row is written — a late pulse catching up on five seconds banks five
+    // readings, and each belongs to the second it counted, not to the moment the phone woke (#84).
+    val atMillis: Long,
     val rawBpm: Int,
     val smoothedBpm: Int,
     val connectionStatus: String,

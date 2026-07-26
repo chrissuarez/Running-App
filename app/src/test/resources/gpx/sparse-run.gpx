@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Running App" xmlns="http://www.topografix.com/GPX/1/1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1" xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd http://www.garmin.com/xmlschemas/TrackPointExtension/v1 http://www.garmin.com/xmlschemas/TrackPointExtensionv1.xsd">
+  <metadata>
+    <name>Run &amp; Walk &lt;test&gt;</name>
+    <time>2025-07-26T03:20:00Z</time>
+  </metadata>
+  <trk>
+    <name>Run &amp; Walk &lt;test&gt;</name>
+    <type>running</type>
+    <trkseg>
+      <trkpt lat="51.5074000" lon="-0.1278000">
+        <time>2025-07-26T03:20:00Z</time>
+      </trkpt>
+      <trkpt lat="51.5074500" lon="-0.1277500">
+        <ele>12.8</ele>
+        <time>2025-07-26T03:20:01Z</time>
+      </trkpt>
+      <trkpt lat="51.5075000" lon="-0.1277000">
+        <time>2025-07-26T03:20:02Z</time>
+        <extensions>
+          <gpxtpx:TrackPointExtension>
+            <gpxtpx:hr>110</gpxtpx:hr>
+          </gpxtpx:TrackPointExtension>
+        </extensions>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>
