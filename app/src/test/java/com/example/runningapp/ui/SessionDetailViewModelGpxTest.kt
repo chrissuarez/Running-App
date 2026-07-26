@@ -130,8 +130,8 @@ class SessionDetailViewModelGpxTest {
             repository(
                 trackPoints = listOf(gpsPoint(0), gpsPoint(1)),
                 samples = listOf(
-                    HrSample(sessionId = 7L, elapsedSeconds = 0, rawBpm = 121, smoothedBpm = 120, connectionState = "Connected"),
-                    HrSample(sessionId = 7L, elapsedSeconds = 1, rawBpm = 123, smoothedBpm = 122, connectionState = "Connected")
+                    HrSample(sessionId = 7L, elapsedSeconds = 0, rawBpm = 120, smoothedBpm = 100, connectionState = "Connected"),
+                    HrSample(sessionId = 7L, elapsedSeconds = 1, rawBpm = 122, smoothedBpm = 100, connectionState = "Connected")
                 )
             ),
             store
