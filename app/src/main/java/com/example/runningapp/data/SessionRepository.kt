@@ -12,6 +12,7 @@ import com.example.runningapp.effectiveMaxHr
 import com.example.runningapp.tallyZoneSeconds
 import com.example.runningapp.recording.SessionRecorder
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -179,12 +180,20 @@ class SessionRepository(
     }
 
     /**
-     * Whether a run has a route worth drawing or exporting (#84) — judged on the same accuracy-gated
-     * points the map and the GPX file are built from, so Share is never offered for a run the export
-     * would find empty. False for a treadmill run, and for history recorded before #37.
+     * Whether a run can be exported (#84) — judged on the same accuracy-gated points the map and the
+     * GPX file are built from, so Share is never offered for a run the export would find empty. False
+     * for a treadmill run, and for history recorded before #37.
+     *
+     * Also false until the run has finished: history stays reachable mid-run, and a run still being
+     * written would export a snapshot that stops short of where the runner actually is.
      */
     fun hasTrackFlow(sessionId: Long): Flow<Boolean> =
-        getTrackPointsForMapFlow(sessionId).map { it.isNotEmpty() }
+        combine(
+            sessionDao.getSessionByIdFlow(sessionId),
+            getTrackPointsForMapFlow(sessionId)
+        ) { session, points ->
+            session != null && session.isFinished() && points.isNotEmpty()
+        }
 
     private fun TrackPoint.isAcceptedForMap(): Boolean = when (source) {
         TrackPointSource.BACKFILL -> true

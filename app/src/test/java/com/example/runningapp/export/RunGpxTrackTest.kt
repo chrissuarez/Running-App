@@ -6,6 +6,7 @@ import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointSource
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -182,8 +183,16 @@ class RunGpxTrackTest {
     @Test
     fun `builds a file name that is safe on every platform`() {
         assertEquals(
-            "run-2025-07-26-0320.gpx",
+            "run-2025-07-26-0320-1.gpx",
             RunGpxTrack.fileName(session(), utc)
+        )
+    }
+
+    @Test
+    fun `two runs started in the same minute get different file names`() {
+        assertNotEquals(
+            RunGpxTrack.fileName(session(id = 7L, start = startTime), utc),
+            RunGpxTrack.fileName(session(id = 8L, start = startTime + 20_000), utc)
         )
     }
 }

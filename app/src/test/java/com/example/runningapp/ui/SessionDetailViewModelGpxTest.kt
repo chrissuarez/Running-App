@@ -124,6 +124,26 @@ class SessionDetailViewModelGpxTest {
     }
 
     @Test
+    fun `a run still being recorded reports a failed share and never writes a file`() = runTest(dispatcher) {
+        // History stays reachable mid-run, so the button can be reached before the run is saved.
+        val store = RecordingGpxFileStore()
+        val viewModel = SessionDetailViewModel(
+            repository(session = session().copy(endTime = 0), trackPoints = listOf(gpsPoint(0))),
+            store
+        )
+        val failures = mutableListOf<Unit>()
+        val job = collectFailures(viewModel, failures)
+        advanceUntilIdle()
+
+        viewModel.shareGpx(7L)
+        advanceUntilIdle()
+
+        assertEquals(1, failures.size)
+        assertEquals(0, store.calls)
+        job.cancel()
+    }
+
+    @Test
     fun `writes the run's GPX with per-point heart rate under a run-named file`() = runTest(dispatcher) {
         val store = RecordingGpxFileStore()
         val viewModel = SessionDetailViewModel(
