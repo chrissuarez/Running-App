@@ -159,9 +159,11 @@ class RunGpxTrackTest {
     }
 
     @Test
-    fun `leaves heart rate out of a paused run recorded before the timestamp column existed`() {
-        // Ran for 600s but spanned 660s of wall clock: the run was paused for a minute somewhere,
-        // so a legacy sample's elapsed seconds no longer say when it was taken.
+    fun `still carries heart rate on a paused run recorded before the timestamp column existed`() {
+        // Ran for 600s but spanned 660s of wall clock, so the run paused for a minute somewhere and
+        // a legacy sample's elapsed seconds sit up to that much behind the fixes. Deliberately kept:
+        // a graph offset by a known, bounded amount beats no graph at all, and only rows written
+        // before v16 are affected (#84 review).
         val paused = session().copy(endTime = startTime + 660_000, durationSeconds = 600)
 
         val track = RunGpxTrack.build(
@@ -171,21 +173,7 @@ class RunGpxTrackTest {
             zoneId = utc
         )
 
-        assertEquals(listOf(null, null), track.points.map { it.heartRateBpm })
-    }
-
-    @Test
-    fun `keeps stamped heart rate on a paused run even where legacy samples cannot be placed`() {
-        val paused = session().copy(endTime = startTime + 660_000, durationSeconds = 600)
-
-        val track = RunGpxTrack.build(
-            session = paused,
-            trackPoints = listOf(point(0), point(1)),
-            hrSamples = listOf(sample(0, 120), legacySample(1, 999)),
-            zoneId = utc
-        )
-
-        assertEquals(listOf(120, 120), track.points.map { it.heartRateBpm })
+        assertEquals(listOf(120, 122), track.points.map { it.heartRateBpm })
     }
 
     @Test
