@@ -21,6 +21,11 @@ object RunGpxTrack {
      * How far a heart-rate sample may sit from a track point and still describe it. Samples are
      * written once a second but only while the strap reports a beat, so short drop-outs leave gaps;
      * five seconds bridges a gap without inventing a reading for a real disconnection.
+     *
+     * Measured from the point, not across the gap: a point is described by any real reading taken
+     * within five seconds of it, on either side. A ten-second drop-out is therefore covered from
+     * both ends and a longer one is not covered in the middle, which is the intent — no point ever
+     * carries a heart rate more than five seconds removed from a beat the strap actually reported.
      */
     private const val HR_MATCH_TOLERANCE_SECONDS = 5L
 
