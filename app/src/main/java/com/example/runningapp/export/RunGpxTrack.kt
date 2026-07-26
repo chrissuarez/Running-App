@@ -43,15 +43,24 @@ object RunGpxTrack {
     ): GpxTrack {
         // Both streams are put on the wall clock, the only axis they share: a track point is stamped
         // with the time of its GPS fix, while a sample's elapsedSeconds counts running seconds and
-        // stands still through a pause. Rows written before v16 have no stamp of their own, and for
-        // them elapsed seconds are the best available answer — exact for a run that was never paused.
-        val bpmByWallSecond = hrSamples.associate { sample ->
-            val atMillis = sample.timestampMillis ?: (session.startTime + sample.elapsedSeconds * 1000)
+        // stands still through a pause.
+        //
+        // Rows written before v16 have no stamp of their own. Elapsed seconds stand in for one, but
+        // only for a run that was never paused: on a paused run the two axes have come apart by the
+        // length of the pause, so placing a legacy sample by its elapsed seconds would hand a point
+        // a heart rate the runner had minutes later. A run with no clock to trust exports its route
+        // without heart rate — a reader can see that nothing was recorded, but not that what was
+        // recorded is wrong.
+        val legacySamplesArePlaceable = session.ranWithoutPausing()
+        val bpmByWallSecond = hrSamples.mapNotNull { sample ->
+            val atMillis = sample.timestampMillis
+                ?: (session.startTime + sample.elapsedSeconds * 1000).takeIf { legacySamplesArePlaceable }
+                ?: return@mapNotNull null
             // The raw reading, not the smoothed one: `<hr>` means the heart rate measured at that
             // point, and every reader does its own smoothing for display. The smoothed number is a
             // coaching aid — averaging twice would only flatten the run into something it wasn't.
             atMillis / 1000 to sample.rawBpm
-        }
+        }.toMap()
         return GpxTrack(
             name = runName(session, zoneId),
             startTimeMillis = session.startTime,
@@ -81,6 +90,18 @@ object RunGpxTrack {
     fun fileName(session: RunnerSession, zoneId: ZoneId = ZoneId.systemDefault()): String =
         "run-" + FILE_NAME_FORMAT.format(Instant.ofEpochMilli(session.startTime).atZone(zoneId)) +
             "-" + session.id + "." + GpxWriter.FILE_EXTENSION
+
+    /**
+     * Whether the run's two clocks agree: running seconds against the wall time it spanned. A pause
+     * is the only thing that parts them, so a run whose duration matches its span was never paused,
+     * and its elapsed seconds are wall seconds. The few seconds of slack absorb the rounding and the
+     * moment between the last tick and the row being stamped as finished.
+     */
+    private fun RunnerSession.ranWithoutPausing(): Boolean {
+        if (endTime <= startTime) return false
+        val wallSeconds = (endTime - startTime) / 1000
+        return wallSeconds - durationSeconds <= HR_MATCH_TOLERANCE_SECONDS
+    }
 
     private fun Map<Long, Int>.nearestBpm(atSecond: Long): Int? {
         for (offset in 0..HR_MATCH_TOLERANCE_SECONDS) {
