@@ -761,8 +761,8 @@ object Run {
      *
      * If the row id has arrived, finalization goes out now. If it has not, the Run is [STOPPING]
      * and finalization is *remembered* rather than lost — it is emitted the moment the id lands.
-     * Those two orderings are the whole of what `sessionCreationLock`, `stopDuringSessionCreation`
-     * and the post-commit gate were spelling between them.
+     * Those two orderings are the whole of the race: a STOP can never outrun its own row, and no
+     * lock or flag is needed to say so.
      */
     private fun finish(state: RunState, nowMillis: Long): RunOutcome {
         // A Run stopped mid-Interval still banks it, and it is banked before the Run's own totals

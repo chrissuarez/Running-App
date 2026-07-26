@@ -3,7 +3,7 @@ package com.example.runningapp
 /**
  * One condition, two renderings (#109) — the ladder's other half.
  *
- * The ladder ([CueLadder]) decides *when* the app speaks; this decides *what it says*, on both
+ * The ladder ([CueLadderState]) decides *when* the app speaks; this decides *what it says*, on both
  * channels at once. A coaching condition is decided once and rendered side by side: [screenAction]
  * is what the glanceable live screen appends to the zone name ("Tempo — ease off"); [spoken] is the
  * full sentence TTS reads aloud. They live in the same row so a condition can never gain a screen

@@ -76,9 +76,6 @@ class LocationTracker(
         sessionRecorder.clearAutoPauseState()
     }
 
-    @Synchronized
-    fun getLastLocation(): Location? = lastLocation
-
     /** The first GPS fix accepted this session — used as the run's start position (#79). */
     @Synchronized
     fun getFirstLocation(): Location? = firstLocation

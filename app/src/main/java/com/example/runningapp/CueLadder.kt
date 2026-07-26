@@ -13,52 +13,6 @@ enum class CueAction {
 }
 
 /**
- * The one clock for sustained zone cues (#108).
- *
- * Out of target it speaks on a fixed ladder — first at 30s, again at 60s, then at most once every
- * 5 minutes for as long as you stay out — and never faster, however long that is. This replaces an
- * app that, once you had been out for 30 seconds, nagged every 75 seconds forever with no ceiling.
- *
- * Back in target it speaks once — but only if it had actually spoken while you were out (never
- * announce a return from somewhere you were never told you had gone) — and resets to the top.
- *
- * The ladder holds no notion of zones or heart rate. The caller resolves those into a [ZoneBand]
- * with midpoint hysteresis (see [bandWithHysteresis], so a heart rate hovering on the edge can't
- * farm return cues) and an [awake] flag — false during warm-up, walk and cool-down steps, and for
- * an unplanned run's first five minutes. When not awake the ladder resets, so every run step, and
- * the moment the grace lifts, starts silent rather than firing a burst of overdue cues.
- *
- * Each rung is timed from the previous cue, not from the moment you left target. Under a steady
- * 1 Hz sample stream that is the same thing, but it matters when samples pause mid-run (a BLE
- * dropout that keeps the run active): when packets resume after a long gap the ladder speaks one
- * catch-up cue and then spaces out again, instead of firing every overdue rung back-to-back.
- */
-class CueLadder(
-    firstCueMs: Long = CueLadderRungs.DEFAULT.firstCueMs,
-    secondCueMs: Long = CueLadderRungs.DEFAULT.secondCueMs,
-    repeatMs: Long = CueLadderRungs.DEFAULT.repeatMs
-) {
-    private val rungs = CueLadderRungs(firstCueMs, secondCueMs, repeatMs)
-    private var state = CueLadderState()
-
-    fun reset() {
-        state = CueLadderState()
-    }
-
-    fun onSample(now: Long, band: ZoneBand, awake: Boolean): CueAction {
-        val step = state.onSample(now, band, awake, rungs)
-        state = step.ladder
-        return step.action
-    }
-
-    /** For the debug overlay only: seconds continuously out of target, 0 when in. */
-    fun secondsOutOfTarget(now: Long): Long = state.secondsOutOfTarget(now)
-
-    /** For the debug overlay only: seconds until the next cue is due, 0 when in target. */
-    fun secondsUntilNextCue(now: Long): Long = state.secondsUntilNextCue(now, rungs)
-}
-
-/**
  * How far apart the rungs are: 30s to the first cue, 60s to the second, then one every 5 minutes.
  *
  * Separate from the ladder's position on them so the position can be a value the caller holds.
@@ -87,12 +41,29 @@ data class CueLadderRungs(
 data class CueLadderStep(val ladder: CueLadderState, val action: CueAction)
 
 /**
- * The ladder's whole position, as a value.
+ * The one clock for sustained zone cues (#108), as a value.
  *
- * [CueLadder] is a mutable holder of one of these, kept for the service, which owns the ladder as a
- * field. The Run cannot: it is a rulebook with no mutable field of its own (ADR 0002), so it holds
- * this in its state and takes the [CueLadderStep] back. The rules are here, once, and both callers
- * get exactly the same ones.
+ * Out of target it speaks on a fixed ladder — first at 30s, again at 60s, then at most once every
+ * 5 minutes for as long as you stay out — and never faster, however long that is. This replaces an
+ * app that, once you had been out for 30 seconds, nagged every 75 seconds forever with no ceiling.
+ *
+ * Back in target it speaks once — but only if it had actually spoken while you were out (never
+ * announce a return from somewhere you were never told you had gone) — and resets to the top.
+ *
+ * The ladder holds no notion of zones or heart rate. The caller resolves those into a [ZoneBand]
+ * with midpoint hysteresis (see [bandWithHysteresis], so a heart rate hovering on the edge can't
+ * farm return cues) and an `awake` flag — false during warm-up, walk and cool-down steps, and for
+ * an unplanned run's first five minutes. When not awake the ladder resets, so every run step, and
+ * the moment the grace lifts, starts silent rather than firing a burst of overdue cues.
+ *
+ * Each rung is timed from the previous cue, not from the moment you left target. Under a steady
+ * 1 Hz sample stream that is the same thing, but it matters when samples pause mid-run (a BLE
+ * dropout that keeps the run active): when packets resume after a long gap the ladder speaks one
+ * catch-up cue and then spaces out again, instead of firing every overdue rung back-to-back.
+ *
+ * A value rather than a mutable holder because its only owner is the Run, a rulebook with no
+ * mutable field of its own (ADR 0002): the Run keeps one of these in its state and takes a
+ * [CueLadderStep] back from each sample.
  */
 data class CueLadderState(
     val outSince: Long? = null,
@@ -127,9 +98,7 @@ data class CueLadderState(
         }
     }
 
-    fun secondsOutOfTarget(now: Long): Long =
-        outSince?.let { (now - it).coerceAtLeast(0) / 1000 } ?: 0
-
+    /** Seconds until the next cue is due, 0 when in target. Read for the live screen's coach line. */
     fun secondsUntilNextCue(now: Long, rungs: CueLadderRungs = CueLadderRungs.DEFAULT): Long {
         val anchor = lastCueTime ?: outSince ?: return 0
         return ((anchor + rungs.nextIntervalMs(cuesSpoken)) - now).coerceAtLeast(0) / 1000
