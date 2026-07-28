@@ -16,11 +16,27 @@ const val MOVING_SPEED_THRESHOLD_MPS = 1609.344 / 1800.0
 
 /**
  * How long the runner must stay under [MOVING_SPEED_THRESHOLD_MPS] before that spell is taken out
- * as rest. Below this, a slow spell stays in: a road crossing, a gate, a hesitation at a junction
- * or a GPS wobble is not a rest, and stopping the clock for each one would flatter every pace in
- * the app.
+ * as rest. Below this, a slow spell stays in: a single dropped stride or a GPS wobble is not a
+ * rest, and stopping the clock for each one would flatter every pace in the app.
+ *
+ * Unlike [MOVING_SPEED_THRESHOLD_MPS], Strava does not publish this, so it is calibrated against a
+ * run Strava and this app both measured — the 28 Jul 2026 run in #163, 4.53 km, out for 37:39,
+ * which Strava reported as 36:56 of moving time. Measuring that run's own exported GPX at each
+ * window:
+ *
+ * ```
+ *   0s -> 36:30   2s -> 36:54   3s -> 36:57   5s -> 37:11   10s -> 37:27   15s -> 37:39
+ * ```
+ *
+ * Three seconds lands within a second of Strava; fifteen removes nothing at all, because this
+ * runner's rest is many short breaks rather than one long stop. Holding the window at 3s and
+ * sweeping the speed threshold instead puts the best fit at 0.894 m/s — Strava's published number,
+ * arrived at independently, which is the reason to trust the pair rather than either alone.
+ *
+ * One run is one data point. A second export (26 Jul, 22:13 out) moves the same way, 22:01 at this
+ * window against 22:13 at fifteen seconds, but has no Strava figure to check against.
  */
-const val REST_SUSTAINED_MS = 15_000L
+const val REST_SUSTAINED_MS = 3_000L
 
 /**
  * How long the track may go unrecorded before the gap counts as a break rather than a leg. Fixes
