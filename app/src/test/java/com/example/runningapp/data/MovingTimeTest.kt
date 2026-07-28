@@ -141,6 +141,24 @@ class MovingTimeTest {
     }
 
     @Test
+    fun `a recorded pause shorter than the rest window is not handed back as moving`() {
+        // The pause is 2s - inside REST_SUSTAINED_MS. Banked as a provisional slow spell it would
+        // be restored whole by the next moving leg, so an explicit break has to be settled rest.
+        val metresPerDegreeLatitude = 111_132.0
+        val before = track(3.0 to 300)
+        var latitude = before.last().latitude + 4.0 / metresPerDegreeLatitude
+        var timestamp = before.last().timestampMillis + 2_000
+        val after = mutableListOf(fixAt(latitude, timestamp).copy(startsAfterPause = true))
+        repeat(100) {
+            latitude += 3.0 / metresPerDegreeLatitude
+            timestamp += 1_000
+            after += fixAt(latitude, timestamp)
+        }
+
+        assertEquals(300 + 100, measureMovingTimeSeconds(before + after))
+    }
+
+    @Test
     fun `a run that never cleared the threshold has no moving time at all`() {
         // Started and stopped by mistake at a standstill: three fixes, two seconds, going nowhere.
         // Short enough that the sustained-rest window would otherwise keep every second of it.

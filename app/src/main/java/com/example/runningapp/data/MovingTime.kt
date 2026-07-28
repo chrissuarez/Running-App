@@ -95,13 +95,20 @@ fun measureMovingTimeSeconds(points: List<TrackPoint>): Long {
         // run said so on the fix that resumed it, or, for a run recorded before it said so, the
         // gap itself is the only evidence there is.
         val spansBreak = current.startsAfterPause || legMs > TRACK_BREAK_MS
-        val isMoving = !spansBreak &&
-            legMeters / (legMs / 1000.0) > MOVING_SPEED_THRESHOLD_MPS
-        if (isMoving) {
-            movingMs += legMs + keptFrom(slowSpellMs)
-            slowSpellMs = 0L
-        } else {
-            slowSpellMs += legMs
+        when {
+            // A break is settled rest, not a slow spell waiting to be judged. Banking it as one
+            // would hand it back: a two-second recorded pause is shorter than the rest window, so
+            // the next moving leg would restore every paused second as moving time. The slow spell
+            // running into it goes too - the runner was slowing to the stop, and it is rest for
+            // the same reason the stop is.
+            spansBreak -> slowSpellMs = 0L
+            // "Faster than a 30-minute mile", as Strava puts it - so exactly the threshold is not
+            // moving.
+            legMeters / (legMs / 1000.0) > MOVING_SPEED_THRESHOLD_MPS -> {
+                movingMs += legMs + keptFrom(slowSpellMs)
+                slowSpellMs = 0L
+            }
+            else -> slowSpellMs += legMs
         }
     }
 
