@@ -48,9 +48,16 @@ class MovingTimeTest {
 
     @Test
     fun `a brief dip below the threshold still counts as moving`() {
-        // 8s slowed to a crawl - a road crossing, a gate, a GPS wobble. Under the sustained-rest
-        // window, so it stays in: stopping the clock for every hesitation is what Strava avoids.
-        assertEquals(608, measureMovingTimeSeconds(track(3.0 to 300, 0.02 to 8, 3.0 to 300)))
+        // 2s slowed to a crawl - a dropped stride, a GPS wobble. Under the sustained-rest window,
+        // so it stays in: stopping the clock for every hesitation is what Strava avoids.
+        assertEquals(602, measureMovingTimeSeconds(track(3.0 to 300, 0.02 to 2, 3.0 to 300)))
+    }
+
+    @Test
+    fun `a pause at a road crossing is rest`() {
+        // 20s waiting to cross. Past the window, so it comes out - the calibration against
+        // Strava's own figure for the #163 run put that window at three seconds, not fifteen.
+        assertEquals(600, measureMovingTimeSeconds(track(3.0 to 300, 0.02 to 20, 3.0 to 300)))
     }
 
     @Test
