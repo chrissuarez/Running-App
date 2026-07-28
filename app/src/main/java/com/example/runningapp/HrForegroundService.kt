@@ -185,6 +185,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // Mission 4: Location
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var locationTracker: LocationTracker? = null
+    // The run the last stored track point belonged to — how a resume is told from a run's first fix.
+    private var lastTrackedSessionId: Long? = null
     private var lastNotificationZone: HrZone? = null
     private var lastNotificationPhase = SessionPhase.WARM_UP
     private var lastNotificationStatus = SessionStatus.IDLE
@@ -739,11 +741,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             isAutoPauseEnabled = { currentSettings.autoPauseEnabled },
             onAutoPause = { postRunEvent(RunEvent.AutoPauseRequested(System.currentTimeMillis())) },
             onAutoResume = { postRunEvent(RunEvent.AutoResumeRequested(System.currentTimeMillis())) },
-            onRawFix = { location, barometerPressureHpa ->
+            onRawFix = { location, barometerPressureHpa, startsAfterPause ->
                 // The Run's row id off its published state: the tracker's thread has no business
                 // reading the Run, and the Run has no business knowing what a fix is.
                 val sessionId = _hrState.value.activeDbSessionId
                 if (sessionId != null) {
+                    // The tracker is reused between runs and ends every one of them with a stop, so
+                    // it offers the first fix of a new run as though a pause preceded it. A run's
+                    // opening fix breaks nothing — there is no earlier point to be joined to.
+                    val resumedHere = startsAfterPause && sessionId == lastTrackedSessionId
+                    lastTrackedSessionId = sessionId
                     val trackPoint = TrackPoint(
                         sessionId = sessionId,
                         latitude = location.latitude,
@@ -754,7 +761,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         speedMps = if (location.hasSpeed()) location.speed else null,
                         barometerPressureHpa = barometerPressureHpa,
                         timestampMillis = location.time,
-                        source = TrackPointSource.GPS
+                        source = TrackPointSource.GPS,
+                        startsAfterPause = resumedHere
                     )
                     recorderWriteScope.launch {
                         database.trackPointDao().insertTrackPoint(trackPoint)

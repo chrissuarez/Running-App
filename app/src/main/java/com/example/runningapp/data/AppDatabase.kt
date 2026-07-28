@@ -162,7 +162,14 @@ data class TrackPoint(
     // Raw barometer pressure at the time of the fix, hPa. Null on phones without a barometer.
     val barometerPressureHpa: Float? = null,
     val timestampMillis: Long,
-    val source: String
+    val source: String,
+    // True on the first fix recorded after the run resumed — the far side of a pause, and the only
+    // record that one happened at all. Nothing else marks it: a manual pause stops GPS and an
+    // auto-pause is not written to the track, so a pause leaves only an absence, and a short one
+    // leaves an absence too small to tell from a sparse patch of a run in progress. Anything drawing
+    // or measuring the route must break here rather than joining across ground the runner covered
+    // while stopped (#84). False on rows written before v17.
+    val startsAfterPause: Boolean = false
 )
 
 @Dao
@@ -326,7 +333,7 @@ interface RunWalkIntervalStatDao {
 
 @Database(
     entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class, TrackPoint::class],
-    version = 16,
+    version = 17,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -366,7 +373,8 @@ abstract class AppDatabase : RoomDatabase() {
                     migration12To13(maxHrProvider),
                     MIGRATION_13_14,
                     MIGRATION_14_15,
-                    MIGRATION_15_16
+                    MIGRATION_15_16,
+                    MIGRATION_16_17
                 )
                 .build()
                 INSTANCE = instance
@@ -865,5 +873,18 @@ val MIGRATION_14_15 = object : Migration(14, 15) {
 val MIGRATION_15_16 = object : Migration(15, 16) {
     override fun migrate(database: SupportSQLiteDatabase) {
         database.execSQL("ALTER TABLE hr_samples ADD COLUMN timestampMillis INTEGER")
+    }
+}
+
+/**
+ * Records where a pause fell, on the fix that resumed the run (#84).
+ *
+ * Not nullable and not backfilled: false is the honest answer for every existing row. Where a pause
+ * fell on a run recorded before v17 was never written down and cannot be recovered — those runs keep
+ * the old behaviour, where only a gap longer than twenty seconds breaks the route.
+ */
+val MIGRATION_16_17 = object : Migration(16, 17) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE track_points ADD COLUMN startsAfterPause INTEGER NOT NULL DEFAULT 0")
     }
 }

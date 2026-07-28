@@ -35,9 +35,9 @@ object RunGpxTrack {
      * on resume — so twenty seconds sits well above the gaps of a run in progress and well below
      * any pause a runner actually takes.
      *
-     * A gap is the only evidence a pause leaves, and it is reliable because nothing records one:
-     * a manual pause tears the GPS stream down, and an auto-pause keeps it up but its fixes are not
-     * written to the track (`LocationTracker.handleNewLocation`).
+     * It is the fallback, not the test: a recorded resume breaks the route however short the pause
+     * was. This catches only what nothing recorded — a long loss of signal, and pauses on runs saved
+     * before v17.
      */
     private const val ROUTE_BREAK_SECONDS = 20L
 
@@ -71,19 +71,25 @@ object RunGpxTrack {
             // coaching aid — averaging twice would only flatten the run into something it wasn't.
             atMillis / 1000 to sample.rawBpm
         }
-        val points = trackPoints.sortedBy { it.timestampMillis }.map { point ->
-            GpxTrackPoint(
-                latitude = point.latitude,
-                longitude = point.longitude,
-                elevationMeters = point.altitudeMeters,
-                timeMillis = point.timestampMillis,
-                heartRateBpm = bpmByWallSecond.nearestBpm(point.timestampMillis / 1000)
-            )
-        }
+        // Split first, then describe: where the run stopped is a fact about the recording, and only
+        // the stored points still carry it.
+        val stretches = trackPoints.sortedBy { it.timestampMillis }.splitWhereTheRunStopped()
         return GpxTrack(
             name = runName(session, zoneId),
             startTimeMillis = session.startTime,
-            segments = points.splitWhereTheRunStopped()
+            segments = stretches.map { stretch ->
+                GpxTrackSegment(
+                    stretch.map { point ->
+                        GpxTrackPoint(
+                            latitude = point.latitude,
+                            longitude = point.longitude,
+                            elevationMeters = point.altitudeMeters,
+                            timeMillis = point.timestampMillis,
+                            heartRateBpm = bpmByWallSecond.nearestBpm(point.timestampMillis / 1000)
+                        )
+                    }
+                )
+            }
         )
     }
 
@@ -103,26 +109,35 @@ object RunGpxTrack {
             "-" + session.id + "." + GpxWriter.FILE_EXTENSION
 
     /**
-     * Breaks the route wherever the recording stopped for longer than [ROUTE_BREAK_SECONDS].
+     * Breaks the route wherever the run stopped, so a reader has nothing to draw across it.
      *
-     * A manual pause tears down the GPS stream, so nothing is recorded between the last fix before
-     * it and the first after the resume — and the runner may be somewhere else by then. Left as one
-     * stretch, a reader joins those two fixes with a straight line and counts it as distance run;
-     * the app deliberately does not (`SessionRecorder.discardLastFix`), and the exported file should
-     * not disagree with the run it describes. A long loss of signal breaks the route here too, for
-     * the same reason: nothing was recorded in between, so nothing should be drawn through it.
+     * A pause leaves the runner somewhere the track never followed them to: the app refuses to count
+     * that leg towards its own distance (`SessionRecorder.discardLastFix`), and the exported file
+     * should not disagree with the run it describes. Left as one stretch, a reader joins the last
+     * fix before the pause to the first after it with a straight line and counts it as distance run.
+     *
+     * Two things break it, and the first is why the second is not enough on its own:
+     *
+     *  - the resume being recorded on the fix that made it ([TrackPoint.startsAfterPause], v17 on).
+     *    A pause of a few seconds — stop, cross, carry on — leaves a gap no longer than a sparse
+     *    patch of a run in progress, so no length of gap can tell the two apart.
+     *  - a gap longer than [ROUTE_BREAK_SECONDS], which catches what nothing recorded: a long loss
+     *    of signal, and the pauses on runs saved before v17, where the boundary was never written
+     *    down and only a gap is left to find it by.
      */
-    private fun List<GpxTrackPoint>.splitWhereTheRunStopped(): List<GpxTrackSegment> {
+    private fun List<TrackPoint>.splitWhereTheRunStopped(): List<List<TrackPoint>> {
         if (isEmpty()) return emptyList()
-        val segments = mutableListOf<MutableList<GpxTrackPoint>>(mutableListOf(first()))
+        val stretches = mutableListOf(mutableListOf(first()))
         zipWithNext { previous, point ->
-            if (point.timeMillis - previous.timeMillis > ROUTE_BREAK_SECONDS * 1000) {
-                segments += mutableListOf(point)
+            val stoppedHere = point.startsAfterPause ||
+                point.timestampMillis - previous.timestampMillis > ROUTE_BREAK_SECONDS * 1000
+            if (stoppedHere) {
+                stretches += mutableListOf(point)
             } else {
-                segments.last() += point
+                stretches.last() += point
             }
         }
-        return segments.map { GpxTrackSegment(it) }
+        return stretches
     }
 
     private fun Map<Long, Int>.nearestBpm(atSecond: Long): Int? {

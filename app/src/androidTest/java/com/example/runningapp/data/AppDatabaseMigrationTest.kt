@@ -74,7 +74,7 @@ class AppDatabaseMigrationTest {
         // migration between the file's version and today's. It does not disturb what this test
         // asserts — it touches sessions, never track_points.
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(MIGRATION_11_12, migration12To13 { 190 }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+            .addMigrations(MIGRATION_11_12, migration12To13 { 190 }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
             .build()
 
         val sessionATrackPoints = runBlockingGet { migratedDb.trackPointDao().getTrackPointsForSessionOnce(1) }
@@ -127,7 +127,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
             .build()
         val session1 = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val session2 = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
@@ -191,7 +191,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
             .build()
         val session1 = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val session2 = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
@@ -236,7 +236,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
+            .addMigrations(migration12To13 { 190 }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
             .build()
         // Opening through Room is itself the assertion that the dead columns are gone: Room refuses
         // a database whose column set does not match the entity, and RunnerSession no longer
@@ -265,6 +265,32 @@ class AppDatabaseMigrationTest {
         assertEquals(71, session.weatherHumidityPercent)
         assertEquals(3, session.weatherConditionCode)
         assertEquals(1, intervals.size)
+    }
+
+    @Test
+    fun migrate16To17_leavesExistingTrackPointsWithNoPauseBoundary() {
+        // Where a pause fell was never written down before v17 and cannot be recovered, so every
+        // existing point must come through saying only that: not a resume. Claiming otherwise would
+        // break an old run's route somewhere nothing happened.
+        val rawDb = openLegacyDatabase()
+        rawDb.execSQL(
+            "INSERT INTO sessions (id, startTime, endTime, durationSeconds, avgBpm, maxBpm, timeInTargetZoneSeconds, " +
+                "zone1Seconds, zone2Seconds, zone3Seconds, zone4Seconds, zone5Seconds, runMode, distanceKm, " +
+                "avgPaceMinPerKm, noDataSeconds, walkBreaksCount, isRunWalkMode, sessionType, includeInAiTraining) " +
+                "VALUES (1, 1000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'outdoor', 0.0, 0.0, 0, 0, 0, 'Run/Walk', 1)"
+        )
+        rawDb.execSQL("INSERT INTO hr_samples (sessionId, elapsedSeconds, rawBpm, smoothedBpm, connectionState, latitude, longitude) VALUES (1, 1, 120, 120, 'Connected', 40.0, -70.0)")
+        rawDb.version = 11
+        rawDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(MIGRATION_11_12, migration12To13 { 190 }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
+            .build()
+        val trackPoints = runBlockingGet { migratedDb.trackPointDao().getTrackPointsForSessionOnce(1) }
+        migratedDb.close()
+
+        assertEquals(1, trackPoints.size)
+        assertEquals(false, trackPoints.single().startsAfterPause)
     }
 
     /**
