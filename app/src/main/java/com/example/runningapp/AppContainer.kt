@@ -11,10 +11,14 @@ import com.example.runningapp.data.WeatherClient
 import com.example.runningapp.export.FileProviderGpxFileStore
 import com.example.runningapp.export.GpxFileStore
 import com.mapbox.common.MapboxOptions
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -83,6 +87,28 @@ class AppContainer(context: Context) {
             }
         )
     }
+
+    /**
+     * Measures moving time for runs recorded before #163, once per process.
+     *
+     * On the container's own scope rather than an Activity's: the latch below is process-wide, so a
+     * backfill tied to an Activity that the user backs out of mid-pass would be cancelled with the
+     * work half done and never start again for the life of the process — leaving some runs quoting
+     * pace over one clock and their neighbours over another.
+     */
+    fun backfillMovingTimeOnce() {
+        if (!movingTimeBackfilled.compareAndSet(false, true)) return
+        applicationScope.launch { sessionRepository.backfillMovingTime() }
+    }
+
+    /**
+     * Lives as long as the process, and deliberately never cancelled — the container itself is a
+     * process-wide singleton, so there is no shorter lifetime to bind to. SupervisorJob so one
+     * failed background pass cannot take the others down with it.
+     */
+    private val applicationScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    private val movingTimeBackfilled = AtomicBoolean(false)
 }
 
 private var appContainerInstance: AppContainer? = null

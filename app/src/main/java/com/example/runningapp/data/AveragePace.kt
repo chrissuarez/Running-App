@@ -11,11 +11,10 @@ import kotlin.math.roundToLong
  * 4.53 km run in 37:39 report 29:05 /km: it was the pace of someone standing still getting their
  * breath back (#163).
  *
- * [durationSeconds] is the time the Run was not paused - [com.example.runningapp.run.Run] banks
- * paused seconds into `secondsPaused`, never into `secondsRunning`. That is this app's moving
- * time, and it is not Strava's: on the run in #163 nothing was ever paused, so this clock read
- * 37:39 against Strava's 36:56, and the two paces stood ~9s/km apart for that reason alone. A gap
- * that size against Strava is the two definitions differing, not a fault here.
+ * The clock passed in is whichever one the caller means pace to be measured against; for a finished
+ * run that is [paceClockSeconds], the run's moving time. Passing a run's `durationSeconds` measures
+ * pace against how long the runner was out instead, which is a different and larger number - on the
+ * run in #163, 37:39 against Strava's 36:56, about 9s/km of pace.
  *
  * Returns 0.0 for a run that never moved or never ran; the UI reads that as "--:--".
  */
@@ -23,10 +22,6 @@ fun averagePaceMinPerKm(durationSeconds: Long, distanceKm: Double): Double {
     if (durationSeconds <= 0 || distanceKm <= 0.0) return 0.0
     return (durationSeconds / 60.0) / distanceKm
 }
-
-/** [averagePaceMinPerKm] as `m:ss`, or `--:--` when there is no pace to show. */
-fun formatAveragePace(durationSeconds: Long, distanceKm: Double): String =
-    formatMinutesPerKm(averagePaceMinPerKm(durationSeconds, distanceKm))
 
 /**
  * The clock a finished run's pace is measured against: its moving time once that has been computed

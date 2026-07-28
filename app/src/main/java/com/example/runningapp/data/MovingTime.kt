@@ -39,15 +39,20 @@ const val MOVING_SPEED_THRESHOLD_MPS = 1609.344 / 1800.0
 const val REST_SUSTAINED_MS = 3_000L
 
 /**
- * How long the track may go unrecorded before the gap counts as a break rather than a leg. Fixes
- * arrive about a second apart, so twenty seconds sits well above the gaps of a run in progress and
- * well below any pause a runner actually takes — the same reasoning, and the same number, as the
- * route break the GPX export draws (`RunGpxTrack.ROUTE_BREAK_SECONDS`).
+ * How long the track may go unrecorded before the gap counts as a break rather than a leg — the
+ * fallback for a break nothing recorded, and the same number the GPX export draws its route break
+ * at (`RunGpxTrack.ROUTE_BREAK_SECONDS`). Fixes arrive about a second apart, so twenty seconds sits
+ * well above the gaps of a run in progress.
  *
  * A break is never moving time, whatever the two fixes either side of it imply about speed. A
- * manual pause tears the GPS stream down, so a runner who pauses, walks 400 m to a shop and
- * resumes leaves one long leg whose average speed clears the moving threshold easily — and
- * counting it would put moving time *above* the run's own clock.
+ * manual pause tears the GPS stream down, so a runner who pauses, walks 400 m to a shop and resumes
+ * leaves one long leg — and counting it would put moving time *above* the run's own clock.
+ *
+ * It is the fallback and not the rule, because a gap is weaker evidence than a record: a pause
+ * shorter than this leaves no gap worth noticing, and the runner who paused at a shop door and
+ * walked on afterwards would have every second of it counted as moving. Runs recorded since #84
+ * write the pause down on the fix that resumed them ([TrackPoint.startsAfterPause]), which is read
+ * first; the gap rule is what remains for older runs, where nothing was written down.
  */
 const val TRACK_BREAK_MS = 20_000L
 
@@ -86,8 +91,11 @@ fun measureMovingTimeSeconds(points: List<TrackPoint>): Long {
             current.longitude,
         )
         // "Faster than a 30-minute mile", as Strava puts it - so exactly the threshold is not
-        // moving. A leg spanning a break in the recording is rest no matter how fast it looks.
-        val isMoving = legMs <= TRACK_BREAK_MS &&
+        // moving. A leg spanning a break in the recording is rest no matter how fast it looks: the
+        // run said so on the fix that resumed it, or, for a run recorded before it said so, the
+        // gap itself is the only evidence there is.
+        val spansBreak = current.startsAfterPause || legMs > TRACK_BREAK_MS
+        val isMoving = !spansBreak &&
             legMeters / (legMs / 1000.0) > MOVING_SPEED_THRESHOLD_MPS
         if (isMoving) {
             movingMs += legMs + keptFrom(slowSpellMs)
@@ -98,7 +106,11 @@ fun measureMovingTimeSeconds(points: List<TrackPoint>): Long {
     }
 
     // A run that ended slowly - stood at the finish line getting a breath back before pressing
-    // stop - closes on an unresolved slow spell, judged by the same rule.
+    // stop - closes on an unresolved slow spell, judged by the same rule. A run that never cleared
+    // the threshold at all keeps nothing: a spell too short to be rest is still not moving on its
+    // own, and a run started and stopped by mistake at a standstill should read zero, not two
+    // seconds of movement it never made.
+    if (movingMs == 0L) return 0
     return (movingMs + keptFrom(slowSpellMs)) / 1000
 }
 

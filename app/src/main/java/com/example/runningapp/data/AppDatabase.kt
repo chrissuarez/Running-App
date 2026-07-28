@@ -47,7 +47,7 @@ data class RunnerSession(
     val weatherConditionCode: Int? = null,
     // The run minus the spells the runner spent going nowhere, computed from the recorded track
     // the way Strava computes it (#163). Null until it has been computed: a run recorded before
-    // v17, a run still being written, or a run with no GPS track to compute it from.
+    // v19, a run still being written, or a run with no GPS track to compute it from.
     val movingTimeSeconds: Long? = null
 )
 

@@ -118,4 +118,32 @@ class MovingTimeTest {
         val ordered = track(3.0 to 600)
         assertEquals(measureMovingTimeSeconds(ordered), measureMovingTimeSeconds(ordered.reversed()))
     }
+
+    @Test
+    fun `a short pause is rest because the run recorded it, not because the gap was long`() {
+        // Pause at a shop door for 12s and walk on 20m while stopped - too short for the gap rule
+        // to notice, and fast enough over the leg (1.7 m_s) to read as moving without the record.
+        // The fix that resumed the run says otherwise, and that is the whole of the evidence.
+        val metresPerDegreeLatitude = 111_132.0
+        val before = track(3.0 to 300)
+        var latitude = before.last().latitude + 20.0 / metresPerDegreeLatitude
+        var timestamp = before.last().timestampMillis + 12_000
+        val after = mutableListOf(fixAt(latitude, timestamp).copy(startsAfterPause = true))
+        repeat(100) {
+            latitude += 3.0 / metresPerDegreeLatitude
+            timestamp += 1_000
+            after += fixAt(latitude, timestamp)
+        }
+
+        // 300s moving, then a 12s leg the run marked as a resume, then 100s moving. Without the
+        // record that leg reads as 1.7 m/s and counts, making it 412.
+        assertEquals(300 + 100, measureMovingTimeSeconds(before + after))
+    }
+
+    @Test
+    fun `a run that never cleared the threshold has no moving time at all`() {
+        // Started and stopped by mistake at a standstill: three fixes, two seconds, going nowhere.
+        // Short enough that the sustained-rest window would otherwise keep every second of it.
+        assertEquals(0, measureMovingTimeSeconds(track(0.0 to 2)))
+    }
 }
