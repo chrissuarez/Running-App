@@ -211,15 +211,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    // Keyed on the file itself, so a result that arrived while this screen was
-                    // being recreated is picked up as soon as it is listening again.
-                    LaunchedEffect(gpxShareReady) {
-                        gpxShareReady?.let { file ->
-                            startActivity(gpxShareChooser(file))
-                            sessionDetailViewModel.gpxShareHandled()
-                        }
-                    }
-
                     LaunchedEffect(sessionRepository) {
                         sessionRepository.retryMissingWeather()
                     }
@@ -463,6 +454,19 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            // Inside this destination, and gated on the run that asked: an export is
+                            // slow enough that the runner can be somewhere else by the time it
+                            // lands, and a chooser opening over another screen interrupts whatever
+                            // they went there to do. Keyed on the file, so one that arrived while
+                            // this screen was being recreated still opens as soon as it is
+                            // listening again.
+                            LaunchedEffect(gpxShareReady, sessionId) {
+                                gpxShareReady?.takeIf { it.sessionId == sessionId }?.let { file ->
+                                    startActivity(gpxShareChooser(file))
+                                    sessionDetailViewModel.gpxShareHandled()
+                                }
+                            }
+
                             SessionDetailScreen(
                                 session = selectedSession,
                                 samples = sessionSamples,
@@ -473,7 +477,7 @@ class MainActivity : ComponentActivity() {
                                 onBack = { navigateTo(Routes.HISTORY) },
                                 canShareGpx = hasTrack,
                                 onShareGpx = { id -> sessionDetailViewModel.shareGpx(id) },
-                                shareFailed = gpxShareFailed,
+                                shareFailed = gpxShareFailed != null && gpxShareFailed == sessionId,
                                 onShareFailureShown = { sessionDetailViewModel.gpxShareFailureShown() }
                             )
                         }
