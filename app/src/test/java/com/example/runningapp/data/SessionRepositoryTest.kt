@@ -196,6 +196,27 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `getTrackPointsForMap carries a pause boundary onto the next point the accuracy gate keeps`() = runTest {
+        // The fix a run resumes on is the likeliest in the run to be thrown out: GPS was torn down
+        // for the pause and is re-acquiring, which is exactly when accuracy is at its worst. Losing
+        // the boundary with it would draw and measure the route straight across the pause.
+        val sessionId = 7L
+        val beforePause = trackPoint(sessionId, lon = 1.0, accuracy = 15f, source = TrackPointSource.GPS)
+        val resumedButNoisy = trackPoint(sessionId, lon = 2.0, accuracy = 45f, source = TrackPointSource.GPS)
+            .copy(startsAfterPause = true)
+        val afterResume = trackPoint(sessionId, lon = 3.0, accuracy = 15f, source = TrackPointSource.GPS)
+        val mockTrackPointDao: TrackPointDao = mock()
+        whenever(mockTrackPointDao.getTrackPointsForSessionOnce(sessionId)).thenReturn(
+            listOf(beforePause, resumedButNoisy, afterResume)
+        )
+        val repositoryWithTrackPoints = SessionRepository(sessionDao = mockDao, trackPointDao = mockTrackPointDao)
+
+        val result = repositoryWithTrackPoints.getTrackPointsForMap(sessionId)
+
+        assertEquals(listOf(beforePause, afterResume.copy(startsAfterPause = true)), result)
+    }
+
+    @Test
     fun `getTrackPointsForMap returns an empty list when no track point dao is configured`() = runTest {
         assertEquals(emptyList<TrackPoint>(), repository.getTrackPointsForMap(sessionId = 7L))
     }

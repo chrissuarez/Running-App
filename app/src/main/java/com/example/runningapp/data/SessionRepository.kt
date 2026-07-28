@@ -160,7 +160,7 @@ class SessionRepository(
      */
     suspend fun getTrackPointsForMap(sessionId: Long): List<TrackPoint> {
         val dao = trackPointDao ?: return emptyList()
-        return dao.getTrackPointsForSessionOnce(sessionId).filter { it.isAcceptedForMap() }
+        return dao.getTrackPointsForSessionOnce(sessionId).acceptedForMap()
     }
 
     /** One-shot read of a finished run, for callers that need it once rather than as a stream. */
@@ -176,7 +176,7 @@ class SessionRepository(
      */
     fun getTrackPointsForMapFlow(sessionId: Long): Flow<List<TrackPoint>> {
         val dao = trackPointDao ?: return flowOf(emptyList())
-        return dao.getTrackPointsForSession(sessionId).map { points -> points.filter { it.isAcceptedForMap() } }
+        return dao.getTrackPointsForSession(sessionId).map { points -> points.acceptedForMap() }
     }
 
     /**
@@ -194,6 +194,32 @@ class SessionRepository(
         ) { session, points ->
             session != null && session.isFinished() && points.isNotEmpty()
         }
+
+    /**
+     * The accuracy gate, applied without losing where the run was paused.
+     *
+     * A resume is recorded on one point ([TrackPoint.startsAfterPause]), and that point is the most
+     * likely in the whole run to be thrown out: the run resumes on the first fix after GPS was torn
+     * down and re-acquired, which is exactly when accuracy is at its worst. Dropping it would take
+     * the pause with it — the next point kept says nothing happened — and the route would be drawn
+     * and measured straight across ground the runner covered while stopped.
+     *
+     * So the boundary moves to whichever point survives to take its place. The pause is a fact about
+     * the run, not about the fix that happened to carry it.
+     */
+    private fun List<TrackPoint>.acceptedForMap(): List<TrackPoint> {
+        var pauseToCarry = false
+        return mapNotNull { point ->
+            if (!point.isAcceptedForMap()) {
+                pauseToCarry = pauseToCarry || point.startsAfterPause
+                null
+            } else {
+                val carried = point.startsAfterPause || pauseToCarry
+                pauseToCarry = false
+                if (carried == point.startsAfterPause) point else point.copy(startsAfterPause = true)
+            }
+        }
+    }
 
     private fun TrackPoint.isAcceptedForMap(): Boolean = when (source) {
         TrackPointSource.BACKFILL -> true
