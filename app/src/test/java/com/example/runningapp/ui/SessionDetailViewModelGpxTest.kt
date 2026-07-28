@@ -92,7 +92,7 @@ class SessionDetailViewModelGpxTest {
         viewModel.shareGpx(7L)
         advanceUntilIdle()
 
-        assertTrue(viewModel.gpxShareFailed.value)
+        assertEquals(7L, viewModel.gpxShareFailed.value)
         assertEquals(0, store.calls)
         assertNull(store.contents)
     }
@@ -105,7 +105,7 @@ class SessionDetailViewModelGpxTest {
         viewModel.shareGpx(7L)
         advanceUntilIdle()
 
-        assertTrue(viewModel.gpxShareFailed.value)
+        assertEquals(7L, viewModel.gpxShareFailed.value)
         assertEquals(0, store.calls)
     }
 
@@ -122,7 +122,7 @@ class SessionDetailViewModelGpxTest {
         viewModel.shareGpx(7L)
         advanceUntilIdle()
 
-        assertTrue(viewModel.gpxShareFailed.value)
+        assertEquals(7L, viewModel.gpxShareFailed.value)
         assertEquals(0, store.calls)
     }
 
@@ -188,6 +188,20 @@ class SessionDetailViewModelGpxTest {
     }
 
     @Test
+    fun `a result names the run that asked for it`() = runTest(dispatcher) {
+        // The screen reading these belongs to the activity, not to one run, and an export is slow
+        // enough that the runner can be looking at a different run by the time it lands. Without the
+        // id there is nothing to tell it apart from a share sheet opening over the wrong screen.
+        val store = RecordingGpxFileStore(uriToReturn = mock<Uri>())
+        val viewModel = SessionDetailViewModel(repository(trackPoints = listOf(gpsPoint(0))), store, dispatcher)
+
+        viewModel.shareGpx(7L)
+        advanceUntilIdle()
+
+        assertEquals(7L, viewModel.gpxShareReady.value?.sessionId)
+    }
+
+    @Test
     fun `a store that cannot produce a shareable file reports a failed share`() = runTest(dispatcher) {
         val store = RecordingGpxFileStore(uriToReturn = null)
         val viewModel = SessionDetailViewModel(repository(trackPoints = listOf(gpsPoint(0))), store, dispatcher)
@@ -196,7 +210,7 @@ class SessionDetailViewModelGpxTest {
         advanceUntilIdle()
 
         assertEquals(1, store.calls)
-        assertTrue(viewModel.gpxShareFailed.value)
+        assertEquals(7L, viewModel.gpxShareFailed.value)
     }
 
     @Test
@@ -206,6 +220,6 @@ class SessionDetailViewModelGpxTest {
         viewModel.shareGpx(7L)
         advanceUntilIdle()
 
-        assertTrue(viewModel.gpxShareFailed.value)
+        assertEquals(7L, viewModel.gpxShareFailed.value)
     }
 }

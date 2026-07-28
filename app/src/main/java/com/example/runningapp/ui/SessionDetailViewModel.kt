@@ -35,10 +35,14 @@ class SessionDetailViewModel(
     // and if the activity is being recreated when the file is ready there is nobody listening. A
     // result that is kept until the screen acknowledges it cannot be missed that way — the runner
     // would otherwise tap Share and watch nothing happen at all.
+    //
+    // Each result names the run that asked for it, because held state says only that *something*
+    // finished: an export that lands after the runner has moved on would otherwise open a chooser —
+    // or report a failure — over whatever run they are looking at now.
     private val _gpxShareReady = MutableStateFlow<GpxShareFile?>(null)
     val gpxShareReady = _gpxShareReady.asStateFlow()
 
-    private val _gpxShareFailed = MutableStateFlow(false)
+    private val _gpxShareFailed = MutableStateFlow<Long?>(null)
     val gpxShareFailed = _gpxShareFailed.asStateFlow()
 
     /** The share sheet has been opened for the ready file; it is not offered again. */
@@ -48,7 +52,7 @@ class SessionDetailViewModel(
 
     /** The failure has been shown to the runner. */
     fun gpxShareFailureShown() {
-        _gpxShareFailed.value = false
+        _gpxShareFailed.value = null
     }
 
     fun deleteSession(sessionId: Long) {
@@ -67,7 +71,7 @@ class SessionDetailViewModel(
         viewModelScope.launch {
             val store = gpxFileStore
             if (store == null) {
-                _gpxShareFailed.value = true
+                _gpxShareFailed.value = sessionId
                 return@launch
             }
             val session = sessionRepository.getSession(sessionId)
@@ -78,7 +82,7 @@ class SessionDetailViewModel(
             // one-shots, so exporting a run still being recorded would stitch together a file the
             // runner never ran.
             if (session == null || !session.isFinished() || trackPoints.isEmpty()) {
-                _gpxShareFailed.value = true
+                _gpxShareFailed.value = sessionId
                 return@launch
             }
             val hrSamples = sessionRepository.getHrSamples(sessionId)
@@ -100,9 +104,10 @@ class SessionDetailViewModel(
                 null
             }
             if (uri == null) {
-                _gpxShareFailed.value = true
+                _gpxShareFailed.value = sessionId
             } else {
                 _gpxShareReady.value = GpxShareFile(
+                    sessionId = sessionId,
                     uri = uri,
                     fileName = fileName,
                     runName = track.name

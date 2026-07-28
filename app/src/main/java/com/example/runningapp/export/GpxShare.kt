@@ -4,8 +4,14 @@ import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 
-/** A written GPX file, ready to hand to the share sheet. */
+/**
+ * A written GPX file, ready to hand to the share sheet.
+ *
+ * It carries the run it was asked for: the export outlives the screen that requested it, and a
+ * chooser is only ever opened by the run whose Share button started it.
+ */
 data class GpxShareFile(
+    val sessionId: Long,
     val uri: Uri,
     val fileName: String,
     val runName: String
