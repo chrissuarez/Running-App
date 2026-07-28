@@ -25,7 +25,7 @@ class LocationTracker(
     private val getSessionStatus: () -> SessionStatus,
     isSplitAnnouncementsEnabled: () -> Boolean,
     onMetricsUpdated: (distanceKm: Double, paceMinPerKm: Double, lastLocation: Location?) -> Unit,
-    private val onRawFix: (location: Location, barometerPressureHpa: Float?) -> Unit = { _, _ -> },
+    private val onRawFix: (location: Location, barometerPressureHpa: Float?, startsAfterPause: Boolean) -> Unit = { _, _, _ -> },
     isAutoPauseEnabled: () -> Boolean = { false },
     onAutoPause: () -> Unit = {},
     onAutoResume: () -> Unit = {},
@@ -35,6 +35,11 @@ class LocationTracker(
     private var locationHandler: Handler? = null
     private var lastLocation: Location? = null
     private var firstLocation: Location? = null
+
+    // Set the moment the recorded track stops keeping up with the runner — either kind of pause —
+    // and carried to the next fix that is written, which is the far side of the break. Nothing else
+    // survives to say a pause happened: the fixes in between either never arrive or are not stored.
+    private var trackBrokenByPause = false
     private val barometerReader = BarometerReader(context)
 
     private val sessionRecorder = SessionRecorder(
@@ -141,6 +146,9 @@ class LocationTracker(
         }
         barometerReader.stop()
         lastLocation = null
+        // A manual pause comes through here: updates are torn down, so the run resumes on a fix
+        // taken somewhere the track never followed the runner to.
+        trackBrokenByPause = true
         sessionRecorder.discardLastFix()
         Log.d(logTag, "Location updates stopped")
     }
@@ -169,8 +177,11 @@ class LocationTracker(
         // towards distance, and the stored track is what the map draws and the export writes, so
         // neither should disagree with it. The fix still reaches the recorder below, which is what
         // notices the runner moving again.
-        if (!autoPaused) {
-            onRawFix(location, barometerReader.getLastPressureHpa())
+        if (autoPaused) {
+            trackBrokenByPause = true
+        } else {
+            onRawFix(location, barometerReader.getLastPressureHpa(), trackBrokenByPause)
+            trackBrokenByPause = false
         }
         sessionRecorder.onLocationFix(
             LocationFix(

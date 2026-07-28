@@ -192,6 +192,28 @@ class RunGpxTrackTest {
     }
 
     @Test
+    fun `breaks the route on a recorded resume however short the pause was`() {
+        // Stop, cross the road, carry on: eight seconds is shorter than a sparse patch of a run in
+        // progress, so no length of gap could find this. The runner still covered ground the track
+        // never followed them across, and a reader joining the two fixes would count it as run.
+        val track = RunGpxTrack.build(
+            session = session(),
+            trackPoints = listOf(
+                point(0),
+                point(1),
+                point(9).copy(startsAfterPause = true),
+                point(10)
+            ),
+            hrSamples = emptyList(),
+            zoneId = utc
+        )
+
+        assertEquals(2, track.segments.size)
+        assertEquals(listOf(2, 2), track.segments.map { it.points.size })
+        assertEquals(4, track.points.size)
+    }
+
+    @Test
     fun `keeps a run with no break in it as a single stretch`() {
         val track = RunGpxTrack.build(
             session = session(),
