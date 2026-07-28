@@ -19,22 +19,26 @@ const val MOVING_SPEED_THRESHOLD_MPS = 1609.344 / 1800.0
  * as rest. Below this, a slow spell stays in: a single dropped stride or a GPS wobble is not a
  * rest, and stopping the clock for each one would flatter every pace in the app.
  *
- * Unlike [MOVING_SPEED_THRESHOLD_MPS], Strava does not publish this, so it is calibrated against a
- * run Strava and this app both measured — the 28 Jul 2026 run in #163, 4.53 km, out for 37:39,
- * which Strava reported as 36:56 of moving time. Measuring that run's own exported GPX at each
- * window:
+ * Unlike [MOVING_SPEED_THRESHOLD_MPS], Strava does not publish this, so it is calibrated against
+ * runs Strava and this app both measured. Measuring each run's own exported GPX at each window,
+ * against what Strava made of the same file:
  *
  * ```
- *   0s -> 36:30   2s -> 36:54   3s -> 36:57   5s -> 37:11   10s -> 37:27   15s -> 37:39
+ *                 0s      1s      2s      3s      4s      5s     15s    Strava
+ *   28 Jul     36:30   36:44   36:54   36:57   37:01   37:11   37:39     36:56
+ *   26 Jul     21:40   21:50   21:58   22:01   22:05   22:05   22:13     21:59
  * ```
  *
- * Three seconds lands within a second of Strava; fifteen removes nothing at all, because this
- * runner's rest is many short breaks rather than one long stop. Holding the window at 3s and
- * sweeping the speed threshold instead puts the best fit at 0.894 m/s — Strava's published number,
- * arrived at independently, which is the reason to trust the pair rather than either alone.
+ * Three seconds lands within two seconds of Strava on both, and is the only window that does.
+ * Fifteen removes almost nothing, because this runner's rest is many short breaks rather than one
+ * long stop; zero removes far too much, because a dropped stride is not a rest. Holding the window
+ * at 3s and sweeping the speed threshold instead puts the best fit at 0.894 m/s — Strava's
+ * published number, arrived at independently, which is the reason to trust the pair rather than
+ * either alone.
  *
- * One run is one data point. A second export (26 Jul, 22:13 out) moves the same way, 22:01 at this
- * window against 22:13 at fifteen seconds, but has no Strava figure to check against.
+ * Two runs are two data points, and both are this one runner on this one phone. The number to
+ * re-check against is pace rather than moving time, since pace is what either app puts on screen:
+ * both runs match Strava's to the second there (8:10 and 8:58 /km).
  */
 const val REST_SUSTAINED_MS = 3_000L
 
