@@ -87,8 +87,6 @@ class LocationTracker(
 
     fun getDistanceKm(): Double = sessionRecorder.getDistanceKm()
 
-    fun getPaceMinPerKm(): Double = sessionRecorder.getPaceMinPerKm()
-
     @Synchronized
     fun start() {
         if (locationCallback != null) {

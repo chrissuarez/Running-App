@@ -65,6 +65,7 @@ import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointSource
+import com.example.runningapp.data.averagePaceMinPerKm
 import com.example.runningapp.foreground.ForegroundPromotion
 import com.example.runningapp.foreground.PromotionHost
 import com.example.runningapp.foreground.isAcquiringStrap
@@ -538,7 +539,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val runRowId = effect.runRowId
         val totals = effect.totals
         val distanceKm = locationTracker?.getDistanceKm() ?: 0.0
-        val avgPace = locationTracker?.getPaceMinPerKm() ?: 0.0
+        // The run's totals, not LocationTracker's live pace - that is a rolling 15-second window,
+        // so reading it here stored the pace of someone standing still at the finish (#163). The UI
+        // derives pace this same way on read, which is what fixes runs already in history; the
+        // column is written from the same function so the two can never drift apart.
+        val avgPace = averagePaceMinPerKm(totals.durationSeconds, distanceKm)
         val startLocation = locationTracker?.getFirstLocation()
 
         // weatherFetchScope, not serviceScope: a background STOP (a notification action with the

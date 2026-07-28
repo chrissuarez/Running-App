@@ -99,6 +99,12 @@ class SessionRecorder(
 
     fun getDistanceKm(): Double = sessionDistanceMeters / 1000.0
 
+    /**
+     * The *live* pace: a rolling [PACE_WINDOW_MS] window, for the in-run tile and split cues.
+     * Never a finished run's average — reading this at STOP reports the pace of a runner standing
+     * still at the finish line (#163). For that, use
+     * [com.example.runningapp.data.averagePaceMinPerKm] on the run's own totals.
+     */
     fun getPaceMinPerKm(): Double = calculatePace()
 
     fun isAutoPaused(): Boolean = isAutoPaused
