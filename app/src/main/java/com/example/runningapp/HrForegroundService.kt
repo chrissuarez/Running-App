@@ -583,7 +583,26 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 recorderWriteScope.coroutineContext.job.children.toList().joinAll()
 
                 database.sessionDao().updateSession(updatedSession)
-                Log.d(TAG, "Finalized DB Session: $runRowId. Evidence: duration=${updatedSession.durationSeconds}")
+
+                // Measured only now the track-point inserts above have landed, so it sees the whole
+                // run. This also rewrites avgPaceMinPerKm over the duration-based value set above:
+                // pace is quoted against other apps, so it is measured over moving time (#163).
+                //
+                // The run is already saved by this point, and weatherFetchScope carries no
+                // exception handler, so a failure here must not be allowed to take the process
+                // down and strand the backup, weather fetch and plan evaluation below it. A run
+                // that fails to measure keeps a null moving time and is picked up by the backfill.
+                val movingTime = try {
+                    sessionRepository.computeMovingTime(runRowId)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Moving time failed for $runRowId; leaving it to the backfill", e)
+                    null
+                }
+
+                Log.d(
+                    TAG,
+                    "Finalized DB Session: $runRowId. Evidence: duration=${updatedSession.durationSeconds} moving=$movingTime"
+                )
 
                 // Snapshot run history to Downloads so it survives "Clear storage" (reinstall is
                 // covered separately by Auto Backup).

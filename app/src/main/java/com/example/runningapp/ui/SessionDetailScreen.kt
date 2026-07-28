@@ -31,8 +31,8 @@ import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.classifyIntervalCompletionBand
 import com.example.runningapp.data.computeRunWalkIntervalAnalytics
-import com.example.runningapp.data.averagePaceMinPerKm
-import com.example.runningapp.data.formatMinutesPerKm
+import com.example.runningapp.data.averagePace
+import com.example.runningapp.data.averagePaceText
 import com.example.runningapp.data.inTargetZoneSeconds
 import com.example.runningapp.data.secondsInZone
 import com.example.runningapp.ui.workout.zoneChartColor
@@ -173,6 +173,20 @@ fun SummaryStats(session: RunnerSession) {
                 StatLarge(label = "Duration", value = formatDurationLarge(session.durationSeconds))
                 StatLarge(label = "Avg HR", value = "${session.avgBpm}")
             }
+
+            // Moving time is what pace is measured over (#163), so it is shown rather than left to
+            // be inferred from a pace that no longer divides the duration. Only for runs that have
+            // one: a treadmill run has no track to compute it from.
+            if (session.movingTimeSeconds != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatLarge(label = "Moving", value = formatDurationLarge(session.movingTimeSeconds))
+                    // Never below zero: moving time is capped at the run's own clock when it is
+                    // measured, and this is the last line of defence for a row stored before that.
+                    val resting = (session.durationSeconds - session.movingTimeSeconds).coerceAtLeast(0)
+                    StatLarge(label = "Resting", value = formatDurationLarge(resting))
+                }
+            }
             
             Spacer(modifier = Modifier.height(16.dp))
             
@@ -186,9 +200,8 @@ fun SummaryStats(session: RunnerSession) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     StatLarge(label = "Distance", value = "%.2f km".format(session.distanceKm))
                     // Derived, not read from the stored column (#163).
-                    val pace = averagePaceMinPerKm(session.durationSeconds, session.distanceKm)
-                    val paceLabel =
-                        if (pace > 0) "${formatMinutesPerKm(pace)} min/km" else formatMinutesPerKm(pace)
+                    val paceLabel = session.averagePaceText
+                        .let { if (session.averagePace > 0) "$it min/km" else it }
                     StatLarge(label = "Avg Pace", value = paceLabel)
                 }
             }

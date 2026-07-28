@@ -18,7 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.data.RunnerSession
-import com.example.runningapp.data.formatAveragePace
+import com.example.runningapp.data.averagePaceText
 import com.example.runningapp.data.inTargetZoneSeconds
 import java.text.SimpleDateFormat
 import java.util.*
@@ -171,10 +171,7 @@ fun SessionItem(
                 if (session.runMode == "outdoor") {
                     StatSmall(label = "Dist", value = "%.2f km".format(session.distanceKm))
                     // Derived, not read from the stored column (#163).
-                    StatSmall(
-                        label = "Pace",
-                        value = formatAveragePace(session.durationSeconds, session.distanceKm),
-                    )
+                    StatSmall(label = "Pace", value = session.averagePaceText)
                 }
                 StatSmall(label = "Target", value = formatDuration(session.inTargetZoneSeconds))
             }

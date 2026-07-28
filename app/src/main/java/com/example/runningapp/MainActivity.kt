@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
@@ -77,6 +78,11 @@ import com.example.runningapp.ui.workout.mapWorkoutPlayerUiState
 import com.example.runningapp.ui.workout.zoneBandColor
 
 class MainActivity : ComponentActivity() {
+
+    private companion object {
+        /** Guards the #163 moving-time backfill so it runs once per process, not once per activity. */
+        val movingTimeBackfilled = java.util.concurrent.atomic.AtomicBoolean(false)
+    }
 
     private var hrService by mutableStateOf<HrForegroundService?>(null)
     private var isBound by mutableStateOf(false)
@@ -153,6 +159,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Runs already in history predate moving time, so their pace would be measured against a
+        // different clock from today's runs until this fills them in (#163). Off the main thread,
+        // and once per process: a run with no usable track stays unmeasurable, so re-reading the
+        // set on every rotation would be work that can only ever come back empty-handed.
+        if (movingTimeBackfilled.compareAndSet(false, true)) {
+            val repository = runningAppContainer().sessionRepository
+            lifecycleScope.launch(Dispatchers.IO) { repository.backfillMovingTime() }
+        }
 
         setContent {
             RunningAppTheme {
