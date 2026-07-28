@@ -190,6 +190,12 @@ class SessionRepository(
      * average pace that follows from it (#163). Returns the moving time, or null for a run with no
      * usable track to measure — a treadmill run, or GPS history too sparse to say anything.
      *
+     * Zero is an answer, not a failure, and is stored like any other. A run of two good fixes that
+     * never got anywhere really did move for none of its length: saying so leaves it reading
+     * `--:--` with Moving 00:00, where a null would quietly pace it over its duration and let GPS
+     * jitter show as a pace the runner never ran. Null is kept for the one case that earns it —
+     * too little track to measure at all.
+     *
      * Measured over the same accuracy-filtered points the map and the GPX export use, so a fix the
      * run itself refused can't reappear here as a phantom sprint.
      */
@@ -198,12 +204,13 @@ class SessionRepository(
         val points = getTrackPointsForMap(sessionId)
         if (points.size < 2) return null
 
-        // Capped at the run's own clock. Moving time is measured on wall-clock track timestamps
-        // while durationSeconds excludes paused time, so a pause the track cannot see would
-        // otherwise let moving time exceed the run it belongs to - and the summary card would show
-        // a negative resting time.
-        val movingTime = measureMovingTimeSeconds(points).coerceAtMost(session.durationSeconds)
-        if (movingTime <= 0) return null
+        // Capped at the run's own clock, and never below zero. Moving time is measured on
+        // wall-clock track timestamps while durationSeconds excludes paused time, so a pause the
+        // track cannot see would otherwise let moving time exceed the run it belongs to - and the
+        // summary card would show a negative resting time.
+        val movingTime = measureMovingTimeSeconds(points)
+            .coerceAtMost(session.durationSeconds)
+            .coerceAtLeast(0)
 
         sessionDao.setMovingTime(
             sessionId = sessionId,
