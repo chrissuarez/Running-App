@@ -19,7 +19,7 @@ private const val WGS84_SEMI_MINOR_AXIS = 6356752.3142
  * spherical (haversine) formula.
  *
  * The one distance function in the app: [SessionRecorder] measures a run's legs with it as they
- * arrive, and [com.example.runningapp.data.movingTimeSeconds] re-measures a finished run's track
+ * arrive, and [com.example.runningapp.data.measureMovingTimeSeconds] re-measures a finished run's track
  * with it afterwards. Both must agree, or a run's distance and its moving time would disagree
  * about the same two points.
  */

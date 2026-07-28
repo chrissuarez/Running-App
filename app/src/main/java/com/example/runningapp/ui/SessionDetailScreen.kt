@@ -199,10 +199,17 @@ fun SummaryStats(session: RunnerSession) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     StatLarge(label = "Distance", value = "%.2f km".format(session.distanceKm))
-                    // Derived, not read from the stored column (#163).
+                    // Derived, not read from the stored column (#163). The label says which clock
+                    // the number is over, because it is not always the same one: a measured run is
+                    // paced over its moving time, and a treadmill run or one with no usable track
+                    // falls back to its duration. #163 asked for that to be said rather than left
+                    // to be inferred from whether the Moving row above happens to be there.
                     val paceLabel = session.averagePaceText
                         .let { if (session.averagePace > 0) "$it min/km" else it }
-                    StatLarge(label = "Avg Pace", value = paceLabel)
+                    StatLarge(
+                        label = if (session.movingTimeSeconds != null) "Avg Pace (moving)" else "Avg Pace",
+                        value = paceLabel
+                    )
                 }
             }
 

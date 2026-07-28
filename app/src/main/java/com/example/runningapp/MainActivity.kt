@@ -79,11 +79,6 @@ import com.example.runningapp.ui.workout.zoneBandColor
 
 class MainActivity : ComponentActivity() {
 
-    private companion object {
-        /** Guards the #163 moving-time backfill so it runs once per process, not once per activity. */
-        val movingTimeBackfilled = java.util.concurrent.atomic.AtomicBoolean(false)
-    }
-
     private var hrService by mutableStateOf<HrForegroundService?>(null)
     private var isBound by mutableStateOf(false)
     private var forceMainToken = mutableStateOf(0)
@@ -161,13 +156,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         // Runs already in history predate moving time, so their pace would be measured against a
-        // different clock from today's runs until this fills them in (#163). Off the main thread,
-        // and once per process: a run with no usable track stays unmeasurable, so re-reading the
-        // set on every rotation would be work that can only ever come back empty-handed.
-        if (movingTimeBackfilled.compareAndSet(false, true)) {
-            val repository = runningAppContainer().sessionRepository
-            lifecycleScope.launch(Dispatchers.IO) { repository.backfillMovingTime() }
-        }
+        // different clock from today's runs until this fills them in (#163). Off the main thread and
+        // once per process, on a scope that outlives this Activity - see the container.
+        runningAppContainer().backfillMovingTimeOnce()
 
         setContent {
             RunningAppTheme {

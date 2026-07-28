@@ -29,24 +29,24 @@ class AveragePaceTest {
 
     @Test
     fun `formats the run from 163 as minutes and seconds`() {
-        assertEquals("8:19", formatAveragePace(durationSeconds = 2259, distanceKm = 4.53))
+        assertEquals("8:19", formatMinutesPerKm(averagePaceMinPerKm(durationSeconds = 2259, distanceKm = 4.53)))
     }
 
     @Test
     fun `pads seconds below ten`() {
         // 1 km in 8:05.
-        assertEquals("8:05", formatAveragePace(durationSeconds = 485, distanceKm = 1.0))
+        assertEquals("8:05", formatMinutesPerKm(averagePaceMinPerKm(durationSeconds = 485, distanceKm = 1.0)))
     }
 
     @Test
     fun `rounding up to a full minute carries into the minutes`() {
         // 10 km at 539.7 s/km - 8:59.7, which must read 9:00 and never 8:60.
-        assertEquals("9:00", formatAveragePace(durationSeconds = 5397, distanceKm = 10.0))
+        assertEquals("9:00", formatMinutesPerKm(averagePaceMinPerKm(durationSeconds = 5397, distanceKm = 10.0)))
     }
 
     @Test
     fun `a run with no distance has no pace to show`() {
-        assertEquals("--:--", formatAveragePace(durationSeconds = 2259, distanceKm = 0.0))
+        assertEquals("--:--", formatMinutesPerKm(averagePaceMinPerKm(durationSeconds = 2259, distanceKm = 0.0)))
     }
 
     // The live tile formats through this same function, so a pace can never round one way on the
