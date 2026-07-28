@@ -166,6 +166,53 @@ class SessionRepository(
     /** One-shot read of a finished run, for callers that need it once rather than as a stream. */
     suspend fun getSession(sessionId: Long): RunnerSession? = sessionDao.getSessionById(sessionId)
 
+    /**
+     * Fills in [RunnerSession.movingTimeSeconds] for runs recorded before #163, so a run already in
+     * history reports the same pace a run recorded today would.
+     *
+     * The v19 migration adds the column but leaves it null: working the number out means measuring
+     * geodesic distances between every pair of a run's track points, which belongs in Kotlin rather
+     * than in SQL. Safe to call more than once — a run is only looked at while its column is null.
+     *
+     * A run with no usable track keeps a null rather than a stored zero. Null means "measured
+     * against the run's duration instead" ([paceClockSeconds]); a zero would mean "this run never
+     * moved", and would put every treadmill run's pace at --:--.
+     */
+    suspend fun backfillMovingTime() {
+        val sessionIds = sessionDao.getSessionIdsMissingMovingTime()
+        if (sessionIds.isEmpty()) return
+        val measured = sessionIds.count { computeMovingTime(it) != null }
+        Log.d("MovingTime", "Backfilled moving time for $measured of ${sessionIds.size} run(s)")
+    }
+
+    /**
+     * Measures a finished run's moving time from its stored track and saves it, along with the
+     * average pace that follows from it (#163). Returns the moving time, or null for a run with no
+     * usable track to measure — a treadmill run, or GPS history too sparse to say anything.
+     *
+     * Measured over the same accuracy-filtered points the map and the GPX export use, so a fix the
+     * run itself refused can't reappear here as a phantom sprint.
+     */
+    suspend fun computeMovingTime(sessionId: Long): Long? {
+        val session = sessionDao.getSessionById(sessionId) ?: return null
+        val points = getTrackPointsForMap(sessionId)
+        if (points.size < 2) return null
+
+        // Capped at the run's own clock. Moving time is measured on wall-clock track timestamps
+        // while durationSeconds excludes paused time, so a pause the track cannot see would
+        // otherwise let moving time exceed the run it belongs to - and the summary card would show
+        // a negative resting time.
+        val movingTime = measureMovingTimeSeconds(points).coerceAtMost(session.durationSeconds)
+        if (movingTime <= 0) return null
+
+        sessionDao.setMovingTime(
+            sessionId = sessionId,
+            movingTimeSeconds = movingTime,
+            avgPaceMinPerKm = averagePaceMinPerKm(movingTime, session.distanceKm),
+        )
+        return movingTime
+    }
+
     /** One-shot read of a run's heart-rate samples, ordered by elapsed second. */
     suspend fun getHrSamples(sessionId: Long): List<HrSample> =
         sampleDao?.getSamplesForSessionOnce(sessionId) ?: emptyList()

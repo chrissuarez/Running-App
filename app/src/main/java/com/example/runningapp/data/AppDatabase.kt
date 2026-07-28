@@ -44,7 +44,11 @@ data class RunnerSession(
     val weatherFeelsLikeC: Double? = null,
     val weatherHumidityPercent: Int? = null,
     val weatherWindSpeedKmh: Double? = null,
-    val weatherConditionCode: Int? = null
+    val weatherConditionCode: Int? = null,
+    // The run minus the spells the runner spent going nowhere, computed from the recorded track
+    // the way Strava computes it (#163). Null until it has been computed: a run recorded before
+    // v17, a run still being written, or a run with no GPS track to compute it from.
+    val movingTimeSeconds: Long? = null
 )
 
 /**
@@ -185,6 +189,13 @@ interface SessionDao {
 
     @Query("SELECT * FROM sessions WHERE id = :sessionId")
     suspend fun getSessionById(sessionId: Long): RunnerSession?
+
+    /** Finished outdoor runs whose moving time has not been computed yet (#163 backfill). */
+    @Query("SELECT id FROM sessions WHERE movingTimeSeconds IS NULL AND endTime > 0 AND runMode = 'outdoor' ORDER BY startTime DESC")
+    suspend fun getSessionIdsMissingMovingTime(): List<Long>
+
+    @Query("UPDATE sessions SET movingTimeSeconds = :movingTimeSeconds, avgPaceMinPerKm = :avgPaceMinPerKm WHERE id = :sessionId")
+    suspend fun setMovingTime(sessionId: Long, movingTimeSeconds: Long, avgPaceMinPerKm: Double)
 
     @Query("UPDATE sessions SET perceivedEffort = :effort, sessionNote = :note WHERE id = :sessionId")
     suspend fun updateFeelFeedback(sessionId: Long, effort: Int?, note: String?)
@@ -333,7 +344,7 @@ interface RunWalkIntervalStatDao {
 
 @Database(
     entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class, TrackPoint::class],
-    version = 18,
+    version = 19,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -375,7 +386,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_14_15,
                     MIGRATION_15_16,
                     MIGRATION_16_17,
-                    MIGRATION_17_18
+                    MIGRATION_17_18,
+                    MIGRATION_18_19
                 )
                 .build()
                 INSTANCE = instance
@@ -900,20 +912,20 @@ val MIGRATION_16_17 = object : Migration(16, 17) {
  * entities do not declare, so the phone cannot reach this branch by any ordinary path.
  *
  * Eighteen is the first number that means one thing again, and both shapes are brought to it by
- * asking the database what it actually has rather than trusting the number: the column this branch
- * needs is added if it is missing, and the column belonging to the other branch is dropped. A
- * database that reached 17 the ordinary way — through [MIGRATION_16_17] — finds nothing to do here.
+ * asking the database what it actually has rather than trusting the number: the column #84 needs is
+ * added if it is missing. A database that reached 17 the ordinary way — through [MIGRATION_16_17] —
+ * finds nothing to do here.
  *
- * Nothing is lost that is not also recoverable: moving time is measured from a run's stored track,
- * and #163 backfills it on first launch once that work lands (as its own migration, from 18).
+ * The other branch's column is left where it is. [MIGRATION_18_19] wants it anyway, and Room checks
+ * the shape of the database only once every migration has run, so a column that is briefly early is
+ * a column that is on time. Dropping and re-adding it would cost the moving times already stored on
+ * that phone, and `ALTER TABLE ... DROP COLUMN` needs a SQLite newer than this app's minimum Android
+ * carries.
  */
 val MIGRATION_17_18 = object : Migration(17, 18) {
     override fun migrate(database: SupportSQLiteDatabase) {
         if (!database.hasColumn("track_points", "startsAfterPause")) {
             database.execSQL("ALTER TABLE track_points ADD COLUMN startsAfterPause INTEGER NOT NULL DEFAULT 0")
-        }
-        if (database.hasColumn("sessions", "movingTimeSeconds")) {
-            database.execSQL("ALTER TABLE sessions DROP COLUMN movingTimeSeconds")
         }
     }
 }
@@ -927,3 +939,20 @@ private fun SupportSQLiteDatabase.hasColumn(table: String, column: String): Bool
         }
         false
     }
+
+/**
+ * Moving time (#163). Left null rather than computed here: working it out means measuring geodesic
+ * distances between every pair of track points, which is Kotlin's job, not SQL's. A one-time pass
+ * fills these in after the database opens — see [SessionRepository.backfillMovingTime].
+ *
+ * Added only if it is missing, because one phone already carries this column from the unmerged v17
+ * described on [MIGRATION_17_18]; there it arrives with its moving times already measured, and the
+ * backfill pass leaves a row that has an answer alone.
+ */
+val MIGRATION_18_19 = object : Migration(18, 19) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        if (!database.hasColumn("sessions", "movingTimeSeconds")) {
+            database.execSQL("ALTER TABLE sessions ADD COLUMN movingTimeSeconds INTEGER")
+        }
+    }
+}

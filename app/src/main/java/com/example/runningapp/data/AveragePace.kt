@@ -29,6 +29,22 @@ fun formatAveragePace(durationSeconds: Long, distanceKm: Double): String =
     formatMinutesPerKm(averagePaceMinPerKm(durationSeconds, distanceKm))
 
 /**
+ * The clock a finished run's pace is measured against: its moving time once that has been computed
+ * from the run's track, and the run's own duration when it has not — a treadmill run, a run with no
+ * usable GPS track, or a run the #163 backfill has yet to reach.
+ *
+ * Pace is the one number quoted against other apps, so it is measured Strava's way (see
+ * [movingTimeSeconds]). Duration keeps meaning what it has always meant, and both are shown.
+ */
+val RunnerSession.paceClockSeconds: Long get() = movingTimeSeconds ?: durationSeconds
+
+/** The run's average pace, min/km, over [paceClockSeconds]. 0.0 when there is none to show. */
+val RunnerSession.averagePace: Double get() = averagePaceMinPerKm(paceClockSeconds, distanceKm)
+
+/** [averagePace] as `m:ss`, or `--:--` when there is none to show. */
+val RunnerSession.averagePaceText: String get() = formatMinutesPerKm(averagePace)
+
+/**
  * A min/km pace as `m:ss`, or `--:--` when there is none. The one place a pace becomes minutes and
  * seconds, so the live tile and a finished run's summary can never round the same pace differently.
  */

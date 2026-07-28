@@ -61,4 +61,39 @@ class AveragePaceTest {
     fun `the shared formatter has nothing to show for a zero pace`() {
         assertEquals("--:--", formatMinutesPerKm(0.0))
     }
+
+    private fun run(durationSeconds: Long, distanceKm: Double, movingTimeSeconds: Long?) =
+        RunnerSession(
+            startTime = 1_700_000_000_000L,
+            endTime = 1_700_000_002_259L,
+            durationSeconds = durationSeconds,
+            runMode = "outdoor",
+            distanceKm = distanceKm,
+            movingTimeSeconds = movingTimeSeconds,
+        )
+
+    @Test
+    fun `a run measures its pace over moving time once it has one`() {
+        // The run from #163: 4.53 km, out for 37:39, moving for 36:56. Strava showed 8:10 for the
+        // same run over its own 4.52 km; the remaining second is that 10 m of distance, not the
+        // clock, and closing it would mean matching Strava's GPS filtering too.
+        val session = run(durationSeconds = 2259, distanceKm = 4.53, movingTimeSeconds = 2216)
+        assertEquals(2216L, session.paceClockSeconds)
+        assertEquals("8:09", session.averagePaceText)
+    }
+
+    @Test
+    fun `a run with no moving time yet falls back to its duration`() {
+        // A treadmill run, or one the backfill has not reached: 8:19 rather than nothing at all.
+        val session = run(durationSeconds = 2259, distanceKm = 4.53, movingTimeSeconds = null)
+        assertEquals(2259L, session.paceClockSeconds)
+        assertEquals("8:19", session.averagePaceText)
+    }
+
+    @Test
+    fun `a run with no distance still has no pace to show`() {
+        val session = run(durationSeconds = 2259, distanceKm = 0.0, movingTimeSeconds = 2216)
+        assertEquals("--:--", session.averagePaceText)
+        assertEquals(0.0, session.averagePace, 0.0)
+    }
 }
