@@ -34,6 +34,10 @@ object RunGpxTrack {
      * arrive about a second apart, and a manual pause costs the pause itself plus re-acquiring GPS
      * on resume — so twenty seconds sits well above the gaps of a run in progress and well below
      * any pause a runner actually takes.
+     *
+     * A gap is the only evidence a pause leaves, and it is reliable because nothing records one:
+     * a manual pause tears the GPS stream down, and an auto-pause keeps it up but its fixes are not
+     * written to the track (`LocationTracker.handleNewLocation`).
      */
     private const val ROUTE_BREAK_SECONDS = 20L
 

@@ -113,14 +113,14 @@ class LocationTracker(
                 // Auto-pause (#39) keeps GPS registered through a standstill so movement can be
                 // detected - unlike a manual pause, which fully stops updates via stop() below -
                 // so fixes must keep flowing to SessionRecorder while auto-paused too.
-                val shouldProcess = status == SessionStatus.RUNNING ||
-                    (status == SessionStatus.PAUSED && sessionRecorder.isAutoPaused())
+                val autoPaused = status == SessionStatus.PAUSED && sessionRecorder.isAutoPaused()
+                val shouldProcess = status == SessionStatus.RUNNING || autoPaused
                 if (!shouldProcess) {
                     Log.d(logTag, "Ignoring location update - session not running")
                     return
                 }
                 for (location in locationResult.locations) {
-                    handleNewLocation(location)
+                    handleNewLocation(location, autoPaused)
                 }
             }
         }
@@ -153,7 +153,7 @@ class LocationTracker(
     }
 
     @Synchronized
-    private fun handleNewLocation(location: Location) {
+    private fun handleNewLocation(location: Location, autoPaused: Boolean = false) {
         Log.d(logTag, "New location: lat=${location.latitude}, lon=${location.longitude}, acc=${location.accuracy}")
         lastLocation = location
         if (firstLocation == null) {
@@ -161,7 +161,17 @@ class LocationTracker(
         }
         // Every received fix is recorded as a track point, unfiltered — SessionRecorder below
         // applies its own accuracy gate separately, only for live distance/pace accumulation.
-        onRawFix(location, barometerReader.getLastPressureHpa())
+        //
+        // Except while auto-paused (#39). A manual pause tears the GPS stream down, so a pause is
+        // simply absent from the recorded route; auto-pause deliberately keeps it up so movement can
+        // restart the run, and those fixes would land a second apart like any others — a standstill
+        // written into the route as if it were run. The recorder already refuses to count them
+        // towards distance, and the stored track is what the map draws and the export writes, so
+        // neither should disagree with it. The fix still reaches the recorder below, which is what
+        // notices the runner moving again.
+        if (!autoPaused) {
+            onRawFix(location, barometerReader.getLastPressureHpa())
+        }
         sessionRecorder.onLocationFix(
             LocationFix(
                 latitude = location.latitude,
