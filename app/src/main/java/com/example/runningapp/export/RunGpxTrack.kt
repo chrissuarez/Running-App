@@ -37,7 +37,7 @@ object RunGpxTrack {
      *
      * It is the fallback, not the test: a recorded resume breaks the route however short the pause
      * was. This catches only what nothing recorded — a long loss of signal, and pauses on runs saved
-     * before v17.
+     * before the boundary was recorded.
      */
     private const val ROUTE_BREAK_SECONDS = 20L
 
@@ -118,11 +118,11 @@ object RunGpxTrack {
      *
      * Two things break it, and the first is why the second is not enough on its own:
      *
-     *  - the resume being recorded on the fix that made it ([TrackPoint.startsAfterPause], v17 on).
+     *  - the resume being recorded on the fix that made it ([TrackPoint.startsAfterPause]).
      *    A pause of a few seconds — stop, cross, carry on — leaves a gap no longer than a sparse
      *    patch of a run in progress, so no length of gap can tell the two apart.
      *  - a gap longer than [ROUTE_BREAK_SECONDS], which catches what nothing recorded: a long loss
-     *    of signal, and the pauses on runs saved before v17, where the boundary was never written
+     *    of signal, and the pauses on runs saved before the boundary was, where it was never written
      *    down and only a gap is left to find it by.
      */
     private fun List<TrackPoint>.splitWhereTheRunStopped(): List<List<TrackPoint>> {

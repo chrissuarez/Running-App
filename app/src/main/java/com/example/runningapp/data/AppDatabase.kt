@@ -168,7 +168,7 @@ data class TrackPoint(
     // auto-pause is not written to the track, so a pause leaves only an absence, and a short one
     // leaves an absence too small to tell from a sparse patch of a run in progress. Anything drawing
     // or measuring the route must break here rather than joining across ground the runner covered
-    // while stopped (#84). False on rows written before v17.
+    // while stopped (#84). False on every row recorded before the column existed.
     val startsAfterPause: Boolean = false
 )
 
@@ -333,7 +333,7 @@ interface RunWalkIntervalStatDao {
 
 @Database(
     entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class, TrackPoint::class],
-    version = 17,
+    version = 18,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -374,7 +374,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_13_14,
                     MIGRATION_14_15,
                     MIGRATION_15_16,
-                    MIGRATION_16_17
+                    MIGRATION_16_17,
+                    MIGRATION_17_18
                 )
                 .build()
                 INSTANCE = instance
@@ -880,7 +881,7 @@ val MIGRATION_15_16 = object : Migration(15, 16) {
  * Records where a pause fell, on the fix that resumed the run (#84).
  *
  * Not nullable and not backfilled: false is the honest answer for every existing row. Where a pause
- * fell on a run recorded before v17 was never written down and cannot be recovered — those runs keep
+ * fell on an older run was never written down and cannot be recovered — those runs keep
  * the old behaviour, where only a gap longer than twenty seconds breaks the route.
  */
 val MIGRATION_16_17 = object : Migration(16, 17) {
@@ -888,3 +889,41 @@ val MIGRATION_16_17 = object : Migration(16, 17) {
         database.execSQL("ALTER TABLE track_points ADD COLUMN startsAfterPause INTEGER NOT NULL DEFAULT 0")
     }
 }
+
+/**
+ * Settles a version number that briefly meant two different things.
+ *
+ * A v17 was installed on the phone from an unmerged branch — the #163 pace work, which spends its
+ * own v17 on `sessions.movingTimeSeconds` — before this branch spent v17 on `startsAfterPause`
+ * above. Two databases now claim to be 17 and are not the same shape, and a version number is the
+ * only thing Room has to tell them apart. Room also refuses to open a database carrying a column its
+ * entities do not declare, so the phone cannot reach this branch by any ordinary path.
+ *
+ * Eighteen is the first number that means one thing again, and both shapes are brought to it by
+ * asking the database what it actually has rather than trusting the number: the column this branch
+ * needs is added if it is missing, and the column belonging to the other branch is dropped. A
+ * database that reached 17 the ordinary way — through [MIGRATION_16_17] — finds nothing to do here.
+ *
+ * Nothing is lost that is not also recoverable: moving time is measured from a run's stored track,
+ * and #163 backfills it on first launch once that work lands (as its own migration, from 18).
+ */
+val MIGRATION_17_18 = object : Migration(17, 18) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        if (!database.hasColumn("track_points", "startsAfterPause")) {
+            database.execSQL("ALTER TABLE track_points ADD COLUMN startsAfterPause INTEGER NOT NULL DEFAULT 0")
+        }
+        if (database.hasColumn("sessions", "movingTimeSeconds")) {
+            database.execSQL("ALTER TABLE sessions DROP COLUMN movingTimeSeconds")
+        }
+    }
+}
+
+/** What the database says it has, rather than what its version number implies. */
+private fun SupportSQLiteDatabase.hasColumn(table: String, column: String): Boolean =
+    query("PRAGMA table_info(`$table`)").use { cursor ->
+        val nameIndex = cursor.getColumnIndex("name")
+        while (cursor.moveToNext()) {
+            if (cursor.getString(nameIndex) == column) return true
+        }
+        false
+    }
