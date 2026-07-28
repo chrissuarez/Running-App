@@ -31,6 +31,8 @@ import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.classifyIntervalCompletionBand
 import com.example.runningapp.data.computeRunWalkIntervalAnalytics
+import com.example.runningapp.data.averagePaceMinPerKm
+import com.example.runningapp.data.formatMinutesPerKm
 import com.example.runningapp.data.inTargetZoneSeconds
 import com.example.runningapp.data.secondsInZone
 import com.example.runningapp.ui.workout.zoneChartColor
@@ -183,9 +185,11 @@ fun SummaryStats(session: RunnerSession) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     StatLarge(label = "Distance", value = "%.2f km".format(session.distanceKm))
-                    val p = session.avgPaceMinPerKm
-                    val pStr = if (p > 0) "%d:%02d min/km".format(p.toInt(), ((p - p.toInt()) * 60).roundToInt()) else "--:--"
-                    StatLarge(label = "Avg Pace", value = pStr)
+                    // Derived, not read from the stored column (#163).
+                    val pace = averagePaceMinPerKm(session.durationSeconds, session.distanceKm)
+                    val paceLabel =
+                        if (pace > 0) "${formatMinutesPerKm(pace)} min/km" else formatMinutesPerKm(pace)
+                    StatLarge(label = "Avg Pace", value = paceLabel)
                 }
             }
 

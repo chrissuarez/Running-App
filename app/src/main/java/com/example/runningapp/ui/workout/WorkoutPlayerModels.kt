@@ -5,6 +5,7 @@ import com.example.runningapp.SessionPhase
 import com.example.runningapp.SessionStatus
 import com.example.runningapp.StructuredWorkoutPhase
 import com.example.runningapp.ZoneBand
+import com.example.runningapp.data.formatMinutesPerKm
 import com.example.runningapp.hrZoneOf
 import com.example.runningapp.liveZoneStatus
 import com.example.runningapp.targetHrZone
@@ -259,10 +260,6 @@ fun formatStopwatch(seconds: Long): String {
     return "%02d:%02d".format(mins, secs)
 }
 
-fun formatPace(paceMinPerKm: Double): String {
-    val mins = paceMinPerKm.toInt()
-    val secs = ((paceMinPerKm - mins) * 60).toInt().coerceIn(0, 59)
-    return "%d:%02d /km".format(mins, secs)
-}
+fun formatPace(paceMinPerKm: Double): String = "${formatMinutesPerKm(paceMinPerKm)} /km"
 
 fun formatDistanceKm(distanceKm: Double): String = "%.2f km".format(distanceKm)

@@ -1,0 +1,64 @@
+package com.example.runningapp.data
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class AveragePaceTest {
+
+    @Test
+    fun `pace is the whole run, not a window of it`() {
+        // The run from #163: 4.53 km in 37:39. The stored column said 29.05 min/km because it
+        // was the last 15 seconds of GPS speed; the run's own totals say 8:19.
+        assertEquals(8.311, averagePaceMinPerKm(durationSeconds = 2259, distanceKm = 4.53), 0.001)
+    }
+
+    @Test
+    fun `no distance means no pace`() {
+        assertEquals(0.0, averagePaceMinPerKm(durationSeconds = 2259, distanceKm = 0.0), 0.0)
+    }
+
+    @Test
+    fun `no duration means no pace`() {
+        assertEquals(0.0, averagePaceMinPerKm(durationSeconds = 0, distanceKm = 4.53), 0.0)
+    }
+
+    @Test
+    fun `a negative distance is treated as no distance`() {
+        assertEquals(0.0, averagePaceMinPerKm(durationSeconds = 2259, distanceKm = -1.0), 0.0)
+    }
+
+    @Test
+    fun `formats the run from 163 as minutes and seconds`() {
+        assertEquals("8:19", formatAveragePace(durationSeconds = 2259, distanceKm = 4.53))
+    }
+
+    @Test
+    fun `pads seconds below ten`() {
+        // 1 km in 8:05.
+        assertEquals("8:05", formatAveragePace(durationSeconds = 485, distanceKm = 1.0))
+    }
+
+    @Test
+    fun `rounding up to a full minute carries into the minutes`() {
+        // 10 km at 539.7 s/km - 8:59.7, which must read 9:00 and never 8:60.
+        assertEquals("9:00", formatAveragePace(durationSeconds = 5397, distanceKm = 10.0))
+    }
+
+    @Test
+    fun `a run with no distance has no pace to show`() {
+        assertEquals("--:--", formatAveragePace(durationSeconds = 2259, distanceKm = 0.0))
+    }
+
+    // The live tile formats through this same function, so a pace can never round one way on the
+    // run screen and another way in history.
+    @Test
+    fun `the shared formatter rounds to the nearest second`() {
+        assertEquals("8:59", formatMinutesPerKm(8.98))
+        assertEquals("9:00", formatMinutesPerKm(8.995))
+    }
+
+    @Test
+    fun `the shared formatter has nothing to show for a zero pace`() {
+        assertEquals("--:--", formatMinutesPerKm(0.0))
+    }
+}
