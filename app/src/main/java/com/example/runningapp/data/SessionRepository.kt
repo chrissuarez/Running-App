@@ -21,25 +21,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlin.math.floor
-import kotlin.math.roundToInt
 
 // Labels describing a run to the AI coach (#107). Structure comes only from a plan, so the one
 // distinction the coach needs is whether the run followed a run/walk workout; these are derived
 // from RunnerSession.isRunWalkMode, not from any user-selected mode.
 private const val AI_LABEL_RUN_WALK = "Run/Walk"
 private const val AI_LABEL_OPEN_RUN = "Open Run"
-
-data class AiRunWalkMetrics(
-    val severeBreakdownRatePercent: Int,
-    val poorToleranceRatePercent: Int,
-    val strainedCompletionRatePercent: Int,
-    val strongCompletionRatePercent: Int,
-    val cleanIntervalRatePercent: Int,
-    val hrDriftSlopeBpmPerInterval: Double?,
-    val intervalCompletionRatioPercent: Int,
-    val avgRecoverySecondsAfterTrigger: Double?,
-    val avgHrAtTrigger: Double?
-)
 
 /**
  * What the AI coach is told about a past Run.
@@ -48,13 +35,19 @@ data class AiRunWalkMetrics(
  * prescribed, so it says nothing about how the Run went, and the rows saved before #167 count
  * heart-rate cues instead — one number, two meanings, and no way to tell which a row carries.
  * Sending it would have the coach read a six-repeat Workout as six failures.
+ *
+ * Interval-quality metrics are gone for the same kind of reason (#168). Completion was measured as
+ * the second heart rate first crossed the target line over the Interval's planned length, so an
+ * Interval run in full logged as a "severe breakdown" — the app never knew whether a runner walked,
+ * only whether their heart rate was high (ADR 0003). Those numbers are still shown per-Interval on
+ * the session detail screen, where they sit next to the run they came from; what changes here is
+ * that the coach no longer adapts a Plan from them.
  */
 data class AiRecentRun(
     val durationSeconds: Long,
     val avgHr: Int,
     val sessionType: String,
-    val timestamp: Long,
-    val runWalkMetrics: AiRunWalkMetrics? = null
+    val timestamp: Long
 )
 
 data class AiTrainingContext(
@@ -91,7 +84,6 @@ internal fun coachTargetZone(
 class SessionRepository(
     private val sessionDao: SessionDao,
     private val sampleDao: SampleDao? = null,
-    private val runWalkIntervalStatDao: RunWalkIntervalStatDao? = null,
     private val trackPointDao: TrackPointDao? = null,
     private val settingsRepository: SettingsRepository? = null,
     private val coachPrescriptionRepository: CoachPrescriptionRepository? = null,
@@ -512,17 +504,11 @@ class SessionRepository(
             // A structured run/walk workout is the only run the coach can adjust intervals from
             // (#107). isRunWalkMode records that per run, so it replaces the retired session-type
             // column both as the gate and as the label the coach sees.
-            val runWalkMetrics = if (session.isRunWalkMode) {
-                buildRunWalkMetrics(session.id)
-            } else {
-                null
-            }
             AiRecentRun(
                 durationSeconds = session.durationSeconds,
                 avgHr = session.avgBpm,
                 sessionType = if (session.isRunWalkMode) AI_LABEL_RUN_WALK else AI_LABEL_OPEN_RUN,
-                timestamp = session.startTime,
-                runWalkMetrics = runWalkMetrics
+                timestamp = session.startTime
             )
         }
 
@@ -694,70 +680,4 @@ class SessionRepository(
         return warmupSeconds.toLong() + mainSetSeconds + cooldownSeconds.toLong()
     }
 
-    private suspend fun buildRunWalkMetrics(sessionId: Long): AiRunWalkMetrics? {
-        val intervalDao = runWalkIntervalStatDao ?: return null
-        val stats = intervalDao.getIntervalStatsForSession(sessionId)
-        if (stats.isEmpty()) {
-            Log.w("AiCoach", "No interval stats available for Run/Walk sessionId=$sessionId")
-            return null
-        }
-
-        val analytics = computeRunWalkIntervalAnalytics(stats)
-
-        val avgHrAtTriggerValues = stats.mapNotNull { it.avgHrAtTriggerInInterval }
-        val avgRecoveryValues = stats.mapNotNull { it.avgRecoverySecondsAfterTriggerInInterval }
-        val avgHrAtTrigger = avgHrAtTriggerValues.averageOrNull()
-        val avgRecoverySeconds = avgRecoveryValues.averageOrNull()
-        val hrDriftSlope = calculateLinearRegressionSlope(
-            stats.mapNotNull { stat ->
-                val triggerHr = stat.avgHrAtTriggerInInterval ?: return@mapNotNull null
-                stat.intervalIndex.toDouble() to triggerHr
-            }
-        )
-
-        if (hrDriftSlope == null) {
-            Log.w("AiCoach", "Sparse drift data for sessionId=$sessionId; slope unavailable")
-        }
-
-        Log.d(
-            "AiCoach",
-            "Run metrics sessionId=$sessionId severe=${analytics.severeBreakdownPercent}% " +
-                "poor=${analytics.poorTolerancePercent}% strained=${analytics.strainedCompletionPercent}% " +
-                "strong=${analytics.strongCompletionPercent}% clean=${analytics.cleanPercent}% " +
-                "completion=${analytics.completionRatioPercent}% avgTriggerHr=${avgHrAtTrigger?.roundToInt()} " +
-                "avgRecovery=${avgRecoverySeconds?.roundToInt()}s driftSlope=${hrDriftSlope ?: "null"}"
-        )
-
-        return AiRunWalkMetrics(
-            severeBreakdownRatePercent = analytics.severeBreakdownPercent,
-            poorToleranceRatePercent = analytics.poorTolerancePercent,
-            strainedCompletionRatePercent = analytics.strainedCompletionPercent,
-            strongCompletionRatePercent = analytics.strongCompletionPercent,
-            cleanIntervalRatePercent = analytics.cleanPercent,
-            hrDriftSlopeBpmPerInterval = hrDriftSlope,
-            intervalCompletionRatioPercent = analytics.completionRatioPercent,
-            avgRecoverySecondsAfterTrigger = avgRecoverySeconds,
-            avgHrAtTrigger = avgHrAtTrigger
-        )
-    }
-
-    private fun calculateLinearRegressionSlope(points: List<Pair<Double, Double>>): Double? {
-        if (points.size < 2) return null
-        val meanX = points.map { it.first }.average()
-        val meanY = points.map { it.second }.average()
-        var numerator = 0.0
-        var denominator = 0.0
-        for ((x, y) in points) {
-            val dx = x - meanX
-            numerator += dx * (y - meanY)
-            denominator += dx * dx
-        }
-        if (denominator == 0.0) return null
-        return numerator / denominator
-    }
-
-    private fun List<Double>.averageOrNull(): Double? {
-        if (isEmpty()) return null
-        return average()
-    }
 }
