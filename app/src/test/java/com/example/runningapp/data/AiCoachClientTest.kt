@@ -72,10 +72,10 @@ class AiCoachClientTest {
             oneRunWalkSession.copy(graduationRequirement = "Run a 5K in 24:59 or faster.")
         )
 
-        // The Run detail screen shows the distance throughout, so a debrief calling it unknown
-        // contradicts a screen the runner has already seen.
+        // An outdoor Run shows its distance on the Run detail screen and a treadmill Run has none at
+        // all, and nothing in this context says which this was — so the coach claims neither.
         assertTrue(prompt.contains("you were not given this run's distance"))
-        assertTrue(prompt.contains("Never tell the user their distance is unknown or unrecorded"))
+        assertTrue(prompt.contains("Do not say whether the app recorded it or not"))
     }
 
     @Test
