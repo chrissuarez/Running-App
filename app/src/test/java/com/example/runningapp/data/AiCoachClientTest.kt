@@ -51,6 +51,22 @@ class AiCoachClientTest {
     }
 
     @Test
+    fun `a Stage asking for a distance cannot be graduated from data that has none`() {
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(graduationRequirement = "Successfully complete a 5K under 30 minutes.")
+        )
+
+        assertTrue(prompt.contains("carries no distance or pace"))
+        assertTrue(prompt.contains("whole run including its warm-up and cool-down"))
+        assertTrue(
+            prompt.contains(
+                "If the stage requirement asks for a distance, a pace, or a distance within a time, " +
+                    "you CANNOT verify it from this data. Set graduatedToNextStage to false"
+            )
+        )
+    }
+
+    @Test
     fun `duration, average heart rate and Stage still reach the coach`() {
         val prompt = buildEvaluationPrompt(oneRunWalkSession)
 

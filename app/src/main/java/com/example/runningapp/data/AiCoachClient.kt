@@ -75,8 +75,14 @@ internal fun buildEvaluationPrompt(
     appendLine("CRITICAL RULE: An 'Open Run' is an unplanned run with no interval structure. Do NOT set graduatedToNextStage to true based on Open Run sessions. Progression ONLY happens via 'Run/Walk' sessions.")
     // No Interval-quality metric is sent, and none is described here (#168) — see AiRecentRun.
     appendLine("Judge the run from its duration and average heart rate against the stage requirement.")
+    // Duration is the whole run, warm-up and cool-down included, and no distance or pace is sent at
+    // all — so a requirement stated as a distance in a time cannot be checked from this data. The
+    // model would otherwise read a 26-minute run that covered 3K as a 5K pass, and one wrong true
+    // advances the stored stage on the spot. #182 sends the evidence; this stops the guess.
+    appendLine("The recent runs data carries no distance or pace, and durationSeconds is the whole run including its warm-up and cool-down.")
+    appendLine("CRITICAL RULE: If the stage requirement asks for a distance, a pace, or a distance within a time, you CANNOT verify it from this data. Set graduatedToNextStage to false and say in coachMessage that the run's distance is not something this app can confirm yet.")
     appendLine("Use this combined context to generate the exact intervals for their NEXT run.")
-    appendLine("If they meet the requirement easily, set graduatedToNextStage to true.")
+    appendLine("If they meet the requirement easily, and the data can actually establish that they met it, set graduatedToNextStage to true.")
     appendLine("Otherwise, adjust their run/walk intervals safely to build endurance.")
     appendLine("You may also set nextTargetZone (1-5) to prescribe an easier or harder target for that run.")
     appendLine("Omit nextTargetZone to leave the workout's own target zone alone.")
