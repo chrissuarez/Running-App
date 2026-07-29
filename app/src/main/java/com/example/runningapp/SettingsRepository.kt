@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -81,6 +82,12 @@ fun aiSharingChangeAllowed(enabled: Boolean, testingModeEnabled: Boolean): Boole
  */
 data class StoredHeartRates(val maxHr: Int, val restingHr: Int?)
 
+/**
+ * A statement of one or both heart rates. Null means "not stated" — not [RESTING_HR_UNSTATED],
+ * which is a resting heart rate deliberately withdrawn.
+ */
+data class StatedHeartRates(val maxHr: Int?, val restingHr: Int?)
+
 fun storedHeartRates(
     statedMaxHr: Int?,
     statedRestingHr: Int?,
@@ -134,6 +141,11 @@ internal object PreferencesKeys {
     val LATEST_COACH_MESSAGE = stringPreferencesKey("latest_coach_message")
     val SIMULATION_ENABLED = booleanPreferencesKey("simulation_enabled")
     val TESTING_MODE_ENABLED = booleanPreferencesKey("testing_mode_enabled")
+    // A statement of the heart rates that has started moving history but has not yet been stored.
+    // See SettingsRepository.beginStatement.
+    val STATEMENT_IN_FLIGHT = booleanPreferencesKey("hr_statement_in_flight")
+    val STATEMENT_MAX_HR = intPreferencesKey("hr_statement_max_hr")
+    val STATEMENT_RESTING_HR = intPreferencesKey("hr_statement_resting_hr")
 }
 
 /**
@@ -266,6 +278,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun setStatedHeartRates(maxHr: Int?, restingHr: Int?) {
         if (maxHr == null && restingHr == null) return
         context.dataStore.edit { preferences ->
+            // Landing the statement is what finishes it, so the in-flight note is dropped in the
+            // same write — see [beginStatement]. Load-bearing rather than tidy-up: without these
+            // three lines every launch would find a statement still in flight and re-band the whole
+            // of history again, for ever, and nothing would fail to say so.
+            preferences.remove(PreferencesKeys.STATEMENT_IN_FLIGHT)
+            preferences.remove(PreferencesKeys.STATEMENT_MAX_HR)
+            preferences.remove(PreferencesKeys.STATEMENT_RESTING_HR)
             val stored = storedHeartRates(
                 statedMaxHr = maxHr,
                 statedRestingHr = restingHr,
@@ -282,6 +301,61 @@ class SettingsRepository(private val context: Context) {
                 preferences[PreferencesKeys.MAX_HR_EVER_SET] = true
             }
             stored.restingHr?.let { preferences[PreferencesKeys.RESTING_HR] = it }
+        }
+    }
+
+    /**
+     * Notes a statement that is about to move history, before it moves any.
+     *
+     * History lives in the database and the profile lives here, so a statement that touches both
+     * cannot be one transaction. Re-banding commits first; if this process dies — or the write
+     * below throws — in the gap before the profile lands, every finished run is banded against a
+     * profile the settings do not hold and no future run will use. Nothing would ever repair it,
+     * because nothing would know: the split #172 exists to prevent, silent and permanent.
+     *
+     * So the intent is recorded first and cleared only by the statement landing
+     * ([setStatedHeartRates]). Anything left behind is an interruption, and replaying it is safe
+     * because a re-tally is a pure re-derivation from stored per-second samples, which are never
+     * pruned — repeating one costs time and changes nothing. See
+     * `SessionRepository.resumeInterruptedStatement`.
+     *
+     * The numbers are carried rather than re-read from storage on the way back, because what
+     * history is re-banded against is not simply what ends up stored: Max HR's future-only rule
+     * means a maximum stated beside a resting heart rate does not move history at all.
+     */
+    suspend fun beginStatement(maxHr: Int?, restingHr: Int?) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.STATEMENT_IN_FLIGHT] = true
+            if (maxHr != null) preferences[PreferencesKeys.STATEMENT_MAX_HR] = maxHr
+            else preferences.remove(PreferencesKeys.STATEMENT_MAX_HR)
+            if (restingHr != null) preferences[PreferencesKeys.STATEMENT_RESTING_HR] = restingHr
+            else preferences.remove(PreferencesKeys.STATEMENT_RESTING_HR)
+        }
+    }
+
+    /**
+     * A statement that began moving history and never landed, or null if none did.
+     *
+     * The flag is what says one exists, not the presence of a number: either number may be absent,
+     * because a statement of one heart rate leaves the other alone. Both absent is meaningless and
+     * unreachable from [beginStatement] — [discardStatement] is how a corrupt one gets cleared,
+     * because a note nothing can replay would otherwise be found again on every launch for ever.
+     */
+    suspend fun interruptedStatement(): StatedHeartRates? {
+        val preferences = context.dataStore.data.first()
+        if (preferences[PreferencesKeys.STATEMENT_IN_FLIGHT] != true) return null
+        return StatedHeartRates(
+            maxHr = preferences[PreferencesKeys.STATEMENT_MAX_HR],
+            restingHr = preferences[PreferencesKeys.STATEMENT_RESTING_HR]
+        )
+    }
+
+    /** Drops an in-flight note without applying anything. See [interruptedStatement]. */
+    suspend fun discardStatement() {
+        context.dataStore.edit { preferences ->
+            preferences.remove(PreferencesKeys.STATEMENT_IN_FLIGHT)
+            preferences.remove(PreferencesKeys.STATEMENT_MAX_HR)
+            preferences.remove(PreferencesKeys.STATEMENT_RESTING_HR)
         }
     }
 

@@ -105,6 +105,30 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Finishes a heart-rate statement that moved history and never landed, once per process.
+     *
+     * History lives in the database and the profile in DataStore, so the two cannot be one
+     * transaction — this is what closes the gap between them. Usually a no-op; when it is not, the
+     * alternative is a history banded against a profile nothing else holds, which nothing would
+     * notice (#172).
+     *
+     * On the container's own scope for the reason [backfillMovingTimeOnce] is: the latch is
+     * process-wide, so a pass tied to an Activity the runner backs out of would be cancelled with
+     * the work undone and never start again for the life of the process.
+     *
+     * Goes back through [stateHeartRates] rather than straight to the repository, so a resume takes
+     * its turn behind anything the runner states in the meantime. Applied directly it would be one
+     * more unordered writer, and could re-band history to last session's number and store it over
+     * the one just typed — the ordering [StatedHeartRateQueue] exists to settle.
+     */
+    fun resumeInterruptedHrStatementOnce() {
+        if (!hrStatementResumed.compareAndSet(false, true)) return
+        applicationScope.launch {
+            sessionRepository.interruptedStatement()?.let { stateHeartRates(it.maxHr, it.restingHr) }
+        }
+    }
+
+    /**
      * Lives as long as the process, and deliberately never cancelled — the container itself is a
      * process-wide singleton, so there is no shorter lifetime to bind to. SupervisorJob so one
      * failed background pass cannot take the others down with it.
@@ -123,6 +147,8 @@ class AppContainer(context: Context) {
     }
 
     private val movingTimeBackfilled = AtomicBoolean(false)
+
+    private val hrStatementResumed = AtomicBoolean(false)
 }
 
 private var appContainerInstance: AppContainer? = null

@@ -5,6 +5,7 @@ import com.example.runningapp.CoachPrescriptionRepository
 import com.example.runningapp.CoachWriteScope
 import com.example.runningapp.MAX_MAX_HR
 import com.example.runningapp.SettingsRepository
+import com.example.runningapp.StatedHeartRates
 import com.example.runningapp.UserSettings
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -14,6 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
@@ -640,6 +642,85 @@ class SessionRepositoryTest {
         repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = 60)
 
         assertEquals(listOf("begin", "row", "row", "commit", "backup"), order)
+    }
+
+    @Test
+    fun `the statement is noted before history moves and cleared only when it lands`() = runTest {
+        // History is in the database and the profile is in DataStore, so the two writes cannot be
+        // one transaction. Die in the gap and every finished run is banded against a profile the
+        // settings do not hold, with nothing to notice or repair it.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 181, maxHrEverSet = true)))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
+
+        repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = 60)
+
+        inOrder(mockDao, mockSettingsRepo) {
+            verify(mockSettingsRepo).beginStatement(null, 60)
+            verify(mockDao).updateZoneSeconds(
+                sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0
+            )
+            verify(mockSettingsRepo).setStatedHeartRates(null, 60)
+        }
+    }
+
+    @Test
+    fun `a statement that moves no history is not noted at all`() = runTest {
+        // Nothing to be interrupted between, so nothing to recover — and a note left for every
+        // future-only Max HR change would be a resume pass that re-tallies for no reason.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 181, maxHrEverSet = true)))
+
+        repositoryWithSamples.setStatedProfile(maxHr = 195, restingHr = null)
+
+        verify(mockSettingsRepo, never()).beginStatement(anyOrNull(), anyOrNull())
+        verify(mockSettingsRepo).setStatedHeartRates(eq(195), anyOrNull())
+    }
+
+    @Test
+    fun `an interrupted statement is handed back to be stated again`() = runTest {
+        // Handed back rather than applied here: replaying is a statement like any other and has to
+        // queue behind whatever the runner states in the meantime, or a resume racing a fresh edit
+        // re-bands history to last session's number and stores it over the one just typed.
+        whenever(mockSettingsRepo.interruptedStatement()).thenReturn(StatedHeartRates(null, 60))
+
+        assertEquals(StatedHeartRates(null, 60), repository.interruptedStatement())
+
+        verify(mockSettingsRepo, never()).setStatedHeartRates(anyOrNull(), anyOrNull())
+        verify(mockDao, never()).updateZoneSeconds(any(), any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `with nothing interrupted, startup touches nothing`() = runTest {
+        whenever(mockSettingsRepo.interruptedStatement()).thenReturn(null)
+
+        assertNull(repository.interruptedStatement())
+
+        verify(mockSettingsRepo, never()).discardStatement()
+    }
+
+    @Test
+    fun `a note with nothing in it is dropped rather than found again every launch`() = runTest {
+        // Unreachable from beginStatement, so this is a corrupt note. Left in place it would be
+        // read, logged and skipped on every launch for ever.
+        whenever(mockSettingsRepo.interruptedStatement()).thenReturn(StatedHeartRates(null, null))
+
+        assertNull(repository.interruptedStatement())
+
+        verify(mockSettingsRepo).discardStatement()
     }
 
     @Test
