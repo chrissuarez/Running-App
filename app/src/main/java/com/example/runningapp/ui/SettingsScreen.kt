@@ -90,8 +90,13 @@ fun SettingsScreen(
     val maxHrState = rememberHrFieldState(settings.maxHr, parse = ::parseMaxHr)
     // Judged against Max HR: the two numbers have to leave a usable reserve between them, so what
     // this field accepts moves when the other one does — without disturbing what is being typed.
+    //
+    // Against the Max HR *in force* rather than the one on disk, because leaving commits both at
+    // once: weighed against storage, lowering Max HR to 100 and stating a resting 90 in the same
+    // visit accepts both here and then stores the 90 as 50 — the silent replacement 36fef08
+    // deleted, arriving through the other door.
     val restingHrState = rememberHrFieldState(settings.restingHr, blankMeans = RESTING_HR_UNSTATED) {
-        parseRestingHr(it, settings.maxHr)
+        parseRestingHr(it, maxHrState.valueInForce)
     }
 
     // Emptying the resting field is the one edit on this screen that is asked about rather than
@@ -160,7 +165,7 @@ fun SettingsScreen(
                 // between these two, so an unstated resting heart rate is not a blank to ignore.
                 supportingText = "Measured at rest. Your zones are sliced from the gap between these two.",
                 refusalText = "Enter a heart rate between $MIN_RESTING_HR and " +
-                    "${highestStatableRestingHr(settings.maxHr)}",
+                    "${highestStatableRestingHr(maxHrState.valueInForce)}",
                 onCommit = ::commitRestingHr
             )
             SettingsRow(
@@ -292,7 +297,9 @@ class HrFieldState(
     var parse: (String) -> Int? = parse
     // An unstated number shows an empty field, not a zero: zero is how storage spells "nobody has
     // said", and printing it would look like a heart rate the runner had somehow chosen.
-    var typed by mutableStateOf(if (stored > 0) stored.toString() else "")
+    private fun storedAsTyped(): String = if (stored > 0) stored.toString() else ""
+
+    var typed by mutableStateOf(storedAsTyped())
         private set
     var refused by mutableStateOf(false)
         private set
@@ -322,7 +329,7 @@ class HrFieldState(
      * way out.
      */
     fun restore() {
-        typed = if (stored > 0) stored.toString() else ""
+        typed = storedAsTyped()
         edited = false
         refused = false
         leaveRefused = false
@@ -336,6 +343,17 @@ class HrFieldState(
      */
     private fun pending(): Int? =
         if (typed.isBlank()) blankMeans else parse(typed)
+
+    /**
+     * The number this field will put in force: its pending entry if that is usable, otherwise the
+     * one already stored.
+     *
+     * The field beside it is judged against this rather than against storage, because leaving
+     * commits both and the writes are asynchronous. Judged against disk, a resting heart rate can
+     * be accepted here and then quietly clamped by the Max HR landing beside it — the runner is
+     * shown back a number they never typed, which is the one failure this screen exists to delete.
+     */
+    val valueInForce: Int get() = pending() ?: stored
 
     /**
      * Blur, or Done on the keyboard. An unusable entry is refused where you can see it, keeping

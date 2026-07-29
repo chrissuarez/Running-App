@@ -169,6 +169,45 @@ class HrFieldStateTest {
         assertNull(committed)
     }
 
+    // --- The pair judged against each other, not against disk (#172) ---
+
+    @Test
+    fun `the number in force is the pending entry once it can be stored`() {
+        val state = HrFieldState(stored = 190, parse = ::parseMaxHr)
+        state.onTyped("100")
+
+        assertEquals(100, state.valueInForce)
+    }
+
+    @Test
+    fun `a half-typed entry leaves the stored number in force`() {
+        // "1" on the way to "100" is not a maximum of 1, and the field beside it must not be
+        // re-judged against one.
+        val state = HrFieldState(stored = 190, parse = ::parseMaxHr)
+        state.onTyped("1")
+
+        assertEquals(190, state.valueInForce)
+    }
+
+    @Test
+    fun `a resting hr the pending max cannot hold is refused, not accepted and clamped`() {
+        // Lowering Max HR to 100 and stating a resting 90 in the same visit. Judged against the
+        // Max HR still on disk, both are accepted here and storage quietly holds 50 — the runner
+        // is shown back a number they never typed, which is the failure this screen deletes.
+        val maxHr = HrFieldState(stored = 190, parse = ::parseMaxHr)
+        maxHr.onTyped("100")
+        val resting = HrFieldState(
+            stored = RESTING_HR_UNSTATED,
+            parse = { parseRestingHr(it, maxHr.valueInForce) },
+            blankMeans = RESTING_HR_UNSTATED
+        )
+        resting.onTyped("90")
+
+        assertFalse(resting.onLeaveAttempt(onCommit))
+        assertTrue(resting.refused)
+        assertNull(committed)
+    }
+
     // --- The way back to unstated (#172) ---
 
     @Test
