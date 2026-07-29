@@ -67,6 +67,18 @@ class AiCoachClientTest {
     }
 
     @Test
+    fun `the missing distance is the coach's gap, not the app's`() {
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(graduationRequirement = "Run a 5K in 24:59 or faster.")
+        )
+
+        // The Run detail screen shows the distance throughout, so a debrief calling it unknown
+        // contradicts a screen the runner has already seen.
+        assertTrue(prompt.contains("you were not given this run's distance"))
+        assertTrue(prompt.contains("Never tell the user their distance is unknown or unrecorded"))
+    }
+
+    @Test
     fun `duration, average heart rate and Stage still reach the coach`() {
         val prompt = buildEvaluationPrompt(oneRunWalkSession)
 

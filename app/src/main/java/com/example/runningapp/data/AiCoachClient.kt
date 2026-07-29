@@ -79,8 +79,13 @@ internal fun buildEvaluationPrompt(
     // all — so a requirement stated as a distance in a time cannot be checked from this data. The
     // model would otherwise read a 26-minute run that covered 3K as a 5K pass, and one wrong true
     // advances the stored stage on the spot. #182 sends the evidence; this stops the guess.
+    //
+    // The shortfall is this context's, not the app's: the run detail screen shows the distance the
+    // whole time. So the model is told to say it wasn't given the distance, never that the distance
+    // is unknown — a debrief claiming otherwise contradicts the screen the runner just came from.
     appendLine("The recent runs data carries no distance or pace, and durationSeconds is the whole run including its warm-up and cool-down.")
-    appendLine("CRITICAL RULE: If the stage requirement asks for a distance, a pace, or a distance within a time, you CANNOT verify it from this data. Set graduatedToNextStage to false and say in coachMessage that the run's distance is not something this app can confirm yet.")
+    appendLine("CRITICAL RULE: If the stage requirement asks for a distance, a pace, or a distance within a time, you CANNOT verify it from this data. Set graduatedToNextStage to false and say in coachMessage that you were not given this run's distance, so you cannot confirm the requirement yourself.")
+    appendLine("Never tell the user their distance is unknown or unrecorded — the app records it and shows it on the run detail screen; it simply was not included in what you were sent.")
     appendLine("Use this combined context to generate the exact intervals for their NEXT run.")
     appendLine("If they meet the requirement easily, and the data can actually establish that they met it, set graduatedToNextStage to true.")
     appendLine("Otherwise, adjust their run/walk intervals safely to build endurance.")
