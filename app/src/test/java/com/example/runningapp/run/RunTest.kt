@@ -2,6 +2,7 @@ package com.example.runningapp.run
 
 import com.example.runningapp.HrProfile
 import com.example.runningapp.HrZone
+import com.example.runningapp.RunType
 import com.example.runningapp.WorkoutTemplate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,6 +37,7 @@ private val COOLDOWN_WORKOUT = WorkoutTemplate(
     totalRepeats = 2,
     warmUpSeconds = 2,
     coolDownSeconds = 30,
+    runType = RunType.LONG,
 )
 
 class RunStartTest {

@@ -2,6 +2,8 @@ package com.example.runningapp.run
 
 import com.example.runningapp.CueCondition
 import com.example.runningapp.HrZone
+import com.example.runningapp.RunType
+import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.coachingCue
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -343,5 +345,46 @@ class RunCoachingTest {
         driver.advanceWith(seconds = 600, bpm = ABOVE_TARGET)
 
         assertEquals(0, driver.state.walkBreaks)
+    }
+
+    /** Stage 1's Quality Run, as the plan actually declares it (#173). */
+    private val qualityRun = TrainingPlanProvider
+        .resolveStageWorkouts("5k_sub_25", "base_builder")
+        .single { it.runType == RunType.QUALITY }
+
+    /**
+     * The whole main set, less the second the first Interval opens on — which is the warm-up's
+     * last, as it is for every Workout.
+     */
+    private val strideSetSeconds = with(qualityRun) {
+        (runDurationSeconds + walkDurationSeconds) * totalRepeats - 1
+    }
+
+    @Test
+    fun `the Quality Run's easy stretch is its warm-up, and the coach is silent through it`() {
+        val driver = Driver()
+        driver.start(config = config(workout = qualityRun))
+
+        // Twenty minutes of easy running, held above target the whole way.
+        val easyStretch = driver.advanceWith(seconds = qualityRun.warmUpSeconds, bpm = ABOVE_TARGET)
+
+        assertEquals(emptyList<String>(), easyStretch.coachCues())
+    }
+
+    @Test
+    fun `the strides and their recoveries are silent, because no stride lasts a rung`() {
+        val driver = Driver()
+        driver.start(config = config(workout = qualityRun))
+        driver.advanceWith(seconds = qualityRun.warmUpSeconds, bpm = ABOVE_TARGET)
+        // The first stride opens on the warm-up's last second, as every Workout's first does.
+        assertEquals(1, driver.state.intervals?.repeat)
+
+        // Six 20s strides and their 90s recoveries. A recovery is silent by rule; a stride is
+        // silent because the ladder starts again on every run Interval and 20 seconds never
+        // reaches its first rung.
+        val strides = driver.advanceWith(seconds = strideSetSeconds, bpm = ABOVE_TARGET)
+
+        assertEquals(emptyList<String>(), strides.coachCues())
+        assertTrue(driver.state.intervalsFinished)
     }
 }

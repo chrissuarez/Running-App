@@ -2,6 +2,7 @@ package com.example.runningapp.run
 
 import com.example.runningapp.HrProfile
 import com.example.runningapp.HrZone
+import com.example.runningapp.RunType
 import com.example.runningapp.WorkoutTemplate
 import org.junit.Assert.assertEquals
 
@@ -33,6 +34,7 @@ internal val PLANNED_WORKOUT = WorkoutTemplate(
     totalRepeats = 6,
     warmUpSeconds = 60,
     coolDownSeconds = 30,
+    runType = RunType.LONG,
 )
 
 internal fun config(
