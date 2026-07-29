@@ -6,42 +6,57 @@ import org.junit.Test
 
 class AiCoachClientTest {
 
-    @Test
-    fun `buildEvaluationPrompt includes graded interval guidance and anti-overclaim rule`() {
-        val context = AiTrainingContext(
-            currentStageTitle = "Base Builder",
-            graduationRequirement = "Complete run-walk sessions consistently",
-            recentRuns = listOf(
-                AiRecentRun(
-                    durationSeconds = 1800,
-                    avgHr = 125,
-                    sessionType = "Run/Walk",
-                    timestamp = 1_742_000_000_000,
-                    runWalkMetrics = AiRunWalkMetrics(
-                        severeBreakdownRatePercent = 0,
-                        poorToleranceRatePercent = 20,
-                        strainedCompletionRatePercent = 50,
-                        strongCompletionRatePercent = 30,
-                        cleanIntervalRatePercent = 10,
-                        hrDriftSlopeBpmPerInterval = 0.4,
-                        intervalCompletionRatioPercent = 82,
-                        avgRecoverySecondsAfterTrigger = 12.0,
-                        avgHrAtTrigger = 136.0
-                    )
-                )
+    private val oneRunWalkSession = AiTrainingContext(
+        currentStageTitle = "Base Builder",
+        graduationRequirement = "Complete run-walk sessions consistently",
+        recentRuns = listOf(
+            AiRecentRun(
+                durationSeconds = 1800,
+                avgHr = 125,
+                sessionType = "Run/Walk",
+                timestamp = 1_742_000_000_000
             )
         )
+    )
 
-        val prompt = buildEvaluationPrompt(context)
+    @Test
+    fun `no Interval-quality metric reaches the coach, in the data or in the reading of it`() {
+        val prompt = buildEvaluationPrompt(oneRunWalkSession)
 
-        assertTrue(prompt.contains("severeBreakdownRatePercent"))
-        assertTrue(prompt.contains("poorToleranceRatePercent"))
-        assertTrue(prompt.contains("strainedCompletionRatePercent"))
-        assertTrue(prompt.contains("strongCompletionRatePercent"))
-        assertTrue(prompt.contains("cleanIntervalRatePercent"))
-        assertTrue(prompt.contains("not merely that severe breakdown is zero"))
-        assertTrue(prompt.contains("Do not describe a session as perfect, stellar, or textbook"))
-        assertTrue(prompt.contains("\"strongCompletionRatePercent\":30"))
+        listOf(
+            "severeBreakdown",
+            "poorTolerance",
+            "strainedCompletion",
+            "strongCompletion",
+            "cleanInterval",
+            "hrDrift",
+            "intervalCompletionRatio",
+            "avgRecoverySecondsAfterTrigger",
+            "avgHrAtTrigger",
+            "runWalkMetrics"
+        ).forEach { metric ->
+            assertFalse("prompt still mentions $metric", prompt.contains(metric, ignoreCase = true))
+        }
+    }
+
+    @Test
+    fun `no Run is described to the coach as a breakdown, a tolerance failure or a strain`() {
+        val prompt = buildEvaluationPrompt(oneRunWalkSession)
+
+        listOf("breakdown", "tolerance", "strain").forEach { word ->
+            assertFalse("prompt still mentions $word", prompt.contains(word, ignoreCase = true))
+        }
+    }
+
+    @Test
+    fun `duration, average heart rate and Stage still reach the coach`() {
+        val prompt = buildEvaluationPrompt(oneRunWalkSession)
+
+        assertTrue(prompt.contains("Base Builder"))
+        assertTrue(prompt.contains("Complete run-walk sessions consistently"))
+        assertTrue(prompt.contains("\"durationSeconds\":1800"))
+        assertTrue(prompt.contains("\"avgHr\":125"))
+        assertTrue(prompt.contains("\"sessionType\":\"Run/Walk\""))
     }
 
     @Test

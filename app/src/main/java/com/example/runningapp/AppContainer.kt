@@ -73,7 +73,6 @@ class AppContainer(context: Context) {
         SessionRepository(
             sessionDao = database.sessionDao(),
             sampleDao = database.sampleDao(),
-            runWalkIntervalStatDao = database.runWalkIntervalStatDao(),
             trackPointDao = database.trackPointDao(),
             settingsRepository = settingsRepository,
             coachPrescriptionRepository = coachPrescriptionRepository,
