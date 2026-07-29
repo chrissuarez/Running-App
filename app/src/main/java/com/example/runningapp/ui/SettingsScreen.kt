@@ -54,6 +54,7 @@ import com.example.runningapp.MIN_RESTING_HR
 import com.example.runningapp.RESTING_HR_UNSTATED
 import com.example.runningapp.UserSettings
 import com.example.runningapp.highestStatableRestingHr
+import com.example.runningapp.lowestStatableMaxHr
 import com.example.runningapp.parseMaxHr
 import com.example.runningapp.parseRestingHr
 import com.example.runningapp.targetHrZone
@@ -86,7 +87,15 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     var showTargetZonePicker by remember { mutableStateOf(false) }
-    val maxHrState = rememberHrFieldState(settings.maxHr, parse = ::parseMaxHr)
+    // Judged against the resting heart rate the same way that one is judged against this: the pair
+    // bounds one reserve, so a maximum with no room above the stated resting number is refused
+    // here rather than accepted and then quietly rewriting that number down.
+    //
+    // Against the *stored* resting heart rate, not the entry pending beside it, and deliberately
+    // not symmetric with the other field: two rules that each asked the other what it held would
+    // call each other forever. Judging this one against disk is the end that can give — a resting
+    // edit made in the same visit is already weighed against the new maximum by the rule below.
+    val maxHrState = rememberHrFieldState(settings.maxHr) { parseMaxHr(it, settings.restingHr) }
     // Judged against Max HR: the two numbers have to leave a usable reserve between them, so what
     // this field accepts moves when the other one does — without disturbing what is being typed.
     //
@@ -154,7 +163,7 @@ fun SettingsScreen(
                 state = maxHrState,
                 label = "Max HR",
                 supportingText = null,
-                refusalText = "Enter a heart rate between $MIN_MAX_HR and $MAX_MAX_HR",
+                refusalText = maxHrRefusalText(settings.restingHr),
                 onCommit = onMaxHrCommit
             )
             HrField(
@@ -638,6 +647,21 @@ private fun SettingsSwitchRow(
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
+}
+
+/**
+ * Why a Max HR was refused, in the runner's own terms.
+ *
+ * The floor under this field moves when a resting heart rate is stated, and a range that had
+ * silently tightened would read as the app changing its mind. So when the resting number is what
+ * raised it, the message says so — that is also what points at the number to change if the
+ * maximum is the one that is right.
+ */
+fun maxHrRefusalText(restingHr: Int): String {
+    val lowest = lowestStatableMaxHr(restingHr)
+    val range = "Enter a heart rate between $lowest and $MAX_MAX_HR"
+    return if (lowest == MIN_MAX_HR) range
+    else "$range — anything lower leaves no room above your resting $restingHr"
 }
 
 /**

@@ -133,6 +133,19 @@ fun highestStatableRestingHr(maxHr: Int): Int =
     minOf(MAX_RESTING_HR, effectiveMaxHr(maxHr) - MIN_HR_RESERVE)
 
 /**
+ * The lowest Max HR that still leaves a usable reserve above [restingHr] — the mirror of
+ * [highestStatableRestingHr], and the reason the Max HR field can refuse.
+ *
+ * A maximum is only unusable *relative* to a resting heart rate, exactly as the reverse is true.
+ * Without this the reserve rule would hold on one door only: the resting field refuses a number
+ * the maximum cannot hold, while lowering the maximum quietly rewrote the resting number instead
+ * — the silent replacement this pair of functions exists to delete.
+ *
+ * An unstated resting heart rate constrains nothing, so the floor stays [MIN_MAX_HR].
+ */
+fun lowestStatableMaxHr(restingHr: Int): Int = maxOf(MIN_MAX_HR, restingHr + MIN_HR_RESERVE)
+
+/**
  * The heart rates a runner's zones are sliced from — one value, passed as one thing.
  *
  * Both numbers travel together because a zone edge is meaningless without the pair: they bound
@@ -154,8 +167,14 @@ data class HrProfile(val maxHr: Int, val restingHr: Int = RESTING_HR_UNSTATED)
  * Deliberately not [effectiveMaxHr]: storage clamps because it must never hold an unusable
  * number, but a *typed* value out of range is a mistake, and silently keeping some other number
  * is the failure this replaces. Null is the caller's cue to refuse visibly.
+ *
+ * Judged against [restingHr] for the reason [parseRestingHr] is judged against the maximum: the
+ * pair bounds one reserve, and a maximum too low to leave room above a stated resting heart rate
+ * would otherwise be accepted and then quietly rewrite that resting number instead. Refusing here
+ * is what keeps "no accepted number is ever silently replaced" true through *both* doors.
  */
-fun parseMaxHr(text: String): Int? = text.trim().toIntOrNull()?.takeIf { it in MIN_MAX_HR..MAX_MAX_HR }
+fun parseMaxHr(text: String, restingHr: Int = RESTING_HR_UNSTATED): Int? =
+    text.trim().toIntOrNull()?.takeIf { it in lowestStatableMaxHr(restingHr)..MAX_MAX_HR }
 
 /**
  * A typed resting heart rate, or null if it is not a whole number inside the settable range.

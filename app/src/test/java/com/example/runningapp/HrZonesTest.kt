@@ -418,6 +418,41 @@ class HrZonesTest {
     }
 
     @Test
+    fun `the typeable floor under max hr follows the resting hr beside it`() {
+        // The mirror of the ceiling above, and for the same reason: without it the reserve rule
+        // holds on one door only, and lowering the maximum quietly rewrites the stated resting
+        // heart rate instead of saying it will not fit.
+        assertEquals(110, lowestStatableMaxHr(60))
+        assertNull(parseMaxHr("100", restingHr = 60))
+        assertEquals(110, parseMaxHr("110", restingHr = 60))
+        assertEquals(100, parseMaxHr("100", restingHr = 30))
+    }
+
+    @Test
+    fun `an unstated resting hr leaves the max hr floor where it always was`() {
+        // Nothing is stated above, so nothing is constrained: every runner who has never typed the
+        // second number must still see the range they saw before #172.
+        assertEquals(MIN_MAX_HR, lowestStatableMaxHr(RESTING_HR_UNSTATED))
+        assertEquals(MIN_MAX_HR, parseMaxHr("$MIN_MAX_HR"))
+        assertNull(parseMaxHr("${MIN_MAX_HR - 1}"))
+    }
+
+    @Test
+    fun `the two typeable ranges name the same reserve from either end`() {
+        // One rule, spelled from both doors: a pair either leaves a usable reserve or it does not,
+        // and the two fields must never disagree about which.
+        for (maxHr in MIN_MAX_HR..MAX_MAX_HR) {
+            for (restingHr in MIN_RESTING_HR..MAX_RESTING_HR) {
+                assertEquals(
+                    "maxHr=$maxHr restingHr=$restingHr",
+                    restingHr <= highestStatableRestingHr(maxHr),
+                    maxHr >= lowestStatableMaxHr(restingHr)
+                )
+            }
+        }
+    }
+
+    @Test
     fun `a resting hr is clamped against the max hr beside it, not on its own`() {
         // The pair bounds one reserve, so a resting heart rate is only unusable relative to a
         // maximum: 100 is fine under a Max HR of 190 and impossible under one of 100.

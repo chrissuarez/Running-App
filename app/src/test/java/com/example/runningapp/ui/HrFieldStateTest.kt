@@ -208,6 +208,27 @@ class HrFieldStateTest {
         assertNull(committed)
     }
 
+    @Test
+    fun `a max hr with no room above the stated resting hr is refused, not accepted`() {
+        // The mirror of the case above, through the other door. Accepting it is what used to
+        // rewrite the runner's stated 60 down to 50 without a word.
+        val state = HrFieldState(stored = 190, parse = { parseMaxHr(it, restingHr = 60) })
+        state.onTyped("100")
+
+        assertFalse(state.onLeaveAttempt(onCommit))
+        assertTrue(state.refused)
+        assertNull(committed)
+    }
+
+    @Test
+    fun `the same max hr is accepted once nothing is stated above it`() {
+        val state = HrFieldState(stored = 190, parse = { parseMaxHr(it, RESTING_HR_UNSTATED) })
+        state.onTyped("100")
+
+        assertTrue(state.onLeaveAttempt(onCommit))
+        assertEquals(100, committed)
+    }
+
     // --- The way back to unstated (#172) ---
 
     @Test
