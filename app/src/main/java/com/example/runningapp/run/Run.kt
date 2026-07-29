@@ -259,10 +259,10 @@ object Run {
         // hrZoneOf answers null for exactly the seconds that had none. #115's second branch — a
         // no-data second banked from inside a positive-reading guard, which nothing could reach —
         // has nowhere here to be written.
-        val zone = hrZoneOf(bpm, config.maxHr)
+        val zone = hrZoneOf(bpm, config.hrProfile)
             ?: return RunOutcome(state.copy(tally = state.tally.bankNoData()))
         return emitOrHold(
-            state.copy(tally = state.tally.bank(zone, bpm, config.maxHr, config.targetZone)),
+            state.copy(tally = state.tally.bank(zone, bpm, config.hrProfile, config.targetZone)),
             PendingRowWork.SaveHrSample(
                 HrSampleReading(
                     elapsedSeconds = state.secondsRunning,
@@ -309,7 +309,7 @@ object Run {
         val awake = state.coachingAwake
         val band =
             if (awake) {
-                bandWithHysteresis(state.coaching.band, heard.smoothedBpm, config.maxHr, config.targetZone)
+                bandWithHysteresis(state.coaching.band, heard.smoothedBpm, config.hrProfile, config.targetZone)
             } else {
                 ZoneBand.UNKNOWN
             }

@@ -1,5 +1,6 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.HrProfile
 import com.example.runningapp.HrZone
 import com.example.runningapp.ZoneBand
 import com.example.runningapp.ZoneSeconds
@@ -10,9 +11,9 @@ import kotlin.math.roundToInt
 /**
  * What the Run has counted so far.
  *
- * Banked one second at a time against the Max HR pinned at START (see [RunConfig]), never against
- * whatever Settings says now — a Run that banked its first minutes against one Max HR and its last
- * against another meant two things at once.
+ * Banked one second at a time against the heart-rate profile pinned at START (see [RunConfig]),
+ * never against whatever Settings says now — a Run that banked its first minutes against one Max HR
+ * and its last against another meant two things at once.
  *
  * A second with no reading is banked as [noDataSeconds] rather than dropped. That covers both a Run
  * with no Strap at all and a dropout that zeroed the reading (#110): the clock kept running, so the
@@ -45,10 +46,10 @@ data class RunTally(
      * what leaves this with no "and if it had no zone" branch to write: #115's dead one, which
      * banked a no-data second from inside a positive-reading guard, has nowhere to go.
      */
-    fun bank(zone: HrZone, bpm: Int, maxHr: Int, targetZone: HrZone): RunTally = copy(
+    fun bank(zone: HrZone, bpm: Int, profile: HrProfile, targetZone: HrZone): RunTally = copy(
         zoneSeconds = zoneSeconds.plusSecondIn(zone),
         aboveTargetSeconds =
-            if (zoneBandOf(bpm, maxHr, targetZone) == ZoneBand.ABOVE) aboveTargetSeconds + 1
+            if (zoneBandOf(bpm, profile, targetZone) == ZoneBand.ABOVE) aboveTargetSeconds + 1
             else aboveTargetSeconds,
         maxBpm = maxOf(maxBpm, bpm),
         bpmSum = bpmSum + bpm,

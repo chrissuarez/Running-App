@@ -4,7 +4,7 @@ import androidx.room.*
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.runningapp.HrZone
-import com.example.runningapp.effectiveMaxHr
+import com.example.runningapp.HrProfile
 import com.example.runningapp.hrZoneOf
 import kotlinx.coroutines.flow.Flow
 
@@ -358,11 +358,11 @@ abstract class AppDatabase : RoomDatabase() {
         private var INSTANCE: AppDatabase? = null
 
         /**
-         * [maxHrProvider] feeds the v12 → v13 zone recompute, which needs a Max HR that lives in
-         * DataStore rather than in the database. It is read lazily, from inside the migration, so
+         * [hrProfileProvider] feeds the v12 → v13 zone recompute, which needs a heart-rate
+         * profile that lives in DataStore rather than in the database. It is read lazily, from inside the migration, so
          * the settings read happens on Room's own thread and only on the one launch that migrates.
          */
-        fun getDatabase(context: android.content.Context, maxHrProvider: () -> Int): AppDatabase {
+        fun getDatabase(context: android.content.Context, hrProfileProvider: () -> HrProfile): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
@@ -381,7 +381,7 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_9_10,
                     MIGRATION_10_11,
                     MIGRATION_11_12,
-                    migration12To13(maxHrProvider),
+                    migration12To13(hrProfileProvider),
                     MIGRATION_13_14,
                     MIGRATION_14_15,
                     MIGRATION_15_16,
@@ -599,10 +599,10 @@ private fun backfillTrackPointsFromHrSamples(database: SupportSQLiteDatabase) {
  * Max HR set — the point at which the number stops being a placeholder — and every change after
  * that is future-only.
  *
- * [maxHrProvider] is called here rather than closed over at construction so the DataStore read
+ * [hrProfileProvider] is called here rather than closed over at construction so the DataStore read
  * happens on Room's own thread, and only on the launch that actually migrates.
  */
-fun migration12To13(maxHrProvider: () -> Int) = object : Migration(12, 13) {
+fun migration12To13(hrProfileProvider: () -> HrProfile) = object : Migration(12, 13) {
     override fun migrate(database: SupportSQLiteDatabase) {
         // SQLite gained ALTER TABLE ... DROP COLUMN in 3.35, but minSdk 26 devices ship far older,
         // so dropping a column means rebuilding the table. Safe despite hr_samples, track_points
@@ -689,7 +689,7 @@ fun migration12To13(maxHrProvider: () -> Int) = object : Migration(12, 13) {
         database.execSQL("DROP TABLE `sessions`")
         database.execSQL("ALTER TABLE `sessions_new` RENAME TO `sessions`")
 
-        recomputeZoneSecondsFromHrSamples(database, maxHrProvider())
+        recomputeZoneSecondsFromHrSamples(database, hrProfileProvider())
     }
 }
 
@@ -706,8 +706,7 @@ fun migration12To13(maxHrProvider: () -> Int) = object : Migration(12, 13) {
  * [backfillTrackPointsFromHrSamples]: this keeps [hrZoneOf] the app's one classifier, and the
  * arithmetic off SQLite versions that predate window functions.
  */
-private fun recomputeZoneSecondsFromHrSamples(database: SupportSQLiteDatabase, maxHr: Int) {
-    val clampedMaxHr = effectiveMaxHr(maxHr)
+private fun recomputeZoneSecondsFromHrSamples(database: SupportSQLiteDatabase, profile: HrProfile) {
     // Zero first so the tally below is a replacement rather than a correction: a run whose samples
     // are all gone must end up with no zone time, not with its old numbers left standing.
     database.execSQL(
@@ -747,7 +746,7 @@ private fun recomputeZoneSecondsFromHrSamples(database: SupportSQLiteDatabase, m
                 currentSessionId = sessionId
                 zoneSeconds.fill(0L)
             }
-            val zone = hrZoneOf(c.getInt(1), clampedMaxHr)
+            val zone = hrZoneOf(c.getInt(1), profile)
             if (zone != null) {
                 val index = zone.number - 1
                 zoneSeconds[index] = zoneSeconds[index] + 1L

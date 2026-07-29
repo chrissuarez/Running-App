@@ -1,5 +1,6 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.HrProfile
 import com.example.runningapp.HrZone
 import com.example.runningapp.WorkoutTemplate
 import org.junit.Assert.assertEquals
@@ -109,11 +110,11 @@ class RunStartTest {
     @Test
     fun `the run's settings are pinned for its lifetime`() {
         val driver = Driver()
-        driver.start(config(maxHr = 190))
+        driver.start(config(hrProfile = HrProfile(190)))
         driver.advance(10)
         driver.on(RunEvent.ControlsChanged(RunControls(coachingEnabled = false), driver.nowMillis))
 
-        assertEquals(190, driver.state.config?.maxHr)
+        assertEquals(HrProfile(190), driver.state.config?.hrProfile)
         assertEquals(HrZone.MODERATE, driver.state.config?.targetZone)
     }
 }

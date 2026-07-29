@@ -1,5 +1,6 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.HrProfile
 import com.example.runningapp.HrZone
 import com.example.runningapp.WorkoutTemplate
 
@@ -24,17 +25,18 @@ enum class RunMode(val settingValue: String) {
 /**
  * Everything about a Run that is fixed the moment START is pressed (#131).
  *
- * Nothing changes these for the Run's lifetime. Max HR used to be read live on every second of
- * zone accounting while Settings stayed reachable mid-Run, so a Run could bank its first minutes
- * against one number and its last against another and mean two things at once. A Run is now
- * recorded entirely under the settings that were in force when it began.
+ * Nothing changes these for the Run's lifetime. The heart-rate profile used to be read live on
+ * every second of zone accounting while Settings stayed reachable mid-Run, so a Run could bank its
+ * first minutes against one Max HR and its last against another and mean two things at once. A Run
+ * is now recorded entirely under the settings that were in force when it began.
  *
  * What is *not* here is as deliberate: coaching on/off, auto-pause and Split announcements are
  * controls the runner flips during a Run, so they arrive as [RunEvent.ControlsChanged] instead.
  * See [RunControls].
  */
 data class RunConfig(
-    val maxHr: Int,
+    /** The heart rates this Run's zones are sliced from, as they stood at START. */
+    val hrProfile: HrProfile,
     val targetZone: HrZone,
     val runMode: RunMode,
     /**

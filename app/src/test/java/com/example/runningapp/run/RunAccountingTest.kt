@@ -1,5 +1,6 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.HrProfile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -27,11 +28,11 @@ class RunAccountingTest {
     @Test
     fun `the zone is the one the max hr pinned at start says it is`() {
         val fitter = Driver()
-        fitter.start(config = config(maxHr = 190))
+        fitter.start(config = config(hrProfile = HrProfile(190)))
         fitter.advanceWith(seconds = 10, bpm = 150)
 
         val lower = Driver()
-        lower.start(config = config(maxHr = 160))
+        lower.start(config = config(hrProfile = HrProfile(160)))
         lower.advanceWith(seconds = 10, bpm = 150)
 
         assertEquals(10L, fitter.state.tally.zoneSeconds.zone3)

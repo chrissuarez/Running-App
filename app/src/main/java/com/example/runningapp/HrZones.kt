@@ -79,6 +79,21 @@ const val DEFAULT_MAX_HR = 190
 fun effectiveMaxHr(maxHr: Int): Int = maxHr.coerceIn(MIN_MAX_HR, MAX_MAX_HR)
 
 /**
+ * The heart rates a runner's zones are sliced from — one value, passed as one thing.
+ *
+ * Today it holds only Max HR, so it says nothing the old bare `Int` did not. It exists because
+ * the zone functions are about to slice from two numbers rather than one (#172), and threading a
+ * second loose Int through thirty call sites by hand, in the same change that alters the formula
+ * and re-tallies irreplaceable history, is where a mistake would hide. The Run pins one of these
+ * at START exactly as it pinned the bare number (ADR 0002, #131).
+ *
+ * Clamping stays in the zone functions rather than here: [effectiveMaxHr] is what guarantees every
+ * zone is a non-empty band, and a profile that silently corrected its own input would give the
+ * settings screen a different number to show than the one it was handed.
+ */
+data class HrProfile(val maxHr: Int)
+
+/**
  * A typed Max HR, or null if it is not a whole number inside the settable range.
  *
  * Deliberately not [effectiveMaxHr]: storage clamps because it must never hold an unusable
@@ -88,16 +103,16 @@ fun effectiveMaxHr(maxHr: Int): Int = maxHr.coerceIn(MIN_MAX_HR, MAX_MAX_HR)
 fun parseMaxHr(text: String): Int? = text.trim().toIntOrNull()?.takeIf { it in MIN_MAX_HR..MAX_MAX_HR }
 
 /** Lowest BPM that counts as [zone]. Zone 1 also swallows everything below it — see [hrZoneOf]. */
-fun zoneLowerBpm(zone: HrZone, maxHr: Int): Int {
-    val max = effectiveMaxHr(maxHr)
+fun zoneLowerBpm(zone: HrZone, profile: HrProfile): Int {
+    val max = effectiveMaxHr(profile.maxHr)
     // Ceiling division: the edge belongs to the zone above it.
     return (max * zone.lowerPercentOfMaxHr + 99) / 100
 }
 
 /** Highest BPM that counts as [zone]. Zone 5 is open-ended; Max HR stands in as its top. */
-fun zoneUpperBpm(zone: HrZone, maxHr: Int): Int {
-    val next = HrZone.entries.getOrNull(zone.ordinal + 1) ?: return effectiveMaxHr(maxHr)
-    return zoneLowerBpm(next, maxHr) - 1
+fun zoneUpperBpm(zone: HrZone, profile: HrProfile): Int {
+    val next = HrZone.entries.getOrNull(zone.ordinal + 1) ?: return effectiveMaxHr(profile.maxHr)
+    return zoneLowerBpm(next, profile) - 1
 }
 
 /**
@@ -106,9 +121,9 @@ fun zoneUpperBpm(zone: HrZone, maxHr: Int): Int {
  * Anything below 50% of Max HR counts as Zone 1: no real second may vanish from the chart.
  * (This deliberately differs from TRIMP, which zero-weights sub-50% — see #99.)
  */
-fun hrZoneOf(bpm: Int, maxHr: Int): HrZone? {
+fun hrZoneOf(bpm: Int, profile: HrProfile): HrZone? {
     if (bpm <= 0) return null
-    return HrZone.entries.lastOrNull { bpm >= zoneLowerBpm(it, maxHr) } ?: HrZone.ENDURANCE
+    return HrZone.entries.lastOrNull { bpm >= zoneLowerBpm(it, profile) } ?: HrZone.ENDURANCE
 }
 
 /**
@@ -119,11 +134,11 @@ fun hrZoneOf(bpm: Int, maxHr: Int): HrZone? {
  * everything beneath it, but a target must be escapable in both directions: the high-HR cues,
  * including the safety override, only fire on [ZoneBand.ABOVE].
  */
-fun zoneBandOf(bpm: Int, maxHr: Int, targetZone: HrZone): ZoneBand {
+fun zoneBandOf(bpm: Int, profile: HrProfile, targetZone: HrZone): ZoneBand {
     if (bpm <= 0) return ZoneBand.UNKNOWN
     return when {
-        bpm < zoneLowerBpm(targetZone, maxHr) -> ZoneBand.BELOW
-        bpm > zoneUpperBpm(targetZone, maxHr) -> ZoneBand.ABOVE
+        bpm < zoneLowerBpm(targetZone, profile) -> ZoneBand.BELOW
+        bpm > zoneUpperBpm(targetZone, profile) -> ZoneBand.ABOVE
         else -> ZoneBand.IN
     }
 }
@@ -138,10 +153,15 @@ fun zoneBandOf(bpm: Int, maxHr: Int, targetZone: HrZone): ZoneBand {
  * overshoot to the far side of the zone as IN. Falling from ABOVE clean through to below the
  * lower edge lands you in [ZoneBand.BELOW], not a false "recovered", and vice versa.
  */
-fun bandWithHysteresis(previous: ZoneBand, avgBpm: Int, maxHr: Int, targetZone: HrZone): ZoneBand {
+fun bandWithHysteresis(
+    previous: ZoneBand,
+    avgBpm: Int,
+    profile: HrProfile,
+    targetZone: HrZone,
+): ZoneBand {
     if (avgBpm <= 0) return ZoneBand.UNKNOWN
-    val low = zoneLowerBpm(targetZone, maxHr)
-    val high = zoneUpperBpm(targetZone, maxHr)
+    val low = zoneLowerBpm(targetZone, profile)
+    val high = zoneUpperBpm(targetZone, profile)
     val midpoint = low + (high - low) / 2
     return when (previous) {
         ZoneBand.ABOVE -> when {
@@ -154,7 +174,7 @@ fun bandWithHysteresis(previous: ZoneBand, avgBpm: Int, maxHr: Int, targetZone: 
             avgBpm <= high -> ZoneBand.IN
             else -> ZoneBand.ABOVE
         }
-        else -> zoneBandOf(avgBpm, maxHr, targetZone)
+        else -> zoneBandOf(avgBpm, profile, targetZone)
     }
 }
 
@@ -186,17 +206,16 @@ fun ZoneSeconds.plusSecondIn(zone: HrZone): ZoneSeconds = when (zone) {
  *
  * Exact rather than an estimate: the recorder writes exactly one sample per second of the run and
  * only when BPM > 0 — the same condition under which it banked a second of zone time. So counting
- * samples per zone reproduces what the run would have recorded under [maxHr]. Seconds with no
+ * samples per zone reproduces what the run would have recorded under [profile]. Seconds with no
  * signal have no sample and gain no zone time, leaving `noDataSeconds` meaningful and unfabricated.
  *
  * The v12 → v13 migration does this same tally in SQL against a raw database, where none of this
  * is reachable; the two must stay in step.
  */
-fun tallyZoneSeconds(bpms: Iterable<Int>, maxHr: Int): ZoneSeconds {
-    val clamped = effectiveMaxHr(maxHr)
+fun tallyZoneSeconds(bpms: Iterable<Int>, profile: HrProfile): ZoneSeconds {
     val seconds = LongArray(HrZone.entries.size)
     bpms.forEach { bpm ->
-        hrZoneOf(bpm, clamped)?.let { seconds[it.number - 1]++ }
+        hrZoneOf(bpm, profile)?.let { seconds[it.number - 1]++ }
     }
     return ZoneSeconds(seconds[0], seconds[1], seconds[2], seconds[3], seconds[4])
 }
@@ -211,10 +230,13 @@ fun tallyZoneSeconds(bpms: Iterable<Int>, maxHr: Int): ZoneSeconds {
  */
 val UserSettings.targetHrZone: HrZone get() = HrZone.coachingTargetOfNumberOrDefault(targetZone)
 
-fun hrZoneOf(bpm: Int, settings: UserSettings): HrZone? = hrZoneOf(bpm, settings.maxHr)
+/** The runner's stated heart rates, as the zone functions take them. */
+val UserSettings.hrProfile: HrProfile get() = HrProfile(maxHr)
+
+fun hrZoneOf(bpm: Int, settings: UserSettings): HrZone? = hrZoneOf(bpm, settings.hrProfile)
 
 fun zoneBandOf(bpm: Int, settings: UserSettings): ZoneBand =
-    zoneBandOf(bpm, settings.maxHr, settings.targetHrZone)
+    zoneBandOf(bpm, settings.hrProfile, settings.targetHrZone)
 
 /**
  * How [zone] reads as a target: e.g. "114-132", "95-113", "171-190" — always closed.
@@ -223,5 +245,5 @@ fun zoneBandOf(bpm: Int, settings: UserSettings): ZoneBand =
  * band would call BELOW or ABOVE. Zone 1 and Zone 5 chart open-ended, but they don't *aim*
  * open-ended: every BPM range this app shows is a target, so a closed range is the only kind.
  */
-fun targetRangeLabel(zone: HrZone, maxHr: Int): String =
-    "${zoneLowerBpm(zone, maxHr)}-${zoneUpperBpm(zone, maxHr)}"
+fun targetRangeLabel(zone: HrZone, profile: HrProfile): String =
+    "${zoneLowerBpm(zone, profile)}-${zoneUpperBpm(zone, profile)}"

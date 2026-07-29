@@ -48,11 +48,11 @@ class AppContainer(context: Context) {
         // a live database already exists, which includes reinstalls, where Auto Backup has already
         // restored it.
         DatabaseBackupManager.restoreIfDatabaseMissing(appContext)
-        // The v12 -> v13 zone recompute needs Max HR, which lives in DataStore rather than the
-        // database. Room only invokes this from inside the migration, on its own background
-        // thread, so the blocking read never lands on the main thread.
+        // The v12 -> v13 zone recompute needs the heart-rate profile, which lives in DataStore
+        // rather than the database. Room only invokes this from inside the migration, on its own
+        // background thread, so the blocking read never lands on the main thread.
         AppDatabase.getDatabase(appContext) {
-            runBlocking { settingsRepository.userSettingsFlow.first().maxHr }
+            runBlocking { settingsRepository.userSettingsFlow.first().hrProfile }
         }
     }
 
