@@ -80,12 +80,13 @@ internal fun buildEvaluationPrompt(
     // model would otherwise read a 26-minute run that covered 3K as a 5K pass, and one wrong true
     // advances the stored stage on the spot. #182 sends the evidence; this stops the guess.
     //
-    // The shortfall is this context's, not the app's: the run detail screen shows the distance the
-    // whole time. So the model is told to say it wasn't given the distance, never that the distance
-    // is unknown — a debrief claiming otherwise contradicts the screen the runner just came from.
+    // The model is told to own the gap rather than describe the app's: an outdoor run's distance is
+    // on the run detail screen the whole time, so calling it unrecorded contradicts the screen the
+    // runner just came from — while a treadmill run has no GPS and genuinely has none. Nothing here
+    // says which this run was, so the only honest line is "I wasn't sent it".
     appendLine("The recent runs data carries no distance or pace, and durationSeconds is the whole run including its warm-up and cool-down.")
     appendLine("CRITICAL RULE: If the stage requirement asks for a distance, a pace, or a distance within a time, you CANNOT verify it from this data. Set graduatedToNextStage to false and say in coachMessage that you were not given this run's distance, so you cannot confirm the requirement yourself.")
-    appendLine("Never tell the user their distance is unknown or unrecorded — the app records it and shows it on the run detail screen; it simply was not included in what you were sent.")
+    appendLine("Say only that the distance was not given to you. Do not say whether the app recorded it or not — you have not been told either way.")
     appendLine("Use this combined context to generate the exact intervals for their NEXT run.")
     appendLine("If they meet the requirement easily, and the data can actually establish that they met it, set graduatedToNextStage to true.")
     appendLine("Otherwise, adjust their run/walk intervals safely to build endurance.")
