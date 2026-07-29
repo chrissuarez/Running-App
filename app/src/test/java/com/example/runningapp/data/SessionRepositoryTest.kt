@@ -8,17 +8,23 @@ import com.example.runningapp.SettingsRepository
 import com.example.runningapp.UserSettings
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.doSuspendableAnswer
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.inOrder
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
+import org.mockito.kotlin.stub
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
@@ -530,6 +536,40 @@ class SessionRepositoryTest {
 
         verify(mockSettingsRepo).setRestingHr(60)
         verify(mockSettingsRepo, never()).setMaxHrDeliberately(any())
+    }
+
+    @Test
+    fun `the two halves of the profile door cannot interleave`() = runTest {
+        // Leaving settings commits both fields at once, each on its own IO coroutine — the ordinary
+        // case the first time both numbers are filled in. Unserialized, each snapshots the settings
+        // before the other's write lands and re-tallies against a pair that was never stored.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 181, maxHrEverSet = true)))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
+        // Parks the resting-HR door mid-write, so the Max HR door has something to interleave with.
+        val heldMidWrite = CompletableDeferred<Unit>()
+        mockSettingsRepo.stub {
+            onBlocking { setRestingHr(any()) }.doSuspendableAnswer { heldMidWrite.await() }
+        }
+
+        val resting = launch { repositoryWithSamples.setRestingHr(60) }
+        runCurrent()
+        val maximum = launch { repositoryWithSamples.setMaxHr(190) }
+        runCurrent()
+
+        // The second door has not read, re-tallied or stored anything while the first is open.
+        verify(mockSettingsRepo, never()).setMaxHrDeliberately(any())
+
+        heldMidWrite.complete(Unit)
+        listOf(resting, maximum).joinAll()
+        verify(mockSettingsRepo).setMaxHrDeliberately(190)
     }
 
     // --- What the coach may prescribe (#113) ---

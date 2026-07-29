@@ -149,4 +149,14 @@ class SettingsRepositoryTest {
         assertTrue(maxHrEverSet(flag = true, storedMaxHr = DEFAULT_MAX_HR))
         assertFalse(maxHrEverSet(flag = false, storedMaxHr = 180))
     }
+
+    @Test
+    fun `a lowered max hr brings the stored resting hr back inside what it can hold`() {
+        // Storage must hold the number the zones actually use. A resting 90 left standing under a
+        // Max HR of 100 would show 90 on the settings screen while every edge was sliced from 50.
+        assertEquals(50, effectiveRestingHr(90, 100))
+        assertEquals(90, effectiveRestingHr(90, 190))
+        // Unstated survives the reconciliation rather than being clamped up into the range.
+        assertEquals(RESTING_HR_UNSTATED, effectiveRestingHr(RESTING_HR_UNSTATED, 100))
+    }
 }

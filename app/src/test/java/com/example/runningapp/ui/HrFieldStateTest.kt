@@ -151,4 +151,20 @@ class HrFieldStateTest {
         assertTrue(state.onLeaveAttempt(onCommit))
         assertNull(committed)
     }
+
+    @Test
+    fun `a moved range judges the entry without discarding it`() {
+        // The resting field's ceiling depends on the Max HR beside it, and a Max HR commit can
+        // land seconds later — after its re-tally of history — which is exactly when the second
+        // number is being typed. Replacing the rule keeps the entry and applies the new range.
+        val state = HrFieldState(stored = 0, parse = { parseRestingHr(it, maxHr = 190) })
+        state.onTyped("90")
+
+        state.parse = { parseRestingHr(it, maxHr = 100) }
+
+        assertEquals("90", state.typed)
+        assertFalse(state.onLeaveAttempt(onCommit))
+        assertTrue(state.refused)
+        assertNull(committed)
+    }
 }

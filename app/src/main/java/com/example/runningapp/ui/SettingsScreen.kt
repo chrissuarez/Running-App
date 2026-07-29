@@ -87,9 +87,9 @@ fun SettingsScreen(
 ) {
     var showTargetZonePicker by remember { mutableStateOf(false) }
     val maxHrState = rememberHrFieldState(settings.maxHr, parse = ::parseMaxHr)
-    // Keyed on Max HR as well as its own stored value: the two numbers have to leave a usable
-    // reserve between them, so what this field will accept moves when the other one does.
-    val restingHrState = rememberHrFieldState(settings.restingHr, rangeKey = settings.maxHr) {
+    // Judged against Max HR: the two numbers have to leave a usable reserve between them, so what
+    // this field accepts moves when the other one does — without disturbing what is being typed.
+    val restingHrState = rememberHrFieldState(settings.restingHr) {
         parseRestingHr(it, settings.maxHr)
     }
 
@@ -232,7 +232,17 @@ fun SettingsScreen(
  * only thing passed in; a second copy of these rules is how the two fields would drift apart.
  */
 @Stable
-class HrFieldState(stored: Int, private val parse: (String) -> Int?) {
+class HrFieldState(stored: Int, parse: (String) -> Int?) {
+    /**
+     * What the field will accept, kept current rather than captured once.
+     *
+     * The resting field's range depends on the Max HR beside it, so it moves while this state is
+     * alive. Rebuilding the state to pick that up would throw away whatever was half-typed — and
+     * a Max HR commit can land seconds later, after its re-tally of history, which is exactly when
+     * someone is likely to be typing the second number. Replacing the rule keeps both true: the
+     * entry survives, and it is judged by the range in force now.
+     */
+    var parse: (String) -> Int? = parse
     // An unstated number shows an empty field, not a zero: zero is how storage spells "nobody has
     // said", and printing it would look like a heart rate the runner had somehow chosen.
     var typed by mutableStateOf(if (stored > 0) stored.toString() else "")
@@ -301,16 +311,13 @@ class HrFieldState(stored: Int, private val parse: (String) -> Int?) {
 }
 
 /**
- * Keyed on the stored value so an outside change (the #65 card, once it lands) shows up here, and
- * on [rangeKey] — whatever else the field's settable range depends on — so a state built around a
- * range that has since moved is rebuilt rather than left judging by the old one.
+ * Keyed on the stored value alone, so an outside change (the #65 card, once it lands) shows up
+ * here. A moved *range* refreshes [HrFieldState.parse] instead of rebuilding the state, so it
+ * never costs the runner what they were part-way through typing.
  */
 @Composable
-private fun rememberHrFieldState(
-    stored: Int,
-    rangeKey: Any = Unit,
-    parse: (String) -> Int?
-): HrFieldState = remember(stored, rangeKey) { HrFieldState(stored, parse) }
+private fun rememberHrFieldState(stored: Int, parse: (String) -> Int?): HrFieldState =
+    remember(stored) { HrFieldState(stored, parse) }.also { it.parse = parse }
 
 /**
  * The two inputs the whole zone model hangs off, so the place a silent failure would cost the
