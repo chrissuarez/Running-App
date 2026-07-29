@@ -3,11 +3,14 @@ package com.example.runningapp
 /**
  * The one place heart rate becomes a zone.
  *
- * All five zones are fixed slices of Max HR on the Polar convention, carrying Strava's five
- * names (our choice — Strava publishes no percentages). Nothing here is user-typed, so no
- * configuration can invert a zone or collapse it to nothing.
+ * All five zones are fixed slices of *heart-rate reserve* on the Polar convention, carrying
+ * Strava's five names (our choice — Strava publishes no percentages). The percentages are not
+ * user-typed, so no configuration can invert a zone or collapse it to nothing.
+ *
+ * The percentages themselves did not move when the range they slice did (ADR 0004, #172): what
+ * changed is that they are read against `max − resting` rather than against Max HR alone.
  */
-enum class HrZone(val number: Int, val zoneName: String, val lowerPercentOfMaxHr: Int) {
+enum class HrZone(val number: Int, val zoneName: String, val lowerPercentOfReserve: Int) {
     ENDURANCE(1, "Endurance", 50),
     MODERATE(2, "Moderate", 60),
     TEMPO(3, "Tempo", 70),
@@ -68,6 +71,32 @@ const val MIN_MAX_HR = 100
 const val MAX_MAX_HR = 230
 
 /**
+ * The range a resting heart rate may be *typed* in: elite (low 30s) through untrained (high 90s).
+ * Wide enough that no real runner is refused, narrow enough that a misread pulse is.
+ */
+const val MIN_RESTING_HR = 30
+const val MAX_RESTING_HR = 100
+
+/**
+ * The narrowest reserve any pair of numbers may produce.
+ *
+ * Reserve is what the five percentages slice, so it plays the role Max HR alone used to: this is
+ * the [MIN_MAX_HR] guarantee restated. Ten percent of 50 is 5, so every zone stays several BPM
+ * wide however the two numbers are set — including a Max HR clamped to its floor of 100 with a
+ * resting heart rate typed at its ceiling.
+ */
+const val MIN_HR_RESERVE = 50
+
+/**
+ * No resting heart rate stated.
+ *
+ * Load-bearing rather than a placeholder to be filled: `0 + (max − 0) × pct` is `max × pct`, so
+ * until someone states their resting heart rate the reserve model *is* the Max HR model, edge for
+ * edge. That is what lets #172 land with no migration and no history moving on upgrade.
+ */
+const val RESTING_HR_UNSTATED = 0
+
+/**
  * The Max HR the app assumes until someone states theirs.
  *
  * Load-bearing rather than cosmetic: it is the value #112 treats as "nobody has chosen yet", so
@@ -79,19 +108,35 @@ const val DEFAULT_MAX_HR = 190
 fun effectiveMaxHr(maxHr: Int): Int = maxHr.coerceIn(MIN_MAX_HR, MAX_MAX_HR)
 
 /**
+ * The resting heart rate a zone edge is actually sliced from, given the Max HR beside it.
+ *
+ * The ceiling depends on the other number, which is the whole reason this is a function of both:
+ * a resting heart rate is only unusable *relative* to a maximum. Holding the reserve at
+ * [MIN_HR_RESERVE] or wider is what keeps every zone non-empty, exactly as [effectiveMaxHr] did
+ * when Max HR alone was the range.
+ *
+ * [RESTING_HR_UNSTATED] is the floor rather than [MIN_RESTING_HR]: "not stated" has to survive the
+ * clamp, or every runner who has never typed a number would be silently given a 30 they did not
+ * choose and their whole history would move under them.
+ */
+fun effectiveRestingHr(restingHr: Int, maxHr: Int): Int =
+    restingHr.coerceIn(RESTING_HR_UNSTATED, minOf(MAX_RESTING_HR, effectiveMaxHr(maxHr) - MIN_HR_RESERVE))
+
+/**
  * The heart rates a runner's zones are sliced from — one value, passed as one thing.
  *
- * Today it holds only Max HR, so it says nothing the old bare `Int` did not. It exists because
- * the zone functions are about to slice from two numbers rather than one (#172), and threading a
- * second loose Int through thirty call sites by hand, in the same change that alters the formula
- * and re-tallies irreplaceable history, is where a mistake would hide. The Run pins one of these
- * at START exactly as it pinned the bare number (ADR 0002, #131).
+ * Both numbers travel together because a zone edge is meaningless without the pair: they bound
+ * the reserve the percentages slice, and half of an update is a band nobody's zones ever were.
+ * The Run pins one of these at START exactly as it pinned the bare Max HR (ADR 0002, #131).
  *
- * Clamping stays in the zone functions rather than here: [effectiveMaxHr] is what guarantees every
- * zone is a non-empty band, and a profile that silently corrected its own input would give the
- * settings screen a different number to show than the one it was handed.
+ * An unstated resting heart rate is the default, and gives back the pre-#172 model unchanged —
+ * see [RESTING_HR_UNSTATED].
+ *
+ * Clamping stays in the zone functions rather than here: [effectiveMaxHr] and [effectiveRestingHr]
+ * are what guarantee every zone is a non-empty band, and a profile that silently corrected its own
+ * input would give the settings screen a different number to show than the one it was handed.
  */
-data class HrProfile(val maxHr: Int)
+data class HrProfile(val maxHr: Int, val restingHr: Int = RESTING_HR_UNSTATED)
 
 /**
  * A typed Max HR, or null if it is not a whole number inside the settable range.
@@ -102,11 +147,29 @@ data class HrProfile(val maxHr: Int)
  */
 fun parseMaxHr(text: String): Int? = text.trim().toIntOrNull()?.takeIf { it in MIN_MAX_HR..MAX_MAX_HR }
 
-/** Lowest BPM that counts as [zone]. Zone 1 also swallows everything below it — see [hrZoneOf]. */
+/**
+ * A typed resting heart rate, or null if it is not a whole number inside the settable range.
+ *
+ * Same standing as [parseMaxHr], for the same reason: this is a number the runner measured, so a
+ * value outside the range is a mistake to show them rather than one to quietly round away.
+ *
+ * The range is the *typeable* one, not the clamp: [effectiveRestingHr] may still hold a perfectly
+ * sensible entry down to fit a low Max HR, which is storage protecting itself, not a refusal.
+ */
+fun parseRestingHr(text: String): Int? =
+    text.trim().toIntOrNull()?.takeIf { it in MIN_RESTING_HR..MAX_RESTING_HR }
+
+/**
+ * Lowest BPM that counts as [zone]. Zone 1 also swallows everything below it — see [hrZoneOf].
+ *
+ * The one place a percentage becomes a BPM, and so the one place the reserve model lives: every
+ * edge, band, label and tally in the app reads through here (ADR 0004).
+ */
 fun zoneLowerBpm(zone: HrZone, profile: HrProfile): Int {
     val max = effectiveMaxHr(profile.maxHr)
+    val resting = effectiveRestingHr(profile.restingHr, profile.maxHr)
     // Ceiling division: the edge belongs to the zone above it.
-    return (max * zone.lowerPercentOfMaxHr + 99) / 100
+    return resting + ((max - resting) * zone.lowerPercentOfReserve + 99) / 100
 }
 
 /** Highest BPM that counts as [zone]. Zone 5 is open-ended; Max HR stands in as its top. */
@@ -118,7 +181,8 @@ fun zoneUpperBpm(zone: HrZone, profile: HrProfile): Int {
 /**
  * The zone for [bpm], or null when there is no heart rate to classify.
  *
- * Anything below 50% of Max HR counts as Zone 1: no real second may vanish from the chart.
+ * Anything below Zone 1's lower edge — 50% of reserve, and so the resting heart rate itself —
+ * counts as Zone 1: no real second may vanish from the chart.
  * (This deliberately differs from TRIMP, which zero-weights sub-50% — see #99.)
  */
 fun hrZoneOf(bpm: Int, profile: HrProfile): HrZone? {
@@ -231,7 +295,7 @@ fun tallyZoneSeconds(bpms: Iterable<Int>, profile: HrProfile): ZoneSeconds {
 val UserSettings.targetHrZone: HrZone get() = HrZone.coachingTargetOfNumberOrDefault(targetZone)
 
 /** The runner's stated heart rates, as the zone functions take them. */
-val UserSettings.hrProfile: HrProfile get() = HrProfile(maxHr)
+val UserSettings.hrProfile: HrProfile get() = HrProfile(maxHr, restingHr)
 
 fun hrZoneOf(bpm: Int, settings: UserSettings): HrZone? = hrZoneOf(bpm, settings.hrProfile)
 

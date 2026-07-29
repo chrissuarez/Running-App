@@ -21,6 +21,10 @@ data class UserSettings(
     // after it is future-only. Distinct from any dismissal flag: keeping the current value is
     // still a deliberate set, dismissing a card is not.
     val maxHrEverSet: Boolean = false,
+    // The other end of the reserve the zones are sliced from (#172). Unstated by default, which
+    // is not a gap to fill in but a value in its own right: it reproduces the Max-HR-only model
+    // exactly, so nobody's zones move until they measure and state a number.
+    val restingHr: Int = RESTING_HR_UNSTATED,
     val targetZone: Int = HrZone.DEFAULT_TARGET.number,
     val coachingEnabled: Boolean = true,
     val aiDataSharingEnabled: Boolean = true,
@@ -81,6 +85,7 @@ fun maxHrEverSet(flag: Boolean?, storedMaxHr: Int?): Boolean =
 internal object PreferencesKeys {
     val MAX_HR = intPreferencesKey("max_hr")
     val MAX_HR_EVER_SET = booleanPreferencesKey("max_hr_ever_set")
+    val RESTING_HR = intPreferencesKey("resting_hr")
     val TARGET_ZONE = intPreferencesKey("target_zone")
     val COACHING_ENABLED = booleanPreferencesKey("coaching_enabled")
     val AI_DATA_SHARING_ENABLED = booleanPreferencesKey("ai_data_sharing_enabled")
@@ -186,6 +191,7 @@ class SettingsRepository(private val context: Context) {
                     flag = preferences[PreferencesKeys.MAX_HR_EVER_SET],
                     storedMaxHr = preferences[PreferencesKeys.MAX_HR]
                 ),
+                restingHr = preferences[PreferencesKeys.RESTING_HR] ?: RESTING_HR_UNSTATED,
                 // Sanitized on read, not only on write: an edge-zone target stored before #117
                 // closed the picker would otherwise keep overstating "In Target" forever.
                 targetZone = HrZone.coachingTargetOfNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE]).number,
@@ -220,6 +226,28 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.MAX_HR] = effectiveMaxHr(maxHr)
             preferences[PreferencesKeys.MAX_HR_EVER_SET] = true
+        }
+    }
+
+    /**
+     * Records a stated resting heart rate.
+     *
+     * Like [setMaxHrDeliberately], nothing should call this directly: go through
+     * `SessionRepository.setRestingHr`, the one door where stating the number and recomputing the
+     * history it re-bands happen together. There is no ever-set flag beside it, because there is
+     * no one-shot to protect — every statement of a resting heart rate re-tallies (#172), so the
+     * whole history always reads under one model.
+     *
+     * Clamped against the Max HR stored *now*, read inside the same `edit` as the write: the two
+     * numbers bound one reserve, so a resting heart rate is only unusable relative to a maximum,
+     * and deciding that against a snapshot taken before the write could store a pair that never
+     * held together. The zone functions clamp again on read regardless — that is what keeps this
+     * from being a second, divergent definition of the same rule.
+     */
+    suspend fun setRestingHr(restingHr: Int) {
+        context.dataStore.edit { preferences ->
+            val maxHr = preferences[PreferencesKeys.MAX_HR] ?: DEFAULT_MAX_HR
+            preferences[PreferencesKeys.RESTING_HR] = effectiveRestingHr(restingHr, maxHr)
         }
     }
 

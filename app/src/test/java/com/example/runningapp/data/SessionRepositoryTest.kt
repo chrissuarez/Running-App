@@ -409,6 +409,129 @@ class SessionRepositoryTest {
         verify(mockSettingsRepo).setMaxHrDeliberately(MAX_MAX_HR)
     }
 
+    @Test
+    fun `the first deliberate max hr set recomputes against both stated numbers`() = runTest {
+        // The pair bounds one reserve, so recomputing against half the profile would re-band every
+        // run to a model nobody's zones are on: 140 is Tempo under 181 alone and Moderate under
+        // 181 with a resting 60.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHrEverSet = false, restingHr = 60)))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
+
+        repositoryWithSamples.setMaxHr(181)
+
+        verify(mockDao).updateZoneSeconds(
+            sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0
+        )
+    }
+
+    // --- Stating a resting heart rate (#172) ---
+
+    @Test
+    fun `stating a resting hr re-tallies every run from its stored samples`() = runTest {
+        // At Max HR 181 with a resting 60 the reserve is 121: Zone 1 runs to 120, Zone 2 starts at
+        // 133 and Zone 3 at 145.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 181, maxHrEverSet = true)))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L, 8L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(120, 140, 150))
+        whenever(mockSampleDao.getRawBpmsForSession(8L)).thenReturn(emptyList())
+
+        repositoryWithSamples.setRestingHr(60)
+
+        verify(mockDao).updateZoneSeconds(
+            sessionId = 7L, zone1 = 1, zone2 = 1, zone3 = 1, zone4 = 0, zone5 = 0
+        )
+        verify(mockDao).updateZoneSeconds(
+            sessionId = 8L, zone1 = 0, zone2 = 0, zone3 = 0, zone4 = 0, zone5 = 0
+        )
+        verify(mockSettingsRepo).setRestingHr(60)
+    }
+
+    @Test
+    fun `every later resting hr change re-tallies again, unlike max hr`() = runTest {
+        // Not the same rule as Max HR by choice: a resting heart rate legitimately falls as fitness
+        // improves, and a history banded half at one value and half at another cannot be compared
+        // with itself — which is the only thing zone history is for.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 181, maxHrEverSet = true, restingHr = 60)))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
+
+        repositoryWithSamples.setRestingHr(52)
+
+        verify(mockDao).updateZoneSeconds(
+            sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0
+        )
+        verify(mockSettingsRepo).setRestingHr(52)
+    }
+
+    @Test
+    fun `the resting hr is stored only once the re-tally it pays for has finished`() = runTest {
+        // Same ordering as Max HR, for the same reason: an interruption must leave the old number
+        // on screen and the conversion to be redone, not a settings screen claiming a re-band that
+        // half happened.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 181, maxHrEverSet = true)))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
+
+        repositoryWithSamples.setRestingHr(60)
+
+        inOrder(mockDao, mockSettingsRepo) {
+            verify(mockDao).updateZoneSeconds(
+                sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0
+            )
+            verify(mockSettingsRepo).setRestingHr(60)
+        }
+    }
+
+    @Test
+    fun `stating a resting hr never spends the max hr one-shot flag`() = runTest {
+        // The two numbers are stated independently. Re-banding history against a Max HR still
+        // sitting on its placeholder must not be recorded as the runner having chosen one.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHrEverSet = false)))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
+
+        repositoryWithSamples.setRestingHr(60)
+
+        verify(mockSettingsRepo).setRestingHr(60)
+        verify(mockSettingsRepo, never()).setMaxHrDeliberately(any())
+    }
+
     // --- What the coach may prescribe (#113) ---
 
     @Test
