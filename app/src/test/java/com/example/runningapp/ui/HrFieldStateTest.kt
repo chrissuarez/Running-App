@@ -1,5 +1,6 @@
 package com.example.runningapp.ui
 
+import com.example.runningapp.RESTING_HR_UNSTATED
 import com.example.runningapp.parseMaxHr
 import com.example.runningapp.parseRestingHr
 import org.junit.Assert.assertEquals
@@ -163,6 +164,68 @@ class HrFieldStateTest {
         state.parse = { parseRestingHr(it, maxHr = 100) }
 
         assertEquals("90", state.typed)
+        assertFalse(state.onLeaveAttempt(onCommit))
+        assertTrue(state.refused)
+        assertNull(committed)
+    }
+
+    // --- The way back to unstated (#172) ---
+
+    @Test
+    fun `emptying a field that has an unstated state commits the unstated value`() {
+        // Without this the only way out of a stated measurement is another measurement.
+        val state = HrFieldState(
+            stored = 60,
+            parse = { parseRestingHr(it, maxHr = 190) },
+            blankMeans = RESTING_HR_UNSTATED
+        )
+        state.onTyped("")
+
+        assertTrue(state.onLeaveAttempt(onCommit))
+        assertEquals(RESTING_HR_UNSTATED, committed)
+        assertFalse(state.refused)
+    }
+
+    @Test
+    fun `emptying a field with no unstated state is still refused`() {
+        // There is no such thing as not having a Max HR, so blank stays the same mistake as "abc".
+        val state = HrFieldState(stored = 190, parse = ::parseMaxHr)
+        state.onTyped("")
+
+        assertFalse(state.onLeaveAttempt(onCommit))
+        assertTrue(state.refused)
+        assertNull(committed)
+    }
+
+    @Test
+    fun `declining the clear puts the number still in force back in the field`() {
+        // Otherwise the blank stays pending and the screen asks again on every way out.
+        val state = HrFieldState(
+            stored = 60,
+            parse = { parseRestingHr(it, maxHr = 190) },
+            blankMeans = RESTING_HR_UNSTATED
+        )
+        state.onTyped("")
+        state.onLeaveAttempt(onCommit)
+        committed = null
+
+        state.restore()
+
+        assertEquals("60", state.typed)
+        assertTrue(state.onLeaveAttempt(onCommit))
+        assertNull(committed)
+    }
+
+    @Test
+    fun `blank is only unstated when it is blank, not whenever parsing fails`() {
+        // A half-typed or nonsense entry is a mistake to refuse, not a withdrawal to act on.
+        val state = HrFieldState(
+            stored = 60,
+            parse = { parseRestingHr(it, maxHr = 190) },
+            blankMeans = RESTING_HR_UNSTATED
+        )
+        state.onTyped("6")
+
         assertFalse(state.onLeaveAttempt(onCommit))
         assertTrue(state.refused)
         assertNull(committed)

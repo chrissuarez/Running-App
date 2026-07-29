@@ -51,6 +51,7 @@ import com.example.runningapp.HrZone
 import com.example.runningapp.MAX_MAX_HR
 import com.example.runningapp.MIN_MAX_HR
 import com.example.runningapp.MIN_RESTING_HR
+import com.example.runningapp.RESTING_HR_UNSTATED
 import com.example.runningapp.UserSettings
 import com.example.runningapp.highestStatableRestingHr
 import com.example.runningapp.hrProfile
@@ -89,8 +90,18 @@ fun SettingsScreen(
     val maxHrState = rememberHrFieldState(settings.maxHr, parse = ::parseMaxHr)
     // Judged against Max HR: the two numbers have to leave a usable reserve between them, so what
     // this field accepts moves when the other one does — without disturbing what is being typed.
-    val restingHrState = rememberHrFieldState(settings.restingHr) {
+    val restingHrState = rememberHrFieldState(settings.restingHr, blankMeans = RESTING_HR_UNSTATED) {
         parseRestingHr(it, settings.maxHr)
+    }
+
+    // Emptying the resting field is the one edit on this screen that is asked about rather than
+    // simply applied. Everything else here states a number; this one *withdraws* a measurement,
+    // moving every zone edge back and re-banding the whole of history with it — and it is a
+    // plausible slip, since clearing a field is how you begin retyping it. So the commit is parked
+    // here and only reaches the repository once the runner has read what it does.
+    var clearingRestingHr by remember { mutableStateOf(false) }
+    fun commitRestingHr(value: Int) {
+        if (value == RESTING_HR_UNSTATED) clearingRestingHr = true else onRestingHrCommit(value)
     }
 
     // Leaving commits both heart-rate fields, and an unusable entry holds the screen open once so
@@ -104,10 +115,13 @@ fun SettingsScreen(
     //
     // Both fields are asked before the answer is used, so a pending edit in one is never dropped
     // because the other refused — `&&` would short-circuit past it.
+    //
+    // A parked clear holds the screen too: leaving while the question is on screen would apply it
+    // behind the runner's back or drop it silently, and both are the failure this screen deletes.
     fun leave() {
         val maxHrReady = maxHrState.onLeaveAttempt(onMaxHrCommit)
-        val restingHrReady = restingHrState.onLeaveAttempt(onRestingHrCommit)
-        if (maxHrReady && restingHrReady) onBack()
+        val restingHrReady = restingHrState.onLeaveAttempt(::commitRestingHr)
+        if (maxHrReady && restingHrReady && !clearingRestingHr) onBack()
     }
     BackHandler(onBack = ::leave)
 
@@ -147,7 +161,7 @@ fun SettingsScreen(
                 supportingText = "Measured at rest. Your zones are sliced from the gap between these two.",
                 refusalText = "Enter a heart rate between $MIN_RESTING_HR and " +
                     "${highestStatableRestingHr(settings.maxHr)}",
-                onCommit = onRestingHrCommit
+                onCommit = ::commitRestingHr
             )
             SettingsRow(
                 label = "Target zone",
@@ -205,6 +219,28 @@ fun SettingsScreen(
         }
     }
 
+    if (clearingRestingHr) {
+        ClearRestingHrDialog(
+            currentRestingHr = settings.restingHr,
+            // What the target band reads now, and what it would read with the resting heart rate
+            // withdrawn — the same arithmetic the zones use, so the warning cannot drift from what
+            // actually happens.
+            bandNow = targetRangeLabel(settings.targetHrZone, settings.hrProfile),
+            bandAfter = targetRangeLabel(settings.targetHrZone, HrProfile(settings.maxHr)),
+            targetZone = settings.targetHrZone,
+            onConfirm = {
+                clearingRestingHr = false
+                onRestingHrCommit(RESTING_HR_UNSTATED)
+            },
+            onDismiss = {
+                clearingRestingHr = false
+                // Declining puts the number still in force back in the field, so the screen does
+                // not ask again on the next way out.
+                restingHrState.restore()
+            }
+        )
+    }
+
     if (showTargetZonePicker) {
         TargetZonePicker(
             selected = settings.targetHrZone,
@@ -232,7 +268,18 @@ fun SettingsScreen(
  * only thing passed in; a second copy of these rules is how the two fields would drift apart.
  */
 @Stable
-class HrFieldState(stored: Int, parse: (String) -> Int?) {
+class HrFieldState(
+    private val stored: Int,
+    parse: (String) -> Int?,
+    /**
+     * What an emptied field means, for a number that has an "unstated" to go back to.
+     *
+     * Null for Max HR — there is no such thing as not having one, so blank stays a refusal. For the
+     * resting heart rate blank is [RESTING_HR_UNSTATED], the value that gives back the Max-HR-only
+     * model; without this the only way out of a measurement is another measurement.
+     */
+    private val blankMeans: Int? = null
+) {
     /**
      * What the field will accept, kept current rather than captured once.
      *
@@ -268,12 +315,35 @@ class HrFieldState(stored: Int, parse: (String) -> Int?) {
     }
 
     /**
+     * Puts the field back to what is stored, with nothing pending.
+     *
+     * For backing out of a commit the screen decided to ask about: declining the question has to
+     * leave the field showing the number still in force, or the screen would keep asking on every
+     * way out.
+     */
+    fun restore() {
+        typed = if (stored > 0) stored.toString() else ""
+        edited = false
+        refused = false
+        leaveRefused = false
+    }
+
+    /**
+     * What the field currently holds, or null if it cannot be stored.
+     *
+     * Blank is the one entry whose meaning depends on the field: for a number with an unstated
+     * state it *is* a value ([blankMeans]), everywhere else it is the same mistake as "abc".
+     */
+    private fun pending(): Int? =
+        if (typed.isBlank()) blankMeans else parse(typed)
+
+    /**
      * Blur, or Done on the keyboard. An unusable entry is refused where you can see it, keeping
      * what you typed — the old field kept the *previous* number instead and said nothing.
      */
     fun onCommitAttempt(onCommit: (Int) -> Unit) {
         if (!edited) return
-        val parsed = parse(typed)
+        val parsed = pending()
         if (parsed == null) {
             refused = true
         } else {
@@ -296,7 +366,7 @@ class HrFieldState(stored: Int, parse: (String) -> Int?) {
      */
     fun onLeaveAttempt(onCommit: (Int) -> Unit): Boolean {
         if (!edited) return true
-        val parsed = parse(typed)
+        val parsed = pending()
         if (parsed != null) {
             refused = false
             edited = false
@@ -316,8 +386,11 @@ class HrFieldState(stored: Int, parse: (String) -> Int?) {
  * never costs the runner what they were part-way through typing.
  */
 @Composable
-private fun rememberHrFieldState(stored: Int, parse: (String) -> Int?): HrFieldState =
-    remember(stored) { HrFieldState(stored, parse) }.also { it.parse = parse }
+private fun rememberHrFieldState(
+    stored: Int,
+    blankMeans: Int? = null,
+    parse: (String) -> Int?
+): HrFieldState = remember(stored) { HrFieldState(stored, parse, blankMeans) }.also { it.parse = parse }
 
 /**
  * The two inputs the whole zone model hangs off, so the place a silent failure would cost the
@@ -355,6 +428,49 @@ private fun HrField(
             .onFocusChanged { focusState ->
                 if (!focusState.isFocused) state.onCommitAttempt(onCommit)
             }
+    )
+}
+
+/**
+ * The one warning on this screen, and it earns its place: withdrawing a measurement moves every
+ * zone edge and re-bands the whole of history behind it.
+ *
+ * Says what changes in the numbers the runner actually reads — their target band, before and after
+ * — rather than naming the model, and says plainly what is *not* touched, because "recalculated"
+ * beside a list of runs reads like the runs are at risk. Neither sentence is a warning about
+ * danger; nothing here is lost. It is a warning about scope.
+ */
+@Composable
+private fun ClearRestingHrDialog(
+    currentRestingHr: Int,
+    bandNow: String,
+    bandAfter: String,
+    targetZone: HrZone,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Clear your resting heart rate?") },
+        text = {
+            Column {
+                Text(
+                    "Your zones go back to being sliced from Max HR alone. " +
+                        "Zone ${targetZone.number} would read $bandAfter BPM instead of $bandNow.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    "Every past run's zone times are worked out again to match, so your history " +
+                        "stays comparable. Your runs, distances and heart-rate recordings are not " +
+                        "affected, and stating the number again puts it all back.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Clear") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Keep $currentRestingHr") } }
     )
 }
 
