@@ -395,15 +395,12 @@ class MainActivity : ComponentActivity() {
                                 // (#112) and every resting-HR statement re-bands it (#172), and
                                 // neither may be something a surface can forget to do.
                                 //
-                                // One call carries both, so the pair reaches the door as a single
-                                // ordered statement. Two launches were two coroutines racing for
-                                // the repository's lock, and the same two edits left different
-                                // history depending on which won.
-                                onHrCommit = { maxHr, restingHr ->
-                                    scope.launch(Dispatchers.IO) {
-                                        sessionRepository.setStatedProfile(maxHr, restingHr)
-                                    }
-                                },
+                                // One call carries both, so a pair stated together reaches the
+                                // door as a single statement — and the container queues the
+                                // statements so separate ones arrive in the order they were made.
+                                // Launched independently they raced for the repository's lock, and
+                                // the same gestures left different history depending on which won.
+                                onHrCommit = appContainer::stateHeartRates,
                                 onTargetZoneChange = { zone ->
                                     scope.launch(Dispatchers.IO) { settingsRepository.setTargetZone(zone) }
                                 },

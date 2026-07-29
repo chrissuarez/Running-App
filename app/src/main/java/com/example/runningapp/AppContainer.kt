@@ -108,6 +108,17 @@ class AppContainer(context: Context) {
      */
     private val applicationScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    /**
+     * States a heart rate, or both at once. Ordered — see [StatedHeartRateQueue].
+     */
+    fun stateHeartRates(maxHr: Int?, restingHr: Int?) = statedHeartRates.state(maxHr, restingHr)
+
+    // A lambda rather than `sessionRepository::setStatedProfile`, so building the queue does not
+    // reach through the lazy repository and open the database at container construction.
+    private val statedHeartRates = StatedHeartRateQueue(applicationScope) { maxHr, restingHr ->
+        sessionRepository.setStatedProfile(maxHr, restingHr)
+    }
+
     private val movingTimeBackfilled = AtomicBoolean(false)
 }
 
