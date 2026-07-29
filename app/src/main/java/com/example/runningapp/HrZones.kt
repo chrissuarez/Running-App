@@ -188,7 +188,18 @@ fun parseMaxHr(text: String, restingHr: Int = RESTING_HR_UNSTATED): Int? =
  * an accepted 90, have storage quietly hold 50, and be shown the 50 back with nothing said.
  */
 fun parseRestingHr(text: String, maxHr: Int): Int? =
-    text.trim().toIntOrNull()?.takeIf { it in MIN_RESTING_HR..highestStatableRestingHr(maxHr) }
+    parseRestingHrAlone(text)?.takeIf { it <= highestStatableRestingHr(maxHr) }
+
+/**
+ * A typed resting heart rate judged by its own limits, with no maximum held up beside it.
+ *
+ * What the Max HR field reads when it asks what the resting field is holding, and the rung that
+ * stops the two rules recursing: each field judges the *other's* entry by that entry's own range,
+ * then applies the pair rule itself. Reading a number that is inside its own range but not yet
+ * checked against its partner is exactly right here — the partner is the one about to check it.
+ */
+fun parseRestingHrAlone(text: String): Int? =
+    text.trim().toIntOrNull()?.takeIf { it in MIN_RESTING_HR..MAX_RESTING_HR }
 
 /**
  * Lowest BPM that counts as [zone]. Zone 1 also swallows everything below it — see [hrZoneOf].

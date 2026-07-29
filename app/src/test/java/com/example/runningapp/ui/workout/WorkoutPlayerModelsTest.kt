@@ -1,5 +1,6 @@
 package com.example.runningapp.ui.workout
 
+import com.example.runningapp.HrProfile
 import com.example.runningapp.HrState
 import com.example.runningapp.HrZone
 import com.example.runningapp.SessionPhase
@@ -8,6 +9,7 @@ import com.example.runningapp.StructuredWorkoutPhase
 import com.example.runningapp.UserSettings
 import com.example.runningapp.ZoneBand
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -40,6 +42,34 @@ class WorkoutPlayerModelsTest {
         val state = stateWithHr(140, targetZone = 3).copy(activeTargetZone = HrZone.MODERATE)
         assertEquals("Tempo — ease off", mapWorkoutPlayerUiState(state).zoneStatusText)
         assertEquals(ZoneBand.ABOVE, mapWorkoutPlayerUiState(state).zoneBand)
+    }
+
+    @Test
+    fun `the run's pinned heart-rate profile wins over a resting hr stated mid-run`() {
+        // Stating a resting heart rate moves every zone edge in settings the moment it lands, but
+        // the Run goes on coaching and tallying against the pair it pinned at START (ADR 0002).
+        // The screen has to follow the Run, or it names a zone the spoken cues disagree with and a
+        // band the recorded totals will not match.
+        val asStarted = stateWithHr(140, targetZone = 3)
+        val statedMidRun = asStarted.copy(
+            userSettings = UserSettings(maxHr = 190, targetZone = 3, restingHr = 60)
+        )
+        val pinned = statedMidRun.copy(activeHrProfile = HrProfile(190))
+
+        // The statement really does move this heart rate into a different zone...
+        assertNotEquals(
+            mapWorkoutPlayerUiState(asStarted).zoneStatusText,
+            mapWorkoutPlayerUiState(statedMidRun).zoneStatusText
+        )
+        // ...and the screen goes on reading the profile the run pinned regardless.
+        assertEquals(
+            mapWorkoutPlayerUiState(asStarted).zoneStatusText,
+            mapWorkoutPlayerUiState(pinned).zoneStatusText
+        )
+        assertEquals(
+            mapWorkoutPlayerUiState(asStarted).zoneBand,
+            mapWorkoutPlayerUiState(pinned).zoneBand
+        )
     }
 
     @Test

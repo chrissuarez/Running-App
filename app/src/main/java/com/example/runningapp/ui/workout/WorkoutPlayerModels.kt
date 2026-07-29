@@ -113,6 +113,11 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
     // only when idle. This keeps the label and band in step with the coach if the global target
     // is changed mid-run.
     val targetZone = state.activeTargetZone ?: state.userSettings.targetHrZone
+    // And the pair those zones are sliced from, for the same reason (#172): stating a resting
+    // heart rate moves every edge in settings the moment it lands, while the Run goes on coaching
+    // and tallying against the profile it pinned at START. Read live, the screen would name a zone
+    // the cues disagree with and a band the recorded totals will not match.
+    val hrProfile = state.activeHrProfile ?: state.userSettings.hrProfile
     val hasSignal = state.bpm > 0 || state.avgBpm > 0
     // Trust avgBpm only while the coach is actively filling its window this packet — then the
     // screen agrees with the coach's smoothed reading. The coach adds a sample only when running,
@@ -123,10 +128,10 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
         (state.currentPhase == SessionPhase.MAIN || state.currentPhase == SessionPhase.WARM_UP) &&
         state.userSettings.coachingEnabled
     val displayBpm = if (coachSampling && state.avgBpm > 0) state.avgBpm else state.bpm
-    val zoneBand = if (hasSignal) zoneBandOf(displayBpm, state.userSettings.hrProfile, targetZone) else ZoneBand.UNKNOWN
+    val zoneBand = if (hasSignal) zoneBandOf(displayBpm, hrProfile, targetZone) else ZoneBand.UNKNOWN
     // The screen names the zone you are actually in (not the target) and the action to close the
     // gap to target; band, not zone, picks the action so words and colour agree. See #109.
-    val actualZone = if (hasSignal) hrZoneOf(displayBpm, state.userSettings.hrProfile) else null
+    val actualZone = if (hasSignal) hrZoneOf(displayBpm, hrProfile) else null
 
     val timeline = if (isStructuredMain) mapIntervalTimelineUiState(state) else null
     val cue = mapCoachCueUiState(state)
