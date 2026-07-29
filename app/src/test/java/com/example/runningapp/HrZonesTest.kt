@@ -23,7 +23,7 @@ class HrZonesTest {
             listOf("Endurance", "Moderate", "Tempo", "Threshold", "Anaerobic"),
             HrZone.entries.map { it.zoneName }
         )
-        assertEquals(listOf(50, 60, 70, 80, 90), HrZone.entries.map { it.lowerPercentOfMaxHr })
+        assertEquals(listOf(50, 60, 70, 80, 90), HrZone.entries.map { it.lowerPercentOfReserve })
     }
 
     @Test
@@ -335,5 +335,159 @@ class HrZonesTest {
     @Test
     fun `the tally clamps max hr the same way the zone edges do`() {
         assertEquals(tallyZoneSeconds(listOf(150), HrProfile(MAX_MAX_HR)), tallyZoneSeconds(listOf(150), HrProfile(999)))
+    }
+
+    @Test
+    fun `the tally clamps resting hr the same way the zone edges do`() {
+        // The v12 to v13 migration re-tallies in SQL against a raw database, where no clamp of its
+        // own is reachable — so a clamp anywhere but inside the zone edges makes the migration's
+        // tally silently disagree with the app's. Same guarantee as the Max HR case above.
+        assertEquals(
+            tallyZoneSeconds(listOf(150), HrProfile(190, effectiveRestingHr(999, 190))),
+            tallyZoneSeconds(listOf(150), HrProfile(190, 999))
+        )
+        assertEquals(
+            tallyZoneSeconds(listOf(150), HrProfile(190, RESTING_HR_UNSTATED)),
+            tallyZoneSeconds(listOf(150), HrProfile(190, -40))
+        )
+    }
+
+    // --- Zones sliced from heart-rate reserve (#172, ADR 0004) ---
+
+    @Test
+    fun `zone edges are sliced from the gap between the two numbers`() {
+        // The runner's own numbers: Max HR 181, resting 60, so a reserve of 121. Under Max HR
+        // alone Zone 2 was 109-126 and their easy jog at 140 read as Tempo; the talk test says
+        // otherwise, and reserve agrees with the talk test.
+        val reserve = HrProfile(maxHr = 181, restingHr = 60)
+
+        assertEquals(121, zoneLowerBpm(HrZone.ENDURANCE, reserve))
+        assertEquals(133, zoneLowerBpm(HrZone.MODERATE, reserve))
+        assertEquals(145, zoneLowerBpm(HrZone.TEMPO, reserve))
+        assertEquals(157, zoneLowerBpm(HrZone.THRESHOLD, reserve))
+        assertEquals(169, zoneLowerBpm(HrZone.ANAEROBIC, reserve))
+        // Zone 5 still tops out at Max HR itself.
+        assertEquals(181, zoneUpperBpm(HrZone.ANAEROBIC, reserve))
+        assertEquals("133-144", targetRangeLabel(HrZone.MODERATE, reserve))
+    }
+
+    @Test
+    fun `an easy jog reads as moderate under reserve where it read as tempo before`() {
+        val maxHrOnly = HrProfile(maxHr = 181)
+        val reserve = HrProfile(maxHr = 181, restingHr = 60)
+
+        assertEquals(HrZone.TEMPO, hrZoneOf(140, maxHrOnly))
+        assertEquals(HrZone.MODERATE, hrZoneOf(140, reserve))
+        assertEquals(ZoneBand.ABOVE, zoneBandOf(140, maxHrOnly, HrZone.MODERATE))
+        assertEquals(ZoneBand.IN, zoneBandOf(140, reserve, HrZone.MODERATE))
+    }
+
+    @Test
+    fun `with no resting hr stated every zone edge is exactly what it was before`() {
+        // The property the whole change rests on: `0 + (max - 0) x pct` is `max x pct`, so nobody
+        // upgrading sees a single second move zone until they state a number. If an expected value
+        // anywhere in this file had to change, the formula is wrong, not the test.
+        for (candidate in -50..400) {
+            val profile = HrProfile(candidate)
+            val max = effectiveMaxHr(candidate)
+            for (zone in HrZone.entries) {
+                assertEquals(
+                    "maxHr=$candidate zone=$zone",
+                    (max * zone.lowerPercentOfReserve + 99) / 100,
+                    zoneLowerBpm(zone, profile)
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `unstated is a value, not a number to be clamped up into the typeable range`() {
+        assertEquals(RESTING_HR_UNSTATED, effectiveRestingHr(RESTING_HR_UNSTATED, 190))
+        assertEquals(HrProfile(190), HrProfile(190, RESTING_HR_UNSTATED))
+    }
+
+    @Test
+    fun `a resting hr is clamped against the max hr beside it, not on its own`() {
+        // The pair bounds one reserve, so a resting heart rate is only unusable relative to a
+        // maximum: 100 is fine under a Max HR of 190 and impossible under one of 100.
+        assertEquals(100, effectiveRestingHr(100, 190))
+        assertEquals(MIN_HR_RESERVE, effectiveMaxHr(100) - effectiveRestingHr(100, 100))
+        assertEquals(MAX_RESTING_HR, effectiveRestingHr(150, 230))
+    }
+
+    @Test
+    fun `every zone stays a non-empty band at every settable pair`() {
+        for (maxCandidate in -50..400 step 7) {
+            for (restingCandidate in -50..250 step 3) {
+                val profile = HrProfile(maxCandidate, restingCandidate)
+                for (zone in HrZone.entries) {
+                    val low = zoneLowerBpm(zone, profile)
+                    val high = zoneUpperBpm(zone, profile)
+                    val where = "maxHr=$maxCandidate restingHr=$restingCandidate zone=$zone"
+                    assertTrue("$where collapsed ($low..$high)", high >= low)
+                    assertEquals(where, zone, hrZoneOf(low, profile))
+                    assertEquals(where, zone, hrZoneOf(high, profile))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `no pair of numbers leaves any target trapped in a single band`() {
+        // The mirror of the Max-HR-only sweep above: the high-HR cues and the safety override only
+        // fire on ABOVE, so a target with no outside silences them.
+        for (maxCandidate in -50..400 step 11) {
+            for (restingCandidate in listOf(-40, RESTING_HR_UNSTATED, 30, 60, 100, 200)) {
+                val profile = HrProfile(maxCandidate, restingCandidate)
+                for (target in HrZone.entries) {
+                    val bands = (1..500).map { zoneBandOf(it, profile, target) }.toSet()
+                    val where = "maxHr=$maxCandidate restingHr=$restingCandidate target=$target"
+                    assertTrue("$where never reads ABOVE", bands.contains(ZoneBand.ABOVE))
+                    assertTrue("$where never reads IN", bands.contains(ZoneBand.IN))
+                    assertTrue("$where never reads BELOW", bands.contains(ZoneBand.BELOW))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `a heart rate at or below the resting number is still zone 1`() {
+        // No real second may vanish from the chart, and the runner's resting heart rate is the one
+        // reading guaranteed to sit under every zone edge.
+        val reserve = HrProfile(maxHr = 181, restingHr = 60)
+        assertEquals(HrZone.ENDURANCE, hrZoneOf(60, reserve))
+        assertEquals(HrZone.ENDURANCE, hrZoneOf(45, reserve))
+        assertEquals(HrZone.ENDURANCE, hrZoneOf(1, reserve))
+        assertNull(hrZoneOf(0, reserve))
+    }
+
+    @Test
+    fun `a typed resting hr is accepted only inside its own settable range`() {
+        assertEquals(30, parseRestingHr("30"))
+        assertEquals(60, parseRestingHr("60"))
+        assertEquals(100, parseRestingHr("100"))
+        assertEquals(58, parseRestingHr(" 58 "))
+    }
+
+    @Test
+    fun `a typed resting hr outside the range is refused rather than clamped`() {
+        assertNull(parseRestingHr("29"))
+        assertNull(parseRestingHr("101"))
+        assertNull(parseRestingHr("6"))      // a pulse counted wrong
+        assertNull(parseRestingHr("0"))      // "unstated" is not something you type
+        assertNull(parseRestingHr("-60"))
+        assertNull(parseRestingHr(""))
+        assertNull(parseRestingHr("abc"))
+        assertNull(parseRestingHr("60.5"))
+    }
+
+    @Test
+    fun `settings carry both numbers into the profile`() {
+        // Half an update is a band nobody's zones ever were, so the pair travels as one value.
+        assertEquals(
+            HrProfile(181, 60),
+            UserSettings(maxHr = 181, restingHr = 60).hrProfile
+        )
+        assertEquals(RESTING_HR_UNSTATED, UserSettings().hrProfile.restingHr)
     }
 }

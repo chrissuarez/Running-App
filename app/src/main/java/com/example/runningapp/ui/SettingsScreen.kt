@@ -49,10 +49,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import com.example.runningapp.HrProfile
 import com.example.runningapp.HrZone
 import com.example.runningapp.MAX_MAX_HR
+import com.example.runningapp.MAX_RESTING_HR
 import com.example.runningapp.MIN_MAX_HR
+import com.example.runningapp.MIN_RESTING_HR
 import com.example.runningapp.UserSettings
 import com.example.runningapp.hrProfile
 import com.example.runningapp.parseMaxHr
+import com.example.runningapp.parseRestingHr
 import com.example.runningapp.targetHrZone
 import com.example.runningapp.targetRangeLabel
 import com.example.runningapp.ui.theme.RunningUiTokens
@@ -72,6 +75,7 @@ fun SettingsScreen(
     settings: UserSettings,
     strapSummary: String,
     onMaxHrCommit: (Int) -> Unit,
+    onRestingHrCommit: (Int) -> Unit,
     onTargetZoneChange: (HrZone) -> Unit,
     onCoachingEnabledChange: (Boolean) -> Unit,
     onSplitAnnouncementsChange: (Boolean) -> Unit,
@@ -82,18 +86,24 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     var showTargetZonePicker by remember { mutableStateOf(false) }
-    val maxHrState = rememberMaxHrFieldState(settings.maxHr)
+    val maxHrState = rememberHrFieldState(settings.maxHr, ::parseMaxHr)
+    val restingHrState = rememberHrFieldState(settings.restingHr, ::parseRestingHr)
 
-    // Leaving commits the Max HR field, and an unusable entry holds the screen open once so the
-    // error is readable — see [MaxHrFieldState.onLeaveAttempt]. Both ways out go through it: the
+    // Leaving commits both heart-rate fields, and an unusable entry holds the screen open once so
+    // the error is readable — see [HrFieldState.onLeaveAttempt]. Both ways out go through it: the
     // top bar arrow and the system back button/gesture, the latter intercepted via [BackHandler]
     // so it cannot dispose the screen behind the check.
     //
     // Intercepting also repairs where the system back went from here, as on [FullScreenMapScreen]:
     // `navigateTo` clears the back stack, so an unhandled back popped the only destination and
     // left the app rather than returning to the main screen.
+    //
+    // Both fields are asked before the answer is used, so a pending edit in one is never dropped
+    // because the other refused — `&&` would short-circuit past it.
     fun leave() {
-        if (maxHrState.onLeaveAttempt(onMaxHrCommit)) onBack()
+        val maxHrReady = maxHrState.onLeaveAttempt(onMaxHrCommit)
+        val restingHrReady = restingHrState.onLeaveAttempt(onRestingHrCommit)
+        if (maxHrReady && restingHrReady) onBack()
     }
     BackHandler(onBack = ::leave)
 
@@ -118,7 +128,22 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             SettingsSectionHeader("Your zones")
-            MaxHrField(state = maxHrState, onCommit = onMaxHrCommit)
+            HrNumberField(
+                state = maxHrState,
+                label = "Max HR",
+                supportingText = null,
+                refusalText = "Enter a heart rate between $MIN_MAX_HR and $MAX_MAX_HR",
+                onCommit = onMaxHrCommit
+            )
+            HrNumberField(
+                state = restingHrState,
+                label = "Resting HR",
+                // Says what the number is for and how to get it: zones are sliced from the gap
+                // between these two, so an unstated resting heart rate is not a blank to ignore.
+                supportingText = "Measured at rest. Your zones are sliced from the gap between these two.",
+                refusalText = "Enter a heart rate between $MIN_RESTING_HR and $MAX_RESTING_HR",
+                onCommit = onRestingHrCommit
+            )
             SettingsRow(
                 label = "Target zone",
                 // Load-bearing: the workout sets the target and this is only the fallback, so
@@ -189,16 +214,23 @@ fun SettingsScreen(
 }
 
 /**
- * What the Max HR field knows: what has been typed, whether it was refused, and whether leaving
+ * What a heart-rate field knows: what has been typed, whether it was refused, and whether leaving
  * the screen is allowed yet.
  *
  * Split out from the composable because the rules it holds are the ones worth being sure about —
  * when a commit happens, when it doesn't, and what Back does with an entry that can't be stored —
  * and none of them are testable while they live inside a `@Composable`.
+ *
+ * One class for both numbers rather than one each: Max HR and resting heart rate are the same kind
+ * of input — a measured value, deliberately stated, refused where you can see it — and the rules
+ * below are the ones that make that true. [parse] is the only thing that differs, so it is the
+ * only thing passed in; a second copy of these rules is how the two fields would drift apart.
  */
 @Stable
-class MaxHrFieldState(storedMaxHr: Int) {
-    var typed by mutableStateOf(storedMaxHr.toString())
+class HrFieldState(stored: Int, private val parse: (String) -> Int?) {
+    // An unstated number shows an empty field, not a zero: zero is how storage spells "nobody has
+    // said", and printing it would look like a heart rate the runner had somehow chosen.
+    var typed by mutableStateOf(if (stored > 0) stored.toString() else "")
         private set
     var refused by mutableStateOf(false)
         private set
@@ -226,7 +258,7 @@ class MaxHrFieldState(storedMaxHr: Int) {
      */
     fun onCommitAttempt(onCommit: (Int) -> Unit) {
         if (!edited) return
-        val parsed = parseMaxHr(typed)
+        val parsed = parse(typed)
         if (parsed == null) {
             refused = true
         } else {
@@ -249,7 +281,7 @@ class MaxHrFieldState(storedMaxHr: Int) {
      */
     fun onLeaveAttempt(onCommit: (Int) -> Unit): Boolean {
         if (!edited) return true
-        val parsed = parseMaxHr(typed)
+        val parsed = parse(typed)
         if (parsed != null) {
             refused = false
             edited = false
@@ -264,30 +296,36 @@ class MaxHrFieldState(storedMaxHr: Int) {
 }
 
 @Composable
-private fun rememberMaxHrFieldState(storedMaxHr: Int): MaxHrFieldState =
+private fun rememberHrFieldState(stored: Int, parse: (String) -> Int?): HrFieldState =
     // Keyed on the stored value so an outside change (the #65 card, once it lands) shows up here.
-    remember(storedMaxHr) { MaxHrFieldState(storedMaxHr) }
+    remember(stored) { HrFieldState(stored, parse) }
 
 /**
- * The single input the whole zone model hangs off, so the one place a silent failure would cost
- * the most: an unusable entry is refused where you can see it and the field keeps what you typed.
+ * The two inputs the whole zone model hangs off, so the place a silent failure would cost the
+ * most: an unusable entry is refused where you can see it and the field keeps what you typed.
  * It never quietly reverts to the old number.
  *
  * Commits on blur rather than per keystroke, because typing "190" passes through "1" and "19" —
  * both of which are invalid, and neither of which is a mistake.
  */
 @Composable
-private fun MaxHrField(state: MaxHrFieldState, onCommit: (Int) -> Unit) {
+private fun HrNumberField(
+    state: HrFieldState,
+    label: String,
+    supportingText: String?,
+    refusalText: String,
+    onCommit: (Int) -> Unit
+) {
     val focusManager = LocalFocusManager.current
 
     OutlinedTextField(
         value = state.typed,
         onValueChange = state::onTyped,
-        label = { Text("Max HR") },
+        label = { Text(label) },
         singleLine = true,
         isError = state.refused,
         supportingText = {
-            if (state.refused) Text("Enter a heart rate between $MIN_MAX_HR and $MAX_MAX_HR")
+            if (state.refused) Text(refusalText) else if (supportingText != null) Text(supportingText)
         },
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
         // Done clears focus rather than committing directly, so both ways of finishing with the

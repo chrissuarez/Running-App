@@ -50,6 +50,14 @@ the runner: a Trigger says a line was crossed, not that anyone struggled,
 stopped, or failed.
 _Avoid_: breakdown, poor tolerance, strain, cap, HR event
 
+**Reserve**:
+The gap between the runner's stated Max HR and their stated resting heart rate —
+the range every zone edge is a percentage of ([ADR 0004](docs/adr/0004-zones-from-heart-rate-reserve.md)).
+Both numbers are measured and stated, never guessed; with no resting heart rate
+stated the Reserve is the whole of Max HR, which is exactly the model that came
+before.
+_Avoid_: HRR, working heart rate, Karvonen
+
 **Split**:
 One completed kilometre of a Run, and the pace it was covered at. Measured by
 distance, unlike an Interval, which is measured by time.

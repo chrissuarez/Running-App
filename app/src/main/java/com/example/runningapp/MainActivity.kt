@@ -396,6 +396,11 @@ class MainActivity : ComponentActivity() {
                                 onMaxHrCommit = { maxHr ->
                                     scope.launch(Dispatchers.IO) { sessionRepository.setMaxHr(maxHr) }
                                 },
+                                // Same door, same reason: stating a resting heart rate re-bands
+                                // every past run, and no surface may state it without that (#172).
+                                onRestingHrCommit = { restingHr ->
+                                    scope.launch(Dispatchers.IO) { sessionRepository.setRestingHr(restingHr) }
+                                },
                                 onTargetZoneChange = { zone ->
                                     scope.launch(Dispatchers.IO) { settingsRepository.setTargetZone(zone) }
                                 },

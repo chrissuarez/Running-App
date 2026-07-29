@@ -118,14 +118,46 @@ class SessionRepository(
     suspend fun setMaxHr(maxHr: Int) {
         val settings = settingsRepository ?: return
         val clampedMaxHr = effectiveMaxHr(maxHr)
-        if (!settings.userSettingsFlow.first().maxHrEverSet) {
+        val current = settings.userSettingsFlow.first()
+        if (!current.maxHrEverSet) {
             // No samples to recompute from is a reason to do nothing at all, not a reason to
             // record the set anyway: the flag is one-shot, so spending it here would strand
             // history on the placeholder with no way back.
             val samples = sampleDao ?: return
-            recomputeZoneSecondsForAllRuns(samples, HrProfile(clampedMaxHr))
+            // The stated resting heart rate comes along: the two numbers bound one reserve, and a
+            // recompute against half of the runner's profile would re-band history to a model
+            // nobody's zones are on.
+            recomputeZoneSecondsForAllRuns(samples, HrProfile(clampedMaxHr, current.restingHr))
         }
         settings.setMaxHrDeliberately(clampedMaxHr)
+    }
+
+    /**
+     * The other half of the same door: stating a resting heart rate, and re-banding the history it
+     * moves (#172, ADR 0004).
+     *
+     * Unlike Max HR this is **not** one-shot. Max HR's future-only rule protects runs the runner
+     * has already read from being rewritten by a later correction; a resting heart rate is not a
+     * correction, it is a measurement that legitimately falls as fitness improves, and a history
+     * banded half at one value and half at another cannot be compared with itself — which is the
+     * only thing zone history is for. So every statement re-tallies everything.
+     *
+     * The re-tally is exact and repeatable rather than destructive: it re-derives from stored
+     * per-second samples, which are never pruned, so running it again costs nothing and no
+     * measurement is lost by doing so.
+     *
+     * Recompute first, then store, for the reason [setMaxHr] does it: an interruption leaves the
+     * old number on screen with history part-converted, and the next statement redoes the whole
+     * thing. Storing first would leave the settings screen claiming a conversion that half
+     * happened.
+     */
+    suspend fun setRestingHr(restingHr: Int) {
+        val settings = settingsRepository ?: return
+        val current = settings.userSettingsFlow.first()
+        sampleDao?.let { samples ->
+            recomputeZoneSecondsForAllRuns(samples, HrProfile(current.maxHr, restingHr))
+        }
+        settings.setRestingHr(restingHr)
     }
 
     /**
