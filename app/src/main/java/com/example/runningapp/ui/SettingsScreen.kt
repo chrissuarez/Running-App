@@ -46,10 +46,12 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import com.example.runningapp.HrProfile
 import com.example.runningapp.HrZone
 import com.example.runningapp.MAX_MAX_HR
 import com.example.runningapp.MIN_MAX_HR
 import com.example.runningapp.UserSettings
+import com.example.runningapp.hrProfile
 import com.example.runningapp.parseMaxHr
 import com.example.runningapp.targetHrZone
 import com.example.runningapp.targetRangeLabel
@@ -176,7 +178,7 @@ fun SettingsScreen(
     if (showTargetZonePicker) {
         TargetZonePicker(
             selected = settings.targetHrZone,
-            maxHr = settings.maxHr,
+            profile = settings.hrProfile,
             onSelect = {
                 onTargetZoneChange(it)
                 showTargetZonePicker = false
@@ -302,7 +304,7 @@ private fun MaxHrField(state: MaxHrFieldState, onCommit: (Int) -> Unit) {
 @Composable
 private fun TargetZonePicker(
     selected: HrZone,
-    maxHr: Int,
+    profile: HrProfile,
     onSelect: (HrZone) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -331,7 +333,7 @@ private fun TargetZonePicker(
                             modifier = Modifier.weight(1f)
                         )
                         Text(
-                            "${targetRangeLabel(zone, maxHr)} BPM",
+                            "${targetRangeLabel(zone, profile)} BPM",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -8,6 +8,7 @@ import com.example.runningapp.CoachWriteScope
 import com.example.runningapp.HrZone
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.TrainingPlanProvider
+import com.example.runningapp.HrProfile
 import com.example.runningapp.effectiveMaxHr
 import com.example.runningapp.tallyZoneSeconds
 import com.example.runningapp.recording.SessionRecorder
@@ -122,7 +123,7 @@ class SessionRepository(
             // record the set anyway: the flag is one-shot, so spending it here would strand
             // history on the placeholder with no way back.
             val samples = sampleDao ?: return
-            recomputeZoneSecondsForAllRuns(samples, clampedMaxHr)
+            recomputeZoneSecondsForAllRuns(samples, HrProfile(clampedMaxHr))
         }
         settings.setMaxHrDeliberately(clampedMaxHr)
     }
@@ -137,9 +138,9 @@ class SessionRepository(
      * row that ends up disagreeing with it. The live run keeps the zone times it accumulated as it
      * was heard — the next run is the first to be measured against the stated number.
      */
-    private suspend fun recomputeZoneSecondsForAllRuns(samples: SampleDao, maxHr: Int) {
+    private suspend fun recomputeZoneSecondsForAllRuns(samples: SampleDao, profile: HrProfile) {
         sessionDao.getFinalizedSessionIds().forEach { sessionId ->
-            val tally = tallyZoneSeconds(samples.getRawBpmsForSession(sessionId), maxHr)
+            val tally = tallyZoneSeconds(samples.getRawBpmsForSession(sessionId), profile)
             sessionDao.updateZoneSeconds(
                 sessionId = sessionId,
                 zone1 = tally.zone1,

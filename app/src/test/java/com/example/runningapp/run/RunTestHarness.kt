@@ -1,5 +1,6 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.HrProfile
 import com.example.runningapp.HrZone
 import com.example.runningapp.WorkoutTemplate
 import org.junit.Assert.assertEquals
@@ -37,11 +38,11 @@ internal val PLANNED_WORKOUT = WorkoutTemplate(
 internal fun config(
     workout: WorkoutTemplate? = PLANNED_WORKOUT,
     runMode: RunMode = RunMode.TREADMILL,
-    maxHr: Int = 190,
+    hrProfile: HrProfile = HrProfile(190),
     targetZone: HrZone = HrZone.MODERATE,
     includeInAiTraining: Boolean = true,
 ) = RunConfig(
-    maxHr = maxHr,
+    hrProfile = hrProfile,
     targetZone = targetZone,
     runMode = runMode,
     workout = workout,

@@ -6,6 +6,7 @@ import com.example.runningapp.SessionStatus
 import com.example.runningapp.StructuredWorkoutPhase
 import com.example.runningapp.ZoneBand
 import com.example.runningapp.data.formatMinutesPerKm
+import com.example.runningapp.hrProfile
 import com.example.runningapp.hrZoneOf
 import com.example.runningapp.liveZoneStatus
 import com.example.runningapp.targetHrZone
@@ -122,10 +123,10 @@ fun mapWorkoutPlayerUiState(state: HrState): WorkoutPlayerUiState {
         (state.currentPhase == SessionPhase.MAIN || state.currentPhase == SessionPhase.WARM_UP) &&
         state.userSettings.coachingEnabled
     val displayBpm = if (coachSampling && state.avgBpm > 0) state.avgBpm else state.bpm
-    val zoneBand = if (hasSignal) zoneBandOf(displayBpm, state.userSettings.maxHr, targetZone) else ZoneBand.UNKNOWN
+    val zoneBand = if (hasSignal) zoneBandOf(displayBpm, state.userSettings.hrProfile, targetZone) else ZoneBand.UNKNOWN
     // The screen names the zone you are actually in (not the target) and the action to close the
     // gap to target; band, not zone, picks the action so words and colour agree. See #109.
-    val actualZone = if (hasSignal) hrZoneOf(displayBpm, state.userSettings.maxHr) else null
+    val actualZone = if (hasSignal) hrZoneOf(displayBpm, state.userSettings.hrProfile) else null
 
     val timeline = if (isStructuredMain) mapIntervalTimelineUiState(state) else null
     val cue = mapCoachCueUiState(state)

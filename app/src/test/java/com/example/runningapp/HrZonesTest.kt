@@ -7,7 +7,16 @@ import org.junit.Test
 
 class HrZonesTest {
 
-    private val maxHr = 190
+    private val profile = HrProfile(190)
+
+    @Test
+    fun `the profile is what the zone edges are sliced from`() {
+        // The whole point of the value: what a zone edge computes to depends on the profile and
+        // on nothing else, so the settings the zones came from can never be half-applied.
+        assertEquals(zoneLowerBpm(HrZone.MODERATE, HrProfile(190)), zoneLowerBpm(HrZone.MODERATE, profile))
+        assertEquals(114, zoneLowerBpm(HrZone.MODERATE, HrProfile(190)))
+        assertEquals(96, zoneLowerBpm(HrZone.MODERATE, HrProfile(160)))
+    }
 
     @Test
     fun `zone names follow the published table`() {
@@ -20,34 +29,34 @@ class HrZonesTest {
 
     @Test
     fun `every zone boundary at max hr 190`() {
-        assertEquals(HrZone.ENDURANCE, hrZoneOf(113, maxHr))
-        assertEquals(HrZone.MODERATE, hrZoneOf(114, maxHr))
-        assertEquals(HrZone.MODERATE, hrZoneOf(132, maxHr))
-        assertEquals(HrZone.TEMPO, hrZoneOf(133, maxHr))
-        assertEquals(HrZone.TEMPO, hrZoneOf(151, maxHr))
-        assertEquals(HrZone.THRESHOLD, hrZoneOf(152, maxHr))
-        assertEquals(HrZone.THRESHOLD, hrZoneOf(170, maxHr))
-        assertEquals(HrZone.ANAEROBIC, hrZoneOf(171, maxHr))
+        assertEquals(HrZone.ENDURANCE, hrZoneOf(113, profile))
+        assertEquals(HrZone.MODERATE, hrZoneOf(114, profile))
+        assertEquals(HrZone.MODERATE, hrZoneOf(132, profile))
+        assertEquals(HrZone.TEMPO, hrZoneOf(133, profile))
+        assertEquals(HrZone.TEMPO, hrZoneOf(151, profile))
+        assertEquals(HrZone.THRESHOLD, hrZoneOf(152, profile))
+        assertEquals(HrZone.THRESHOLD, hrZoneOf(170, profile))
+        assertEquals(HrZone.ANAEROBIC, hrZoneOf(171, profile))
     }
 
     @Test
     fun `hr below 50 percent of max hr counts as zone 1`() {
-        assertEquals(HrZone.ENDURANCE, hrZoneOf(95, maxHr)) // exactly 50%
-        assertEquals(HrZone.ENDURANCE, hrZoneOf(94, maxHr))
-        assertEquals(HrZone.ENDURANCE, hrZoneOf(40, maxHr))
-        assertEquals(HrZone.ENDURANCE, hrZoneOf(1, maxHr))
+        assertEquals(HrZone.ENDURANCE, hrZoneOf(95, profile)) // exactly 50%
+        assertEquals(HrZone.ENDURANCE, hrZoneOf(94, profile))
+        assertEquals(HrZone.ENDURANCE, hrZoneOf(40, profile))
+        assertEquals(HrZone.ENDURANCE, hrZoneOf(1, profile))
     }
 
     @Test
     fun `above max hr stays in zone 5`() {
-        assertEquals(HrZone.ANAEROBIC, hrZoneOf(190, maxHr))
-        assertEquals(HrZone.ANAEROBIC, hrZoneOf(240, maxHr))
+        assertEquals(HrZone.ANAEROBIC, hrZoneOf(190, profile))
+        assertEquals(HrZone.ANAEROBIC, hrZoneOf(240, profile))
     }
 
     @Test
     fun `no heart rate is not a zone`() {
-        assertNull(hrZoneOf(0, maxHr))
-        assertNull(hrZoneOf(-5, maxHr))
+        assertNull(hrZoneOf(0, profile))
+        assertNull(hrZoneOf(-5, profile))
     }
 
     @Test
@@ -55,26 +64,27 @@ class HrZonesTest {
         // The shipped "Derive Defaults" button set zone2High to 143, so the hand-typed Zone 2
         // band swallowed 133-143 — every one of those seconds was filed as Zone 2 rather than
         // Tempo, and Zone 3 was left a 9-BPM sliver. Zones no longer read a typed band at all.
-        assertEquals(HrZone.TEMPO, hrZoneOf(140, maxHr)) // 73.7% — was Zone 2
-        assertEquals(HrZone.TEMPO, hrZoneOf(143, maxHr)) // 75.3% — was Zone 2
-        assertEquals(HrZone.THRESHOLD, hrZoneOf(156, maxHr)) // 82.1% — Threshold per the table
+        assertEquals(HrZone.TEMPO, hrZoneOf(140, profile)) // 73.7% — was Zone 2
+        assertEquals(HrZone.TEMPO, hrZoneOf(143, profile)) // 75.3% — was Zone 2
+        assertEquals(HrZone.THRESHOLD, hrZoneOf(156, profile)) // 82.1% — Threshold per the table
     }
 
     @Test
     fun `zone 3 is reachable at every possible max hr`() {
         for (candidate in -50..400) {
-            val low = zoneLowerBpm(HrZone.TEMPO, candidate)
-            val high = zoneUpperBpm(HrZone.TEMPO, candidate)
+            val profile = HrProfile(candidate)
+            val low = zoneLowerBpm(HrZone.TEMPO, profile)
+            val high = zoneUpperBpm(HrZone.TEMPO, profile)
             assertTrue("Zone 3 collapsed at maxHr=$candidate ($low..$high)", high >= low)
             assertEquals(
                 "maxHr=$candidate",
                 HrZone.TEMPO,
-                hrZoneOf(low, candidate)
+                hrZoneOf(low, profile)
             )
             assertEquals(
                 "maxHr=$candidate",
                 HrZone.TEMPO,
-                hrZoneOf(high, candidate)
+                hrZoneOf(high, profile)
             )
         }
     }
@@ -82,9 +92,10 @@ class HrZonesTest {
     @Test
     fun `every zone is reachable at every possible max hr`() {
         for (candidate in -50..400) {
+            val profile = HrProfile(candidate)
             for (zone in HrZone.entries) {
-                val low = zoneLowerBpm(zone, candidate)
-                assertEquals("maxHr=$candidate zone=$zone", zone, hrZoneOf(low, candidate))
+                val low = zoneLowerBpm(zone, profile)
+                assertEquals("maxHr=$candidate zone=$zone", zone, hrZoneOf(low, profile))
             }
         }
     }
@@ -93,7 +104,7 @@ class HrZonesTest {
     fun `zones tile the bpm range with no gaps`() {
         var previous: HrZone? = null
         for (bpm in 1..250) {
-            val zone = hrZoneOf(bpm, maxHr)!!
+            val zone = hrZoneOf(bpm, profile)!!
             if (previous != null) {
                 assertTrue(
                     "Zone went backwards or skipped at $bpm",
@@ -107,40 +118,41 @@ class HrZonesTest {
 
     @Test
     fun `zone edges are computed from clamped max hr`() {
-        assertEquals(zoneLowerBpm(HrZone.TEMPO, MIN_MAX_HR), zoneLowerBpm(HrZone.TEMPO, 20))
-        assertEquals(zoneLowerBpm(HrZone.TEMPO, MAX_MAX_HR), zoneLowerBpm(HrZone.TEMPO, 900))
+        assertEquals(zoneLowerBpm(HrZone.TEMPO, HrProfile(MIN_MAX_HR)), zoneLowerBpm(HrZone.TEMPO, HrProfile(20)))
+        assertEquals(zoneLowerBpm(HrZone.TEMPO, HrProfile(MAX_MAX_HR)), zoneLowerBpm(HrZone.TEMPO, HrProfile(900)))
     }
 
     @Test
     fun `band compares the current zone to the target zone`() {
-        assertEquals(ZoneBand.BELOW, zoneBandOf(100, maxHr, HrZone.MODERATE))
-        assertEquals(ZoneBand.IN, zoneBandOf(120, maxHr, HrZone.MODERATE))
-        assertEquals(ZoneBand.ABOVE, zoneBandOf(140, maxHr, HrZone.MODERATE))
-        assertEquals(ZoneBand.UNKNOWN, zoneBandOf(0, maxHr, HrZone.MODERATE))
+        assertEquals(ZoneBand.BELOW, zoneBandOf(100, profile, HrZone.MODERATE))
+        assertEquals(ZoneBand.IN, zoneBandOf(120, profile, HrZone.MODERATE))
+        assertEquals(ZoneBand.ABOVE, zoneBandOf(140, profile, HrZone.MODERATE))
+        assertEquals(ZoneBand.UNKNOWN, zoneBandOf(0, profile, HrZone.MODERATE))
 
         // Same BPM, different target.
-        assertEquals(ZoneBand.BELOW, zoneBandOf(140, maxHr, HrZone.THRESHOLD))
-        assertEquals(ZoneBand.IN, zoneBandOf(140, maxHr, HrZone.TEMPO))
+        assertEquals(ZoneBand.BELOW, zoneBandOf(140, profile, HrZone.THRESHOLD))
+        assertEquals(ZoneBand.IN, zoneBandOf(140, profile, HrZone.TEMPO))
     }
 
     @Test
     fun `every target has an outside, so high-HR cues stay reachable`() {
         // The high-HR branch — the safety override included — only fires on ABOVE. A target with
         // no ABOVE silences it. Zone 5 is the case that matters: its chart slice is open-ended.
-        assertEquals(ZoneBand.ABOVE, zoneBandOf(maxHr + 1, maxHr, HrZone.ANAEROBIC))
-        assertEquals(ZoneBand.ABOVE, zoneBandOf(maxHr + 15, maxHr, HrZone.ANAEROBIC))
-        assertEquals(ZoneBand.IN, zoneBandOf(maxHr, maxHr, HrZone.ANAEROBIC))
+        assertEquals(ZoneBand.ABOVE, zoneBandOf(profile.maxHr + 1, profile, HrZone.ANAEROBIC))
+        assertEquals(ZoneBand.ABOVE, zoneBandOf(profile.maxHr + 15, profile, HrZone.ANAEROBIC))
+        assertEquals(ZoneBand.IN, zoneBandOf(profile.maxHr, profile, HrZone.ANAEROBIC))
 
         // Zone 1 is the mirror: its slice swallows everything below 50%, the band must not.
-        assertEquals(ZoneBand.BELOW, zoneBandOf(40, maxHr, HrZone.ENDURANCE))
-        assertEquals(ZoneBand.IN, zoneBandOf(100, maxHr, HrZone.ENDURANCE))
+        assertEquals(ZoneBand.BELOW, zoneBandOf(40, profile, HrZone.ENDURANCE))
+        assertEquals(ZoneBand.IN, zoneBandOf(100, profile, HrZone.ENDURANCE))
     }
 
     @Test
     fun `no max hr leaves any target trapped in a single band`() {
         for (candidate in -50..400) {
+            val profile = HrProfile(candidate)
             for (target in HrZone.entries) {
-                val bands = (1..500).map { zoneBandOf(it, candidate, target) }.toSet()
+                val bands = (1..500).map { zoneBandOf(it, profile, target) }.toSet()
                 assertTrue(
                     "maxHr=$candidate target=$target never reads ABOVE",
                     bands.contains(ZoneBand.ABOVE)
@@ -155,26 +167,26 @@ class HrZonesTest {
 
     @Test
     fun `range labels read the way the table does`() {
-        assertEquals("114-132", targetRangeLabel(HrZone.MODERATE, maxHr))
-        assertEquals("133-151", targetRangeLabel(HrZone.TEMPO, maxHr))
-        assertEquals("152-170", targetRangeLabel(HrZone.THRESHOLD, maxHr))
+        assertEquals("114-132", targetRangeLabel(HrZone.MODERATE, profile))
+        assertEquals("133-151", targetRangeLabel(HrZone.TEMPO, profile))
+        assertEquals("152-170", targetRangeLabel(HrZone.THRESHOLD, profile))
     }
 
     @Test
     fun `target ranges are closed, so they never advertise BPM outside the band`() {
         // Zones 2-4 read the same either way; only the open-ended ends differ.
-        assertEquals("114-132", targetRangeLabel(HrZone.MODERATE, maxHr))
-        assertEquals("95-113", targetRangeLabel(HrZone.ENDURANCE, maxHr))
-        assertEquals("171-190", targetRangeLabel(HrZone.ANAEROBIC, maxHr))
+        assertEquals("114-132", targetRangeLabel(HrZone.MODERATE, profile))
+        assertEquals("95-113", targetRangeLabel(HrZone.ENDURANCE, profile))
+        assertEquals("171-190", targetRangeLabel(HrZone.ANAEROBIC, profile))
 
         // Every edge a target range shows must read IN, and stepping outside must not.
         for (target in HrZone.entries) {
-            val low = zoneLowerBpm(target, maxHr)
-            val high = zoneUpperBpm(target, maxHr)
-            assertEquals(ZoneBand.IN, zoneBandOf(low, maxHr, target))
-            assertEquals(ZoneBand.IN, zoneBandOf(high, maxHr, target))
-            assertEquals(ZoneBand.BELOW, zoneBandOf(low - 1, maxHr, target))
-            assertEquals(ZoneBand.ABOVE, zoneBandOf(high + 1, maxHr, target))
+            val low = zoneLowerBpm(target, profile)
+            val high = zoneUpperBpm(target, profile)
+            assertEquals(ZoneBand.IN, zoneBandOf(low, profile, target))
+            assertEquals(ZoneBand.IN, zoneBandOf(high, profile, target))
+            assertEquals(ZoneBand.BELOW, zoneBandOf(low - 1, profile, target))
+            assertEquals(ZoneBand.ABOVE, zoneBandOf(high + 1, profile, target))
         }
     }
 
@@ -182,30 +194,30 @@ class HrZonesTest {
     fun `hysteresis holds you out until you reach the midpoint`() {
         // Target Tempo at maxHr 190: low 133, high 151, midpoint 142.
         // Coming from ABOVE, you stay ABOVE until the heart rate drops to the midpoint.
-        assertEquals(ZoneBand.ABOVE, bandWithHysteresis(ZoneBand.ABOVE, 150, maxHr, HrZone.TEMPO))
-        assertEquals(ZoneBand.ABOVE, bandWithHysteresis(ZoneBand.ABOVE, 143, maxHr, HrZone.TEMPO))
-        assertEquals(ZoneBand.IN, bandWithHysteresis(ZoneBand.ABOVE, 142, maxHr, HrZone.TEMPO))
+        assertEquals(ZoneBand.ABOVE, bandWithHysteresis(ZoneBand.ABOVE, 150, profile, HrZone.TEMPO))
+        assertEquals(ZoneBand.ABOVE, bandWithHysteresis(ZoneBand.ABOVE, 143, profile, HrZone.TEMPO))
+        assertEquals(ZoneBand.IN, bandWithHysteresis(ZoneBand.ABOVE, 142, profile, HrZone.TEMPO))
         // Coming from BELOW, you stay BELOW until you climb to the midpoint.
-        assertEquals(ZoneBand.BELOW, bandWithHysteresis(ZoneBand.BELOW, 134, maxHr, HrZone.TEMPO))
-        assertEquals(ZoneBand.IN, bandWithHysteresis(ZoneBand.BELOW, 142, maxHr, HrZone.TEMPO))
+        assertEquals(ZoneBand.BELOW, bandWithHysteresis(ZoneBand.BELOW, 134, profile, HrZone.TEMPO))
+        assertEquals(ZoneBand.IN, bandWithHysteresis(ZoneBand.BELOW, 142, profile, HrZone.TEMPO))
     }
 
     @Test
     fun `an overshoot to the far side of the zone is out, not a false recovery`() {
         // Falling from ABOVE clean through the zone to below the lower edge is BELOW, not IN — the
         // runner is still out of target, so no "recovered" cue and no ladder reset.
-        assertEquals(ZoneBand.BELOW, bandWithHysteresis(ZoneBand.ABOVE, 120, maxHr, HrZone.TEMPO))
+        assertEquals(ZoneBand.BELOW, bandWithHysteresis(ZoneBand.ABOVE, 120, profile, HrZone.TEMPO))
         // The mirror: climbing from BELOW clean past the upper edge is ABOVE, not IN.
-        assertEquals(ZoneBand.ABOVE, bandWithHysteresis(ZoneBand.BELOW, 160, maxHr, HrZone.TEMPO))
+        assertEquals(ZoneBand.ABOVE, bandWithHysteresis(ZoneBand.BELOW, 160, profile, HrZone.TEMPO))
     }
 
     @Test
     fun `with no prior out-of-zone state hysteresis is just the plain band`() {
-        assertEquals(ZoneBand.IN, bandWithHysteresis(ZoneBand.IN, 140, maxHr, HrZone.TEMPO))
-        assertEquals(ZoneBand.IN, bandWithHysteresis(ZoneBand.UNKNOWN, 140, maxHr, HrZone.TEMPO))
-        assertEquals(ZoneBand.ABOVE, bandWithHysteresis(ZoneBand.IN, 160, maxHr, HrZone.TEMPO))
-        assertEquals(ZoneBand.BELOW, bandWithHysteresis(ZoneBand.IN, 120, maxHr, HrZone.TEMPO))
-        assertEquals(ZoneBand.UNKNOWN, bandWithHysteresis(ZoneBand.ABOVE, 0, maxHr, HrZone.TEMPO))
+        assertEquals(ZoneBand.IN, bandWithHysteresis(ZoneBand.IN, 140, profile, HrZone.TEMPO))
+        assertEquals(ZoneBand.IN, bandWithHysteresis(ZoneBand.UNKNOWN, 140, profile, HrZone.TEMPO))
+        assertEquals(ZoneBand.ABOVE, bandWithHysteresis(ZoneBand.IN, 160, profile, HrZone.TEMPO))
+        assertEquals(ZoneBand.BELOW, bandWithHysteresis(ZoneBand.IN, 120, profile, HrZone.TEMPO))
+        assertEquals(ZoneBand.UNKNOWN, bandWithHysteresis(ZoneBand.ABOVE, 0, profile, HrZone.TEMPO))
     }
 
     @Test
@@ -246,12 +258,13 @@ class HrZonesTest {
     fun `for every coaching target, the chart bucket and the band agree`() {
         // This is why the target is restricted (#117): "In Target" is derived on read as the
         // target zone's own seconds, which is only exact where bucket and band coincide.
-        for (maxHr in MIN_MAX_HR..MAX_MAX_HR) {
+        for (max in MIN_MAX_HR..MAX_MAX_HR) {
             for (target in HrZone.COACHING_TARGETS) {
                 for (bpm in 1..300) {
-                    val inBucket = hrZoneOf(bpm, maxHr) == target
-                    val inBand = zoneBandOf(bpm, maxHr, target) == ZoneBand.IN
-                    assertEquals("maxHr=$maxHr target=$target bpm=$bpm", inBucket, inBand)
+                    val profile = HrProfile(max)
+                    val inBucket = hrZoneOf(bpm, profile) == target
+                    val inBand = zoneBandOf(bpm, profile, target) == ZoneBand.IN
+                    assertEquals("maxHr=$max target=$target bpm=$bpm", inBucket, inBand)
                 }
             }
         }
@@ -261,11 +274,11 @@ class HrZonesTest {
     fun `the excluded edge zones are excluded because bucket and band diverge`() {
         // Zone 5's bucket is open-ended upward and Zone 1's swallows everything beneath it, but a
         // target must have an outside — so above Max HR and far below Zone 1 the two disagree.
-        assertEquals(HrZone.ANAEROBIC, hrZoneOf(205, maxHr))
-        assertEquals(ZoneBand.ABOVE, zoneBandOf(205, maxHr, HrZone.ANAEROBIC))
+        assertEquals(HrZone.ANAEROBIC, hrZoneOf(205, profile))
+        assertEquals(ZoneBand.ABOVE, zoneBandOf(205, profile, HrZone.ANAEROBIC))
 
-        assertEquals(HrZone.ENDURANCE, hrZoneOf(60, maxHr))
-        assertEquals(ZoneBand.BELOW, zoneBandOf(60, maxHr, HrZone.ENDURANCE))
+        assertEquals(HrZone.ENDURANCE, hrZoneOf(60, profile))
+        assertEquals(ZoneBand.BELOW, zoneBandOf(60, profile, HrZone.ENDURANCE))
     }
 
     @Test
@@ -308,7 +321,7 @@ class HrZonesTest {
     fun `zone seconds are tallied one second per sample`() {
         assertEquals(
             ZoneSeconds(zone1 = 1, zone2 = 2, zone3 = 1, zone4 = 1, zone5 = 1),
-            tallyZoneSeconds(listOf(100, 120, 120, 140, 160, 175), maxHr)
+            tallyZoneSeconds(listOf(100, 120, 120, 140, 160, 175), profile)
         )
     }
 
@@ -316,12 +329,12 @@ class HrZonesTest {
     fun `samples with no heart rate bank no zone time`() {
         // The recorder writes one row per second and only when BPM > 0, so seconds with no signal
         // have no row — they must stay unfabricated rather than land in Zone 1.
-        assertEquals(ZoneSeconds(), tallyZoneSeconds(listOf(0, -1), maxHr))
-        assertEquals(ZoneSeconds(), tallyZoneSeconds(emptyList(), maxHr))
+        assertEquals(ZoneSeconds(), tallyZoneSeconds(listOf(0, -1), profile))
+        assertEquals(ZoneSeconds(), tallyZoneSeconds(emptyList(), profile))
     }
 
     @Test
     fun `the tally clamps max hr the same way the zone edges do`() {
-        assertEquals(tallyZoneSeconds(listOf(150), MAX_MAX_HR), tallyZoneSeconds(listOf(150), 999))
+        assertEquals(tallyZoneSeconds(listOf(150), HrProfile(MAX_MAX_HR)), tallyZoneSeconds(listOf(150), HrProfile(999)))
     }
 }

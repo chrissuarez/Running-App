@@ -657,7 +657,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // unplanned or skipped Run has neither.
         val workout = if (skipPlanForToday) null else resolveActiveWorkoutTemplate()
         return RunConfig(
-            maxHr = settings.maxHr,
+            hrProfile = settings.hrProfile,
             // The Workout sets the target when a plan is attached; otherwise the global is the
             // fallback (#107).
             targetZone = workout?.let { HrZone.ofNumberOrDefault(it.targetZone) } ?: settings.targetHrZone,
