@@ -80,11 +80,16 @@ class SessionDetailScreenTest {
         }
 
         composeRule.onNodeWithText("Run/Walk Interval Summary").assertIsDisplayed()
-        composeRule.onNodeWithText("Average completion").assertIsDisplayed()
-        composeRule.onNodeWithText("Strong completion (>=90%)").assertIsDisplayed()
+        composeRule.onNodeWithText("Total run intervals").assertIsDisplayed()
+        composeRule.onNodeWithText("Intervals with no trigger").assertIsDisplayed()
+        composeRule.onNodeWithText("Average time before heart rate went above target").assertIsDisplayed()
+        composeRule.onNodeWithText("Longest interval with no trigger").assertIsDisplayed()
         composeRule.onNodeWithText("Raw Interval Data").assertIsDisplayed().performClick()
         composeRule.onNodeWithText("Interval 1").assertIsDisplayed()
-        composeRule.onAllNodesWithText("Completion band").assertCountEquals(2)
+
+        // The collapse vocabulary is gone from the screen, not just from the summary card (#169).
+        listOf("Average completion", "Severe breakdown", "Poor tolerance", "Strained completion", "Completion band")
+            .forEach { composeRule.onAllNodesWithText(it).assertCountEquals(0) }
     }
 
     @Test
