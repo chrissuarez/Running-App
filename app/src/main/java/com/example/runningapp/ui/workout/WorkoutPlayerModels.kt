@@ -209,7 +209,7 @@ fun mapIntervalTimelineUiState(state: HrState): IntervalTimelineUiState {
                 type = TimelineMarkerType.PLANNED_TRANSITION
             )
         )
-        if (state.triggerInCurrentInterval && state.triggerAtSecond != null && state.currentIntervalPlannedSeconds > 0) {
+        if (state.triggerAtSecond != null && state.currentIntervalPlannedSeconds > 0) {
             add(
                 TimelineMarkerUi(
                     segmentIndex = currentSegmentIndex.coerceIn(0, segments.lastIndex),
@@ -233,7 +233,7 @@ fun mapCoachCueUiState(state: HrState): CoachCueUiState? {
 
     val reasonTag = when {
         staleSignal -> CUE_REASON_SENSOR_LOST
-        state.triggerInCurrentInterval -> CUE_REASON_HR_HIGH
+        state.triggerAtSecond != null -> CUE_REASON_HR_HIGH
         // "Planned transition" only means something on a structured workout: on an open run there
         // is no interval, so without this gate the coach card would tell an open-run user to
         // "follow the interval" that doesn't exist (#107).
@@ -243,9 +243,10 @@ fun mapCoachCueUiState(state: HrState): CoachCueUiState? {
 
     val message = when (reasonTag) {
         CUE_REASON_SENSOR_LOST -> "Sensor signal is stale. Keep effort easy until reconnect."
-        // The card says what the voice says, because they are the same cue on two channels. It used
-        // to read "Above cap. Walk until HR settles." — an order, from a number that cannot carry
-        // one (#167). A condition with no sentence shows no card rather than a blank one.
+        // The advisory the voice gives, in the voice's own words rather than a second wording of
+        // it. It used to read "Above cap. Walk until HR settles." — an order, from a number that
+        // cannot carry one (#167). The card knows only that a Trigger stands, not which sentence
+        // was spoken, so a drift cue still shows as the plain ease-off here.
         CUE_REASON_HR_HIGH -> coachingCue(CueCondition.ABOVE).spoken ?: return null
         CUE_REASON_PLANNED -> "Planned transition. Follow the interval."
         else -> state.coachWaitingLine.takeIf { it.isNotBlank() } ?: return null

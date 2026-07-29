@@ -49,15 +49,20 @@ data class RunCoaching(
  * Run, so one Interval's high heart rate is never shown against the next one.
  */
 data class Trigger(
-    /** Whether the runner's heart rate went above target during the run Interval in progress. */
-    val occurred: Boolean = false,
-    /** How far into that Interval it first did. */
+    /**
+     * How far into the run Interval the heart rate first went above target, or null if it never
+     * did. The one field, because a Trigger is a moment: there is no such thing as one that
+     * happened at no second, and none that happened at a second.
+     */
     val atSecond: Int? = null,
 ) {
+    /** Whether there has been a Trigger in the run Interval in progress at all. */
+    val occurred: Boolean get() = atSecond != null
+
     /**
      * The coach spoke about a heart rate above target, [secondIntoInterval] seconds in. The first
      * such second is the one kept — later ones in the same Interval do not overwrite it.
      */
     fun triggered(secondIntoInterval: Int): Trigger =
-        if (occurred) this else Trigger(occurred = true, atSecond = secondIntoInterval)
+        if (occurred) this else Trigger(atSecond = secondIntoInterval)
 }

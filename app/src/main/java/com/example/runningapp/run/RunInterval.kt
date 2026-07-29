@@ -140,7 +140,7 @@ data class IntervalTracker(
     val intervalIndex: Int,
     val plannedSeconds: Int,
     val secondsElapsed: Int = 0,
-    /** The second the runner's heart rate first went over the cap, or null if it never did. */
+    /** The second the runner's heart rate first went above target, or null if it never did. */
     val firstHrTriggerSecond: Int? = null,
     val hrTriggerEvents: Int = 0,
     val walkingRecoverySeconds: Int = 0,
