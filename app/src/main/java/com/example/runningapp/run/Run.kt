@@ -333,21 +333,19 @@ object Run {
     /**
      * The words for an above-target cue, the ladder having already decided it is time to speak.
      *
-     * Drift outranks the walk break, which outranks the plain ease-off. Only the walk break counts
-     * toward the Run's walk breaks — the other two ask for a change of effort, not for a walk. No
-     * spoken cue names a zone (#109): the voice asks for a change, and the screen reports the state.
+     * Advice, and only advice (#167): both sentences ask for a change of effort, neither prescribes
+     * a walk, and nothing in the Run's state moves because the runner ignored one. The Trigger is
+     * still recorded — that is the readout the runner wants afterwards — but it is no longer a
+     * verdict on them. No spoken cue names a zone (#109): the voice asks for a change, and the
+     * screen reports the state.
      */
     private fun highCue(state: RunState, smoothedBpm: Int): RunOutcome {
         val condition = highCueCondition(
             secondsRunning = state.secondsRunning,
             baselineHr = state.coaching.baselineHr,
             avgBpm = smoothedBpm,
-            isStructured = state.config?.isRunWalkMode ?: false,
         )
-        val counted =
-            if (condition == CueCondition.ABOVE_WALK_BREAK) state.copy(walkBreaks = state.walkBreaks + 1)
-            else state
-        return RunOutcome(recordHighHrTrigger(counted, smoothedBpm), spoken(condition))
+        return RunOutcome(recordHighHrTrigger(state, smoothedBpm), spoken(condition))
     }
 
     /**
@@ -364,18 +362,18 @@ object Run {
         listOfNotNull(coachingCue(condition).spoken?.let(RunEffect::Speak))
 
     /**
-     * The runner's heart rate sent them walking. What the Interval is measuring, and what makes a
-     * walk explicable afterwards rather than a mystery.
+     * The runner's heart rate went above target and the coach said so. Where that happened, kept so
+     * the Interval can be read back afterwards.
      *
      * Only a run Interval has a number for it — an unplanned Run, a walk Interval and the stretch
      * after the Workout's last Interval all record nothing, so the coach can still speak there
-     * without inventing an Interval to hang the trigger on.
+     * without inventing an Interval to hang the Trigger on.
      */
     private fun recordHighHrTrigger(state: RunState, smoothedBpm: Int): RunState {
         val tracker = state.runIntervalTracker ?: return state
         return state.copy(
             intervalTracker = tracker.hrTriggered(tracker.secondsElapsed, smoothedBpm),
-            walkDecision = state.walkDecision.triggered(tracker.secondsElapsed),
+            trigger = state.trigger.triggered(tracker.secondsElapsed),
         )
     }
 
@@ -463,7 +461,7 @@ object Run {
             // A Workout prescribing runs of no length therefore leaves the coach exactly as it
             // was — reproduced rather than chosen, and unreachable by any Workout the app writes.
             coaching = if (runSeconds > 0) state.coaching.startAgain() else state.coaching,
-            walkDecision = if (runSeconds > 0) WalkDecision() else state.walkDecision,
+            trigger = if (runSeconds > 0) Trigger() else state.trigger,
         )
         return RunOutcome(
             begun,
@@ -498,10 +496,11 @@ object Run {
                             kind = IntervalKind.WALK,
                             secondsRemaining = intervals.walkSeconds,
                         ),
-                        // The walk starts, and why it was taken is settled now: the runner's own
-                        // heart rate if it went above target during the run, and the Workout
-                        // itself if it did not.
-                        walkDecision = current.walkDecision.atHandover(),
+                        // The Workout's walk, counted as the Run takes it. This is the only place a
+                        // walk break is counted (#167): the coach used to add one every time it
+                        // spoke about heart rate, which made the number a tally of line-crossings
+                        // rather than of walks.
+                        walkBreaks = current.walkBreaks + 1,
                     ),
                     effects + RunEffect.Speak(
                         "Transition to walking, ${intervals.walkSeconds} seconds.",
@@ -517,7 +516,7 @@ object Run {
                     intervals = null,
                     intervalsFinished = true,
                     // No Interval left to explain.
-                    walkDecision = WalkDecision(),
+                    trigger = Trigger(),
                     // The Workout's last Interval hands the Run into its cool-down, the way the
                     // warm-up hands it into the main Phase — so the sentence the coach speaks here
                     // becomes true. From this second the cool-down's ten-second warning and its own
@@ -726,7 +725,7 @@ object Run {
                     phaseCarryMillis = -owed,
                     intervals = null,
                     intervalsFinished = true,
-                    walkDecision = WalkDecision(),
+                    trigger = Trigger(),
                 )
                 RunOutcome(
                     skipped,

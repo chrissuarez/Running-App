@@ -45,7 +45,7 @@ A robust Android application designed to track heart rate (HR) during runs and p
     - **Target Zone Emphasis**: Alerts you when you are above or below your target zone. All five zones (Endurance, Moderate, Tempo, Threshold, Anaerobic) are fixed slices of your Max HR at 50/60/70/80/90%; you pick which one to train in, and Moderate (Zone 2) is the default.
     - **Warm-up Coaching Buffer**: Total audio silence for the first **8 minutes** of a session to allow physiological steady-state. Includes a safety override (Target High + 15 BPM).
     - **Cardiac Drift Detection**: Detects slow physiological HR rise after 20 minutes using a 10-minute baseline. Plays specialized "Steady Effort" cues with a 5-minute anti-nag cooldown.
-    - **Run/Walk Coach Mode**: Specialized mode for beginner training with tailored interval cues ("Walk until breathing settles", "Transition to a light jog") and wider recovery hysteresis.
+    - **Run/Walk Coach Mode**: Specialized mode for beginner training with interval transition cues ("Transition to walking", "Start running, interval 2 of 6") and wider recovery hysteresis. A high heart rate is advice — "Ease off slightly" — and never an instruction to walk; the walks are the ones the workout prescribed.
     - **Smart Persistence**: Avoids "jittery" alerts by requiring the heart rate to stay outside a zone for a configurable duration before triggering a cue.
     - **Hysteresis & Cooldown**: Prevents back-to-back voice cues with customizable cooldown periods.
 - **Session Management**:
@@ -82,7 +82,7 @@ The coaching engine employs several sophisticated filters:
     - After 20 minutes, if your HR rises slightly above your target but is within 12 BPM of your baseline, the app recognizes this as physiological drift.
     - Instead of "Ease off", it plays a helpful drift cue: *"Heart rate drifting up. Keep effort steady, or take a short walk break."*
 - **Run/Walk Coach Mode**: 
-    - Changes cues to interval-based instructions (Walk/Jog).
+    - Adds interval transition cues (Walk/Jog) at the boundaries the workout sets.
     - Employs **Wider Hysteresis**: In this mode, the app tells you to start jogging again as soon as your HR drops to the *midpoint* of your target zone, preventing your HR from dropping too low during walk intervals.
 
 ### 4. Session Phases

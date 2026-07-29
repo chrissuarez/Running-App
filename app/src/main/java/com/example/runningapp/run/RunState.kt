@@ -102,12 +102,23 @@ data class RunState(
     val coaching: RunCoaching = RunCoaching(),
 
     /**
-     * Why the runner is walking, and whether their heart rate has been above target during the run
-     * Interval in progress. Written only by the coach's cue decisions. See [WalkDecision].
+     * The Trigger of the run Interval in progress: whether the runner's heart rate has been above
+     * target during it, and when it first was. Written only by the coach's cue decisions.
+     * See [Trigger].
      */
-    val walkDecision: WalkDecision = WalkDecision(),
+    val trigger: Trigger = Trigger(),
 
-    /** How many times this Run's coach has sent the runner walking. Saved with the Run. */
+    /**
+     * How many of the Workout's walks this Run has taken. Saved with the Run, and 0 for a Run
+     * following no Workout, which has no walks to take.
+     *
+     * It counted something else until #167 — one per above-target cue the coach spoke — so a Run
+     * recorded before that carries a tally of line-crossings under the same name, and the two are
+     * not comparable. Not migrated: the old number cannot be recovered into the new one (the cues
+     * were never recorded), and the Runs it was written against keep the number they were saved
+     * with. Counted as the walk is taken rather than read off the Workout, so a Run stopped
+     * half-way counts the walks it actually took.
+     */
     val walkBreaks: Int = 0,
 
     /**

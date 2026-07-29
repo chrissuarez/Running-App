@@ -170,8 +170,8 @@ class WorkoutPlayerModelsTest {
             currentIntervalPlannedSeconds = 120,
             currentIntervalElapsedSeconds = 30,
             nextIntervalDurationSeconds = 60,
-            hrCapExceededInCurrentInterval = true,
-            hrCapExceededAtSecond = 18
+            triggerInCurrentInterval = true,
+            triggerAtSecond = 18
         )
 
         val timeline = mapIntervalTimelineUiState(state)
@@ -197,8 +197,7 @@ class WorkoutPlayerModelsTest {
             workoutProgressPercent = 40,
             bpm = 152,
             avgBpm = 152,
-            currentWalkReason = "HR cap exceeded",
-            hrCapExceededInCurrentInterval = true,
+            triggerInCurrentInterval = true,
             userSettings = UserSettings(maxHr = 190, targetZone = 2)
         )
 
@@ -213,21 +212,36 @@ class WorkoutPlayerModelsTest {
 
     @Test
     fun `open run does not surface a planned-interval coach cue`() {
-        // currentWalkReason defaults to "Planned"; on an open run there is no interval to follow,
-        // so the planned-transition cue must not fire (#107). Blanking the zone-coaching passthrough
-        // isolates the gate: with nothing else to say, the open run yields no cue at all.
+        // On an open run there is no interval to follow, so the planned-transition cue must not
+        // fire (#107). Blanking the zone-coaching passthrough isolates the gate: with nothing else
+        // to say, the open run yields no cue at all.
         val openRun = HrState(
             sessionStatus = SessionStatus.RUNNING,
             currentPhase = SessionPhase.MAIN,
             isStructuredWorkout = false,
-            currentWalkReason = "Planned",
             coachWaitingLine = ""
         )
         assertEquals(null, mapCoachCueUiState(openRun))
 
-        // The same reason on a structured workout still coaches the interval.
+        // A structured workout still coaches the interval.
         val structured = openRun.copy(isStructuredWorkout = true)
         assertEquals(CUE_REASON_PLANNED, mapCoachCueUiState(structured)?.reasonTag)
+    }
+
+    @Test
+    fun `the coach card advises easing off rather than ordering a walk`() {
+        val aboveTarget = HrState(
+            sessionStatus = SessionStatus.RUNNING,
+            currentPhase = SessionPhase.MAIN,
+            isStructuredWorkout = true,
+            triggerInCurrentInterval = true,
+            coachWaitingLine = ""
+        )
+
+        val cue = mapCoachCueUiState(aboveTarget)
+
+        assertEquals(CUE_REASON_HR_HIGH, cue?.reasonTag)
+        assertEquals("Ease off slightly.", cue?.message)
     }
 
     @Test

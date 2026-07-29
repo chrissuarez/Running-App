@@ -14,7 +14,6 @@ private val COACHING_SENTENCES = CueCondition.entries.mapNotNull { coachingCue(i
 
 private fun List<RunEffect>.coachCues(): List<String> = spoken().filter { it in COACHING_SENTENCES }
 
-private val WALK_BREAK = coachingCue(CueCondition.ABOVE_WALK_BREAK).spoken!!
 private val EASE_OFF = coachingCue(CueCondition.ABOVE).spoken!!
 private val DRIFTING = coachingCue(CueCondition.ABOVE_DRIFTING).spoken!!
 private val PICK_IT_UP = coachingCue(CueCondition.BELOW).spoken!!
@@ -52,8 +51,8 @@ class RunCoachingTest {
         val theNextMinute = driver.advanceWith(seconds = 60, bpm = ABOVE_TARGET)
 
         assertEquals(emptyList<String>(), firstTwentyNine.coachCues())
-        assertEquals(listOf(WALK_BREAK), toSixty.coachCues())
-        assertEquals(listOf(WALK_BREAK), theNextMinute.coachCues())
+        assertEquals(listOf(EASE_OFF), toSixty.coachCues())
+        assertEquals(listOf(EASE_OFF), theNextMinute.coachCues())
     }
 
     @Test
@@ -101,20 +100,22 @@ class RunCoachingTest {
         val after = driver.advanceWith(seconds = 31, bpm = ABOVE_TARGET)
 
         assertEquals(emptyList<String>(), grace.coachCues())
-        // An unplanned Run has no walk to be sent on, so the plain ease-off is what it hears.
         assertEquals(listOf(EASE_OFF), after.coachCues())
     }
 
     @Test
-    fun `a high heart rate on a run Interval asks for a walk break and counts one`() {
+    fun `a high heart rate on a run Interval advises easing off and counts no walk break`() {
         val driver = Driver()
         driver.start()
         driver.throughWarmUp()
 
         val cued = driver.advanceWith(seconds = 31, bpm = ABOVE_TARGET)
 
-        assertEquals(listOf(WALK_BREAK), cued.coachCues())
-        assertEquals(1, driver.state.walkBreaks)
+        // The same sentence a Run with no Workout hears: on a Quality Run a stride is over before
+        // heart rate responds, and on an easy one the runner can still hold a conversation, so
+        // there is no Run Type the walk-break order was ever right for (ADR 0003).
+        assertEquals(listOf(EASE_OFF), cued.coachCues())
+        assertEquals(0, driver.state.walkBreaks)
     }
 
     @Test
@@ -186,7 +187,7 @@ class RunCoachingTest {
 
         assertEquals(emptyList<String>(), silenced.coachCues())
         // The ladder starts from where the runner is now, not from a debt run up while it was off.
-        assertEquals(listOf(WALK_BREAK), resumed.coachCues())
+        assertEquals(listOf(EASE_OFF), resumed.coachCues())
     }
 
     @Test
@@ -228,7 +229,7 @@ class RunCoachingTest {
         // Reusing the old ladder would make the runner 80 seconds overdue on their first stride of
         // Interval 2 and fire a catch-up cue immediately (Codex #124).
         assertEquals(emptyList<String>(), nextIntervalOpening.coachCues())
-        assertEquals(listOf(WALK_BREAK), thirtySecondsIn.coachCues())
+        assertEquals(listOf(EASE_OFF), thirtySecondsIn.coachCues())
     }
 
     @Test
@@ -274,28 +275,28 @@ class RunCoachingTest {
     }
 
     @Test
-    fun `the walk after a high heart rate is recorded as the runner's, not the plan's`() {
+    fun `a high heart rate is still recorded, as a readout rather than a verdict`() {
         val driver = Driver()
         driver.start()
         driver.throughWarmUp()
         driver.advanceWith(seconds = 30, bpm = IN_TARGET)
         driver.advanceWith(seconds = 33, bpm = ABOVE_TARGET)
 
-        // Settled the moment the cue is spoken, not at the handover: the runner is being asked to
-        // walk now, and the live screen must say why now rather than a minute later.
-        assertEquals(WalkReason.HR_TRIGGERED, driver.state.walkDecision.reason)
-        assertTrue(driver.state.walkDecision.hrCapExceededInInterval)
-        assertEquals(63, driver.state.walkDecision.hrCapExceededAtSecond)
+        // The moment the line was crossed is what the runner wants to see afterwards, so it is kept
+        // exactly as before — it simply no longer decides anything.
+        assertTrue(driver.state.trigger.occurred)
+        assertEquals(63, driver.state.trigger.atSecond)
 
-        // The run Interval reaches its end on second 240 and hands over to the walk.
+        // The run Interval reaches its end on second 240 and hands over to the walk the Workout
+        // prescribed — the same walk it would have handed over to at any heart rate.
         driver.advanceWith(seconds = 117, bpm = IN_TARGET)
 
         assertEquals(IntervalKind.WALK, driver.state.intervals?.kind)
-        assertEquals(WalkReason.HR_TRIGGERED, driver.state.walkDecision.reason)
+        assertEquals(1, driver.state.walkBreaks)
     }
 
     @Test
-    fun `the next Interval does not inherit the last one's reason for walking`() {
+    fun `the next Interval does not inherit the last one's high heart rate`() {
         val driver = Driver()
         driver.start()
         driver.throughWarmUp()
@@ -305,20 +306,36 @@ class RunCoachingTest {
         driver.advanceWith(seconds = 177, bpm = IN_TARGET)
 
         assertEquals(2, driver.state.intervals?.repeat)
-        assertEquals(WalkReason.PLANNED, driver.state.walkDecision.reason)
-        assertFalse(driver.state.walkDecision.hrCapExceededInInterval)
-        assertNull(driver.state.walkDecision.hrCapExceededAtSecond)
+        assertFalse(driver.state.trigger.occurred)
+        assertNull(driver.state.trigger.atSecond)
     }
 
     @Test
-    fun `a walk taken because the plan says so is recorded as planned`() {
+    fun `the Run's walk breaks count the Workout's walks, whatever the heart rate does`() {
         val driver = Driver()
         driver.start()
         driver.throughWarmUp()
 
-        driver.advanceWith(seconds = 180, bpm = IN_TARGET)
-
+        // Above target for the whole of run Interval 1, which used to buy a walk break every 30
+        // seconds. The Workout prescribes one walk here, so one is what the Run counts.
+        driver.advanceWith(seconds = 180, bpm = ABOVE_TARGET)
         assertEquals(IntervalKind.WALK, driver.state.intervals?.kind)
-        assertEquals(WalkReason.PLANNED, driver.state.walkDecision.reason)
+        assertEquals(1, driver.state.walkBreaks)
+
+        // Through that walk and the whole of run Interval 2, in target throughout: still one walk
+        // per repeat.
+        driver.advanceWith(seconds = 240, bpm = IN_TARGET)
+        assertEquals(IntervalKind.WALK, driver.state.intervals?.kind)
+        assertEquals(2, driver.state.walkBreaks)
+    }
+
+    @Test
+    fun `a Run with no Workout counts no walk breaks, however high the heart rate goes`() {
+        val driver = Driver()
+        driver.start(config = config(workout = null))
+
+        driver.advanceWith(seconds = 600, bpm = ABOVE_TARGET)
+
+        assertEquals(0, driver.state.walkBreaks)
     }
 }
