@@ -3,6 +3,7 @@ package com.example.runningapp.ui
 import com.example.runningapp.RESTING_HR_UNSTATED
 import com.example.runningapp.parseMaxHr
 import com.example.runningapp.parseRestingHr
+import com.example.runningapp.parseRestingHrAlone
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -218,6 +219,53 @@ class HrFieldStateTest {
         assertFalse(state.onLeaveAttempt(onCommit))
         assertTrue(state.refused)
         assertNull(committed)
+    }
+
+    @Test
+    fun `a resting hr already blurred still blocks a max hr with no room above it`() {
+        // Blur commits, but the commit is asynchronous and waits on a re-tally of the whole
+        // history before it publishes — so storage still reads the old number when the maximum is
+        // typed a moment later. Judged against disk this pair is accepted, and one of the two
+        // numbers is then quietly rewritten. What the field is holding is the honest answer.
+        val resting = HrFieldState(
+            stored = RESTING_HR_UNSTATED,
+            parse = { parseRestingHr(it, maxHr = 190) },
+            blankMeans = RESTING_HR_UNSTATED,
+            readAlone = ::parseRestingHrAlone
+        )
+        resting.onTyped("60")
+        resting.onCommitAttempt { }
+
+        val maxHr = HrFieldState(stored = 190, parse = { parseMaxHr(it, resting.valueInForce) })
+        maxHr.onTyped("100")
+
+        assertEquals(60, resting.valueInForce)
+        assertFalse(maxHr.onLeaveAttempt(onCommit))
+        assertTrue(maxHr.refused)
+        assertNull(committed)
+    }
+
+    @Test
+    fun `neither field's rule recurses into the other`() {
+        // Each names the other, so each must answer "what are you holding" without going back
+        // through the rule that asked. Both entries are unusable as a pair; resolving either one
+        // must terminate rather than bounce between them.
+        val maxHr = HrFieldState(stored = 190, parse = ::parseMaxHr, readAlone = ::parseMaxHr)
+        val resting = HrFieldState(
+            stored = 60,
+            parse = { parseRestingHr(it, maxHr = 190) },
+            blankMeans = RESTING_HR_UNSTATED,
+            readAlone = ::parseRestingHrAlone
+        )
+        maxHr.parse = { parseMaxHr(it, resting.valueInForce) }
+        resting.parse = { parseRestingHr(it, maxHr.valueInForce) }
+        maxHr.onTyped("100")
+        resting.onTyped("90")
+
+        assertEquals(100, maxHr.valueInForce)
+        assertEquals(90, resting.valueInForce)
+        assertFalse(maxHr.onLeaveAttempt(onCommit))
+        assertFalse(resting.onLeaveAttempt(onCommit))
     }
 
     @Test

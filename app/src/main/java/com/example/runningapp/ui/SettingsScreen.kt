@@ -57,6 +57,7 @@ import com.example.runningapp.highestStatableRestingHr
 import com.example.runningapp.lowestStatableMaxHr
 import com.example.runningapp.parseMaxHr
 import com.example.runningapp.parseRestingHr
+import com.example.runningapp.parseRestingHrAlone
 import com.example.runningapp.targetHrZone
 import com.example.runningapp.targetRangeLabel
 import com.example.runningapp.ui.theme.RunningUiTokens
@@ -87,25 +88,28 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     var showTargetZonePicker by remember { mutableStateOf(false) }
-    // Judged against the resting heart rate the same way that one is judged against this: the pair
-    // bounds one reserve, so a maximum with no room above the stated resting number is refused
-    // here rather than accepted and then quietly rewriting that number down.
+    val maxHrState = rememberHrFieldState(settings.maxHr, readAlone = ::parseMaxHr)
+    val restingHrState = rememberHrFieldState(
+        settings.restingHr,
+        blankMeans = RESTING_HR_UNSTATED,
+        readAlone = ::parseRestingHrAlone
+    )
+    // The two numbers bound one reserve, so neither field's range is knowable without what the
+    // other is holding — each rule names the other, which is why they are set here rather than at
+    // construction. Kotlin will not let the first `val` mention the second.
     //
-    // Against the *stored* resting heart rate, not the entry pending beside it, and deliberately
-    // not symmetric with the other field: two rules that each asked the other what it held would
-    // call each other forever. Judging this one against disk is the end that can give — a resting
-    // edit made in the same visit is already weighed against the new maximum by the rule below.
-    val maxHrState = rememberHrFieldState(settings.maxHr) { parseMaxHr(it, settings.restingHr) }
-    // Judged against Max HR: the two numbers have to leave a usable reserve between them, so what
-    // this field accepts moves when the other one does — without disturbing what is being typed.
+    // Each reads the other through `valueInForce`, which answers from what is in the field rather
+    // than from disk. Storage lags the screen twice over: a commit is asynchronous, and a
+    // resting-HR commit waits on a re-tally of the whole history first. Judged against disk, a
+    // resting 60 blurred a moment ago is still invisible when Max HR 100 is typed beside it — so
+    // the pair is accepted and then one of the two numbers is quietly rewritten, which is the
+    // failure this screen exists to delete. Judged against the field, it is refused where the
+    // runner can see it.
     //
-    // Against the Max HR *in force* rather than the one on disk, because leaving commits both at
-    // once: weighed against storage, lowering Max HR to 100 and stating a resting 90 in the same
-    // visit accepts both here and then stores the 90 as 50 — the silent replacement 36fef08
-    // deleted, arriving through the other door.
-    val restingHrState = rememberHrFieldState(settings.restingHr, blankMeans = RESTING_HR_UNSTATED) {
-        parseRestingHr(it, maxHrState.valueInForce)
-    }
+    // Setting them on every composition is also what keeps a moved range from costing the runner
+    // whatever they were part-way through typing — see [HrFieldState.parse].
+    maxHrState.parse = { parseMaxHr(it, restingHrState.valueInForce) }
+    restingHrState.parse = { parseRestingHr(it, maxHrState.valueInForce) }
 
     // Emptying the resting field is the one edit on this screen that is asked about rather than
     // simply applied. Everything else here states a number; this one *withdraws* a measurement,
@@ -163,7 +167,7 @@ fun SettingsScreen(
                 state = maxHrState,
                 label = "Max HR",
                 supportingText = null,
-                refusalText = maxHrRefusalText(settings.restingHr),
+                refusalText = maxHrRefusalText(restingHrState.valueInForce),
                 onCommit = onMaxHrCommit
             )
             HrField(
@@ -290,8 +294,8 @@ fun SettingsScreen(
  *
  * One class for both numbers rather than one each: Max HR and resting heart rate are the same kind
  * of input — a measured value, deliberately stated, refused where you can see it — and the rules
- * below are the ones that make that true. [parse] is the only thing that differs, so it is the
- * only thing passed in; a second copy of these rules is how the two fields would drift apart.
+ * below are the ones that make that true. What each number *accepts* is all that differs, so that
+ * is all that is passed in; a second copy of these rules is how the two fields would drift apart.
  */
 @Stable
 class HrFieldState(
@@ -304,7 +308,17 @@ class HrFieldState(
      * resting heart rate blank is [RESTING_HR_UNSTATED], the value that gives back the Max-HR-only
      * model; without this the only way out of a measurement is another measurement.
      */
-    private val blankMeans: Int? = null
+    private val blankMeans: Int? = null,
+    /**
+     * How this field's entry reads when the *other* field asks what it is holding: by its own
+     * limits alone, never by the pair rule.
+     *
+     * The rung that stops the two rules recursing. Each field's [parse] names the other, so a
+     * [valueInForce] that went back through [parse] would have them calling each other forever.
+     * Answering with a number that is inside its own range but not yet checked against its partner
+     * is exactly right — the partner is the one about to check it.
+     */
+    private val readAlone: (String) -> Int? = parse
 ) {
     /**
      * What the field will accept, kept current rather than captured once.
@@ -366,15 +380,19 @@ class HrFieldState(
         if (typed.isBlank()) blankMeans else parse(typed)
 
     /**
-     * The number this field will put in force: its pending entry if that is usable, otherwise the
-     * one already stored.
+     * The number this field will put in force: whatever it is holding if that is a heart rate at
+     * all, otherwise the one already stored.
      *
-     * The field beside it is judged against this rather than against storage, because leaving
-     * commits both and the writes are asynchronous. Judged against disk, a resting heart rate can
-     * be accepted here and then quietly clamped by the Max HR landing beside it — the runner is
-     * shown back a number they never typed, which is the one failure this screen exists to delete.
+     * The field beside it is judged against this rather than against storage, because storage lags
+     * the screen twice over — a commit is asynchronous, and a resting-HR commit waits on a re-tally
+     * of the whole history before it publishes. Read off disk, a resting 60 blurred a moment ago is
+     * still invisible when the Max HR beside it is typed, so an unusable pair is accepted and one
+     * of the two numbers is quietly rewritten. That is the failure this screen exists to delete.
+     *
+     * Read through [readAlone], not [parse]: a blur does not empty the field, so what it is holding
+     * is still the answer even once committed, and asking [parse] would recurse.
      */
-    val valueInForce: Int get() = pending() ?: stored
+    val valueInForce: Int get() = readAlone(typed) ?: stored
 
     /**
      * Blur, or Done on the keyboard. An unusable entry is refused where you can see it, keeping
@@ -422,14 +440,15 @@ class HrFieldState(
 /**
  * Keyed on the stored value alone, so an outside change (the #65 card, once it lands) shows up
  * here. A moved *range* refreshes [HrFieldState.parse] instead of rebuilding the state, so it
- * never costs the runner what they were part-way through typing.
+ * never costs the runner what they were part-way through typing — the caller does that refresh,
+ * because each field's rule names the other and neither can be written down until both exist.
  */
 @Composable
 private fun rememberHrFieldState(
     stored: Int,
     blankMeans: Int? = null,
-    parse: (String) -> Int?
-): HrFieldState = remember(stored) { HrFieldState(stored, parse, blankMeans) }.also { it.parse = parse }
+    readAlone: (String) -> Int?
+): HrFieldState = remember(stored) { HrFieldState(stored, readAlone, blankMeans, readAlone) }
 
 /**
  * The two inputs the whole zone model hangs off, so the place a silent failure would cost the

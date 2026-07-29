@@ -130,7 +130,15 @@ data class HrState(
     // stop. Active-run UI must gate distance/map on this, not userSettings.runMode: the settings
     // write from a just-tapped mode toggle is async, so an outdoor run started immediately after
     // the tap would otherwise render as a treadmill run while GPS records underneath.
-    val activeRunMode: String? = null
+    val activeRunMode: String? = null,
+
+    // The heart rates the live run's zones are sliced from, pinned at START with everything else
+    // in RunConfig (ADR 0002). The screen must prefer this over userSettings.hrProfile for the
+    // same reason it prefers activeTargetZone: a resting heart rate stated mid-run moves every
+    // zone edge in settings immediately, while the Run keeps coaching and tallying against the
+    // pair it started with — so the screen would name a zone the runner is not being coached to,
+    // and a total that will not match what gets recorded.
+    val activeHrProfile: HrProfile? = null
 ) {
     /**
      * Is an Acquisition in flight — scanning, connecting, or retrying a Strap?
@@ -396,9 +404,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 hrCapExceededInCurrentInterval = run.walkDecision.hrCapExceededInInterval,
                 hrCapExceededAtSecond = run.walkDecision.hrCapExceededAtSecond,
 
-                // The three the screen must only ever read off a live Run: its pinned target, its
-                // pinned mode, and the row the feedback sheet will be attached to.
+                // The four the screen must only ever read off a live Run: its pinned target, the
+                // pair its zones are sliced from, its pinned mode, and the row the feedback sheet
+                // will be attached to.
                 activeTargetZone = if (live) run.config?.targetZone else null,
+                activeHrProfile = if (live) run.config?.hrProfile else null,
                 activeRunMode = if (live) run.config?.runMode?.settingValue else null,
                 activeDbSessionId = if (live) run.runRowId else null,
             )
