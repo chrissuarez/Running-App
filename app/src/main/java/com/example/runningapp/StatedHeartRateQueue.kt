@@ -44,6 +44,14 @@ class StatedHeartRateQueue(
 
     init {
         scope.launch {
+            // Once, ahead of the loop, and not retried inside it. A second attempt part-way through
+            // would land last session's leftover number *after* something the runner had just
+            // stated and overwrite it — the very race applying it here first exists to remove.
+            //
+            // Failing is therefore allowed to mean "not this launch". It is safe because the note
+            // outlives the failure: only a statement that re-bands history clears it, so a
+            // future-only Max HR change cannot wipe it on the way past, and the next launch finds
+            // it. A statement that does re-band history supersedes it anyway.
             applying { recover()?.let { apply(it.maxHr, it.restingHr) } }
             for (statement in statements) {
                 applying { apply(statement.maxHr, statement.restingHr) }
@@ -59,8 +67,8 @@ class StatedHeartRateQueue(
      * while [state] went on cheerfully accepting numbers into a channel nothing reads. The runner
      * would watch the app take a heart rate that never lands, with nothing anywhere to say so.
      *
-     * A failed recovery is left in place rather than retried here: the note is only cleared by a
-     * statement landing, so the next launch finds it and tries again.
+     * A failed recovery is left for the next launch rather than retried here — see the call site
+     * for why trying again mid-queue would be worse than waiting.
      */
     private inline fun applying(block: () -> Unit) {
         try {

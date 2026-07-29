@@ -73,19 +73,27 @@ class StatedHeartRateQueueTest {
 
     @Test
     fun `a failed recovery costs the recovery, not the queue`() = runTest {
-        // The note is only cleared by a statement landing, so a failure here leaves it for the next
-        // launch to find. What must not happen is the runner's own statements being lost with it.
+        // Left for the next launch rather than retried mid-queue, which would land last session's
+        // number after something the runner had just stated. Safe because only a statement that
+        // re-bands history clears the note, so nothing wipes it on the way past.
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
         val applied = mutableListOf<Pair<Int?, Int?>>()
+        var attempts = 0
         val queue = StatedHeartRateQueue(
             scope = scope,
-            recover = { throw IllegalStateException("storage is having a day") }
+            recover = {
+                attempts++
+                throw IllegalStateException("storage is having a day")
+            }
         ) { maxHr, restingHr -> applied += maxHr to restingHr }
 
         queue.state(null, 55)
+        queue.state(null, 50)
         advanceUntilIdle()
 
-        assertEquals(listOf<Pair<Int?, Int?>>(null to 55), applied)
+        // Tried once, not once per statement — a later success would overtake what was stated.
+        assertEquals(1, attempts)
+        assertEquals(listOf<Pair<Int?, Int?>>(null to 55, null to 50), applied)
         scope.cancel()
     }
 

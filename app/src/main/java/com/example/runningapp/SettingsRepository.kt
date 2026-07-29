@@ -26,6 +26,13 @@ data class UserSettings(
     // is not a gap to fill in but a value in its own right: it reproduces the Max-HR-only model
     // exactly, so nobody's zones move until they measure and state a number.
     val restingHr: Int = RESTING_HR_UNSTATED,
+    // The Max HR every finished Run's zone times are banded against, which is *not* always [maxHr].
+    // The first deliberate set re-bands all history and every change after it is future-only
+    // (#112), so a runner who set 181 and later corrected to 195 has history on 181 and zones on
+    // 195 — deliberately, because a correction must not rewrite runs already read. Anything that
+    // re-bands history has to use this, or a resting-HR statement would drag the whole of history
+    // onto the later maximum by a side door (#172).
+    val historyMaxHr: Int = DEFAULT_MAX_HR,
     val targetZone: Int = HrZone.DEFAULT_TARGET.number,
     val coachingEnabled: Boolean = true,
     val aiDataSharingEnabled: Boolean = true,
@@ -127,6 +134,9 @@ fun maxHrEverSet(flag: Boolean?, storedMaxHr: Int?): Boolean =
 internal object PreferencesKeys {
     val MAX_HR = intPreferencesKey("max_hr")
     val MAX_HR_EVER_SET = booleanPreferencesKey("max_hr_ever_set")
+    // The maximum every finished Run's zone times are currently banded against — not necessarily
+    // the one in force. See UserSettings.historyMaxHr.
+    val HISTORY_MAX_HR = intPreferencesKey("history_max_hr")
     val RESTING_HR = intPreferencesKey("resting_hr")
     val TARGET_ZONE = intPreferencesKey("target_zone")
     val COACHING_ENABLED = booleanPreferencesKey("coaching_enabled")
@@ -239,6 +249,13 @@ class SettingsRepository(private val context: Context) {
                     storedMaxHr = preferences[PreferencesKeys.MAX_HR]
                 ),
                 restingHr = preferences[PreferencesKeys.RESTING_HR] ?: RESTING_HR_UNSTATED,
+                // Absent for anyone whose history was last banded before this key existed. Their
+                // stored maximum is the best evidence available: if they set it once and never
+                // changed it — much the commonest case — it is exactly right, and if they changed
+                // it twice the value it was banded against is simply not recorded anywhere. Either
+                // way this is no worse than the behaviour it replaces.
+                historyMaxHr = preferences[PreferencesKeys.HISTORY_MAX_HR]
+                    ?: (preferences[PreferencesKeys.MAX_HR] ?: DEFAULT_MAX_HR),
                 // Sanitized on read, not only on write: an edge-zone target stored before #117
                 // closed the picker would otherwise keep overstating "In Target" forever.
                 targetZone = HrZone.coachingTargetOfNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE]).number,
@@ -274,17 +291,30 @@ class SettingsRepository(private val context: Context) {
      * What actually gets stored is [storedHeartRates] — pure, so the rule can be read and tested
      * without a DataStore. It is applied inside the same `edit` that reads the current values, so
      * nothing can move between the decision and the write.
+     *
+     * [rebandedHistoryAgainst] has no default on purpose: taken by omission it would quietly mean
+     * "moved no history", and the caller that did move some would leave a note nothing ever clears
+     * and a maximum nothing ever records.
      */
-    suspend fun setStatedHeartRates(maxHr: Int?, restingHr: Int?) {
+    suspend fun setStatedHeartRates(maxHr: Int?, restingHr: Int?, rebandedHistoryAgainst: Int?) {
         if (maxHr == null && restingHr == null) return
         context.dataStore.edit { preferences ->
-            // Landing the statement is what finishes it, so the in-flight note is dropped in the
-            // same write — see [beginStatement]. Load-bearing rather than tidy-up: without these
-            // three lines every launch would find a statement still in flight and re-band the whole
-            // of history again, for ever, and nothing would fail to say so.
-            preferences.remove(PreferencesKeys.STATEMENT_IN_FLIGHT)
-            preferences.remove(PreferencesKeys.STATEMENT_MAX_HR)
-            preferences.remove(PreferencesKeys.STATEMENT_RESTING_HR)
+            // Only a statement that actually re-banded history finishes the note, and it records
+            // the maximum it banded against while it does.
+            //
+            // Both halves matter. Recording it is what stops the *next* resting-HR statement
+            // dragging history onto a later, future-only maximum. And clearing it only here is
+            // what stops a statement that moved no history — a future-only Max HR change — wiping
+            // a note left by an interrupted re-tally, which would strand that history for good.
+            //
+            // Load-bearing rather than tidy-up: never clearing would have every launch re-band the
+            // whole of history again for ever, and nothing would fail to say so.
+            if (rebandedHistoryAgainst != null) {
+                preferences[PreferencesKeys.HISTORY_MAX_HR] = rebandedHistoryAgainst
+                preferences.remove(PreferencesKeys.STATEMENT_IN_FLIGHT)
+                preferences.remove(PreferencesKeys.STATEMENT_MAX_HR)
+                preferences.remove(PreferencesKeys.STATEMENT_RESTING_HR)
+            }
             val stored = storedHeartRates(
                 statedMaxHr = maxHr,
                 statedRestingHr = restingHr,
