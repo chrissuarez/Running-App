@@ -2,6 +2,7 @@ package com.example.runningapp
 
 import android.content.Context
 import android.util.Log
+import androidx.room.withTransaction
 import com.example.runningapp.data.AiCoachClient
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.DatabaseBackupManager
@@ -84,7 +85,9 @@ class AppContainer(context: Context) {
                 withContext(Dispatchers.IO) {
                     DatabaseBackupManager.backup(appContext, database)
                 }
-            }
+            },
+            // A re-tally of history is all of it or none: see SessionRepository.inTransaction.
+            inTransaction = { block -> database.withTransaction { block() } }
         )
     }
 

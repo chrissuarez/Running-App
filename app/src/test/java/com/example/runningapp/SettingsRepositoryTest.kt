@@ -150,6 +150,61 @@ class SettingsRepositoryTest {
         assertFalse(maxHrEverSet(flag = false, storedMaxHr = 180))
     }
 
+    // --- What a statement of the pair actually stores (#172) ---
+
+    @Test
+    fun `stating one number leaves the other exactly as it was`() {
+        assertEquals(
+            StoredHeartRates(maxHr = 181, restingHr = 60),
+            storedHeartRates(statedMaxHr = 181, statedRestingHr = null, storedMaxHr = 190, storedRestingHr = 60)
+        )
+        assertEquals(
+            StoredHeartRates(maxHr = 190, restingHr = 55),
+            storedHeartRates(statedMaxHr = null, statedRestingHr = 55, storedMaxHr = 190, storedRestingHr = 60)
+        )
+    }
+
+    @Test
+    fun `nothing stored and nothing stated leaves the resting key alone`() {
+        // Null out means "no resting heart rate is stored and none is being stated", so nothing is
+        // written under that key — not the same as a stored, deliberate RESTING_HR_UNSTATED.
+        assertEquals(
+            StoredHeartRates(maxHr = 181, restingHr = null),
+            storedHeartRates(statedMaxHr = 181, statedRestingHr = null, storedMaxHr = null, storedRestingHr = null)
+        )
+    }
+
+    @Test
+    fun `stating only a lower maximum still brings a stranded resting hr back into range`() {
+        // The backstop: storage must never hold a pair with no reserve between them, whatever the
+        // screen did or did not refuse.
+        assertEquals(
+            StoredHeartRates(maxHr = 100, restingHr = 50),
+            storedHeartRates(statedMaxHr = 100, statedRestingHr = null, storedMaxHr = 190, storedRestingHr = 90)
+        )
+    }
+
+    @Test
+    fun `a resting hr stated with a maximum is judged against that maximum, not the old one`() {
+        assertEquals(
+            StoredHeartRates(maxHr = 100, restingHr = 50),
+            storedHeartRates(statedMaxHr = 100, statedRestingHr = 90, storedMaxHr = 190, storedRestingHr = null)
+        )
+    }
+
+    @Test
+    fun `an unstated resting hr survives the pair being stored`() {
+        assertEquals(
+            StoredHeartRates(maxHr = 190, restingHr = RESTING_HR_UNSTATED),
+            storedHeartRates(
+                statedMaxHr = null,
+                statedRestingHr = RESTING_HR_UNSTATED,
+                storedMaxHr = 190,
+                storedRestingHr = 60
+            )
+        )
+    }
+
     @Test
     fun `a lowered max hr brings the stored resting hr back inside what it can hold`() {
         // Storage must hold the number the zones actually use. A resting 90 left standing under a

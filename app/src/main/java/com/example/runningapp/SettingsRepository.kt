@@ -58,6 +58,41 @@ fun aiSharingChangeAllowed(enabled: Boolean, testingModeEnabled: Boolean): Boole
     !enabled || !testingModeEnabled
 
 /**
+ * The heart rates as they will be stored, given what is there now and what is being stated.
+ *
+ * Pure and separate from the write for the reason [coachWriteAllowed] is: the rule is worth being
+ * able to read and test without a DataStore behind it.
+ *
+ * A null *stated* number means "not stated now" and leaves that one alone. A null [StoredHeartRates.restingHr]
+ * out means there is no resting heart rate stored and none is being stated, so nothing should be
+ * written under that key — distinct from [RESTING_HR_UNSTATED], which is a stored, deliberate
+ * "no resting heart rate".
+ *
+ * **Both numbers are clamped against each other as stored**, so storage can never hold a pair with
+ * no reserve between them: a resting heart rate is only unusable *relative* to a maximum. That is
+ * what makes lowering the maximum bring a stranded resting heart rate back into range even when
+ * only the maximum was stated.
+ *
+ * A backstop rather than the rule. The settings screen *refuses* a pair with no usable reserve
+ * ([parseMaxHr], [parseRestingHr]), because rewriting a measured number the runner never retyped
+ * is the silent replacement #172 exists to delete, so nothing on that path should reach it. It
+ * stays because storage must hold a usable pair whatever calls it, and a clamp that never fires
+ * costs nothing — but it is not permission to strand the number.
+ */
+data class StoredHeartRates(val maxHr: Int, val restingHr: Int?)
+
+fun storedHeartRates(
+    statedMaxHr: Int?,
+    statedRestingHr: Int?,
+    storedMaxHr: Int?,
+    storedRestingHr: Int?
+): StoredHeartRates {
+    val maxHr = effectiveMaxHr(statedMaxHr ?: storedMaxHr ?: DEFAULT_MAX_HR)
+    val restingHr = statedRestingHr ?: storedRestingHr
+    return StoredHeartRates(maxHr, restingHr?.let { effectiveRestingHr(it, maxHr) })
+}
+
+/**
  * Whether Max HR counts as deliberately set, for a store that may predate the flag recording it.
  *
  * The flag arrived with #112; before it, Max HR was a field on a screen with a Save button. So an
@@ -211,56 +246,42 @@ class SettingsRepository(private val context: Context) {
         }
 
     /**
-     * Records a deliberate Max HR, and that one has now been made.
+     * Records a statement of the heart rates the runner's zones are sliced from — either number,
+     * or both — in **one** write.
      *
-     * The point of the flag is that `190` is a placeholder nobody chose, so history sitting on it
-     * is stranded until someone states the real number. Nothing should call this directly: go
-     * through `SessionRepository.setMaxHr`, the one door where stating the number and recomputing
-     * the history it invalidates happen together. A surface that trips the flag on its own is a
-     * back door stranding history on the placeholder forever (#103).
+     * One write because the pair bounds one reserve. Published separately, a collector sees the
+     * new maximum beside the old resting heart rate, and a Run started in that gap pins a profile
+     * that was never anyone's (ADR 0002 pins it at START and never revisits it).
      *
-     * Setting the value it already holds still counts: the runner has confirmed the number, which
-     * is exactly the statement the flag records.
+     * Null means "not stated now" and leaves that number alone. Nothing should call this directly:
+     * go through `SessionRepository.setStatedProfile`, the one door where stating the numbers and
+     * re-banding the history they move happen together, and which owns the reasoning about what
+     * that re-banding is against. A surface writing here on its own is a back door stranding
+     * history on a profile nobody chose (#103, #172).
+     *
+     * What actually gets stored is [storedHeartRates] — pure, so the rule can be read and tested
+     * without a DataStore. It is applied inside the same `edit` that reads the current values, so
+     * nothing can move between the decision and the write.
      */
-    suspend fun setMaxHrDeliberately(maxHr: Int) {
+    suspend fun setStatedHeartRates(maxHr: Int?, restingHr: Int?) {
+        if (maxHr == null && restingHr == null) return
         context.dataStore.edit { preferences ->
-            val clampedMaxHr = effectiveMaxHr(maxHr)
-            preferences[PreferencesKeys.MAX_HR] = clampedMaxHr
-            preferences[PreferencesKeys.MAX_HR_EVER_SET] = true
-            // The stored resting heart rate is brought back inside what the new maximum can hold,
-            // in the same write, so storage can never hold a pair with no reserve between it.
-            //
-            // A backstop rather than the rule: the settings screen now *refuses* a maximum with no
-            // room above the stated resting heart rate ([parseMaxHr]), because rewriting a
-            // measured number the runner never retyped is the silent replacement #172 exists to
-            // delete. Nothing on that path should reach this line. It stays because storage must
-            // hold a usable pair whatever calls it, and because a clamp that never fires costs
-            // nothing — but it is not permission for another caller to strand the number.
-            preferences[PreferencesKeys.RESTING_HR]?.let {
-                preferences[PreferencesKeys.RESTING_HR] = effectiveRestingHr(it, clampedMaxHr)
+            val stored = storedHeartRates(
+                statedMaxHr = maxHr,
+                statedRestingHr = restingHr,
+                storedMaxHr = preferences[PreferencesKeys.MAX_HR],
+                storedRestingHr = preferences[PreferencesKeys.RESTING_HR]
+            )
+            // The maximum carries a flag and the resting heart rate does not: `190` is a
+            // placeholder nobody chose, so history sitting on it is stranded until someone states
+            // the real number, and stating the value already held still counts — confirming it is
+            // exactly the statement the flag records. Only written when the maximum was actually
+            // stated, so a resting-only statement can never spend the one-shot.
+            if (maxHr != null) {
+                preferences[PreferencesKeys.MAX_HR] = stored.maxHr
+                preferences[PreferencesKeys.MAX_HR_EVER_SET] = true
             }
-        }
-    }
-
-    /**
-     * Records a stated resting heart rate.
-     *
-     * Like [setMaxHrDeliberately], nothing should call this directly: go through
-     * `SessionRepository.setRestingHr`, the one door where stating the number and recomputing the
-     * history it re-bands happen together. There is no ever-set flag beside it, because there is
-     * no one-shot to protect — every statement of a resting heart rate re-tallies (#172), so the
-     * whole history always reads under one model.
-     *
-     * Clamped against the Max HR stored *now*, read inside the same `edit` as the write: the two
-     * numbers bound one reserve, so a resting heart rate is only unusable relative to a maximum,
-     * and deciding that against a snapshot taken before the write could store a pair that never
-     * held together. The zone functions clamp again on read regardless — that is what keeps this
-     * from being a second, divergent definition of the same rule.
-     */
-    suspend fun setRestingHr(restingHr: Int) {
-        context.dataStore.edit { preferences ->
-            val maxHr = preferences[PreferencesKeys.MAX_HR] ?: DEFAULT_MAX_HR
-            preferences[PreferencesKeys.RESTING_HR] = effectiveRestingHr(restingHr, maxHr)
+            stored.restingHr?.let { preferences[PreferencesKeys.RESTING_HR] = it }
         }
     }
 

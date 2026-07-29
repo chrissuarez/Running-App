@@ -93,7 +93,27 @@ class SessionRepository(
     // Clear-storage restore would bring back a stale snapshot that still holds the deleted runs, so
     // deletes have to invalidate the snapshot too — not just the finish-run path. Null in tests and
     // wherever no backup target is wired.
-    private val refreshHistoryBackup: (suspend () -> Unit)? = null
+    private val refreshHistoryBackup: (suspend () -> Unit)? = null,
+    /**
+     * Runs a block as one database transaction, so a re-tally of history is all of it or none.
+     *
+     * Re-banding walks every finished run one row at a time. Failing part-way through — a full
+     * disk, a corrupt page — would otherwise leave the early runs on the new profile and the rest
+     * on the old, which is precisely the split #172 exists to prevent, arriving by accident and
+     * with nothing on screen to say so. Rolled back, the statement is simply lost and the runner
+     * can state it again.
+     *
+     * Holds the database's write lock for the length of the re-tally, and Settings is reachable
+     * mid-run, so a recorder's per-second sample insert can be made to wait behind it. Acceptable
+     * because the work is bounded by history size and is a read-and-write per finished run with no
+     * IO of its own — the history backup is deliberately taken *after* the commit rather than
+     * inside, so a file copy never sits inside the lock.
+     *
+     * Defaults to running the block as-is, for tests that drive the DAOs directly. The production
+     * wiring is a single line in `AppContainer`; without it this silently loses its atomicity, so
+     * that line is the thing to look for if half-moved history ever shows up.
+     */
+    private val inTransaction: suspend (suspend () -> Unit) -> Unit = { it() }
 ) {
     suspend fun deleteSession(sessionId: Long) {
         sessionDao.deleteSessionById(sessionId)
@@ -170,22 +190,22 @@ class SessionRepository(
                 // it is left unstated and the next attempt redoes the whole thing. A resting heart
                 // rate stated in the same breath is unaffected and still lands below.
                 if (firstMaxHrSet) {
-                    if (restingHr != null) settings.setRestingHr(restingHr)
+                    if (restingHr != null) settings.setStatedHeartRates(null, restingHr)
                     return@withLock
                 }
             } else {
-                recomputeZoneSecondsForAllRuns(
-                    samples,
-                    HrProfile(
-                        maxHr = if (firstMaxHrSet) clampedMaxHr!! else current.maxHr,
-                        restingHr = restingHr ?: current.restingHr
-                    )
+                val historyProfile = HrProfile(
+                    maxHr = if (firstMaxHrSet) clampedMaxHr!! else current.maxHr,
+                    restingHr = restingHr ?: current.restingHr
                 )
+                // All of history or none of it — see [inTransaction]. Half a re-tally is the split
+                // this whole rule exists to prevent.
+                inTransaction { recomputeZoneSecondsForAllRuns(samples, historyProfile) }
+                refreshHistoryBackup?.invoke()
             }
         }
 
-        if (clampedMaxHr != null) settings.setMaxHrDeliberately(clampedMaxHr)
-        if (restingHr != null) settings.setRestingHr(restingHr)
+        settings.setStatedHeartRates(clampedMaxHr, restingHr)
     }
 
     /**
@@ -197,6 +217,11 @@ class SessionRepository(
      * would overwrite anything written here, so retallying it would spend the one-shot flag on a
      * row that ends up disagreeing with it. The live run keeps the zone times it accumulated as it
      * was heard — the next run is the first to be measured against the stated number.
+     *
+     * Runs inside [inTransaction], and does not refresh the history backup itself: the caller does
+     * that once the transaction has committed, because a snapshot taken mid-transaction would copy
+     * a history half-moved, and file IO inside a database transaction holds the write lock open for
+     * the length of a file copy.
      */
     private suspend fun recomputeZoneSecondsForAllRuns(samples: SampleDao, profile: HrProfile) {
         sessionDao.getFinalizedSessionIds().forEach { sessionId ->
@@ -210,7 +235,6 @@ class SessionRepository(
                 zone5 = tally.zone5
             )
         }
-        refreshHistoryBackup?.invoke()
     }
 
     /**
