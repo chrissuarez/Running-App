@@ -7,6 +7,7 @@ import com.example.runningapp.CoachPrescriptionRepository
 import com.example.runningapp.CoachWriteScope
 import com.example.runningapp.HrZone
 import com.example.runningapp.SettingsRepository
+import com.example.runningapp.StatedHeartRates
 import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.HrProfile
 import com.example.runningapp.effectiveMaxHr
@@ -178,6 +179,7 @@ class SessionRepository(
         val current = settings.userSettingsFlow.first()
         val clampedMaxHr = maxHr?.let { effectiveMaxHr(it) }
         val firstMaxHrSet = clampedMaxHr != null && !current.maxHrEverSet
+        var retallied = false
 
         if (restingHr != null || firstMaxHrSet) {
             val samples = sampleDao
@@ -198,14 +200,49 @@ class SessionRepository(
                     maxHr = if (firstMaxHrSet) clampedMaxHr!! else current.maxHr,
                     restingHr = restingHr ?: current.restingHr
                 )
+                // Noted before any of it moves, and cleared only by the statement landing below —
+                // see [SettingsRepository.beginStatement]. History and the profile live in
+                // different stores, so this is what makes the pair of writes recoverable rather
+                // than merely each atomic.
+                settings.beginStatement(maxHr, restingHr)
                 // All of history or none of it — see [inTransaction]. Half a re-tally is the split
                 // this whole rule exists to prevent.
                 inTransaction { recomputeZoneSecondsForAllRuns(samples, historyProfile) }
-                refreshHistoryBackup?.invoke()
+                retallied = true
             }
         }
 
         settings.setStatedHeartRates(clampedMaxHr, restingHr)
+        // Last, so the snapshot copies a database whose history and profile already agree, and so
+        // a file copy of the whole database never sits inside the gap the note above covers.
+        if (retallied) refreshHistoryBackup?.invoke()
+    }
+
+    /**
+     * A statement of the heart rates that began moving history and never landed, ready to be
+     * stated again — or null when nothing was interrupted, which is the ordinary case.
+     *
+     * Read rather than applied, deliberately. Replaying it is a statement like any other and has to
+     * queue behind the runner's own, or a resume racing a fresh edit would re-band history to the
+     * number left over from last time and store it over the one just typed — the ordering
+     * `StatedHeartRateQueue` exists to settle. The caller enqueues it there.
+     *
+     * The whole statement is replayed rather than only the missing half, because a re-tally is a
+     * pure re-derivation from per-second samples that are never pruned: doing it twice costs time
+     * and changes nothing, and doing it again is the only way to be sure which half was reached.
+     */
+    suspend fun interruptedStatement(): StatedHeartRates? {
+        val settings = settingsRepository ?: return null
+        val interrupted = settings.interruptedStatement() ?: return null
+        if (interrupted.maxHr == null && interrupted.restingHr == null) {
+            // Nothing to replay. Unreachable from `beginStatement`, so this is a corrupt note —
+            // dropped rather than left to be found again on every launch for ever.
+            Log.w("StatedProfile", "Discarding a heart-rate statement with nothing in it")
+            settings.discardStatement()
+            return null
+        }
+        Log.w("StatedProfile", "Finishing an interrupted heart-rate statement: $interrupted")
+        return interrupted
     }
 
     /**

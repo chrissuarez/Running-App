@@ -27,11 +27,7 @@ class StatedHeartRateQueue(
     scope: CoroutineScope,
     apply: suspend (maxHr: Int?, restingHr: Int?) -> Unit
 ) {
-    // Null means "not stated now", leaving that number alone — not RESTING_HR_UNSTATED, which is a
-    // resting heart rate being deliberately withdrawn.
-    private data class Statement(val maxHr: Int?, val restingHr: Int?)
-
-    private val statements = Channel<Statement>(Channel.UNLIMITED)
+    private val statements = Channel<StatedHeartRates>(Channel.UNLIMITED)
 
     init {
         scope.launch {
@@ -49,6 +45,6 @@ class StatedHeartRateQueue(
     }
 
     fun state(maxHr: Int?, restingHr: Int?) {
-        statements.trySend(Statement(maxHr, restingHr))
+        statements.trySend(StatedHeartRates(maxHr, restingHr))
     }
 }

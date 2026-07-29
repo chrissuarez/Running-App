@@ -159,6 +159,7 @@ class MainActivity : ComponentActivity() {
         // different clock from today's runs until this fills them in (#163). Off the main thread and
         // once per process, on a scope that outlives this Activity - see the container.
         runningAppContainer().backfillMovingTimeOnce()
+        runningAppContainer().resumeInterruptedHrStatementOnce()
 
         setContent {
             RunningAppTheme {
