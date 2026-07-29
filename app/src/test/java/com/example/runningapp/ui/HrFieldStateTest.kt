@@ -1,11 +1,11 @@
 package com.example.runningapp.ui
 
+import com.example.runningapp.parseMaxHr
+import com.example.runningapp.parseRestingHr
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import com.example.runningapp.parseMaxHr
-import com.example.runningapp.parseRestingHr
 import org.junit.Test
 
 /**
@@ -127,7 +127,7 @@ class HrFieldStateTest {
     fun `the field refuses by its own range, not by Max HR's`() {
         // 60 is a fine resting heart rate and an impossible maximum. One field state, two ranges:
         // whatever the field is for is what decides, so neither number is judged by the other's.
-        val resting = HrFieldState(stored = 0, parse = ::parseRestingHr)
+        val resting = HrFieldState(stored = 0, parse = { parseRestingHr(it, maxHr = 190) })
         resting.onTyped("60")
 
         assertTrue(resting.onLeaveAttempt(onCommit))
@@ -145,7 +145,7 @@ class HrFieldStateTest {
     fun `an unstated number shows an empty field rather than a zero`() {
         // Zero is how storage spells "nobody has said"; shown, it reads as a heart rate somebody
         // chose. Nothing is committed until something is typed, so the blank stays a blank.
-        val state = HrFieldState(stored = 0, parse = ::parseRestingHr)
+        val state = HrFieldState(stored = 0, parse = { parseRestingHr(it, maxHr = 190) })
 
         assertEquals("", state.typed)
         assertTrue(state.onLeaveAttempt(onCommit))

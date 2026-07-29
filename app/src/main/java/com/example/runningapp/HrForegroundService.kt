@@ -241,6 +241,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // inbox: the pulse asks whether to feed the Run a simulated reading, and the published state
     // reports how stale the Strap's last packet is.
     @Volatile private var isSimulationEnabled = false
+    // How far past each end of the zone range the simulated sweep goes before turning back. The
+    // sweep exists to drive the cues, and the cues at both extremes only fire from outside the
+    // band — so it has to leave it, not merely touch it.
+    private val SIMULATION_OVERSHOOT_BPM = 10
+
     private var simulationBpm = 70
     private var simulationDirection = 1
 
@@ -1722,9 +1727,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // would leave the sweep never reading BELOW for a runner whose Zone 1 begins at 121.
         val profile = currentSettings.hrProfile
         simulationBpm += (5 * simulationDirection)
-        if (simulationBpm >= effectiveMaxHr(profile.maxHr) + 10) simulationDirection = -1
-        if (simulationBpm <= zoneLowerBpm(HrZone.ENDURANCE, profile) - 10) simulationDirection = 1
-
+        if (simulationBpm >= effectiveMaxHr(profile.maxHr) + SIMULATION_OVERSHOOT_BPM) simulationDirection = -1
+        if (simulationBpm <= zoneLowerBpm(HrZone.ENDURANCE, profile) - SIMULATION_OVERSHOOT_BPM) {
+            simulationDirection = 1
+        }
 
         handleHeartRateForSimulation(simulationBpm)
     }

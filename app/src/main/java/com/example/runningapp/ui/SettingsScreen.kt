@@ -49,10 +49,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import com.example.runningapp.HrProfile
 import com.example.runningapp.HrZone
 import com.example.runningapp.MAX_MAX_HR
-import com.example.runningapp.MAX_RESTING_HR
 import com.example.runningapp.MIN_MAX_HR
 import com.example.runningapp.MIN_RESTING_HR
 import com.example.runningapp.UserSettings
+import com.example.runningapp.highestStatableRestingHr
 import com.example.runningapp.hrProfile
 import com.example.runningapp.parseMaxHr
 import com.example.runningapp.parseRestingHr
@@ -86,8 +86,12 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     var showTargetZonePicker by remember { mutableStateOf(false) }
-    val maxHrState = rememberHrFieldState(settings.maxHr, ::parseMaxHr)
-    val restingHrState = rememberHrFieldState(settings.restingHr, ::parseRestingHr)
+    val maxHrState = rememberHrFieldState(settings.maxHr, parse = ::parseMaxHr)
+    // Keyed on Max HR as well as its own stored value: the two numbers have to leave a usable
+    // reserve between them, so what this field will accept moves when the other one does.
+    val restingHrState = rememberHrFieldState(settings.restingHr, rangeKey = settings.maxHr) {
+        parseRestingHr(it, settings.maxHr)
+    }
 
     // Leaving commits both heart-rate fields, and an unusable entry holds the screen open once so
     // the error is readable — see [HrFieldState.onLeaveAttempt]. Both ways out go through it: the
@@ -128,20 +132,21 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             SettingsSectionHeader("Your zones")
-            HrNumberField(
+            HrField(
                 state = maxHrState,
                 label = "Max HR",
                 supportingText = null,
                 refusalText = "Enter a heart rate between $MIN_MAX_HR and $MAX_MAX_HR",
                 onCommit = onMaxHrCommit
             )
-            HrNumberField(
+            HrField(
                 state = restingHrState,
                 label = "Resting HR",
                 // Says what the number is for and how to get it: zones are sliced from the gap
                 // between these two, so an unstated resting heart rate is not a blank to ignore.
                 supportingText = "Measured at rest. Your zones are sliced from the gap between these two.",
-                refusalText = "Enter a heart rate between $MIN_RESTING_HR and $MAX_RESTING_HR",
+                refusalText = "Enter a heart rate between $MIN_RESTING_HR and " +
+                    "${highestStatableRestingHr(settings.maxHr)}",
                 onCommit = onRestingHrCommit
             )
             SettingsRow(
@@ -295,10 +300,17 @@ class HrFieldState(stored: Int, private val parse: (String) -> Int?) {
     }
 }
 
+/**
+ * Keyed on the stored value so an outside change (the #65 card, once it lands) shows up here, and
+ * on [rangeKey] — whatever else the field's settable range depends on — so a state built around a
+ * range that has since moved is rebuilt rather than left judging by the old one.
+ */
 @Composable
-private fun rememberHrFieldState(stored: Int, parse: (String) -> Int?): HrFieldState =
-    // Keyed on the stored value so an outside change (the #65 card, once it lands) shows up here.
-    remember(stored) { HrFieldState(stored, parse) }
+private fun rememberHrFieldState(
+    stored: Int,
+    rangeKey: Any = Unit,
+    parse: (String) -> Int?
+): HrFieldState = remember(stored, rangeKey) { HrFieldState(stored, parse) }
 
 /**
  * The two inputs the whole zone model hangs off, so the place a silent failure would cost the
@@ -309,7 +321,7 @@ private fun rememberHrFieldState(stored: Int, parse: (String) -> Int?): HrFieldS
  * both of which are invalid, and neither of which is a mistake.
  */
 @Composable
-private fun HrNumberField(
+private fun HrField(
     state: HrFieldState,
     label: String,
     supportingText: String?,
