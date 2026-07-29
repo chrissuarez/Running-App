@@ -158,8 +158,11 @@ class SessionRepository(
      *   is future-only, so a later correction cannot quietly rewrite runs already read. This is
      *   Strava's rule read literally: only the first time you *set* zones.
      *
-     * So the maximum the re-tally uses is the new one only on that first set, and the stored one
-     * ever after — while the resting heart rate is always whichever is being stated. Both numbers
+     * So the maximum the re-tally uses is the new one only on that first set, and
+     * [UserSettings.historyMaxHr] — the one history is *already* banded against — ever after.
+     * Not the stored maximum: after a future-only correction those differ, and re-banding against
+     * the stored one would drag every run already read onto the later number. The resting heart
+     * rate is always whichever is being stated. Both numbers
      * travel together because they bound one reserve, and a recompute against half of the runner's
      * profile would re-band history to a model nobody's zones are on.
      *
@@ -179,7 +182,7 @@ class SessionRepository(
         val current = settings.userSettingsFlow.first()
         val clampedMaxHr = maxHr?.let { effectiveMaxHr(it) }
         val firstMaxHrSet = clampedMaxHr != null && !current.maxHrEverSet
-        var retallied = false
+        var rebandedAgainst: Int? = null
 
         if (restingHr != null || firstMaxHrSet) {
             val samples = sampleDao
@@ -192,12 +195,18 @@ class SessionRepository(
                 // it is left unstated and the next attempt redoes the whole thing. A resting heart
                 // rate stated in the same breath is unaffected and still lands below.
                 if (firstMaxHrSet) {
-                    if (restingHr != null) settings.setStatedHeartRates(null, restingHr)
+                    if (restingHr != null) settings.setStatedHeartRates(null, restingHr, rebandedHistoryAgainst = null)
                     return@withLock
                 }
             } else {
+                // The maximum history is *already* banded against, not the one in force. They
+                // differ the moment a Max HR correction lands: that change is future-only, so the
+                // runs keep the maximum they were banded on, and a resting-HR statement re-banding
+                // against the current one would drag every run already read onto the later number
+                // by a side door — the exact rewrite the one-shot exists to prevent.
+                val historyMaxHr = if (firstMaxHrSet) clampedMaxHr!! else current.historyMaxHr
                 val historyProfile = HrProfile(
-                    maxHr = if (firstMaxHrSet) clampedMaxHr!! else current.maxHr,
+                    maxHr = historyMaxHr,
                     restingHr = restingHr ?: current.restingHr
                 )
                 // Noted before any of it moves, and cleared only by the statement landing below —
@@ -208,14 +217,14 @@ class SessionRepository(
                 // All of history or none of it — see [inTransaction]. Half a re-tally is the split
                 // this whole rule exists to prevent.
                 inTransaction { recomputeZoneSecondsForAllRuns(samples, historyProfile) }
-                retallied = true
+                rebandedAgainst = historyMaxHr
             }
         }
 
-        settings.setStatedHeartRates(clampedMaxHr, restingHr)
+        settings.setStatedHeartRates(clampedMaxHr, restingHr, rebandedHistoryAgainst = rebandedAgainst)
         // Last, so the snapshot copies a database whose history and profile already agree, and so
         // a file copy of the whole database never sits inside the gap the note above covers.
-        if (retallied) refreshHistoryBackup?.invoke()
+        if (rebandedAgainst != null) refreshHistoryBackup?.invoke()
     }
 
     /**
