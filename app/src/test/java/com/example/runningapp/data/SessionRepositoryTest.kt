@@ -4,6 +4,7 @@ import com.example.runningapp.CoachPrescription
 import com.example.runningapp.CoachPrescriptionRepository
 import com.example.runningapp.CoachWriteScope
 import com.example.runningapp.MAX_MAX_HR
+import com.example.runningapp.RunType
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.StatedHeartRates
 import com.example.runningapp.UserSettings
@@ -118,7 +119,8 @@ class SessionRepositoryTest {
         targetZone = 2,
         runDurationSeconds = 180,
         walkDurationSeconds = 60,
-        totalRepeats = 6
+        totalRepeats = 6,
+        runType = RunType.LONG
     )
 
     @Test
@@ -1044,10 +1046,12 @@ class SessionRepositoryTest {
             MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
         )
         whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            // Above the stage's own Long run (3 x 10 min), so the floor (#170) leaves it alone and
+            // this stays a test of what one evaluation writes.
             AiCoachResponse(
-                nextRunDurationSeconds = 360,
+                nextRunDurationSeconds = 660,
                 nextWalkDurationSeconds = 60,
-                nextRepeats = 5,
+                nextRepeats = 4,
                 nextTargetZone = 3,
                 graduatedToNextStage = false,
                 coachMessage = "Good session."
@@ -1058,9 +1062,9 @@ class SessionRepositoryTest {
 
         val prescribed = argumentCaptor<CoachPrescription>()
         verify(mockPrescriptions).prescribe(prescribed.capture(), eq(activeScope))
-        assertEquals(360, prescribed.firstValue.runDurationSeconds)
+        assertEquals(660, prescribed.firstValue.runDurationSeconds)
         assertEquals(60, prescribed.firstValue.walkDurationSeconds)
-        assertEquals(5, prescribed.firstValue.totalRepeats)
+        assertEquals(4, prescribed.firstValue.totalRepeats)
         assertEquals(3, prescribed.firstValue.targetZone)
         verify(mockSettingsRepo).setLatestCoachMessage("Good session.", activeScope)
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescription(anyOrNull(), any())

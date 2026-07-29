@@ -1,5 +1,6 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.RunType
 import com.example.runningapp.WorkoutTemplate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,6 +29,7 @@ private val SHORT_WORKOUT = WorkoutTemplate(
     totalRepeats = 2,
     warmUpSeconds = 3,
     coolDownSeconds = 5,
+    runType = RunType.LONG,
 )
 
 /**

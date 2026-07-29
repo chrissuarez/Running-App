@@ -1,6 +1,7 @@
 package com.example.runningapp.ui.workout
 
 import com.example.runningapp.CoachPrescription
+import com.example.runningapp.RunType
 import com.example.runningapp.UserSettings
 import com.example.runningapp.WorkoutTemplate
 import org.junit.Assert.assertEquals
@@ -13,7 +14,7 @@ import org.junit.Test
 class TodayCardModelsTest {
 
     private val aerobicFoundation =
-        WorkoutTemplate("w1_s2", "Aerobic Foundation", 2, 300, 60, 5, warmUpSeconds = 480, coolDownSeconds = 180)
+        WorkoutTemplate("w1_s2", "Aerobic Foundation", 2, 300, 60, 5, warmUpSeconds = 480, coolDownSeconds = 180, runType = RunType.LONG)
     private val settings = UserSettings()
 
     private val now = 1_700_000_000_000L
@@ -51,19 +52,19 @@ class TodayCardModelsTest {
 
     @Test
     fun `a single continuous workout drops the repeat count and the walk`() {
-        val thirtyMinuteRun = WorkoutTemplate("w2_s2", "The 30-Minute Run", 2, 1800, 0, 1)
+        val thirtyMinuteRun = WorkoutTemplate("w2_s2", "The 30-Minute Run", 2, 1800, 0, 1, runType = RunType.EASY)
         assertEquals("30 min run", card(workout = thirtyMinuteRun).detailLine)
     }
 
     @Test
     fun `repeats without a walk still read as repeats`() {
-        val fourByTen = WorkoutTemplate("x", "Cruise", 3, 600, 0, 4, warmUpSeconds = 0, coolDownSeconds = 0)
+        val fourByTen = WorkoutTemplate("x", "Cruise", 3, 600, 0, 4, warmUpSeconds = 0, coolDownSeconds = 0, runType = RunType.LONG)
         assertEquals("4 × 10 min run", card(workout = fourByTen).detailLine)
     }
 
     @Test
     fun `sub-minute intervals read in seconds and the total never rounds to zero`() {
-        val deskTest = WorkoutTemplate("d", "10s Run / 10s Walk Test", 2, 10, 10, 2, 0, 0)
+        val deskTest = WorkoutTemplate("d", "10s Run / 10s Walk Test", 2, 10, 10, 2, 0, 0, RunType.LONG)
         val state = card(workout = deskTest)
         assertEquals("2 × (10 s run / 10 s walk)", state.detailLine)
         assertEquals("≈ 1 min", state.envelopeLine)
@@ -195,7 +196,7 @@ class TodayCardModelsTest {
 
     @Test
     fun `the coach can drop today's target, and the pill follows it`() {
-        val threshold = WorkoutTemplate("w3_s1", "Threshold Intervals", 4, 300, 120, 5)
+        val threshold = WorkoutTemplate("w3_s1", "Threshold Intervals", 4, 300, 120, 5, runType = RunType.QUALITY)
         val eased = card(workout = threshold, prescription = prescription(targetZone = 2))
         assertEquals("Target: Moderate", eased.targetPill)
     }
@@ -211,13 +212,13 @@ class TodayCardModelsTest {
 
     @Test
     fun `the target pill follows the workout, not the global default`() {
-        val threshold = WorkoutTemplate("w3_s1", "Threshold Intervals", 4, 300, 120, 5)
+        val threshold = WorkoutTemplate("w3_s1", "Threshold Intervals", 4, 300, 120, 5, runType = RunType.QUALITY)
         assertEquals("Target: Threshold", card(workout = threshold).targetPill)
     }
 
     @Test
     fun `a skipped day falls back to the global target, since the workout is not being run`() {
-        val threshold = WorkoutTemplate("w3_s1", "Threshold Intervals", 4, 300, 120, 5)
+        val threshold = WorkoutTemplate("w3_s1", "Threshold Intervals", 4, 300, 120, 5, runType = RunType.QUALITY)
         assertEquals("Target: Moderate", card(workout = threshold, skippedToday = true).targetPill)
     }
 }
