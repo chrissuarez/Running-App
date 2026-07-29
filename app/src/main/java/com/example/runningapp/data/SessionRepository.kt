@@ -39,9 +39,9 @@ private const val AI_LABEL_OPEN_RUN = "Open Run"
  * Interval-quality metrics are gone for the same kind of reason (#168). Completion was measured as
  * the second heart rate first crossed the target line over the Interval's planned length, so an
  * Interval run in full logged as a "severe breakdown" — the app never knew whether a runner walked,
- * only whether their heart rate was high (ADR 0003). Those numbers are still shown per-Interval on
- * the session detail screen, where they sit next to the run they came from; what changes here is
- * that the coach no longer adapts a Plan from them.
+ * only whether their heart rate was high (ADR 0003). What changes here is that the coach no longer
+ * adapts a Plan from them; the Run detail screen still shows them per-Interval until the rest of
+ * that vocabulary is retired.
  */
 data class AiRecentRun(
     val durationSeconds: Long,

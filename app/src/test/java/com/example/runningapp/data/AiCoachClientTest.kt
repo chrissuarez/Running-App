@@ -43,7 +43,9 @@ class AiCoachClientTest {
     fun `no Run is described to the coach as a breakdown, a tolerance failure or a strain`() {
         val prompt = buildEvaluationPrompt(oneRunWalkSession)
 
-        listOf("breakdown", "tolerance", "strain").forEach { word ->
+        // The words CONTEXT.md bans for a Trigger, not the loose stems: "strain" alone would fail on
+        // an innocent "constraint" one day and the failure would read as a real finding.
+        listOf("breakdown", "poor tolerance", "strained").forEach { word ->
             assertFalse("prompt still mentions $word", prompt.contains(word, ignoreCase = true))
         }
     }
