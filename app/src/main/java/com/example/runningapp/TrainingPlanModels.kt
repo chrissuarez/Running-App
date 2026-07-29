@@ -50,6 +50,26 @@ data class WorkoutTemplate(
 )
 
 /**
+ * Whether a main set of [repeats] × ([runSeconds] run + [walkSeconds] walk) is at least as much
+ * work as this workout's own — the floor of #170, in one place because it is asked twice: when the
+ * coach writes a prescription, and again when one is applied.
+ *
+ * Two measures, both of which have to clear: the main set's total seconds, and the running seconds
+ * inside it. Total alone would let six 30s runs padded with 210s walks match a six-by-three-minute
+ * workout second for second while prescribing a sixth of the running, which is exactly the easing
+ * this rule exists to refuse. The warm-up/cool-down envelope is the workout's either way, so it
+ * cancels out of both.
+ */
+fun WorkoutTemplate.clearedBy(runSeconds: Int, walkSeconds: Int, repeats: Int): Boolean {
+    val proposedTotal = (runSeconds.toLong() + walkSeconds.toLong()) * repeats.toLong()
+    val proposedRunning = runSeconds.toLong() * repeats.toLong()
+    val plannedTotal =
+        (runDurationSeconds.toLong() + walkDurationSeconds.toLong()) * totalRepeats.toLong()
+    val plannedRunning = runDurationSeconds.toLong() * totalRepeats.toLong()
+    return proposedTotal >= plannedTotal && proposedRunning >= plannedRunning
+}
+
+/**
  * Today's workout as it will actually be run: the base workout with the AI coach's prescription
  * applied. One home for that rule (#111), because the record-screen card promises the numbers you
  * are about to run — a card adapting on a looser condition than the service would show a shape the
@@ -59,6 +79,12 @@ data class WorkoutTemplate(
  * against, and a stale one applies nothing. Identity, title and the warm-up/cool-down
  * envelope stay the plan's — the coach prescribes work, not the whole workout (#113).
  *
+ * One that asks for less work than this workout applies nothing either. The coach's write is
+ * already held to that floor (#170), but a prescription stands for a fortnight and the plan's own
+ * numbers can change underneath it — as they do the moment stage 1's workouts are rewritten (#173).
+ * Asking again here is what stops a prescription floored at a workout that no longer exists from
+ * quietly easing the one that replaced it.
+ *
  * No testing-mode branch: testing mode erases the prescription and blocks the coach from writing
  * one, so under it there is simply nothing here to apply.
  */
@@ -67,6 +93,12 @@ fun WorkoutTemplate.withCoachPrescription(
     nowEpochMillis: Long
 ): WorkoutTemplate {
     if (prescription == null || !prescription.isFreshAt(nowEpochMillis)) return this
+    val clearsFloor = clearedBy(
+        runSeconds = prescription.runDurationSeconds,
+        walkSeconds = prescription.walkDurationSeconds,
+        repeats = prescription.totalRepeats
+    )
+    if (!clearsFloor) return this
     return copy(
         targetZone = prescription.targetZone,
         runDurationSeconds = prescription.runDurationSeconds,

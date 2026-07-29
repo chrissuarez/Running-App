@@ -10,6 +10,7 @@ import com.example.runningapp.SettingsRepository
 import com.example.runningapp.StatedHeartRates
 import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.WorkoutTemplate
+import com.example.runningapp.clearedBy
 import com.example.runningapp.HrProfile
 import com.example.runningapp.effectiveMaxHr
 import com.example.runningapp.tallyZoneSeconds
@@ -690,11 +691,8 @@ class SessionRepository(
      * Accepted cost: the coach cannot ease anyone back in below the Workout after illness or a
      * layoff. Dropping a Stage by hand is the move there.
      *
-     * Two measures, both of which have to clear the Workout: the main set's total seconds — the
-     * measure the ceiling uses — and the running seconds inside it. Total alone would let six 30s
-     * Runs padded with 210s walks match a six-by-three-minute Workout second for second while
-     * prescribing a sixth of the running, which is exactly the easing this rule exists to refuse.
-     * The warm-up/cool-down envelope is the Workout's either way, so it cancels out of both.
+     * What counts as clearing the Workout is [clearedBy], which the Prescription is measured
+     * against again when it is applied — the Plan's own numbers can change while one stands.
      *
      * Raising means taking the Workout's three numbers whole rather than scaling toward it — a
      * half-raised Prescription would be a shape neither the coach nor the Plan asked for. The
@@ -709,26 +707,12 @@ class SessionRepository(
     ): AiCoachResponse {
         if (workout == null) return response
 
-        val proposedRepeats = response.nextRepeats.coerceAtLeast(1)
-        val proposedTotalSeconds = mainSetSeconds(
+        val clearsFloor = workout.clearedBy(
             runSeconds = response.nextRunDurationSeconds.coerceAtLeast(1),
             walkSeconds = response.nextWalkDurationSeconds.coerceAtLeast(0),
-            repeats = proposedRepeats
+            repeats = response.nextRepeats.coerceAtLeast(1)
         )
-        val proposedRunSeconds =
-            response.nextRunDurationSeconds.coerceAtLeast(1).toLong() * proposedRepeats.toLong()
-
-        val plannedTotalSeconds = mainSetSeconds(
-            runSeconds = workout.runDurationSeconds,
-            walkSeconds = workout.walkDurationSeconds,
-            repeats = workout.totalRepeats
-        )
-        val plannedRunSeconds =
-            workout.runDurationSeconds.toLong() * workout.totalRepeats.toLong()
-
-        if (proposedTotalSeconds >= plannedTotalSeconds && proposedRunSeconds >= plannedRunSeconds) {
-            return response
-        }
+        if (clearsFloor) return response
 
         return response.copy(
             nextRunDurationSeconds = workout.runDurationSeconds,

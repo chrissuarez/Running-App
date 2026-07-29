@@ -19,11 +19,13 @@ class TodayCardModelsTest {
 
     private val now = 1_700_000_000_000L
 
+    // Longer than the workout it is applied to, because a prescription asking for less work than
+    // the plan applies nothing (#170) — see the shortening case below.
     private fun prescription(
         targetZone: Int = 2,
-        run: Int = 240,
+        run: Int = 360,
         walk: Int = 90,
-        repeats: Int = 4,
+        repeats: Int = 5,
         prescribedAt: Long = now
     ) = CoachPrescription(targetZone, run, walk, repeats, prescribedAt)
 
@@ -145,13 +147,13 @@ class TodayCardModelsTest {
             ),
             prescription = prescription()
         )
-        assertEquals("4 × (4 min run / 1 min 30 s walk)", state.detailLine)
+        assertEquals("5 × (6 min run / 1 min 30 s walk)", state.detailLine)
         assertEquals(
             "Coach: Shortened after Tuesday — your heart rate drifted in the last two intervals.",
             state.coachNote
         )
         // Never the original numbers.
-        assertTrue(state.detailLine.contains("4 min run"))
+        assertTrue(state.detailLine.contains("6 min run"))
     }
 
     @Test
@@ -199,6 +201,15 @@ class TodayCardModelsTest {
         val threshold = WorkoutTemplate("w3_s1", "Threshold Intervals", 4, 300, 120, 5, runType = RunType.QUALITY)
         val eased = card(workout = threshold, prescription = prescription(targetZone = 2))
         assertEquals("Target: Moderate", eased.targetPill)
+    }
+
+    @Test
+    fun `a prescription asking for less work than the plan leaves the card as written`() {
+        // The coach is floored at the stage's own workout when it writes (#170), but a prescription
+        // stands for a fortnight and the plan's numbers can be rewritten under it (#173).
+        val eased = card(prescription = prescription(run = 180, walk = 60, repeats = 6))
+        assertEquals("5 × (5 min run / 1 min walk)", eased.detailLine)
+        assertNull(eased.coachNote)
     }
 
     @Test
