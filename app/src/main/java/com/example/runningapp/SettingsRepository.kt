@@ -228,10 +228,14 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.MAX_HR] = clampedMaxHr
             preferences[PreferencesKeys.MAX_HR_EVER_SET] = true
             // The stored resting heart rate is brought back inside what the new maximum can hold,
-            // in the same write. The two bound one reserve, so lowering the maximum can strand a
-            // resting heart rate the zone functions would clamp anyway — leaving the settings
-            // screen showing 90 while every zone edge was sliced from 50. Storage holding the
-            // number the zones actually use is what keeps the screen honest.
+            // in the same write, so storage can never hold a pair with no reserve between it.
+            //
+            // A backstop rather than the rule: the settings screen now *refuses* a maximum with no
+            // room above the stated resting heart rate ([parseMaxHr]), because rewriting a
+            // measured number the runner never retyped is the silent replacement #172 exists to
+            // delete. Nothing on that path should reach this line. It stays because storage must
+            // hold a usable pair whatever calls it, and because a clamp that never fires costs
+            // nothing — but it is not permission for another caller to strand the number.
             preferences[PreferencesKeys.RESTING_HR]?.let {
                 preferences[PreferencesKeys.RESTING_HR] = effectiveRestingHr(it, clampedMaxHr)
             }
