@@ -54,7 +54,6 @@ import com.example.runningapp.MIN_RESTING_HR
 import com.example.runningapp.RESTING_HR_UNSTATED
 import com.example.runningapp.UserSettings
 import com.example.runningapp.highestStatableRestingHr
-import com.example.runningapp.hrProfile
 import com.example.runningapp.parseMaxHr
 import com.example.runningapp.parseRestingHr
 import com.example.runningapp.targetHrZone
@@ -230,8 +229,18 @@ fun SettingsScreen(
             // What the target band reads now, and what it would read with the resting heart rate
             // withdrawn — the same arithmetic the zones use, so the warning cannot drift from what
             // actually happens.
-            bandNow = targetRangeLabel(settings.targetHrZone, settings.hrProfile),
-            bandAfter = targetRangeLabel(settings.targetHrZone, HrProfile(settings.maxHr)),
+            //
+            // Off the Max HR *in force* for that reason: leaving commits both fields, so a visit
+            // that lowers the maximum and then clears the resting number would otherwise quote a
+            // before and after taken from a maximum already on its way out.
+            bandNow = targetRangeLabel(
+                settings.targetHrZone,
+                HrProfile(maxHrState.valueInForce, settings.restingHr)
+            ),
+            bandAfter = targetRangeLabel(
+                settings.targetHrZone,
+                HrProfile(maxHrState.valueInForce)
+            ),
             targetZone = settings.targetHrZone,
             onConfirm = {
                 clearingRestingHr = false
@@ -249,7 +258,10 @@ fun SettingsScreen(
     if (showTargetZonePicker) {
         TargetZonePicker(
             selected = settings.targetHrZone,
-            profile = settings.hrProfile,
+            // Same reason as the clear dialog: the bands offered here are the ones the runner is
+            // choosing between, so they have to be sliced from the maximum on its way to disk
+            // rather than the one it is replacing.
+            profile = HrProfile(maxHrState.valueInForce, settings.restingHr),
             onSelect = {
                 onTargetZoneChange(it)
                 showTargetZonePicker = false
