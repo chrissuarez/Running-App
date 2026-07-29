@@ -15,11 +15,12 @@ class TrainingPlanModelsTest {
         WorkoutTemplate("w1_s2", "Aerobic Foundation", 2, 300, 60, 5, runType = RunType.LONG)
     private val now = 1_700_000_000_000L
 
+    // More work than [base], since a prescription asking for less applies nothing (#170).
     private fun prescription(
         targetZone: Int = 2,
-        run: Int = 240,
+        run: Int = 360,
         walk: Int = 90,
-        repeats: Int = 4,
+        repeats: Int = 5,
         prescribedAt: Long = now
     ) = CoachPrescription(targetZone, run, walk, repeats, prescribedAt)
 
@@ -34,9 +35,9 @@ class TrainingPlanModelsTest {
     fun `a prescription replaces target, run, walk and repeats`() {
         val adapted = base.withCoachPrescription(prescription(targetZone = 3), now)
         assertEquals(3, adapted.targetZone)
-        assertEquals(240, adapted.runDurationSeconds)
+        assertEquals(360, adapted.runDurationSeconds)
         assertEquals(90, adapted.walkDurationSeconds)
-        assertEquals(4, adapted.totalRepeats)
+        assertEquals(5, adapted.totalRepeats)
     }
 
     @Test
@@ -51,7 +52,37 @@ class TrainingPlanModelsTest {
     @Test
     fun `a prescription still applies days later, since runs are days apart`() {
         val adapted = base.withCoachPrescription(prescription(prescribedAt = daysBefore(5)), now)
-        assertEquals(240, adapted.runDurationSeconds)
+        assertEquals(360, adapted.runDurationSeconds)
+    }
+
+    @Test
+    fun `a prescription asking for less work than the workout applies nothing`() {
+        // Written against a workout this stage no longer offers — the plan's own numbers changed
+        // under it (#173). The floor is the same rule the coach's write is held to (#170), asked
+        // again here because a standing prescription outlives the workout it was floored at.
+        val fromAnEarlierPlan = prescription(run = 180, walk = 60, repeats = 6)
+
+        assertSame(base, base.withCoachPrescription(fromAnEarlierPlan, now))
+    }
+
+    @Test
+    fun `a prescription padded with walks is refused on its running seconds`() {
+        // 6 x (60s run + 240s walk) is longer than 5 x (300s run + 60s walk) end to end while
+        // prescribing a fifth of the running. Total alone would let that through.
+        val padded = prescription(run = 60, walk = 240, repeats = 6)
+
+        assertSame(base, base.withCoachPrescription(padded, now))
+    }
+
+    @Test
+    fun `a prescription that clears the workout still applies in full`() {
+        val harder = prescription(run = 360, walk = 60, repeats = 5)
+
+        val adapted = base.withCoachPrescription(harder, now)
+
+        assertEquals(360, adapted.runDurationSeconds)
+        assertEquals(60, adapted.walkDurationSeconds)
+        assertEquals(5, adapted.totalRepeats)
     }
 
     @Test
