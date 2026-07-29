@@ -222,10 +222,11 @@ class SessionRepository(
      * A statement of the heart rates that began moving history and never landed, ready to be
      * stated again — or null when nothing was interrupted, which is the ordinary case.
      *
-     * Read rather than applied, deliberately. Replaying it is a statement like any other and has to
-     * queue behind the runner's own, or a resume racing a fresh edit would re-band history to the
-     * number left over from last time and store it over the one just typed — the ordering
-     * `StatedHeartRateQueue` exists to settle. The caller enqueues it there.
+     * Read rather than applied, deliberately. `StatedHeartRateQueue` applies it ahead of everything
+     * on its queue, which is the only placement that works: applied here it would be one more
+     * unordered writer, and enqueued it would race a runner who reached Settings first — their
+     * statement landing and then being overwritten by last session's leftover number, or clearing
+     * the note with a statement that moves no history and stranding the already-re-banded runs.
      *
      * The whole statement is replayed rather than only the missing half, because a re-tally is a
      * pure re-derivation from per-second samples that are never pruned: doing it twice costs time

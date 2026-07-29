@@ -317,7 +317,7 @@ class SettingsRepository(private val context: Context) {
      * ([setStatedHeartRates]). Anything left behind is an interruption, and replaying it is safe
      * because a re-tally is a pure re-derivation from stored per-second samples, which are never
      * pruned — repeating one costs time and changes nothing. See
-     * `SessionRepository.resumeInterruptedStatement`.
+     * `SessionRepository.interruptedStatement`, which `StatedHeartRateQueue` applies before anything else.
      *
      * The numbers are carried rather than re-read from storage on the way back, because what
      * history is re-banded against is not simply what ends up stored: Max HR's future-only rule

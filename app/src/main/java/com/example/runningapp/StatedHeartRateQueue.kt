@@ -1,6 +1,7 @@
 package com.example.runningapp
 
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
@@ -25,22 +26,51 @@ import kotlinx.coroutines.launch
  */
 class StatedHeartRateQueue(
     scope: CoroutineScope,
+    /**
+     * A statement left interrupted by a previous process, or null when none was — see
+     * `SessionRepository.interruptedStatement`.
+     *
+     * Read and applied by the consumer *before* it takes anything off the queue, which is the only
+     * placement that works. Enqueued instead, it would be a race: the runner reaching Settings
+     * first would have their statement applied and then overwritten by last session's leftover
+     * number, or would clear the note with a statement that moves no history and strand the
+     * already-re-banded runs for good. Anything stated meanwhile waits in the queue, which is
+     * exactly right — recovery is what the profile *was*, so it has to land first.
+     */
+    recover: suspend () -> StatedHeartRates?,
     apply: suspend (maxHr: Int?, restingHr: Int?) -> Unit
 ) {
     private val statements = Channel<StatedHeartRates>(Channel.UNLIMITED)
 
     init {
         scope.launch {
+            applying { recover()?.let { apply(it.maxHr, it.restingHr) } }
             for (statement in statements) {
-                // One failed statement must cost one statement, not the queue. Applying a profile
-                // touches Room, DataStore and a re-tally of the whole history, so it can genuinely
-                // fail — and an uncaught throw here would end the consumer for the life of the
-                // process while [state] went on cheerfully accepting numbers into a channel nothing
-                // reads. The runner would watch the app take a heart rate that never lands, with
-                // nothing anywhere to say so.
-                runCatching { apply(statement.maxHr, statement.restingHr) }
-                    .onFailure { Log.e("StatedHeartRateQueue", "Stating heart rates failed", it) }
+                applying { apply(statement.maxHr, statement.restingHr) }
             }
+        }
+    }
+
+    /**
+     * One failed statement must cost one statement, not the queue.
+     *
+     * Applying a profile touches Room, DataStore and a re-tally of the whole history, so it can
+     * genuinely fail — and an uncaught throw would end the consumer for the life of the process
+     * while [state] went on cheerfully accepting numbers into a channel nothing reads. The runner
+     * would watch the app take a heart rate that never lands, with nothing anywhere to say so.
+     *
+     * A failed recovery is left in place rather than retried here: the note is only cleared by a
+     * statement landing, so the next launch finds it and tries again.
+     */
+    private inline fun applying(block: () -> Unit) {
+        try {
+            block()
+        } catch (cancellation: CancellationException) {
+            // Not a failure — the scope is going away, and swallowing it would leave the consumer
+            // looking alive to structured concurrency while nothing drains the queue.
+            throw cancellation
+        } catch (failure: Throwable) {
+            Log.e("StatedHeartRateQueue", "Stating heart rates failed", failure)
         }
     }
 
