@@ -171,6 +171,48 @@ class HrFieldStateTest {
         assertNull(committed)
     }
 
+    // --- A commit publishing while the field is being used again (#172) ---
+
+    @Test
+    fun `a commit landing while the runner is retyping does not replace what they typed`() {
+        // A resting-HR commit re-tallies the whole history before DataStore publishes, which is a
+        // long time to sit there — and exactly when someone refocuses to correct the number they
+        // just entered. Showing the just-stored value now would drop the newer entry, which is the
+        // silent discard this screen exists to delete arriving from the other direction.
+        val state = HrFieldState(stored = 0, parse = { parseRestingHr(it, maxHr = 190) })
+        state.onTyped("60")
+        state.onCommitAttempt(onCommit)
+        assertEquals(60, committed)
+        state.onTyped("55")
+
+        state.onStoredChanged(60)
+
+        assertEquals("55", state.typed)
+    }
+
+    @Test
+    fun `a commit landing with nothing pending is shown`() {
+        // The ordinary case, and how an outside change reaches the field at all.
+        val state = HrFieldState(stored = 0, parse = { parseRestingHr(it, maxHr = 190) })
+
+        state.onStoredChanged(60)
+
+        assertEquals("60", state.typed)
+    }
+
+    @Test
+    fun `an outside change to unstated empties the field rather than showing a zero`() {
+        val state = HrFieldState(
+            stored = 60,
+            parse = { parseRestingHr(it, maxHr = 190) },
+            blankMeans = RESTING_HR_UNSTATED
+        )
+
+        state.onStoredChanged(RESTING_HR_UNSTATED)
+
+        assertEquals("", state.typed)
+    }
+
     // --- The pair judged against each other (#172) ---
     //
     // What each field puts *in force* for the other, and the fallback when an entry is unusable,

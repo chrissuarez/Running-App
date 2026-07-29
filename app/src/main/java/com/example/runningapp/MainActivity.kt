@@ -390,16 +390,19 @@ class MainActivity : ComponentActivity() {
                                     userSettings,
                                     serviceState?.value?.connectionStatus ?: "Disconnected"
                                 ),
-                                // Max HR goes through the repository rather than DataStore
-                                // directly: the first deliberate set recomputes all history, and
-                                // that must not be something a surface can forget to do (#112).
-                                onMaxHrCommit = { maxHr ->
-                                    scope.launch(Dispatchers.IO) { sessionRepository.setMaxHr(maxHr) }
-                                },
-                                // Same door, same reason: stating a resting heart rate re-bands
-                                // every past run, and no surface may state it without that (#172).
-                                onRestingHrCommit = { restingHr ->
-                                    scope.launch(Dispatchers.IO) { sessionRepository.setRestingHr(restingHr) }
+                                // Both heart rates go through the repository rather than DataStore
+                                // directly: the first deliberate Max HR set recomputes all history
+                                // (#112) and every resting-HR statement re-bands it (#172), and
+                                // neither may be something a surface can forget to do.
+                                //
+                                // One call carries both, so the pair reaches the door as a single
+                                // ordered statement. Two launches were two coroutines racing for
+                                // the repository's lock, and the same two edits left different
+                                // history depending on which won.
+                                onHrCommit = { maxHr, restingHr ->
+                                    scope.launch(Dispatchers.IO) {
+                                        sessionRepository.setStatedProfile(maxHr, restingHr)
+                                    }
                                 },
                                 onTargetZoneChange = { zone ->
                                     scope.launch(Dispatchers.IO) { settingsRepository.setTargetZone(zone) }

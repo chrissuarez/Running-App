@@ -333,7 +333,7 @@ class SessionRepositoryTest {
         whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(120, 121, 130))
         whenever(mockSampleDao.getRawBpmsForSession(8L)).thenReturn(emptyList())
 
-        repositoryWithSamples.setMaxHr(181)
+        repositoryWithSamples.setStatedProfile(maxHr = 181, restingHr = null)
 
         verify(mockDao).updateZoneSeconds(
             sessionId = 7L, zone1 = 0, zone2 = 2, zone3 = 1, zone4 = 0, zone5 = 0
@@ -354,7 +354,7 @@ class SessionRepositoryTest {
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(maxHrEverSet = false)))
 
-        repositoryWithoutSamples.setMaxHr(181)
+        repositoryWithoutSamples.setStatedProfile(maxHr = 181, restingHr = null)
 
         verify(mockSettingsRepo, never()).setMaxHrDeliberately(any())
     }
@@ -373,7 +373,7 @@ class SessionRepositoryTest {
         whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
         whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(120))
 
-        repositoryWithSamples.setMaxHr(181)
+        repositoryWithSamples.setStatedProfile(maxHr = 181, restingHr = null)
 
         inOrder(mockDao, mockSettingsRepo) {
             verify(mockDao).updateZoneSeconds(
@@ -393,7 +393,7 @@ class SessionRepositoryTest {
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(maxHrEverSet = true)))
 
-        repositoryWithSamples.setMaxHr(195)
+        repositoryWithSamples.setStatedProfile(maxHr = 195, restingHr = null)
 
         verify(mockSettingsRepo).setMaxHrDeliberately(195)
         verify(mockDao, never()).getFinalizedSessionIds()
@@ -410,7 +410,7 @@ class SessionRepositoryTest {
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(maxHrEverSet = true)))
 
-        repositoryWithSamples.setMaxHr(999)
+        repositoryWithSamples.setStatedProfile(maxHr = 999, restingHr = null)
 
         verify(mockSettingsRepo).setMaxHrDeliberately(MAX_MAX_HR)
     }
@@ -431,7 +431,7 @@ class SessionRepositoryTest {
         whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
         whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
 
-        repositoryWithSamples.setMaxHr(181)
+        repositoryWithSamples.setStatedProfile(maxHr = 181, restingHr = null)
 
         verify(mockDao).updateZoneSeconds(
             sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0
@@ -456,7 +456,7 @@ class SessionRepositoryTest {
         whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(120, 140, 150))
         whenever(mockSampleDao.getRawBpmsForSession(8L)).thenReturn(emptyList())
 
-        repositoryWithSamples.setRestingHr(60)
+        repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = 60)
 
         verify(mockDao).updateZoneSeconds(
             sessionId = 7L, zone1 = 1, zone2 = 1, zone3 = 1, zone4 = 0, zone5 = 0
@@ -483,7 +483,7 @@ class SessionRepositoryTest {
         whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
         whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
 
-        repositoryWithSamples.setRestingHr(52)
+        repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = 52)
 
         verify(mockDao).updateZoneSeconds(
             sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0
@@ -507,7 +507,7 @@ class SessionRepositoryTest {
         whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
         whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
 
-        repositoryWithSamples.setRestingHr(60)
+        repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = 60)
 
         inOrder(mockDao, mockSettingsRepo) {
             verify(mockDao).updateZoneSeconds(
@@ -532,10 +532,96 @@ class SessionRepositoryTest {
         whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
         whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
 
-        repositoryWithSamples.setRestingHr(60)
+        repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = 60)
 
         verify(mockSettingsRepo).setRestingHr(60)
         verify(mockSettingsRepo, never()).setMaxHrDeliberately(any())
+    }
+
+    @Test
+    fun `stating both numbers at once re-tallies once, against the pair being stored`() = runTest {
+        // The ordinary first fill-in: both fields pending, one statement. Sent as two the same two
+        // edits left different history depending on which coroutine won the lock — resting-first
+        // re-banded against the maximum about to be replaced.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 190, maxHrEverSet = false)))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
+        // At Max HR 181 with a resting 60 the reserve is 121: Zone 2 starts at 133, Zone 3 at 145.
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
+
+        repositoryWithSamples.setStatedProfile(maxHr = 181, restingHr = 60)
+
+        verify(mockDao, times(1)).updateZoneSeconds(
+            sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0
+        )
+        verify(mockSettingsRepo).setMaxHrDeliberately(181)
+        verify(mockSettingsRepo).setRestingHr(60)
+    }
+
+    @Test
+    fun `stating both when max hr is already set re-bands against the stored maximum`() = runTest {
+        // The two rules collide here, so the answer is pinned: the resting statement re-tallies
+        // everything, and Max HR's future-only rule says the maximum it re-tallies against is the
+        // one already in force. Read the other way round, a later Max HR correction would rewrite
+        // runs the runner has already read — which is the whole point of the one-shot.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 181, maxHrEverSet = true)))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
+
+        repositoryWithSamples.setStatedProfile(maxHr = 200, restingHr = 60)
+
+        // Banded against (181, 60) — the stored maximum — not the 200 on its way to disk.
+        verify(mockDao).updateZoneSeconds(
+            sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0
+        )
+        verify(mockSettingsRepo).setMaxHrDeliberately(200)
+        verify(mockSettingsRepo).setRestingHr(60)
+    }
+
+    @Test
+    fun `with nothing to re-band from, the resting hr still lands but the flag stays unspent`() = runTest {
+        // The two numbers part company here. Max HR's flag is one-shot, so recording the set
+        // against a recompute that never ran would strand history on the placeholder for good. A
+        // resting heart rate carries no such flag — there is simply no history to move — and
+        // dropping it would be the silent discard the screen exists to delete.
+        val repositoryWithoutSamples = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(maxHrEverSet = false)))
+
+        repositoryWithoutSamples.setStatedProfile(maxHr = 181, restingHr = 60)
+
+        verify(mockSettingsRepo, never()).setMaxHrDeliberately(any())
+        verify(mockSettingsRepo).setRestingHr(60)
+    }
+
+    @Test
+    fun `a statement with neither number touches nothing`() = runTest {
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mock(),
+            settingsRepository = mockSettingsRepo
+        )
+
+        repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = null)
+
+        verify(mockSettingsRepo, never()).setMaxHrDeliberately(any())
+        verify(mockSettingsRepo, never()).setRestingHr(any())
+        verify(mockDao, never()).updateZoneSeconds(any(), any(), any(), any(), any(), any())
     }
 
     @Test
@@ -559,9 +645,9 @@ class SessionRepositoryTest {
             onBlocking { setRestingHr(any()) }.doSuspendableAnswer { heldMidWrite.await() }
         }
 
-        val resting = launch { repositoryWithSamples.setRestingHr(60) }
+        val resting = launch { repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = 60) }
         runCurrent()
-        val maximum = launch { repositoryWithSamples.setMaxHr(190) }
+        val maximum = launch { repositoryWithSamples.setStatedProfile(maxHr = 190, restingHr = null) }
         runCurrent()
 
         // The second door has not read, re-tallied or stored anything while the first is open.

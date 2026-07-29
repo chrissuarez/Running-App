@@ -101,78 +101,91 @@ class SessionRepository(
     }
 
     /**
-     * Held across both halves of the profile door, so stating one number is a read, a re-tally and
-     * a store that nothing interleaves with.
+     * Held across the profile door, so a statement is a read, a re-tally and a store that nothing
+     * interleaves with.
      *
-     * Leaving the settings screen commits both fields at once, each on its own IO coroutine — the
-     * ordinary case the first time a runner fills them in. Unserialized, each would snapshot the
-     * settings before the other's write landed and re-tally against a pair that was never stored:
-     * whichever tally finished last would stand, banded to half of one profile and half of the
-     * other. The lock is what makes "the number the history was computed from is the number that
-     * ends up stored" true rather than usually true.
+     * Stating the pair together is one call now, so the two halves can no longer race each other —
+     * but a blur commit and a way-out commit still can, and so can any future surface. Unserialized
+     * they would each snapshot the settings before the other's write landed and re-tally against a
+     * pair that was never stored: whichever tally finished last would stand, banded to half of one
+     * profile and half of the other. The lock is what makes "the number the history was computed
+     * from is the number that ends up stored" true rather than usually true.
      */
     private val statedProfile = Mutex()
 
     /**
-     * The one door for setting Max HR — every surface that offers the number should come through
-     * here, or history can be stranded on a placeholder forever (#112, #103).
+     * The one door for stating either heart rate, or both at once.
      *
-     * The **first** deliberate set recomputes all history against the true number: until someone
-     * states it, every run's zone times sit on the default `190` that nobody chose. Every change
-     * after that is future-only, so a later correction can't quietly rewrite runs the runner has
-     * already read. This is Strava's rule read literally: only the first time you *set* zones.
+     * Both at once is the ordinary case: leaving the settings screen commits whatever is pending in
+     * each field, and the first time a runner fills the pair in that is two numbers. Sent through
+     * separately they were two coroutines racing for [statedProfile] — the lock kept them from
+     * overlapping but said nothing about *order*, so the same two edits left different history
+     * depending on which won. Resting-first re-tallies against the maximum about to be replaced;
+     * maximum-first re-tallies against the final pair. One call, one re-tally, one answer.
      *
-     * Silent by design — there is nothing to decide, and confirming a correction is nagging.
+     * A null means "not stated in this commit" and leaves that number exactly as it is — which is
+     * what makes this safe as the single door for the one-number blur commits too. It is *not* the
+     * same as [RESTING_HR_UNSTATED], which is a resting heart rate being deliberately withdrawn.
      *
-     * The recompute runs *before* the flag is set, so an interruption is retried rather than
-     * remembered as done: a half-finished recompute leaves the flag clear and the old Max HR on
-     * screen, and the next set redoes the whole thing (the tally is a pure re-derivation, so
-     * repeating it costs nothing). Setting the flag first would strand history permanently
-     * half-converted, with nothing on screen to say so.
+     * **What history is re-banded against** is the collision of the two numbers' rules, so it is
+     * decided in one place here:
+     * - A resting heart rate is a measurement that legitimately falls as fitness improves, not a
+     *   correction, and a history banded half at one value and half at another cannot be compared
+     *   with itself — which is the only thing zone history is for. So every statement re-tallies.
+     * - Max HR is one-shot: the **first** deliberate set recomputes everything, because until then
+     *   every run's zone times sit on the default `190` that nobody chose. Every change after that
+     *   is future-only, so a later correction cannot quietly rewrite runs already read. This is
+     *   Strava's rule read literally: only the first time you *set* zones.
+     *
+     * So the maximum the re-tally uses is the new one only on that first set, and the stored one
+     * ever after — while the resting heart rate is always whichever is being stated. Both numbers
+     * travel together because they bound one reserve, and a recompute against half of the runner's
+     * profile would re-band history to a model nobody's zones are on.
+     *
+     * Recompute first, then store: an interruption leaves the old numbers on screen with history
+     * part-converted, and the next statement redoes the whole thing (the tally is a pure
+     * re-derivation, so repeating it costs nothing). Storing first would leave the settings screen
+     * claiming a conversion that only half happened, and — for Max HR — would strand history
+     * permanently half-converted behind a spent one-shot flag.
+     *
+     * Silent by design. There is nothing here to decide, and confirming a correction is nagging;
+     * the one edit that *is* asked about is withdrawing a resting heart rate, and the screen asks
+     * that before it ever reaches this door.
      */
-    suspend fun setMaxHr(maxHr: Int) = statedProfile.withLock {
+    suspend fun setStatedProfile(maxHr: Int?, restingHr: Int?) = statedProfile.withLock {
         val settings = settingsRepository ?: return@withLock
-        val clampedMaxHr = effectiveMaxHr(maxHr)
+        if (maxHr == null && restingHr == null) return@withLock
         val current = settings.userSettingsFlow.first()
-        if (!current.maxHrEverSet) {
-            // No samples to recompute from is a reason to do nothing at all, not a reason to
-            // record the set anyway: the flag is one-shot, so spending it here would strand
-            // history on the placeholder with no way back.
-            val samples = sampleDao ?: return
-            // The stated resting heart rate comes along: the two numbers bound one reserve, and a
-            // recompute against half of the runner's profile would re-band history to a model
-            // nobody's zones are on.
-            recomputeZoneSecondsForAllRuns(samples, HrProfile(clampedMaxHr, current.restingHr))
-        }
-        settings.setMaxHrDeliberately(clampedMaxHr)
-    }
+        val clampedMaxHr = maxHr?.let { effectiveMaxHr(it) }
+        val firstMaxHrSet = clampedMaxHr != null && !current.maxHrEverSet
 
-    /**
-     * The other half of the same door: stating a resting heart rate, and re-banding the history it
-     * moves (#172, ADR 0004).
-     *
-     * Unlike Max HR this is **not** one-shot. Max HR's future-only rule protects runs the runner
-     * has already read from being rewritten by a later correction; a resting heart rate is not a
-     * correction, it is a measurement that legitimately falls as fitness improves, and a history
-     * banded half at one value and half at another cannot be compared with itself — which is the
-     * only thing zone history is for. So every statement re-tallies everything.
-     *
-     * The re-tally is exact and repeatable rather than destructive: it re-derives from stored
-     * per-second samples, which are never pruned, so running it again costs nothing and no
-     * measurement is lost by doing so.
-     *
-     * Recompute first, then store, for the reason [setMaxHr] does it: an interruption leaves the
-     * old number on screen with history part-converted, and the next statement redoes the whole
-     * thing. Storing first would leave the settings screen claiming a conversion that half
-     * happened.
-     */
-    suspend fun setRestingHr(restingHr: Int) = statedProfile.withLock {
-        val settings = settingsRepository ?: return@withLock
-        val current = settings.userSettingsFlow.first()
-        sampleDao?.let { samples ->
-            recomputeZoneSecondsForAllRuns(samples, HrProfile(current.maxHr, restingHr))
+        if (restingHr != null || firstMaxHrSet) {
+            val samples = sampleDao
+            // Nothing to re-band from. For Max HR that is a reason to do nothing at all rather than
+            // to record the set anyway: the flag is one-shot, so spending it here would strand
+            // history on the placeholder with no way back. A resting heart rate carries no such
+            // flag — there is simply no history to move — so it goes on and stores.
+            if (samples == null) {
+                // Storing the maximum would spend the one-shot on a recompute that never ran, so
+                // it is left unstated and the next attempt redoes the whole thing. A resting heart
+                // rate stated in the same breath is unaffected and still lands below.
+                if (firstMaxHrSet) {
+                    if (restingHr != null) settings.setRestingHr(restingHr)
+                    return@withLock
+                }
+            } else {
+                recomputeZoneSecondsForAllRuns(
+                    samples,
+                    HrProfile(
+                        maxHr = if (firstMaxHrSet) clampedMaxHr!! else current.maxHr,
+                        restingHr = restingHr ?: current.restingHr
+                    )
+                )
+            }
         }
-        settings.setRestingHr(restingHr)
+
+        if (clampedMaxHr != null) settings.setMaxHrDeliberately(clampedMaxHr)
+        if (restingHr != null) settings.setRestingHr(restingHr)
     }
 
     /**

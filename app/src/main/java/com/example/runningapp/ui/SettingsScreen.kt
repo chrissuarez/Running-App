@@ -78,8 +78,13 @@ import com.example.runningapp.ui.theme.RunningUiTokens
 fun SettingsScreen(
     settings: UserSettings,
     strapSummary: String,
-    onMaxHrCommit: (Int) -> Unit,
-    onRestingHrCommit: (Int) -> Unit,
+    /**
+     * States one or both heart rates as a single edit. A null means "not stated now" and leaves
+     * that number alone — it is not [RESTING_HR_UNSTATED], which is a resting heart rate being
+     * deliberately withdrawn. One callback rather than two because the pair bounds one reserve and
+     * must reach storage as one ordered statement.
+     */
+    onHrCommit: (maxHr: Int?, restingHr: Int?) -> Unit,
     onTargetZoneChange: (HrZone) -> Unit,
     onCoachingEnabledChange: (Boolean) -> Unit,
     onSplitAnnouncementsChange: (Boolean) -> Unit,
@@ -129,8 +134,12 @@ fun SettingsScreen(
     // plausible slip, since clearing a field is how you begin retyping it. So the commit is parked
     // here and only reaches the repository once the runner has read what it does.
     var clearingRestingHr by remember { mutableStateOf(false) }
+    // A Max HR pending alongside a parked clear. It waits with the question rather than going on
+    // ahead: committed now it would land against a resting heart rate the runner may still choose
+    // to keep, and the pair is the thing being stated.
+    var maxHrAwaitingClear by remember { mutableStateOf<Int?>(null) }
     fun commitRestingHr(value: Int) {
-        if (value == RESTING_HR_UNSTATED) clearingRestingHr = true else onRestingHrCommit(value)
+        if (value == RESTING_HR_UNSTATED) clearingRestingHr = true else onHrCommit(null, value)
     }
 
     // Leaving commits both heart-rate fields, and an unusable entry holds the screen open once so
@@ -147,10 +156,21 @@ fun SettingsScreen(
     //
     // A parked clear holds the screen too: leaving while the question is on screen would apply it
     // behind the runner's back or drop it silently, and both are the failure this screen deletes.
+    //
+    // Whatever both fields have pending is sent as **one** statement. Sent as two they were two
+    // coroutines racing for the repository's lock, and the same two edits left different history
+    // depending on which won — see `SessionRepository.setStatedProfile`.
     fun leave() {
-        val maxHrReady = maxHrState.onLeaveAttempt(onMaxHrCommit)
-        val restingHrReady = restingHrState.onLeaveAttempt(::commitRestingHr)
-        if (maxHrReady && restingHrReady && !clearingRestingHr) onBack()
+        val statement = hrStatementOnLeave(maxHrState, restingHrState)
+        if (statement.withdrawingRestingHr) {
+            clearingRestingHr = true
+            // The question owns the whole statement now, including any Max HR beside it. Only
+            // overwrite when there is one, so a second way-out attempt cannot wipe the first's.
+            if (statement.maxHr != null) maxHrAwaitingClear = statement.maxHr
+            return
+        }
+        if (statement.statesSomething) onHrCommit(statement.maxHr, statement.restingHr)
+        if (statement.mayLeave) onBack()
     }
     BackHandler(onBack = ::leave)
 
@@ -180,7 +200,7 @@ fun SettingsScreen(
                 label = "Max HR",
                 supportingText = null,
                 refusalText = maxHrRefusalText(restingHrInForce),
-                onCommit = onMaxHrCommit
+                onCommit = { onHrCommit(it, null) }
             )
             HrField(
                 state = restingHrState,
@@ -262,12 +282,19 @@ fun SettingsScreen(
             targetZone = settings.targetHrZone,
             onConfirm = {
                 clearingRestingHr = false
-                onRestingHrCommit(RESTING_HR_UNSTATED)
+                // The Max HR that was waiting on the answer goes with it, as one statement.
+                onHrCommit(maxHrAwaitingClear, RESTING_HR_UNSTATED)
+                maxHrAwaitingClear = null
             },
             onDismiss = {
                 clearingRestingHr = false
-                // Declining puts the number still in force back in the field, so the screen does
-                // not ask again on the next way out.
+                // Declining the clear is not declining the Max HR typed beside it: that number was
+                // stated, and the field has already let go of it, so dropping it here would be the
+                // silent discard this screen exists to delete.
+                maxHrAwaitingClear?.let { onHrCommit(it, null) }
+                maxHrAwaitingClear = null
+                // The resting field goes back to the number still in force, so the screen does not
+                // ask again on the next way out.
                 restingHrState.restore()
             }
         )
@@ -304,7 +331,7 @@ fun SettingsScreen(
  */
 @Stable
 class HrFieldState(
-    private val stored: Int,
+    stored: Int,
     parse: (String) -> Int?,
     /**
      * What an emptied field means, for a number that has an "unstated" to go back to.
@@ -325,6 +352,18 @@ class HrFieldState(
      * entry survives, and it is judged by the range in force now.
      */
     var parse: (String) -> Int? = parse
+
+    /**
+     * The number currently on disk, as far as this field knows.
+     *
+     * A `var` because a commit publishes asynchronously: the field is alive across the write, and
+     * has to notice when the value it sent finally lands — see [onStoredChanged].
+     *
+     * Private, so this stays a `@Stable` type by the letter of the contract: everything the screen
+     * reads off this object ([typed], [refused]) is snapshot-backed and notifies composition.
+     */
+    private var stored: Int = stored
+
     // An unstated number shows an empty field, not a zero: zero is how storage spells "nobody has
     // said", and printing it would look like a heart rate the runner had somehow chosen.
     private fun storedAsTyped(): String = if (stored > 0) stored.toString() else ""
@@ -347,6 +386,28 @@ class HrFieldState(
     fun onTyped(text: String) {
         typed = text
         edited = true
+        refused = false
+        leaveRefused = false
+    }
+
+    /**
+     * The stored number changed underneath the field — a commit finally publishing, or an outside
+     * edit (the #65 card, once it lands).
+     *
+     * Shown **only when nothing is pending**. A resting-HR commit re-tallies the whole history
+     * before DataStore publishes, which is a long time for a field to be sitting there — and it is
+     * exactly when someone refocuses and starts correcting the number they just entered. Adopting
+     * unconditionally would drop that newer entry and put the just-committed one back, which is
+     * the silent discard this whole screen exists to delete, arriving from the other direction.
+     *
+     * Rebuilding the state on every stored change was the older spelling of this and had the same
+     * hole; keeping one state and choosing when to adopt is what closes it.
+     */
+    fun onStoredChanged(newStored: Int) {
+        if (newStored == stored) return
+        stored = newStored
+        if (edited) return
+        typed = storedAsTyped()
         refused = false
         leaveRefused = false
     }
@@ -419,21 +480,22 @@ class HrFieldState(
 }
 
 /**
- * Keyed on the stored value alone, so an outside change (the #65 card, once it lands) shows up
- * here. A moved *range* refreshes [HrFieldState.parse] instead of rebuilding the state, so it
- * never costs the runner what they were part-way through typing — the caller does that refresh,
- * because each field's rule names the other and neither can be written down until both exist.
+ * Built once and kept, never rebuilt. Both of the things that move while it is alive are handed to
+ * it instead: a changed stored value through [HrFieldState.onStoredChanged], and a moved range
+ * through [HrFieldState.parse]. Rebuilding on either would throw away whatever was half-typed —
+ * and both of them land *precisely* when someone is typing, since a commit publishes only after
+ * its re-tally of history has finished.
  */
 @Composable
 private fun rememberHrFieldState(
     stored: Int,
     blankMeans: Int? = null
-): HrFieldState = remember(stored) {
+): HrFieldState = remember {
     // Refuses everything until the caller sets the real rule, which it does on this same
     // composition — the two fields' rules name each other, so neither can be written down until
     // both states exist. A placeholder that *accepted* would be the dangerous way round.
     HrFieldState(stored, { null }, blankMeans)
-}
+}.also { it.onStoredChanged(stored) }
 
 /**
  * The two inputs the whole zone model hangs off, so the place a silent failure would cost the
@@ -651,6 +713,50 @@ private fun SettingsSwitchRow(
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
+}
+
+/**
+ * What leaving the settings screen states, gathered from both heart-rate fields at once.
+ *
+ * [maxHr] and [restingHr] are null when that field has nothing pending — the same "not stated now"
+ * the repository door takes. [withdrawingRestingHr] is the one entry that cannot simply be applied:
+ * an emptied resting field is a measurement being *withdrawn*, so it is a question to ask rather
+ * than a number to store, and it carries any Max HR beside it into the question.
+ */
+data class HrStatement(
+    val maxHr: Int?,
+    val restingHr: Int?,
+    val withdrawingRestingHr: Boolean,
+    val mayLeave: Boolean
+) {
+    val statesSomething: Boolean get() = maxHr != null || restingHr != null
+}
+
+/**
+ * Asks both fields what they hold on the way out, and gathers it into one statement.
+ *
+ * **Both are asked before the answer is used**, so a pending edit in one is never dropped because
+ * the other refused — an `&&` would short-circuit past the second field and lose what was typed in
+ * it, which is the silent discard this screen exists to delete.
+ *
+ * One statement rather than two commits because the pair bounds one reserve: sent separately they
+ * were two coroutines racing for the repository's lock, and the same two edits left different
+ * history depending on which won.
+ */
+fun hrStatementOnLeave(maxHrState: HrFieldState, restingHrState: HrFieldState): HrStatement {
+    var maxHr: Int? = null
+    var restingHr: Int? = null
+    var withdrawing = false
+    val maxHrReady = maxHrState.onLeaveAttempt { maxHr = it }
+    val restingHrReady = restingHrState.onLeaveAttempt {
+        if (it == RESTING_HR_UNSTATED) withdrawing = true else restingHr = it
+    }
+    return HrStatement(
+        maxHr = maxHr,
+        restingHr = restingHr,
+        withdrawingRestingHr = withdrawing,
+        mayLeave = maxHrReady && restingHrReady
+    )
 }
 
 /**
