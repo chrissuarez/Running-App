@@ -110,7 +110,7 @@ data class HrState(
     val nextIntervalDurationSeconds: Int = 0,
     val workoutProgressPercent: Int = 0,
     val currentIntervalElapsedSeconds: Int = 0,
-    val triggerInCurrentInterval: Boolean = false,
+    /** The run Interval's Trigger: the second heart rate first went above target, if it did. */
     val triggerAtSecond: Int? = null,
     
     // Mission 4: Outdoor Running
@@ -400,7 +400,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 nextIntervalDurationSeconds = intervals?.nextSeconds ?: 0,
                 workoutProgressPercent = intervals?.progressPercent ?: 0,
                 currentIntervalElapsedSeconds = intervals?.secondsElapsed ?: 0,
-                triggerInCurrentInterval = run.trigger.occurred,
                 triggerAtSecond = run.trigger.atSecond,
 
                 // The four the screen must only ever read off a live Run: its pinned target, the

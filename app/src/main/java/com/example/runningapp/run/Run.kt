@@ -501,6 +501,11 @@ object Run {
                         // spoke about heart rate, which made the number a tally of line-crossings
                         // rather than of walks.
                         walkBreaks = current.walkBreaks + 1,
+                        // The Trigger belonged to the run Interval that has just ended. Carried
+                        // into the walk it becomes a reason for it — the live screen reads a
+                        // standing Trigger as the cue in force and marks the walk "Safety cue
+                        // active", which is heart rate claiming a prescribed walk by the back door.
+                        trigger = Trigger(),
                     ),
                     effects + RunEffect.Speak(
                         "Transition to walking, ${intervals.walkSeconds} seconds.",

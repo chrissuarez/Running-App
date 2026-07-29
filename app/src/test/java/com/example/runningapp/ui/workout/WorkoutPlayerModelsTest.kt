@@ -170,7 +170,6 @@ class WorkoutPlayerModelsTest {
             currentIntervalPlannedSeconds = 120,
             currentIntervalElapsedSeconds = 30,
             nextIntervalDurationSeconds = 60,
-            triggerInCurrentInterval = true,
             triggerAtSecond = 18
         )
 
@@ -197,7 +196,7 @@ class WorkoutPlayerModelsTest {
             workoutProgressPercent = 40,
             bpm = 152,
             avgBpm = 152,
-            triggerInCurrentInterval = true,
+            triggerAtSecond = 18,
             userSettings = UserSettings(maxHr = 190, targetZone = 2)
         )
 
@@ -229,12 +228,33 @@ class WorkoutPlayerModelsTest {
     }
 
     @Test
+    fun `a planned walk is not marked as a safety cue`() {
+        // The Run clears the Trigger at the run-to-walk handover, so the walk arrives here with
+        // none standing and reads as what it is. A Trigger left over from the run Interval would
+        // tag this walk CUE_REASON_HR_HIGH and put "Safety cue active" over a walk the Workout
+        // asked for (#167).
+        val plannedWalk = HrState(
+            sessionStatus = SessionStatus.RUNNING,
+            currentPhase = SessionPhase.MAIN,
+            isStructuredWorkout = true,
+            structuredWorkoutPhase = StructuredWorkoutPhase.WALK,
+            triggerAtSecond = null,
+            coachWaitingLine = ""
+        )
+
+        val cue = mapCoachCueUiState(plannedWalk)
+
+        assertEquals(CUE_REASON_PLANNED, cue?.reasonTag)
+        assertEquals(CueSeverity.INFO, cue?.severity)
+    }
+
+    @Test
     fun `the coach card advises easing off rather than ordering a walk`() {
         val aboveTarget = HrState(
             sessionStatus = SessionStatus.RUNNING,
             currentPhase = SessionPhase.MAIN,
             isStructuredWorkout = true,
-            triggerInCurrentInterval = true,
+            triggerAtSecond = 18,
             coachWaitingLine = ""
         )
 

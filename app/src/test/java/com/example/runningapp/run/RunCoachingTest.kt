@@ -293,6 +293,12 @@ class RunCoachingTest {
 
         assertEquals(IntervalKind.WALK, driver.state.intervals?.kind)
         assertEquals(1, driver.state.walkBreaks)
+        // And the Trigger belongs to the run Interval that has just ended, not to this walk. Left
+        // standing it would follow the runner into the walk, where the live screen reads it as a
+        // reason and puts "Safety cue active" over the walk the Workout asked for — heart rate
+        // claiming the walk as its own through the screen instead of the voice.
+        assertFalse(driver.state.trigger.occurred)
+        assertNull(driver.state.trigger.atSecond)
     }
 
     @Test
