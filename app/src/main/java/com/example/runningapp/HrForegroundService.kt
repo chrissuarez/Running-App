@@ -1716,11 +1716,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun updateSimulationData() {
-        // Simple sawtooth simulation to sweep through zones
+        // Simple sawtooth simulation to sweep through zones. Both turning points are derived from
+        // the profile rather than fixed, because the zones no longer start at a percentage of Max
+        // HR — they start above the stated resting heart rate (#172), and a hard-coded floor of 60
+        // would leave the sweep never reading BELOW for a runner whose Zone 1 begins at 121.
+        val profile = currentSettings.hrProfile
         simulationBpm += (5 * simulationDirection)
-        if (simulationBpm >= currentSettings.maxHr + 10) simulationDirection = -1
-        if (simulationBpm <= 60) simulationDirection = 1
-        
+        if (simulationBpm >= effectiveMaxHr(profile.maxHr) + 10) simulationDirection = -1
+        if (simulationBpm <= zoneLowerBpm(HrZone.ENDURANCE, profile) - 10) simulationDirection = 1
+
+
         handleHeartRateForSimulation(simulationBpm)
     }
 
