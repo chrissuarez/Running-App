@@ -120,7 +120,17 @@ fun effectiveMaxHr(maxHr: Int): Int = maxHr.coerceIn(MIN_MAX_HR, MAX_MAX_HR)
  * choose and their whole history would move under them.
  */
 fun effectiveRestingHr(restingHr: Int, maxHr: Int): Int =
-    restingHr.coerceIn(RESTING_HR_UNSTATED, minOf(MAX_RESTING_HR, effectiveMaxHr(maxHr) - MIN_HR_RESERVE))
+    restingHr.coerceIn(RESTING_HR_UNSTATED, highestStatableRestingHr(maxHr))
+
+/**
+ * The highest resting heart rate that still leaves a usable reserve under [maxHr].
+ *
+ * Both the clamp and the refusal read this, so the number the field refuses past is the same
+ * number storage would have corrected to. Two spellings of one ceiling is how a runner ends up
+ * typing an accepted value and being shown a different one back.
+ */
+fun highestStatableRestingHr(maxHr: Int): Int =
+    minOf(MAX_RESTING_HR, effectiveMaxHr(maxHr) - MIN_HR_RESERVE)
 
 /**
  * The heart rates a runner's zones are sliced from — one value, passed as one thing.
@@ -153,11 +163,13 @@ fun parseMaxHr(text: String): Int? = text.trim().toIntOrNull()?.takeIf { it in M
  * Same standing as [parseMaxHr], for the same reason: this is a number the runner measured, so a
  * value outside the range is a mistake to show them rather than one to quietly round away.
  *
- * The range is the *typeable* one, not the clamp: [effectiveRestingHr] may still hold a perfectly
- * sensible entry down to fit a low Max HR, which is storage protecting itself, not a refusal.
+ * Judged against [maxHr] because the ceiling depends on it — the pair has to leave a usable
+ * reserve. Refusing at exactly the point [effectiveRestingHr] would have clamped is what keeps
+ * "never silently kept some other number" true: without it, a runner with a low Max HR could type
+ * an accepted 90, have storage quietly hold 50, and be shown the 50 back with nothing said.
  */
-fun parseRestingHr(text: String): Int? =
-    text.trim().toIntOrNull()?.takeIf { it in MIN_RESTING_HR..MAX_RESTING_HR }
+fun parseRestingHr(text: String, maxHr: Int): Int? =
+    text.trim().toIntOrNull()?.takeIf { it in MIN_RESTING_HR..highestStatableRestingHr(maxHr) }
 
 /**
  * Lowest BPM that counts as [zone]. Zone 1 also swallows everything below it — see [hrZoneOf].

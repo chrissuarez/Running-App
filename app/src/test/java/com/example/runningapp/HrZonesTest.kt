@@ -407,6 +407,17 @@ class HrZonesTest {
     }
 
     @Test
+    fun `the typeable ceiling follows the max hr beside it`() {
+        // A refusal at exactly the point storage would have clamped: without this, a runner with a
+        // low Max HR types an accepted 90, storage quietly holds 50, and the field shows the 50
+        // back with nothing said — the failure the visible refusal exists to delete.
+        assertEquals(50, highestStatableRestingHr(100))
+        assertNull(parseRestingHr("90", maxHr = 100))
+        assertEquals(50, parseRestingHr("50", maxHr = 100))
+        assertEquals(90, parseRestingHr("90", maxHr = 190))
+    }
+
+    @Test
     fun `a resting hr is clamped against the max hr beside it, not on its own`() {
         // The pair bounds one reserve, so a resting heart rate is only unusable relative to a
         // maximum: 100 is fine under a Max HR of 190 and impossible under one of 100.
@@ -463,22 +474,22 @@ class HrZonesTest {
 
     @Test
     fun `a typed resting hr is accepted only inside its own settable range`() {
-        assertEquals(30, parseRestingHr("30"))
-        assertEquals(60, parseRestingHr("60"))
-        assertEquals(100, parseRestingHr("100"))
-        assertEquals(58, parseRestingHr(" 58 "))
+        assertEquals(30, parseRestingHr("30", maxHr = 190))
+        assertEquals(60, parseRestingHr("60", maxHr = 190))
+        assertEquals(100, parseRestingHr("100", maxHr = 190))
+        assertEquals(58, parseRestingHr(" 58 ", maxHr = 190))
     }
 
     @Test
     fun `a typed resting hr outside the range is refused rather than clamped`() {
-        assertNull(parseRestingHr("29"))
-        assertNull(parseRestingHr("101"))
-        assertNull(parseRestingHr("6"))      // a pulse counted wrong
-        assertNull(parseRestingHr("0"))      // "unstated" is not something you type
-        assertNull(parseRestingHr("-60"))
-        assertNull(parseRestingHr(""))
-        assertNull(parseRestingHr("abc"))
-        assertNull(parseRestingHr("60.5"))
+        assertNull(parseRestingHr("29", maxHr = 190))
+        assertNull(parseRestingHr("101", maxHr = 190))
+        assertNull(parseRestingHr("6", maxHr = 190))      // a pulse counted wrong
+        assertNull(parseRestingHr("0", maxHr = 190))      // "unstated" is not something you type
+        assertNull(parseRestingHr("-60", maxHr = 190))
+        assertNull(parseRestingHr("", maxHr = 190))
+        assertNull(parseRestingHr("abc", maxHr = 190))
+        assertNull(parseRestingHr("60.5", maxHr = 190))
     }
 
     @Test
