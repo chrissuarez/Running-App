@@ -73,11 +73,8 @@ internal fun buildEvaluationPrompt(
     appendLine("Look at the older runs to establish trends (e.g., is their heart rate consistently improving?).")
     appendLine("The recent runs data includes a 'sessionType' ('Run/Walk' for a structured plan workout, or 'Open Run' for an unplanned open-ended run).")
     appendLine("CRITICAL RULE: An 'Open Run' is an unplanned run with no interval structure. Do NOT set graduatedToNextStage to true based on Open Run sessions. Progression ONLY happens via 'Run/Walk' sessions.")
-    // No per-interval quality metrics are sent, and none are described here (#168). The app has
-    // never known how an Interval actually went — only whether heart rate was high — so every
-    // metric that claimed to was measuring something else (ADR 0003). Duration, average heart rate
-    // and the stage requirement are what the coach can honestly read.
-    appendLine("Judge the session from its duration and average heart rate against the stage requirement.")
+    // No Interval-quality metric is sent, and none is described here (#168) — see AiRecentRun.
+    appendLine("Judge the run from its duration and average heart rate against the stage requirement.")
     appendLine("Use this combined context to generate the exact intervals for their NEXT run.")
     appendLine("If they meet the requirement easily, set graduatedToNextStage to true.")
     appendLine("Otherwise, adjust their run/walk intervals safely to build endurance.")
