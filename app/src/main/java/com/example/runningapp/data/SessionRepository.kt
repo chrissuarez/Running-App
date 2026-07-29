@@ -9,6 +9,7 @@ import com.example.runningapp.HrZone
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.StatedHeartRates
 import com.example.runningapp.TrainingPlanProvider
+import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.HrProfile
 import com.example.runningapp.effectiveMaxHr
 import com.example.runningapp.tallyZoneSeconds
@@ -560,10 +561,16 @@ class SessionRepository(
                 settings.activePlanId,
                 settings.activeStageId
             )
-            val clampedResponse = clampAiResponseByRecentLoad(
-                response,
-                warmUpSeconds = activeWorkout?.warmUpSeconds ?: 0,
-                coolDownSeconds = activeWorkout?.coolDownSeconds ?: 0
+            // Ceiling first, then floor: the floor wins where they disagree (#170). The ceiling is
+            // measured against recorded runs, so a run cut short drags it below the plan — the
+            // stage's own workout is the commitment and outranks that.
+            val clampedResponse = floorAiResponseAtWorkout(
+                clampAiResponseByRecentLoad(
+                    response,
+                    warmUpSeconds = activeWorkout?.warmUpSeconds ?: 0,
+                    coolDownSeconds = activeWorkout?.coolDownSeconds ?: 0
+                ),
+                activeWorkout
             )
             Log.d(
                 "AiCoach",
@@ -668,15 +675,81 @@ class SessionRepository(
         )
     }
 
+    /**
+     * The coach may make today harder than the Stage's own Workout, never easier (#170).
+     *
+     * The 110% ceiling above is floored nowhere, so anything shorter used to pass straight through,
+     * and because that ceiling is measured against *recorded* Run durations, a Run cut short lowered
+     * the next one directly — a ratchet that only turned down. The Stage's own Workout is a rule a
+     * runner can hold in their head: the Workout is the commitment, the coach adjusts upward from
+     * it.
+     *
+     * Being derived from static Plan data, it also still holds where the ceiling silently no-ops —
+     * with no 30-day maximum at all, which is every time run history is wiped.
+     *
+     * Accepted cost: the coach cannot ease anyone back in below the Workout after illness or a
+     * layoff. Dropping a Stage by hand is the move there.
+     *
+     * Two measures, both of which have to clear the Workout: the main set's total seconds — the
+     * measure the ceiling uses — and the running seconds inside it. Total alone would let six 30s
+     * Runs padded with 210s walks match a six-by-three-minute Workout second for second while
+     * prescribing a sixth of the running, which is exactly the easing this rule exists to refuse.
+     * The warm-up/cool-down envelope is the Workout's either way, so it cancels out of both.
+     *
+     * Raising means taking the Workout's three numbers whole rather than scaling toward it — a
+     * half-raised Prescription would be a shape neither the coach nor the Plan asked for. The
+     * coach's target zone is untouched: this rule is about how much work, not how hard. A
+     * Prescription that clears the floor is returned exactly as it came, coercions included:
+     * sanitising is the ceiling's job, and doing it twice would be two places to disagree.
+     */
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal fun floorAiResponseAtWorkout(
+        response: AiCoachResponse,
+        workout: WorkoutTemplate?
+    ): AiCoachResponse {
+        if (workout == null) return response
+
+        val proposedRepeats = response.nextRepeats.coerceAtLeast(1)
+        val proposedTotalSeconds = mainSetSeconds(
+            runSeconds = response.nextRunDurationSeconds.coerceAtLeast(1),
+            walkSeconds = response.nextWalkDurationSeconds.coerceAtLeast(0),
+            repeats = proposedRepeats
+        )
+        val proposedRunSeconds =
+            response.nextRunDurationSeconds.coerceAtLeast(1).toLong() * proposedRepeats.toLong()
+
+        val plannedTotalSeconds = mainSetSeconds(
+            runSeconds = workout.runDurationSeconds,
+            walkSeconds = workout.walkDurationSeconds,
+            repeats = workout.totalRepeats
+        )
+        val plannedRunSeconds =
+            workout.runDurationSeconds.toLong() * workout.totalRepeats.toLong()
+
+        if (proposedTotalSeconds >= plannedTotalSeconds && proposedRunSeconds >= plannedRunSeconds) {
+            return response
+        }
+
+        return response.copy(
+            nextRunDurationSeconds = workout.runDurationSeconds,
+            nextWalkDurationSeconds = workout.walkDurationSeconds,
+            nextRepeats = workout.totalRepeats
+        )
+    }
+
     private fun computePlannedTotalSeconds(
         runSeconds: Int,
         walkSeconds: Int,
         repeats: Int,
         warmupSeconds: Int,
         cooldownSeconds: Int
-    ): Long {
-        val mainSetSeconds = (runSeconds.toLong() + walkSeconds.toLong()) * repeats.toLong()
-        return warmupSeconds.toLong() + mainSetSeconds + cooldownSeconds.toLong()
-    }
+    ): Long =
+        warmupSeconds.toLong() +
+            mainSetSeconds(runSeconds, walkSeconds, repeats) +
+            cooldownSeconds.toLong()
+
+    /** The run/walk repeats alone, without the warm-up/cool-down envelope around them. */
+    private fun mainSetSeconds(runSeconds: Int, walkSeconds: Int, repeats: Int): Long =
+        (runSeconds.toLong() + walkSeconds.toLong()) * repeats.toLong()
 
 }

@@ -7,6 +7,7 @@ import com.example.runningapp.MAX_MAX_HR
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.StatedHeartRates
 import com.example.runningapp.UserSettings
+import com.example.runningapp.WorkoutTemplate
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CompletableDeferred
@@ -108,6 +109,150 @@ class SessionRepositoryTest {
         assertEquals(60, clamped.nextRunDurationSeconds)
         assertEquals(30, clamped.nextWalkDurationSeconds)
         assertEquals(5, clamped.nextRepeats)
+    }
+
+    // The stage's own workout: 6 x (180s run + 60s walk) = 1440s of main set, 1080s of it running.
+    private val introIntervals = WorkoutTemplate(
+        id = "w1_s1",
+        title = "Intro Intervals",
+        targetZone = 2,
+        runDurationSeconds = 180,
+        walkDurationSeconds = 60,
+        totalRepeats = 6
+    )
+
+    @Test
+    fun `floorAiResponse raises a prescription that asks for less work than the workout`() {
+        // The coach asks for 3 x (60s run + 60s walk) = 360s — well under the plan.
+        val eased = AiCoachResponse(
+            nextRunDurationSeconds = 60,
+            nextWalkDurationSeconds = 60,
+            nextRepeats = 3,
+            graduatedToNextStage = false,
+            coachMessage = "Take it easy."
+        )
+
+        val floored = repository.floorAiResponseAtWorkout(eased, introIntervals)
+
+        assertEquals(180, floored.nextRunDurationSeconds)
+        assertEquals(60, floored.nextWalkDurationSeconds)
+        assertEquals(6, floored.nextRepeats)
+    }
+
+    @Test
+    fun `floorAiResponse raises a prescription that pads the same total with walking`() {
+        // 6 x (30s run + 210s walk) = 1440s, matching the plan second for second, on a sixth of
+        // the running. Total alone would wave this through.
+        val padded = AiCoachResponse(
+            nextRunDurationSeconds = 30,
+            nextWalkDurationSeconds = 210,
+            nextRepeats = 6,
+            graduatedToNextStage = false,
+            coachMessage = "Mostly walking today."
+        )
+
+        val floored = repository.floorAiResponseAtWorkout(padded, introIntervals)
+
+        assertEquals(180, floored.nextRunDurationSeconds)
+        assertEquals(60, floored.nextWalkDurationSeconds)
+        assertEquals(6, floored.nextRepeats)
+    }
+
+    @Test
+    fun `floorAiResponse raises a prescription the ceiling clamped below the workout`() = runTest {
+        // A 900s run — one cut short — is the 30-day maximum, so the ceiling allows 990s total.
+        // Against the workout's own 480s/180s envelope that leaves 330s for the main set, less
+        // than the workout's 1440s. The floor outranks it.
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 2.0, maxDurationSeconds = 900L)
+        )
+
+        val onPlan = AiCoachResponse(
+            nextRunDurationSeconds = 180,
+            nextWalkDurationSeconds = 60,
+            nextRepeats = 6,
+            graduatedToNextStage = false,
+            coachMessage = "Same again."
+        )
+
+        val ceilinged = repository.clampAiResponseByRecentLoad(
+            onPlan,
+            warmUpSeconds = introIntervals.warmUpSeconds,
+            coolDownSeconds = introIntervals.coolDownSeconds
+        )
+        // The ceiling did cut it — that rule is untouched.
+        assertEquals(6, ceilinged.nextRunDurationSeconds)
+        assertEquals(5, ceilinged.nextRepeats)
+
+        val floored = repository.floorAiResponseAtWorkout(ceilinged, introIntervals)
+
+        assertEquals(180, floored.nextRunDurationSeconds)
+        assertEquals(60, floored.nextWalkDurationSeconds)
+        assertEquals(6, floored.nextRepeats)
+    }
+
+    @Test
+    fun `floorAiResponse leaves a prescription between the floor and the ceiling alone`() {
+        // 6 x (240s + 60s) = 1800s — more than the plan's 1440s, so the floor has no say.
+        val harder = AiCoachResponse(
+            nextRunDurationSeconds = 240,
+            nextWalkDurationSeconds = 60,
+            nextRepeats = 6,
+            graduatedToNextStage = false,
+            coachMessage = "Push on."
+        )
+
+        val floored = repository.floorAiResponseAtWorkout(harder, introIntervals)
+
+        assertEquals(240, floored.nextRunDurationSeconds)
+        assertEquals(60, floored.nextWalkDurationSeconds)
+        assertEquals(6, floored.nextRepeats)
+    }
+
+    @Test
+    fun `floorAiResponse holds with no run history, where the ceiling does nothing`() = runTest {
+        // No run history at all: the ceiling reads a zero maximum and passes the response straight
+        // through. The floor is the only rule left standing.
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        val eased = AiCoachResponse(
+            nextRunDurationSeconds = 30,
+            nextWalkDurationSeconds = 30,
+            nextRepeats = 2,
+            graduatedToNextStage = false,
+            coachMessage = "Ease back in."
+        )
+
+        val ceilinged = repository.clampAiResponseByRecentLoad(
+            eased,
+            warmUpSeconds = introIntervals.warmUpSeconds,
+            coolDownSeconds = introIntervals.coolDownSeconds
+        )
+        assertEquals(30, ceilinged.nextRunDurationSeconds)
+
+        val floored = repository.floorAiResponseAtWorkout(ceilinged, introIntervals)
+
+        assertEquals(180, floored.nextRunDurationSeconds)
+        assertEquals(60, floored.nextWalkDurationSeconds)
+        assertEquals(6, floored.nextRepeats)
+    }
+
+    @Test
+    fun `floorAiResponse passes the response through when no workout is queued`() {
+        val eased = AiCoachResponse(
+            nextRunDurationSeconds = 30,
+            nextWalkDurationSeconds = 30,
+            nextRepeats = 2,
+            graduatedToNextStage = false,
+            coachMessage = "Ease back in."
+        )
+
+        val floored = repository.floorAiResponseAtWorkout(eased, workout = null)
+
+        assertEquals(30, floored.nextRunDurationSeconds)
+        assertEquals(30, floored.nextWalkDurationSeconds)
+        assertEquals(2, floored.nextRepeats)
     }
 
     @Test
