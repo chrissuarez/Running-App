@@ -291,29 +291,29 @@ class HrZonesTest {
 
     @Test
     fun `a typed max hr is accepted only inside the settable range`() {
-        assertEquals(100, parseMaxHr("100"))
-        assertEquals(190, parseMaxHr("190"))
-        assertEquals(230, parseMaxHr("230"))
-        assertEquals(185, parseMaxHr(" 185 "))
+        assertEquals(100, parseMaxHrAlone("100"))
+        assertEquals(190, parseMaxHrAlone("190"))
+        assertEquals(230, parseMaxHrAlone("230"))
+        assertEquals(185, parseMaxHrAlone(" 185 "))
     }
 
     @Test
     fun `a typed max hr outside the range is refused rather than clamped`() {
         // effectiveMaxHr clamps because storage must never hold an unusable number; typing is the
         // opposite case — a refusal the runner can see beats a number they did not choose.
-        assertNull(parseMaxHr("99"))
-        assertNull(parseMaxHr("231"))
-        assertNull(parseMaxHr("0"))
-        assertNull(parseMaxHr("-190"))
+        assertNull(parseMaxHrAlone("99"))
+        assertNull(parseMaxHrAlone("231"))
+        assertNull(parseMaxHrAlone("0"))
+        assertNull(parseMaxHrAlone("-190"))
     }
 
     @Test
     fun `a max hr that is not a whole number is refused`() {
-        assertNull(parseMaxHr(""))
-        assertNull(parseMaxHr("   "))
-        assertNull(parseMaxHr("abc"))
-        assertNull(parseMaxHr("19"))    // mid-typing "190"
-        assertNull(parseMaxHr("190.5"))
+        assertNull(parseMaxHrAlone(""))
+        assertNull(parseMaxHrAlone("   "))
+        assertNull(parseMaxHrAlone("abc"))
+        assertNull(parseMaxHrAlone("19"))    // mid-typing "190"
+        assertNull(parseMaxHrAlone("190.5"))
     }
 
     @Test
@@ -433,8 +433,8 @@ class HrZonesTest {
         // Nothing is stated above, so nothing is constrained: every runner who has never typed the
         // second number must still see the range they saw before #172.
         assertEquals(MIN_MAX_HR, lowestStatableMaxHr(RESTING_HR_UNSTATED))
-        assertEquals(MIN_MAX_HR, parseMaxHr("$MIN_MAX_HR"))
-        assertNull(parseMaxHr("${MIN_MAX_HR - 1}"))
+        assertEquals(MIN_MAX_HR, parseMaxHrAlone("$MIN_MAX_HR"))
+        assertNull(parseMaxHrAlone("${MIN_MAX_HR - 1}"))
     }
 
     @Test

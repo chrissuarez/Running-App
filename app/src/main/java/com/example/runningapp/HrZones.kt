@@ -173,8 +173,20 @@ data class HrProfile(val maxHr: Int, val restingHr: Int = RESTING_HR_UNSTATED)
  * would otherwise be accepted and then quietly rewrite that resting number instead. Refusing here
  * is what keeps "no accepted number is ever silently replaced" true through *both* doors.
  */
-fun parseMaxHr(text: String, restingHr: Int = RESTING_HR_UNSTATED): Int? =
-    text.trim().toIntOrNull()?.takeIf { it in lowestStatableMaxHr(restingHr)..MAX_MAX_HR }
+fun parseMaxHr(text: String, restingHr: Int): Int? =
+    parseMaxHrAlone(text)?.takeIf { it >= lowestStatableMaxHr(restingHr) }
+
+/**
+ * A typed Max HR judged by its own limits, with no resting heart rate held up beside it.
+ *
+ * The mirror of [parseRestingHrAlone], and half of what stops the two fields' rules chasing each
+ * other: each asks what the other is *holding* through the alone-reading, then applies the pair
+ * rule itself. Named rather than spelled as a default argument on [parseMaxHr] — they are two
+ * different rules, and one name for both is how a call site ends up applying the weaker one by
+ * accident.
+ */
+fun parseMaxHrAlone(text: String): Int? =
+    text.trim().toIntOrNull()?.takeIf { it in MIN_MAX_HR..MAX_MAX_HR }
 
 /**
  * A typed resting heart rate, or null if it is not a whole number inside the settable range.
