@@ -23,7 +23,7 @@ class StatedHeartRateQueueTest {
         // against the maximum about to be replaced — the same two gestures, different history.
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
         val applied = mutableListOf<Pair<Int?, Int?>>()
-        val queue = StatedHeartRateQueue(scope) { maxHr, restingHr ->
+        val queue = StatedHeartRateQueue(scope, recover = { null }) { maxHr, restingHr ->
             // The first statement is the slow one — a first Max HR set re-tallies all history — so
             // an unordered implementation lets the second overtake it.
             if (maxHr != null) delay(1_000)
@@ -39,6 +39,57 @@ class StatedHeartRateQueueTest {
     }
 
     @Test
+    fun `an interrupted statement lands before anything the runner states`() = runTest {
+        // Recovery is what the profile *was*, so it has to land first. Enqueued instead of applied
+        // ahead of the queue, a runner reaching Settings before the note had been read would have
+        // their statement applied and then overwritten by last session's leftover number.
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val applied = mutableListOf<Pair<Int?, Int?>>()
+        val queue = StatedHeartRateQueue(
+            scope = scope,
+            recover = { StatedHeartRates(null, 60) }
+        ) { maxHr, restingHr -> applied += maxHr to restingHr }
+
+        // Stated before the consumer has run at all — the queue buffers it.
+        queue.state(null, 55)
+        advanceUntilIdle()
+
+        assertEquals(listOf<Pair<Int?, Int?>>(null to 60, null to 55), applied)
+        scope.cancel()
+    }
+
+    @Test
+    fun `with nothing interrupted, the queue just starts`() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val applied = mutableListOf<Pair<Int?, Int?>>()
+        val queue = StatedHeartRateQueue(scope, recover = { null }) { maxHr, restingHr -> applied += maxHr to restingHr }
+
+        queue.state(null, 55)
+        advanceUntilIdle()
+
+        assertEquals(listOf<Pair<Int?, Int?>>(null to 55), applied)
+        scope.cancel()
+    }
+
+    @Test
+    fun `a failed recovery costs the recovery, not the queue`() = runTest {
+        // The note is only cleared by a statement landing, so a failure here leaves it for the next
+        // launch to find. What must not happen is the runner's own statements being lost with it.
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val applied = mutableListOf<Pair<Int?, Int?>>()
+        val queue = StatedHeartRateQueue(
+            scope = scope,
+            recover = { throw IllegalStateException("storage is having a day") }
+        ) { maxHr, restingHr -> applied += maxHr to restingHr }
+
+        queue.state(null, 55)
+        advanceUntilIdle()
+
+        assertEquals(listOf<Pair<Int?, Int?>>(null to 55), applied)
+        scope.cancel()
+    }
+
+    @Test
     fun `a statement that fails costs one statement, not the queue`() = runTest {
         // Applying a profile touches Room, DataStore and a re-tally of the whole history, so it can
         // genuinely fail. An uncaught throw would end the consumer for the life of the process
@@ -46,7 +97,7 @@ class StatedHeartRateQueueTest {
         // watching the app take a heart rate that never lands, with nothing to say so.
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
         val applied = mutableListOf<Int?>()
-        val queue = StatedHeartRateQueue(scope) { maxHr, _ ->
+        val queue = StatedHeartRateQueue(scope, recover = { null }) { maxHr, _ ->
             if (maxHr == 181) throw IllegalStateException("storage is having a day")
             applied += maxHr
         }
@@ -65,7 +116,7 @@ class StatedHeartRateQueueTest {
         var inFlight = 0
         var overlapped = false
         val applied = mutableListOf<Int?>()
-        val queue = StatedHeartRateQueue(scope) { maxHr, _ ->
+        val queue = StatedHeartRateQueue(scope, recover = { null }) { maxHr, _ ->
             inFlight++
             if (inFlight > 1) overlapped = true
             delay(10)
