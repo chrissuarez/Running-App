@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
@@ -99,6 +101,19 @@ class SessionRepository(
     }
 
     /**
+     * Held across both halves of the profile door, so stating one number is a read, a re-tally and
+     * a store that nothing interleaves with.
+     *
+     * Leaving the settings screen commits both fields at once, each on its own IO coroutine — the
+     * ordinary case the first time a runner fills them in. Unserialized, each would snapshot the
+     * settings before the other's write landed and re-tally against a pair that was never stored:
+     * whichever tally finished last would stand, banded to half of one profile and half of the
+     * other. The lock is what makes "the number the history was computed from is the number that
+     * ends up stored" true rather than usually true.
+     */
+    private val statedProfile = Mutex()
+
+    /**
      * The one door for setting Max HR — every surface that offers the number should come through
      * here, or history can be stranded on a placeholder forever (#112, #103).
      *
@@ -115,8 +130,8 @@ class SessionRepository(
      * repeating it costs nothing). Setting the flag first would strand history permanently
      * half-converted, with nothing on screen to say so.
      */
-    suspend fun setMaxHr(maxHr: Int) {
-        val settings = settingsRepository ?: return
+    suspend fun setMaxHr(maxHr: Int) = statedProfile.withLock {
+        val settings = settingsRepository ?: return@withLock
         val clampedMaxHr = effectiveMaxHr(maxHr)
         val current = settings.userSettingsFlow.first()
         if (!current.maxHrEverSet) {
@@ -151,8 +166,8 @@ class SessionRepository(
      * thing. Storing first would leave the settings screen claiming a conversion that half
      * happened.
      */
-    suspend fun setRestingHr(restingHr: Int) {
-        val settings = settingsRepository ?: return
+    suspend fun setRestingHr(restingHr: Int) = statedProfile.withLock {
+        val settings = settingsRepository ?: return@withLock
         val current = settings.userSettingsFlow.first()
         sampleDao?.let { samples ->
             recomputeZoneSecondsForAllRuns(samples, HrProfile(current.maxHr, restingHr))

@@ -224,8 +224,17 @@ class SettingsRepository(private val context: Context) {
      */
     suspend fun setMaxHrDeliberately(maxHr: Int) {
         context.dataStore.edit { preferences ->
-            preferences[PreferencesKeys.MAX_HR] = effectiveMaxHr(maxHr)
+            val clampedMaxHr = effectiveMaxHr(maxHr)
+            preferences[PreferencesKeys.MAX_HR] = clampedMaxHr
             preferences[PreferencesKeys.MAX_HR_EVER_SET] = true
+            // The stored resting heart rate is brought back inside what the new maximum can hold,
+            // in the same write. The two bound one reserve, so lowering the maximum can strand a
+            // resting heart rate the zone functions would clamp anyway — leaving the settings
+            // screen showing 90 while every zone edge was sliced from 50. Storage holding the
+            // number the zones actually use is what keeps the screen honest.
+            preferences[PreferencesKeys.RESTING_HR]?.let {
+                preferences[PreferencesKeys.RESTING_HR] = effectiveRestingHr(it, clampedMaxHr)
+            }
         }
     }
 
