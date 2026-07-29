@@ -359,8 +359,9 @@ abstract class AppDatabase : RoomDatabase() {
 
         /**
          * [hrProfileProvider] feeds the v12 → v13 zone recompute, which needs a heart-rate
-         * profile that lives in DataStore rather than in the database. It is read lazily, from inside the migration, so
-         * the settings read happens on Room's own thread and only on the one launch that migrates.
+         * profile that lives in DataStore rather than in the database. It is read lazily, from
+         * inside the migration, so the settings read happens on Room's own thread and only on the
+         * one launch that migrates.
          */
         fun getDatabase(context: android.content.Context, hrProfileProvider: () -> HrProfile): AppDatabase {
             return INSTANCE ?: synchronized(this) {
