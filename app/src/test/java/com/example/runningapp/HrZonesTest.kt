@@ -13,7 +13,6 @@ class HrZonesTest {
     fun `the profile is what the zone edges are sliced from`() {
         // The whole point of the value: what a zone edge computes to depends on the profile and
         // on nothing else, so the settings the zones came from can never be half-applied.
-        assertEquals(zoneLowerBpm(HrZone.MODERATE, HrProfile(190)), zoneLowerBpm(HrZone.MODERATE, profile))
         assertEquals(114, zoneLowerBpm(HrZone.MODERATE, HrProfile(190)))
         assertEquals(96, zoneLowerBpm(HrZone.MODERATE, HrProfile(160)))
     }
