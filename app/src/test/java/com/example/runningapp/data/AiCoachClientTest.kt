@@ -1,5 +1,6 @@
 package com.example.runningapp.data
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -14,7 +15,6 @@ class AiCoachClientTest {
                 AiRecentRun(
                     durationSeconds = 1800,
                     avgHr = 125,
-                    walkBreaksCount = 6,
                     sessionType = "Run/Walk",
                     timestamp = 1_742_000_000_000,
                     runWalkMetrics = AiRunWalkMetrics(
@@ -42,6 +42,27 @@ class AiCoachClientTest {
         assertTrue(prompt.contains("not merely that severe breakdown is zero"))
         assertTrue(prompt.contains("Do not describe a session as perfect, stellar, or textbook"))
         assertTrue(prompt.contains("\"strongCompletionRatePercent\":30"))
+    }
+
+    @Test
+    fun `the walk-break count is neither sent nor asked about`() {
+        val prompt = buildEvaluationPrompt(
+            AiTrainingContext(
+                currentStageTitle = "Base Builder",
+                graduationRequirement = "Complete run-walk sessions consistently",
+                recentRuns = listOf(
+                    AiRecentRun(
+                        durationSeconds = 1800,
+                        avgHr = 125,
+                        sessionType = "Run/Walk",
+                        timestamp = 1_742_000_000_000
+                    )
+                )
+            )
+        )
+
+        assertFalse(prompt.contains("walkBreak", ignoreCase = true))
+        assertFalse(prompt.contains("HR-triggered", ignoreCase = true))
     }
 
     @Test

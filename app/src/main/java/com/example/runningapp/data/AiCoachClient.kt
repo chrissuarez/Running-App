@@ -89,7 +89,7 @@ internal fun buildEvaluationPrompt(
     appendLine("- Judge overall interval quality primarily from intervalCompletionRatioPercent, strongCompletionRatePercent, cleanIntervalRatePercent, and how much of the session sat in poorToleranceRatePercent or strainedCompletionRatePercent.")
     appendLine("- Repeated severe breakdown or poor tolerance suggests the run interval is too aggressive; consider shortening run duration and/or increasing walk support.")
     appendLine("- Strong performance means most intervals are strongly completed, not merely that severe breakdown is zero.")
-    appendLine("- Do not describe a session as perfect, stellar, or textbook if there were frequent HR-triggered walk breaks, low cleanIntervalRatePercent, or intervalCompletionRatioPercent below 90.")
+    appendLine("- Do not describe a session as perfect, stellar, or textbook if there was low cleanIntervalRatePercent or intervalCompletionRatioPercent below 90.")
     appendLine("- If clean performance is strong with stable or improving drift/recovery, consider safely extending run duration.")
     appendLine("- Rising HR drift across intervals with slower recovery suggests fatigue; prefer conservative progression over progression jumps.")
     appendLine("Use this combined context to generate the exact intervals for their NEXT run.")

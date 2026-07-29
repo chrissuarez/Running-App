@@ -41,10 +41,17 @@ data class AiRunWalkMetrics(
     val avgHrAtTrigger: Double?
 )
 
+/**
+ * What the AI coach is told about a past Run.
+ *
+ * The walk-break count is deliberately absent (#167). It now counts the walks the Workout
+ * prescribed, so it says nothing about how the Run went, and the rows saved before #167 count
+ * heart-rate cues instead — one number, two meanings, and no way to tell which a row carries.
+ * Sending it would have the coach read a six-repeat Workout as six failures.
+ */
 data class AiRecentRun(
     val durationSeconds: Long,
     val avgHr: Int,
-    val walkBreaksCount: Int,
     val sessionType: String,
     val timestamp: Long,
     val runWalkMetrics: AiRunWalkMetrics? = null
@@ -513,7 +520,6 @@ class SessionRepository(
             AiRecentRun(
                 durationSeconds = session.durationSeconds,
                 avgHr = session.avgBpm,
-                walkBreaksCount = session.walkBreaksCount,
                 sessionType = if (session.isRunWalkMode) AI_LABEL_RUN_WALK else AI_LABEL_OPEN_RUN,
                 timestamp = session.startTime,
                 runWalkMetrics = runWalkMetrics
