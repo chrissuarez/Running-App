@@ -14,6 +14,13 @@ import kotlin.math.roundToInt
 data class RunWalkIntervalAnalytics(
     val totalIntervals: Int,
     val intervalsWithNoTrigger: Int,
+    /**
+     * The average second of an Interval at which the coach first spoke about high heart rate.
+     *
+     * A Trigger, not a crossing: the cue ladder waits until heart rate has sat outside the band
+     * before it speaks, so heart rate went above target some time earlier than this and the Run
+     * never recorded when. Naming this "time above target" would overstate it by that wait.
+     */
     val avgSecondsBeforeTrigger: Int?,
     val longestIntervalWithNoTriggerSeconds: Int?
 )

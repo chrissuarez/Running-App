@@ -253,7 +253,7 @@ private fun RunWalkIntervalSummaryCard(intervalStats: List<RunWalkIntervalStat>)
                 "${metrics.intervalsWithNoTrigger} of ${metrics.totalIntervals}"
             )
             SummaryMetricRow(
-                "Average time before heart rate went above target",
+                "Average time to first trigger",
                 metrics.avgSecondsBeforeTrigger?.let { formatMinutesSeconds(it) } ?: "--"
             )
             SummaryMetricRow(

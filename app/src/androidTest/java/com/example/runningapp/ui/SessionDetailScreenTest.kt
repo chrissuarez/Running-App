@@ -82,7 +82,7 @@ class SessionDetailScreenTest {
         composeRule.onNodeWithText("Run/Walk Interval Summary").assertIsDisplayed()
         composeRule.onNodeWithText("Total run intervals").assertIsDisplayed()
         composeRule.onNodeWithText("Intervals with no trigger").assertIsDisplayed()
-        composeRule.onNodeWithText("Average time before heart rate went above target").assertIsDisplayed()
+        composeRule.onNodeWithText("Average time to first trigger").assertIsDisplayed()
         composeRule.onNodeWithText("Longest interval with no trigger").assertIsDisplayed()
         composeRule.onNodeWithText("Raw Interval Data").assertIsDisplayed().performClick()
         composeRule.onNodeWithText("Interval 1").assertIsDisplayed()
