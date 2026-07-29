@@ -25,9 +25,6 @@ enum class CueCondition {
     /** Above target and drifting up (past 20 min, still within baseline + 12). */
     ABOVE_DRIFTING,
 
-    /** Above target on a structured run step: suggest a walk break. */
-    ABOVE_WALK_BREAK,
-
     /** Above target, plainly. */
     ABOVE,
 
@@ -46,10 +43,6 @@ fun coachingCue(condition: CueCondition): CoachingCue = when (condition) {
     CueCondition.ABOVE_DRIFTING -> CoachingCue(
         screenAction = "ease off",
         spoken = "Heart rate drifting up. Keep effort steady, or take a short walk break."
-    )
-    CueCondition.ABOVE_WALK_BREAK -> CoachingCue(
-        screenAction = "ease off",
-        spoken = "Heart rate high. Walk until your breathing settles."
     )
     CueCondition.ABOVE -> CoachingCue(
         screenAction = "ease off",
@@ -70,18 +63,18 @@ fun coachingCue(condition: CueCondition): CoachingCue = when (condition) {
 }
 
 /**
- * Which above-target sentence to speak. Drift outranks the structured walk-break, which outranks
- * the plain ease-off — the order the service has always resolved them in. Drift is a heart rate
- * creeping up on a steady effort late in a run (past 20 min, still within [baselineHr] + 12);
- * anything higher than that is real overexertion and gets the plain cue.
+ * Which above-target sentence to speak: drift, or the plain ease-off. Drift is a heart rate creeping
+ * up on a steady effort late in a run (past 20 min, still within [baselineHr] + 12); anything higher
+ * than that is real overexertion and gets the plain cue.
+ *
+ * A structured Run used to get a third sentence here that ordered a walk break, and no longer does
+ * (#167). Whether a Run follows a Workout says nothing about how the runner feels, and the order was
+ * wrong on all three Run Types — see [ADR 0003](docs/adr/0003-heart-rate-is-a-readout-not-a-gate.md).
+ * What is left asks for a change of effort, on every Run alike.
  */
-fun highCueCondition(secondsRunning: Long, baselineHr: Int?, avgBpm: Int, isStructured: Boolean): CueCondition {
+fun highCueCondition(secondsRunning: Long, baselineHr: Int?, avgBpm: Int): CueCondition {
     val drifting = secondsRunning > 1200 && baselineHr != null && avgBpm <= baselineHr + 12
-    return when {
-        drifting -> CueCondition.ABOVE_DRIFTING
-        isStructured -> CueCondition.ABOVE_WALK_BREAK
-        else -> CueCondition.ABOVE
-    }
+    return if (drifting) CueCondition.ABOVE_DRIFTING else CueCondition.ABOVE
 }
 
 /**

@@ -1,10 +1,12 @@
 package com.example.runningapp.ui.workout
 
+import com.example.runningapp.CueCondition
 import com.example.runningapp.HrState
 import com.example.runningapp.SessionPhase
 import com.example.runningapp.SessionStatus
 import com.example.runningapp.StructuredWorkoutPhase
 import com.example.runningapp.ZoneBand
+import com.example.runningapp.coachingCue
 import com.example.runningapp.data.formatMinutesPerKm
 import com.example.runningapp.hrProfile
 import com.example.runningapp.hrZoneOf
@@ -14,7 +16,6 @@ import com.example.runningapp.zoneBandOf
 
 const val CUE_REASON_PLANNED = "planned_transition"
 const val CUE_REASON_HR_HIGH = "hr_too_high"
-const val CUE_REASON_HR_RECOVERED = "hr_recovered"
 const val CUE_REASON_SENSOR_LOST = "sensor_lost"
 const val CUE_REASON_UNKNOWN = "unknown"
 
@@ -208,11 +209,11 @@ fun mapIntervalTimelineUiState(state: HrState): IntervalTimelineUiState {
                 type = TimelineMarkerType.PLANNED_TRANSITION
             )
         )
-        if (state.hrCapExceededInCurrentInterval && state.hrCapExceededAtSecond != null && state.currentIntervalPlannedSeconds > 0) {
+        if (state.triggerInCurrentInterval && state.triggerAtSecond != null && state.currentIntervalPlannedSeconds > 0) {
             add(
                 TimelineMarkerUi(
                     segmentIndex = currentSegmentIndex.coerceIn(0, segments.lastIndex),
-                    fractionInSegment = (state.hrCapExceededAtSecond.toFloat() / state.currentIntervalPlannedSeconds.toFloat()).coerceIn(0f, 1f),
+                    fractionInSegment = (state.triggerAtSecond.toFloat() / state.currentIntervalPlannedSeconds.toFloat()).coerceIn(0f, 1f),
                     type = TimelineMarkerType.HR_TRIGGER
                 )
             )
@@ -228,24 +229,24 @@ fun mapIntervalTimelineUiState(state: HrState): IntervalTimelineUiState {
 }
 
 fun mapCoachCueUiState(state: HrState): CoachCueUiState? {
-    val reasonLower = state.currentWalkReason.lowercase()
     val staleSignal = state.sessionStatus.name == "RUNNING" && state.lastHrAgeSeconds >= 8
 
     val reasonTag = when {
         staleSignal -> CUE_REASON_SENSOR_LOST
-        state.hrCapExceededInCurrentInterval || reasonLower.contains("hr") || reasonLower.contains("cap") -> CUE_REASON_HR_HIGH
-        reasonLower.contains("recover") || reasonLower.contains("resume") -> CUE_REASON_HR_RECOVERED
-        // "Planned transition" only means something on a structured workout. On an open run
-        // currentWalkReason is still its default "Planned", so without this gate the coach card
-        // would tell an open-run user to "follow the interval" that doesn't exist (#107).
-        state.isStructuredWorkout && reasonLower.contains("planned") -> CUE_REASON_PLANNED
+        state.triggerInCurrentInterval -> CUE_REASON_HR_HIGH
+        // "Planned transition" only means something on a structured workout: on an open run there
+        // is no interval, so without this gate the coach card would tell an open-run user to
+        // "follow the interval" that doesn't exist (#107).
+        state.isStructuredWorkout -> CUE_REASON_PLANNED
         else -> CUE_REASON_UNKNOWN
     }
 
     val message = when (reasonTag) {
         CUE_REASON_SENSOR_LOST -> "Sensor signal is stale. Keep effort easy until reconnect."
-        CUE_REASON_HR_HIGH -> "Above cap. Walk until HR settles."
-        CUE_REASON_HR_RECOVERED -> "Recovered. Resume easy jog."
+        // The card says what the voice says, because they are the same cue on two channels. It used
+        // to read "Above cap. Walk until HR settles." — an order, from a number that cannot carry
+        // one (#167). A condition with no sentence shows no card rather than a blank one.
+        CUE_REASON_HR_HIGH -> coachingCue(CueCondition.ABOVE).spoken ?: return null
         CUE_REASON_PLANNED -> "Planned transition. Follow the interval."
         else -> state.coachWaitingLine.takeIf { it.isNotBlank() } ?: return null
     }

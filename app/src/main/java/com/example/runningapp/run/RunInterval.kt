@@ -102,8 +102,13 @@ data class RunIntervals(
  * row's own id and the Run's. Those belong to the write, so they arrive with
  * [RunEffect.SaveIntervalStat] instead, and the service maps this onto its database entity.
  *
- * Walk Intervals produce nothing. What is being measured is how much of each prescribed run the
- * runner held before their heart rate made them walk, and a walk step has no such number.
+ * Walk Intervals produce nothing. What is being measured is where the Run's heart rate went during
+ * each prescribed run, and a walk step has no such number.
+ *
+ * The names date from when heart rate prescribed a walk, and outlive it (#167): nothing here sends
+ * anyone walking now, so `actualRunningDurationBeforeHrTrigger` is how long the Interval ran before
+ * the coach first spoke, and `totalTimeSpentWalkingDuringRunInterval` is time spent above target
+ * rather than time spent walking — which the app has never been able to tell. See ADR 0003.
  */
 data class IntervalStat(
     val intervalIndex: Int,
@@ -146,7 +151,7 @@ data class IntervalTracker(
     val recoveryEventCount: Int = 0,
     val activeRecoveryStartSecond: Int? = null,
 ) {
-    /** One more second of this Interval — walked rather than run if a cue sent them walking. */
+    /** One more second of this Interval, counted against the recovery window if one is open. */
     fun tick(): IntervalTracker = copy(
         secondsElapsed = secondsElapsed + 1,
         walkingRecoverySeconds =
@@ -156,10 +161,10 @@ data class IntervalTracker(
     /**
      * The coach told the runner their heart rate was high, [secondIntoInterval] seconds in.
      *
-     * The first such second is the one that answers "how long did they hold the run before their
-     * heart rate stopped them", so later triggers in the same Interval do not overwrite it. Each
-     * one opens a recovery window if one is not already open — the runner is walking it off from
-     * here until they are told they are back on target, or until the Interval ends.
+     * The first such second is the one that answers "how far into the Interval did the heart rate
+     * first cross the line", so later Triggers in the same Interval do not overwrite it. Each one
+     * opens a recovery window if one is not already open, which runs until they are told they are
+     * back on target, or until the Interval ends.
      */
     fun hrTriggered(secondIntoInterval: Int, atBpm: Int): IntervalTracker = copy(
         firstHrTriggerSecond = firstHrTriggerSecond ?: secondIntoInterval,

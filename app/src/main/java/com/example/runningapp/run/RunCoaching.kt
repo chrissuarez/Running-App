@@ -34,41 +34,30 @@ data class RunCoaching(
     fun startAgain(): RunCoaching = copy(band = ZoneBand.UNKNOWN, ladder = CueLadderState())
 }
 
-/** Why the runner is walking. Recorded per Interval, and shown live so the walk is never a mystery. */
-enum class WalkReason(val label: String) {
-    PLANNED("Planned"),
-    HR_TRIGGERED("HR-triggered"),
-}
-
 /**
- * Why the walk that follows this run Interval was taken, decided while the run Interval is still
- * going.
+ * The Trigger of the run Interval in progress: whether the Run's heart rate has sat outside target
+ * long enough for the coach to speak, and how far in it first did.
+ *
+ * This was a `WalkDecision`, and it held *why* the walk that follows was taken — heart rate could
+ * claim the walk as its own. Nothing claims a walk now (#167): every walk in a Workout is the walk
+ * the Workout prescribed, so what is left is the readout alone, which is exactly what CONTEXT.md
+ * means by a Trigger — a record of where heart rate went, and never a verdict on the runner. The
+ * live screen marks the second on the interval timeline, and [IntervalTracker] saves it with the
+ * Interval.
  *
  * Forgotten at each run Interval's start and again when the Workout's last Interval is behind the
- * Run, so one Interval's high heart rate can never explain the next one's walk.
+ * Run, so one Interval's high heart rate is never shown against the next one.
  */
-data class WalkDecision(
-    val reason: WalkReason = WalkReason.PLANNED,
+data class Trigger(
     /** Whether the runner's heart rate went above target during the run Interval in progress. */
-    val hrCapExceededInInterval: Boolean = false,
+    val occurred: Boolean = false,
     /** How far into that Interval it first did. */
-    val hrCapExceededAtSecond: Int? = null,
+    val atSecond: Int? = null,
 ) {
     /**
-     * The runner was sent walking by their heart rate, [secondIntoInterval] seconds in.
-     *
-     * Settled here rather than at the handover because the runner is being asked to walk now, and
-     * the live screen has to be able to say why now.
+     * The coach spoke about a heart rate above target, [secondIntoInterval] seconds in. The first
+     * such second is the one kept — later ones in the same Interval do not overwrite it.
      */
-    fun triggered(secondIntoInterval: Int): WalkDecision =
-        if (hrCapExceededInInterval) copy(reason = WalkReason.HR_TRIGGERED)
-        else WalkDecision(
-            reason = WalkReason.HR_TRIGGERED,
-            hrCapExceededInInterval = true,
-            hrCapExceededAtSecond = secondIntoInterval,
-        )
-
-    /** The run Interval reached its prescribed end: the walk is whatever the Interval made it. */
-    fun atHandover(): WalkDecision =
-        copy(reason = if (hrCapExceededInInterval) WalkReason.HR_TRIGGERED else WalkReason.PLANNED)
+    fun triggered(secondIntoInterval: Int): Trigger =
+        if (occurred) this else Trigger(occurred = true, atSecond = secondIntoInterval)
 }

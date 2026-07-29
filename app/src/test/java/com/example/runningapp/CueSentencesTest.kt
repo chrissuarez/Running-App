@@ -17,10 +17,6 @@ class CueSentencesTest {
             CoachingCue("ease off", "Heart rate drifting up. Keep effort steady, or take a short walk break."),
             coachingCue(CueCondition.ABOVE_DRIFTING)
         )
-        assertEquals(
-            CoachingCue("ease off", "Heart rate high. Walk until your breathing settles."),
-            coachingCue(CueCondition.ABOVE_WALK_BREAK)
-        )
         assertEquals(CoachingCue("ease off", "Ease off slightly."), coachingCue(CueCondition.ABOVE))
         assertEquals(CoachingCue("pick it up", "Gently increase pace."), coachingCue(CueCondition.BELOW))
         assertEquals(CoachingCue("on target", "Back on target."), coachingCue(CueCondition.RETURNED))
@@ -47,27 +43,40 @@ class CueSentencesTest {
     }
 
     @Test
-    fun `high cue picks drift over walk-break over plain ease-off`() {
-        // Drifting: past 20 min, within baseline + 12. Wins even on a structured run.
+    fun `high cue picks drift over the plain ease-off`() {
+        // Drifting: past 20 min, within baseline + 12.
         assertEquals(
             CueCondition.ABOVE_DRIFTING,
-            highCueCondition(secondsRunning = 1300, baselineHr = 150, avgBpm = 160, isStructured = true)
+            highCueCondition(secondsRunning = 1300, baselineHr = 150, avgBpm = 160)
         )
-        // Structured, not drifting (no baseline yet): the walk-break cue.
-        assertEquals(
-            CueCondition.ABOVE_WALK_BREAK,
-            highCueCondition(secondsRunning = 300, baselineHr = null, avgBpm = 175, isStructured = true)
-        )
-        // Unstructured, not drifting: the plain ease-off.
+        // Not drifting (no baseline yet): the plain ease-off.
         assertEquals(
             CueCondition.ABOVE,
-            highCueCondition(secondsRunning = 300, baselineHr = null, avgBpm = 175, isStructured = false)
+            highCueCondition(secondsRunning = 300, baselineHr = null, avgBpm = 175)
         )
         // Past 20 min but well above baseline+12 is real overexertion, not drift.
         assertEquals(
             CueCondition.ABOVE,
-            highCueCondition(secondsRunning = 1300, baselineHr = 150, avgBpm = 180, isStructured = false)
+            highCueCondition(secondsRunning = 1300, baselineHr = 150, avgBpm = 180)
         )
+    }
+
+    @Test
+    fun `only the drift cue mentions walking, and it offers rather than orders`() {
+        // ADR 0003: the above-target cue asks for a change of effort, and nothing follows from
+        // ignoring it. Pinning the whole set rather than grepping for the deleted wording — any
+        // newly worded order to walk shows up here as a condition that should not mention walking.
+        assertEquals(
+            "Ease off slightly.",
+            coachingCue(highCueCondition(secondsRunning = 300, baselineHr = null, avgBpm = 175)).spoken
+        )
+
+        val mentionWalking = CueCondition.entries.filter {
+            coachingCue(it).spoken?.contains("walk", ignoreCase = true) == true
+        }
+        assertEquals(listOf(CueCondition.ABOVE_DRIFTING), mentionWalking)
+        // And it offers one as a way to hold effort steady, rather than instructing one.
+        assertTrue(coachingCue(CueCondition.ABOVE_DRIFTING).spoken!!.contains("or take a short walk break"))
     }
 
     @Test

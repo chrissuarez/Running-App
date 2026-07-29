@@ -110,9 +110,8 @@ data class HrState(
     val nextIntervalDurationSeconds: Int = 0,
     val workoutProgressPercent: Int = 0,
     val currentIntervalElapsedSeconds: Int = 0,
-    val currentWalkReason: String = "Planned",
-    val hrCapExceededInCurrentInterval: Boolean = false,
-    val hrCapExceededAtSecond: Int? = null,
+    val triggerInCurrentInterval: Boolean = false,
+    val triggerAtSecond: Int? = null,
     
     // Mission 4: Outdoor Running
     val distanceKm: Double = 0.0,
@@ -401,9 +400,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 nextIntervalDurationSeconds = intervals?.nextSeconds ?: 0,
                 workoutProgressPercent = intervals?.progressPercent ?: 0,
                 currentIntervalElapsedSeconds = intervals?.secondsElapsed ?: 0,
-                currentWalkReason = run.walkDecision.reason.label,
-                hrCapExceededInCurrentInterval = run.walkDecision.hrCapExceededInInterval,
-                hrCapExceededAtSecond = run.walkDecision.hrCapExceededAtSecond,
+                triggerInCurrentInterval = run.trigger.occurred,
+                triggerAtSecond = run.trigger.atSecond,
 
                 // The four the screen must only ever read off a live Run: its pinned target, the
                 // pair its zones are sliced from, its pinned mode, and the row the feedback sheet
