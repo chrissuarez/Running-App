@@ -26,10 +26,8 @@ import kotlin.math.roundToInt
 import com.example.runningapp.HrZone
 import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.data.HrSample
-import com.example.runningapp.data.IntervalCompletionBand
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
-import com.example.runningapp.data.classifyIntervalCompletionBand
 import com.example.runningapp.data.computeRunWalkIntervalAnalytics
 import com.example.runningapp.data.averagePace
 import com.example.runningapp.data.averagePaceText
@@ -234,26 +232,10 @@ fun SummaryStats(session: RunnerSession) {
     }
 }
 
-private data class RunWalkIntervalSummaryMetrics(
-    val totalIntervals: Int,
-    val cleanPercent: Int,
-    val avgTimeToTriggerSeconds: Int?,
-    val longestCleanSeconds: Int?,
-    val completionRatioPercent: Int,
-    val severeBreakdownCount: Int,
-    val severeBreakdownPercent: Int,
-    val poorToleranceCount: Int,
-    val poorTolerancePercent: Int,
-    val strainedCompletionCount: Int,
-    val strainedCompletionPercent: Int,
-    val strongCompletionCount: Int,
-    val strongCompletionPercent: Int
-)
-
 @Composable
 private fun RunWalkIntervalSummaryCard(intervalStats: List<RunWalkIntervalStat>) {
     val metrics = remember(intervalStats) {
-        computeRunWalkIntervalSummaryMetrics(intervalStats)
+        computeRunWalkIntervalAnalytics(intervalStats)
     }
 
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -266,31 +248,17 @@ private fun RunWalkIntervalSummaryCard(intervalStats: List<RunWalkIntervalStat>)
             Spacer(modifier = Modifier.height(12.dp))
 
             SummaryMetricRow("Total run intervals", "${metrics.totalIntervals}")
-            SummaryMetricRow("Average completion", "${metrics.completionRatioPercent}%")
-            SummaryMetricRow("% intervals without HR trigger", "${metrics.cleanPercent}%")
             SummaryMetricRow(
-                "Average time-to-trigger",
-                metrics.avgTimeToTriggerSeconds?.let { formatMinutesSeconds(it) } ?: "--"
+                "Intervals with no trigger",
+                "${metrics.intervalsWithNoTrigger} of ${metrics.totalIntervals}"
             )
             SummaryMetricRow(
-                "Longest clean interval",
-                metrics.longestCleanSeconds?.let { formatMinutesSeconds(it) } ?: "--"
+                "Average time before heart rate went above target",
+                metrics.avgSecondsBeforeTrigger?.let { formatMinutesSeconds(it) } ?: "--"
             )
             SummaryMetricRow(
-                "Severe breakdown (<30%)",
-                "${metrics.severeBreakdownCount} (${metrics.severeBreakdownPercent}%)"
-            )
-            SummaryMetricRow(
-                "Poor tolerance (30-59%)",
-                "${metrics.poorToleranceCount} (${metrics.poorTolerancePercent}%)"
-            )
-            SummaryMetricRow(
-                "Strained completion (60-89%)",
-                "${metrics.strainedCompletionCount} (${metrics.strainedCompletionPercent}%)"
-            )
-            SummaryMetricRow(
-                "Strong completion (>=90%)",
-                "${metrics.strongCompletionCount} (${metrics.strongCompletionPercent}%)"
+                "Longest interval with no trigger",
+                metrics.longestIntervalWithNoTriggerSeconds?.let { formatMinutesSeconds(it) } ?: "--"
             )
         }
     }
@@ -303,11 +271,16 @@ private fun SummaryMetricRow(label: String, value: String) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
+        // The label takes the leftover width and wraps; the value keeps whatever it needs. Without
+        // this a long label ("Average time before heart rate went above target") squeezes the number
+        // it belongs to off the row on a narrow phone.
         Text(
             text = label,
+            modifier = Modifier.weight(1f, fill = false),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        Spacer(modifier = Modifier.width(12.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.bodyLarge,
@@ -365,15 +338,6 @@ private fun RunWalkIntervalRawDataCard(intervalStats: List<RunWalkIntervalStat>)
 
 @Composable
 private fun RunWalkIntervalRawDataRow(stat: RunWalkIntervalStat) {
-    val completionBand = classifyIntervalCompletionBand(stat)
-    val completionPercent = if (stat.plannedDurationSeconds > 0) {
-        ((stat.actualRunningDurationBeforeHrTriggerSeconds.toDouble() / stat.plannedDurationSeconds.toDouble()) * 100.0)
-            .roundToInt()
-            .coerceAtMost(100)
-    } else {
-        0
-    }
-
     Column {
         Text(
             text = "Interval ${stat.intervalIndex + 1}",
@@ -383,7 +347,6 @@ private fun RunWalkIntervalRawDataRow(stat: RunWalkIntervalStat) {
         Spacer(modifier = Modifier.height(8.dp))
         SummaryMetricRow("Planned run duration", formatMinutesSeconds(stat.plannedDurationSeconds))
         SummaryMetricRow("Actual run before trigger", formatMinutesSeconds(stat.actualRunningDurationBeforeHrTriggerSeconds))
-        SummaryMetricRow("Completion", "$completionPercent%")
         SummaryMetricRow(
             "First HR trigger",
             stat.timeIntoIntervalWhenHrExceededCapSeconds?.let { formatMinutesSeconds(it) } ?: "None"
@@ -401,57 +364,8 @@ private fun RunWalkIntervalRawDataRow(stat: RunWalkIntervalStat) {
             "Avg recovery after trigger",
             stat.avgRecoverySecondsAfterTriggerInInterval?.roundToInt()?.let { formatMinutesSeconds(it) } ?: "--"
         )
-        SummaryMetricRow("Completion band", completionBand.label)
     }
 }
-
-private fun computeRunWalkIntervalSummaryMetrics(
-    intervalStats: List<RunWalkIntervalStat>
-): RunWalkIntervalSummaryMetrics {
-    val totalIntervals = intervalStats.size
-    if (totalIntervals == 0) {
-        return RunWalkIntervalSummaryMetrics(
-            totalIntervals = 0,
-            cleanPercent = 0,
-            avgTimeToTriggerSeconds = null,
-            longestCleanSeconds = null,
-            completionRatioPercent = 0,
-            severeBreakdownCount = 0,
-            severeBreakdownPercent = 0,
-            poorToleranceCount = 0,
-            poorTolerancePercent = 0,
-            strainedCompletionCount = 0,
-            strainedCompletionPercent = 0,
-            strongCompletionCount = 0,
-            strongCompletionPercent = 0
-        )
-    }
-    val analytics = computeRunWalkIntervalAnalytics(intervalStats)
-
-    return RunWalkIntervalSummaryMetrics(
-        totalIntervals = analytics.totalIntervals,
-        cleanPercent = analytics.cleanPercent,
-        avgTimeToTriggerSeconds = analytics.avgTimeToTriggerSeconds,
-        longestCleanSeconds = analytics.longestCleanSeconds,
-        completionRatioPercent = analytics.completionRatioPercent,
-        severeBreakdownCount = analytics.severeBreakdownCount,
-        severeBreakdownPercent = analytics.severeBreakdownPercent,
-        poorToleranceCount = analytics.poorToleranceCount,
-        poorTolerancePercent = analytics.poorTolerancePercent,
-        strainedCompletionCount = analytics.strainedCompletionCount,
-        strainedCompletionPercent = analytics.strainedCompletionPercent,
-        strongCompletionCount = analytics.strongCompletionCount,
-        strongCompletionPercent = analytics.strongCompletionPercent
-    )
-}
-
-private val IntervalCompletionBand.label: String
-    get() = when (this) {
-        IntervalCompletionBand.SEVERE_BREAKDOWN -> "Severe breakdown"
-        IntervalCompletionBand.POOR_TOLERANCE -> "Poor tolerance"
-        IntervalCompletionBand.STRAINED_COMPLETION -> "Strained completion"
-        IntervalCompletionBand.STRONG_COMPLETION -> "Strong completion"
-    }
 
 @Composable
 fun StatLarge(label: String, value: String) {

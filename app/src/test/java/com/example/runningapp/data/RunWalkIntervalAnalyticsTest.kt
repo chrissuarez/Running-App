@@ -6,7 +6,7 @@ import org.junit.Test
 class RunWalkIntervalAnalyticsTest {
 
     @Test
-    fun `computeRunWalkIntervalAnalytics classifies interval completion bands and summary rates`() {
+    fun `computeRunWalkIntervalAnalytics counts Intervals and times the first Trigger`() {
         val stats = listOf(
             stat(intervalIndex = 0, planned = 60, actual = 12, triggers = 1, triggerSecond = 12),
             stat(intervalIndex = 1, planned = 60, actual = 30, triggers = 1, triggerSecond = 30),
@@ -17,38 +17,33 @@ class RunWalkIntervalAnalyticsTest {
         val analytics = computeRunWalkIntervalAnalytics(stats)
 
         assertEquals(4, analytics.totalIntervals)
-        assertEquals(25, analytics.cleanPercent)
-        assertEquals(30, analytics.avgTimeToTriggerSeconds)
-        assertEquals(60, analytics.longestCleanSeconds)
-        assertEquals(63, analytics.completionRatioPercent)
-        assertEquals(1, analytics.severeBreakdownCount)
-        assertEquals(25, analytics.severeBreakdownPercent)
-        assertEquals(1, analytics.poorToleranceCount)
-        assertEquals(25, analytics.poorTolerancePercent)
-        assertEquals(1, analytics.strainedCompletionCount)
-        assertEquals(25, analytics.strainedCompletionPercent)
-        assertEquals(1, analytics.strongCompletionCount)
-        assertEquals(25, analytics.strongCompletionPercent)
+        assertEquals(1, analytics.intervalsWithNoTrigger)
+        assertEquals(30, analytics.avgSecondsBeforeTrigger)
+        assertEquals(60, analytics.longestIntervalWithNoTriggerSeconds)
     }
 
     @Test
-    fun `classifyIntervalCompletionBand uses completion ratio bands`() {
-        assertEquals(
-            IntervalCompletionBand.SEVERE_BREAKDOWN,
-            classifyIntervalCompletionBand(stat(intervalIndex = 0, planned = 60, actual = 17, triggers = 1, triggerSecond = 17))
+    fun `an Interval run in full is not counted against a Run that never Triggered`() {
+        val stats = listOf(
+            stat(intervalIndex = 0, planned = 300, actual = 300, triggers = 0, triggerSecond = null),
+            stat(intervalIndex = 1, planned = 300, actual = 120, triggers = 0, triggerSecond = null)
         )
-        assertEquals(
-            IntervalCompletionBand.POOR_TOLERANCE,
-            classifyIntervalCompletionBand(stat(intervalIndex = 0, planned = 60, actual = 18, triggers = 1, triggerSecond = 18))
-        )
-        assertEquals(
-            IntervalCompletionBand.STRAINED_COMPLETION,
-            classifyIntervalCompletionBand(stat(intervalIndex = 0, planned = 60, actual = 36, triggers = 1, triggerSecond = 36))
-        )
-        assertEquals(
-            IntervalCompletionBand.STRONG_COMPLETION,
-            classifyIntervalCompletionBand(stat(intervalIndex = 0, planned = 60, actual = 54, triggers = 1, triggerSecond = 54))
-        )
+
+        val analytics = computeRunWalkIntervalAnalytics(stats)
+
+        assertEquals(2, analytics.intervalsWithNoTrigger)
+        assertEquals(null, analytics.avgSecondsBeforeTrigger)
+        assertEquals(300, analytics.longestIntervalWithNoTriggerSeconds)
+    }
+
+    @Test
+    fun `a Run with no Intervals reports nothing rather than zero seconds`() {
+        val analytics = computeRunWalkIntervalAnalytics(emptyList())
+
+        assertEquals(0, analytics.totalIntervals)
+        assertEquals(0, analytics.intervalsWithNoTrigger)
+        assertEquals(null, analytics.avgSecondsBeforeTrigger)
+        assertEquals(null, analytics.longestIntervalWithNoTriggerSeconds)
     }
 
     private fun stat(
