@@ -1023,11 +1023,14 @@ class SessionRepositoryTest {
     }
 
     @Test
-    fun `a stage offering no workout of the run type stores no prescription`() = runTest {
+    fun `a stage offering no workout of the run type is not evaluated at all`() = runTest {
         // Stage 3 is two hard days and no endurance run, so a Long prescription there has nothing to
         // be floored at (#176) — and its own first Workout is a Quality one, which is exactly the
-        // slot a prescription reasoned about a Long Run must never land in. The debrief is about the
-        // Run just finished, so it still stands.
+        // slot a prescription reasoned about a Long Run must never land in.
+        //
+        // The coach is not asked either. The way to arrive here is an earlier evaluation graduating
+        // the plan while this Long Run was still going, so the stage on the way out is one the Run
+        // was never judged against — and its debrief would land on top of the graduation's own.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
         val mockCoach: AiCoachClient = mock()
         val repo = SessionRepository(
@@ -1059,11 +1062,9 @@ class SessionRepositoryTest {
 
         repo.evaluateAndAdjustPlan("sub_25_peak", RunType.LONG)
 
+        verify(mockCoach, never()).evaluateProgress(any())
         verify(mockPrescriptions, never()).prescribe(any(), any(), any())
-        verify(mockSettingsRepo).setLatestCoachMessage(
-            "Good session.",
-            CoachWriteScope("5k_sub_25", "sub_25_peak")
-        )
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
     }
 
     @Test
