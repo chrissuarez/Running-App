@@ -50,13 +50,24 @@ object ArchiveNames {
     fun inProgressName(atEpochMillis: Long, zoneId: ZoneId = ZoneId.systemDefault()): String =
         archiveName(atEpochMillis, zoneId) + IN_PROGRESS_EXTENSION
 
+    /**
+     * The exact shape of a name this app wrote: the prefix, a timestamp of the fixed width
+     * [TIMESTAMP_FORMAT] produces, and nothing else before the extension.
+     *
+     * Matched whole rather than by prefix and suffix, because these two predicates are the ones that
+     * decide what [retire] *deletes*, and the folder belongs to the runner, not to this app. A file
+     * they called `running-app-archive-family.zip` sits between the same two ends as a real archive
+     * and would otherwise be retired as one — the folder's fourth archive deleting a photo album.
+     */
+    private val ARCHIVE_NAME = Regex("""^\Q$PREFIX\E\d{4}-\d{2}-\d{2}-\d{4}\Q$EXTENSION\E$""")
+    private val IN_PROGRESS_NAME =
+        Regex("""^\Q$PREFIX\E\d{4}-\d{2}-\d{2}-\d{4}\Q$EXTENSION$IN_PROGRESS_EXTENSION\E$""")
+
     /** Whether a file in the folder is one of this app's finished archives. */
-    fun isArchive(fileName: String): Boolean =
-        fileName.startsWith(PREFIX) && fileName.endsWith(EXTENSION)
+    fun isArchive(fileName: String): Boolean = ARCHIVE_NAME.matches(fileName)
 
     /** Whether a file is the wreckage of an archive that never finished. */
-    fun isAbandoned(fileName: String): Boolean =
-        fileName.startsWith(PREFIX) && fileName.endsWith(IN_PROGRESS_EXTENSION)
+    fun isAbandoned(fileName: String): Boolean = IN_PROGRESS_NAME.matches(fileName)
 
     /**
      * Which of the folder's files a completed backup should now delete.
