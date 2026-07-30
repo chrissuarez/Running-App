@@ -15,6 +15,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -51,11 +52,15 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import com.example.runningapp.archive.MonthlyArchiveWorker
+import com.example.runningapp.archive.SafArchiveFolder
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.export.gpxShareChooser
 import com.example.runningapp.foreground.isAcquiringStrap
 import com.example.runningapp.navigation.Routes
 import com.example.runningapp.ui.FeelFeedbackSheet
+import com.example.runningapp.ui.BackupViewModel
+import com.example.runningapp.ui.BackupViewModelFactory
 import com.example.runningapp.ui.HistoryScreen
 import com.example.runningapp.ui.HistoryViewModel
 import com.example.runningapp.ui.HistoryViewModelFactory
@@ -64,6 +69,7 @@ import com.example.runningapp.ui.SessionDetailViewModel
 import com.example.runningapp.ui.SessionDetailViewModelFactory
 import com.example.runningapp.ui.SettingsScreen
 import com.example.runningapp.ui.TrainingPlanScreen
+import com.example.runningapp.ui.backupResultMessage
 import com.example.runningapp.ui.strapRowSummary
 import com.example.runningapp.ui.theme.RunningAppTheme
 import com.example.runningapp.ui.theme.RunningUiTokens
@@ -180,6 +186,11 @@ class MainActivity : ComponentActivity() {
         // is the launch that finishes it (#192).
         runningAppContainer().rescueInterruptedRunsOnce()
 
+        // Keeps the monthly full archive scheduled (#85). Called on every launch and cheap every
+        // time: an existing schedule is left exactly where it is, so this only ever creates the job
+        // the first time, or after the runner has cleared the app's data.
+        MonthlyArchiveWorker.schedule(this)
+
         setContent {
             RunningAppTheme {
                 Surface(
@@ -219,6 +230,23 @@ class MainActivity : ComponentActivity() {
                     val sessionDetailViewModel: SessionDetailViewModel = viewModel(
                         factory = SessionDetailViewModelFactory(sessionRepository, appContainer.gpxFileStore)
                     )
+                    val backupViewModel: BackupViewModel = viewModel(
+                        factory = BackupViewModelFactory(appContainer.archiver, settingsRepository)
+                    )
+                    val backingUp by backupViewModel.backingUp.collectAsState()
+                    val backupOutcome by backupViewModel.lastOutcome.collectAsState()
+                    val pickBackupFolder = rememberLauncherForActivityResult(
+                        ActivityResultContracts.OpenDocumentTree()
+                    ) { treeUri ->
+                        // Taken here, while the grant this Activity was handed is still alive:
+                        // without it the monthly job would find the folder closed the first time it
+                        // ran, months later.
+                        if (treeUri != null) {
+                            SafArchiveFolder.takePersistedAccess(this@MainActivity, treeUri)
+                        }
+                        backupViewModel.folderChosen(treeUri?.toString())
+                    }
+
                     val gpxShareReady by sessionDetailViewModel.gpxShareReady.collectAsState()
                     val gpxShareFailed by sessionDetailViewModel.gpxShareFailed.collectAsState()
                     val selectedSessionIds by historyViewModel.selectedSessionIds.collectAsState()
@@ -444,7 +472,22 @@ class MainActivity : ComponentActivity() {
                                     scope.launch(Dispatchers.IO) { settingsRepository.setTestingModeEnabled(enabled) }
                                 },
                                 onManageStrap = { navigateTo(Routes.MANAGE_DEVICES) },
-                                onBack = { navigateTo(Routes.MAIN) }
+                                onPickBackupFolder = { thenBackUp ->
+                                    backupViewModel.folderPickerOpened(thenBackUp)
+                                    // null starts the picker at the system's own default rather
+                                    // than anywhere this app chooses for them.
+                                    pickBackupFolder.launch(null)
+                                },
+                                onBackUpNow = backupViewModel::backUpNow,
+                                backingUp = backingUp,
+                                backupResult = backupResultMessage(backupOutcome),
+                                onBack = {
+                                    // The result belonged to the visit that asked for it; coming
+                                    // back to Settings later should read the last-backup time, not
+                                    // an announcement about a backup made some time ago.
+                                    backupViewModel.resultShown()
+                                    navigateTo(Routes.MAIN)
+                                }
                             )
                         }
                         composable(Routes.HISTORY) {
