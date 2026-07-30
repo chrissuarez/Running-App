@@ -2,8 +2,10 @@ package com.example.runningapp.ui.workout
 
 import com.example.runningapp.CoachPrescription
 import com.example.runningapp.HrZone
+import com.example.runningapp.RunType
 import com.example.runningapp.UserSettings
 import com.example.runningapp.WorkoutTemplate
+import com.example.runningapp.pickedOrFirst
 import com.example.runningapp.targetHrZone
 import com.example.runningapp.withCoachPrescription
 
@@ -29,7 +31,34 @@ data class TodayCardUiState(
     /** Named change and why, when the coach edited today's numbers. Null when it didn't. */
     val coachNote: String?,
     /** The one link inside the card, bottom-right — an edit to the card, not an alternative to START. */
-    val link: TodayCardLink
+    val link: TodayCardLink,
+    /**
+     * The Stage's Workouts, one per Run Type, for the runner to pick today's from (#174). Empty on
+     * an open run, which has no Stage to pick from.
+     */
+    val choices: List<TodayCardChoice>
+)
+
+/**
+ * One of the Stage's Workouts, offered as today's Run (#174).
+ *
+ * The Plan is a menu, not a cursor: all three are always on offer, in the order the Stage declares
+ * them, and picking is the whole of choosing today's Run. Nothing here remembers a position in a
+ * week, so there is no rule to invent for a missed Run or two in a day.
+ */
+data class TodayCardChoice(
+    val workoutId: String,
+    /** "Long", "Easy" or "Quality" — what makes the three differ in kind rather than length. */
+    val runTypeLabel: String,
+    /** The Workout's own name, e.g. "Endurance Walk-Run". */
+    val title: String,
+    /**
+     * "3 × (10 min run / 2 min walk) · ≈ 47 min" — the shape and the total, at the numbers this
+     * Workout will actually be run at, prescription included.
+     */
+    val summaryLine: String,
+    /** Whether this is today's Run. Exactly one choice is selected whenever there are any. */
+    val selected: Boolean
 )
 
 enum class TodayCardLinkKind {
@@ -48,20 +77,27 @@ data class TodayCardLink(val kind: TodayCardLinkKind, val label: String)
 /**
  * The card's full state for one morning.
  *
- * [baseWorkout] is the plan's queued workout *before* the coach's prescription — this applies it, so
- * the card and the run resolve today's numbers through the same function. A null [baseWorkout] (no
- * plan) and [skippedToday] both produce the open-run card; only [link] tells them apart.
+ * [stageWorkouts] are the Stage's own Workouts *before* the coach's prescription — this applies it,
+ * so the card and the run resolve today's numbers through the same function. An empty
+ * [stageWorkouts] (no plan) and [skippedToday] both produce the open-run card; only [link] tells
+ * them apart.
+ *
+ * [pickedWorkoutId] is the runner's choice of today's Run (#174), and the Stage's first Workout
+ * until they make one. An id that names nothing here — the Stage changed under a stale pick — falls
+ * back to that same first Workout rather than leaving the card with nothing to be about.
  */
 fun todayCardUiState(
     stageTitle: String?,
-    baseWorkout: WorkoutTemplate?,
+    stageWorkouts: List<WorkoutTemplate>,
+    pickedWorkoutId: String?,
     settings: UserSettings,
     prescription: CoachPrescription?,
     nowEpochMillis: Long,
     runMode: String,
     skippedToday: Boolean
 ): TodayCardUiState {
-    val planned = baseWorkout?.withCoachPrescription(prescription, nowEpochMillis)
+    val picked = stageWorkouts.pickedOrFirst(pickedWorkoutId)
+    val planned = picked?.withCoachPrescription(prescription, nowEpochMillis)
 
     if (planned == null || skippedToday) {
         return TodayCardUiState(
@@ -73,11 +109,14 @@ fun todayCardUiState(
             targetPill = targetPill(settings.targetHrZone),
             envelopeLine = null,
             coachNote = null,
-            link = if (baseWorkout != null) {
-                TodayCardLink(TodayCardLinkKind.UNDO, "Bring back ${baseWorkout.title}")
+            link = if (picked != null) {
+                TodayCardLink(TodayCardLinkKind.UNDO, "Bring back ${picked.title}")
             } else {
                 TodayCardLink(TodayCardLinkKind.CHOOSE_PLAN, "Choose a plan")
-            }
+            },
+            // Nothing is being picked from on a day the plan isn't being run: the link back is the
+            // only choice the open-run card offers.
+            choices = emptyList()
         )
     }
 
@@ -87,9 +126,28 @@ fun todayCardUiState(
         detailLine = intervalShape(planned),
         targetPill = targetPill(HrZone.ofNumberOrDefault(planned.targetZone)),
         envelopeLine = envelopeLine(planned),
-        coachNote = coachNote(baseWorkout, planned, settings),
-        link = TodayCardLink(TodayCardLinkKind.SKIP, "Skip today")
+        coachNote = coachNote(picked, planned, settings),
+        link = TodayCardLink(TodayCardLinkKind.SKIP, "Skip today"),
+        choices = stageWorkouts.map { workout ->
+            // Each choice asks the prescription for itself rather than borrowing today's answer:
+            // the floor (#170) is measured against the workout being adapted, so the same standing
+            // prescription can move one of the three and leave another as the plan wrote it.
+            val asRun = workout.withCoachPrescription(prescription, nowEpochMillis)
+            TodayCardChoice(
+                workoutId = workout.id,
+                runTypeLabel = runTypeLabel(workout.runType),
+                title = workout.title,
+                summaryLine = "${intervalShape(asRun)} · ≈ ${totalMinutes(asRun)} min",
+                selected = workout.id == picked.id
+            )
+        }
     )
+}
+
+private fun runTypeLabel(runType: RunType): String = when (runType) {
+    RunType.LONG -> "Long"
+    RunType.EASY -> "Easy"
+    RunType.QUALITY -> "Quality"
 }
 
 private fun targetPill(zone: HrZone): String = "Target: ${zone.zoneName}"
@@ -144,11 +202,11 @@ private fun totalMinutes(workout: WorkoutTemplate): Int {
  * text still shows in its own slot on the screen when there is no prescription for it to explain.
  */
 private fun coachNote(
-    baseWorkout: WorkoutTemplate,
+    picked: WorkoutTemplate,
     planned: WorkoutTemplate,
     settings: UserSettings
 ): String? {
-    if (planned == baseWorkout) return null
+    if (planned == picked) return null
     val message = settings.latestCoachMessage?.takeIf { it.isNotBlank() }
         ?: return "Coach: Today's intervals were adjusted for you."
     return "Coach: ${firstSentence(message)}"

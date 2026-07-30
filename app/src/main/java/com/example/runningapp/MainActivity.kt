@@ -21,6 +21,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -71,6 +72,7 @@ import com.example.runningapp.ui.workout.FullScreenMapScreen
 import com.example.runningapp.ui.workout.MapCard
 import com.example.runningapp.ui.workout.TimelineMarkerType
 import com.example.runningapp.ui.workout.TimelineSegmentType
+import com.example.runningapp.ui.workout.TodayCardChoice
 import com.example.runningapp.ui.workout.TodayCardLinkKind
 import com.example.runningapp.ui.workout.TodayCardUiState
 import com.example.runningapp.ui.workout.todayCardUiState
@@ -104,8 +106,16 @@ class MainActivity : ComponentActivity() {
     }
 
     // A START tap that had to ask for location first parks here until the
-    // dialog resolves, then the run starts from the launcher callback.
-    private var pendingStartRun: Pair<Boolean, String>? = null
+    // dialog resolves, then the run starts from the launcher callback. Whole,
+    // including which Workout was picked (#174): the tap is replayed as it was
+    // made, not re-read from a screen that has been sitting behind a dialog.
+    private data class PendingStartRun(
+        val skipPlan: Boolean,
+        val runMode: String,
+        val pickedWorkoutId: String?
+    )
+
+    private var pendingStartRun: PendingStartRun? = null
 
     // A Manage Devices scan tap that had to ask for BLUETOOTH_SCAN first.
     // Unlike START (which proceeds even on denial — GPS is a sensor, #110),
@@ -117,9 +127,9 @@ class MainActivity : ComponentActivity() {
             // Resume a START that was waiting on the location dialog. The gate
             // was only "having asked" (#110) — the run starts whether or not
             // the dialog was granted; denied just means no GPS this run.
-            pendingStartRun?.let { (skipPlan, runMode) ->
+            pendingStartRun?.let { parked ->
                 pendingStartRun = null
-                sendStartRun(skipPlan, runMode)
+                sendStartRun(parked.skipPlan, parked.runMode, parked.pickedWorkoutId)
             }
             if (pendingScan) {
                 pendingScan = false
@@ -138,7 +148,7 @@ class MainActivity : ComponentActivity() {
         ContextCompat.startForegroundService(this, intent)
     }
 
-    private fun sendStartRun(skipPlan: Boolean, runMode: String) {
+    private fun sendStartRun(skipPlan: Boolean, runMode: String, pickedWorkoutId: String?) {
         // START begins the run regardless of the strap (#110): the service
         // opens the record and starts the clock, then acquires the strap as a
         // sensor alongside. The mode travels with the intent so a just-tapped
@@ -148,6 +158,9 @@ class MainActivity : ComponentActivity() {
             action = HrForegroundService.ACTION_START_RUN
             putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
             putExtra(HrForegroundService.EXTRA_RUN_MODE, runMode)
+            // The Workout picked on the card travels with START, so the run is the one the card
+            // was showing (#174).
+            putExtra(HrForegroundService.EXTRA_WORKOUT_ID, pickedWorkoutId)
         }
         ContextCompat.startForegroundService(this, intent)
     }
@@ -229,7 +242,7 @@ class MainActivity : ComponentActivity() {
                                 coachPrescription = coachPrescription,
                                 sessionRepository = sessionRepository,
                                 onRequestPermissions = { checkAndRequestPermissions() },
-                                onStartRun = { skipPlan, runMode ->
+                                onStartRun = { skipPlan, runMode, pickedWorkoutId ->
                                     // An Outdoor run without location permission would silently
                                     // record 0 km (LocationTracker just logs and returns): ask
                                     // first instead of starting blind. The tap is parked in
@@ -241,10 +254,11 @@ class MainActivity : ComponentActivity() {
                                             this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION
                                         ) != PackageManager.PERMISSION_GRANTED
                                     if (needsLocation) {
-                                        pendingStartRun = skipPlan to runMode
+                                        pendingStartRun =
+                                            PendingStartRun(skipPlan, runMode, pickedWorkoutId)
                                         checkAndRequestPermissions()
                                     } else {
-                                        sendStartRun(skipPlan, runMode)
+                                        sendStartRun(skipPlan, runMode, pickedWorkoutId)
                                     }
                                 },
                                 onRetryStrap = {
@@ -308,13 +322,16 @@ class MainActivity : ComponentActivity() {
                                 onOpenFullScreenMap = {
                                     navigateTo(Routes.MAP)
                                 },
-                                onToggleSimulation = { simulationEnabled, skipPlan ->
+                                onToggleSimulation = { simulationEnabled, skipPlan, pickedWorkoutId ->
                                     scope.launch(Dispatchers.IO) {
                                         settingsRepository.setSimulationEnabled(simulationEnabled)
                                         val simulationIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                             action = HrForegroundService.ACTION_SET_SIMULATION
                                             putExtra(HrForegroundService.EXTRA_SIMULATION_ENABLED, simulationEnabled)
                                             putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
+                                            // Turning simulation on starts a run, so it carries the
+                                            // pick for the same reason START does (#174).
+                                            putExtra(HrForegroundService.EXTRA_WORKOUT_ID, pickedWorkoutId)
                                         }
                                         ContextCompat.startForegroundService(this@MainActivity, simulationIntent)
                                     }
@@ -603,7 +620,7 @@ fun MainScreen(
     sessionRepository: SessionRepository,
     paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
-    onStartRun: (Boolean, String) -> Unit,
+    onStartRun: (Boolean, String, String?) -> Unit,
     onRetryStrap: () -> Unit,
     onTogglePause: () -> Unit,
     onStopSession: () -> Unit,
@@ -614,7 +631,7 @@ fun MainScreen(
     onOpenManageDevices: () -> Unit,
     onOpenTrainingPlan: () -> Unit,
     onOpenFullScreenMap: () -> Unit,
-    onToggleSimulation: (Boolean, Boolean) -> Unit,
+    onToggleSimulation: (Boolean, Boolean, String?) -> Unit,
     onRunModeChange: (String) -> Unit
 ) {
     // Skip today's plan (#107): a today-only choice that runs open-ended without touching the plan.
@@ -628,10 +645,15 @@ fun MainScreen(
     var selectedRunMode by rememberSaveable { mutableStateOf(userSettings.runMode) }
     LaunchedEffect(userSettings.runMode) { selectedRunMode = userSettings.runMode }
 
+    // Which of the stage's Workouts today is (#174). Screen state, saved the same way the skip
+    // choice is so a rotation doesn't undo the tap — and nowhere else, ever. Nothing writes a
+    // position in the Plan down, because the Plan is a menu and has no position to write.
+    var pickedWorkoutId by rememberSaveable { mutableStateOf<String?>(null) }
+
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
     val activeStage = activePlan?.stages?.firstOrNull { it.id == userSettings.activeStageId } ?: activePlan?.stages?.firstOrNull()
-    val baseWorkout = activeStage?.workouts?.firstOrNull()
+    val stageWorkouts = activeStage?.workouts.orEmpty()
     // No testing-mode check: turning testing mode on erases the debrief, and the coach is refused
     // the write while it stays on, so there is nothing left to filter out on read (#113).
     val coachMessage = userSettings.latestCoachMessage?.takeIf { it.isNotBlank() }
@@ -639,13 +661,18 @@ fun MainScreen(
     // read the same numbers — see withCoachPrescription (#111).
     val todayCard = todayCardUiState(
         stageTitle = activeStage?.title,
-        baseWorkout = baseWorkout,
+        stageWorkouts = stageWorkouts,
+        pickedWorkoutId = pickedWorkoutId,
         settings = userSettings,
         prescription = coachPrescription,
         nowEpochMillis = System.currentTimeMillis(),
         runMode = selectedRunMode,
         skippedToday = skipPlanToday
     )
+
+    // Taken from the card rather than from the pick itself, so START runs exactly what the card is
+    // showing — including where a stale pick has already fallen back to the stage's first (#174).
+    val todaysWorkoutId = todayCard.choices.firstOrNull { it.selected }?.workoutId
 
     val isSessionActive = state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED
 
@@ -738,6 +765,7 @@ fun MainScreen(
                     item {
                         TodayCard(
                             state = todayCard,
+                            onPickWorkout = { pickedWorkoutId = it },
                             onSkipToday = { skipPlanToday = true },
                             onUndoSkip = { skipPlanToday = false },
                             onChoosePlan = onOpenTrainingPlan
@@ -833,7 +861,9 @@ fun MainScreen(
                             Text("Permissions")
                         }
                         Button(
-                            onClick = { onToggleSimulation(!state.isSimulating, skipPlanToday) },
+                            onClick = {
+                                onToggleSimulation(!state.isSimulating, skipPlanToday, todaysWorkoutId)
+                            },
                             colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer) else ButtonDefaults.buttonColors(),
                             modifier = Modifier
                                 .weight(1f)
@@ -870,7 +900,7 @@ fun MainScreen(
                     connectionStatus = state.connectionStatus,
                     strapConnected = state.connectionStatus == "Connected",
                     isSimulating = state.isSimulating,
-                    onStart = { onStartRun(skipPlanToday, selectedRunMode) },
+                    onStart = { onStartRun(skipPlanToday, selectedRunMode, todaysWorkoutId) },
                     // The activity-level handler re-acquires via the service intent (saved strap
                     // first, scan fallback) — no direct binder connect here, which would race the
                     // intent-based connect paths.
@@ -1066,13 +1096,19 @@ private fun MainBottomBar(
 /**
  * Renders [TodayCardUiState] — which is where what this card is and why lives.
  *
- * The one shape decision that belongs here: the link is a text link inside the card, bottom-right,
- * so it reads as an edit to the card it sits in rather than an alternative to starting — and undo
- * lands in the exact slot skip vacated, because the slot is the same one either way.
+ * Two shape decisions belong here. The link is a text link inside the card, bottom-right, so it
+ * reads as an edit to the card it sits in rather than an alternative to starting — and undo lands
+ * in the exact slot skip vacated, because the slot is the same one either way.
+ *
+ * And where a Stage offers a choice (#174), today's Run keeps the heading it always had and the
+ * three Workouts sit under it as rows. The heading is what the card is *about* — it carries the
+ * target and the coach's note, which belong to the Run being started and to no other row — so the
+ * rows are the menu it was chosen from, with the current choice highlighted among them.
  */
 @Composable
 fun TodayCard(
     state: TodayCardUiState,
+    onPickWorkout: (String) -> Unit,
     onSkipToday: () -> Unit,
     onUndoSkip: () -> Unit,
     onChoosePlan: () -> Unit
@@ -1113,6 +1149,19 @@ fun TodayCard(
                     color = MaterialTheme.colorScheme.secondary
                 )
             }
+            if (state.choices.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "TODAY'S RUN",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                state.choices.forEach { choice ->
+                    WorkoutChoiceRow(choice = choice, onPick = { onPickWorkout(choice.workoutId) })
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -1139,6 +1188,41 @@ fun TodayCard(
                         .padding(horizontal = 4.dp)
                 )
             }
+        }
+    }
+}
+
+/**
+ * One of the Stage's Workouts, offered as today's Run (#174).
+ *
+ * A radio, not a button: picking one is choosing among three, and the two not picked stay on the
+ * screen as what they are — still offered, not dismissed.
+ */
+@Composable
+private fun WorkoutChoiceRow(choice: TodayCardChoice, onPick: () -> Unit) {
+    Surface(
+        shape = MaterialTheme.shapes.small,
+        color = if (choice.selected) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .selectable(selected = choice.selected, role = Role.RadioButton, onClick = onPick)
+            .heightIn(min = RunningUiTokens.MinTouchTarget)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Text(
+                text = "${choice.runTypeLabel.uppercase()} · ${choice.title}",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (choice.selected) FontWeight.Bold else FontWeight.Normal
+            )
+            Text(
+                text = choice.summaryLine,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

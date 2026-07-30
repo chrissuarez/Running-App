@@ -107,6 +107,17 @@ fun WorkoutTemplate.withCoachPrescription(
     )
 }
 
+/**
+ * Today's Workout out of the ones a Stage offers: the one picked, or the first until one is (#174).
+ *
+ * One home for the rule, because the card and the Run both ask it — and a card promising a Workout
+ * the Run then resolved differently is exactly the split that [WorkoutTemplate.withCoachPrescription]
+ * exists to prevent. Never null while the Stage has any Workout: an id naming nothing is a pick that
+ * outlived the Stage it was made in, not an instruction to run nothing.
+ */
+fun List<WorkoutTemplate>.pickedOrFirst(workoutId: String?): WorkoutTemplate? =
+    firstOrNull { it.id == workoutId } ?: firstOrNull()
+
 object TrainingPlanProvider {
     val plans = listOf(
         TrainingPlan(
@@ -237,8 +248,21 @@ object TrainingPlanProvider {
     }
 
     /**
-     * The single workout the app still queues on its own, until the runner does the picking: the
-     * stage's first, which in stage 1 is its Long run. Returns null when no plan is attached (#107).
+     * The Workout the runner picked as today's Run (#174), or the stage's first when they have not
+     * picked — which in stage 1 is its Long run. Returns null when no plan is attached (#107).
+     *
+     * A [workoutId] the stage does not offer falls back the same way rather than detaching the plan
+     * — see [pickedOrFirst], which is the rule the card asks too.
+     */
+    fun resolvePickedWorkout(
+        planId: String?,
+        stageId: String?,
+        workoutId: String?
+    ): WorkoutTemplate? = resolveStageWorkouts(planId, stageId).pickedOrFirst(workoutId)
+
+    /**
+     * The stage's own first workout, for the things that are about the stage rather than about
+     * today's Run — the AI coach's envelope, above all.
      */
     fun resolveBaseWorkout(planId: String?, stageId: String?): WorkoutTemplate? =
         resolveStageWorkouts(planId, stageId).firstOrNull()
