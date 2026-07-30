@@ -1,6 +1,7 @@
 package com.example.runningapp
 
 import android.content.Context
+import androidx.datastore.core.DataMigration
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -106,8 +107,8 @@ internal class CoachPrescriptionKeys private constructor(runType: RunType) {
  * The unsuffixed keys the single global prescription used before the split (#175).
  *
  * Read by nothing: a global prescription cannot say which kind of session it was about, and guessing
- * is the mistake the slots exist to make impossible. Named here only so the next clear takes them
- * away instead of leaving them in storage for good.
+ * is the mistake the slots exist to make impossible. Named here so [dropLegacyCoachWork] can take
+ * them away on upgrade instead of leaving them in storage for good.
  *
  * `internal` for the same reason the current keys are: one spelling of a key, so a test can assert
  * on these strings without a second copy of them.
@@ -119,6 +120,30 @@ internal val LEGACY_GLOBAL_KEYS: List<Preferences.Key<*>> = listOf(
     intPreferencesKey("coach_repeats"),
     longPreferencesKey("coach_prescribed_at")
 )
+
+/**
+ * Takes the abandoned global prescription away on the launch that upgrades, debrief included (#175).
+ *
+ * Dropping the numbers is not enough on its own. The debrief that explains them is stored separately
+ * and rendered on its own, so a legacy prescription that reads as nothing would leave the runner a
+ * card describing intervals that no run will do — until the next stage or coach reply happened to
+ * clear it. `clearCoachWork` exists precisely because the text and the numbers are one thing to
+ * invalidate, so the upgrade uses it.
+ *
+ * A DataStore migration rather than a clear folded into some later write, because a migration lands
+ * before the first read: there is no launch on which the orphaned text can be shown. It runs only
+ * when a legacy key is actually present, so an install that never had one is never rewritten.
+ */
+internal val dropLegacyCoachWork: DataMigration<Preferences> = object : DataMigration<Preferences> {
+
+    override suspend fun shouldMigrate(currentData: Preferences): Boolean =
+        LEGACY_GLOBAL_KEYS.any { currentData.contains(it) }
+
+    override suspend fun migrate(currentData: Preferences): Preferences =
+        currentData.toMutablePreferences().apply { clearCoachWork() }
+
+    override suspend fun cleanUp() = Unit
+}
 
 /**
  * Everything standing, read out of one snapshot of the preferences.
