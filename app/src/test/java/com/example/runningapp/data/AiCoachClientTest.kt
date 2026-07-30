@@ -14,7 +14,10 @@ class AiCoachClientTest {
                 durationSeconds = 1800,
                 avgHr = 125,
                 sessionType = "Run/Walk",
-                timestamp = 1_742_000_000_000
+                timestamp = 1_742_000_000_000,
+                runMode = "outdoor",
+                distanceKm = 5.4,
+                fastest5kSeconds = 1620
             )
         )
     )
@@ -51,35 +54,58 @@ class AiCoachClientTest {
     }
 
     @Test
-    fun `a Stage asking for a distance cannot be graduated from data that has none`() {
+    fun `a Stage asking for a 5K time is judged from the measured 5K and nothing else`() {
         val prompt = buildEvaluationPrompt(
             oneRunWalkSession.copy(graduationRequirement = "Successfully complete a 5K under 30 minutes.")
         )
 
-        assertTrue(prompt.contains("carries no distance or pace"))
-        assertTrue(prompt.contains("whole run including its warm-up and cool-down"))
+        assertTrue(prompt.contains("\"fastest5kSeconds\":1620"))
+        assertTrue(prompt.contains("whole run including its warm-up and cool-down, so it is NOT a 5K time"))
         assertTrue(
             prompt.contains(
-                "If the stage requirement asks for a distance, a pace, or a distance within a time, " +
-                    "you CANNOT verify it from this data. Set graduatedToNextStage to false"
+                "If the stage requirement asks for a 5K in a time, judge it ONLY from fastest5kSeconds."
             )
         )
     }
 
     @Test
-    fun `the missing distance is the coach's gap, not the app's`() {
+    fun `a 5K that was never measured cannot graduate a Stage, and the coach is told why`() {
         val prompt = buildEvaluationPrompt(
-            oneRunWalkSession.copy(graduationRequirement = "Run a 5K in 24:59 or faster.")
+            oneRunWalkSession.copy(
+                graduationRequirement = "Run a 5K in 24:59 or faster.",
+                recentRuns = oneRunWalkSession.recentRuns.map {
+                    it.copy(runMode = "treadmill", distanceKm = null, fastest5kSeconds = null)
+                }
+            )
         )
 
-        // An outdoor Run shows its distance on the Run detail screen and a treadmill Run has none at
-        // all, and nothing in this context says which this was — so the coach claims neither.
-        assertTrue(prompt.contains("you were not given this run's distance"))
-        assertTrue(prompt.contains("Do not say whether the app recorded it or not"))
+        // Sent as an explicit null rather than left out: a field that is simply missing is a field
+        // the model can read as an oversight, and this one is the whole of the evidence.
+        assertTrue(prompt.contains("\"fastest5kSeconds\":null"))
+        assertTrue(prompt.contains("\"distanceKm\":null"))
+        assertTrue(prompt.contains("If fastest5kSeconds is null, set graduatedToNextStage to false"))
+        // A treadmill Run has no distance to be given, an outdoor one does — so the run mode is sent
+        // and the coach says which of the two it is looking at rather than guessing.
+        assertTrue(prompt.contains("treadmill run with no distance recorded when runMode is 'treadmill'"))
+        assertTrue(prompt.contains("\"runMode\":\"treadmill\""))
     }
 
     @Test
-    fun `duration, average heart rate and Stage still reach the coach`() {
+    fun `a requirement the data cannot answer is still refused`() {
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(graduationRequirement = "Run 10K at 5:00 /km.")
+        )
+
+        assertTrue(
+            prompt.contains(
+                "If the stage requirement asks for any other distance or pace that fastest5kSeconds " +
+                    "does not answer, set graduatedToNextStage to false"
+            )
+        )
+    }
+
+    @Test
+    fun `duration, average heart rate, distance and Stage all reach the coach`() {
         val prompt = buildEvaluationPrompt(oneRunWalkSession)
 
         assertTrue(prompt.contains("Base Builder"))
@@ -87,6 +113,8 @@ class AiCoachClientTest {
         assertTrue(prompt.contains("\"durationSeconds\":1800"))
         assertTrue(prompt.contains("\"avgHr\":125"))
         assertTrue(prompt.contains("\"sessionType\":\"Run/Walk\""))
+        assertTrue(prompt.contains("\"runMode\":\"outdoor\""))
+        assertTrue(prompt.contains("\"distanceKm\":5.4"))
     }
 
     @Test
@@ -100,7 +128,10 @@ class AiCoachClientTest {
                         durationSeconds = 1800,
                         avgHr = 125,
                         sessionType = "Run/Walk",
-                        timestamp = 1_742_000_000_000
+                        timestamp = 1_742_000_000_000,
+                        runMode = "outdoor",
+                        distanceKm = 5.4,
+                        fastest5kSeconds = 1620
                     )
                 )
             )

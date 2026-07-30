@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.runningapp.BuildConfig
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 
 data class AiCoachResponse(
     val nextRunDurationSeconds: Int,
@@ -45,7 +46,7 @@ class AiCoachClient {
     suspend fun evaluateProgress(context: AiTrainingContext): AiCoachResponse? {
         require(apiKey.isNotBlank()) { "Gemini API key is missing" }
 
-        val prompt = buildEvaluationPrompt(context, gson)
+        val prompt = buildEvaluationPrompt(context)
 
         return try {
             val response = model.generateContent(prompt)
@@ -62,9 +63,16 @@ class AiCoachClient {
     }
 }
 
+/**
+ * Nulls are written out rather than dropped, which is Gson's default. A run with no measured 5K has
+ * to say so: a field that is simply absent reads as an oversight, and this one is the whole of the
+ * evidence a distance-and-time requirement is judged on (#182).
+ */
+private val recentRunsGson: Gson = GsonBuilder().serializeNulls().create()
+
 internal fun buildEvaluationPrompt(
     context: AiTrainingContext,
-    gson: Gson = Gson()
+    gson: Gson = recentRunsGson
 ): String = buildString {
     appendLine("You are an expert running coach.")
     appendLine("Analyze the user's last 3 runs against their current stage requirement: ${context.graduationRequirement}.")
@@ -74,19 +82,17 @@ internal fun buildEvaluationPrompt(
     appendLine("The recent runs data includes a 'sessionType' ('Run/Walk' for a structured plan workout, or 'Open Run' for an unplanned open-ended run).")
     appendLine("CRITICAL RULE: An 'Open Run' is an unplanned run with no interval structure. Do NOT set graduatedToNextStage to true based on Open Run sessions. Progression ONLY happens via 'Run/Walk' sessions.")
     // No Interval-quality metric is sent, and none is described here (#168) — see AiRecentRun.
-    appendLine("Judge the run from its duration and average heart rate against the stage requirement.")
-    // Duration is the whole run, warm-up and cool-down included, and no distance or pace is sent at
-    // all — so a requirement stated as a distance in a time cannot be checked from this data. The
-    // model would otherwise read a 26-minute run that covered 3K as a 5K pass, and one wrong true
-    // advances the stored stage on the spot. #182 sends the evidence; this stops the guess.
-    //
-    // The model is told to own the gap rather than describe the app's: an outdoor run's distance is
-    // on the run detail screen the whole time, so calling it unrecorded contradicts the screen the
-    // runner just came from — while a treadmill run has no GPS and genuinely has none. Nothing here
-    // says which this run was, so the only honest line is "I wasn't sent it".
-    appendLine("The recent runs data carries no distance or pace, and durationSeconds is the whole run including its warm-up and cool-down.")
-    appendLine("CRITICAL RULE: If the stage requirement asks for a distance, a pace, or a distance within a time, you CANNOT verify it from this data. Set graduatedToNextStage to false and say in coachMessage that you were not given this run's distance, so you cannot confirm the requirement yourself.")
-    appendLine("Say only that the distance was not given to you. Do not say whether the app recorded it or not — you have not been told either way.")
+    appendLine("Judge a duration-and-heart-rate requirement from the run's duration and average heart rate.")
+    // The evidence a 5K-in-a-time requirement needs, and the rule that stops it being answered from
+    // anything else (#182). durationSeconds is the whole run — an eight-minute warm-up walk and a
+    // three-minute cool-down are inside it — so judging a 5K by it fails both ways: a 26-minute run
+    // that covered 3K reads as a pass, and a genuine 24-minute 5K reads as 35 minutes and fails.
+    // One wrong true advances the stored stage on the spot, so fastest5kSeconds is the only field
+    // allowed to answer, and its absence is stated as an absence rather than left to inference.
+    appendLine("The recent runs data also includes 'runMode' ('outdoor' for a GPS-recorded run, 'treadmill' for one with no GPS), 'distanceKm' (the ground covered, null when none was recorded), and 'fastest5kSeconds' (the quickest continuous 5K inside that run, measured from its GPS track, null when the run never covered 5K in one continuous stretch of recording).")
+    appendLine("durationSeconds is the whole run including its warm-up and cool-down, so it is NOT a 5K time and must never be compared to one.")
+    appendLine("CRITICAL RULE: If the stage requirement asks for a 5K in a time, judge it ONLY from fastest5kSeconds. If fastest5kSeconds is null, set graduatedToNextStage to false, and say in coachMessage that this run does not contain a measured 5K — because it was a treadmill run with no distance recorded when runMode is 'treadmill', or because the run did not cover a continuous 5K otherwise.")
+    appendLine("CRITICAL RULE: If the stage requirement asks for any other distance or pace that fastest5kSeconds does not answer, set graduatedToNextStage to false and say in coachMessage that you cannot confirm that requirement from this run's data.")
     appendLine("Use this combined context to generate the exact intervals for their NEXT run.")
     appendLine("If they meet the requirement easily, and the data can actually establish that they met it, set graduatedToNextStage to true.")
     appendLine("Otherwise, adjust their run/walk intervals safely to build endurance.")

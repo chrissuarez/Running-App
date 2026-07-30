@@ -50,7 +50,23 @@ data class AiRecentRun(
     val durationSeconds: Long,
     val avgHr: Int,
     val sessionType: String,
-    val timestamp: Long
+    val timestamp: Long,
+    /**
+     * How the Run was recorded — "outdoor" or "treadmill". Sent so the coach can tell a distance it
+     * was not given from a distance that does not exist: a treadmill Run has no GPS and so no
+     * distance to send, and saying "I wasn't told" about it would be wrong in the other direction
+     * (#182).
+     */
+    val runMode: String,
+    /** The ground the Run covered, in kilometres. Null for a Run that recorded no distance. */
+    val distanceKm: Double?,
+    /**
+     * The quickest continuous 5K inside the Run, in seconds — the only number here that answers a
+     * requirement stated as a 5K in a time, because [durationSeconds] is the whole Run, warm-up and
+     * cool-down included. Null when the Run's track never covered 5K in one continuous stretch of
+     * recording, which is an absence of evidence and never a failed attempt (#182).
+     */
+    val fastest5kSeconds: Long?
 )
 
 data class AiTrainingContext(
@@ -511,7 +527,18 @@ class SessionRepository(
                 durationSeconds = session.durationSeconds,
                 avgHr = session.avgBpm,
                 sessionType = if (session.isRunWalkMode) AI_LABEL_RUN_WALK else AI_LABEL_OPEN_RUN,
-                timestamp = session.startTime
+                timestamp = session.startTime,
+                runMode = session.runMode,
+                // Zero is what a treadmill Run stores, and it is not a distance the coach should be
+                // reasoning from — a Run that covered no ground is a Run whose distance is unknown.
+                distanceKm = session.distanceKm.takeIf { it > 0 },
+                // Measured from the stored track rather than read off the Run: nothing records where
+                // the warm-up ended, so the fastest window is the only way to a 5K time the Phases
+                // either side of it have not inflated (#182).
+                fastest5kSeconds = measureFastestEffortSeconds(
+                    points = getTrackPointsForMap(session.id),
+                    targetMeters = FIVE_K_METERS
+                )
             )
         }
 
