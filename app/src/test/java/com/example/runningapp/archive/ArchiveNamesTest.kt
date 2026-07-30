@@ -102,4 +102,32 @@ class ArchiveNamesTest {
 
         assertEquals(listOf("running-app-archive-2026-05-01-0800.zip"), ArchiveNames.retire(names))
     }
+
+    @Test
+    fun `a runner's own file that merely starts the same way is not an archive`() {
+        listOf(
+            "running-app-archive-family.zip",
+            "running-app-archive-.zip",
+            "running-app-archive-2026-07-30-0712-copy.zip",
+            "running-app-archive-2026-07-30.zip",
+            "running-app-archive-2026-07-30-0712.zip.bak"
+        ).forEach { name ->
+            assertFalse(name, ArchiveNames.isArchive(name))
+            assertFalse(name, ArchiveNames.isAbandoned(name))
+        }
+    }
+
+    @Test
+    fun `a lookalike is never retired, however many real archives there are`() {
+        val names = listOf(
+            "running-app-archive-2026-05-01-0800.zip",
+            "running-app-archive-2026-06-01-0800.zip",
+            "running-app-archive-2026-07-01-0800.zip",
+            "running-app-archive-2026-08-01-0800.zip",
+            "running-app-archive-family.zip",
+            "running-app-archive-holiday.zip.part"
+        )
+
+        assertEquals(listOf("running-app-archive-2026-05-01-0800.zip"), ArchiveNames.retire(names))
+    }
 }

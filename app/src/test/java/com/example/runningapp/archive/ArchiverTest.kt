@@ -4,6 +4,9 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.OutputStream
 import java.time.ZoneId
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -210,6 +213,57 @@ class ArchiverTest {
         archiver(folder).archiveNow()
 
         assertEquals(listOf(expectedName), folder.files.keys.toList())
+    }
+
+    /**
+     * The button and the monthly job share one archiver, so this is the shape of a real overlap:
+     * the second attempt must not touch the folder while the first is still writing into it — they
+     * would be writing the same `.part` under the same name.
+     */
+    @Test
+    fun `a second backup asked for mid-write waits rather than joining in`() = runTest {
+        val folder = FakeFolder()
+        val firstIsWriting = CompletableDeferred<Unit>()
+        val letTheFirstFinish = CompletableDeferred<Unit>()
+        var isFirst = true
+        val archiver = archiver(folder, contents = {
+            if (isFirst) {
+                isFirst = false
+                firstIsWriting.complete(Unit)
+                letTheFirstFinish.await()
+            }
+            listOf(ArchiveEntry.ofText(ArchiveJson.FILE_NAME, "{}"))
+        })
+
+        val first = launch { archiver.archiveNow() }
+        firstIsWriting.await()
+        val second = launch { archiver.archiveNow() }
+        runCurrent()
+
+        // The first is suspended mid-write, so the folder has seen exactly its one write.
+        assertEquals(
+            listOf("write $expectedInProgressName"),
+            folder.log.filterNot { it == "list" }
+        )
+
+        letTheFirstFinish.complete(Unit)
+        first.join()
+        second.join()
+
+        // The second went the whole way round on its own afterwards, and both wrote the same name,
+        // so the folder is left holding one archive rather than a part-file and a casualty.
+        assertEquals(listOf(expectedName), folder.files.keys.toList())
+        assertEquals(
+            listOf(
+                "write $expectedInProgressName",
+                "delete $expectedName",
+                "rename $expectedInProgressName -> $expectedName",
+                "write $expectedInProgressName",
+                "delete $expectedName",
+                "rename $expectedInProgressName -> $expectedName"
+            ),
+            folder.log.filterNot { it == "list" }
+        )
     }
 
     @Test

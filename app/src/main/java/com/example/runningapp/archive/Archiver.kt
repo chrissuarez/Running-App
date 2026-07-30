@@ -3,6 +3,8 @@ package com.example.runningapp.archive
 import android.util.Log
 import java.io.OutputStream
 import java.time.ZoneId
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * The folder the runner picked, as the archive needs to see it (#85).
@@ -73,7 +75,21 @@ class Archiver(
     private val zoneId: ZoneId = ZoneId.systemDefault()
 ) {
 
-    suspend fun archiveNow(): ArchiveOutcome {
+    /**
+     * One backup at a time, whoever asked.
+     *
+     * The button and the monthly job share this one archiver, and two attempts overlapping would
+     * share more than they can: the same `.part` name, the same finished name, and the same local
+     * snapshot of the database. The second attempt's sweep would delete the first's part-file
+     * mid-write, and the first could record a last-backup time for an archive the second had already
+     * replaced. Serialised rather than refused, because both attempts are asking for the same true
+     * thing — an archive of the history as it stands — and the second simply gets it a moment later.
+     */
+    private val oneAtATime = Mutex()
+
+    suspend fun archiveNow(): ArchiveOutcome = oneAtATime.withLock { archive() }
+
+    private suspend fun archive(): ArchiveOutcome {
         val destination = try {
             folder()
         } catch (e: Exception) {
