@@ -778,7 +778,7 @@ object Run {
             durationSeconds = current.secondsRunning,
             pausedSeconds = current.secondsPaused,
             endedAtMillis = nowMillis,
-            isRunWalkMode = current.config?.isRunWalkMode ?: false,
+            runType = current.config?.workout?.runType,
             averageBpm = current.tally.averageBpm,
             maxBpm = current.tally.maxBpm,
             zoneSeconds = current.tally.zoneSeconds,

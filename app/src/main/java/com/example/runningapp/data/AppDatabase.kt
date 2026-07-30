@@ -766,8 +766,10 @@ private fun recomputeZoneSecondsFromHrSamples(database: SupportSQLiteDatabase, p
  * was. The new code treats the flag as the structured-workout truth for AI context and metrics, so
  * on upgraded databases it is wrong in both directions:
  *  - False positive: a run recorded with the coach toggle on but which never ran intervals has
- *    `isRunWalkMode = 1`. Because `evaluateAndAdjustPlan` now gates on this flag, such a row as the
- *    latest finalized session would send a non-plan run to Gemini and adjust or graduate the plan.
+ *    `isRunWalkMode = 1`, which read as a structured run it never was. At the time this also gated
+ *    `evaluateAndAdjustPlan`, so such a row as the latest finalized session would send a non-plan run
+ *    to Gemini and adjust or graduate the plan; that gate is a Run's Run Type now (#176), and the flag
+ *    is only the record's own label and its metrics.
  *  - False negative: a real run/walk run recorded with the toggle off has `isRunWalkMode = 0`.
  *
  * The one durable, trustworthy signal is `run_walk_interval_stats`: those rows are written only when

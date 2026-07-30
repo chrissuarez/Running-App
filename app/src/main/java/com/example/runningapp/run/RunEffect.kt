@@ -1,5 +1,6 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.RunType
 import com.example.runningapp.ZoneSeconds
 
 /**
@@ -12,15 +13,24 @@ data class RunTotals(
     val durationSeconds: Long,
     val pausedSeconds: Long,
     val endedAtMillis: Long,
-    /** Whether the Run followed a Workout. Drives the record's flag and whether the coach looks. */
-    val isRunWalkMode: Boolean,
+    /**
+     * The kind of work this Run was, from the Workout it followed — null when it followed none.
+     *
+     * It is what decides whether the coach looks at the Run at all (#176), so it travels with the
+     * totals rather than being read back off the row: a recorded Run has no Run Type column, and
+     * re-deriving one from the plan afterwards would answer for whatever the settings say *now*.
+     */
+    val runType: RunType?,
     val averageBpm: Int,
     val maxBpm: Int,
     val zoneSeconds: ZoneSeconds,
     val noDataSeconds: Long,
     /** How many times the coach sent the runner walking because their heart rate was high. */
     val walkBreaks: Int,
-)
+) {
+    /** Whether the Run followed a Workout — the record's own flag, and nothing more than that. */
+    val isRunWalkMode: Boolean get() = runType != null
+}
 
 /**
  * One second of a Run, as it is to be saved.

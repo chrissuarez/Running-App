@@ -652,10 +652,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 }
 
                 val stageId = currentSettings.activeStageId
-                if (stageId != null && totals.isRunWalkMode) {
+                if (stageId != null) {
                     if (updatedSession.includeInAiTraining && !currentSettings.testingModeEnabled) {
+                        // Whether this Run is one the coach adjusts is its Run Type's answer, given
+                        // once inside evaluateAndAdjustPlan (#176) — asking it here too would be the
+                        // same rule in two places, free to drift apart.
                         Log.d("AiCoach", "Triggering AI evaluation after session finalization for stage: $stageId")
-                        sessionRepository.evaluateAndAdjustPlan(stageId)
+                        sessionRepository.evaluateAndAdjustPlan(stageId, totals.runType)
                     } else {
                         Log.d(
                             "AiCoach",

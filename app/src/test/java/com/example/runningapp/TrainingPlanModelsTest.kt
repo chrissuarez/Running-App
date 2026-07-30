@@ -1,6 +1,7 @@
 package com.example.runningapp
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -228,6 +229,41 @@ class TrainingPlanModelsTest {
             TrainingPlanProvider.resolvePickedWorkout("5k_sub_25", "base_builder", "w2_s1")?.id
         )
         assertNull(TrainingPlanProvider.resolvePickedWorkout(null, "base_builder", "w1_long"))
+    }
+
+    @Test
+    fun `the coach adjusts the Long Run and nothing else`() {
+        // The one gate (#176). Easy is fixed at its continuous stretch and Quality at its strides;
+        // both are recorded in full and simply not adjusted.
+        assertTrue(RunType.LONG.isCoachAdjusted)
+        assertFalse(RunType.EASY.isCoachAdjusted)
+        assertFalse(RunType.QUALITY.isCoachAdjusted)
+    }
+
+    @Test
+    fun `a stage's workout of a run type is the one of that kind, not its first`() {
+        // The prescription floor is per Run Type (#176), so this cannot be "the stage's first
+        // workout" — in stage 1 that is the Long run, and it would floor every kind at it.
+        assertEquals(
+            "w1_easy",
+            TrainingPlanProvider.resolveWorkoutOfType("5k_sub_25", "base_builder", RunType.EASY)?.id
+        )
+        assertEquals(
+            "w1_quality",
+            TrainingPlanProvider.resolveWorkoutOfType("5k_sub_25", "base_builder", RunType.QUALITY)?.id
+        )
+        assertEquals(
+            "w1_long",
+            TrainingPlanProvider.resolveWorkoutOfType("5k_sub_25", "base_builder", RunType.LONG)?.id
+        )
+    }
+
+    @Test
+    fun `a stage that offers no workout of a run type has none`() {
+        // Stage 3 is two hard days and no endurance run, so there is nothing there to floor a Long
+        // prescription at — and inventing one out of a Quality workout is the mistake #176 refuses.
+        assertNull(TrainingPlanProvider.resolveWorkoutOfType("5k_sub_25", "sub_25_peak", RunType.LONG))
+        assertNull(TrainingPlanProvider.resolveWorkoutOfType(null, "base_builder", RunType.LONG))
     }
 
     @Test

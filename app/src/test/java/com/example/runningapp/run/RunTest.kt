@@ -1321,7 +1321,7 @@ private fun Driver.totalsOf(
     durationSeconds = durationSeconds,
     pausedSeconds = pausedSeconds,
     endedAtMillis = nowMillis,
-    isRunWalkMode = state.config?.isRunWalkMode ?: false,
+    runType = state.config?.workout?.runType,
     averageBpm = state.tally.averageBpm,
     maxBpm = state.tally.maxBpm,
     zoneSeconds = state.tally.zoneSeconds,
