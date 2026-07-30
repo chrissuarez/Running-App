@@ -33,20 +33,20 @@ data class TodayCardUiState(
     /** The one link inside the card, bottom-right — an edit to the card, not an alternative to START. */
     val link: TodayCardLink,
     /**
-     * The Stage's Workouts, one per Run Type, for the runner to pick today's from (#174). Empty on
-     * an open run, which has no Stage to pick from.
+     * The Stage's Workouts, one per Run Type, for the runner to Pick today's from (#174). Empty on
+     * an open run, which has no Stage to Pick from.
      */
-    val choices: List<TodayCardChoice>
+    val workouts: List<TodayCardWorkout>
 )
 
 /**
  * One of the Stage's Workouts, offered as today's Run (#174).
  *
- * The Plan is a menu, not a cursor: all three are always on offer, in the order the Stage declares
- * them, and picking is the whole of choosing today's Run. Nothing here remembers a position in a
- * week, so there is no rule to invent for a missed Run or two in a day.
+ * The Plan is a menu, not a cursor (ADR 0005): all three are always on offer, in the order the
+ * Stage declares them, and the Pick is the whole of choosing today's Run. Nothing here remembers a
+ * position in a week, so there is no rule to invent for a missed Run or two in a day.
  */
-data class TodayCardChoice(
+data class TodayCardWorkout(
     val workoutId: String,
     /** "Long", "Easy" or "Quality" — what makes the three differ in kind rather than length. */
     val runTypeLabel: String,
@@ -57,8 +57,8 @@ data class TodayCardChoice(
      * Workout will actually be run at, prescription included.
      */
     val summaryLine: String,
-    /** Whether this is today's Run. Exactly one choice is selected whenever there are any. */
-    val selected: Boolean
+    /** Whether this is today's Run — the Pick. Exactly one is, whenever the Stage offers any. */
+    val picked: Boolean
 )
 
 enum class TodayCardLinkKind {
@@ -82,7 +82,7 @@ data class TodayCardLink(val kind: TodayCardLinkKind, val label: String)
  * [stageWorkouts] (no plan) and [skippedToday] both produce the open-run card; only [link] tells
  * them apart.
  *
- * [pickedWorkoutId] is the runner's choice of today's Run (#174), and the Stage's first Workout
+ * [pickedWorkoutId] is the runner's Pick of today's Run (#174), and the Stage's first Workout
  * until they make one. An id that names nothing here — the Stage changed under a stale pick — falls
  * back to that same first Workout rather than leaving the card with nothing to be about.
  */
@@ -114,9 +114,9 @@ fun todayCardUiState(
             } else {
                 TodayCardLink(TodayCardLinkKind.CHOOSE_PLAN, "Choose a plan")
             },
-            // Nothing is being picked from on a day the plan isn't being run: the link back is the
-            // only choice the open-run card offers.
-            choices = emptyList()
+            // There is nothing to Pick from on a day the plan isn't being run: the link back is
+            // all the open-run card offers.
+            workouts = emptyList()
         )
     }
 
@@ -128,17 +128,17 @@ fun todayCardUiState(
         envelopeLine = envelopeLine(planned),
         coachNote = coachNote(picked, planned, settings),
         link = TodayCardLink(TodayCardLinkKind.SKIP, "Skip today"),
-        choices = stageWorkouts.map { workout ->
-            // Each choice asks the prescription for itself rather than borrowing today's answer:
+        workouts = stageWorkouts.map { workout ->
+            // Each one asks the prescription for itself rather than borrowing today's answer:
             // the floor (#170) is measured against the workout being adapted, so the same standing
             // prescription can move one of the three and leave another as the plan wrote it.
             val asRun = workout.withCoachPrescription(prescription, nowEpochMillis)
-            TodayCardChoice(
+            TodayCardWorkout(
                 workoutId = workout.id,
                 runTypeLabel = runTypeLabel(workout.runType),
                 title = workout.title,
                 summaryLine = "${intervalShape(asRun)} · ≈ ${totalMinutes(asRun)} min",
-                selected = workout.id == picked.id
+                picked = workout.id == picked.id
             )
         }
     )

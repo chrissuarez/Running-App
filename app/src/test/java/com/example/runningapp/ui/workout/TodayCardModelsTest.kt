@@ -271,19 +271,19 @@ class TodayCardModelsTest {
 
     @Test
     fun `the card offers all three of the stage's run types`() {
-        val choices = stageCard().choices
-        assertEquals(listOf("Long", "Easy", "Quality"), choices.map { it.runTypeLabel })
-        assertEquals(listOf("w1_long", "w1_easy", "w1_quality"), choices.map { it.workoutId })
-        assertEquals(listOf("Endurance Walk-Run", "Easy Continuous", "Strides"), choices.map { it.title })
+        val offered = stageCard().workouts
+        assertEquals(listOf("Long", "Easy", "Quality"), offered.map { it.runTypeLabel })
+        assertEquals(listOf("w1_long", "w1_easy", "w1_quality"), offered.map { it.workoutId })
+        assertEquals(listOf("Endurance Walk-Run", "Easy Continuous", "Strides"), offered.map { it.title })
     }
 
     @Test
     fun `each offered workout shows its own shape and total`() {
-        val choices = stageCard().choices.associateBy { it.runTypeLabel }
+        val offered = stageCard().workouts.associateBy { it.runTypeLabel }
         // 8 min warm-up + 3 × 12 min + 3 min cool-down = 47 min.
-        assertEquals("3 × (10 min run / 2 min walk) · ≈ 47 min", choices.getValue("Long").summaryLine)
-        assertEquals("20 min run · ≈ 28 min", choices.getValue("Easy").summaryLine)
-        assertEquals("6 × (20 s run / 1 min 30 s walk) · ≈ 34 min", choices.getValue("Quality").summaryLine)
+        assertEquals("3 × (10 min run / 2 min walk) · ≈ 47 min", offered.getValue("Long").summaryLine)
+        assertEquals("20 min run · ≈ 28 min", offered.getValue("Easy").summaryLine)
+        assertEquals("6 × (20 s run / 1 min 30 s walk) · ≈ 34 min", offered.getValue("Quality").summaryLine)
     }
 
     @Test
@@ -291,41 +291,41 @@ class TodayCardModelsTest {
         val picked = stageCard(pickedWorkoutId = "w1_quality")
         assertEquals("Strides", picked.title)
         assertEquals("6 × (20 s run / 1 min 30 s walk)", picked.detailLine)
-        assertEquals(listOf(false, false, true), picked.choices.map { it.selected })
+        assertEquals(listOf(false, false, true), picked.workouts.map { it.picked })
     }
 
     @Test
     fun `with nothing picked the stage's first workout is today's`() {
         val untouched = stageCard()
         assertEquals("Endurance Walk-Run", untouched.title)
-        assertEquals(listOf(true, false, false), untouched.choices.map { it.selected })
+        assertEquals(listOf(true, false, false), untouched.workouts.map { it.picked })
     }
 
     @Test
     fun `a pick from a stage that is no longer attached falls back rather than emptying the card`() {
         val stale = stageCard(pickedWorkoutId = "w2_s1")
         assertEquals("Endurance Walk-Run", stale.title)
-        assertEquals(listOf(true, false, false), stale.choices.map { it.selected })
+        assertEquals(listOf(true, false, false), stale.workouts.map { it.picked })
     }
 
     @Test
     fun `every offered workout shows the numbers a standing prescription would run it at`() {
         // One prescription still stands for whichever workout it is applied to (a Prescription per
-        // Run Type is #175), so each choice asks the floor (#170) for itself: this one is more work
+        // Run Type is #175), so each one asks the floor (#170) for itself: this one is more work
         // than Strides and less than the other two, and only Strides moves.
         val stretched = stageCard(prescription = prescription(run = 200, walk = 60, repeats = 4))
-        val choices = stretched.choices.associateBy { it.runTypeLabel }
+        val offered = stretched.workouts.associateBy { it.runTypeLabel }
         assertEquals(
             "4 × (3 min 20 s run / 1 min walk) · ≈ 40 min",
-            choices.getValue("Quality").summaryLine
+            offered.getValue("Quality").summaryLine
         )
-        assertEquals("3 × (10 min run / 2 min walk) · ≈ 47 min", choices.getValue("Long").summaryLine)
-        assertEquals("20 min run · ≈ 28 min", choices.getValue("Easy").summaryLine)
+        assertEquals("3 × (10 min run / 2 min walk) · ≈ 47 min", offered.getValue("Long").summaryLine)
+        assertEquals("20 min run · ≈ 28 min", offered.getValue("Easy").summaryLine)
     }
 
     @Test
     fun `an open run offers no pick, because there is no stage to pick from`() {
-        assertTrue(card(stageTitle = null, workout = null).choices.isEmpty())
-        assertTrue(stageCard(skippedToday = true).choices.isEmpty())
+        assertTrue(card(stageTitle = null, workout = null).workouts.isEmpty())
+        assertTrue(stageCard(skippedToday = true).workouts.isEmpty())
     }
 }

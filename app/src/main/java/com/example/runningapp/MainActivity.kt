@@ -72,7 +72,7 @@ import com.example.runningapp.ui.workout.FullScreenMapScreen
 import com.example.runningapp.ui.workout.MapCard
 import com.example.runningapp.ui.workout.TimelineMarkerType
 import com.example.runningapp.ui.workout.TimelineSegmentType
-import com.example.runningapp.ui.workout.TodayCardChoice
+import com.example.runningapp.ui.workout.TodayCardWorkout
 import com.example.runningapp.ui.workout.TodayCardLinkKind
 import com.example.runningapp.ui.workout.TodayCardUiState
 import com.example.runningapp.ui.workout.todayCardUiState
@@ -672,7 +672,7 @@ fun MainScreen(
 
     // Taken from the card rather than from the pick itself, so START runs exactly what the card is
     // showing — including where a stale pick has already fallen back to the stage's first (#174).
-    val todaysWorkoutId = todayCard.choices.firstOrNull { it.selected }?.workoutId
+    val todaysWorkoutId = todayCard.workouts.firstOrNull { it.picked }?.workoutId
 
     val isSessionActive = state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED
 
@@ -1100,10 +1100,10 @@ private fun MainBottomBar(
  * reads as an edit to the card it sits in rather than an alternative to starting — and undo lands
  * in the exact slot skip vacated, because the slot is the same one either way.
  *
- * And where a Stage offers a choice (#174), today's Run keeps the heading it always had and the
+ * And where a Stage offers a Pick (#174), today's Run keeps the heading it always had and the
  * three Workouts sit under it as rows. The heading is what the card is *about* — it carries the
  * target and the coach's note, which belong to the Run being started and to no other row — so the
- * rows are the menu it was chosen from, with the current choice highlighted among them.
+ * rows are the menu it was Picked from, with the Pick highlighted among them.
  */
 @Composable
 fun TodayCard(
@@ -1149,7 +1149,7 @@ fun TodayCard(
                     color = MaterialTheme.colorScheme.secondary
                 )
             }
-            if (state.choices.isNotEmpty()) {
+            if (state.workouts.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
                     text = "TODAY'S RUN",
@@ -1157,8 +1157,8 @@ fun TodayCard(
                     color = MaterialTheme.colorScheme.primary
                 )
                 Spacer(modifier = Modifier.height(6.dp))
-                state.choices.forEach { choice ->
-                    WorkoutChoiceRow(choice = choice, onPick = { onPickWorkout(choice.workoutId) })
+                state.workouts.forEach { workout ->
+                    WorkoutRow(workout = workout, onPick = { onPickWorkout(workout.workoutId) })
                     Spacer(modifier = Modifier.height(6.dp))
                 }
             }
@@ -1195,31 +1195,31 @@ fun TodayCard(
 /**
  * One of the Stage's Workouts, offered as today's Run (#174).
  *
- * A radio, not a button: picking one is choosing among three, and the two not picked stay on the
- * screen as what they are — still offered, not dismissed.
+ * A radio, not a button: the Pick is one of three, and the two not Picked stay on the screen as
+ * what they are — still offered, not dismissed.
  */
 @Composable
-private fun WorkoutChoiceRow(choice: TodayCardChoice, onPick: () -> Unit) {
+private fun WorkoutRow(workout: TodayCardWorkout, onPick: () -> Unit) {
     Surface(
         shape = MaterialTheme.shapes.small,
-        color = if (choice.selected) {
+        color = if (workout.picked) {
             MaterialTheme.colorScheme.primaryContainer
         } else {
             MaterialTheme.colorScheme.surface.copy(alpha = 0.4f)
         },
         modifier = Modifier
             .fillMaxWidth()
-            .selectable(selected = choice.selected, role = Role.RadioButton, onClick = onPick)
+            .selectable(selected = workout.picked, role = Role.RadioButton, onClick = onPick)
             .heightIn(min = RunningUiTokens.MinTouchTarget)
     ) {
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
             Text(
-                text = "${choice.runTypeLabel.uppercase()} · ${choice.title}",
+                text = "${workout.runTypeLabel.uppercase()} · ${workout.title}",
                 style = MaterialTheme.typography.labelLarge,
-                fontWeight = if (choice.selected) FontWeight.Bold else FontWeight.Normal
+                fontWeight = if (workout.picked) FontWeight.Bold else FontWeight.Normal
             )
             Text(
-                text = choice.summaryLine,
+                text = workout.summaryLine,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
