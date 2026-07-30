@@ -1023,6 +1023,44 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `with no plan attached there is no run type to store a prescription under`() = runTest {
+        // A prescription now lives in the slot of the Run Type it is about (#175), and no plan means
+        // no Workout to name one. Nothing would read such a prescription either — a Run with no plan
+        // runs open-ended — so the debrief stands alone rather than a kind being invented for it.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings()))
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 660,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 4,
+                nextTargetZone = 3,
+                graduatedToNextStage = false,
+                coachMessage = "Good session."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder")
+
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+        verify(mockSettingsRepo).setLatestCoachMessage("Good session.", CoachWriteScope(null, null))
+    }
+
+    @Test
     fun `a normal evaluation writes one prescription and touches no setting but the debrief`() = runTest {
         val mockPrescriptions: CoachPrescriptionRepository = mock()
         val mockCoach: AiCoachClient = mock()
