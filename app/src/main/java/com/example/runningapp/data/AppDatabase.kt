@@ -202,6 +202,14 @@ interface SessionDao {
     @Query("SELECT id FROM sessions WHERE endTime = 0 AND startTime < :startedBeforeMillis ORDER BY startTime ASC")
     suspend fun getInterruptedSessionIds(startedBeforeMillis: Long): List<Long>
 
+    /**
+     * Every run there is, oldest first — the whole history, for the archive that has to carry all
+     * of it (#85). Unfiltered on purpose: a run still being recorded is part of what the database
+     * holds, and an archive that quietly left rows out would not be the backup it claims to be.
+     */
+    @Query("SELECT * FROM sessions ORDER BY startTime ASC")
+    suspend fun getAllSessions(): List<RunnerSession>
+
     /** Finished outdoor runs whose moving time has not been computed yet (#163 backfill). */
     @Query("SELECT id FROM sessions WHERE movingTimeSeconds IS NULL AND endTime > 0 AND runMode = 'outdoor' ORDER BY startTime DESC")
     suspend fun getSessionIdsMissingMovingTime(): List<Long>
@@ -337,6 +345,13 @@ interface TrackPointDao {
 
     @Query("SELECT * FROM track_points WHERE sessionId = :sessionId ORDER BY timestampMillis ASC")
     suspend fun getTrackPointsForSessionOnce(sessionId: Long): List<TrackPoint>
+
+    /**
+     * Which runs have a route at all, asked once rather than a run at a time (#85). A treadmill run
+     * has none, and a GPX file of a run that went nowhere would be an empty file with a name.
+     */
+    @Query("SELECT DISTINCT sessionId FROM track_points")
+    suspend fun getSessionIdsWithTrackPoints(): List<Long>
 }
 
 @Dao
@@ -352,6 +367,10 @@ interface RunWalkIntervalStatDao {
 
     @Query("SELECT * FROM run_walk_interval_stats WHERE sessionId = :sessionId ORDER BY intervalIndex ASC")
     suspend fun getIntervalStatsForSession(sessionId: Long): List<RunWalkIntervalStat>
+
+    /** Every Interval of every Run, for the archive (#85). Ordered so the file reads run by run. */
+    @Query("SELECT * FROM run_walk_interval_stats ORDER BY sessionId ASC, intervalIndex ASC")
+    suspend fun getAllIntervalStats(): List<RunWalkIntervalStat>
 }
 
 @Database(

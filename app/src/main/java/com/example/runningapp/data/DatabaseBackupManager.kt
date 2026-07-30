@@ -77,9 +77,9 @@ object DatabaseBackupManager {
         if (!isSupported) return
         synchronized(backupLock) {
             try {
-                val dbFile = context.getDatabasePath(DATABASE_NAME)
+                val dbFile = databaseFile(context)
                 if (!dbFile.exists()) return
-                if (!checkpointWal(database)) {
+                if (!checkpoint(database)) {
                     // Couldn't fully fold the WAL — a reader held a snapshot through every retry.
                     // Copy anyway (better a slightly-stale backup than none), but say so rather than
                     // logging an unqualified success.
@@ -94,13 +94,19 @@ object DatabaseBackupManager {
         }
     }
 
+    /** The live database file. Shared with the archive (#85), which snapshots the same one. */
+    fun databaseFile(context: Context): File = context.getDatabasePath(DATABASE_NAME)
+
     /**
      * Folds the WAL into the main `.db` so the copied file includes the latest write. A TRUNCATE
      * checkpoint reports a blocked run in its result row (busy=1) instead of throwing — e.g. when a
      * UI query is holding a read snapshot — leaving recent frames only in `-wal`. Retry a few times
      * to ride out that transient reader. Returns true once a checkpoint completes cleanly.
+     *
+     * Public because the full archive (#85) snapshots the same file and needs the same fold first;
+     * one implementation, so the two copies can't come to mean different things.
      */
-    private fun checkpointWal(database: AppDatabase): Boolean {
+    fun checkpoint(database: AppDatabase): Boolean {
         val db = database.openHelper.writableDatabase
         repeat(CHECKPOINT_ATTEMPTS) { attempt ->
             val complete = db.query("PRAGMA wal_checkpoint(TRUNCATE)").use { cursor ->

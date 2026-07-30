@@ -89,6 +89,10 @@ dependencies {
     implementation("androidx.room:room-ktx:$roomVersion")
     ksp("androidx.room:room-compiler:$roomVersion")
 
+    // Monthly full archive (#85) — WorkManager reschedules itself across reboots, which is what
+    // makes an unattended monthly backup survive the phone being turned off.
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
+
     // Location
     implementation("com.google.android.gms:play-services-location:21.1.0")
 

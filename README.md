@@ -58,6 +58,11 @@ A robust Android application designed to track heart rate (HR) during runs and p
 - **History & Data**:
     - All sessions and high-resolution HR samples are saved locally to a Room database.
     - View past workout summaries including Avg BPM, Max BPM, and **Time in Zones breakdown**.
+    - **Share a run** as a GPX file (track, timestamps, per-point heart rate) from its detail page.
+    - **Full archive**: Settings → Backup writes one ZIP — a GPX per run, an `archive.json` of
+      everything GPX can't carry, and a snapshot of the database — to a folder you pick once
+      (choose a Drive-synced one for offsite backup). Automatic monthly, keeping the last 3, plus a
+      **Back up now** button and the last-backup time.
 - **Device Management**:
     - Prioritizes manually selected BLE devices.
     - Robust background reconnection logic.

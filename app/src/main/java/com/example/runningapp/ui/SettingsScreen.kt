@@ -92,6 +92,15 @@ fun SettingsScreen(
     onAiDataSharingChange: (Boolean) -> Unit,
     onTestingModeChange: (Boolean) -> Unit,
     onManageStrap: () -> Unit,
+    /**
+     * Opens the folder picker. [thenBackUp] is set when the picker is standing in for a "Back up
+     * now" that had nowhere to write, so answering it finishes the tap that asked.
+     */
+    onPickBackupFolder: (thenBackUp: Boolean) -> Unit,
+    onBackUpNow: () -> Unit,
+    backingUp: Boolean,
+    /** What the last backup came to, or null when there is nothing to report. */
+    backupResult: String?,
     onBack: () -> Unit
 ) {
     var showTargetZonePicker by remember { mutableStateOf(false) }
@@ -246,6 +255,31 @@ fun SettingsScreen(
                 subtitle = null,
                 value = null,
                 onClick = onManageStrap
+            )
+
+            Spacer(modifier = Modifier.height(RunningUiTokens.SectionSpacing))
+            SettingsSectionHeader("Backup")
+            SettingsRow(
+                label = "Backup folder",
+                // Says what picking a folder is *for*, because the answer is not obvious and it is
+                // the one decision that makes the rest of this section work. A folder that syncs
+                // off the phone is the whole point: a backup on a lost phone is not a backup.
+                subtitle = "Pick a folder that syncs off your phone, like Drive.",
+                value = backupFolderLabel(settings.backupFolderUri),
+                onClick = { onPickBackupFolder(false) }
+            )
+            SettingsRow(
+                label = if (backingUp) "Backing up…" else "Back up now",
+                // The result outranks the last-backup time while there is one to show: having just
+                // tapped the button, what happened is the thing being waited for.
+                subtitle = backupResult ?: lastBackupLine(settings.lastBackupAtEpochMillis),
+                value = null,
+                // Tapping with no folder chosen opens the picker instead of failing at them: the
+                // missing thing is a folder, so ask for a folder.
+                onClick = {
+                    if (backingUp) return@SettingsRow
+                    if (settings.backupFolderUri == null) onPickBackupFolder(true) else onBackUpNow()
+                }
             )
 
             Spacer(modifier = Modifier.height(RunningUiTokens.SectionSpacing))

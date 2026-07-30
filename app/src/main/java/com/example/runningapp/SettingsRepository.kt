@@ -52,7 +52,13 @@ data class UserSettings(
     // prescription for the *next* run is not here and is not a setting; see [CoachPrescription].
     val latestCoachMessage: String? = null,
     val simulationEnabled: Boolean = false,
-    val testingModeEnabled: Boolean = false
+    val testingModeEnabled: Boolean = false,
+    // The folder the runner picked for full archives, as a Storage Access Framework tree Uri, and
+    // when one was last written there (#85). Null and null until they pick one and a backup lands —
+    // and a last-backup time is a claim that there is a backup, so it is only ever written after a
+    // complete archive has been promoted into place.
+    val backupFolderUri: String? = null,
+    val lastBackupAtEpochMillis: Long? = null
 )
 
 /**
@@ -161,6 +167,8 @@ internal object PreferencesKeys {
     val STATEMENT_IN_FLIGHT = booleanPreferencesKey("hr_statement_in_flight")
     val STATEMENT_MAX_HR = intPreferencesKey("hr_statement_max_hr")
     val STATEMENT_RESTING_HR = intPreferencesKey("hr_statement_resting_hr")
+    val BACKUP_FOLDER_URI = stringPreferencesKey("backup_folder_uri")
+    val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
 }
 
 /**
@@ -275,7 +283,9 @@ class SettingsRepository(private val context: Context) {
                 activeStageId = preferences[PreferencesKeys.ACTIVE_STAGE_ID],
                 latestCoachMessage = preferences[PreferencesKeys.LATEST_COACH_MESSAGE],
                 simulationEnabled = preferences[PreferencesKeys.SIMULATION_ENABLED] ?: false,
-                testingModeEnabled = preferences[PreferencesKeys.TESTING_MODE_ENABLED] ?: false
+                testingModeEnabled = preferences[PreferencesKeys.TESTING_MODE_ENABLED] ?: false,
+                backupFolderUri = preferences[PreferencesKeys.BACKUP_FOLDER_URI],
+                lastBackupAtEpochMillis = preferences[PreferencesKeys.LAST_BACKUP_AT]
             )
         }
 
@@ -550,6 +560,23 @@ class SettingsRepository(private val context: Context) {
             preferences.clearCoachPrescriptions()
         }
     }
+
+    /**
+     * Remembers the folder the runner picked for archives (#85).
+     *
+     * The Uri alone is not the permission — that is taken separately and persistently, at the
+     * moment the picker returns, by whoever owns the Activity result. Stored here it is only the
+     * address; a grant that was never taken, or has since been revoked, shows up as the folder
+     * failing to open rather than as a wrong address.
+     *
+     * Choosing a new folder deliberately leaves [PreferencesKeys.LAST_BACKUP_AT] alone: the last
+     * backup did happen, and when it happened is the fact the runner is being told. Where it went
+     * is a separate question, and one the new folder answers only from the next backup on.
+     */
+    suspend fun setBackupFolderUri(uri: String) = put(PreferencesKeys.BACKUP_FOLDER_URI, uri)
+
+    /** Written only once a complete archive has been promoted into place. See [Archiver]. */
+    suspend fun setLastBackupAt(atEpochMillis: Long) = put(PreferencesKeys.LAST_BACKUP_AT, atEpochMillis)
 
     suspend fun setSimulationEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences ->
