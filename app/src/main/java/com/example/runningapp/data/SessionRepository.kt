@@ -600,13 +600,22 @@ class SessionRepository(
                 // No prescription on a graduation: it would be intervals for the stage just left,
                 // and writing one only to clear it in the next breath leaves a window where a run
                 // could start on the new stage carrying the old one's numbers.
-                settingsRepo.advanceStageAndClearPrescription(nextStageId, scope)
+                settingsRepo.advanceStageAndClearPrescriptions(nextStageId, scope)
+            } else if (activeWorkout == null) {
+                // A prescription is now stored under the Run Type it is about (#175), and with no
+                // plan attached there is no Workout to name one. Nothing would have read such a
+                // prescription anyway — a run with no plan runs open-ended — so this stores nothing
+                // rather than inventing a kind for it.
+                Log.d("AiCoach", "No new prescription: no plan is attached, so no Run Type to store it under.")
             } else {
                 coachPrescriptionRepository?.prescribe(
-                    CoachPrescription(
+                    // The Workout the evaluation was floored against and reasoned about, so its kind
+                    // is the slot the prescription belongs in.
+                    runType = activeWorkout.runType,
+                    prescription = CoachPrescription(
                         targetZone = coachTargetZone(
                             requested = clampedResponse.nextTargetZone,
-                            workoutTargetZone = activeWorkout?.targetZone,
+                            workoutTargetZone = activeWorkout.targetZone,
                             settingsTargetZone = settings.targetZone
                         ),
                         runDurationSeconds = clampedResponse.nextRunDurationSeconds,
@@ -614,7 +623,7 @@ class SessionRepository(
                         totalRepeats = clampedResponse.nextRepeats,
                         prescribedAtEpochMillis = System.currentTimeMillis()
                     ),
-                    scope
+                    scope = scope
                 )
             }
         } catch (e: Exception) {

@@ -75,6 +75,10 @@ fun WorkoutTemplate.clearedBy(runSeconds: Int, walkSeconds: Int, repeats: Int): 
  * are about to run — a card adapting on a looser condition than the service would show a shape the
  * run never takes.
  *
+ * Only this workout's own Run Type is asked for (#175). The coach holds a prescription per type, and
+ * a Long Run's intervals dropped onto a stride session would be the plan rewritten into something
+ * nobody wrote — so the type match is the lookup itself rather than a check that could be skipped.
+ *
  * A prescription carries all four fields together, so there is no half-applied one to guard
  * against, and a stale one applies nothing. Identity, title and the warm-up/cool-down
  * envelope stay the plan's — the coach prescribes work, not the whole workout (#113).
@@ -89,9 +93,10 @@ fun WorkoutTemplate.clearedBy(runSeconds: Int, walkSeconds: Int, repeats: Int): 
  * one, so under it there is simply nothing here to apply.
  */
 fun WorkoutTemplate.withCoachPrescription(
-    prescription: CoachPrescription?,
+    prescriptions: CoachPrescriptions,
     nowEpochMillis: Long
 ): WorkoutTemplate {
+    val prescription = prescriptions[runType]
     if (prescription == null || !prescription.isFreshAt(nowEpochMillis)) return this
     val clearsFloor = clearedBy(
         runSeconds = prescription.runDurationSeconds,

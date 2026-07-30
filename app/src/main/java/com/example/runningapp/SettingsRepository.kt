@@ -228,7 +228,7 @@ internal fun coachWriteAllowed(
  * Named once so the settings that invalidate the coach's work cannot drop half of it.
  */
 internal fun MutablePreferences.clearCoachWork() {
-    clearCoachPrescription()
+    clearCoachPrescriptions()
     remove(PreferencesKeys.LATEST_COACH_MESSAGE)
 }
 
@@ -490,7 +490,7 @@ class SettingsRepository(private val context: Context) {
      *
      * Those numbers were reasoned about against the plan being left. Carried across, they would
      * overwrite day one of the plan just chosen — target zone included — which is the one workout
-     * the runner picked the plan *for*. Same rule as [advanceStageAndClearPrescription], since
+     * the runner picked the plan *for*. Same rule as [advanceStageAndClearPrescriptions], since
      * "the stage under it changed" is the same event either way.
      *
      * The debrief goes because it exists to explain the prescription, so it cannot outlive one:
@@ -500,7 +500,7 @@ class SettingsRepository(private val context: Context) {
      * there is no ordering between them to get right, which is the only reason they need not share
      * a single edit.
      *
-     * Graduating is the exception and keeps its message: [advanceStageAndClearPrescription] is the
+     * Graduating is the exception and keeps its message: [advanceStageAndClearPrescriptions] is the
      * coach moving the runner on, and "you have finished this stage" is the one thing it had to say.
      */
     suspend fun setActivePlan(planId: String?, stageId: String?) {
@@ -528,20 +528,21 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
-     * Moves the plan on, dropping the coach's prescription with it: those numbers were written for
-     * the stage just left, and the new stage's own workout is where the next progression starts.
-     * One write, so no run can start against the new stage carrying the old stage's intervals.
+     * Moves the plan on, dropping every standing prescription with it: those numbers were written
+     * for the stage just left, and the new stage's own workouts are where the next progression
+     * starts. One write for the move and all three slots (#175), so no run can start against the new
+     * stage carrying the old stage's intervals.
      *
      * Graduating is the coach moving the runner on, so it goes through [editCoachWrite] like its
      * other writes: [scope] is the stage it decided to graduate *from*, and a runner who changed
      * plans while it was thinking must not be advanced to a stage of the plan they left.
      */
-    suspend fun advanceStageAndClearPrescription(nextStageId: String?, scope: CoachWriteScope) {
+    suspend fun advanceStageAndClearPrescriptions(nextStageId: String?, scope: CoachWriteScope) {
         context.dataStore.editCoachWrite(scope) { preferences ->
             if (nextStageId != null) {
                 preferences[PreferencesKeys.ACTIVE_STAGE_ID] = nextStageId
             }
-            preferences.clearCoachPrescription()
+            preferences.clearCoachPrescriptions()
         }
     }
 

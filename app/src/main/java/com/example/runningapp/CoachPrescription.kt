@@ -2,10 +2,31 @@ package com.example.runningapp
 
 import android.content.Context
 import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+
+/**
+ * The work the coach has standing, one slot per Run Type (#175).
+ *
+ * One global prescription worked while only one Workout was ever queued. With three Runs to choose
+ * between it becomes a hazard: intervals reasoned about for a Long Run would land on a session built
+ * from twenty-second strides. So which session a prescription is about is *storage*, not a check —
+ * [get] is the only way to reach one, and it can only be asked by Run Type.
+ *
+ * Empty is a whole answer, not a missing one: [NONE] means the plan runs as written.
+ */
+data class CoachPrescriptions(val byRunType: Map<RunType, CoachPrescription>) {
+
+    /** What the coach wrote for [runType], or null when it has written nothing for that kind. */
+    operator fun get(runType: RunType): CoachPrescription? = byRunType[runType]
+
+    companion object {
+        val NONE = CoachPrescriptions(emptyMap())
+    }
+}
 
 /**
  * Today's work, as written by the AI coach (#113).
@@ -56,64 +77,121 @@ fun CoachPrescription.isFreshAt(nowEpochMillis: Long): Boolean =
     nowEpochMillis - prescribedAtEpochMillis <= MAX_AGE_MILLIS
 
 /**
+ * One Run Type's five keys, spelled from the type itself so a slot cannot be added without its
+ * storage (#175).
+ *
  * `internal` rather than private so a test can assert on the stored keys without a second copy of
  * the key strings — same reason [PreferencesKeys] is. One spelling of a key, one meaning.
  */
-internal object CoachPrescriptionKeys {
-    val TARGET_ZONE = intPreferencesKey("coach_target_zone")
-    val RUN_SECONDS = intPreferencesKey("coach_run_seconds")
-    val WALK_SECONDS = intPreferencesKey("coach_walk_seconds")
-    val REPEATS = intPreferencesKey("coach_repeats")
-    val PRESCRIBED_AT = longPreferencesKey("coach_prescribed_at")
+internal class CoachPrescriptionKeys private constructor(runType: RunType) {
+    private val suffix = runType.name.lowercase()
+    val targetZone = intPreferencesKey("coach_target_zone_$suffix")
+    val runSeconds = intPreferencesKey("coach_run_seconds_$suffix")
+    val walkSeconds = intPreferencesKey("coach_walk_seconds_$suffix")
+    val repeats = intPreferencesKey("coach_repeats_$suffix")
+    val prescribedAt = longPreferencesKey("coach_prescribed_at_$suffix")
+
+    companion object {
+        private val slots = RunType.entries.associateWith { CoachPrescriptionKeys(it) }
+
+        fun of(runType: RunType): CoachPrescriptionKeys = slots.getValue(runType)
+    }
 }
 
 /**
- * Drops the standing prescription, in whatever edit the caller is already making.
+ * The unsuffixed keys the single global prescription used before the split (#175).
+ *
+ * Read by nothing: a global prescription cannot say which kind of session it was about, and guessing
+ * is the mistake the slots exist to make impossible. Named here only so the next clear takes them
+ * away instead of leaving them in storage for good.
+ */
+private val LEGACY_GLOBAL_KEYS = listOf(
+    intPreferencesKey("coach_target_zone"),
+    intPreferencesKey("coach_run_seconds"),
+    intPreferencesKey("coach_walk_seconds"),
+    intPreferencesKey("coach_repeats"),
+    longPreferencesKey("coach_prescribed_at")
+)
+
+/**
+ * Everything standing, read out of one snapshot of the preferences.
+ *
+ * A slot missing any of its five keys stands for nothing: all four numbers were reasoned about
+ * together, so half a prescription is not a lighter one. Freshness is *not* applied here — whoever
+ * runs a workout decides against its own clock, so the expiry cannot drift between the card and the
+ * run.
+ */
+internal fun Preferences.coachPrescriptions(): CoachPrescriptions = CoachPrescriptions(
+    RunType.entries.mapNotNull { runType ->
+        coachPrescription(runType)?.let { runType to it }
+    }.toMap()
+)
+
+private fun Preferences.coachPrescription(runType: RunType): CoachPrescription? {
+    val keys = CoachPrescriptionKeys.of(runType)
+    return CoachPrescription(
+        targetZone = this[keys.targetZone] ?: return null,
+        runDurationSeconds = this[keys.runSeconds] ?: return null,
+        walkDurationSeconds = this[keys.walkSeconds] ?: return null,
+        totalRepeats = this[keys.repeats] ?: return null,
+        prescribedAtEpochMillis = this[keys.prescribedAt] ?: return null
+    )
+}
+
+/** Stores [prescription] in [runType]'s slot, leaving the other two exactly as they were. */
+internal fun MutablePreferences.writeCoachPrescription(
+    runType: RunType,
+    prescription: CoachPrescription
+) {
+    val keys = CoachPrescriptionKeys.of(runType)
+    this[keys.targetZone] = prescription.targetZone
+    this[keys.runSeconds] = prescription.runDurationSeconds
+    this[keys.walkSeconds] = prescription.walkDurationSeconds
+    this[keys.repeats] = prescription.totalRepeats
+    this[keys.prescribedAt] = prescription.prescribedAtEpochMillis
+}
+
+/**
+ * Drops every standing prescription, in whatever edit the caller is already making.
  *
  * An extension on the preferences rather than a repository call so the settings changes that
  * invalidate a prescription — testing mode coming on, the stage advancing — can drop it in the same
  * atomic write. Two writes could interleave with a run starting between them, which is the one
- * moment the guarantee matters.
+ * moment the guarantee matters. All three slots go here for the same reason: three writes would
+ * leave a window where a run could start on a stage it had half-left.
  */
-internal fun MutablePreferences.clearCoachPrescription() {
-    remove(CoachPrescriptionKeys.TARGET_ZONE)
-    remove(CoachPrescriptionKeys.RUN_SECONDS)
-    remove(CoachPrescriptionKeys.WALK_SECONDS)
-    remove(CoachPrescriptionKeys.REPEATS)
-    remove(CoachPrescriptionKeys.PRESCRIBED_AT)
+internal fun MutablePreferences.clearCoachPrescriptions() {
+    RunType.entries.forEach { runType ->
+        val keys = CoachPrescriptionKeys.of(runType)
+        remove(keys.targetZone)
+        remove(keys.runSeconds)
+        remove(keys.walkSeconds)
+        remove(keys.repeats)
+        remove(keys.prescribedAt)
+    }
+    LEGACY_GLOBAL_KEYS.forEach { remove(it) }
 }
 
 class CoachPrescriptionRepository(private val context: Context) {
 
-    /**
-     * The standing prescription, or null when the coach has not written one. Freshness is *not*
-     * applied here: whoever runs a workout decides against its own clock, so the expiry cannot
-     * drift between the card and the run.
-     */
-    val prescriptionFlow: Flow<CoachPrescription?> = context.dataStore.data.map { preferences ->
-        val prescribedAt = preferences[CoachPrescriptionKeys.PRESCRIBED_AT] ?: return@map null
-        CoachPrescription(
-            targetZone = preferences[CoachPrescriptionKeys.TARGET_ZONE] ?: return@map null,
-            runDurationSeconds = preferences[CoachPrescriptionKeys.RUN_SECONDS] ?: return@map null,
-            walkDurationSeconds = preferences[CoachPrescriptionKeys.WALK_SECONDS] ?: return@map null,
-            totalRepeats = preferences[CoachPrescriptionKeys.REPEATS] ?: return@map null,
-            prescribedAtEpochMillis = prescribedAt
-        )
-    }
+    /** Every Run Type's standing prescription; [CoachPrescriptions.NONE] when the coach is silent. */
+    val prescriptionsFlow: Flow<CoachPrescriptions> =
+        context.dataStore.data.map { it.coachPrescriptions() }
 
     /**
-     * Records what the coach wants run next, replacing anything it wrote before.
+     * Records what the coach wants run next for [runType], replacing anything it wrote for that kind
+     * before and touching no other kind.
      *
      * [scope] is the plan and stage the prescription was reasoned about against; the write is
      * refused if they are no longer the active ones. See `editCoachWrite`.
      */
-    suspend fun prescribe(prescription: CoachPrescription, scope: CoachWriteScope) {
+    suspend fun prescribe(
+        runType: RunType,
+        prescription: CoachPrescription,
+        scope: CoachWriteScope
+    ) {
         context.dataStore.editCoachWrite(scope) { preferences ->
-            preferences[CoachPrescriptionKeys.TARGET_ZONE] = prescription.targetZone
-            preferences[CoachPrescriptionKeys.RUN_SECONDS] = prescription.runDurationSeconds
-            preferences[CoachPrescriptionKeys.WALK_SECONDS] = prescription.walkDurationSeconds
-            preferences[CoachPrescriptionKeys.REPEATS] = prescription.totalRepeats
-            preferences[CoachPrescriptionKeys.PRESCRIBED_AT] = prescription.prescribedAtEpochMillis
+            preferences.writeCoachPrescription(runType, prescription)
         }
     }
 }
