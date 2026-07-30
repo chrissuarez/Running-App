@@ -33,6 +33,12 @@ each and the runner chooses; it is what makes two Workouts different in kind
 rather than only in length.
 _Avoid_: category, workout type, session type
 
+**Pick**:
+Which of the Stage's Workouts today's Run follows. Made fresh each time and
+worth only as long as the screen that made it — the Plan is a menu, so there is
+no place in it to keep ([ADR 0005](docs/adr/0005-the-plan-is-a-menu-not-a-cursor.md)).
+_Avoid_: choice, selection, current workout
+
 **Phase**:
 Which of a Run's three stretches it is in: warm-up, main, or cool-down. Every
 Run has all three in that order; only the main one is open-ended.
