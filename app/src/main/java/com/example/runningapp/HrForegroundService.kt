@@ -247,6 +247,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // edits the plan, so tomorrow the plan is queued again.
     @Volatile private var skipPlanForToday: Boolean = false
 
+    // Which of the stage's Workouts the runner picked as today's Run (#174). Held only for as long
+    // as the process is up and never written down: there is no position-in-week to keep, so a pick
+    // that outlives the tap it came from would be the app inventing one. Null means the stage's
+    // first, exactly as it was before the runner could pick at all.
+    @Volatile private var pickedWorkoutId: String? = null
+
     private lateinit var database: AppDatabase
 
     // Both written on main (or a Binder thread) and read on the session thread, which is the Run's
@@ -290,6 +296,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // START carries the mode the user has selected right now, so a Treadmill/Outdoor switch made
         // just before tapping START is honoured even if its async settings write hasn't landed yet.
         const val EXTRA_RUN_MODE = "EXTRA_RUN_MODE"
+        // Which of the stage's Workouts today's Run is (#174). Carried on the same intents as the
+        // skip choice, and for the same reason: both are made on the record screen and both have to
+        // be in force before the run's configuration is pinned.
+        const val EXTRA_WORKOUT_ID = "EXTRA_WORKOUT_ID"
         const val EXTRA_SIMULATION_ENABLED = "SIMULATION_ENABLED"
         const val TAG = "HrService"
     }
@@ -828,9 +838,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun resolveActiveWorkoutTemplate(): WorkoutTemplate? {
-        val baseWorkout = TrainingPlanProvider.resolveBaseWorkout(
+        val baseWorkout = TrainingPlanProvider.resolvePickedWorkout(
             currentSettings.activePlanId,
-            currentSettings.activeStageId
+            currentSettings.activeStageId,
+            pickedWorkoutId
         ) ?: return null
         // Shared with the record screen's card, so what it promises is what this runs (#111).
         return baseWorkout.withCoachPrescription(currentPrescription, System.currentTimeMillis())
@@ -860,6 +871,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // and other control intents so it survives for the duration of the run.
         if (intent?.hasExtra(EXTRA_SKIP_PLAN) == true) {
             skipPlanForToday = intent.getBooleanExtra(EXTRA_SKIP_PLAN, false)
+        }
+        if (intent?.hasExtra(EXTRA_WORKOUT_ID) == true) {
+            pickedWorkoutId = intent.getStringExtra(EXTRA_WORKOUT_ID)
         }
         Log.d(
             TAG,

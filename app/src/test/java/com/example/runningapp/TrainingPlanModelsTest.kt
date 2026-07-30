@@ -1,6 +1,7 @@
 package com.example.runningapp
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -173,6 +174,28 @@ class TrainingPlanModelsTest {
             stage1().workouts,
             TrainingPlanProvider.resolveStageWorkouts("5k_sub_25", "no_such_stage")
         )
+    }
+
+    @Test
+    fun `the picked workout is the one today's run uses`() {
+        assertEquals(
+            "w1_quality",
+            TrainingPlanProvider.resolvePickedWorkout("5k_sub_25", "base_builder", "w1_quality")?.id
+        )
+    }
+
+    @Test
+    fun `no pick, or one the stage does not offer, falls back to the stage's first`() {
+        val first = stage1().workouts.first().id
+        assertEquals(
+            first,
+            TrainingPlanProvider.resolvePickedWorkout("5k_sub_25", "base_builder", null)?.id
+        )
+        assertEquals(
+            first,
+            TrainingPlanProvider.resolvePickedWorkout("5k_sub_25", "base_builder", "w2_s1")?.id
+        )
+        assertNull(TrainingPlanProvider.resolvePickedWorkout(null, "base_builder", "w1_long"))
     }
 
     @Test

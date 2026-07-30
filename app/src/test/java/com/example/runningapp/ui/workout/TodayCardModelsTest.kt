@@ -32,13 +32,22 @@ class TodayCardModelsTest {
     private fun card(
         stageTitle: String? = "Stage 1: Base Builder",
         workout: WorkoutTemplate? = aerobicFoundation,
+        stageWorkouts: List<WorkoutTemplate> = listOfNotNull(workout),
+        pickedWorkoutId: String? = null,
         settings: UserSettings = this.settings,
         prescription: CoachPrescription? = null,
         nowEpochMillis: Long = now,
         runMode: String = "outdoor",
         skippedToday: Boolean = false
     ) = todayCardUiState(
-        stageTitle, workout, settings, prescription, nowEpochMillis, runMode, skippedToday
+        stageTitle,
+        stageWorkouts,
+        pickedWorkoutId,
+        settings,
+        prescription,
+        nowEpochMillis,
+        runMode,
+        skippedToday
     )
 
     @Test
@@ -231,5 +240,92 @@ class TodayCardModelsTest {
     fun `a skipped day falls back to the global target, since the workout is not being run`() {
         val threshold = WorkoutTemplate("w3_s1", "Threshold Intervals", 4, 300, 120, 5, runType = RunType.QUALITY)
         assertEquals("Target: Moderate", card(workout = threshold, skippedToday = true).targetPill)
+    }
+
+    // #174 — the runner picks which of the stage's three Runs today is.
+
+    private val long = WorkoutTemplate(
+        "w1_long", "Endurance Walk-Run", 2, 600, 120, 3,
+        warmUpSeconds = 480, coolDownSeconds = 180, runType = RunType.LONG
+    )
+    private val easy = WorkoutTemplate(
+        "w1_easy", "Easy Continuous", 2, 1200, 0, 1,
+        warmUpSeconds = 300, coolDownSeconds = 180, runType = RunType.EASY
+    )
+    private val quality = WorkoutTemplate(
+        "w1_quality", "Strides", 2, 20, 90, 6,
+        warmUpSeconds = 1200, coolDownSeconds = 180, runType = RunType.QUALITY
+    )
+    private val stageOne = listOf(long, easy, quality)
+
+    private fun stageCard(
+        pickedWorkoutId: String? = null,
+        prescription: CoachPrescription? = null,
+        skippedToday: Boolean = false
+    ) = card(
+        stageWorkouts = stageOne,
+        pickedWorkoutId = pickedWorkoutId,
+        prescription = prescription,
+        skippedToday = skippedToday
+    )
+
+    @Test
+    fun `the card offers all three of the stage's run types`() {
+        val choices = stageCard().choices
+        assertEquals(listOf("Long", "Easy", "Quality"), choices.map { it.runTypeLabel })
+        assertEquals(listOf("w1_long", "w1_easy", "w1_quality"), choices.map { it.workoutId })
+        assertEquals(listOf("Endurance Walk-Run", "Easy Continuous", "Strides"), choices.map { it.title })
+    }
+
+    @Test
+    fun `each offered workout shows its own shape and total`() {
+        val choices = stageCard().choices.associateBy { it.runTypeLabel }
+        // 8 min warm-up + 3 × 12 min + 3 min cool-down = 47 min.
+        assertEquals("3 × (10 min run / 2 min walk) · ≈ 47 min", choices.getValue("Long").summaryLine)
+        assertEquals("20 min run · ≈ 28 min", choices.getValue("Easy").summaryLine)
+        assertEquals("6 × (20 s run / 1 min 30 s walk) · ≈ 34 min", choices.getValue("Quality").summaryLine)
+    }
+
+    @Test
+    fun `the picked workout is the one the card is about`() {
+        val picked = stageCard(pickedWorkoutId = "w1_quality")
+        assertEquals("Strides", picked.title)
+        assertEquals("6 × (20 s run / 1 min 30 s walk)", picked.detailLine)
+        assertEquals(listOf(false, false, true), picked.choices.map { it.selected })
+    }
+
+    @Test
+    fun `with nothing picked the stage's first workout is today's`() {
+        val untouched = stageCard()
+        assertEquals("Endurance Walk-Run", untouched.title)
+        assertEquals(listOf(true, false, false), untouched.choices.map { it.selected })
+    }
+
+    @Test
+    fun `a pick from a stage that is no longer attached falls back rather than emptying the card`() {
+        val stale = stageCard(pickedWorkoutId = "w2_s1")
+        assertEquals("Endurance Walk-Run", stale.title)
+        assertEquals(listOf(true, false, false), stale.choices.map { it.selected })
+    }
+
+    @Test
+    fun `every offered workout shows the numbers a standing prescription would run it at`() {
+        // One prescription still stands for whichever workout it is applied to (a Prescription per
+        // Run Type is #175), so each choice asks the floor (#170) for itself: this one is more work
+        // than Strides and less than the other two, and only Strides moves.
+        val stretched = stageCard(prescription = prescription(run = 200, walk = 60, repeats = 4))
+        val choices = stretched.choices.associateBy { it.runTypeLabel }
+        assertEquals(
+            "4 × (3 min 20 s run / 1 min walk) · ≈ 40 min",
+            choices.getValue("Quality").summaryLine
+        )
+        assertEquals("3 × (10 min run / 2 min walk) · ≈ 47 min", choices.getValue("Long").summaryLine)
+        assertEquals("20 min run · ≈ 28 min", choices.getValue("Easy").summaryLine)
+    }
+
+    @Test
+    fun `an open run offers no pick, because there is no stage to pick from`() {
+        assertTrue(card(stageTitle = null, workout = null).choices.isEmpty())
+        assertTrue(stageCard(skippedToday = true).choices.isEmpty())
     }
 }
