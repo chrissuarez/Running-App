@@ -1014,7 +1014,7 @@ class SessionRepositoryTest {
             )
         )
 
-        repo.evaluateAndAdjustPlan("base_builder")
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
         verify(mockSettingsRepo).advanceStageAndClearPrescriptions("sub_30_bridge", activeScope)
         verify(mockPrescriptions, never()).prescribe(any(), any(), any())
@@ -1023,10 +1023,11 @@ class SessionRepositoryTest {
     }
 
     @Test
-    fun `with no plan attached there is no run type to store a prescription under`() = runTest {
-        // A prescription now lives in the slot of the Run Type it is about (#175), and no plan means
-        // no Workout to name one. Nothing would read such a prescription either — a Run with no plan
-        // runs open-ended — so the debrief stands alone rather than a kind being invented for it.
+    fun `a stage offering no workout of the run type stores no prescription`() = runTest {
+        // Stage 3 is two hard days and no endurance run, so a Long prescription there has nothing to
+        // be floored at (#176) — and its own first Workout is a Quality one, which is exactly the
+        // slot a prescription reasoned about a Long Run must never land in. The debrief is about the
+        // Run just finished, so it still stands.
         val mockPrescriptions: CoachPrescriptionRepository = mock()
         val mockCoach: AiCoachClient = mock()
         val repo = SessionRepository(
@@ -1035,7 +1036,9 @@ class SessionRepositoryTest {
             coachPrescriptionRepository = mockPrescriptions,
             aiCoachClient = mockCoach
         )
-        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings()))
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_25_peak"))
+        )
         whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
             RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
         )
@@ -1054,10 +1057,81 @@ class SessionRepositoryTest {
             )
         )
 
-        repo.evaluateAndAdjustPlan("base_builder")
+        repo.evaluateAndAdjustPlan("sub_25_peak", RunType.LONG)
 
         verify(mockPrescriptions, never()).prescribe(any(), any(), any())
-        verify(mockSettingsRepo).setLatestCoachMessage("Good session.", CoachWriteScope(null, null))
+        verify(mockSettingsRepo).setLatestCoachMessage(
+            "Good session.",
+            CoachWriteScope("5k_sub_25", "sub_25_peak")
+        )
+    }
+
+    @Test
+    fun `an Easy Run is recorded in full but never evaluated`() = runTest {
+        // The gate is the Run Type (#176): the Easy Run stays fixed at its continuous stretch, so
+        // the coach is not even asked about it. Nothing here stops it being recorded or counting
+        // toward the 30-day load — those happen before an evaluation is ever considered.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.EASY)
+
+        verify(mockCoach, never()).evaluateProgress(any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
+    @Test
+    fun `a Quality Run is never evaluated, so its slot is never written`() = runTest {
+        // Six strides until it is changed by hand — an accepted gap (#176), and an AI does not
+        // belong in the hard day at all.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.QUALITY)
+
+        verify(mockCoach, never()).evaluateProgress(any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
+    @Test
+    fun `a Run following no workout has no run type, so it is not evaluated`() = runTest {
+        // An unplanned Run, or one where today's plan was skipped: there is no Workout to name a
+        // kind, and a prescription with no kind is the hazard the slots exist to prevent (#175).
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings()))
+
+        repo.evaluateAndAdjustPlan("base_builder", runType = null)
+
+        verify(mockCoach, never()).evaluateProgress(any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
     }
 
     @Test
@@ -1096,11 +1170,11 @@ class SessionRepositoryTest {
             )
         )
 
-        repo.evaluateAndAdjustPlan("base_builder")
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
         val prescribed = argumentCaptor<CoachPrescription>()
-        // Stored under the Run Type of the Workout the evaluation was floored against (#175) —
-        // stage 1's own first Workout, its Long Run. Nothing it writes can reach the other two kinds.
+        // Stored under the Run Type of the Run just finished (#176), which is the Workout the
+        // evaluation was floored against. Nothing it writes can reach the other two kinds.
         verify(mockPrescriptions).prescribe(eq(RunType.LONG), prescribed.capture(), eq(activeScope))
         assertEquals(660, prescribed.firstValue.runDurationSeconds)
         assertEquals(60, prescribed.firstValue.walkDurationSeconds)
@@ -1111,6 +1185,51 @@ class SessionRepositoryTest {
         verify(mockSettingsRepo, never()).setCoachingEnabled(any())
         verify(mockSettingsRepo, never()).setTargetZone(any())
         verify(mockSettingsRepo, never()).setStatedHeartRates(any(), anyOrNull(), anyOrNull())
+    }
+
+    @Test
+    fun `a prescription is floored at the stage's workout of the same run type`() = runTest {
+        // Stage 1's Long run is 3 x (10 min run + 2 min walk). A coach asking for less than that is
+        // refused and given the Workout's own three numbers whole (#170), and the Workout it is held
+        // to is the Long one because that is the kind of Run just finished (#176).
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            // Less work than the Long run, and *more* than the Easy or Quality Workout — so flooring
+            // at either of those would let this through unchanged.
+            AiCoachResponse(
+                nextRunDurationSeconds = 300,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                nextTargetZone = 2,
+                graduatedToNextStage = false,
+                coachMessage = "Steady."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        val prescribed = argumentCaptor<CoachPrescription>()
+        verify(mockPrescriptions).prescribe(eq(RunType.LONG), prescribed.capture(), any())
+        assertEquals(600, prescribed.firstValue.runDurationSeconds)
+        assertEquals(120, prescribed.firstValue.walkDurationSeconds)
+        assertEquals(3, prescribed.firstValue.totalRepeats)
     }
 
     private fun session(id: Long, endTime: Long) = RunnerSession(

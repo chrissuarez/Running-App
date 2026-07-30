@@ -73,8 +73,11 @@ _Avoid_: lap, mile
 What the AI coach writes after a Run: the intervals and target zone for the next
 Workout of one Run Type, and nothing else. The coach holds one per Run Type —
 three independent slots — so a Prescription applies only to its own kind of
-session and can never land on another. Dated, replaceable, and never a setting —
-the coach prescribes work, it does not configure the app.
+session and can never land on another. Only the Long slot is ever written: the
+coach decides whether to evaluate a Run by its Run Type, and adjusts the Long Run
+alone ([ADR 0006](docs/adr/0006-the-coach-adjusts-the-long-run-only.md)). Dated,
+replaceable, and never a setting — the coach prescribes work, it does not
+configure the app.
 _Avoid_: AI adjustments, AI intervals
 
 **Strap**:

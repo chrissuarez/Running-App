@@ -6,11 +6,13 @@ import com.example.runningapp.CoachPrescription
 import com.example.runningapp.CoachPrescriptionRepository
 import com.example.runningapp.CoachWriteScope
 import com.example.runningapp.HrZone
+import com.example.runningapp.RunType
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.StatedHeartRates
 import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.clearedBy
+import com.example.runningapp.isCoachAdjusted
 import com.example.runningapp.HrProfile
 import com.example.runningapp.effectiveMaxHr
 import com.example.runningapp.tallyZoneSeconds
@@ -502,9 +504,9 @@ class SessionRepository(
             ?: throw IllegalArgumentException("Stage not found for id: $stageId")
 
         val recentRuns = sessionDao.getLast3AiEligibleCompletedSessions().map { session ->
-            // A structured run/walk workout is the only run the coach can adjust intervals from
-            // (#107). isRunWalkMode records that per run, so it replaces the retired session-type
-            // column both as the gate and as the label the coach sees.
+            // The label the coach sees for a past run: whether it followed a Workout at all.
+            // Whether a run is *evaluated* is no longer this — that is its Run Type (#176) — but a
+            // recorded run carries no Run Type of its own, so this stays the label.
             AiRecentRun(
                 durationSeconds = session.durationSeconds,
                 avgHr = session.avgBpm,
@@ -520,9 +522,25 @@ class SessionRepository(
         )
     }
 
-    suspend fun evaluateAndAdjustPlan(stageId: String) {
+    /**
+     * Ask the coach about the Run just finished, and write what it says down.
+     *
+     * [runType] is the kind of Run that finished, taken from the Workout it followed — null for a Run
+     * that followed none. It is the gate (#176): only a Long Run is evaluated, so an Easy or Quality
+     * Run returns here before the coach is asked anything, and no Prescription slot of theirs is ever
+     * written. Both are still recorded in full and still count toward the 30-day load; those happen
+     * on the way in, before this is called.
+     */
+    suspend fun evaluateAndAdjustPlan(stageId: String, runType: RunType?) {
         val settingsRepo = settingsRepository ?: return
         val coachClient = aiCoachClient ?: return
+        if (runType == null || !runType.isCoachAdjusted) {
+            Log.d(
+                "AiCoach",
+                "Skipping AI evaluation: a ${runType ?: "plan-less"} run is not one the coach adjusts. stageId=$stageId"
+            )
+            return
+        }
 
         try {
             val settings = settingsRepo.userSettingsFlow.first()
@@ -538,16 +556,7 @@ class SessionRepository(
                 )
                 return
             }
-            // Keep interval-based AI prescriptions scoped to structured run/walk runs only.
-            if (latestFinalizedSession?.isRunWalkMode != true) {
-                Log.d(
-                    "AiCoach",
-                    "Skipping AI evaluation: latest run was not a structured run/walk. stageId=$stageId"
-                )
-                return
-            }
-
-            Log.d("AiCoach", "Starting AI evaluation for stage: $stageId")
+            Log.d("AiCoach", "Starting AI evaluation of a $runType run for stage: $stageId")
             val context = getAiTrainingContext(stageId)
             Log.d("AiCoach", "Sending prompt to Gemini with ${context.recentRuns.size} recent runs.")
             val response = coachClient.evaluateProgress(context)
@@ -557,10 +566,13 @@ class SessionRepository(
                 return
             }
             // Warm-up/cool-down now live on the workout (#107); the load clamp accounts for the
-            // active workout's envelope so the estimated total stays comparable to real sessions.
-            val activeWorkout = TrainingPlanProvider.resolveBaseWorkout(
+            // envelope so the estimated total stays comparable to real sessions. The Workout is the
+            // Stage's own one of this Run's kind (#176) — both the envelope and the floor below are
+            // about the session the coach is prescribing, which is the kind that just finished.
+            val stageWorkoutOfKind = TrainingPlanProvider.resolveWorkoutOfType(
                 settings.activePlanId,
-                settings.activeStageId
+                settings.activeStageId,
+                runType
             )
             // Ceiling first, then floor: the floor wins where they disagree (#170). The ceiling is
             // measured against recorded runs, so a run cut short drags it below the plan — the
@@ -568,10 +580,10 @@ class SessionRepository(
             val clampedResponse = floorAiResponseAtWorkout(
                 clampAiResponseByRecentLoad(
                     response,
-                    warmUpSeconds = activeWorkout?.warmUpSeconds ?: 0,
-                    coolDownSeconds = activeWorkout?.coolDownSeconds ?: 0
+                    warmUpSeconds = stageWorkoutOfKind?.warmUpSeconds ?: 0,
+                    coolDownSeconds = stageWorkoutOfKind?.coolDownSeconds ?: 0
                 ),
-                activeWorkout
+                stageWorkoutOfKind
             )
             Log.d(
                 "AiCoach",
@@ -601,21 +613,26 @@ class SessionRepository(
                 // and writing one only to clear it in the next breath leaves a window where a run
                 // could start on the new stage carrying the old one's numbers.
                 settingsRepo.advanceStageAndClearPrescriptions(nextStageId, scope)
-            } else if (activeWorkout == null) {
-                // A prescription is now stored under the Run Type it is about (#175), and with no
-                // plan attached there is no Workout to name one. Nothing would have read such a
-                // prescription anyway — a run with no plan runs open-ended — so this stores nothing
-                // rather than inventing a kind for it.
-                Log.d("AiCoach", "No new prescription: no plan is attached, so no Run Type to store it under.")
+            } else if (stageWorkoutOfKind == null) {
+                // Nothing of this kind to floor a prescription at, and nothing one would apply to
+                // either. The Run followed a Workout of this kind, so this means the plan or stage
+                // moved while the coach was being asked — detached, or advanced to a stage that
+                // offers no Workout of this Run Type, as stage 3 offers no Long run (#176). Storing
+                // one anyway would mean floored at a Workout of another kind, or at nothing at all —
+                // both are the plan rewritten into something nobody asked for.
+                Log.d(
+                    "AiCoach",
+                    "No new prescription: no $runType workout is attached to floor one at. " +
+                        "planId=${settings.activePlanId} stageId=${settings.activeStageId}"
+                )
             } else {
                 coachPrescriptionRepository?.prescribe(
-                    // The Workout the evaluation was floored against and reasoned about, so its kind
-                    // is the slot the prescription belongs in.
-                    runType = activeWorkout.runType,
+                    // The kind of Run just finished, which is the kind the Workout above is of.
+                    runType = runType,
                     prescription = CoachPrescription(
                         targetZone = coachTargetZone(
                             requested = clampedResponse.nextTargetZone,
-                            workoutTargetZone = activeWorkout.targetZone,
+                            workoutTargetZone = stageWorkoutOfKind.targetZone,
                             settingsTargetZone = settings.targetZone
                         ),
                         runDurationSeconds = clampedResponse.nextRunDurationSeconds,

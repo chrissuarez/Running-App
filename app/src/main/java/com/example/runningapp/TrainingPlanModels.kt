@@ -32,6 +32,24 @@ enum class RunType {
     QUALITY
 }
 
+/**
+ * Whether the AI coach evaluates a Run of this kind and writes a Prescription for it (#176).
+ *
+ * The Long Run only, because it is the one session where the judgement is genuinely worth making:
+ * whether this week's endurance run goes from 30 minutes of running to 36 depends on how the last
+ * few went. The Easy Run is a fixed continuous stretch and the Quality Run a fixed set of strides —
+ * both are recorded in full and count toward history and the 30-day load, and neither is adjusted.
+ *
+ * This replaces asking whether the last Run had walk Intervals, a proxy that fails in both
+ * directions once a Stage offers one Workout of each kind: a continuous Easy Run would be skipped
+ * for having no walks, and a Quality Run *would* be evaluated — so the coach would start adjusting
+ * the one session that most wants leaving alone.
+ *
+ * Accepted gap: the Quality Run never progresses on its own. Taking it from six strides toward
+ * eight is a static rule for its own ticket, and an AI does not belong in it.
+ */
+val RunType.isCoachAdjusted: Boolean get() = this == RunType.LONG
+
 data class WorkoutTemplate(
     val id: String,
     val title: String,
@@ -266,9 +284,20 @@ object TrainingPlanProvider {
     ): WorkoutTemplate? = resolveStageWorkouts(planId, stageId).pickedOrFirst(workoutId)
 
     /**
-     * The stage's own first workout, for the things that are about the stage rather than about
-     * today's Run — the AI coach's envelope, above all.
+     * The Stage's own Workout of one kind — the Prescription floor and the envelope the coach
+     * reasons inside (#176).
+     *
+     * Of that kind rather than the Stage's first, which is what this replaced. The coach evaluates
+     * the Run just finished, so the Workout it must be held to is the one of that Run's own kind; in
+     * stage 1 the first Workout is the Long run, so "first" would have floored every kind at it.
+     *
+     * Null when the Stage offers nothing of that kind — stage 3 offers no Long run — or when no plan
+     * is attached. Not "the nearest Workout": a Prescription reasoned about a Long Run and floored at
+     * a stride session is a shape nobody wrote.
      */
-    fun resolveBaseWorkout(planId: String?, stageId: String?): WorkoutTemplate? =
-        resolveStageWorkouts(planId, stageId).firstOrNull()
+    fun resolveWorkoutOfType(
+        planId: String?,
+        stageId: String?,
+        runType: RunType
+    ): WorkoutTemplate? = resolveStageWorkouts(planId, stageId).firstOrNull { it.runType == runType }
 }
