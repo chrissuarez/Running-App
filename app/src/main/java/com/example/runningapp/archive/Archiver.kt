@@ -123,7 +123,14 @@ class Archiver(
             // A name can already be taken by a backup made in the same minute. That archive is
             // about to be superseded by this one, so it goes rather than blocking the promotion —
             // some folders would otherwise quietly rename to "…(1).zip", leaving both.
-            runCatching { destination.delete(finishedName) }
+            //
+            // Its failure is fatal to the promotion rather than shrugged off, because a folder that
+            // kept the old file would make the rename *look* like it worked: the check that the new
+            // name is now in the folder would be satisfied by the very file that should have gone,
+            // and a last-backup time would be recorded for an archive still holding yesterday's
+            // history. Failing here leaves the finished `.part` in place instead, which is the newest
+            // complete copy and what the next attempt promotes.
+            destination.delete(finishedName)
             destination.rename(inProgressName, finishedName)
         } catch (e: Exception) {
             Log.w(TAG, "Backup could not be promoted", e)
@@ -137,7 +144,8 @@ class Archiver(
 
         // Listed *after* the promotion, so the archive just written is one of the ones being kept.
         runCatching {
-            ArchiveNames.retire(destination.list()).forEach { destination.delete(it) }
+            ArchiveNames.retire(destination.list(), justWritten = finishedName)
+                .forEach { destination.delete(it) }
         }.onFailure { Log.w(TAG, "Could not retire older archives", it) }
 
         onArchived(at)
