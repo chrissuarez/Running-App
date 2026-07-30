@@ -201,8 +201,8 @@ class MainActivity : ComponentActivity() {
                     val appContainer = remember { this@MainActivity.runningAppContainer() }
                     val settingsRepository = remember { appContainer.settingsRepository }
                     val userSettings by settingsRepository.userSettingsFlow.collectAsState(initial = UserSettings())
-                    val coachPrescription by appContainer.coachPrescriptionRepository
-                        .prescriptionFlow.collectAsState(initial = null)
+                    val coachPrescriptions by appContainer.coachPrescriptionRepository
+                        .prescriptionsFlow.collectAsState(initial = CoachPrescriptions.NONE)
 
                     val database = remember { appContainer.database }
                     val sessionRepository = remember { appContainer.sessionRepository }
@@ -239,7 +239,7 @@ class MainActivity : ComponentActivity() {
                             MainScreen(
                                 hrService = hrService,
                                 userSettings = userSettings,
-                                coachPrescription = coachPrescription,
+                                coachPrescriptions = coachPrescriptions,
                                 sessionRepository = sessionRepository,
                                 onRequestPermissions = { checkAndRequestPermissions() },
                                 onStartRun = { skipPlan, runMode, pickedWorkoutId ->
@@ -616,7 +616,7 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(
     hrService: HrForegroundService?,
     userSettings: UserSettings,
-    coachPrescription: CoachPrescription?,
+    coachPrescriptions: CoachPrescriptions,
     sessionRepository: SessionRepository,
     paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
@@ -664,7 +664,7 @@ fun MainScreen(
         stageWorkouts = stageWorkouts,
         pickedWorkoutId = pickedWorkoutId,
         settings = userSettings,
-        prescription = coachPrescription,
+        prescriptions = coachPrescriptions,
         nowEpochMillis = System.currentTimeMillis(),
         runMode = selectedRunMode,
         skippedToday = skipPlanToday

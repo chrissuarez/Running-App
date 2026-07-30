@@ -108,22 +108,27 @@ class SettingsRepositoryTest {
         // the runner reading about a workout that is not the one queued.
         val preferences = mutablePreferencesOf(
             PreferencesKeys.LATEST_COACH_MESSAGE to "Shortened after Tuesday.",
-            PreferencesKeys.ACTIVE_PLAN_ID to "5k_sub_25",
-            CoachPrescriptionKeys.TARGET_ZONE to 2,
-            CoachPrescriptionKeys.RUN_SECONDS to 30,
-            CoachPrescriptionKeys.WALK_SECONDS to 60,
-            CoachPrescriptionKeys.REPEATS to 5,
-            CoachPrescriptionKeys.PRESCRIBED_AT to 1_784_739_209_365L
+            PreferencesKeys.ACTIVE_PLAN_ID to "5k_sub_25"
         )
+        // Every Run Type's slot, since the debrief is written about whichever one the coach adapted
+        // and all three go together (#175).
+        RunType.entries.forEach { runType ->
+            preferences.writeCoachPrescription(
+                runType,
+                CoachPrescription(
+                    targetZone = 2,
+                    runDurationSeconds = 30,
+                    walkDurationSeconds = 60,
+                    totalRepeats = 5,
+                    prescribedAtEpochMillis = 1_784_739_209_365L
+                )
+            )
+        }
 
         preferences.clearCoachWork()
 
         assertNull(preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
-        assertNull(preferences[CoachPrescriptionKeys.TARGET_ZONE])
-        assertNull(preferences[CoachPrescriptionKeys.RUN_SECONDS])
-        assertNull(preferences[CoachPrescriptionKeys.WALK_SECONDS])
-        assertNull(preferences[CoachPrescriptionKeys.REPEATS])
-        assertNull(preferences[CoachPrescriptionKeys.PRESCRIBED_AT])
+        assertEquals(CoachPrescriptions.NONE, preferences.coachPrescriptions())
         // Untouched: this says which plan is attached, not what the coach said about it.
         assertEquals("5k_sub_25", preferences[PreferencesKeys.ACTIVE_PLAN_ID])
     }

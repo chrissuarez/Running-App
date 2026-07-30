@@ -1016,8 +1016,8 @@ class SessionRepositoryTest {
 
         repo.evaluateAndAdjustPlan("base_builder")
 
-        verify(mockSettingsRepo).advanceStageAndClearPrescription("sub_30_bridge", activeScope)
-        verify(mockPrescriptions, never()).prescribe(any(), any())
+        verify(mockSettingsRepo).advanceStageAndClearPrescriptions("sub_30_bridge", activeScope)
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
         // The debrief is about the run just finished, so it survives the graduation.
         verify(mockSettingsRepo).setLatestCoachMessage("Stage complete.", activeScope)
     }
@@ -1061,13 +1061,15 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder")
 
         val prescribed = argumentCaptor<CoachPrescription>()
-        verify(mockPrescriptions).prescribe(prescribed.capture(), eq(activeScope))
+        // Stored under the Run Type of the Workout the evaluation was floored against (#175) —
+        // stage 1's own first Workout, its Long Run. Nothing it writes can reach the other two kinds.
+        verify(mockPrescriptions).prescribe(eq(RunType.LONG), prescribed.capture(), eq(activeScope))
         assertEquals(660, prescribed.firstValue.runDurationSeconds)
         assertEquals(60, prescribed.firstValue.walkDurationSeconds)
         assertEquals(4, prescribed.firstValue.totalRepeats)
         assertEquals(3, prescribed.firstValue.targetZone)
         verify(mockSettingsRepo).setLatestCoachMessage("Good session.", activeScope)
-        verify(mockSettingsRepo, never()).advanceStageAndClearPrescription(anyOrNull(), any())
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(anyOrNull(), any())
         verify(mockSettingsRepo, never()).setCoachingEnabled(any())
         verify(mockSettingsRepo, never()).setTargetZone(any())
         verify(mockSettingsRepo, never()).setStatedHeartRates(any(), anyOrNull(), anyOrNull())

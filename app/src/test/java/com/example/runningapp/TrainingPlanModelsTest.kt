@@ -25,16 +25,48 @@ class TrainingPlanModelsTest {
         prescribedAt: Long = now
     ) = CoachPrescription(targetZone, run, walk, repeats, prescribedAt)
 
+    /** What the coach has standing, with [prescription] in [base]'s own slot (#175). */
+    private fun standingFor(
+        prescription: CoachPrescription,
+        runType: RunType = RunType.LONG
+    ) = CoachPrescriptions(mapOf(runType to prescription))
+
     private fun daysBefore(days: Long) = now - days * 24L * 60L * 60L * 1000L
 
     @Test
     fun `with no prescription the base workout is what runs`() {
-        assertSame(base, base.withCoachPrescription(null, now))
+        assertSame(base, base.withCoachPrescription(CoachPrescriptions.NONE, now))
+    }
+
+    @Test
+    fun `a prescription for another run type applies nothing to this one`() {
+        // The reason the slots exist (#175): ten-minute run Intervals written for the Long Run must
+        // never reshape a session built from twenty-second strides.
+        val forTheEasyRun = standingFor(prescription(), runType = RunType.EASY)
+
+        assertSame(base, base.withCoachPrescription(forTheEasyRun, now))
+    }
+
+    @Test
+    fun `two slots at once each move their own workout and no other`() {
+        val long = workoutOf(RunType.LONG)
+        val quality = workoutOf(RunType.QUALITY)
+        val standing = CoachPrescriptions(
+            mapOf(
+                RunType.LONG to prescription(run = 660, walk = 120, repeats = 3),
+                RunType.QUALITY to prescription(run = 25, walk = 90, repeats = 6)
+            )
+        )
+
+        assertEquals(660, long.withCoachPrescription(standing, now).runDurationSeconds)
+        assertEquals(25, quality.withCoachPrescription(standing, now).runDurationSeconds)
+        // No slot of its own, so the plan's numbers stand.
+        assertSame(workoutOf(RunType.EASY), workoutOf(RunType.EASY).withCoachPrescription(standing, now))
     }
 
     @Test
     fun `a prescription replaces target, run, walk and repeats`() {
-        val adapted = base.withCoachPrescription(prescription(targetZone = 3), now)
+        val adapted = base.withCoachPrescription(standingFor(prescription(targetZone = 3)), now)
         assertEquals(3, adapted.targetZone)
         assertEquals(360, adapted.runDurationSeconds)
         assertEquals(90, adapted.walkDurationSeconds)
@@ -43,7 +75,7 @@ class TrainingPlanModelsTest {
 
     @Test
     fun `identity and the envelope stay the plan's — the coach prescribes work, not the workout`() {
-        val adapted = base.withCoachPrescription(prescription(), now)
+        val adapted = base.withCoachPrescription(standingFor(prescription()), now)
         assertEquals(base.id, adapted.id)
         assertEquals(base.title, adapted.title)
         assertEquals(base.warmUpSeconds, adapted.warmUpSeconds)
@@ -52,7 +84,7 @@ class TrainingPlanModelsTest {
 
     @Test
     fun `a prescription still applies days later, since runs are days apart`() {
-        val adapted = base.withCoachPrescription(prescription(prescribedAt = daysBefore(5)), now)
+        val adapted = base.withCoachPrescription(standingFor(prescription(prescribedAt = daysBefore(5))), now)
         assertEquals(360, adapted.runDurationSeconds)
     }
 
@@ -63,7 +95,7 @@ class TrainingPlanModelsTest {
         // again here because a standing prescription outlives the workout it was floored at.
         val fromAnEarlierPlan = prescription(run = 180, walk = 60, repeats = 6)
 
-        assertSame(base, base.withCoachPrescription(fromAnEarlierPlan, now))
+        assertSame(base, base.withCoachPrescription(standingFor(fromAnEarlierPlan), now))
     }
 
     @Test
@@ -72,14 +104,14 @@ class TrainingPlanModelsTest {
         // prescribing a fifth of the running. Total alone would let that through.
         val padded = prescription(run = 60, walk = 240, repeats = 6)
 
-        assertSame(base, base.withCoachPrescription(padded, now))
+        assertSame(base, base.withCoachPrescription(standingFor(padded), now))
     }
 
     @Test
     fun `a prescription that clears the workout still applies in full`() {
         val harder = prescription(run = 360, walk = 60, repeats = 5)
 
-        val adapted = base.withCoachPrescription(harder, now)
+        val adapted = base.withCoachPrescription(standingFor(harder), now)
 
         assertEquals(360, adapted.runDurationSeconds)
         assertEquals(60, adapted.walkDurationSeconds)
@@ -89,7 +121,7 @@ class TrainingPlanModelsTest {
     @Test
     fun `a prescription older than the cutoff is not applied`() {
         val stale = prescription(prescribedAt = daysBefore(COACH_PRESCRIPTION_MAX_AGE_DAYS + 1L))
-        assertSame(base, base.withCoachPrescription(stale, now))
+        assertSame(base, base.withCoachPrescription(standingFor(stale), now))
     }
 
     @Test

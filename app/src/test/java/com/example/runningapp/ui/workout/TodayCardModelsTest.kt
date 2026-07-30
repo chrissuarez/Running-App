@@ -1,6 +1,7 @@
 package com.example.runningapp.ui.workout
 
 import com.example.runningapp.CoachPrescription
+import com.example.runningapp.CoachPrescriptions
 import com.example.runningapp.RunType
 import com.example.runningapp.UserSettings
 import com.example.runningapp.WorkoutTemplate
@@ -29,13 +30,17 @@ class TodayCardModelsTest {
         prescribedAt: Long = now
     ) = CoachPrescription(targetZone, run, walk, repeats, prescribedAt)
 
+    /** What the coach has standing, by the Run Type each prescription was written for (#175). */
+    private fun standing(vararg slots: Pair<RunType, CoachPrescription>) =
+        CoachPrescriptions(slots.toMap())
+
     private fun card(
         stageTitle: String? = "Stage 1: Base Builder",
         workout: WorkoutTemplate? = aerobicFoundation,
         stageWorkouts: List<WorkoutTemplate> = listOfNotNull(workout),
         pickedWorkoutId: String? = null,
         settings: UserSettings = this.settings,
-        prescription: CoachPrescription? = null,
+        prescriptions: CoachPrescriptions = CoachPrescriptions.NONE,
         nowEpochMillis: Long = now,
         runMode: String = "outdoor",
         skippedToday: Boolean = false
@@ -44,7 +49,7 @@ class TodayCardModelsTest {
         stageWorkouts,
         pickedWorkoutId,
         settings,
-        prescription,
+        prescriptions,
         nowEpochMillis,
         runMode,
         skippedToday
@@ -154,7 +159,7 @@ class TodayCardModelsTest {
             settings = settings.copy(
                 latestCoachMessage = "Shortened after Tuesday — your heart rate drifted in the last two intervals."
             ),
-            prescription = prescription()
+            prescriptions = standing(RunType.LONG to prescription())
         )
         assertEquals("5 × (6 min run / 1 min 30 s walk)", state.detailLine)
         assertEquals(
@@ -172,7 +177,7 @@ class TodayCardModelsTest {
                 latestCoachMessage = "Shortened after Tuesday. Your heart rate drifted in the last " +
                     "two intervals, and the final one was cut short.\n\nWe will build back up next week."
             ),
-            prescription = prescription()
+            prescriptions = standing(RunType.LONG to prescription())
         )
         assertEquals("Coach: Shortened after Tuesday.", state.coachNote)
     }
@@ -183,7 +188,7 @@ class TodayCardModelsTest {
             settings = settings.copy(
                 latestCoachMessage = "Your pace was 5.30 min/km, so today eases off. And then more."
             ),
-            prescription = prescription()
+            prescriptions = standing(RunType.LONG to prescription())
         )
         assertEquals("Coach: Your pace was 5.30 min/km, so today eases off.", state.coachNote)
     }
@@ -192,7 +197,7 @@ class TodayCardModelsTest {
     fun `a debrief with no sentence end is shown whole rather than guessed at`() {
         val state = card(
             settings = settings.copy(latestCoachMessage = "Easing off today"),
-            prescription = prescription()
+            prescriptions = standing(RunType.LONG to prescription())
         )
         assertEquals("Coach: Easing off today", state.coachNote)
     }
@@ -201,14 +206,14 @@ class TodayCardModelsTest {
     fun `an adaptation without a message still names that something changed`() {
         assertEquals(
             "Coach: Today's intervals were adjusted for you.",
-            card(prescription = prescription()).coachNote
+            card(prescriptions = standing(RunType.LONG to prescription())).coachNote
         )
     }
 
     @Test
     fun `the coach can drop today's target, and the pill follows it`() {
         val threshold = WorkoutTemplate("w3_s1", "Threshold Intervals", 4, 300, 120, 5, runType = RunType.QUALITY)
-        val eased = card(workout = threshold, prescription = prescription(targetZone = 2))
+        val eased = card(workout = threshold, prescriptions = standing(RunType.QUALITY to prescription(targetZone = 2)))
         assertEquals("Target: Moderate", eased.targetPill)
     }
 
@@ -216,7 +221,7 @@ class TodayCardModelsTest {
     fun `a prescription asking for less work than the plan leaves the card as written`() {
         // The coach is floored at the stage's own workout when it writes (#170), but a prescription
         // stands for a fortnight and the plan's numbers can be rewritten under it (#173).
-        val eased = card(prescription = prescription(run = 180, walk = 60, repeats = 6))
+        val eased = card(prescriptions = standing(RunType.LONG to prescription(run = 180, walk = 60, repeats = 6)))
         assertEquals("5 × (5 min run / 1 min walk)", eased.detailLine)
         assertNull(eased.coachNote)
     }
@@ -225,7 +230,7 @@ class TodayCardModelsTest {
     fun `a stale prescription leaves the card showing the plan as written`() {
         val staleByOneDay = now - (com.example.runningapp.COACH_PRESCRIPTION_MAX_AGE_DAYS + 1) *
             24L * 60L * 60L * 1000L
-        val state = card(prescription = prescription(prescribedAt = staleByOneDay))
+        val state = card(prescriptions = standing(RunType.LONG to prescription(prescribedAt = staleByOneDay)))
         assertEquals("5 × (5 min run / 1 min walk)", state.detailLine)
         assertNull(state.coachNote)
     }
@@ -260,12 +265,12 @@ class TodayCardModelsTest {
 
     private fun stageCard(
         pickedWorkoutId: String? = null,
-        prescription: CoachPrescription? = null,
+        prescriptions: CoachPrescriptions = CoachPrescriptions.NONE,
         skippedToday: Boolean = false
     ) = card(
         stageWorkouts = stageOne,
         pickedWorkoutId = pickedWorkoutId,
-        prescription = prescription,
+        prescriptions = prescriptions,
         skippedToday = skippedToday
     )
 
@@ -309,11 +314,16 @@ class TodayCardModelsTest {
     }
 
     @Test
-    fun `every offered workout shows the numbers a standing prescription would run it at`() {
-        // One prescription still stands for whichever workout it is applied to (a Prescription per
-        // Run Type is #175), so each one asks the floor (#170) for itself: this one is more work
-        // than Strides and less than the other two, and only Strides moves.
-        val stretched = stageCard(prescription = prescription(run = 200, walk = 60, repeats = 4))
+    fun `every offered workout shows the numbers its own slot would run it at`() {
+        // Each row asks the coach for its own Run Type (#175) and then asks the floor (#170) for
+        // itself. Here the Quality slot stretches Strides; the Long slot asks for less running than
+        // the Long Run's own workout, so that row stays as the plan wrote it; Easy has no slot at all.
+        val stretched = stageCard(
+            prescriptions = standing(
+                RunType.QUALITY to prescription(run = 200, walk = 60, repeats = 4),
+                RunType.LONG to prescription(run = 180, walk = 60, repeats = 6)
+            )
+        )
         val offered = stretched.workouts.associateBy { it.runTypeLabel }
         assertEquals(
             "4 × (3 min 20 s run / 1 min walk) · ≈ 40 min",
@@ -321,6 +331,33 @@ class TodayCardModelsTest {
         )
         assertEquals("3 × (10 min run / 2 min walk) · ≈ 47 min", offered.getValue("Long").summaryLine)
         assertEquals("20 min run · ≈ 28 min", offered.getValue("Easy").summaryLine)
+    }
+
+    @Test
+    fun `a prescription for one run type moves no other row, whatever it asks for`() {
+        // The hazard #175 closes, seen on the card: ten-minute run Intervals written for the Long Run
+        // would otherwise be offered as today's stride session.
+        val forTheLongRun = standing(RunType.LONG to prescription(run = 660, walk = 120, repeats = 3))
+        val offered = stageCard(prescriptions = forTheLongRun).workouts.associateBy { it.runTypeLabel }
+
+        assertEquals("3 × (11 min run / 2 min walk) · ≈ 50 min", offered.getValue("Long").summaryLine)
+        assertEquals("6 × (20 s run / 1 min 30 s walk) · ≈ 34 min", offered.getValue("Quality").summaryLine)
+        assertEquals("20 min run · ≈ 28 min", offered.getValue("Easy").summaryLine)
+    }
+
+    @Test
+    fun `the picked row's numbers are the card's own, slot for slot`() {
+        // Nothing may promise a Workout at numbers the Run then resolves differently (#111): the
+        // heading and the row it was picked from read the same slot.
+        val picked = stageCard(
+            pickedWorkoutId = "w1_quality",
+            prescriptions = standing(RunType.QUALITY to prescription(run = 25, walk = 90, repeats = 6))
+        )
+        assertEquals("6 × (25 s run / 1 min 30 s walk)", picked.detailLine)
+        assertEquals(
+            "6 × (25 s run / 1 min 30 s walk) · ≈ 35 min",
+            picked.workouts.single { it.picked }.summaryLine
+        )
     }
 
     @Test

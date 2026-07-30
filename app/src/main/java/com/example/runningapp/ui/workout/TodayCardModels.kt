@@ -1,6 +1,6 @@
 package com.example.runningapp.ui.workout
 
-import com.example.runningapp.CoachPrescription
+import com.example.runningapp.CoachPrescriptions
 import com.example.runningapp.HrZone
 import com.example.runningapp.RunType
 import com.example.runningapp.UserSettings
@@ -91,13 +91,13 @@ fun todayCardUiState(
     stageWorkouts: List<WorkoutTemplate>,
     pickedWorkoutId: String?,
     settings: UserSettings,
-    prescription: CoachPrescription?,
+    prescriptions: CoachPrescriptions,
     nowEpochMillis: Long,
     runMode: String,
     skippedToday: Boolean
 ): TodayCardUiState {
     val picked = stageWorkouts.pickedOrFirst(pickedWorkoutId)
-    val planned = picked?.withCoachPrescription(prescription, nowEpochMillis)
+    val planned = picked?.withCoachPrescription(prescriptions, nowEpochMillis)
 
     if (planned == null || skippedToday) {
         return TodayCardUiState(
@@ -132,7 +132,7 @@ fun todayCardUiState(
             // Each one asks the prescription for itself rather than borrowing today's answer:
             // the floor (#170) is measured against the workout being adapted, so the same standing
             // prescription can move one of the three and leave another as the plan wrote it.
-            val asRun = workout.withCoachPrescription(prescription, nowEpochMillis)
+            val asRun = workout.withCoachPrescription(prescriptions, nowEpochMillis)
             TodayCardWorkout(
                 workoutId = workout.id,
                 runTypeLabel = runTypeLabel(workout.runType),

@@ -71,8 +71,10 @@ _Avoid_: lap, mile
 
 **Prescription**:
 What the AI coach writes after a Run: the intervals and target zone for the next
-Workout of one Run Type, and nothing else. Dated, replaceable, and never a
-setting — the coach prescribes work, it does not configure the app.
+Workout of one Run Type, and nothing else. There is one slot per Run Type, so a
+Prescription applies only to its own kind of session and can never land on
+another. Dated, replaceable, and never a setting — the coach prescribes work, it
+does not configure the app.
 _Avoid_: AI adjustments, AI intervals
 
 **Strap**:

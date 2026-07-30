@@ -237,9 +237,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private lateinit var settingsRepository: SettingsRepository
-    // The coach's standing prescription for today's workout, if any. Read once at START, like the
-    // workout it adapts — a prescription arriving mid-run must not reshape a run in progress.
-    @Volatile private var currentPrescription: CoachPrescription? = null
+    // What the coach has standing, one slot per Run Type (#175) — today's workout takes the slot
+    // of its own kind and no other. Read once at START, like the workout it adapts: a prescription
+    // arriving mid-run must not reshape a run in progress.
+    @Volatile private var currentPrescriptions: CoachPrescriptions = CoachPrescriptions.NONE
     private lateinit var sessionRepository: SessionRepository
     private var currentSettings = UserSettings()
     // Skip today's plan (#107): a per-run, today-only choice from the record screen. When set, the
@@ -749,8 +750,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
 
         serviceScope.launch {
-            appContainer.coachPrescriptionRepository.prescriptionFlow.collect {
-                currentPrescription = it
+            appContainer.coachPrescriptionRepository.prescriptionsFlow.collect {
+                currentPrescriptions = it
             }
         }
 
@@ -844,7 +845,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             pickedWorkoutId
         ) ?: return null
         // Shared with the record screen's card, so what it promises is what this runs (#111).
-        return baseWorkout.withCoachPrescription(currentPrescription, System.currentTimeMillis())
+        return baseWorkout.withCoachPrescription(currentPrescriptions, System.currentTimeMillis())
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
