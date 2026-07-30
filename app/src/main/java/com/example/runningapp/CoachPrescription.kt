@@ -18,7 +18,7 @@ import kotlinx.coroutines.flow.map
  *
  * Empty is a whole answer, not a missing one: [NONE] means the plan runs as written.
  */
-data class CoachPrescriptions(val byRunType: Map<RunType, CoachPrescription>) {
+data class CoachPrescriptions(private val byRunType: Map<RunType, CoachPrescription>) {
 
     /** What the coach wrote for [runType], or null when it has written nothing for that kind. */
     operator fun get(runType: RunType): CoachPrescription? = byRunType[runType]
@@ -91,6 +91,10 @@ internal class CoachPrescriptionKeys private constructor(runType: RunType) {
     val repeats = intPreferencesKey("coach_repeats_$suffix")
     val prescribedAt = longPreferencesKey("coach_prescribed_at_$suffix")
 
+    /** All five together, for the callers that treat a slot as one thing rather than five. */
+    val all: List<Preferences.Key<*>> =
+        listOf(targetZone, runSeconds, walkSeconds, repeats, prescribedAt)
+
     companion object {
         private val slots = RunType.entries.associateWith { CoachPrescriptionKeys(it) }
 
@@ -104,8 +108,11 @@ internal class CoachPrescriptionKeys private constructor(runType: RunType) {
  * Read by nothing: a global prescription cannot say which kind of session it was about, and guessing
  * is the mistake the slots exist to make impossible. Named here only so the next clear takes them
  * away instead of leaving them in storage for good.
+ *
+ * `internal` for the same reason the current keys are: one spelling of a key, so a test can assert
+ * on these strings without a second copy of them.
  */
-private val LEGACY_GLOBAL_KEYS = listOf(
+internal val LEGACY_GLOBAL_KEYS: List<Preferences.Key<*>> = listOf(
     intPreferencesKey("coach_target_zone"),
     intPreferencesKey("coach_run_seconds"),
     intPreferencesKey("coach_walk_seconds"),
@@ -161,15 +168,9 @@ internal fun MutablePreferences.writeCoachPrescription(
  * leave a window where a run could start on a stage it had half-left.
  */
 internal fun MutablePreferences.clearCoachPrescriptions() {
-    RunType.entries.forEach { runType ->
-        val keys = CoachPrescriptionKeys.of(runType)
-        remove(keys.targetZone)
-        remove(keys.runSeconds)
-        remove(keys.walkSeconds)
-        remove(keys.repeats)
-        remove(keys.prescribedAt)
-    }
-    LEGACY_GLOBAL_KEYS.forEach { remove(it) }
+    RunType.entries.flatMap { CoachPrescriptionKeys.of(it).all }
+        .plus(LEGACY_GLOBAL_KEYS)
+        .forEach { remove(it) }
 }
 
 class CoachPrescriptionRepository(private val context: Context) {

@@ -98,22 +98,30 @@ class CoachPrescriptionTest {
         // there is no way to say which session it was about, and a prescription applied to the wrong
         // kind of session is the whole bug this ticket closes. So it applies nothing, and the keys
         // go with the next clear rather than sitting in storage for good.
-        val globalKeys = listOf(
-            intPreferencesKey("coach_target_zone"),
-            intPreferencesKey("coach_run_seconds"),
-            intPreferencesKey("coach_walk_seconds"),
-            intPreferencesKey("coach_repeats")
+        // Typed from the names the app itself holds, so this test cannot drift from what would
+        // actually be sitting in storage.
+        val preferences = mutablePreferencesOf()
+        LEGACY_GLOBAL_KEYS.dropLast(1).forEach { preferences[intPreferencesKey(it.name)] = 60 }
+        preferences[longPreferencesKey(LEGACY_GLOBAL_KEYS.last().name)] = now
+
+        // The names those keys carry, asserted because nothing else reads them any more: a typo in
+        // the list would otherwise leave the real keys behind and still pass.
+        assertEquals(
+            listOf(
+                "coach_target_zone",
+                "coach_run_seconds",
+                "coach_walk_seconds",
+                "coach_repeats",
+                "coach_prescribed_at"
+            ),
+            LEGACY_GLOBAL_KEYS.map { it.name }
         )
-        val prescribedAt = longPreferencesKey("coach_prescribed_at")
-        val preferences = mutablePreferencesOf(*globalKeys.map { it to 60 }.toTypedArray())
-        preferences[prescribedAt] = now
 
         assertEquals(CoachPrescriptions.NONE, preferences.coachPrescriptions())
 
         preferences.clearCoachPrescriptions()
 
-        globalKeys.forEach { assertNull(preferences[it]) }
-        assertNull(preferences[prescribedAt])
+        LEGACY_GLOBAL_KEYS.forEach { assertNull(preferences[it]) }
     }
 
     @Test
