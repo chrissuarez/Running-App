@@ -73,9 +73,24 @@ class SafArchiveFolder(context: Context, private val treeUri: Uri) : ArchiveFold
         withContext(Dispatchers.IO) { deleteIfPresent(fileName) }
     }
 
+    /**
+     * Removes [fileName] if it is there, and refuses to pretend it did.
+     *
+     * A provider reports a refused delete by returning false as readily as by throwing, and a
+     * silently-kept file is the one failure this class must never pass upwards as success: the very
+     * next call creates a document under the same name, the provider invents a second one —
+     * `…zip.part (1)` — and the archive is written there while promotion still finds and renames the
+     * *stale* file. A backup that was never written would be recorded as one.
+     *
+     * The folder is asked afterwards rather than the return value believed, for the same reason
+     * [rename] asks: it is the only answer that means the same thing on every provider.
+     */
     private fun deleteIfPresent(fileName: String) {
         val document = documentUri(fileName) ?: return
         DocumentsContract.deleteDocument(resolver, document)
+        if (children().any { it.name == fileName }) {
+            throw IOException("Could not remove $fileName from the backup folder")
+        }
     }
 
     private fun documentUri(fileName: String): Uri? =

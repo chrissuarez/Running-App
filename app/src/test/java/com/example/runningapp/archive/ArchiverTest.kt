@@ -32,6 +32,12 @@ class ArchiverTest {
         var failRename = false
         var failList = false
 
+        /**
+         * A folder that keeps a file it was asked to remove. Real ones say so by returning false
+         * from `deleteDocument` as readily as by throwing; [SafArchiveFolder] turns both into this.
+         */
+        var failDeleteOf: String? = null
+
         override suspend fun list(): List<String> {
             if (failList) throw IOException("folder gone")
             log += "list"
@@ -59,6 +65,7 @@ class ArchiverTest {
 
         override suspend fun delete(fileName: String) {
             log += "delete $fileName"
+            if (fileName == failDeleteOf) throw IOException("could not remove $fileName")
             files.remove(fileName)
         }
     }
@@ -213,6 +220,27 @@ class ArchiverTest {
         archiver(folder).archiveNow()
 
         assertEquals(listOf(expectedName), folder.files.keys.toList())
+    }
+
+    /**
+     * A folder that will not give up the name is the case where a promotion can *look* like it
+     * worked: the old archive would still be sitting under the new name, satisfying every check,
+     * while the archive just written stayed a `.part`.
+     */
+    @Test
+    fun `a name that cannot be cleared fails the backup rather than claiming it`() = runTest {
+        val folder = FakeFolder(listOf(expectedName)).apply { failDeleteOf = expectedName }
+        folder.files[expectedName] = "yesterday".toByteArray()
+        var recordedAt: Long? = null
+
+        val outcome = archiver(folder, onArchived = { recordedAt = it }).archiveNow()
+
+        assertTrue(outcome is ArchiveOutcome.Failed)
+        assertNull(recordedAt)
+        // The finished archive that was there is untouched, and the new one waits under its part
+        // name — the newest complete copy in the folder, for the next attempt to promote.
+        assertEquals("yesterday", String(folder.files.getValue(expectedName)))
+        assertTrue(folder.files.containsKey(expectedInProgressName))
     }
 
     /**

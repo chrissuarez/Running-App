@@ -80,10 +80,24 @@ object ArchiveNames {
      *
      * Anything else in the folder is untouched. The runner picked a folder, not a private
      * directory — it may be their Drive root, full of things that are none of this app's business.
+     *
+     * [justWritten] is the archive this backup has only just promoted, and it is never retired
+     * whatever the sort says. These names carry local wall-clock time, so a phone that has moved to
+     * an earlier time zone — or simply lived through the October clock change — can write an archive
+     * whose name sorts *before* ones already in the folder. Without this the fourth backup could
+     * delete itself the instant it landed, and still record a last-backup time: the one claim this
+     * class exists to keep honest. Ordering among the older archives can be an hour out across a
+     * clock change, which costs at most a slightly newer archive retiring before a slightly older
+     * one — a different thing entirely from losing the backup just made.
      */
-    fun retire(fileNames: List<String>, keep: Int = KEEP): List<String> {
+    fun retire(
+        fileNames: List<String>,
+        keep: Int = KEEP,
+        justWritten: String? = null
+    ): List<String> {
         val archives = fileNames.filter(::isArchive).sorted()
         val surplus = (archives.size - keep).coerceAtLeast(0)
-        return archives.take(surplus) + fileNames.filter(::isAbandoned)
+        val retired = archives.filterNot { it == justWritten }.take(surplus)
+        return retired + fileNames.filter(::isAbandoned)
     }
 }

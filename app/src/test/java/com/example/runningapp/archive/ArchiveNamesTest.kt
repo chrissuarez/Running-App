@@ -104,6 +104,41 @@ class ArchiveNamesTest {
     }
 
     @Test
+    fun `the archive just written is never the one retired`() {
+        // The phone moved west, or the clocks went back: the newest archive is named for an hour
+        // that sorts before the three already there.
+        val justWritten = "running-app-archive-2026-07-30-0112.zip"
+        val names = listOf(
+            justWritten,
+            "running-app-archive-2026-07-30-0212.zip",
+            "running-app-archive-2026-07-30-0312.zip",
+            "running-app-archive-2026-07-30-0412.zip"
+        )
+
+        val retired = ArchiveNames.retire(names, justWritten = justWritten)
+
+        assertEquals(listOf("running-app-archive-2026-07-30-0212.zip"), retired)
+        assertFalse(retired.contains(justWritten))
+    }
+
+    @Test
+    fun `protecting the newest still leaves exactly three archives`() {
+        val justWritten = "running-app-archive-2026-01-01-0000.zip"
+        val names = listOf(
+            justWritten,
+            "running-app-archive-2026-05-01-0800.zip",
+            "running-app-archive-2026-06-01-0800.zip",
+            "running-app-archive-2026-07-01-0800.zip",
+            "running-app-archive-2026-08-01-0800.zip"
+        )
+
+        val kept = names - ArchiveNames.retire(names, justWritten = justWritten).toSet()
+
+        assertEquals(3, kept.size)
+        assertTrue(kept.contains(justWritten))
+    }
+
+    @Test
     fun `a runner's own file that merely starts the same way is not an archive`() {
         listOf(
             "running-app-archive-family.zip",
