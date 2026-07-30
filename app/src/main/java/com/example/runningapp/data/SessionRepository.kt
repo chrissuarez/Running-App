@@ -556,6 +556,31 @@ class SessionRepository(
                 )
                 return
             }
+            // Warm-up/cool-down now live on the workout (#107); the load clamp accounts for the
+            // envelope so the estimated total stays comparable to real sessions. The Workout is the
+            // Stage's own one of this Run's kind (#176) — both the envelope and the floor below are
+            // about the session the coach is prescribing, which is the kind that just finished.
+            //
+            // Resolved before the coach is asked anything, because its absence is the same "not a
+            // Run I understand" answer as the Run Type gate above. The Run followed a Workout of
+            // this kind, so a missing one means the plan moved on: detached, or advanced to a stage
+            // that offers no Workout of this Run Type, as stage 3 offers no Long run. That happens
+            // when an earlier evaluation graduates the plan while this Run is still going. Asking
+            // anyway would evaluate the finished Run against a stage it was never run under, and
+            // then write that verdict over the graduation's own debrief.
+            val stageWorkoutOfKind = TrainingPlanProvider.resolveWorkoutOfType(
+                settings.activePlanId,
+                settings.activeStageId,
+                runType
+            )
+            if (stageWorkoutOfKind == null) {
+                Log.d(
+                    "AiCoach",
+                    "Skipping AI evaluation: no $runType workout is attached to judge this run against. " +
+                        "planId=${settings.activePlanId} stageId=${settings.activeStageId}"
+                )
+                return
+            }
             Log.d("AiCoach", "Starting AI evaluation of a $runType run for stage: $stageId")
             val context = getAiTrainingContext(stageId)
             Log.d("AiCoach", "Sending prompt to Gemini with ${context.recentRuns.size} recent runs.")
@@ -565,23 +590,14 @@ class SessionRepository(
                 Log.d("AiCoach", "No new prescription: the coach could not be reached. stageId=$stageId")
                 return
             }
-            // Warm-up/cool-down now live on the workout (#107); the load clamp accounts for the
-            // envelope so the estimated total stays comparable to real sessions. The Workout is the
-            // Stage's own one of this Run's kind (#176) — both the envelope and the floor below are
-            // about the session the coach is prescribing, which is the kind that just finished.
-            val stageWorkoutOfKind = TrainingPlanProvider.resolveWorkoutOfType(
-                settings.activePlanId,
-                settings.activeStageId,
-                runType
-            )
             // Ceiling first, then floor: the floor wins where they disagree (#170). The ceiling is
             // measured against recorded runs, so a run cut short drags it below the plan — the
             // stage's own workout is the commitment and outranks that.
             val clampedResponse = floorAiResponseAtWorkout(
                 clampAiResponseByRecentLoad(
                     response,
-                    warmUpSeconds = stageWorkoutOfKind?.warmUpSeconds ?: 0,
-                    coolDownSeconds = stageWorkoutOfKind?.coolDownSeconds ?: 0
+                    warmUpSeconds = stageWorkoutOfKind.warmUpSeconds,
+                    coolDownSeconds = stageWorkoutOfKind.coolDownSeconds
                 ),
                 stageWorkoutOfKind
             )
@@ -613,18 +629,6 @@ class SessionRepository(
                 // and writing one only to clear it in the next breath leaves a window where a run
                 // could start on the new stage carrying the old one's numbers.
                 settingsRepo.advanceStageAndClearPrescriptions(nextStageId, scope)
-            } else if (stageWorkoutOfKind == null) {
-                // Nothing of this kind to floor a prescription at, and nothing one would apply to
-                // either. The Run followed a Workout of this kind, so this means the plan or stage
-                // moved while the coach was being asked — detached, or advanced to a stage that
-                // offers no Workout of this Run Type, as stage 3 offers no Long run (#176). Storing
-                // one anyway would mean floored at a Workout of another kind, or at nothing at all —
-                // both are the plan rewritten into something nobody asked for.
-                Log.d(
-                    "AiCoach",
-                    "No new prescription: no $runType workout is attached to floor one at. " +
-                        "planId=${settings.activePlanId} stageId=${settings.activeStageId}"
-                )
             } else {
                 coachPrescriptionRepository?.prescribe(
                     // The kind of Run just finished, which is the kind the Workout above is of.

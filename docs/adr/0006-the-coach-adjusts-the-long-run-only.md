@@ -29,11 +29,14 @@ nothing there to weigh.
 - **In a Stage offering no Long run the coach says nothing at all** — no
   Prescription and no debrief, because it is never asked. Stage 3 is two hard
   days, so that is where it lands; it is still locked, so nobody is there yet.
-- **A Stage that offers no Workout of the finished Run's kind gets no
-  Prescription.** Reachable only when the plan or Stage moves while the coach is
-  being asked, which takes seconds. Flooring a Long Prescription at a stride
-  session, or at nothing, would be the Plan rewritten into a shape nobody asked
-  for. The debrief still stands — it is about the Run just finished.
+- **A Stage that offers no Workout of the finished Run's kind is not evaluated,**
+  the same as a Run Type the coach does not adjust: the Workout is resolved
+  before the coach is asked anything. Reachable when the plan detaches, or when
+  an earlier evaluation graduates the Stage while a Long Run is still going —
+  finalization then reads the new Stage, which offers no Long run. Flooring a
+  Long Prescription at a stride session, or at nothing, would be the Plan
+  rewritten into a shape nobody asked for; and a debrief reasoned against a Stage
+  the Run was never judged under would land on top of the graduation's own.
 - **A Run that followed no Workout has no Run Type,** so it is not evaluated.
   That is the same outcome the old proxy gave an unplanned Run, by a rule that
   says why.
