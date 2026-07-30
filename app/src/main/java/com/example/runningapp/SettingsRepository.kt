@@ -8,7 +8,12 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
-val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
+val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
+    name = "settings",
+    // The one upgrade this store needs: the pre-#175 global prescription and its debrief, taken away
+    // before anything can read them. See [dropLegacyCoachWork].
+    produceMigrations = { listOf(dropLegacyCoachWork) }
+)
 
 data class SavedDevice(
     val address: String,

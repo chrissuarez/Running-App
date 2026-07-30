@@ -3,8 +3,11 @@ package com.example.runningapp
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.mutablePreferencesOf
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -26,6 +29,15 @@ class CoachPrescriptionTest {
             totalRepeats = repeats,
             prescribedAtEpochMillis = now
         )
+
+    /**
+     * Storage as it stood before the split, typed from the names the app itself holds so this cannot
+     * drift from what would actually be sitting in a real install's preferences.
+     */
+    private fun legacyPrescription() = mutablePreferencesOf().apply {
+        LEGACY_GLOBAL_KEYS.dropLast(1).forEach { this[intPreferencesKey(it.name)] = 60 }
+        this[longPreferencesKey(LEGACY_GLOBAL_KEYS.last().name)] = now
+    }
 
     @Test
     fun `each run type keeps its own prescription`() {
@@ -98,11 +110,7 @@ class CoachPrescriptionTest {
         // there is no way to say which session it was about, and a prescription applied to the wrong
         // kind of session is the whole bug this ticket closes. So it applies nothing, and the keys
         // go with the next clear rather than sitting in storage for good.
-        // Typed from the names the app itself holds, so this test cannot drift from what would
-        // actually be sitting in storage.
-        val preferences = mutablePreferencesOf()
-        LEGACY_GLOBAL_KEYS.dropLast(1).forEach { preferences[intPreferencesKey(it.name)] = 60 }
-        preferences[longPreferencesKey(LEGACY_GLOBAL_KEYS.last().name)] = now
+        val preferences = legacyPrescription()
 
         // The names those keys carry, asserted because nothing else reads them any more: a typo in
         // the list would otherwise leave the real keys behind and still pass.
@@ -122,6 +130,35 @@ class CoachPrescriptionTest {
         preferences.clearCoachPrescriptions()
 
         LEGACY_GLOBAL_KEYS.forEach { assertNull(preferences[it]) }
+    }
+
+    @Test
+    fun `the upgrade takes the legacy prescription and its debrief together`() = runBlocking {
+        // The numbers reading as nothing is not enough: the debrief is stored separately and rendered
+        // on its own, so leaving it behind shows a card about intervals no run will do.
+        val stored = legacyPrescription().apply {
+            this[PreferencesKeys.LATEST_COACH_MESSAGE] = "Shortened after Tuesday."
+            this[PreferencesKeys.ACTIVE_PLAN_ID] = "5k_sub_25"
+        }
+
+        assertTrue(dropLegacyCoachWork.shouldMigrate(stored))
+        val migrated = dropLegacyCoachWork.migrate(stored)
+
+        LEGACY_GLOBAL_KEYS.forEach { assertNull(migrated[it]) }
+        assertNull(migrated[PreferencesKeys.LATEST_COACH_MESSAGE])
+        // Only the coach's work goes: the plan the runner chose is untouched.
+        assertEquals("5k_sub_25", migrated[PreferencesKeys.ACTIVE_PLAN_ID])
+    }
+
+    @Test
+    fun `an install with no legacy prescription is never rewritten`() = runBlocking {
+        val fresh = mutablePreferencesOf()
+        fresh.writeCoachPrescription(RunType.LONG, prescription())
+        fresh[PreferencesKeys.LATEST_COACH_MESSAGE] = "Longer intervals today."
+
+        // A per-type slot standing with its debrief is the normal state, not something to migrate —
+        // an upgrade that cleared it would throw away work the coach did after the split.
+        assertFalse(dropLegacyCoachWork.shouldMigrate(fresh))
     }
 
     @Test
