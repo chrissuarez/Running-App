@@ -231,7 +231,11 @@ class MainActivity : ComponentActivity() {
                         factory = SessionDetailViewModelFactory(sessionRepository, appContainer.gpxFileStore)
                     )
                     val backupViewModel: BackupViewModel = viewModel(
-                        factory = BackupViewModelFactory(appContainer.archiver, settingsRepository)
+                        factory = BackupViewModelFactory(
+                            this@MainActivity,
+                            appContainer.archiver,
+                            settingsRepository
+                        )
                     )
                     val backingUp by backupViewModel.backingUp.collectAsState()
                     val backupOutcome by backupViewModel.lastOutcome.collectAsState()

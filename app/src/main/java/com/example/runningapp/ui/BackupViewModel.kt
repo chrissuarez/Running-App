@@ -1,8 +1,10 @@
 package com.example.runningapp.ui
 
+import androidx.lifecycle.AbstractSavedStateViewModelFactory
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import androidx.savedstate.SavedStateRegistryOwner
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.archive.ArchiveOutcome
 import com.example.runningapp.archive.Archiver
@@ -20,7 +22,8 @@ import kotlinx.coroutines.launch
  */
 class BackupViewModel(
     private val archiver: Archiver,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val savedState: SavedStateHandle
 ) : ViewModel() {
 
     private val _backingUp = MutableStateFlow(false)
@@ -47,12 +50,18 @@ class BackupViewModel(
     /**
      * Whether the folder picker now open was opened by a "Back up now" that had nowhere to write.
      *
-     * Kept here rather than beside the launcher, because the picker is another app's screen: this
-     * one can be recreated while it is up — a rotation is enough — and an intention remembered in
-     * the composition would be gone by the time the folder came back, leaving the runner staring at
+     * In saved state rather than a field, because the picker is another app's screen and this app
+     * can be *killed* while it is up — a long browse through Drive on a busy phone is enough.
+     * Android brings the activity back and delivers the folder to it, so an intention held only in
+     * memory would be gone by the time the answer arrived: the folder would be saved and the backup
+     * the runner actually asked for silently dropped, leaving them looking at "No backup yet" under
      * a button they had already pressed.
      */
-    private var backUpOnceFolderChosen = false
+    private var backUpOnceFolderChosen: Boolean
+        get() = savedState[BACK_UP_ONCE_FOLDER_CHOSEN] ?: false
+        set(value) {
+            savedState[BACK_UP_ONCE_FOLDER_CHOSEN] = value
+        }
 
     fun folderPickerOpened(thenBackUp: Boolean) {
         backUpOnceFolderChosen = thenBackUp
@@ -82,16 +91,30 @@ class BackupViewModel(
     fun resultShown() {
         _lastOutcome.value = null
     }
+
+    private companion object {
+        const val BACK_UP_ONCE_FOLDER_CHOSEN = "backUpOnceFolderChosen"
+    }
 }
 
+/**
+ * Built through [AbstractSavedStateViewModelFactory] so the pending "back up once a folder is
+ * chosen" intention is written into the same saved state Android restores after killing the process
+ * to make room — the case the picker actually has to survive.
+ */
 class BackupViewModelFactory(
+    owner: SavedStateRegistryOwner,
     private val archiver: Archiver,
     private val settingsRepository: SettingsRepository
-) : ViewModelProvider.Factory {
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+) : AbstractSavedStateViewModelFactory(owner, null) {
+    override fun <T : ViewModel> create(
+        key: String,
+        modelClass: Class<T>,
+        handle: SavedStateHandle
+    ): T {
         if (modelClass.isAssignableFrom(BackupViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return BackupViewModel(archiver, settingsRepository) as T
+            return BackupViewModel(archiver, settingsRepository, handle) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }
