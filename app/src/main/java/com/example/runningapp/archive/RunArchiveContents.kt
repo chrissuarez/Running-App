@@ -83,7 +83,9 @@ class RunArchiveContents(
      *
      * Two steps rather than one, and the order matters. The write-ahead log is checkpointed first,
      * or the snapshot would be the database as of some earlier moment with the recent writes left
-     * behind in a file that is not being copied. Then it is copied to a local file *before* being
+     * behind in a file that is not being copied — and the fold and the copy are taken together under
+     * the manager's lock, so no other checkpoint in the app can rewrite the file between them. Then
+     * it is copied to a local file *before* being
      * streamed into the archive: writing into the runner's folder means compressing and crossing a
      * content provider, which is slow, and a run finishing halfway through would leave the copy torn
      * across two versions of the database. The local copy is a bulk file copy — narrow enough that a
@@ -91,12 +93,14 @@ class RunArchiveContents(
      */
     private fun databaseEntry(): ArchiveEntry =
         ArchiveEntry("${ArchiveZip.DATABASE_DIRECTORY}/${DatabaseBackupManager.DATABASE_NAME}") { out ->
-            if (!DatabaseBackupManager.checkpoint(database)) {
-                Log.w(TAG, "WAL checkpoint stayed blocked; the snapshot may lag the most recent write")
-            }
             val snapshot = File(appContext.cacheDir, SNAPSHOT_FILE_NAME)
             try {
-                DatabaseBackupManager.databaseFile(appContext).copyTo(snapshot, overwrite = true)
+                // Folded and copied as one step by the manager, which holds these two together
+                // against every other checkpoint in the app — the post-run snapshot's fold running
+                // inside this copy would rewrite pages under it and archive a torn database.
+                if (!DatabaseBackupManager.snapshotTo(appContext, database, snapshot)) {
+                    Log.w(TAG, "WAL checkpoint stayed blocked; the snapshot may lag the most recent write")
+                }
                 snapshot.inputStream().use { it.copyTo(out) }
             } finally {
                 snapshot.delete()

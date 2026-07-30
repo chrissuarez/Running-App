@@ -98,6 +98,24 @@ object DatabaseBackupManager {
     fun databaseFile(context: Context): File = context.getDatabasePath(DATABASE_NAME)
 
     /**
+     * Folds the WAL and copies the live database to [destination]. Returns whether the fold
+     * completed; the copy is made either way.
+     *
+     * Under [backupLock] with everything else that checkpoints, and that is the whole point of it
+     * existing rather than the archive (#85) doing these two steps for itself. A TRUNCATE checkpoint
+     * rewrites pages *inside* the main database file — it is the one routine moment when that file
+     * changes underneath a reader — so a plain file copy running beside the post-run snapshot could
+     * take some pages from before the fold and some from after, and produce an archive holding a
+     * SQLite image that never existed. Stale would be survivable; torn is not.
+     */
+    fun snapshotTo(context: Context, database: AppDatabase, destination: File): Boolean =
+        synchronized(backupLock) {
+            val folded = checkpoint(database)
+            databaseFile(context).copyTo(destination, overwrite = true)
+            folded
+        }
+
+    /**
      * Folds the WAL into the main `.db` so the copied file includes the latest write. A TRUNCATE
      * checkpoint reports a blocked run in its result row (busy=1) instead of throwing — e.g. when a
      * UI query is holding a read snapshot — leaving recent frames only in `-wal`. Retry a few times
