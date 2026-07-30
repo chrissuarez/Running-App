@@ -1233,6 +1233,63 @@ class SessionRepositoryTest {
         assertEquals(3, prescribed.firstValue.totalRepeats)
     }
 
+    @Test
+    fun `an outdoor Run reaches the coach with its distance and its measured 5K`() = runTest {
+        // The evidence a 5K-in-a-time Stage needs (#182): a 24-minute 5K inside a 35-minute Run.
+        // Judged by durationSeconds it fails the stage it just passed.
+        val metresPerDegreeLatitude = 111_132.0
+        var latitude = 50.79
+        var timestamp = 1_700_000_000_000L
+        val points = mutableListOf(fiveKFix(latitude, timestamp))
+        listOf(1.3 to 480, 5000.0 / 1440 to 1440, 1.3 to 180).forEach { (speedMps, seconds) ->
+            repeat(seconds) {
+                latitude += speedMps / metresPerDegreeLatitude
+                timestamp += 1_000
+                points += fiveKFix(latitude, timestamp)
+            }
+        }
+        val outdoorRun = session(id = 7L, endTime = 1_000L)
+            .copy(runMode = "outdoor", distanceKm = 6.4, durationSeconds = 2100)
+        val mockTrackPointDao: TrackPointDao = mock()
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(listOf(outdoorRun))
+        whenever(mockTrackPointDao.getTrackPointsForSessionOnce(7L)).thenReturn(points)
+        val repositoryWithTrackPoints = SessionRepository(sessionDao = mockDao, trackPointDao = mockTrackPointDao)
+
+        val recentRun = repositoryWithTrackPoints.getAiTrainingContext("sub_30_bridge").recentRuns.single()
+
+        assertEquals("outdoor", recentRun.runMode)
+        assertEquals(6.4, recentRun.distanceKm!!, 0.001)
+        assertEquals(2100L, recentRun.durationSeconds)
+        assertEquals(true, recentRun.fastest5kSeconds!! in 1435..1445)
+    }
+
+    @Test
+    fun `a treadmill Run reaches the coach with no distance and no 5K to graduate on`() = runTest {
+        // A treadmill Run has no GPS, so its stored distance is a zero rather than a measurement.
+        // Sent as a zero it would read as a Run that covered no ground; sent as null it reads as
+        // what it is, and the coach can say a 5K Stage cannot be settled from it at all.
+        val treadmillRun = session(id = 8L, endTime = 1_000L).copy(runMode = "treadmill")
+        val mockTrackPointDao: TrackPointDao = mock()
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(listOf(treadmillRun))
+        whenever(mockTrackPointDao.getTrackPointsForSessionOnce(8L)).thenReturn(emptyList())
+        val repositoryWithTrackPoints = SessionRepository(sessionDao = mockDao, trackPointDao = mockTrackPointDao)
+
+        val recentRun = repositoryWithTrackPoints.getAiTrainingContext("sub_30_bridge").recentRuns.single()
+
+        assertEquals("treadmill", recentRun.runMode)
+        assertNull(recentRun.distanceKm)
+        assertNull(recentRun.fastest5kSeconds)
+    }
+
+    private fun fiveKFix(latitude: Double, timestampMillis: Long) = TrackPoint(
+        sessionId = 7L,
+        latitude = latitude,
+        longitude = 0.22,
+        horizontalAccuracyMeters = 5f,
+        timestampMillis = timestampMillis,
+        source = TrackPointSource.GPS
+    )
+
     private fun session(id: Long, endTime: Long) = RunnerSession(
         id = id,
         startTime = 0L,
