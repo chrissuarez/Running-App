@@ -35,7 +35,9 @@ import com.example.runningapp.tallyZoneSeconds
  * Returns null when there is nothing to rebuild from: a Run that recorded no second at all, which
  * is a START that died before its first reading. Such a row is left exactly as it is rather than
  * being finished as a zero-second Run, because a Run with nothing in it is not a Run — and a
- * recovery path should never be the thing that puts something into history.
+ * recovery path should never be the thing that puts something into history. Nothing at all is the
+ * test, not any particular number of rows: a single fix minutes after START is one row and it proves
+ * both that the Run was recording and how far into it that was.
  *
  * Two tracks, because *when* and *where* want different evidence. A fix too vague to draw is still
  * proof the Run was being recorded at that moment, so the clock and the end of the Run are read from
@@ -57,8 +59,6 @@ fun RunnerSession.finishedFromRecord(
     mappedTrack: List<TrackPoint>,
     profile: HrProfile,
 ): RunnerSession? {
-    if (samples.isEmpty() && track.size < 2) return null
-
     // The Run's clock, which counts *running* seconds and so already excludes anything it spent
     // paused. The last second banked rather than the number of samples: a dropout saves no row, and
     // counting rows would hand those seconds back and shorten the Run. And the track as well as the
@@ -69,6 +69,10 @@ fun RunnerSession.finishedFromRecord(
         samples.maxOfOrNull { it.elapsedSeconds } ?: 0L,
         measureTrackRecordedSeconds(startTime, track),
     )
+    // Nothing to put back: no reading was banked and nothing the track holds says the Run ever got
+    // past its first instant.
+    if (samples.isEmpty() && durationSeconds == 0L) return null
+
     // Seconds the Run counted but had no reading for — exactly the ones with no sample row, which
     // is how the Run itself counts them.
     val noDataSeconds = (durationSeconds - samples.size).coerceAtLeast(0L)
@@ -112,8 +116,14 @@ fun RunnerSession.finishedFromRecord(
  *
  * The head — [startTime] to the first fix — counts. The Run's clock starts at START, and the wait
  * for a first satellite fix is time the runner spent running rather than time they spent paused.
- * Everything after it is measured leg by leg, skipping only the legs that cross a *recorded* pause:
- * the Run's clock stops for a pause, so those seconds were never its to count.
+ * Unless the first fix says otherwise: a fix carrying [TrackPoint.startsAfterPause] is the far side
+ * of a pause, and a pause before the track began means the wait was not all running. What the Run
+ * did manage to run before it stopped is unknowable from the track and is given up rather than
+ * guessed at — the samples still speak for it, and a head counted through a pause could not be
+ * argued down by them, because the clock is whichever record reaches further.
+ *
+ * Everything after the head is measured leg by leg, skipping only the legs that cross a *recorded*
+ * pause: the Run's clock stops for a pause, so those seconds were never its to count.
  *
  * A pause and only a pause, which is where this parts company with [measureTrackDistanceKm] and
  * [measureMovingTimeSeconds] — they treat a long gap between fixes as a break too, and here that
@@ -132,7 +142,8 @@ fun RunnerSession.finishedFromRecord(
 fun measureTrackRecordedSeconds(startTime: Long, points: List<TrackPoint>): Long {
     val ordered = points.sortedBy { it.timestampMillis }
     val firstFix = ordered.firstOrNull() ?: return 0L
-    var millis = (firstFix.timestampMillis - startTime).coerceAtLeast(0L)
+    var millis =
+        if (firstFix.startsAfterPause) 0L else (firstFix.timestampMillis - startTime).coerceAtLeast(0L)
     for (i in 1 until ordered.size) {
         val legMs = ordered[i].timestampMillis - ordered[i - 1].timestampMillis
         if (legMs <= 0 || ordered[i].startsAfterPause) continue
