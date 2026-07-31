@@ -37,14 +37,24 @@ import com.example.runningapp.tallyZoneSeconds
  * being finished as a zero-second Run, because a Run with nothing in it is not a Run — and a
  * recovery path should never be the thing that puts something into history.
  *
+ * Two tracks, because *when* and *where* want different evidence. A fix too vague to draw is still
+ * proof the Run was being recorded at that moment, so the clock and the end of the Run are read from
+ * every fix the Run wrote down, while distance and the start pin are read from only the fixes good
+ * enough to trust. Given one track for both, a Run that lost reception and never got it back before
+ * the process died would stop at its last good fix — and one that never got a good fix at all would
+ * not be rescued, though the database can plainly see it running.
+ *
  * @param samples the Run's heart-rate samples, in any order.
- * @param track the Run's track points, already accuracy-filtered by
- *   [SessionRepository.getTrackPointsForMap] so a wild fix the Run itself refused cannot reappear
+ * @param track every track point the Run recorded, in any order — the unfiltered record of when it
+ *   was running.
+ * @param mappedTrack the same points after the accuracy gate
+ *   ([SessionRepository.getTrackPointsForMap]), so a wild fix the Run itself refused cannot reappear
  *   here as a phantom sprint.
  */
 fun RunnerSession.finishedFromRecord(
     samples: List<HrSample>,
     track: List<TrackPoint>,
+    mappedTrack: List<TrackPoint>,
     profile: HrProfile,
 ): RunnerSession? {
     if (samples.isEmpty() && track.size < 2) return null
@@ -73,8 +83,8 @@ fun RunnerSession.finishedFromRecord(
 
     val bpms = samples.map { it.rawBpm }
     val zones = tallyZoneSeconds(bpms, profile)
-    val distanceKm = measureTrackDistanceKm(track)
-    val firstFix = track.minByOrNull { it.timestampMillis }
+    val distanceKm = measureTrackDistanceKm(mappedTrack)
+    val firstFix = mappedTrack.minByOrNull { it.timestampMillis }
 
     return copy(
         endTime = endedAtMillis,

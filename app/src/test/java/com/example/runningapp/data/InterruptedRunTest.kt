@@ -51,7 +51,7 @@ class InterruptedRunTest {
 
     @Test
     fun `a run with nothing recorded is left alone rather than finished as an empty run`() {
-        assertNull(interrupted.finishedFromRecord(samples = emptyList(), track = emptyList(), profile = profile))
+        assertNull(interrupted.finishedFromRecord(samples = emptyList(), track = emptyList(), mappedTrack = emptyList(), profile = profile))
     }
 
     @Test
@@ -60,7 +60,7 @@ class InterruptedRunTest {
         // rows would hand that second back and report the run a second shorter than it was.
         val dropped = samples(292).filterNot { it.elapsedSeconds == 100L }
 
-        val finished = interrupted.finishedFromRecord(dropped, track = emptyList(), profile = profile)!!
+        val finished = interrupted.finishedFromRecord(dropped, track = emptyList(), mappedTrack = emptyList(), profile = profile)!!
 
         assertEquals(292, finished.durationSeconds)
         assertEquals(1, finished.noDataSeconds)
@@ -73,7 +73,7 @@ class InterruptedRunTest {
         // apart from the moment it started, so 99 seconds of it, every one of them without a reading.
         val track = (0..99).map { fixAt(50.8152, startedAt + it * 1_000L) }
 
-        val finished = interrupted.finishedFromRecord(samples = emptyList(), track = track, profile = profile)!!
+        val finished = interrupted.finishedFromRecord(samples = emptyList(), track = track, mappedTrack = track, profile = profile)!!
 
         assertEquals(99, finished.durationSeconds)
         assertEquals(99, finished.noDataSeconds)
@@ -87,7 +87,7 @@ class InterruptedRunTest {
         // 1-minute one.
         val track = (0..299).map { fixAt(50.8152, startedAt + it * 1_000L) }
 
-        val finished = interrupted.finishedFromRecord(samples(60), track, profile = profile)!!
+        val finished = interrupted.finishedFromRecord(samples(60), track, mappedTrack = track, profile = profile)!!
 
         assertEquals(299, finished.durationSeconds)
         assertEquals(239, finished.noDataSeconds)
@@ -104,7 +104,7 @@ class InterruptedRunTest {
             fixAt(50.8300, startedAt + 401_000),
         )
 
-        val finished = interrupted.finishedFromRecord(samples = emptyList(), track = track, profile = profile)!!
+        val finished = interrupted.finishedFromRecord(samples = emptyList(), track = track, mappedTrack = track, profile = profile)!!
 
         assertEquals(2, finished.durationSeconds)
     }
@@ -121,9 +121,45 @@ class InterruptedRunTest {
             fixAt(50.8300, startedAt + 140_000),
         )
 
-        val finished = interrupted.finishedFromRecord(samples = emptyList(), track = track, profile = profile)!!
+        val finished = interrupted.finishedFromRecord(samples = emptyList(), track = track, mappedTrack = track, profile = profile)!!
 
         assertEquals(140, finished.durationSeconds)
+    }
+
+    @Test
+    fun `reception lost for the rest of the run does not end the run early`() {
+        // The last two minutes are fixes too vague to draw, so they are not in the mapped track.
+        // They are still the Run saying it was recording, and there is no later good fix to restore
+        // those seconds through: read from the mapped track alone the Run would stop at 01:00.
+        val track = (0..179).map { fixAt(50.8152, startedAt + it * 1_000L) }
+
+        val finished = interrupted.finishedFromRecord(
+            samples = emptyList(),
+            track = track,
+            mappedTrack = track.take(61),
+            profile = profile,
+        )!!
+
+        assertEquals(179, finished.durationSeconds)
+        assertEquals(startedAt + 179_000, finished.endTime)
+    }
+
+    @Test
+    fun `a run whose every fix was too vague to draw is still rescued`() {
+        // Nothing survives the accuracy gate, so there is no distance and no start pin to give it.
+        // The Run happened all the same, and leaving it interrupted loses it for good.
+        val track = (0..99).map { fixAt(50.8152, startedAt + it * 1_000L) }
+
+        val finished = interrupted.finishedFromRecord(
+            samples = emptyList(),
+            track = track,
+            mappedTrack = emptyList(),
+            profile = profile,
+        )!!
+
+        assertEquals(99, finished.durationSeconds)
+        assertEquals(0.0, finished.distanceKm, 1e-9)
+        assertNull(finished.startLatitude)
     }
 
     @Test
@@ -132,7 +168,7 @@ class InterruptedRunTest {
         // were run, not paused, and a Run that began indoors would otherwise lose all of them.
         val track = (0..9).map { fixAt(50.8152, startedAt + 30_000 + it * 1_000L) }
 
-        val finished = interrupted.finishedFromRecord(samples = emptyList(), track = track, profile = profile)!!
+        val finished = interrupted.finishedFromRecord(samples = emptyList(), track = track, mappedTrack = track, profile = profile)!!
 
         assertEquals(39, finished.durationSeconds)
     }
@@ -144,6 +180,7 @@ class InterruptedRunTest {
         val finished = interrupted.finishedFromRecord(
             samples(20, bpm = { 130 + it }),
             track = emptyList(),
+            mappedTrack = emptyList(),
             profile = profile,
         )!!
 
@@ -155,7 +192,7 @@ class InterruptedRunTest {
 
     @Test
     fun `the run ends when the recording died, not when the app noticed`() {
-        val finished = interrupted.finishedFromRecord(samples(292), track = emptyList(), profile = profile)!!
+        val finished = interrupted.finishedFromRecord(samples(292), track = emptyList(), mappedTrack = emptyList(), profile = profile)!!
 
         assertEquals(startedAt + 292_000, finished.endTime)
         assertTrue(finished.isFinished())
@@ -166,7 +203,7 @@ class InterruptedRunTest {
         // Rows written before v16 carry no wall clock. The Run's own seconds are all there is.
         val untimed = samples(60).map { it.copy(timestampMillis = null) }
 
-        val finished = interrupted.finishedFromRecord(untimed, track = emptyList(), profile = profile)!!
+        val finished = interrupted.finishedFromRecord(untimed, track = emptyList(), mappedTrack = emptyList(), profile = profile)!!
 
         assertEquals(startedAt + 60_000, finished.endTime)
     }
@@ -176,7 +213,7 @@ class InterruptedRunTest {
         // 100 fixes a second apart, each 3 m further north: 297 m over 99 legs.
         val track = (0..99).map { fixAt(50.8152 + it * 3.0 / 111_132.0, startedAt + it * 1_000L) }
 
-        val finished = interrupted.finishedFromRecord(samples(100), track, profile = profile)!!
+        val finished = interrupted.finishedFromRecord(samples(100), track, mappedTrack = track, profile = profile)!!
 
         assertEquals(0.297, finished.distanceKm, 0.002)
         assertEquals(50.8152, finished.startLatitude!!, 1e-6)
@@ -194,7 +231,7 @@ class InterruptedRunTest {
             fixAt(50.8300 + 3.0 / 111_132.0, startedAt + 401_000),
         )
 
-        val finished = interrupted.finishedFromRecord(samples(10), track, profile = profile)!!
+        val finished = interrupted.finishedFromRecord(samples(10), track, mappedTrack = track, profile = profile)!!
 
         assertEquals(0.006, finished.distanceKm, 0.001)
     }
@@ -205,7 +242,7 @@ class InterruptedRunTest {
         // says which Workout was being run. A rescue must not invent them.
         val row = interrupted.copy(isRunWalkMode = true, walkBreaksCount = 4, sessionNote = "easy")
 
-        val finished = row.finishedFromRecord(samples(60), track = emptyList(), profile = profile)!!
+        val finished = row.finishedFromRecord(samples(60), track = emptyList(), mappedTrack = emptyList(), profile = profile)!!
 
         assertTrue(finished.isRunWalkMode)
         assertEquals(4, finished.walkBreaksCount)

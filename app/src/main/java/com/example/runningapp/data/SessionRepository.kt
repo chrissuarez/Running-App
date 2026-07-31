@@ -361,9 +361,14 @@ class SessionRepository(
         interruptedIds.forEach { sessionId ->
             try {
                 val session = sessionDao.getSessionById(sessionId) ?: return@forEach
+                // Read once and gated here rather than through [getTrackPointsForMap], because the
+                // rebuild wants both: every fix says when the Run was recording, the accepted ones
+                // say where it went. See [finishedFromRecord].
+                val track = trackPointDao?.getTrackPointsForSessionOnce(sessionId).orEmpty()
                 val finished = session.finishedFromRecord(
                     samples = samples.getSamplesForSessionOnce(sessionId),
-                    track = getTrackPointsForMap(sessionId),
+                    track = track,
+                    mappedTrack = track.acceptedForMap(),
                     profile = profile,
                 ) ?: return@forEach
                 sessionDao.updateSession(finished)
