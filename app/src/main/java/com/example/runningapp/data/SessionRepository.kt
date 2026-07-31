@@ -315,6 +315,18 @@ class SessionRepository(
         return dao.getTrackPointsForSessionOnce(sessionId).acceptedForMap()
     }
 
+    /**
+     * Which runs have a route worth drawing, asked once for the whole history (#85).
+     *
+     * The same [getTrackPointsForMap] gate, applied a run at a time rather than a point at a time,
+     * so a run only counts as having a route if at least one of its fixes would survive to be
+     * written.
+     */
+    suspend fun getSessionIdsWithMappableTrack(): List<Long> {
+        val dao = trackPointDao ?: return emptyList()
+        return dao.getSessionIdsWithTrackPoints(SessionRecorder.ACCURACY_THRESHOLD_METERS)
+    }
+
     /** One-shot read of a finished run, for callers that need it once rather than as a stream. */
     suspend fun getSession(sessionId: Long): RunnerSession? = sessionDao.getSessionById(sessionId)
 
