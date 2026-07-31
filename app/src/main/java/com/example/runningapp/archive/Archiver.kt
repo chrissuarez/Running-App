@@ -101,13 +101,33 @@ class Archiver(
         val finishedName = ArchiveNames.archiveName(at, zoneId)
         val inProgressName = ArchiveNames.inProgressName(at, zoneId)
 
+        // Read once, before anything is written: the sweep below needs it, and so does the question
+        // of whether this second's archive is already there. Null means the folder would not say —
+        // a backup can still be written into a folder that cannot be listed.
+        val before = runCatching { destination.list() }
+            .onFailure { Log.w(TAG, "Could not read the backup folder", it) }
+            .getOrNull()
+
         // Anything a previous attempt left unfinished goes before this one starts, not only after
         // it succeeds. A folder that keeps refusing — read-only, full, signed out — would otherwise
         // gain one abandoned copy of the whole database per attempt, and nothing would ever sweep
         // them, because sweeping only happens after a backup that worked.
         runCatching {
-            destination.list().filter(ArchiveNames::isAbandoned).forEach { destination.delete(it) }
+            before.orEmpty().filter(ArchiveNames::isAbandoned).forEach { destination.delete(it) }
         }.onFailure { Log.w(TAG, "Could not clear unfinished archives", it) }
+
+        if (before != null && finishedName in before) {
+            // An archive stamped with this very second is already in the folder, so the history as
+            // it stands is already backed up and there is nothing this attempt can add. Reported as
+            // the backup it is rather than written again, because writing again would mean taking a
+            // name that is occupied — and the only way to take it is to delete the finished archive
+            // standing under it *before* the replacement can be promoted. A folder that then refused
+            // the rename would have swallowed the runner's only backup to make room for one that
+            // never landed.
+            Log.i(TAG, "An archive for this second is already in the folder; keeping it")
+            recordBackupTime(at)
+            return ArchiveOutcome.Archived(finishedName, at)
+        }
 
         try {
             destination.write(inProgressName) { out -> ArchiveZip.write(out, contents(at)) }
@@ -120,14 +140,14 @@ class Archiver(
         }
 
         try {
-            // Names carry seconds and backups are taken one at a time, so this name should be free.
-            // Cleared rather than assumed, because some folders answer an occupied name by quietly
-            // inventing "…(1).zip" and leaving both — and a failure here is fatal to the promotion
-            // rather than shrugged off, because a folder that kept the old file would make the
-            // rename *look* like it worked: the check that the new name is now present would be
-            // satisfied by the very file that should have gone. Failing instead leaves the finished
-            // `.part` in place, which is the newest complete copy in the folder.
-            destination.delete(finishedName)
+            // The name was free a moment ago and this archiver takes one backup at a time, so
+            // nothing of this app's has taken it since. The one case that cannot be ruled out is a
+            // folder that would not be listed at all: there the name is cleared first, because some
+            // folders answer an occupied name by quietly inventing "…(1).zip" and leaving both, and
+            // a folder that kept the old file would make the rename *look* like it worked — the
+            // check that the new name is now present would be satisfied by the very file that should
+            // have gone. A failure clearing it is fatal to the promotion rather than shrugged off.
+            if (before == null) destination.delete(finishedName)
             destination.rename(inProgressName, finishedName)
         } catch (e: Exception) {
             Log.w(TAG, "Backup could not be promoted", e)
@@ -145,8 +165,24 @@ class Archiver(
                 .forEach { destination.delete(it) }
         }.onFailure { Log.w(TAG, "Could not retire older archives", it) }
 
-        onArchived(at)
+        recordBackupTime(at)
         return ArchiveOutcome.Archived(finishedName, at)
+    }
+
+    /**
+     * Records the time, and does not let failing at it take the archive down with it.
+     *
+     * By the time this runs the archive is written and promoted — it is in the folder whatever
+     * happens here. Settings live in app-private storage, which can be full or unwritable precisely
+     * when a backup has just been made; letting that throw would carry the exception out of
+     * [archiveNow] past a backup that succeeded, and out of the button's launch, which has nothing
+     * to catch it. The cost of swallowing it is a "last backed up" line that lags reality until the
+     * next backup — the archive itself is not lost, and the monthly job still schedules from the
+     * calendar rather than from this stamp.
+     */
+    private suspend fun recordBackupTime(at: Long) {
+        runCatching { onArchived(at) }
+            .onFailure { Log.w(TAG, "Archive written, but the last-backup time could not be saved", it) }
     }
 
     private companion object {

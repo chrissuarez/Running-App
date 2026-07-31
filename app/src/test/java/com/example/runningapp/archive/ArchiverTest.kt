@@ -8,6 +8,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -105,10 +106,9 @@ class ArchiverTest {
         assertEquals(
             listOf(
                 "write $expectedInProgressName",
-                "delete $expectedName",
                 "rename $expectedInProgressName -> $expectedName"
             ),
-            folder.log.filterNot { it == "list" }.take(3)
+            folder.log.filterNot { it == "list" }.take(2)
         )
     }
 
@@ -201,13 +201,39 @@ class ArchiverTest {
         assertEquals(julyMorning, recordedAt)
     }
 
+    /**
+     * Two backups can still land in the same second — an empty history archives in no time — and the
+     * second one must not take the name off the first. Clearing the name means deleting a finished
+     * archive *before* the replacement can be promoted, and a folder that then refused the rename
+     * would have taken the runner's only backup away.
+     */
     @Test
-    fun `backing up twice in the same second replaces rather than accumulates`() = runTest {
+    fun `backing up twice in the same second keeps the archive already written`() = runTest {
         val folder = FakeFolder()
         val archiver = archiver(folder)
 
         archiver.archiveNow()
+        val first = folder.files.getValue(expectedName)
+        folder.log.clear()
         val outcome = archiver.archiveNow()
+
+        assertEquals(ArchiveOutcome.Archived(expectedName, julyMorning), outcome)
+        assertEquals(listOf(expectedName), folder.files.keys.toList())
+        // The archive standing there is the one that was there — never deleted, never rewritten.
+        assertArrayEquals(first, folder.files.getValue(expectedName))
+        assertEquals(emptyList<String>(), folder.log.filterNot { it == "list" })
+    }
+
+    /**
+     * The archive is in the folder by the time the time is recorded, so a settings write that fails
+     * — app-private storage full is exactly the condition a big backup can leave behind — must not
+     * throw out of a backup that worked. The manual path launches this with nothing to catch it.
+     */
+    @Test
+    fun `an archive still counts as made when the time cannot be recorded`() = runTest {
+        val folder = FakeFolder()
+
+        val outcome = archiver(folder, onArchived = { throw IOException("no space left") }).archiveNow()
 
         assertEquals(ArchiveOutcome.Archived(expectedName, julyMorning), outcome)
         assertEquals(listOf(expectedName), folder.files.keys.toList())
@@ -226,10 +252,16 @@ class ArchiverTest {
      * A folder that will not give up the name is the case where a promotion can *look* like it
      * worked: the old archive would still be sitting under the new name, satisfying every check,
      * while the archive just written stayed a `.part`.
+     *
+     * Only reachable through a folder that will not be listed — a listable one shows the name is
+     * taken and the backup already there is kept instead of cleared.
      */
     @Test
     fun `a name that cannot be cleared fails the backup rather than claiming it`() = runTest {
-        val folder = FakeFolder(listOf(expectedName)).apply { failDeleteOf = expectedName }
+        val folder = FakeFolder(listOf(expectedName)).apply {
+            failList = true
+            failDeleteOf = expectedName
+        }
         folder.files[expectedName] = "yesterday".toByteArray()
         var recordedAt: Long? = null
 
@@ -278,16 +310,13 @@ class ArchiverTest {
         first.join()
         second.join()
 
-        // The second went the whole way round on its own afterwards, and both wrote the same name,
-        // so the folder is left holding one archive rather than a part-file and a casualty.
+        // The second waited, found the first's archive already standing under the name it wanted,
+        // and left it alone — so the folder is left holding one archive, and it is the one that was
+        // written whole rather than a replacement that had to clear it first.
         assertEquals(listOf(expectedName), folder.files.keys.toList())
         assertEquals(
             listOf(
                 "write $expectedInProgressName",
-                "delete $expectedName",
-                "rename $expectedInProgressName -> $expectedName",
-                "write $expectedInProgressName",
-                "delete $expectedName",
                 "rename $expectedInProgressName -> $expectedName"
             ),
             folder.log.filterNot { it == "list" }
