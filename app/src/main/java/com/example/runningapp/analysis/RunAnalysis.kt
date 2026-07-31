@@ -2,6 +2,7 @@ package com.example.runningapp.analysis
 
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.run.RunMode
 import java.time.Instant
 import java.time.ZoneId
@@ -13,13 +14,23 @@ import kotlin.math.abs
  * The one seam for the whole detail page: the page hands over a Run and its recordings and gets back
  * finished figures, so the composables stay a thin layer that only knows how to put shapes on the
  * screen. Pure and on no clock but the Run's own, so a scripted Run in a unit test is the whole test
- * — nothing here needs a phone. Later tickets extend this same module with Splits (#45), pace and
- * elevation (#46) and Records (#49); today it produces the heart-rate chart, which every Run in the
- * history has the data for, indoors or out.
+ * — nothing here needs a phone. Later tickets extend this same module with the pace and elevation
+ * series (#46) and Records (#49); today it produces the heart-rate chart, which every Run in the
+ * history has the data for, indoors or out, and the kilometre splits of the ones that have a route.
  */
 data class RunAnalysis(
     /** Null when the Run recorded no heart rate worth drawing — the page then has no chart. */
-    val chart: RunChart?
+    val chart: RunChart?,
+    /**
+     * The Run's kilometres (#45). Empty for a treadmill Run and for any Run with no usable track,
+     * which is the page's signal to leave the splits table out entirely.
+     */
+    val splits: List<Split> = emptyList(),
+    /**
+     * Metres climbed over the whole Run (#45), or null when it recorded no height to climb — the
+     * page then shows no elevation line at all rather than a confident zero.
+     */
+    val elevationGainMeters: Double? = null,
 ) {
     companion object {
         /**
@@ -43,8 +54,25 @@ data class RunAnalysis(
         /** Air above and below the run's own range, so the line never touches the frame. */
         private const val BPM_HEADROOM = 5
 
-        fun of(run: RunnerSession, samples: List<HrSample>): RunAnalysis =
-            RunAnalysis(chart = heartRateChart(run, samples))
+        /**
+         * [track] is the Run's route, gated for accuracy the way the map gates it
+         * ([com.example.runningapp.data.SessionRepository.getTrackPointsForMap]) — a wild fix left
+         * in would read as a sprint and put a split on the page nobody ran. Defaults to nothing, so
+         * a caller that only wants the chart (a treadmill Run, a Run whose track has not loaded yet)
+         * need not pretend to have one.
+         */
+        fun of(
+            run: RunnerSession,
+            samples: List<HrSample>,
+            track: List<TrackPoint> = emptyList(),
+        ): RunAnalysis {
+            val ground = groundOf(run, samples, track)
+            return RunAnalysis(
+                chart = heartRateChart(run, samples),
+                splits = ground.splits,
+                elevationGainMeters = ground.elevationGainMeters,
+            )
+        }
 
         private fun heartRateChart(run: RunnerSession, samples: List<HrSample>): RunChart? {
             // The raw reading, not the smoothed one: the chart is a record of the Run, and the
