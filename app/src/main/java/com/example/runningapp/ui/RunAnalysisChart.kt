@@ -134,8 +134,13 @@ fun RunAnalysisChart(chart: RunChart?, modifier: Modifier = Modifier) {
             fun xOf(elapsedSeconds: Long): Float =
                 leftPaddingPx + elapsedSeconds.toFloat() / span * plotWidth
 
+            // A reading past the ends of the scale — a Strap glitch reporting a beat no runner has —
+            // rides the edge of the frame rather than being drawn beyond it. Nothing clips this
+            // canvas, so an unclamped one would be painted over the page above and below the chart.
+            // The readout under the finger still says the beat that was recorded.
             fun yOf(bpm: Int): Float =
-                topPaddingPx + plotHeight - (bpm - chart.bpmFloor) / bpmRange * plotHeight
+                topPaddingPx + plotHeight -
+                    (bpm.coerceIn(chart.bpmFloor, chart.bpmCeiling) - chart.bpmFloor) / bpmRange * plotHeight
 
             val yTicks = 5
             for (tick in 0 until yTicks) {

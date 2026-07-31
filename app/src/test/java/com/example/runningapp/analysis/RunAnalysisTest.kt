@@ -92,6 +92,25 @@ class RunAnalysisTest {
     }
 
     @Test
+    fun `a short dropout in a second-by-second recording breaks the line too`() {
+        // A run recorded today banks a row for every second it had a beat for and no row at all for
+        // the seconds the strap was lost in. Twenty of those in a row is a real hole, and drawing a
+        // line across it would invent twenty seconds of heart rate and let the readout report one.
+        val beforeAndAfter = ((0L..20L) + (41L..60L)).map { it to 130 }
+        val chart = requireNotNull(
+            RunAnalysis.of(
+                run = aRun(durationSeconds = 60),
+                samples = samples(*beforeAndAfter.toTypedArray())
+            ).chart
+        )
+
+        assertEquals(2, chart.heartRate.size)
+        assertEquals(20L, chart.heartRate[0].readings.last().elapsedSeconds)
+        assertEquals(41L, chart.heartRate[1].readings.first().elapsedSeconds)
+        assertNull(chart.readingAt(30L))
+    }
+
+    @Test
     fun `a run recorded before every second was banked keeps one line through its sparse patches`() {
         // Old history was sampled irregularly; a few seconds between readings is sparseness, not a
         // dropped strap, and must not be drawn as a broken line.
@@ -154,6 +173,21 @@ class RunAnalysisTest {
 
         val chart = requireNotNull(analysis.chart)
         assertEquals(40, chart.bpmFloor)
+        assertEquals(220, chart.bpmCeiling)
+    }
+
+    @Test
+    fun `a run of nothing but strap glitches still gets a scale that runs upwards`() {
+        // Nothing sanity-checks a beat on its way into the recording, so a Strap that spent a run
+        // reporting numbers no heart produces reaches the chart as it was recorded. Held to the
+        // plausible ends, the scale must still run from a floor upwards to a ceiling.
+        val analysis = RunAnalysis.of(
+            run = aRun(durationSeconds = 120),
+            samples = samples(0 to 250, 60 to 255)
+        )
+
+        val chart = requireNotNull(analysis.chart)
+        assertTrue(chart.bpmCeiling > chart.bpmFloor)
         assertEquals(220, chart.bpmCeiling)
     }
 
