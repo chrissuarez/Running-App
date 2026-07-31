@@ -9,7 +9,6 @@ import com.example.runningapp.data.RunWalkIntervalStatDao
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.SessionDao
 import com.example.runningapp.data.SessionRepository
-import com.example.runningapp.data.TrackPointDao
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.export.GpxWriter
 import com.example.runningapp.export.RunGpxTrack
@@ -29,7 +28,6 @@ class RunArchiveContents(
     context: Context,
     private val database: AppDatabase,
     private val sessionDao: SessionDao,
-    private val trackPointDao: TrackPointDao,
     private val intervalStatDao: RunWalkIntervalStatDao,
     private val sessionRepository: SessionRepository,
     private val settingsRepository: SettingsRepository
@@ -49,7 +47,7 @@ class RunArchiveContents(
      * file out of the archive and a file off the share sheet are the same file.
      */
     private suspend fun runEntries(runs: List<RunnerSession>): List<ArchiveEntry> =
-        runsWorthAGpx(runs, trackPointDao.getSessionIdsWithTrackPoints())
+        runsWorthAGpx(runs, sessionRepository.getSessionIdsWithMappableTrack())
             .map { run ->
                 ArchiveEntry("${ArchiveZip.ACTIVITIES_DIRECTORY}/${RunGpxTrack.fileName(run)}") { out ->
                     out.write(gpx(run).toByteArray(Charsets.UTF_8))
@@ -126,7 +124,9 @@ class RunArchiveContents(
  * Two exclusions, and neither loses anything — every run is in `archive.json` and in the database
  * snapshot whether it appears here or not:
  *
- *  - **a run with no route**, which is every treadmill run. GPX is a file of places; a run that
+ *  - **a run with no route**, which is every treadmill run, and equally a run whose every fix was
+ *    too vague to trust (#38) — the same gate the map and the share sheet apply, so a run the Share
+ *    button refuses to export is a run the archive leaves out. GPX is a file of places; a run that
  *    went nowhere would be an empty file with a name, and a reader importing the archive would find
  *    a run it could say nothing about.
  *  - **a run still being recorded** ([RunnerSession.isFinished]). Its track stops wherever the

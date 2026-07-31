@@ -349,9 +349,19 @@ interface TrackPointDao {
     /**
      * Which runs have a route at all, asked once rather than a run at a time (#85). A treadmill run
      * has none, and a GPX file of a run that went nowhere would be an empty file with a name.
+     *
+     * Gated the same way [SessionRepository.getTrackPointsForMap] gates the points themselves (#38),
+     * because the two have to agree: a run whose every fix was too vague to trust has rows here but
+     * nothing that survives to be written, and asking only whether rows exist would put a
+     * point-less GPX in the archive for a run the Share sheet refuses to export.
      */
-    @Query("SELECT DISTINCT sessionId FROM track_points")
-    suspend fun getSessionIdsWithTrackPoints(): List<Long>
+    @Query(
+        "SELECT DISTINCT sessionId FROM track_points " +
+            "WHERE source = '${TrackPointSource.BACKFILL}' " +
+            "OR (horizontalAccuracyMeters IS NOT NULL " +
+            "AND horizontalAccuracyMeters <= :accuracyThresholdMeters)"
+    )
+    suspend fun getSessionIdsWithTrackPoints(accuracyThresholdMeters: Double): List<Long>
 }
 
 @Dao
