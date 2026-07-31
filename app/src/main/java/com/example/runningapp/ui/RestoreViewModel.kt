@@ -5,7 +5,6 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.runningapp.SettingsRepository
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.restore.CurrentHistory
 import com.example.runningapp.restore.PendingRestore
@@ -32,7 +31,7 @@ sealed interface RestoreUiState {
     /** The file cannot be restored, and this is why. Nothing was touched. */
     data class Refused(val reason: RestoreRefusal) : RestoreUiState
 
-    /** Agreed. Settings are being written and the database swap armed. Not yet safe to restart. */
+    /** Agreed. The restore is being armed on disk. Not yet safe to restart. */
     data object Applying : RestoreUiState
 
     /**
@@ -56,7 +55,6 @@ sealed interface RestoreUiState {
 class RestoreViewModel(
     private val appContext: Context,
     private val database: AppDatabase,
-    private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<RestoreUiState>(RestoreUiState.Idle)
@@ -92,24 +90,19 @@ class RestoreViewModel(
     /**
      * The runner has read what they are about to lose and said yes.
      *
-     * Settings land now; the database waits for the relaunch. They are not the same kind of write —
-     * settings live outside the database and can be replaced safely while the app runs, whereas the
-     * database is open and being read. Doing the safe half now keeps the deferred half down to a
-     * single file move at the next launch, which is the part that has to be beyond doubt. If the
-     * phone dies in the gap, the next launch still applies the armed database, and settings and
-     * history come from the same file either way.
+     * Nothing is replaced here — not the database, and deliberately not the settings either. Both
+     * wait for the relaunch, where [PendingRestore.applyIfArmed] puts the history in place first and
+     * only then writes the settings that came in the same archive. Writing settings at this point
+     * would look safe, because they live outside the open database, but it splits the restore: if
+     * arming failed, or the move failed at the next launch, the runner would be left with their old
+     * history reinterpreted against another phone's heart-rate profile and training plan. The two
+     * halves are one act, so they happen at one moment.
      */
     fun confirm() {
-        val confirming = _state.value as? RestoreUiState.Confirming ?: return
+        if (_state.value !is RestoreUiState.Confirming) return
         _state.value = RestoreUiState.Applying
         viewModelScope.launch {
-            val armed = withContext(Dispatchers.IO) {
-                if (confirming.plan.summary.carriesSettings) {
-                    RestoreReader.stagedSettings(appContext)
-                        ?.let { settingsRepository.restoreArchivedSettings(it) }
-                }
-                PendingRestore.arm(appContext)
-            }
+            val armed = withContext(Dispatchers.IO) { PendingRestore.arm(appContext) }
             // Restarting is announced only once the marker is on disk. Announced any earlier, the
             // screen watching for it could take the process down mid-arm, and the runner would come
             // back to the history they had just been told was replaced.
@@ -144,12 +137,11 @@ class RestoreViewModel(
 class RestoreViewModelFactory(
     private val appContext: Context,
     private val database: AppDatabase,
-    private val settingsRepository: SettingsRepository,
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(RestoreViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return RestoreViewModel(appContext, database, settingsRepository) as T
+            return RestoreViewModel(appContext, database) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

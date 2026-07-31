@@ -75,19 +75,20 @@ data class RestoreSummary(
      * inside it. What [RestoreEligibility] compares against the app doing the restoring.
      */
     val databaseVersion: Int,
-) {
     /**
      * Whether restoring this file also puts back max heart rate, target zone and the training Plan
      * and Stage.
      *
-     * A property of the *kind*, not of the particular file: settings never lived in the database, so
-     * a bare `.db` has nowhere to have kept them and an archive always carries `archive.json`
-     * beside its snapshot. The runner is told which they picked, because after a Clear storage their
-     * settings are gone too and a `.db` restore will not bring them back — better said out loud than
-     * discovered later.
+     * A fact about *this* file, established by actually reading its settings, rather than something
+     * inferred from its kind. A bare `.db` never carries them — settings have never lived in the
+     * database, and the runner is told so, because after a Clear storage their settings are gone too
+     * and a `.db` restore will not bring them back. But an archive is only a promise: one whose
+     * `archive.json` is missing, damaged, or written by a version this app cannot read is still
+     * restored for its history (see [RestoreReader]), and saying "your settings will be restored
+     * too" over that file would be a promise the confirmation cannot keep.
      */
-    val carriesSettings: Boolean get() = kind == RestoreFileKind.ARCHIVE
-}
+    val carriesSettings: Boolean,
+)
 
 /** What the phone holds right now, for the runner to weigh the file against. */
 data class CurrentHistory(

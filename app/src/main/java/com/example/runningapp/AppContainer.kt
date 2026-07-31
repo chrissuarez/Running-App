@@ -54,7 +54,14 @@ class AppContainer(context: Context) {
         // condition under which the automatic restore below correctly stands down. Also clears away
         // a pick that was never confirmed, which is otherwise a whole spare database sitting in app
         // storage with nothing to remove it.
-        PendingRestore.applyIfArmed(appContext)
+        //
+        // An archive's settings are written from here rather than at the moment the runner
+        // confirmed, so that they only ever land beside the history they were saved with. Blocking
+        // is the point: Room must not open the database until the restore has finished with it, and
+        // this already runs off the main thread for the same reason as the migration read below.
+        PendingRestore.applyIfArmed(appContext) { archived ->
+            runBlocking { settingsRepository.restoreArchivedSettings(archived) }
+        }
         // If this install has no database of its own yet — a freshly-cleared install — bring run
         // history back from the Downloads copy before Room opens. No-ops (and never overwrites) when
         // a live database already exists, which includes reinstalls, where Auto Backup has already
