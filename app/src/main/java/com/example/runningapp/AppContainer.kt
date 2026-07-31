@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import androidx.room.withTransaction
+import com.example.runningapp.archive.ArchivedSettings
 import com.example.runningapp.archive.Archiver
 import com.example.runningapp.archive.RunArchiveContents
 import com.example.runningapp.archive.SafArchiveFolder
@@ -59,7 +60,14 @@ class AppContainer(context: Context) {
         // confirmed, so that they only ever land beside the history they were saved with. Blocking
         // is the point: Room must not open the database until the restore has finished with it, and
         // this already runs off the main thread for the same reason as the migration read below.
+        var restoredSettings: ArchivedSettings? = null
         PendingRestore.applyIfArmed(appContext) { archived ->
+            // Held before the write is attempted rather than after it, deliberately. The migration
+            // below has to band the restored runs against the profile they arrived with, and a
+            // DataStore write that fails leaves the restore armed to try again at the next launch —
+            // by which point the migration has already run and cannot be re-run. Reading the profile
+            // straight off the archive takes the migration out of that race entirely.
+            restoredSettings = archived
             runBlocking { settingsRepository.restoreArchivedSettings(archived) }
         }
         // If this install has no database of its own yet — a freshly-cleared install — bring run
@@ -70,8 +78,12 @@ class AppContainer(context: Context) {
         // The v12 -> v13 zone recompute needs the heart-rate profile, which lives in DataStore
         // rather than the database. Room only invokes this from inside the migration, on its own
         // background thread, so the blocking read never lands on the main thread.
+        val archived = restoredSettings
         AppDatabase.getDatabase(appContext) {
-            runBlocking { settingsRepository.userSettingsFlow.first().hrProfile }
+            // Whichever settings belong to the history being opened: the archive's if this launch
+            // just restored one, the phone's own otherwise.
+            archived?.let { HrProfile(it.maxHr, it.restingHr) }
+                ?: runBlocking { settingsRepository.userSettingsFlow.first().hrProfile }
         }
     }
 

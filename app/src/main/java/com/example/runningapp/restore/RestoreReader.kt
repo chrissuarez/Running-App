@@ -172,6 +172,18 @@ object RestoreReader {
      * anything has been replaced — rather than at the next launch with the previous history already
      * gone. That is #86's "restoring an invalid file fails safely with current data untouched", and
      * it is the same read that lets the confirmation quote real numbers: one open, both jobs.
+     *
+     * Three questions, because reading `sessions` alone answers none of them. `quick_check` is
+     * SQLite's own verdict on whether the pages hang together, which is the only way to catch a
+     * download that stopped halfway or a file that came back damaged through a chat app — the runs
+     * table can read perfectly while a table nobody queries here is shredded. `room_master_table` is
+     * the one thing every Room database has and no hand-made SQLite file does, so it separates this
+     * app's backup from somebody else's database that happens to have a `sessions` table. Only then
+     * does the count mean anything.
+     *
+     * What is deliberately *not* checked is the full schema. A backup from an older app is the
+     * ordinary case and legitimately lacks tables and columns added since; Room's migrations exist
+     * to build them. Demanding today's schema would refuse exactly the backups this feature is for.
      */
     private fun summarise(
         database: File,
@@ -185,6 +197,14 @@ object RestoreReader {
                 null,
                 SQLiteDatabase.OPEN_READONLY,
             )
+            if (!db.passesIntegrityCheck()) {
+                Log.w(TAG, "Picked backup failed its integrity check")
+                return null
+            }
+            if (!db.hasRoomIdentity()) {
+                Log.w(TAG, "Picked file is a database, but not one Room wrote")
+                return null
+            }
             val version = db.rawQuery("PRAGMA user_version", null).use { cursor ->
                 if (cursor.moveToFirst()) cursor.getInt(0) else return null
             }
@@ -206,6 +226,27 @@ object RestoreReader {
             runCatching { db?.close() }
         }
     }
+
+    /**
+     * SQLite's own answer to "is this file whole?" — `ok` on the first row, or the first thing it
+     * found wrong.
+     *
+     * `quick_check` rather than `integrity_check`: it skips the index cross-check, which is the
+     * slowest part and the one thing a restore does not need, because Room rebuilds indexes it finds
+     * wrong. On a history of a few thousand runs this is the difference between a pause the runner
+     * notices and one they do not.
+     */
+    private fun SQLiteDatabase.passesIntegrityCheck(): Boolean =
+        rawQuery("PRAGMA quick_check(1)", null).use { cursor ->
+            cursor.moveToFirst() && cursor.getString(0).equals("ok", ignoreCase = true)
+        }
+
+    /** Whether Room wrote this database — its bookkeeping table, present in every version. */
+    private fun SQLiteDatabase.hasRoomIdentity(): Boolean =
+        rawQuery(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+            arrayOf("room_master_table"),
+        ).use { cursor -> cursor.moveToFirst() && cursor.getInt(0) > 0 }
 
     /** Fills as much of [buffer] as the stream has, returning how many bytes landed. */
     private fun InputStream.readAtMost(buffer: ByteArray): Int {
