@@ -22,15 +22,34 @@ private const val BAROMETER_HYSTERESIS_METERS = 2.0
 private const val GPS_HYSTERESIS_METERS = 10.0
 
 /**
- * How many fixes each tier averages a height over before judging it a climb.
+ * How long a stretch of the run each tier averages a height over before judging it a climb.
  *
- * Five for GPS is the width found to reproduce what Strava and Garmin Connect make of the same
- * track. Three for the barometer is not about noise but about weather: a gust of wind is a real
- * pressure change that is not a change in height, and it passes in a second or two. Wider would
- * start flattening the short sharp climbs the barometer is here to catch.
+ * In time rather than in fixes, because it is the noise of the instrument that sets these and noise
+ * arrives at a rate — a track sampled twice a second and one sampled every five would otherwise mean
+ * quite different things by the same number.
+ *
+ * **Thirty seconds for the barometer is measured, not assumed** (#45). The sensor's *signal* is
+ * excellent: over three of Chris's runs the height it reports at each kilometre marker agrees with
+ * Strava's to within one to three metres. But between one fix and the next it jitters far more than
+ * a barometer's quarter-metre precision suggests — a median of 0.87 m on those runs, 5.6 m at the
+ * 95th percentile, 26 m at worst. That is well above [BAROMETER_HYSTERESIS_METERS], so a narrow
+ * window banks jitter as climb all run long: at the three-second window this code first shipped
+ * with, a 4.5 km run that truly climbs about 35 m reported 376 m.
+ *
+ * Widening the window makes the figure converge on the truth, and it has settled by thirty seconds:
+ * across those three runs, three seconds gave 263/376/434 m, fifteen gave 34/61/49, thirty gave
+ * 21/44/21, and sixty — half again as much smoothing — moved it only to 14/38/19. Thirty is where
+ * the noise is gone and the ground has not yet started to flatten.
+ *
+ * Raising the threshold instead does not work, and was tried: the jitter is broad rather than spiky,
+ * so a five-metre threshold on a three-second window still reported 84/92/108 m. Only the window
+ * touches it.
+ *
+ * Five seconds for GPS is the five-fix width the research found to reproduce what Strava and Garmin
+ * Connect make of the same track, restated at the one-fix-per-second those tracks are recorded at.
  */
-private const val GPS_SMOOTHING_FIXES = 5
-private const val BAROMETER_SMOOTHING_FIXES = 3
+private const val BAROMETER_SMOOTHING_MILLIS = 30_000L
+private const val GPS_SMOOTHING_MILLIS = 5_000L
 
 /**
  * How wrong a fix may say its own height is before it is passed over. The research settles that
@@ -46,9 +65,13 @@ private const val GPS_VERTICAL_ACCURACY_LIMIT_METERS = 20f
  * or null when the run recorded nothing to derive a height from (#20, #45).
  *
  * Two tiers, which is what both Garmin and Strava do and for the same reason: a phone barometer
- * measures a *change* in height to within about a quarter of a metre, while a GPS fix is out by
- * eight to fifteen metres vertically — and gain is a sum of positive differences, so every metre of
- * noise adds. Summed raw, a flat route reports hundreds of metres of climbing.
+ * tracks a *change* in height far more closely than a GPS fix, which is out by eight to fifteen
+ * metres vertically — and gain is a sum of positive differences, so every metre of noise adds.
+ * Summed raw, a flat route reports hundreds of metres of climbing.
+ *
+ * Neither tier is trusted fix by fix. The barometer's advantage is in where it says the runner is
+ * over half a minute, not in what it reports in any one second — see [BAROMETER_SMOOTHING_MILLIS],
+ * which is the whole difference between this reading a run right and reading it ten times too high.
  *
  * The full reasoning, with sources, is in `docs/research/elevation-gain.md`. Two things that
  * research recommends are deliberately absent, because this reads a *finished* run rather than
@@ -72,12 +95,13 @@ internal fun elevationOf(track: MeasuredTrack): ElevationProfile? {
     // reader starts empty and is emptied again when the run stops ([BarometerReader]): a fix that
     // lands before the sensor's first event carries no pressure, and a handful of those at the start
     // of a run must not demote the whole of it to the GPS tier's ten-metre threshold.
+    val stampedAt = points.map { it.timestampMillis }
     if (points.any { it.barometerPressureHpa != null }) {
         return ElevationProfile(
             metersAtFix = points
                 .map { point -> point.barometerPressureHpa?.let { heightFromPressure(it.toDouble()) } }
                 .filledFromNeighbours()
-                .medianOver(BAROMETER_SMOOTHING_FIXES),
+                .medianOver(BAROMETER_SMOOTHING_MILLIS, stampedAt),
             hysteresisMeters = BAROMETER_HYSTERESIS_METERS,
             recordedLeg = recordedLeg,
         )
@@ -88,7 +112,7 @@ internal fun elevationOf(track: MeasuredTrack): ElevationProfile? {
     // resting on nothing.
     if (points.all { it.altitudeMeters != null && it.verticalAccuracyMeters != null }) {
         return ElevationProfile(
-            metersAtFix = points.trustedGpsHeights().meanOver(GPS_SMOOTHING_FIXES),
+            metersAtFix = points.trustedGpsHeights().meanOver(GPS_SMOOTHING_MILLIS, stampedAt),
             hysteresisMeters = GPS_HYSTERESIS_METERS,
             recordedLeg = recordedLeg,
         )
@@ -169,16 +193,38 @@ private fun List<TrackPoint>.trustedGpsHeights(): List<Double> {
 }
 
 /** A centred moving average, shortened at the ends rather than dropping fixes from either. */
-private fun List<Double>.meanOver(window: Int): List<Double> =
-    windowedAround(window) { it.average() }
+private fun List<Double>.meanOver(windowMillis: Long, stampedAt: List<Long>): List<Double> =
+    windowedAround(windowMillis, stampedAt) { it.average() }
 
 /** A centred median — what kills a one-off spike outright rather than spreading it over its neighbours. */
-private fun List<Double>.medianOver(window: Int): List<Double> =
-    windowedAround(window) { neighbours -> neighbours.sorted()[neighbours.size / 2] }
+private fun List<Double>.medianOver(windowMillis: Long, stampedAt: List<Long>): List<Double> =
+    windowedAround(windowMillis, stampedAt) { neighbours -> neighbours.sorted()[neighbours.size / 2] }
 
-private fun List<Double>.windowedAround(window: Int, of: (List<Double>) -> Double): List<Double> =
-    indices.map { i ->
-        val from = (i - window / 2).coerceAtLeast(0)
-        val to = (i + window / 2).coerceAtMost(lastIndex)
+/**
+ * Each height folded together with every height recorded within half of [windowMillis] either side
+ * of it, so the window is a stretch of the run rather than a count of fixes.
+ *
+ * The ends are shortened rather than dropped: a run's first and last fixes keep a height, taken from
+ * the half-window they do have. The fixes are in time order ([measureTrack] sorts them), so the
+ * window's edges only ever move forwards and the whole walk is linear in the number of fixes.
+ *
+ * A break in the recording is not treated specially here. It does not need to be — the fixes either
+ * side of a gap are far enough apart in time to fall outside each other's window, so the heights
+ * never mix; and where a pause is short enough that they do, they are moments apart and mixing them
+ * is right. What must not join across a break is the *climb*, and that is
+ * [ElevationProfile.gainMetersBetween]'s business.
+ */
+private fun List<Double>.windowedAround(
+    windowMillis: Long,
+    stampedAt: List<Long>,
+    of: (List<Double>) -> Double,
+): List<Double> {
+    val half = windowMillis / 2
+    var from = 0
+    var to = 0
+    return indices.map { i ->
+        while (stampedAt[i] - stampedAt[from] > half) from++
+        while (to < lastIndex && stampedAt[to + 1] - stampedAt[i] <= half) to++
         of(subList(from, to + 1))
     }
+}

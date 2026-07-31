@@ -93,6 +93,8 @@ the CDD only *strongly recommends* a barometer, so runtime checking is mandatory
    explicitly endorses standard-atmosphere reference for altitude *differences*
    ([SensorManager docs][sm-getalt]). Median/low-pass over ~1–3 s to kill wind-gust spikes
    (rapid non-altitude pressure transients are documented in [Sabatini & Genovese 2014][sensors-paper]).
+   **Corrected by measurement — ~1–3 s is far too narrow; use ~30 s.** See
+   [What the device actually recorded](#what-the-device-actually-recorded) below.
 3. **Fuse with GPS (complementary filter):** baro provides short-term deltas; GPS altitude —
    heavily low-passed and weighted by `getVerticalAccuracyMeters()` — slowly corrects the absolute
    offset (equivalently, the effective sea-level pressure `p0`). This is the canonical
@@ -138,6 +140,54 @@ N meters before it is added to the total" [FAQ][strava-faq]; same 2 m-class hyst
 Fitbit's altimeter patent [US 8,386,008][fitbit-patent]). It suppresses flat-route oscillation
 (e.g. 98↔102 m jitter being counted as repeated 4 m climbs, the case TwoNav documents
 suppressing [TwoNav][twonav]) while still counting real sustained climbs.
+
+### What the device actually recorded
+
+Written after the first implementation was checked against real runs on the target phone (a Pixel
+8a) in #45. The research above was right about the barometer's *signal* and wrong about how fast it
+may be read.
+
+Three of Chris's recorded runs (26, 28, 29 Jul 2026) were compared against the same activities in
+Strava.
+
+**The signal is as good as the datasheets claim.** Net height change per kilometre, barometer versus
+Strava, on the 28 Jul run: −4.6/−4, +9.0/+8, +20.0/+23, −22.7/−25, −1.6/−2 m. Within one to three
+metres every split, with no drift across 37 minutes. The sub-metre relative precision above holds.
+
+**The fix-to-fix noise does not.** Over those runs the *stored* height moved a median of 0.87 m from
+one second to the next, 5.6 m at the 95th percentile, 26 m at worst — one to two orders of magnitude
+above the ±0.25 m of [BMP390][bmp390]. The datasheet figure is the sensor's own repeatability under
+oversampling; what reaches a `SensorEvent` consumer at `SENSOR_DELAY_NORMAL` and gets stamped onto a
+GPS fix is much noisier.
+
+That matters because the noise sits **above** the 2 m hysteresis of step 4, so the accumulator banks
+it as climb continuously. With the ~1–3 s window this document recommended, a 4.5 km run that truly
+climbs about 35 m reported **376 m**.
+
+Widening the window is the only lever that works. Measured gain against window width, 2 m hysteresis:
+
+| Window | 26 Jul (2.45 km) | 28 Jul (4.53 km) | 29 Jul (2.63 km) |
+|---|---|---|---|
+| 3 s | 263 m | 376 m | 434 m |
+| 9 s | 58 m | 90 m | 93 m |
+| 15 s | 34 m | 61 m | 49 m |
+| **30 s** | **21 m** | **44 m** | **21 m** |
+| 60 s | 14 m | 38 m | 19 m |
+| 180 s | 8 m | 34 m | 15 m |
+
+Strava's per-split figures put 28 Jul's true climb a little above 31 m. The number has converged by
+30 s and gains little after it, so **30 s is the width adopted**, with the 2 m hysteresis unchanged.
+
+Raising the hysteresis instead does not work and was tried: the jitter is broad rather than spiky, so
+a 5 m threshold on a 3 s window still reported 84/92/108 m. Only the window moves it.
+
+Two consequences worth carrying forward:
+
+- **Express the window in seconds, not in samples.** A 5-sample average means different things at
+  1 Hz and at 5 Hz, and the tracks here are ~1 Hz.
+- **Smoothing this wide rounds off turning points**, costing roughly (climb rate × half-window) at
+  each reversal — about 1.5 m at 0.1 m/s. Real terrain has shoulders, so this is small; a synthetic
+  triangular hill is the worst case.
 
 ### Later options (not v1)
 
