@@ -210,6 +210,20 @@ interface SessionDao {
     @Query("SELECT * FROM sessions ORDER BY startTime ASC")
     suspend fun getAllSessions(): List<RunnerSession>
 
+    /**
+     * How much history is here, and how recent it is — the two numbers a restore weighs the picked
+     * file against before replacing any of it (#86).
+     *
+     * Counted the same unfiltered way as [getAllSessions], and for the same reason: the runner is
+     * being told what they stand to lose, and a run still being recorded is part of that.
+     */
+    @Query("SELECT COUNT(*) FROM sessions")
+    suspend fun countSessions(): Int
+
+    /** When the most recent run started, or null when there is no history at all. */
+    @Query("SELECT MAX(startTime) FROM sessions")
+    suspend fun newestSessionStartTime(): Long?
+
     /** Finished outdoor runs whose moving time has not been computed yet (#163 backfill). */
     @Query("SELECT id FROM sessions WHERE movingTimeSeconds IS NULL AND endTime > 0 AND runMode = 'outdoor' ORDER BY startTime DESC")
     suspend fun getSessionIdsMissingMovingTime(): List<Long>

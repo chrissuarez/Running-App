@@ -60,6 +60,8 @@ import com.example.runningapp.parseMaxHr
 import com.example.runningapp.parseRestingHr
 import com.example.runningapp.parseMaxHrAlone
 import com.example.runningapp.parseRestingHrAlone
+import com.example.runningapp.restore.RestorePlan
+import com.example.runningapp.restore.RestoreRefusal
 import com.example.runningapp.targetHrZone
 import com.example.runningapp.targetRangeLabel
 import com.example.runningapp.ui.theme.RunningUiTokens
@@ -109,6 +111,19 @@ fun SettingsScreen(
     backingUp: Boolean,
     /** What the last backup came to, or null when there is nothing to report. */
     backupResult: String?,
+    /** Opens the system file picker to choose a backup file or archive to restore from (#86). */
+    onPickRestoreFile: () -> Unit,
+    /** Where the restore flow has got to — Idle for all but the moments after a file is picked. */
+    restoreState: RestoreUiState,
+    /** The runner has agreed to replace their history; the app closes and reopens onto it. */
+    onConfirmRestore: () -> Unit,
+    /** Backed out of the confirmation, or acknowledged a refusal. */
+    onDismissRestore: () -> Unit,
+    /**
+     * Whether a run is being recorded. Restoring restarts the app, which would end that run — so
+     * the row is off rather than warned about.
+     */
+    runInProgress: Boolean,
     onBack: () -> Unit
 ) {
     var showTargetZonePicker by remember { mutableStateOf(false) }
@@ -292,6 +307,20 @@ fun SettingsScreen(
                     if (backupFolderUri == null) onPickBackupFolder(true) else onBackUpNow()
                 }
             )
+            SettingsRow(
+                label = when (restoreState) {
+                    RestoreUiState.Reading -> "Reading backup…"
+                    RestoreUiState.Applying, RestoreUiState.Restarting -> "Restoring…"
+                    else -> "Restore history"
+                },
+                subtitle = restoreRowSubtitle(runInProgress),
+                value = null,
+                // Off during a run, because restoring restarts the app and that would end the run —
+                // the feature destroying live data in the act of rescuing old data. Never urgent at
+                // the same time, so refusing outright beats a warning read mid-stride.
+                enabled = !runInProgress && restoreState is RestoreUiState.Idle,
+                onClick = onPickRestoreFile
+            )
 
             Spacer(modifier = Modifier.height(RunningUiTokens.SectionSpacing))
             SettingsSectionHeader("Advanced")
@@ -310,6 +339,24 @@ fun SettingsScreen(
                 onCheckedChange = onTestingModeChange
             )
         }
+    }
+
+    when (restoreState) {
+        is RestoreUiState.Confirming -> RestoreConfirmationDialog(
+            plan = restoreState.plan,
+            onConfirm = onConfirmRestore,
+            onDismiss = onDismissRestore
+        )
+        is RestoreUiState.Refused -> RestoreRefusedDialog(
+            reason = restoreState.reason,
+            onDismiss = onDismissRestore
+        )
+        // The waits say what they are in the row itself; a dialog over something the runner cannot
+        // answer is a dialog that only gets in the way.
+        RestoreUiState.Idle,
+        RestoreUiState.Reading,
+        RestoreUiState.Applying,
+        RestoreUiState.Restarting -> Unit
     }
 
     if (clearingRestingHr) {
@@ -624,6 +671,51 @@ private fun ClearRestingHrDialog(
     )
 }
 
+/**
+ * The last thing standing between a runner and their history being replaced (#86).
+ *
+ * Everything it says comes from [restoreConfirmationBody], which is pure and tested — the wording
+ * is the safety mechanism here, so it does not live inside a composable where nothing can check it.
+ *
+ * The confirm button says "Replace" rather than "OK" or "Restore": it names the destructive half of
+ * what is about to happen, which is the half worth being sure about.
+ */
+@Composable
+private fun RestoreConfirmationDialog(
+    plan: RestorePlan,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Replace your history?") },
+        text = {
+            Text(
+                restoreConfirmationBody(plan),
+                style = MaterialTheme.typography.bodyMedium
+            )
+        },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Replace") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+/** A file that cannot be restored, and why. Nothing on the phone has been touched at this point. */
+@Composable
+private fun RestoreRefusedDialog(
+    reason: RestoreRefusal,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Can't restore that file") },
+        text = {
+            Text(restoreRefusalMessage(reason), style = MaterialTheme.typography.bodyMedium)
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("OK") } }
+    )
+}
+
 @Composable
 private fun TargetZonePicker(
     selected: HrZone,
@@ -685,18 +777,29 @@ private fun SettingsRow(
     label: String,
     subtitle: String?,
     value: String?,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    enabled: Boolean = true
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = RunningUiTokens.MinTouchTarget)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyLarge,
+                // Greyed with the row, as in SettingsSwitchRow: a row that will not respond has to
+                // look unlike one that simply hasn't been tapped yet.
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            )
             if (subtitle != null) {
                 Text(
                     subtitle,

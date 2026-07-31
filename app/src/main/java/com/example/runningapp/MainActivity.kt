@@ -61,6 +61,9 @@ import com.example.runningapp.navigation.Routes
 import com.example.runningapp.ui.FeelFeedbackSheet
 import com.example.runningapp.ui.BackupViewModel
 import com.example.runningapp.ui.BackupViewModelFactory
+import com.example.runningapp.ui.RestoreUiState
+import com.example.runningapp.ui.RestoreViewModel
+import com.example.runningapp.ui.RestoreViewModelFactory
 import com.example.runningapp.ui.HistoryScreen
 import com.example.runningapp.ui.HistoryViewModel
 import com.example.runningapp.ui.HistoryViewModelFactory
@@ -173,6 +176,28 @@ class MainActivity : ComponentActivity() {
         ContextCompat.startForegroundService(this, intent)
     }
 
+    /**
+     * Closes the app and reopens it, so the armed restore can be applied before Room opens (#86).
+     *
+     * The process is ended rather than the Activity recreated, and that is the whole point: the
+     * database this app has open is the one about to be replaced, and only a fresh process is
+     * guaranteed to have no connection to it, no Room instance cached, and no background work
+     * mid-write. `PendingRestore.applyIfArmed` then runs on the way back up, in the one window
+     * where the file provably has no readers.
+     *
+     * The relaunch intent is started first so Android has somewhere to go; the exit follows
+     * immediately, and the runner sees an ordinary relaunch onto their restored history.
+     */
+    private fun restartForRestore() {
+        val relaunch = packageManager.getLaunchIntentForPackage(packageName)
+            ?.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (relaunch != null) startActivity(relaunch)
+        finish()
+        // Not exitProcess: this is the documented way to end an Android process without running
+        // shutdown hooks that would try to touch the database on the way out.
+        Runtime.getRuntime().exit(0)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -249,6 +274,33 @@ class MainActivity : ComponentActivity() {
                             SafArchiveFolder.takePersistedAccess(this@MainActivity, treeUri)
                         }
                         backupViewModel.folderChosen(treeUri?.toString())
+                    }
+
+                    val restoreViewModel: RestoreViewModel = viewModel(
+                        factory = RestoreViewModelFactory(
+                            applicationContext,
+                            database,
+                            settingsRepository
+                        )
+                    )
+                    val restoreState by restoreViewModel.state.collectAsState()
+                    // OpenDocument rather than GetContent: it hands back a Uri this app may read
+                    // for as long as it holds it, which is the whole reason a picked file works
+                    // where the app's own Downloads copy no longer does after a Clear storage
+                    // (#198) — the grant comes from the act of picking, so who owns the file on
+                    // disk stops mattering.
+                    val pickRestoreFile = rememberLauncherForActivityResult(
+                        ActivityResultContracts.OpenDocument()
+                    ) { uri ->
+                        restoreViewModel.fileChosen(uri)
+                    }
+                    // Armed and staged; the swap itself happens at the next launch, before Room
+                    // opens anything (PendingRestore). Relaunching is how the app gets to that
+                    // moment — the database is open and being read right now, and replacing the
+                    // file underneath live readers is the one way this feature could destroy the
+                    // history it exists to rescue.
+                    LaunchedEffect(restoreState) {
+                        if (restoreState is RestoreUiState.Restarting) restartForRestore()
                     }
 
                     val gpxShareReady by sessionDetailViewModel.gpxShareReady.collectAsState()
@@ -493,6 +545,21 @@ class MainActivity : ComponentActivity() {
                                 )?.toString(),
                                 backingUp = backingUp,
                                 backupResult = backupResultMessage(backupOutcome),
+                                onPickRestoreFile = {
+                                    // Every type, not just the two this app writes. A backup that
+                                    // came back through Drive or a chat app arrives with whatever
+                                    // type that app decided on, and a picker that hides the file
+                                    // the runner is looking for would be its own bug — the file is
+                                    // checked by its contents once picked (RestoreFileKind).
+                                    pickRestoreFile.launch(arrayOf("*/*"))
+                                },
+                                restoreState = restoreState,
+                                onConfirmRestore = restoreViewModel::confirm,
+                                onDismissRestore = restoreViewModel::dismiss,
+                                runInProgress = serviceState?.value?.let {
+                                    it.sessionStatus != SessionStatus.IDLE &&
+                                        it.sessionStatus != SessionStatus.STOPPED
+                                } ?: false,
                                 onBack = {
                                     // The result belonged to the visit that asked for it; coming
                                     // back to Settings later should read the last-backup time, not
