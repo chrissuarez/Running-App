@@ -82,7 +82,13 @@ class AppContainer(context: Context) {
         AppDatabase.getDatabase(appContext) {
             // Whichever settings belong to the history being opened: the archive's if this launch
             // just restored one, the phone's own otherwise.
-            archived?.let { HrProfile(it.maxHr, it.restingHr) }
+            //
+            // `historyMaxHr`, not `maxHr` — the migration re-bands finished runs, and those two
+            // numbers part company on purpose (#112, #172). A runner who stated 181 and later
+            // corrected to 195 has history banded on 181 and live zones on 195, because a correction
+            // must not rewrite runs already read. The archive carries both, so the restored runs can
+            // be recomputed against the very maximum they were written under.
+            archived?.let { HrProfile(it.historyMaxHr, it.restingHr) }
                 ?: runBlocking { settingsRepository.userSettingsFlow.first().hrProfile }
         }
     }
