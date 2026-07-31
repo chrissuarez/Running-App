@@ -55,8 +55,9 @@ private const val GPS_SMOOTHING_MILLIS = 5_000L
  * How wrong a fix may say its own height is before it is passed over. The research settles that
  * there must be a cutoff without naming one; twenty metres is where a fix stops carrying information
  * a five-fix average could rescue, given that a fix states this as a one-sigma bound and a third of
- * them are worse than they claim. The last trusted height stands in, rather than the fix being
- * dropped, so the heights stay one-to-one with the track's points.
+ * them are worse than they claim. A trusted height stands in, rather than the fix being dropped, so
+ * the heights stay one-to-one with the track's points; a run where no fix at all stands behind its
+ * own height reports no elevation rather than a figure resting on nothing.
  */
 private const val GPS_VERTICAL_ACCURACY_LIMIT_METERS = 20f
 
@@ -111,8 +112,9 @@ internal fun elevationOf(track: MeasuredTrack): ElevationProfile? {
     // of hysteresis from one worth a hundred, and a run of them would report a confident figure
     // resting on nothing.
     if (points.all { it.altitudeMeters != null && it.verticalAccuracyMeters != null }) {
+        val trusted = points.trustedGpsHeights() ?: return null
         return ElevationProfile(
-            metersAtFix = points.trustedGpsHeights().meanOver(GPS_SMOOTHING_MILLIS, stampedAt),
+            metersAtFix = trusted.meanOver(GPS_SMOOTHING_MILLIS, stampedAt),
             hysteresisMeters = GPS_HYSTERESIS_METERS,
             recordedLeg = recordedLeg,
         )
@@ -178,18 +180,21 @@ private fun List<Double?>.filledFromNeighbours(): List<Double> {
     return filled.map { it ?: firstKnown }
 }
 
-/** GPS heights with the ones the fix itself disowns replaced by the last one it did not. */
-private fun List<TrackPoint>.trustedGpsHeights(): List<Double> {
-    var lastTrusted: Double? = null
-    return map { point ->
-        val height = point.altitudeMeters!!
-        if (point.verticalAccuracyMeters!! <= GPS_VERTICAL_ACCURACY_LIMIT_METERS) {
-            lastTrusted = height
-            height
-        } else {
-            lastTrusted ?: height
-        }
+/**
+ * GPS heights with the ones the fix itself disowns taken from the nearest fix that stood behind its
+ * own — or null when no fix in the run did, so there is no height to stand in.
+ *
+ * The nearest either side, rather than only the last one behind: a run's opening fixes are the
+ * likeliest to be disowned, the sky not yet fully acquired, and there is nothing behind them to take.
+ * Left as they were they would report a height tens of metres out from the run that follows, and the
+ * step back up to the truth would be banked as a climb the runner never made.
+ */
+private fun List<TrackPoint>.trustedGpsHeights(): List<Double>? {
+    val trusted = map { point ->
+        point.altitudeMeters!!.takeIf { point.verticalAccuracyMeters!! <= GPS_VERTICAL_ACCURACY_LIMIT_METERS }
     }
+    if (trusted.all { it == null }) return null
+    return trusted.filledFromNeighbours()
 }
 
 /** A centred moving average, shortened at the ends rather than dropping fixes from either. */

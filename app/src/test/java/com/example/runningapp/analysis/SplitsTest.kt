@@ -291,6 +291,28 @@ class SplitsTest {
     }
 
     @Test
+    fun `a run that starts before the sky is acquired does not climb into it`() {
+        // The first fixes of a run are the likeliest to be disowned, and there is no earlier height
+        // for them to take. Kept as they were, this run's opening thirty metres of error would be
+        // climbed back out of over the flat ground that follows.
+        val track = script {
+            unacquiredGpsStart(seconds = 30, offsetMeters = -30.0)
+            running(2.0, seconds = 500, gps = true)
+        }
+
+        assertEquals(0.0, elevationGainOf(aRun(), track)!!, 1.0)
+    }
+
+    @Test
+    fun `a run where no fix stands behind its height shows no elevation`() {
+        // Every fix reports a vertical error past the cutoff. There is no trusted height anywhere to
+        // stand in for them, and a figure summed from heights the run itself disowns rests on nothing.
+        val track = script { unacquiredGpsStart(seconds = 500, offsetMeters = 0.0) }
+
+        assertNull(elevationGainOf(aRun(), track))
+    }
+
+    @Test
     fun `a gust of wind is not a hill`() {
         // A one-second pressure spike worth eight metres, on otherwise flat ground. It is past the
         // barometer's two-metre threshold, so without the median it would bank permanently.
@@ -497,6 +519,21 @@ class SplitsTest {
             timestamp += 1_000
             height += offsetMeters
             add(gps = true, verticalAccuracyMeters = 60f)
+            height -= offsetMeters
+        }
+
+        /**
+         * The opening [seconds] of a run before the sky is properly acquired: fixes reporting a
+         * height [offsetMeters] out and admitting it with a poor vertical accuracy.
+         */
+        fun unacquiredGpsStart(seconds: Int, offsetMeters: Double) {
+            height += offsetMeters
+            if (points.isEmpty()) add(gps = true, verticalAccuracyMeters = 60f)
+            repeat(seconds) {
+                advance(2.0)
+                timestamp += 1_000
+                add(gps = true, verticalAccuracyMeters = 60f)
+            }
             height -= offsetMeters
         }
 
