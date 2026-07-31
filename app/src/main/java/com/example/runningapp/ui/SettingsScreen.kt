@@ -31,6 +31,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -342,11 +343,20 @@ fun SettingsScreen(
     }
 
     when (restoreState) {
-        is RestoreUiState.Confirming -> RestoreConfirmationDialog(
-            plan = restoreState.plan,
-            onConfirm = onConfirmRestore,
-            onDismiss = onDismissRestore
-        )
+        // Reading a big archive takes long enough for the runner to leave Settings, start a run and
+        // come back to a confirmation that is now offering to restart the app underneath it. The row
+        // that opened the picker is already disabled during a run; this is the same rule applied at
+        // the only other moment it can be broken. The pick is let go rather than held: the run is
+        // the thing that cannot be redone, and the row explains why the button is off.
+        is RestoreUiState.Confirming -> if (runInProgress) {
+            LaunchedEffect(Unit) { onDismissRestore() }
+        } else {
+            RestoreConfirmationDialog(
+                plan = restoreState.plan,
+                onConfirm = onConfirmRestore,
+                onDismiss = onDismissRestore
+            )
+        }
         is RestoreUiState.Refused -> RestoreRefusedDialog(
             reason = restoreState.reason,
             onDismiss = onDismissRestore

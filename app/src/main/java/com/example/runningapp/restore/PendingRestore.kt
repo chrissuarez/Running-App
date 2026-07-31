@@ -238,8 +238,20 @@ object PendingRestore {
         deleteJournalsOf(destination)
     }
 
-    /** Everything SQLite can leave beside a database file. */
+    /**
+     * Removes everything SQLite can leave beside a database file, and throws if any of it survives.
+     *
+     * The throw is the point. This is the last thing standing between the old database's journals
+     * and the restored database that is about to take its place — a journal that outlives the file
+     * it describes is replayed into the replacement or condemns it as corrupt. Failing here abandons
+     * the restore before anything has been promoted, which is a state the runner can retry from.
+     */
     private fun deleteJournalsOf(destination: File) {
-        listOf("-wal", "-shm", "-journal").forEach { File("${destination.path}$it").delete() }
+        listOf("-wal", "-shm", "-journal").forEach { suffix ->
+            val journal = File("${destination.path}$suffix")
+            if (journal.exists() && !journal.delete()) {
+                throw IllegalStateException("Could not remove the previous database's $suffix")
+            }
+        }
     }
 }
