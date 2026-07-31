@@ -145,8 +145,11 @@ object PendingRestore {
     private fun moveIntoPlace(context: Context, staged: File) {
         val destination = DatabaseBackupManager.databaseFile(context)
         destination.parentFile?.mkdirs()
-        val sidecars = setPreviousSidecarsAside(context, destination)
+        // Accumulated as they move rather than returned at the end, so that a failure partway
+        // through — one log set aside and the next refusing to budge — puts back the one that did.
+        val sidecars = mutableListOf<Pair<File, File>>()
         try {
+            setPreviousSidecarsAside(context, destination, sidecars)
             if (!staged.renameTo(destination)) {
                 // A rename can only fail here if staging and the database sit on different volumes,
                 // which they do not today — but a copy through a sibling temp file keeps the same
@@ -168,9 +171,9 @@ object PendingRestore {
     }
 
     /**
-     * Moves the live database's log files into staging, returning where each went and where it came
-     * from. Empty when there were none, which is the ordinary case on a phone whose database Room
-     * checkpointed cleanly.
+     * Moves the live database's log files into staging, recording each move into [movedSoFar] as
+     * where it went and where it came from. Records nothing when there were no logs, which is the
+     * ordinary case on a phone whose database Room checkpointed cleanly.
      *
      * They go into staging rather than beside the database so that the one thing which clears up
      * after an abandoned restore clears these up too — a crash between the move and the promotion
@@ -179,19 +182,29 @@ object PendingRestore {
      * A file already sitting in staging is a move that a previous attempt made before being cut
      * short. It is still the right log for the database still in place, so it is adopted rather than
      * overwritten.
+     *
+     * A log that exists and cannot be moved throws, which abandons the restore with the previous
+     * database and its log both whole. Carrying on would be the one outcome this whole arrangement
+     * exists to prevent: the two renames are separate calls and can fail separately, so a sidecar
+     * that refuses to move says nothing about whether the database is about to be replaced beside
+     * it. Failing here costs the runner another tap; not failing costs them the restore.
      */
-    private fun setPreviousSidecarsAside(context: Context, destination: File): List<Pair<File, File>> {
+    private fun setPreviousSidecarsAside(
+        context: Context,
+        destination: File,
+        movedSoFar: MutableList<Pair<File, File>>,
+    ) {
         val directory = RestoreReader.stagingDirectory(context)
-        return listOf("-wal", "-shm").mapNotNull { suffix ->
+        listOf("-wal", "-shm").forEach { suffix ->
             val original = File("${destination.path}$suffix")
             val saved = File(directory, "previous$suffix")
             when {
-                original.exists() && original.renameTo(saved) -> saved to original
-                saved.exists() -> saved to original
-                // Either there was no log, or it could not be moved. Nothing has been destroyed
-                // either way, and a volume that refuses this rename will refuse the next one too —
-                // which fails the restore with the previous database whole, the right way round.
-                else -> null
+                original.exists() && original.renameTo(saved) -> movedSoFar += saved to original
+                original.exists() ->
+                    throw IllegalStateException("Could not move the previous database's $suffix aside")
+                saved.exists() -> movedSoFar += saved to original
+                // No log at all — the ordinary case on a database Room checkpointed cleanly.
+                else -> Unit
             }
         }
     }
