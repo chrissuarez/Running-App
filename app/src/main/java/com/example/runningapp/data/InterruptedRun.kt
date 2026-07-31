@@ -23,8 +23,17 @@ import com.example.runningapp.tallyZoneSeconds
  *    accumulator, so it is the distance the map and the GPX export already draw for this Run rather
  *    than to-the-metre what a completed Run would have stored. Legs across a break do not count, for
  *    the reason [measureMovingTimeSeconds] gives: a pause is not ground the runner covered.
- *  - **Walk breaks and the run/walk flag** are the Workout's, not the recording's, and nothing in
- *    the record says which Workout was being run. They keep the row's own values.
+ *  - **Walk breaks** are the Workout's, not the recording's. What is banked is the Interval that
+ *    ended, and the walk that follows it is the Workout's answer to that — counted as the Run takes
+ *    it and gone with the Run. The row keeps its own value rather than being handed a count derived
+ *    from how many Intervals happen to have been banked.
+ *
+ * The **run/walk flag** is neither derived nor left alone but *found*: `run_walk_interval_stats`
+ * holds a row per Interval the Run banked as it ran, and those rows are written only by a Run
+ * actually running Intervals. Their presence is the same evidence [MIGRATION_13_14] treats as the
+ * one durable signal of a structured Run, read the same way here. It can only turn the flag on — a
+ * Run killed during its warm-up has banked no Interval and has nothing to say either way, which is
+ * the case that migration calls having no interval evidence to preserve.
  *
  * Zone seconds are tallied against the profile passed in rather than whatever was pinned at START,
  * which is the same choice the #112 re-tally makes for history — and it must be passed the same
@@ -52,12 +61,14 @@ import com.example.runningapp.tallyZoneSeconds
  * @param mappedTrack the same points after the accuracy gate
  *   ([SessionRepository.getTrackPointsForMap]), so a wild fix the Run itself refused cannot reappear
  *   here as a phantom sprint.
+ * @param bankedIntervals whether the Run banked any run/walk Interval before it was killed.
  */
 fun RunnerSession.finishedFromRecord(
     samples: List<HrSample>,
     track: List<TrackPoint>,
     mappedTrack: List<TrackPoint>,
     profile: HrProfile,
+    bankedIntervals: Boolean = false,
 ): RunnerSession? {
     // The Run's clock, which counts *running* seconds and so already excludes anything it spent
     // paused. The last second banked rather than the number of samples: a dropout saves no row, and
@@ -98,6 +109,9 @@ fun RunnerSession.finishedFromRecord(
         distanceKm = distanceKm,
         avgPaceMinPerKm = averagePaceMinPerKm(durationSeconds, distanceKm),
         noDataSeconds = noDataSeconds,
+        // Never taken away: the flag is a claim the row can only have got from a Run that made it,
+        // and a banked Interval is the same claim from the other direction.
+        isRunWalkMode = isRunWalkMode || bankedIntervals,
         zone1Seconds = zones.zone1,
         zone2Seconds = zones.zone2,
         zone3Seconds = zones.zone3,

@@ -2,6 +2,7 @@ package com.example.runningapp.data
 
 import com.example.runningapp.HrProfile
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -281,6 +282,37 @@ class InterruptedRunTest {
         val finished = interrupted.finishedFromRecord(samples(10), track, mappedTrack = track, profile = profile)!!
 
         assertEquals(0.006, finished.distanceKm, 0.001)
+    }
+
+    @Test
+    fun `a run that banked an interval is a run walk run`() {
+        // Interval rows are written only by a Run running Intervals, and written as it runs rather
+        // than at the finish it never reached. The same evidence MIGRATION_13_14 goes on. Without
+        // it the Run comes back labelled an Open Run, to the runner and to the coach.
+        val finished = interrupted.finishedFromRecord(
+            samples(60),
+            track = emptyList(),
+            mappedTrack = emptyList(),
+            profile = profile,
+            bankedIntervals = true,
+        )!!
+
+        assertTrue(finished.isRunWalkMode)
+    }
+
+    @Test
+    fun `a run that banked no interval is not told what it was`() {
+        // Killed during its warm-up, a run/walk Run has banked nothing and says nothing — which is
+        // exactly what the migration calls having no interval evidence to preserve.
+        val finished = interrupted.finishedFromRecord(
+            samples(60),
+            track = emptyList(),
+            mappedTrack = emptyList(),
+            profile = profile,
+            bankedIntervals = false,
+        )!!
+
+        assertFalse(finished.isRunWalkMode)
     }
 
     @Test
