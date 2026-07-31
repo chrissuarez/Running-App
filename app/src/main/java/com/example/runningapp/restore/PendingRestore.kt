@@ -123,33 +123,76 @@ object PendingRestore {
     /**
      * Puts [staged] where Room will look for it, sidecars and all.
      *
-     * The stale `-wal` and `-shm` go **first**, before the file they describe is replaced. They
-     * belong to the database being thrown away: the snapshot is already checkpointed, so a log left
-     * beside it describes writes to a file that no longer exists, and replaying it would corrupt the
-     * restore. Deleting them after the rename would open a window — however short — in which a death
-     * leaves the new database sitting beside the old one's log, and the next launch, seeing no
-     * snapshot left to move, would take that mixture for a finished restore. Deleting them first
-     * makes every instant of this recoverable: what is on disk is either the old database (with or
-     * without its log) or the new one, and while the marker and the snapshot both survive, an
-     * interrupted move simply runs again.
+     * The previous database's `-wal` and `-shm` are moved out of the way **before** the file they
+     * describe is replaced, and only thrown away once the replacement has landed. Both halves of
+     * that matter, for opposite reasons.
+     *
+     * Out of the way first, because the snapshot arrives already checkpointed: a log left beside it
+     * describes writes to a file that no longer exists, and replaying it would corrupt the restore.
+     * Clearing them *after* the rename would leave a window — however short — in which a death
+     * leaves the new database sitting beside the old one's log, and the next launch, finding no
+     * snapshot left to move, would take that mixture for a finished restore.
+     *
+     * Moved rather than deleted, because a restore that fails promises the runner their phone is
+     * exactly as it was. The app is killed without closing Room, so recent runs can live only in
+     * that log; deleting it and then failing to promote the replacement would quietly roll back the
+     * history this had just said it would not touch. Set aside, it can be put back.
+     *
+     * So at every instant on disk this is one of: the old database with its log, the old database
+     * with its log alongside under another name, or the new database with no log at all. Never the
+     * new database beside the old log, and never the old database with its log destroyed.
      */
     private fun moveIntoPlace(context: Context, staged: File) {
         val destination = DatabaseBackupManager.databaseFile(context)
         destination.parentFile?.mkdirs()
-        File("${destination.path}-wal").delete()
-        File("${destination.path}-shm").delete()
-        if (!staged.renameTo(destination)) {
-            // A rename can only fail here if staging and the database sit on different volumes,
-            // which they do not today — but a copy through a sibling temp file keeps the same
-            // promise if that ever changes: the destination is only ever the whole snapshot or
-            // the previous database, never a half-written mixture of the two.
-            val temp = File("${destination.path}.restore.tmp")
-            staged.copyTo(temp, overwrite = true)
-            if (!temp.renameTo(destination)) {
-                temp.delete()
-                throw IllegalStateException("Could not move the restored database into place")
+        val sidecars = setPreviousSidecarsAside(context, destination)
+        try {
+            if (!staged.renameTo(destination)) {
+                // A rename can only fail here if staging and the database sit on different volumes,
+                // which they do not today — but a copy through a sibling temp file keeps the same
+                // promise if that ever changes: the destination is only ever the whole snapshot or
+                // the previous database, never a half-written mixture of the two.
+                val temp = File("${destination.path}.restore.tmp")
+                staged.copyTo(temp, overwrite = true)
+                if (!temp.renameTo(destination)) {
+                    temp.delete()
+                    throw IllegalStateException("Could not move the restored database into place")
+                }
+                staged.delete()
             }
-            staged.delete()
+        } catch (e: Exception) {
+            sidecars.forEach { (saved, original) -> saved.renameTo(original) }
+            throw e
+        }
+        sidecars.forEach { (saved, _) -> saved.delete() }
+    }
+
+    /**
+     * Moves the live database's log files into staging, returning where each went and where it came
+     * from. Empty when there were none, which is the ordinary case on a phone whose database Room
+     * checkpointed cleanly.
+     *
+     * They go into staging rather than beside the database so that the one thing which clears up
+     * after an abandoned restore clears these up too — a crash between the move and the promotion
+     * leaves them named after nothing, and [RestoreReader.clear] is what eventually removes them.
+     *
+     * A file already sitting in staging is a move that a previous attempt made before being cut
+     * short. It is still the right log for the database still in place, so it is adopted rather than
+     * overwritten.
+     */
+    private fun setPreviousSidecarsAside(context: Context, destination: File): List<Pair<File, File>> {
+        val directory = RestoreReader.stagingDirectory(context)
+        return listOf("-wal", "-shm").mapNotNull { suffix ->
+            val original = File("${destination.path}$suffix")
+            val saved = File(directory, "previous$suffix")
+            when {
+                original.exists() && original.renameTo(saved) -> saved to original
+                saved.exists() -> saved to original
+                // Either there was no log, or it could not be moved. Nothing has been destroyed
+                // either way, and a volume that refuses this rename will refuse the next one too —
+                // which fails the restore with the previous database whole, the right way round.
+                else -> null
+            }
         }
     }
 }
