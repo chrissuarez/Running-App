@@ -89,6 +89,16 @@ object PendingRestore {
                 moveIntoPlace(context, staged)
                 replaced = true
                 Log.d(TAG, "Restored run history from the picked backup")
+            } catch (e: StrandedPreviousLog) {
+                // The restore failed *and* could not put the previous database's log back, so that
+                // log is sitting in staging under a name nothing else knows. Clearing up would
+                // delete it, and it may hold runs that exist nowhere else. Everything is left
+                // exactly where it is instead: the marker survives, and the next launch tries the
+                // whole move again — this time adopting the log already set aside, and putting it
+                // back if it fails again. Storage that stays broken costs a retry per launch and
+                // nothing more; clearing up would cost the runs.
+                Log.w(TAG, "Could not restore, and the previous log is still set aside; leaving it", e)
+                return false
             } catch (e: Exception) {
                 // Best-effort, like every other recovery path here: a failed restore must not stop
                 // the app launching. The previous database is untouched, so the runner lands where
@@ -164,11 +174,28 @@ object PendingRestore {
                 staged.delete()
             }
         } catch (e: Exception) {
-            sidecars.forEach { (saved, original) -> saved.renameTo(original) }
+            // The rollback is itself two renames that can fail. If one does, the log it was carrying
+            // is still in staging, and staging is what gets cleared away after a failed restore —
+            // so say so loudly enough that the caller keeps it. Reported even though the restore has
+            // already failed, because this is the more serious of the two failures: one costs a
+            // retry, the other costs runs that exist nowhere else.
+            val stranded = sidecars.filterNot { (saved, original) -> saved.renameTo(original) }
+            if (stranded.isNotEmpty()) {
+                throw StrandedPreviousLog(stranded.map { (saved, _) -> saved.name }, e)
+            }
             throw e
         }
         sidecars.forEach { (saved, _) -> saved.delete() }
     }
+
+    /**
+     * A restore that failed and could not put the previous database's log back where it belongs.
+     *
+     * Carries the cause, so the reason the restore failed in the first place is not lost behind the
+     * reason the rollback did.
+     */
+    private class StrandedPreviousLog(names: List<String>, cause: Throwable) :
+        IllegalStateException("Could not put back: ${names.joinToString()}", cause)
 
     /**
      * Moves the live database's log files into staging, recording each move into [movedSoFar] as
