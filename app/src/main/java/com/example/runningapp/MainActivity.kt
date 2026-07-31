@@ -607,6 +607,15 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            // The route the splits and the elevation line are measured off (#45),
+                            // through the same accuracy gate as the map and the GPX export so all
+                            // three are describing the same run.
+                            val sessionTrack by produceState<List<com.example.runningapp.data.TrackPoint>>(initialValue = emptyList(), key1 = sessionId) {
+                                sessionId?.let { id ->
+                                    sessionRepository.getTrackPointsForMapFlow(id).collect { value = it }
+                                }
+                            }
+
                             // Inside this destination, and gated on the run that asked: an export is
                             // slow enough that the runner can be somewhere else by the time it
                             // lands, and a chooser opening over another screen interrupts whatever
@@ -624,6 +633,7 @@ class MainActivity : ComponentActivity() {
                                 session = selectedSession,
                                 samples = sessionSamples,
                                 intervalStats = sessionIntervalStats,
+                                trackPoints = sessionTrack,
                                 onDeleteSession = { id ->
                                     sessionDetailViewModel.deleteSession(id)
                                 },
