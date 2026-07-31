@@ -67,6 +67,60 @@ class InterruptedRunTest {
     }
 
     @Test
+    fun `a run recorded without a strap is as long as its track says`() {
+        // Nothing banks a heart-rate second when no strap is paired, and the Run is a real one all
+        // the same. The track is the only record of how long it went on for: 100 fixes a second
+        // apart from the moment it started, so 99 seconds of it, every one of them without a reading.
+        val track = (0..99).map { fixAt(50.8152, startedAt + it * 1_000L) }
+
+        val finished = interrupted.finishedFromRecord(samples = emptyList(), track = track, profile = profile)!!
+
+        assertEquals(99, finished.durationSeconds)
+        assertEquals(99, finished.noDataSeconds)
+        assertEquals(0, finished.avgBpm)
+    }
+
+    @Test
+    fun `a strap that drops out for good does not end the run early`() {
+        // 60 seconds of readings, then the strap goes and the Run runs on for another 240 with the
+        // track still being written. Trusting the last sample would rescue a 5-minute Run as a
+        // 1-minute one.
+        val track = (0..299).map { fixAt(50.8152, startedAt + it * 1_000L) }
+
+        val finished = interrupted.finishedFromRecord(samples(60), track, profile = profile)!!
+
+        assertEquals(299, finished.durationSeconds)
+        assertEquals(239, finished.noDataSeconds)
+    }
+
+    @Test
+    fun `the seconds a run spent paused are not counted as time it ran`() {
+        // Two fixes a second apart, a six-minute break, then two more. The Run's clock stopped for
+        // the break, so the track vouches for two seconds, not six minutes and two.
+        val track = listOf(
+            fixAt(50.8152, startedAt),
+            fixAt(50.8152, startedAt + 1_000),
+            fixAt(50.8300, startedAt + 400_000, startsAfterPause = true),
+            fixAt(50.8300, startedAt + 401_000),
+        )
+
+        val finished = interrupted.finishedFromRecord(samples = emptyList(), track = track, profile = profile)!!
+
+        assertEquals(2, finished.durationSeconds)
+    }
+
+    @Test
+    fun `the wait for a first fix is time the runner spent running`() {
+        // The Run's clock starts at START; the satellites take another 30 seconds. Those seconds
+        // were run, not paused, and a Run that began indoors would otherwise lose all of them.
+        val track = (0..9).map { fixAt(50.8152, startedAt + 30_000 + it * 1_000L) }
+
+        val finished = interrupted.finishedFromRecord(samples = emptyList(), track = track, profile = profile)!!
+
+        assertEquals(39, finished.durationSeconds)
+    }
+
+    @Test
     fun `heart rate totals are the ones the finish would have written`() {
         // The Run banks its tally from the same rawBpm it saves on the sample, so these are
         // derived rather than estimated: a mean of 130..149 is 139, and the max is the top of it.

@@ -48,9 +48,15 @@ fun RunnerSession.finishedFromRecord(
     if (samples.isEmpty() && track.size < 2) return null
 
     // The Run's clock, which counts *running* seconds and so already excludes anything it spent
-    // paused. Taken from the last second banked rather than from the number of samples: a dropout
-    // saves no row, and counting rows would hand those seconds back and shorten the Run.
-    val durationSeconds = samples.maxOfOrNull { it.elapsedSeconds } ?: 0L
+    // paused. The last second banked rather than the number of samples: a dropout saves no row, and
+    // counting rows would hand those seconds back and shorten the Run. And the track as well as the
+    // samples, because the samples are not always the longer record — a Run recorded without a strap
+    // banks no second at all, and a strap that drops out for good banks its last one early, while
+    // the track goes on being written either way. Whichever record reaches further is the Run.
+    val durationSeconds = maxOf(
+        samples.maxOfOrNull { it.elapsedSeconds } ?: 0L,
+        measureTrackRecordedSeconds(startTime, track),
+    )
     // Seconds the Run counted but had no reading for — exactly the ones with no sample row, which
     // is how the Run itself counts them.
     val noDataSeconds = (durationSeconds - samples.size).coerceAtLeast(0L)
@@ -86,6 +92,31 @@ fun RunnerSession.finishedFromRecord(
         startLatitude = startLatitude ?: firstFix?.latitude,
         startLongitude = startLongitude ?: firstFix?.longitude,
     )
+}
+
+/**
+ * Running seconds a stored track can vouch for: the wall clock from the Run's start to its last fix,
+ * less the spells the recording was down.
+ *
+ * The head — [startTime] to the first fix — counts. The Run's clock starts at START, and the wait
+ * for a first satellite fix is time the runner spent running rather than time they spent paused.
+ * Everything after it is measured leg by leg, skipping the ones that span a break for the reason
+ * [measureMovingTimeSeconds] gives: a pause is not time the Run was counting either.
+ *
+ * This is a floor rather than the Run's clock exactly — the seconds after the last fix are gone with
+ * the process that would have written them. It exists so a Run whose samples stop early, or never
+ * start, is not rescued as a Run that lasted no time at all.
+ */
+fun measureTrackRecordedSeconds(startTime: Long, points: List<TrackPoint>): Long {
+    val ordered = points.sortedBy { it.timestampMillis }
+    val firstFix = ordered.firstOrNull() ?: return 0L
+    var millis = (firstFix.timestampMillis - startTime).coerceAtLeast(0L)
+    for (i in 1 until ordered.size) {
+        val legMs = ordered[i].timestampMillis - ordered[i - 1].timestampMillis
+        if (legMs <= 0 || ordered[i].startsAfterPause || legMs > TRACK_BREAK_MS) continue
+        millis += legMs
+    }
+    return millis / 1000
 }
 
 /**

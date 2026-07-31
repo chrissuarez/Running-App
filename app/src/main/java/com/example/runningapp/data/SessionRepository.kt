@@ -353,9 +353,6 @@ class SessionRepository(
                     profile = profile,
                 ) ?: return@forEach
                 sessionDao.updateSession(finished)
-                // After the row is finished, not before: this measures the same stored track and
-                // rewrites avgPaceMinPerKm over moving time, which is the pace the app quotes (#163).
-                computeMovingTime(sessionId)
                 rescued++
                 Log.w(
                     "InterruptedRun",
@@ -364,6 +361,19 @@ class SessionRepository(
                 )
             } catch (e: Exception) {
                 Log.w("InterruptedRun", "Could not rescue run $sessionId; leaving it for next launch", e)
+                return@forEach
+            }
+            try {
+                // After the row is finished, not before: this measures the same stored track and
+                // rewrites avgPaceMinPerKm over moving time, which is the pace the app quotes (#163).
+                computeMovingTime(sessionId)
+            } catch (e: Exception) {
+                // Its own attempt, because the row is already finished by this point and will never
+                // be offered to this pass again. Failing here leaves movingTimeSeconds null, which
+                // is the state [backfillMovingTime] picks up at the next launch — so the Run is in
+                // history with everything else it needs, and the one number it is missing is
+                // already somebody's job.
+                Log.w("InterruptedRun", "Rescued run $sessionId but could not measure its moving time", e)
             }
         }
 

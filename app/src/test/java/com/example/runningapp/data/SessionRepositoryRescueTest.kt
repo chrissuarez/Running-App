@@ -115,6 +115,24 @@ class SessionRepositoryRescueTest {
     }
 
     @Test
+    fun `a run whose moving time cannot be measured is still rescued`() = runTest {
+        // The row is finished by the time moving time is worked out, so this pass will never see
+        // the Run again. Failing here must not cost it its place in history or the snapshot: the
+        // one number it is missing is left null, which is what the next launch's backfill looks for.
+        whenever(sessionDao.getInterruptedSessionIds(processStartedAt)).thenReturn(listOf(67L))
+        whenever(sessionDao.getSessionById(67L))
+            .thenReturn(interruptedRun(67L))
+            .thenThrow(IllegalStateException("corrupt page"))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 60))
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+
+        repository.rescueInterruptedRuns(processStartedAt)
+
+        verify(sessionDao).updateSession(any())
+        assertEquals(1, backupsRefreshed)
+    }
+
+    @Test
     fun `a launch with nothing interrupted asks the database for nothing else`() = runTest {
         whenever(sessionDao.getInterruptedSessionIds(processStartedAt)).thenReturn(emptyList())
 
