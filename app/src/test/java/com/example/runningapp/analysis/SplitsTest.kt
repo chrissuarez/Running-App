@@ -9,6 +9,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.cos
+import kotlin.math.ln
+import kotlin.math.sqrt
+import kotlin.random.Random
 
 /**
  * Scripted runs, cut into splits. Each test lays out a run as a sequence of legs — a speed held for
@@ -234,15 +238,22 @@ class SplitsTest {
     @Test
     fun `a barometer run banks the climb it measured`() {
         // Up 50 m over the first kilometre, back down over the second.
+        //
+        // Three metres of the fifty go missing, and are meant to: smoothing over half a minute
+        // rounds off a turning point, and this run is two of them — it starts climbing at full rate
+        // from its first second and reverses at the summit in one. At 0.1 m/s that is about 1.5 m
+        // rounded off each, which is the price of [BAROMETER_SMOOTHING_MILLIS] and is charged only
+        // where the ground changes direction instantly. Real hills have shoulders; this one is a
+        // triangle, so it is close to the worst case there is.
         val track = script {
             running(2.0, seconds = 500, climbMeters = 50.0, barometer = true)
             running(2.0, seconds = 500, climbMeters = -50.0, barometer = true)
         }
         val splits = splitsOfRun(aRun(), noSamples, track)
 
-        assertEquals(50.0, splits[0].elevationGainMeters!!, 2.0)
+        assertEquals(50.0, splits[0].elevationGainMeters!!, 4.0)
         assertEquals(0.0, splits[1].elevationGainMeters!!, 0.5)
-        assertEquals(50.0, elevationGainOf(aRun(), track)!!, 2.0)
+        assertEquals(50.0, elevationGainOf(aRun(), track)!!, 4.0)
     }
 
     @Test
@@ -303,6 +314,25 @@ class SplitsTest {
         }
 
         assertEquals(30.0, elevationGainOf(aRun(), track)!!, 3.0)
+    }
+
+    @Test
+    fun `a flat run does not climb on the barometer's own noise`() {
+        // The bug this feature shipped with (#45). A phone barometer's second-to-second jitter runs
+        // well past the two-metre threshold, so a window only three seconds wide banks it as climb
+        // over and over: ten flat minutes here reported hundreds of metres before the window widened.
+        val track = script { wobblingBarometer(seconds = 600) }
+
+        assertEquals(0.0, elevationGainOf(aRun(), track)!!, 5.0)
+    }
+
+    @Test
+    fun `a real climb is still banked through that noise`() {
+        // The other half of the same bug: the cure must not be to flatten everything. Forty metres
+        // climbed under exactly the noise of the test above, which must still come back out.
+        val track = script { wobblingBarometer(seconds = 600, climbMeters = 40.0) }
+
+        assertEquals(40.0, elevationGainOf(aRun(), track)!!, 8.0)
     }
 
     @Test
@@ -500,6 +530,34 @@ class SplitsTest {
             add(barometer = barometer, gps = gps)
         }
 
+        /**
+         * Flat ground, with the barometer as noisy as Chris's Pixel 8a actually records it (#45).
+         *
+         * The shape of the jitter is taken from three of his runs: mostly under a metre from one
+         * second to the next, with a heavy tail that reaches several metres often enough to matter —
+         * a median step of about 0.9 m, about 5.6 m at the 95th percentile. That tail is the whole
+         * problem, because it clears the barometer's two-metre threshold on its own.
+         *
+         * Seeded, so the run is the same every time this test is run.
+         *
+         * [climbMeters] is real ground underneath the noise, climbed evenly across the stretch.
+         */
+        fun wobblingBarometer(seconds: Int, climbMeters: Double = 0.0, seed: Int = 45) {
+            val noise = Random(seed)
+            val flat = height
+            if (points.isEmpty()) add(barometer = true)
+            repeat(seconds) { second ->
+                advance(2.0)
+                timestamp += 1_000
+                val ground = flat + climbMeters * (second + 1) / seconds
+                // A calm second and a gusty one, mixed the way the recorded runs mix them.
+                val spread = if (noise.nextInt(10) == 0) 3.0 else 0.7
+                height = ground + noise.nextGaussian(spread)
+                add(barometer = true)
+                height = ground
+            }
+        }
+
         /** Flat ground, with GPS altitude bouncing [amplitudeMeters] either side of it each second. */
         fun wobblingGps(seconds: Int, amplitudeMeters: Double) {
             val flat = height
@@ -518,6 +576,11 @@ class SplitsTest {
             /** The standard atmosphere read backwards: the pressure a barometer sees at a height. */
             fun pressureAt(heightMeters: Double): Float =
                 (1013.25 * Math.pow(1.0 - heightMeters / 44_330.0, 5.255)).toFloat()
+
+            /** A normally distributed draw of standard deviation [sd] — Box-Muller, so no platform
+             * random-number generator's bell curve has to be the same across JDKs for a test to hold. */
+            fun Random.nextGaussian(sd: Double): Double =
+                sd * sqrt(-2.0 * ln(1.0 - nextDouble())) * cos(2.0 * Math.PI * nextDouble())
         }
     }
 }
