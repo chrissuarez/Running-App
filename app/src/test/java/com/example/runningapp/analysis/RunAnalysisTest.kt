@@ -143,6 +143,25 @@ class RunAnalysisTest {
     }
 
     @Test
+    fun `a recorded no-beat second breaks the line however close the readings around it are`() {
+        // Old history wrote a row for a second with no beat in it. That row says outright that
+        // nothing was measured, and it must be believed rather than left to a judgement about how
+        // far apart the readings either side of it happen to sit.
+        val lost = (11L..20L).map { it to 0 }
+        val chart = requireNotNull(
+            RunAnalysis.of(
+                run = aRun(durationSeconds = 31),
+                samples = samples(0 to 120, 10 to 124, *lost.toTypedArray(), 21 to 128, 31 to 130)
+            ).chart
+        )
+
+        assertEquals(2, chart.heartRate.size)
+        assertEquals(listOf(0L, 10L), chart.heartRate[0].readings.map { it.elapsedSeconds })
+        assertEquals(listOf(21L, 31L), chart.heartRate[1].readings.map { it.elapsedSeconds })
+        assertNull(chart.readingAt(16L))
+    }
+
+    @Test
     fun `a run recorded before every second was banked keeps one line through its sparse patches`() {
         // Old history was sampled irregularly; a few seconds between readings is sparseness, not a
         // dropped strap, and must not be drawn as a broken line.
