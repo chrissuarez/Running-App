@@ -164,29 +164,43 @@ object PendingRestore {
     }
 
     /**
-     * Checkpoints the live database's write-ahead log into the database itself, leaving no log
-     * beside it. Does nothing when there is no database or no log, which is the ordinary case.
+     * Folds whatever the previous database left beside it back into the database itself, leaving no
+     * journal of any kind for the restored file to inherit. Does nothing when there is no previous
+     * database, which is the freshly-wiped phone this feature exists for.
+     *
+     * Opened unconditionally, not only when a `-wal` is sitting there. Room picks its journal mode
+     * to suit the device and falls back to a rollback journal on low-memory ones, so the leftovers
+     * of a killed write can just as easily be a hot `running_app_db-journal`. Merely opening the
+     * database is what makes SQLite deal with either — replaying a write-ahead log, rolling back an
+     * interrupted transaction — and skipping that because one particular file was absent would let
+     * the other kind survive to be replayed into the restored history.
+     *
+     * Folded rather than deleted, because a restore that fails promises the runner their phone is
+     * exactly as it was. The app is killed without closing Room, so recent runs can live only in
+     * these files — dropping them and then failing to promote the replacement would quietly roll
+     * back history this had just said it would not touch. Recovered into the database, those runs
+     * are safe if the restore fails and discarded with everything else if it succeeds.
      *
      * `TRUNCATE` rather than the default `PASSIVE`, because a partial checkpoint is exactly the
      * outcome that must not be mistaken for success: it reports whether it was blocked, and being
-     * blocked here throws, which abandons the restore with the database and its log both untouched.
+     * blocked here throws, which abandons the restore with the database and its journals untouched.
      * Nothing else in the process holds this file — this runs before Room opens anything — so being
-     * blocked means something is wrong enough to stop for.
+     * blocked means something is wrong enough to stop for. On a database in rollback-journal mode
+     * the pragma has nothing to do and says so, which is the right answer there too: the recovery
+     * that mattered already happened when it opened.
      *
      * A database that will not open at all is the one case this steps over rather than stops for.
-     * Its log cannot be folded into it, cannot be read, and cannot be replayed by Room either; the
-     * restore is the runner's way out of precisely that, so the log goes and the restore proceeds.
+     * Its journals cannot be folded into it, cannot be read, and cannot be replayed by Room either;
+     * the restore is the runner's way out of precisely that, so they go and the restore proceeds.
      */
     private fun foldPreviousLogIntoItsDatabase(destination: File) {
-        val log = File("${destination.path}-wal")
-        if (!destination.exists() || !log.exists()) return
+        if (!destination.exists()) return
         var db: SQLiteDatabase? = null
         try {
             db = SQLiteDatabase.openDatabase(destination.path, null, SQLiteDatabase.OPEN_READWRITE)
         } catch (e: Exception) {
-            Log.w(TAG, "Previous database will not open; dropping its log unread", e)
-            log.delete()
-            File("${destination.path}-shm").delete()
+            Log.w(TAG, "Previous database will not open; dropping its journals unread", e)
+            deleteJournalsOf(destination)
             return
         }
         try {
@@ -200,9 +214,13 @@ object PendingRestore {
         } finally {
             runCatching { db.close() }
         }
-        // A truncating checkpoint empties the log and a clean close removes it; anything left
+        // A truncating checkpoint empties the log and a clean close removes these; anything left
         // describes nothing, and leaving it would put it beside the restored database.
-        log.delete()
-        File("${destination.path}-shm").delete()
+        deleteJournalsOf(destination)
+    }
+
+    /** Everything SQLite can leave beside a database file. */
+    private fun deleteJournalsOf(destination: File) {
+        listOf("-wal", "-shm", "-journal").forEach { File("${destination.path}$it").delete() }
     }
 }

@@ -56,6 +56,14 @@ object RestoreReader {
      * strand every restored run on a profile nobody chose.
      */
     fun stage(context: Context, uri: Uri, currentDatabaseVersion: Int): Outcome {
+        // A restore still armed while the app is running is the one that got its history in place
+        // and not its settings, and is waiting for the next launch to finish. Its settings are the
+        // only copy left, and the clear below would delete them — so a second pick, even one that
+        // goes on to be refused or backed out of, would strand the restored runs on the previous
+        // phone's profile and plan for good. Say no until the relaunch has finished the first one.
+        if (PendingRestore.isArmed(context)) {
+            return Outcome.Refused(RestoreRefusal.A_RESTORE_IS_UNFINISHED)
+        }
         val directory = stagingDirectory(context)
         clear(context)
         directory.mkdirs()
