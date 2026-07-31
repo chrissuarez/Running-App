@@ -230,6 +230,27 @@ class RunAnalysisTest {
     }
 
     @Test
+    fun `dragging into a break too short to be wider than the finger still reads out nothing`() {
+        // Seconds 2 to 4 were never recorded, so the line breaks there — and every one of those
+        // seconds is within a finger's reach of a reading on either side. The readout must agree
+        // with the break the runner can see rather than hand back a beat from beside it.
+        val chart = requireNotNull(
+            RunAnalysis.of(
+                run = aRun(durationSeconds = 10),
+                samples = samples(0 to 120, 1 to 121, 5 to 130, 6 to 131, 7 to 132)
+            ).chart
+        )
+
+        assertEquals(2, chart.heartRate.size)
+        assertNull(chart.readingAt(2L))
+        assertNull(chart.readingAt(3L))
+        assertNull(chart.readingAt(4L))
+        // The outer ends of the recording are still forgiving, which is what that tolerance is for.
+        assertEquals(HeartRateReading(0L, 120), chart.readingAt(-2L))
+        assertEquals(HeartRateReading(7L, 132), chart.readingAt(10L))
+    }
+
+    @Test
     fun `a run is titled by the part of the day it was run in`() {
         assertEquals("Morning Run", runHeadline(aRunStartedAt("2026-07-31T07:15"), ZONE))
         assertEquals("Afternoon Run", runHeadline(aRunStartedAt("2026-07-31T13:00"), ZONE))

@@ -138,8 +138,8 @@ data class RunChart(
      * the Run, or null where nothing was.
      *
      * Null rather than the nearest reading at any distance, because the chart's breaks are the point
-     * — dragging into the minute the Strap dropped out should say so, not hand back a beat from
-     * before it. A finger just off either end of a drawn stretch is still reading that stretch.
+     * — dragging into the stretch the Strap dropped out of should say so, not hand back a beat from
+     * before it. The one exception is a finger just off either end of the whole recording.
      */
     fun readingAt(elapsedSeconds: Long): HeartRateReading? {
         val inside = heartRate.firstOrNull {
@@ -149,20 +149,31 @@ data class RunChart(
         if (inside != null) {
             return inside.readings.minByOrNull { abs(it.elapsedSeconds - elapsedSeconds) }
         }
-        return heartRate
-            .flatMap { listOf(it.readings.first(), it.readings.last()) }
-            .filter { abs(it.elapsedSeconds - elapsedSeconds) <= SCRUB_EDGE_TOLERANCE_SECONDS }
-            .minByOrNull { abs(it.elapsedSeconds - elapsedSeconds) }
+        // Outside every drawn stretch: either side of the recording as a whole, or in one of its
+        // breaks. Only the first case is forgiven — a break says nothing was recorded there, and
+        // the readout must say the same however short the break is.
+        val begins = heartRate.first().readings.first()
+        val ends = heartRate.last().readings.last()
+        return when {
+            elapsedSeconds < begins.elapsedSeconds &&
+                begins.elapsedSeconds - elapsedSeconds <= SCRUB_EDGE_TOLERANCE_SECONDS -> begins
+            elapsedSeconds > ends.elapsedSeconds &&
+                elapsedSeconds - ends.elapsedSeconds <= SCRUB_EDGE_TOLERANCE_SECONDS -> ends
+            else -> null
+        }
     }
 
     private companion object {
         /**
-         * How far past the ends of a drawn stretch a finger may sit and still be reading it.
+         * How far past either end of the whole recording a finger may sit and still read it.
          *
          * A finger dragged to the very edge of the chart asks about second zero, or about the
          * Run's last second — and a recording that began a moment after the clock did, or whose
          * Strap stopped a moment before it, has no reading exactly there. Without this the readout
          * would blank at precisely the ends of the Run the runner is most likely to drag to.
+         *
+         * The ends of the recording, not the ends of every drawn stretch: a break in the middle is
+         * a stretch nothing was measured in, and a finger inside one gets no reading at all.
          */
         const val SCRUB_EDGE_TOLERANCE_SECONDS = 5L
     }
