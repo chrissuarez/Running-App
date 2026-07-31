@@ -52,9 +52,9 @@ data class RunAnalysis(
             // recorded today writes no row for one, so both kinds of no-data second end up as the
             // same thing here: a hole in the recording, to be left as a break in the line rather
             // than drawn as a dive to the floor.
-            val readings = samples
+            val recorded = samples.sortedBy { it.elapsedSeconds }
+            val readings = recorded
                 .filter { it.rawBpm > 0 }
-                .sortedBy { it.elapsedSeconds }
                 .map { HeartRateReading(elapsedSeconds = it.elapsedSeconds, bpm = it.rawBpm) }
             if (readings.isEmpty()) return null
 
@@ -71,7 +71,9 @@ data class RunAnalysis(
             val bankedEverySecond = samples.any { it.timestampMillis != null }
 
             return RunChart(
-                heartRate = readings.splitWhereNothingWasRecorded(bankedEverySecond),
+                heartRate = recorded.tracesOfWhatWasRecorded(
+                    readings.recordingBreakSeconds(bankedEverySecond)
+                ),
                 // The Run's own clock, not the last reading's: a Strap that gave up at minute ten of
                 // a half hour leaves a line that stops a third of the way across, which is the truth
                 // about the recording. Runs still being written, and old rows that banked no
@@ -82,17 +84,31 @@ data class RunAnalysis(
             )
         }
 
-        private fun List<HeartRateReading>.splitWhereNothingWasRecorded(
-            bankedEverySecond: Boolean
-        ): List<HeartRateTrace> {
-            val breakSeconds = recordingBreakSeconds(bankedEverySecond)
-            val traces = mutableListOf(mutableListOf(first()))
-            zipWithNext { previous, reading ->
-                if (reading.elapsedSeconds - previous.elapsedSeconds > breakSeconds) {
-                    traces += mutableListOf(reading)
-                } else {
-                    traces.last() += reading
+        /**
+         * The Run's readings cut into the stretches that may be drawn as one line, from the whole of
+         * what it recorded rather than only the beats in it.
+         *
+         * A row with no beat in it is the recording saying outright that nothing was measured that
+         * second, and one of those between two readings breaks the line whatever the clock says
+         * about how far apart they are. Only where the recording says nothing at all — no row either
+         * way — is [breakSeconds] left to judge from the size of the silence.
+         */
+        private fun List<HrSample>.tracesOfWhatWasRecorded(breakSeconds: Long): List<HeartRateTrace> {
+            val traces = mutableListOf<MutableList<HeartRateReading>>()
+            var previous: HeartRateReading? = null
+            var nothingMeasuredSince = false
+            forEach { sample ->
+                if (sample.rawBpm <= 0) {
+                    nothingMeasuredSince = true
+                    return@forEach
                 }
+                val reading = HeartRateReading(elapsedSeconds = sample.elapsedSeconds, bpm = sample.rawBpm)
+                val continues = previous?.let {
+                    !nothingMeasuredSince && reading.elapsedSeconds - it.elapsedSeconds <= breakSeconds
+                } ?: false
+                if (continues) traces.last() += reading else traces += mutableListOf(reading)
+                previous = reading
+                nothingMeasuredSince = false
             }
             return traces.map { HeartRateTrace(it) }
         }

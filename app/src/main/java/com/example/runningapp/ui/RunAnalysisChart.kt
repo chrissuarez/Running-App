@@ -92,9 +92,9 @@ fun RunAnalysisChart(chart: RunChart?, modifier: Modifier = Modifier) {
         Text(
             text = when {
                 scrubbedReading != null ->
-                    "${formatElapsed(scrubbedReading.elapsedSeconds)} · ${scrubbedReading.bpm} bpm"
+                    "${formatMoment(scrubbedReading.elapsedSeconds)} · ${scrubbedReading.bpm} bpm"
                 scrubbed != null ->
-                    "${formatElapsed(scrubbed)} · no reading"
+                    "${formatMoment(scrubbed)} · no reading"
                 else -> "Drag across the chart to read any moment of the run"
             },
             style = MaterialTheme.typography.bodySmall,
@@ -231,11 +231,25 @@ private fun Float.toElapsedSecond(plotLeft: Float, plotWidth: Float, span: Long)
     return (fraction * span).toLong()
 }
 
+/** An axis tick: a round point on the Run's clock, kept short enough to sit under the chart. */
 private fun formatElapsed(seconds: Long): String =
     if (seconds < 3600) {
         "%02d:%02d".format(seconds / 60, seconds % 60)
     } else {
         "%dh %02dm".format(seconds / 3600, (seconds % 3600) / 60)
+    }
+
+/**
+ * The one moment under the finger, said to the second.
+ *
+ * Not the axis's wording: an hour into a Run that reads "1h 00m" names sixty different seconds, each
+ * with its own beat, and the readout's whole job is to say which one the runner is on.
+ */
+private fun formatMoment(seconds: Long): String =
+    if (seconds < 3600) {
+        "%02d:%02d".format(seconds / 60, seconds % 60)
+    } else {
+        "%d:%02d:%02d".format(seconds / 3600, (seconds % 3600) / 60, seconds % 60)
     }
 
 @Preview(showBackground = true)
