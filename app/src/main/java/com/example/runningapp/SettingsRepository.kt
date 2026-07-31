@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.runningapp.archive.ArchivedSettings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -577,6 +578,47 @@ class SettingsRepository(private val context: Context) {
 
     /** Written only once a complete archive has been promoted into place. See [Archiver]. */
     suspend fun setLastBackupAt(atEpochMillis: Long) = put(PreferencesKeys.LAST_BACKUP_AT, atEpochMillis)
+
+    /**
+     * Puts back the settings an archive was written with, beside the history from the same archive
+     * (#86). Written verbatim, in one edit, and deliberately **not** through [setStatedHeartRates].
+     *
+     * A restore is not a statement about the runner's heart. [setStatedHeartRates] exists to keep a
+     * newly stated maximum and the history banded against it in step, and applies a future-only
+     * rule to get there — correct for someone typing a new number, wrong here. What arrives here is
+     * a *pair that was already in step*: the archive's `historyMaxHr` says what the archive's runs
+     * were banded against, and those very runs are being restored from the same file in the same
+     * act. Re-deriving either half would strand every restored run on a profile nobody chose, which
+     * is the split #172 exists to prevent — reached from the other direction.
+     *
+     * Any statement left half-finished by the install being wiped is dropped rather than carried
+     * over: it describes a re-band of history that no longer exists, and replaying it against
+     * restored history would band runs against a maximum from a different phone's afternoon.
+     */
+    suspend fun restoreArchivedSettings(settings: ArchivedSettings) {
+        context.dataStore.edit { preferences ->
+            preferences[PreferencesKeys.MAX_HR] = settings.maxHr
+            preferences[PreferencesKeys.MAX_HR_EVER_SET] = settings.maxHrEverSet
+            preferences[PreferencesKeys.HISTORY_MAX_HR] = settings.historyMaxHr
+            preferences[PreferencesKeys.RESTING_HR] = settings.restingHr
+            preferences[PreferencesKeys.TARGET_ZONE] = settings.targetZone
+            preferences[PreferencesKeys.COACHING_ENABLED] = settings.coachingEnabled
+            preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] =
+                settings.splitAnnouncementsEnabled
+            preferences[PreferencesKeys.AUTO_PAUSE_ENABLED] = settings.autoPauseEnabled
+            preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] = settings.aiDataSharingEnabled
+            preferences[PreferencesKeys.RUN_MODE] = settings.runMode
+            settings.activePlanId
+                ?.let { preferences[PreferencesKeys.ACTIVE_PLAN_ID] = it }
+                ?: preferences.remove(PreferencesKeys.ACTIVE_PLAN_ID)
+            settings.activeStageId
+                ?.let { preferences[PreferencesKeys.ACTIVE_STAGE_ID] = it }
+                ?: preferences.remove(PreferencesKeys.ACTIVE_STAGE_ID)
+            preferences.remove(PreferencesKeys.STATEMENT_IN_FLIGHT)
+            preferences.remove(PreferencesKeys.STATEMENT_MAX_HR)
+            preferences.remove(PreferencesKeys.STATEMENT_RESTING_HR)
+        }
+    }
 
     suspend fun setSimulationEnabled(enabled: Boolean) {
         context.dataStore.edit { preferences ->

@@ -15,6 +15,7 @@ import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.WeatherClient
 import com.example.runningapp.export.FileProviderGpxFileStore
 import com.example.runningapp.export.GpxFileStore
+import com.example.runningapp.restore.PendingRestore
 import com.mapbox.common.MapboxOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +49,12 @@ class AppContainer(context: Context) {
     }
 
     val database: AppDatabase by lazy {
+        // A restore the runner confirmed and the app relaunched for (#86). First, because it is the
+        // one that was explicitly asked for — and once it has run the database exists, which is the
+        // condition under which the automatic restore below correctly stands down. Also clears away
+        // a pick that was never confirmed, which is otherwise a whole spare database sitting in app
+        // storage with nothing to remove it.
+        PendingRestore.applyIfArmed(appContext)
         // If this install has no database of its own yet — a freshly-cleared install — bring run
         // history back from the Downloads copy before Room opens. No-ops (and never overwrites) when
         // a live database already exists, which includes reinstalls, where Auto Backup has already
