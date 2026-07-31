@@ -109,6 +109,13 @@ enum class RestoreRefusal {
 
     /** A database that opened but isn't this app's — no `sessions` table, or unreadable partway. */
     UNREADABLE,
+
+    /**
+     * A restore already applied its history and is waiting for the next launch to finish putting
+     * its settings back. Picking a second file would throw away the only copy of those settings,
+     * so the app asks for the relaunch first.
+     */
+    A_RESTORE_IS_UNFINISHED,
 }
 
 /** Whether a summarised file may be restored, and if not, why not. */

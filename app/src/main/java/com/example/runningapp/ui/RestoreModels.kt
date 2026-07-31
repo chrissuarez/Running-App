@@ -101,6 +101,9 @@ fun restoreRefusalMessage(reason: RestoreRefusal): String = when (reason) {
     RestoreRefusal.FROM_A_NEWER_APP ->
         "That backup was made by a newer version of the app than this one. Update the app, then " +
             "try again."
+    RestoreRefusal.A_RESTORE_IS_UNFINISHED ->
+        "Your history is back, but the last restore still has your settings and training plan to " +
+            "put back. Close the app and open it again to finish, then you can restore another file."
     RestoreRefusal.UNREADABLE ->
         "That backup couldn't be read — it may be damaged or only partly copied. Nothing on your " +
             "phone has changed."
