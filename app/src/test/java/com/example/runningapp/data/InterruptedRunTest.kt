@@ -110,6 +110,23 @@ class InterruptedRunTest {
     }
 
     @Test
+    fun `losing the sky is not the same as stopping`() {
+        // Two minutes with no usable fix — a tunnel, a stairwell, or reception too vague for
+        // getTrackPointsForMap to keep. The Run was running through all of it, and nothing marked a
+        // pause, so the gap is time it counted. Only a recorded pause takes seconds off the clock.
+        val track = listOf(
+            fixAt(50.8152, startedAt),
+            fixAt(50.8152, startedAt + 10_000),
+            fixAt(50.8300, startedAt + 130_000),
+            fixAt(50.8300, startedAt + 140_000),
+        )
+
+        val finished = interrupted.finishedFromRecord(samples = emptyList(), track = track, profile = profile)!!
+
+        assertEquals(140, finished.durationSeconds)
+    }
+
+    @Test
     fun `the wait for a first fix is time the runner spent running`() {
         // The Run's clock starts at START; the satellites take another 30 seconds. Those seconds
         // were run, not paused, and a Run that began indoors would otherwise lose all of them.

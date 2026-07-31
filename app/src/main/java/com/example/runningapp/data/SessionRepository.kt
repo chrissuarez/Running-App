@@ -335,14 +335,28 @@ class SessionRepository(
      *
      * Runs one Run at a time and keeps going past a failure: a Run that cannot be rebuilt should
      * cost the others nothing, and it stays interrupted for the next launch to try again.
+     *
+     * Holds [statedProfile] for the whole pass, because this is the one other writer of banded zone
+     * seconds. A re-tally only ever visits finished Runs, so a rescue landing beside one would slip
+     * through it: the profile read here, the re-tally banding all of history against a new one, and
+     * then this Run stored against the old — the single row in history on a profile nobody else is
+     * on. Both happen at launch, which is exactly when they would meet: a statement interrupted last
+     * session is replayed then (`StatedHeartRateQueue`), and so is this. Under the lock the Run is
+     * either already banded when the re-tally walks history, or banded by this pass against the
+     * profile the re-tally has finished storing.
      */
-    suspend fun rescueInterruptedRuns(startedBeforeMillis: Long) {
-        val samples = sampleDao ?: return
-        val settings = settingsRepository ?: return
+    suspend fun rescueInterruptedRuns(startedBeforeMillis: Long) = statedProfile.withLock {
+        val samples = sampleDao ?: return@withLock
+        val settings = settingsRepository ?: return@withLock
         val interruptedIds = sessionDao.getInterruptedSessionIds(startedBeforeMillis)
-        if (interruptedIds.isEmpty()) return
+        if (interruptedIds.isEmpty()) return@withLock
 
-        val profile = settings.userSettingsFlow.first().hrProfile
+        // The maximum history is banded against rather than the one in force, which is the same
+        // number the re-tally uses and differs from the stored one after a future-only Max HR
+        // correction. Banding this Run on the current maximum would land it beside runs on the
+        // earlier one — the very drag the one-shot exists to prevent, arriving one Run at a time.
+        val current = settings.userSettingsFlow.first()
+        val profile = HrProfile(maxHr = current.historyMaxHr, restingHr = current.restingHr)
         var rescued = 0
         interruptedIds.forEach { sessionId ->
             try {
