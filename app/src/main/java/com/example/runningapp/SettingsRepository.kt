@@ -594,6 +594,11 @@ class SettingsRepository(private val context: Context) {
      * Any statement left half-finished by the install being wiped is dropped rather than carried
      * over: it describes a re-band of history that no longer exists, and replaying it against
      * restored history would band runs against a maximum from a different phone's afternoon.
+     *
+     * The coach's work goes with it, for the same reason and by the same rule as everywhere else it
+     * is dropped (#113): a prescription is read back by run type without asking which plan or stage
+     * produced it, so one left over from the history being replaced would quietly modify the first
+     * restored workout, and its debrief would go on explaining a run nobody has any more.
      */
     suspend fun restoreArchivedSettings(settings: ArchivedSettings) {
         context.dataStore.edit { preferences ->
@@ -617,6 +622,7 @@ class SettingsRepository(private val context: Context) {
             preferences.remove(PreferencesKeys.STATEMENT_IN_FLIGHT)
             preferences.remove(PreferencesKeys.STATEMENT_MAX_HR)
             preferences.remove(PreferencesKeys.STATEMENT_RESTING_HR)
+            preferences.clearCoachWork()
         }
     }
 

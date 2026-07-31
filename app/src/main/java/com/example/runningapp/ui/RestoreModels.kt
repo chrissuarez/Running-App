@@ -70,11 +70,16 @@ fun restoreConfirmationBody(plan: RestorePlan, zoneId: ZoneId = ZoneId.systemDef
         "You have no run history on this phone, so nothing will be lost."
     }
     // Settings are only in an archive, never in a bare database, and after a Clear storage they are
-    // gone too — so a runner restoring a .db needs telling that this will not bring them back.
-    val settings = if (plan.summary.carriesSettings) {
-        "Your settings and training plan will be restored too."
-    } else {
-        "Your settings and training plan stay as they are — a backup file does not carry them."
+    // gone too — so a runner restoring a .db needs telling that this will not bring them back. An
+    // archive can fail to carry them too, when the settings file inside it cannot be read; the
+    // history still restores, and the reason differs enough to be worth its own sentence.
+    val settings = when {
+        plan.summary.carriesSettings -> "Your settings and training plan will be restored too."
+        plan.summary.kind == RestoreFileKind.DATABASE ->
+            "Your settings and training plan stay as they are — a backup file does not carry them."
+        else ->
+            "Your settings and training plan stay as they are — this archive's settings couldn't " +
+                "be read. Your runs will still come back."
     }
     return "$incoming $outgoing\n\n$settings\n\nThis cannot be undone. The app will close and reopen."
 }

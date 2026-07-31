@@ -72,7 +72,13 @@ object RestoreReader {
             }
             val fileKind =
                 if (kind == Unpacked.ARCHIVE) RestoreFileKind.ARCHIVE else RestoreFileKind.DATABASE
-            val summary = summarise(staged, fileKind)
+            // Read now, so the confirmation promises settings only when there are settings to
+            // promise: an archive whose `archive.json` this app cannot parse is still restorable
+            // for its history, and it must not say otherwise. Parsed twice — once here to tell the
+            // truth, once at the restore to apply it — which is a few hundred bytes either way.
+            val carriesSettings = fileKind == RestoreFileKind.ARCHIVE &&
+                stagedSettings(context) != null
+            val summary = summarise(staged, fileKind, carriesSettings)
                 ?: return refuse(context, RestoreRefusal.UNREADABLE)
             when (val eligibility = RestoreEligibility.of(summary, currentDatabaseVersion)) {
                 is RestoreEligibility.Refused -> refuse(context, eligibility.reason)
@@ -167,7 +173,11 @@ object RestoreReader {
      * gone. That is #86's "restoring an invalid file fails safely with current data untouched", and
      * it is the same read that lets the confirmation quote real numbers: one open, both jobs.
      */
-    private fun summarise(database: File, kind: RestoreFileKind): RestoreSummary? {
+    private fun summarise(
+        database: File,
+        kind: RestoreFileKind,
+        carriesSettings: Boolean,
+    ): RestoreSummary? {
         var db: SQLiteDatabase? = null
         return try {
             db = SQLiteDatabase.openDatabase(
@@ -186,6 +196,7 @@ object RestoreReader {
                     // MAX over no rows is SQL NULL — a backup holding no runs, which restores fine.
                     newestRunStartedAtEpochMillis = if (cursor.isNull(1)) null else cursor.getLong(1),
                     databaseVersion = version,
+                    carriesSettings = carriesSettings,
                 )
             }
         } catch (e: Exception) {

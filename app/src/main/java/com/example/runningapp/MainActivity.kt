@@ -277,11 +277,7 @@ class MainActivity : ComponentActivity() {
                     }
 
                     val restoreViewModel: RestoreViewModel = viewModel(
-                        factory = RestoreViewModelFactory(
-                            applicationContext,
-                            database,
-                            settingsRepository
-                        )
+                        factory = RestoreViewModelFactory(applicationContext, database)
                     )
                     val restoreState by restoreViewModel.state.collectAsState()
                     // OpenDocument rather than GetContent: it hands back a Uri this app may read

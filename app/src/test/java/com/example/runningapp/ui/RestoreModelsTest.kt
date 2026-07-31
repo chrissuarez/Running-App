@@ -28,8 +28,15 @@ class RestoreModelsTest {
         incomingNewest: Long? = june,
         currentRuns: Int = 13,
         currentNewest: Long? = july,
+        carriesSettings: Boolean = kind == RestoreFileKind.ARCHIVE,
     ) = RestorePlan(
-        summary = RestoreSummary(kind, incomingRuns, incomingNewest, databaseVersion = 19),
+        summary = RestoreSummary(
+            kind,
+            incomingRuns,
+            incomingNewest,
+            databaseVersion = 19,
+            carriesSettings = carriesSettings,
+        ),
         current = CurrentHistory(currentRuns, currentNewest),
     )
 
@@ -71,6 +78,14 @@ class RestoreModelsTest {
         assertTrue(restoreConfirmationBody(plan(), london).contains("will be restored too"))
         val database = restoreConfirmationBody(plan(kind = RestoreFileKind.DATABASE), london)
         assertTrue(database, database.contains("stay as they are"))
+    }
+
+    @Test
+    fun `an archive that could not be read for settings does not promise them back`() {
+        // Its history restores fine; its `archive.json` is damaged or from a future version. The
+        // confirmation has to describe the restore that will actually happen.
+        val body = restoreConfirmationBody(plan(carriesSettings = false), london)
+        assertTrue(body, body.contains("stay as they are"))
     }
 
     @Test

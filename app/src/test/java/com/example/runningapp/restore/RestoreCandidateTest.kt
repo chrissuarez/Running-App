@@ -59,6 +59,7 @@ class RestoreEligibilityTest {
         runCount = 12,
         newestRunStartedAtEpochMillis = 1_000L,
         databaseVersion = databaseVersion,
+        carriesSettings = false,
     )
 
     @Test
@@ -93,12 +94,14 @@ class RestorePlanTest {
         incomingRuns: Int = 40,
         currentNewest: Long?,
         currentRuns: Int,
+        carriesSettings: Boolean = true,
     ) = RestorePlan(
         summary = RestoreSummary(
             kind = RestoreFileKind.ARCHIVE,
             runCount = incomingRuns,
             newestRunStartedAtEpochMillis = incomingNewest,
             databaseVersion = 19,
+            carriesSettings = carriesSettings,
         ),
         current = CurrentHistory(
             runCount = currentRuns,
@@ -141,9 +144,23 @@ class RestorePlanTest {
     }
 
     @Test
-    fun `an archive carries settings and a bare database does not`() {
+    fun `an archive whose settings were read carries them, and a bare database does not`() {
         assertTrue(plan(incomingNewest = may, currentNewest = null, currentRuns = 0).summary.carriesSettings)
-        val database = RestoreSummary(RestoreFileKind.DATABASE, 1, may, 19)
+        val database = RestoreSummary(RestoreFileKind.DATABASE, 1, may, 19, carriesSettings = false)
         assertFalse(database.carriesSettings)
+    }
+
+    @Test
+    fun `an archive whose settings could not be read does not promise them`() {
+        // An archive with a damaged or unreadable `archive.json` is still restored for its history,
+        // deliberately — but the confirmation must not go on promising a training plan back that
+        // the restore will then silently skip.
+        val archive = plan(
+            incomingNewest = may,
+            currentNewest = null,
+            currentRuns = 0,
+            carriesSettings = false,
+        )
+        assertFalse(archive.summary.carriesSettings)
     }
 }
