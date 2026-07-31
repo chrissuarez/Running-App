@@ -105,6 +105,7 @@ class SessionRepository(
     private val sessionDao: SessionDao,
     private val sampleDao: SampleDao? = null,
     private val trackPointDao: TrackPointDao? = null,
+    private val intervalStatDao: RunWalkIntervalStatDao? = null,
     private val settingsRepository: SettingsRepository? = null,
     private val coachPrescriptionRepository: CoachPrescriptionRepository? = null,
     private val aiCoachClient: AiCoachClient? = null,
@@ -370,6 +371,10 @@ class SessionRepository(
                     track = track,
                     mappedTrack = track.acceptedForMap(),
                     profile = profile,
+                    bankedIntervals = intervalStatDao
+                        ?.getIntervalStatsForSession(sessionId)
+                        .orEmpty()
+                        .isNotEmpty(),
                 ) ?: return@forEach
                 sessionDao.updateSession(finished)
                 rescued++

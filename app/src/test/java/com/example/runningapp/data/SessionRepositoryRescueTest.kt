@@ -7,6 +7,7 @@ import com.example.runningapp.tallyZoneSeconds
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
@@ -153,6 +154,41 @@ class SessionRepositoryRescueTest {
         val onHistoryProfile = tallyZoneSeconds(List(60) { 130 }, HrProfile(maxHr = 181))
         assertEquals(onHistoryProfile.zone2, saved.firstValue.zone2Seconds)
         assertEquals(onHistoryProfile.zone3, saved.firstValue.zone3Seconds)
+    }
+
+    @Test
+    fun `a rescued run that banked an interval comes back as a run walk run`() = runTest {
+        val intervalStatDao: RunWalkIntervalStatDao = mock {
+            onBlocking { getIntervalStatsForSession(67L) }.thenReturn(
+                listOf(
+                    RunWalkIntervalStat(
+                        sessionId = 67L,
+                        intervalIndex = 0,
+                        plannedDurationSeconds = 120,
+                        actualRunningDurationBeforeHrTriggerSeconds = 120,
+                        hrTriggerEvents = 0,
+                        totalTimeSpentWalkingDuringRunIntervalSeconds = 0,
+                    )
+                )
+            )
+        }
+        val repository = SessionRepository(
+            sessionDao = sessionDao,
+            sampleDao = sampleDao,
+            trackPointDao = trackPointDao,
+            intervalStatDao = intervalStatDao,
+            settingsRepository = settingsRepository,
+        )
+        whenever(sessionDao.getInterruptedSessionIds(processStartedAt)).thenReturn(listOf(67L))
+        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 60))
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+
+        repository.rescueInterruptedRuns(processStartedAt)
+
+        val saved = argumentCaptor<RunnerSession>()
+        verify(sessionDao).updateSession(saved.capture())
+        assertTrue(saved.firstValue.isRunWalkMode)
     }
 
     @Test
