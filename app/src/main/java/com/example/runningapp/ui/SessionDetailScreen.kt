@@ -12,18 +12,13 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.rememberTextMeasurer
-import androidx.compose.ui.tooling.preview.Preview
 import kotlin.math.roundToInt
 import com.example.runningapp.HrZone
+import com.example.runningapp.analysis.RunAnalysis
+import com.example.runningapp.analysis.runHeadline
 import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
@@ -66,7 +61,11 @@ fun SessionDetailScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
-                title = { Text("Session Summary") },
+                // The Run, not the screen (#44). A page about one outing is titled the way the
+                // runner would name it — "Morning Run" — rather than "Session Summary", which named
+                // the report and not the run it reports on. The date stays in the summary card
+                // immediately below rather than being said twice.
+                title = { Text(if (session == null) "Run" else runHeadline(session)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
@@ -100,7 +99,25 @@ fun SessionDetailScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(RunningUiTokens.PagePadding)
             ) {
+                // The page's order (#43): route map, summary, achievements, splits, chart, then the
+                // coaching cards the app already had. The first four of those arrive with their own
+                // tickets (#47, #49, #45) and are simply absent until then — this ticket lands the
+                // order and the chart.
                 SummaryStats(session)
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text("Heart Rate", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                // Worked out once per set of readings rather than on every recomposition: a long run
+                // is thousands of samples, and the runner's finger on the scrubber recomposes this
+                // screen many times a second.
+                val analysis = remember(session, samples) { RunAnalysis.of(session, samples) }
+                RunAnalysisChart(chart = analysis.chart)
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text("Heart Rate Zones", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(8.dp))
+                ZoneBarChart(session)
                 Spacer(modifier = Modifier.height(24.dp))
 
                 // Interval stats exist only for structured run/walk workouts, so their presence is
@@ -111,16 +128,6 @@ fun SessionDetailScreen(
                     RunWalkIntervalRawDataCard(intervalStats = intervalStats)
                     Spacer(modifier = Modifier.height(24.dp))
                 }
-                
-                Text("Heart Rate Zones", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                ZoneBarChart(session)
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Text("Heart Rate Chart", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                HrChart(samples = samples, modifier = Modifier.fillMaxWidth().height(200.dp))
-                Spacer(modifier = Modifier.height(24.dp))
             }
         }
     }
@@ -375,109 +382,6 @@ fun StatLarge(label: String, value: String) {
     }
 }
 
-@Composable
-fun HrChart(samples: List<HrSample>, modifier: Modifier = Modifier) {
-    if (samples.isEmpty()) {
-        Box(modifier = modifier.background(Color.Black.copy(alpha = 0.05f)), contentAlignment = Alignment.Center) {
-            Text("No chart data")
-        }
-        return
-    }
-
-    val textMeasurer = rememberTextMeasurer()
-    val labelStyle = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-    val rawMax = samples.maxOf { it.rawBpm }.toFloat()
-    val rawMin = samples.minOf { it.rawBpm }.toFloat()
-    
-    // Rounded range for cleaner labels
-    val chartMin = (rawMin - 5f).coerceAtLeast(40f).let { (it / 10).toInt() * 10f }
-    val chartMax = (rawMax + 5f).coerceAtMost(220f).let { ((it + 9) / 10).toInt() * 10f }
-    val bpmRange = (chartMax - chartMin).coerceAtLeast(1f)
-
-    val durationSeconds = samples.last().elapsedSeconds
-
-    Canvas(modifier = modifier.background(Color.Black.copy(alpha = 0.05f)).padding(8.dp)) {
-        val leftPadding = 32.dp.toPx() // Decreased slightly to fit text better
-        val bottomPadding = 20.dp.toPx()
-        val topPadding = 16.dp.toPx() // Improved top spacing
-        val rightPadding = 16.dp.toPx() // Improved right spacing
-
-        val chartWidth = size.width - leftPadding - rightPadding
-        val chartHeight = size.height - bottomPadding - topPadding
-
-        // 1. Draw Y-axis labels and horizontal grid lines (5 ticks)
-        val yTicks = 5
-        for (i in 0 until yTicks) {
-            val fraction = i / (yTicks - 1).toFloat()
-            val bpm = chartMin + (fraction * bpmRange)
-            val y = topPadding + chartHeight - (fraction * chartHeight)
-            
-            // Grid line
-            drawLine(
-                color = Color.LightGray.copy(alpha = 0.5f),
-                start = Offset(leftPadding, y),
-                end = Offset(size.width - rightPadding, y),
-                strokeWidth = 1.dp.toPx()
-            )
-            
-            // Label
-            val labelLayout = textMeasurer.measure(bpm.toInt().toString(), style = labelStyle)
-            drawText(
-                textLayoutResult = labelLayout,
-                topLeft = Offset(leftPadding - labelLayout.size.width - 4.dp.toPx(), y - labelLayout.size.height / 2)
-            )
-        }
-
-        // 2. Draw X-axis labels (3-4 ticks based on duration)
-        val xTicks = if (durationSeconds < 120) 3 else 4
-        for (i in 0 until xTicks) {
-            val fraction = i / (xTicks - 1).toFloat()
-            val seconds = (fraction * durationSeconds).toLong()
-            val x = leftPadding + (fraction * chartWidth)
-            
-            val label = if (durationSeconds < 3600) {
-                "%02d:%02d".format(seconds / 60, seconds % 60)
-            } else {
-                "%dh %dm".format(seconds / 3600, (seconds % 3600) / 60)
-            }
-            
-            val labelLayout = textMeasurer.measure(label, style = labelStyle)
-            
-            // Adjust X position to keep text within bounds
-            val textX = when (i) {
-                0 -> x // Left aligned
-                xTicks - 1 -> x - labelLayout.size.width // Right aligned
-                else -> x - labelLayout.size.width / 2 // Center aligned
-            }
-            
-            drawText(
-                textLayoutResult = labelLayout,
-                topLeft = Offset(textX, topPadding + chartHeight + 4.dp.toPx())
-            )
-        }
-
-        // 3. Draw HR Path
-        val path = Path()
-        samples.forEachIndexed { index, sample ->
-            val x = leftPadding + (sample.elapsedSeconds.toFloat() / durationSeconds.coerceAtLeast(1) * chartWidth)
-            val y = topPadding + chartHeight - ((sample.rawBpm - chartMin) / bpmRange * chartHeight)
-            
-            if (index == 0) {
-                path.moveTo(x, y)
-            } else {
-                path.lineTo(x, y)
-            }
-        }
-        
-        drawPath(
-            path = path,
-            color = Color.Red,
-            style = Stroke(width = 2.dp.toPx())
-        )
-    }
-}
-
 private fun formatDurationLarge(seconds: Long): String {
     val h = seconds / 3600
     val m = (seconds % 3600) / 60
@@ -532,28 +436,6 @@ private fun formatWeatherLine(session: RunnerSession): String {
         condition?.let { append(" · $it") }
         session.weatherHumidityPercent?.let { append(" · $it% humidity") }
         session.weatherWindSpeedKmh?.let { append(" · %.0f km/h wind".format(it)) }
-    }
-}
-
-@Preview(showBackground = true)
-@Composable
-fun PreviewHrChart() {
-    val samples = listOf(
-        HrSample(1, 1, 0, 70, 70, "CONNECTED"),
-        HrSample(2, 1, 30, 85, 80, "CONNECTED"),
-        HrSample(3, 1, 60, 110, 100, "CONNECTED"),
-        HrSample(4, 1, 90, 140, 130, "CONNECTED"),
-        HrSample(5, 1, 120, 135, 135, "CONNECTED"),
-        HrSample(6, 1, 150, 155, 150, "CONNECTED")
-    )
-    MaterialTheme {
-        HrChart(
-            samples = samples,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(200.dp)
-                .padding(16.dp)
-        )
     }
 }
 
