@@ -88,6 +88,9 @@ class InterruptedRunTest {
         // stored fix is the far side of a pause. Counting start-to-first-fix would hand the Run the
         // whole pause — and the samples could not argue it back down, since the clock is whichever
         // record reaches further.
+        //
+        // The marker is constructed here because the recorder does not yet write it onto a Run's
+        // opening fix (#195). This is the rule waiting for the fact.
         val track = listOf(
             fixAt(50.8152, startedAt + 240_000, startsAfterPause = true),
             fixAt(50.8152, startedAt + 250_000),
