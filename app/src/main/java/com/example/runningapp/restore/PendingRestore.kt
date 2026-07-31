@@ -1,6 +1,7 @@
 package com.example.runningapp.restore
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import android.util.Log
 import com.example.runningapp.archive.ArchivedSettings
 import com.example.runningapp.data.DatabaseBackupManager
@@ -89,16 +90,6 @@ object PendingRestore {
                 moveIntoPlace(context, staged)
                 replaced = true
                 Log.d(TAG, "Restored run history from the picked backup")
-            } catch (e: StrandedPreviousLog) {
-                // The restore failed *and* could not put the previous database's log back, so that
-                // log is sitting in staging under a name nothing else knows. Clearing up would
-                // delete it, and it may hold runs that exist nowhere else. Everything is left
-                // exactly where it is instead: the marker survives, and the next launch tries the
-                // whole move again — this time adopting the log already set aside, and putting it
-                // back if it fails again. Storage that stays broken costs a retry per launch and
-                // nothing more; clearing up would cost the runs.
-                Log.w(TAG, "Could not restore, and the previous log is still set aside; leaving it", e)
-                return false
             } catch (e: Exception) {
                 // Best-effort, like every other recovery path here: a failed restore must not stop
                 // the app launching. The previous database is untouched, so the runner lands where
@@ -131,108 +122,87 @@ object PendingRestore {
     }
 
     /**
-     * Puts [staged] where Room will look for it, sidecars and all.
+     * Puts [staged] where Room will look for it.
      *
-     * The previous database's `-wal` and `-shm` are moved out of the way **before** the file they
-     * describe is replaced, and only thrown away once the replacement has landed. Both halves of
-     * that matter, for opposite reasons.
+     * The previous database's log is dealt with first, and by folding it into the database it
+     * belongs to rather than by moving it out of the way. That ordering is not optional: the
+     * snapshot arrives already checkpointed, so a log left beside it describes writes to a file
+     * that no longer exists, and Room would either replay it into the restored history or call the
+     * result corrupt.
      *
-     * Out of the way first, because the snapshot arrives already checkpointed: a log left beside it
-     * describes writes to a file that no longer exists, and replaying it would corrupt the restore.
-     * Clearing them *after* the rename would leave a window — however short — in which a death
-     * leaves the new database sitting beside the old one's log, and the next launch, finding no
-     * snapshot left to move, would take that mixture for a finished restore.
-     *
-     * Moved rather than deleted, because a restore that fails promises the runner their phone is
+     * Folded rather than deleted, because a restore that fails promises the runner their phone is
      * exactly as it was. The app is killed without closing Room, so recent runs can live only in
-     * that log; deleting it and then failing to promote the replacement would quietly roll back the
-     * history this had just said it would not touch. Set aside, it can be put back.
+     * that log — deleting it and then failing to promote the replacement would quietly roll back
+     * history this had just said it would not touch. A checkpoint puts those runs into the database
+     * itself, where a failed restore leaves them safe and a successful one discards them along with
+     * everything else that database held.
      *
-     * So at every instant on disk this is one of: the old database with its log, the old database
-     * with its log alongside under another name, or the new database with no log at all. Never the
-     * new database beside the old log, and never the old database with its log destroyed.
+     * Earlier revisions set the log aside under another name and put it back if the promotion
+     * failed. That is the same idea with a tail of failures behind it — the put-back is itself a
+     * rename that can fail, and a log stranded under a name nothing recognises is worse than no log
+     * at all, because the next launch opens the database without it and any later checkpoint makes
+     * it unreplayable. Folding it in has no such state: after this returns there is one file, and it
+     * is either wholly the old history or wholly the new.
      */
     private fun moveIntoPlace(context: Context, staged: File) {
         val destination = DatabaseBackupManager.databaseFile(context)
         destination.parentFile?.mkdirs()
-        // Accumulated as they move rather than returned at the end, so that a failure partway
-        // through — one log set aside and the next refusing to budge — puts back the one that did.
-        val sidecars = mutableListOf<Pair<File, File>>()
-        try {
-            setPreviousSidecarsAside(context, destination, sidecars)
-            if (!staged.renameTo(destination)) {
-                // A rename can only fail here if staging and the database sit on different volumes,
-                // which they do not today — but a copy through a sibling temp file keeps the same
-                // promise if that ever changes: the destination is only ever the whole snapshot or
-                // the previous database, never a half-written mixture of the two.
-                val temp = File("${destination.path}.restore.tmp")
-                staged.copyTo(temp, overwrite = true)
-                if (!temp.renameTo(destination)) {
-                    temp.delete()
-                    throw IllegalStateException("Could not move the restored database into place")
-                }
-                staged.delete()
+        foldPreviousLogIntoItsDatabase(destination)
+        if (!staged.renameTo(destination)) {
+            // A rename can only fail here if staging and the database sit on different volumes,
+            // which they do not today — but a copy through a sibling temp file keeps the same
+            // promise if that ever changes: the destination is only ever the whole snapshot or
+            // the previous database, never a half-written mixture of the two.
+            val temp = File("${destination.path}.restore.tmp")
+            staged.copyTo(temp, overwrite = true)
+            if (!temp.renameTo(destination)) {
+                temp.delete()
+                throw IllegalStateException("Could not move the restored database into place")
             }
-        } catch (e: Exception) {
-            // The rollback is itself two renames that can fail. If one does, the log it was carrying
-            // is still in staging, and staging is what gets cleared away after a failed restore —
-            // so say so loudly enough that the caller keeps it. Reported even though the restore has
-            // already failed, because this is the more serious of the two failures: one costs a
-            // retry, the other costs runs that exist nowhere else.
-            val stranded = sidecars.filterNot { (saved, original) -> saved.renameTo(original) }
-            if (stranded.isNotEmpty()) {
-                throw StrandedPreviousLog(stranded.map { (saved, _) -> saved.name }, e)
-            }
-            throw e
+            staged.delete()
         }
-        sidecars.forEach { (saved, _) -> saved.delete() }
     }
 
     /**
-     * A restore that failed and could not put the previous database's log back where it belongs.
+     * Checkpoints the live database's write-ahead log into the database itself, leaving no log
+     * beside it. Does nothing when there is no database or no log, which is the ordinary case.
      *
-     * Carries the cause, so the reason the restore failed in the first place is not lost behind the
-     * reason the rollback did.
+     * `TRUNCATE` rather than the default `PASSIVE`, because a partial checkpoint is exactly the
+     * outcome that must not be mistaken for success: it reports whether it was blocked, and being
+     * blocked here throws, which abandons the restore with the database and its log both untouched.
+     * Nothing else in the process holds this file — this runs before Room opens anything — so being
+     * blocked means something is wrong enough to stop for.
+     *
+     * A database that will not open at all is the one case this steps over rather than stops for.
+     * Its log cannot be folded into it, cannot be read, and cannot be replayed by Room either; the
+     * restore is the runner's way out of precisely that, so the log goes and the restore proceeds.
      */
-    private class StrandedPreviousLog(names: List<String>, cause: Throwable) :
-        IllegalStateException("Could not put back: ${names.joinToString()}", cause)
-
-    /**
-     * Moves the live database's log files into staging, recording each move into [movedSoFar] as
-     * where it went and where it came from. Records nothing when there were no logs, which is the
-     * ordinary case on a phone whose database Room checkpointed cleanly.
-     *
-     * They go into staging rather than beside the database so that the one thing which clears up
-     * after an abandoned restore clears these up too — a crash between the move and the promotion
-     * leaves them named after nothing, and [RestoreReader.clear] is what eventually removes them.
-     *
-     * A file already sitting in staging is a move that a previous attempt made before being cut
-     * short. It is still the right log for the database still in place, so it is adopted rather than
-     * overwritten.
-     *
-     * A log that exists and cannot be moved throws, which abandons the restore with the previous
-     * database and its log both whole. Carrying on would be the one outcome this whole arrangement
-     * exists to prevent: the two renames are separate calls and can fail separately, so a sidecar
-     * that refuses to move says nothing about whether the database is about to be replaced beside
-     * it. Failing here costs the runner another tap; not failing costs them the restore.
-     */
-    private fun setPreviousSidecarsAside(
-        context: Context,
-        destination: File,
-        movedSoFar: MutableList<Pair<File, File>>,
-    ) {
-        val directory = RestoreReader.stagingDirectory(context)
-        listOf("-wal", "-shm").forEach { suffix ->
-            val original = File("${destination.path}$suffix")
-            val saved = File(directory, "previous$suffix")
-            when {
-                original.exists() && original.renameTo(saved) -> movedSoFar += saved to original
-                original.exists() ->
-                    throw IllegalStateException("Could not move the previous database's $suffix aside")
-                saved.exists() -> movedSoFar += saved to original
-                // No log at all — the ordinary case on a database Room checkpointed cleanly.
-                else -> Unit
-            }
+    private fun foldPreviousLogIntoItsDatabase(destination: File) {
+        val log = File("${destination.path}-wal")
+        if (!destination.exists() || !log.exists()) return
+        var db: SQLiteDatabase? = null
+        try {
+            db = SQLiteDatabase.openDatabase(destination.path, null, SQLiteDatabase.OPEN_READWRITE)
+        } catch (e: Exception) {
+            Log.w(TAG, "Previous database will not open; dropping its log unread", e)
+            log.delete()
+            File("${destination.path}-shm").delete()
+            return
         }
+        try {
+            val blocked = db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { cursor ->
+                // First column is 1 when SQLite could not finish. No row at all is the same answer.
+                !cursor.moveToFirst() || cursor.getInt(0) != 0
+            }
+            if (blocked) {
+                throw IllegalStateException("Could not fold the previous database's log into it")
+            }
+        } finally {
+            runCatching { db.close() }
+        }
+        // A truncating checkpoint empties the log and a clean close removes it; anything left
+        // describes nothing, and leaving it would put it beside the restored database.
+        log.delete()
+        File("${destination.path}-shm").delete()
     }
 }
