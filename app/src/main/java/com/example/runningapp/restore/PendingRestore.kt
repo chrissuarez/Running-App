@@ -2,6 +2,7 @@ package com.example.runningapp.restore
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
+import android.database.sqlite.SQLiteDatabaseCorruptException
 import android.util.Log
 import com.example.runningapp.archive.ArchivedSettings
 import com.example.runningapp.data.DatabaseBackupManager
@@ -189,19 +190,37 @@ object PendingRestore {
      * the pragma has nothing to do and says so, which is the right answer there too: the recovery
      * that mattered already happened when it opened.
      *
-     * A database that will not open at all is the one case this steps over rather than stops for.
-     * Its journals cannot be folded into it, cannot be read, and cannot be replayed by Room either;
-     * the restore is the runner's way out of precisely that, so they go and the restore proceeds.
+     * A database that will not open splits in two, on SQLite's own verdict. *Corrupt* is stepped
+     * over rather than stopped for: its journals describe pages of something unreadable, cannot be
+     * folded in and could not be replayed by Room either, and a database in that state is precisely
+     * what the runner is restoring their way out of. Anything else — storage full, an I/O error —
+     * may pass, and its journals may still hold runs that exist nowhere else, so nothing is deleted
+     * and the restore is abandoned instead. Guessing wrong the other way is the expensive mistake:
+     * a transient failure here is likely to fail the promotion a moment later too, and Room would
+     * reopen the old database with its recent runs already thrown away.
      */
     private fun foldPreviousLogIntoItsDatabase(destination: File) {
         if (!destination.exists()) return
         var db: SQLiteDatabase? = null
         try {
             db = SQLiteDatabase.openDatabase(destination.path, null, SQLiteDatabase.OPEN_READWRITE)
-        } catch (e: Exception) {
-            Log.w(TAG, "Previous database will not open; dropping its journals unread", e)
+        } catch (e: SQLiteDatabaseCorruptException) {
+            // SQLite's own verdict that the file is not a database any more. Its journals describe
+            // pages of something unreadable: they cannot be folded in, and Room could not replay
+            // them either, so they are only ever dangerous from here. Dropping them and carrying on
+            // is right, because a database in this state is precisely what the runner is restoring
+            // their way out of.
+            Log.w(TAG, "Previous database is corrupt; dropping its journals unread", e)
             deleteJournalsOf(destination)
             return
+        } catch (e: Exception) {
+            // Anything else — storage full, an I/O error, a file that cannot be opened just now —
+            // is a condition that may pass, and the journals may still hold runs that exist nowhere
+            // else. It is also a condition likely to fail the promotion a moment later, which would
+            // leave Room reopening the old database with its recent runs already thrown away. So
+            // nothing is deleted and the restore is abandoned; the runner picks again, having lost
+            // only a temporary copy.
+            throw IllegalStateException("Could not recover the previous database before restoring", e)
         }
         try {
             val blocked = db.rawQuery("PRAGMA wal_checkpoint(TRUNCATE)", null).use { cursor ->

@@ -122,6 +122,15 @@ class RestoreViewModel(
         val current = _state.value
         if (current is RestoreUiState.Applying || current is RestoreUiState.Restarting) return
         _state.value = RestoreUiState.Idle
+        // Everything staged belongs to the pick being dismissed and goes with it — except when the
+        // refusal was that a restore is still unfinished. Nothing was staged for that one: what is
+        // sitting there is the *previous* restore's settings, waiting for the relaunch, and the only
+        // copy of them. Tidying up after this refusal would be tidying away the thing it is about.
+        if (current is RestoreUiState.Refused &&
+            current.reason == RestoreRefusal.A_RESTORE_IS_UNFINISHED
+        ) {
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) { RestoreReader.clear(appContext) }
     }
 
