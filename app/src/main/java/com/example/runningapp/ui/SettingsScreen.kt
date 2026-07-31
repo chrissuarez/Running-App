@@ -274,7 +274,10 @@ fun SettingsScreen(
                 // off the phone is the whole point: a backup on a lost phone is not a backup.
                 subtitle = "Pick a folder that syncs off your phone, like Drive.",
                 value = backupFolderLabel(backupFolderUri),
-                onClick = { onPickBackupFolder(false) }
+                // Not while a backup is running. The archive is already being written into the
+                // folder in force when it started, so a folder changed mid-write would be shown
+                // beside a "Backed up" line reporting an archive that landed somewhere else.
+                onClick = { if (!backingUp) onPickBackupFolder(false) }
             )
             SettingsRow(
                 label = if (backingUp) "Backing up…" else "Back up now",

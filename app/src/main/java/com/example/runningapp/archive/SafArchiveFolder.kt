@@ -63,7 +63,14 @@ class SafArchiveFolder(context: Context, private val treeUri: Uri) : ArchiveFold
             // change with the name — Drive's do not — returns null on a rename that worked. So the
             // folder is asked instead, which is the only answer that means the same thing
             // everywhere.
-            if (children().none { it.name == newName }) {
+            //
+            // Both ends of the move, not just the destination. A file already wearing [newName] —
+            // a listing that was stale when the name was cleared, or another client writing into a
+            // synced folder during a write long enough for that to happen — would answer for a
+            // rename that never took place, and the archive just written would be swept as
+            // wreckage while its predecessor was recorded as the backup.
+            val after = children()
+            if (after.none { it.name == newName } || after.any { it.name == fileName }) {
                 throw IOException("Could not rename $fileName to $newName")
             }
         }
