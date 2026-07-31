@@ -204,9 +204,14 @@ object DatabaseBackupManager {
      * file the app could neither see nor replace. MediaStore de-duplicated silently up to
      * `(31).db`, then began throwing `Failed to build unique file` — five days of backups landing
      * where nothing read, and then not landing at all.
+     *
+     * [freeNameSlots] runs first for that same reason: an install already carrying `(1)`–`(31)` has
+     * no collision slots left, so the insert below would throw before the sweep at the end could
+     * ever free any, and that install would never write another backup.
      */
     private fun writeBackupBytes(context: Context, bytes: ByteArray) {
         val resolver = context.contentResolver
+        freeNameSlots(context)
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, BACKUP_DISPLAY_NAME)
             put(MediaStore.Downloads.MIME_TYPE, BACKUP_MIME)
@@ -271,12 +276,47 @@ object DatabaseBackupManager {
      * Deletes every other snapshot this install owns in the backup folder, leaving only [keep].
      *
      * Runs last, once the replacement is finished and published, so there is no instant where the
-     * folder holds no readable backup. Entries this install doesn't own — a previous install's
-     * leftovers — can't be deleted under scoped storage and aren't ours to remove; skip them
-     * individually so one refusal can't strand the rest of the sweep.
+     * folder holds no readable backup — the counterpart to [freeNameSlots], which keeps the same
+     * invariant from the other side by leaving the newest snapshot standing before the write.
      */
     private fun retireOtherBackups(context: Context, keep: Uri) {
-        val keepId = ContentUris.parseId(keep)
+        val retired = retireAllExcept(context, keepId = ContentUris.parseId(keep))
+        if (retired > 0) Log.d(TAG, "Retired $retired superseded backup file(s)")
+    }
+
+    /**
+     * Clears out room for the insert to come, by retiring every snapshot this install owns except
+     * the newest finished one.
+     *
+     * MediaStore resolves a name collision by numbering — `running_app_history_backup (1).db` and
+     * so on — but it gives up at `(31)` and throws `Failed to build unique file`. An install that
+     * has accumulated a full set of numbered leftovers (which is exactly the state #196 left behind)
+     * therefore cannot insert at all, and since the sweep that would clean them up only runs *after*
+     * a successful insert, it stays stuck forever. Freeing the slots first is what lets such an
+     * install heal itself on its next backup.
+     *
+     * The one snapshot kept is a complete, restorable database, so the invariant this class is built
+     * on still holds: at no point does the folder hold no readable backup. On a healthy install
+     * (one snapshot, already the newest) this deletes nothing and costs a single query.
+     *
+     * It cannot help when the numbered files are *unowned* — a previous install's leftovers, which
+     * scoped storage makes invisible and undeletable. Nothing in the app can free those; recovering
+     * from that needs the user, and is what #198 is about.
+     */
+    private fun freeNameSlots(context: Context) {
+        val newest = backupIdsNewestFirst(context, onlyComplete = true).firstOrNull()
+        val retired = retireAllExcept(context, keepId = newest)
+        if (retired > 0) Log.d(TAG, "Freed $retired backup name slot(s) before writing")
+    }
+
+    /**
+     * Deletes every backup entry this install owns except [keepId], and returns how many went.
+     *
+     * Entries this install doesn't own — a previous install's leftovers — can't be deleted under
+     * scoped storage and aren't ours to remove; skip them individually so one refusal can't strand
+     * the rest of the sweep.
+     */
+    private fun retireAllExcept(context: Context, keepId: Long?): Int {
         val stale = backupIdsNewestFirst(context, onlyComplete = false).filter { it != keepId }
         var retired = 0
         stale.forEach { id ->
@@ -285,7 +325,7 @@ object DatabaseBackupManager {
                 .onSuccess { retired++ }
                 .onFailure { Log.w(TAG, "Could not retire superseded backup $id", it) }
         }
-        if (retired > 0) Log.d(TAG, "Retired $retired superseded backup file(s)")
+        return retired
     }
 
     private fun readBackupBytes(context: Context): ByteArray? {
