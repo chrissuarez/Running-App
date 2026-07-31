@@ -55,6 +55,50 @@ class InterruptedRunTest {
     }
 
     @Test
+    fun `one fix, late enough, is a run`() {
+        // A strapless Run whose only stored fix lands five minutes in. One row, and it says both
+        // that the Run was still recording and how far into it that was.
+        val finished = interrupted.finishedFromRecord(
+            samples = emptyList(),
+            track = listOf(fixAt(50.8152, startedAt + 300_000)),
+            mappedTrack = emptyList(),
+            profile = profile,
+        )!!
+
+        assertEquals(300, finished.durationSeconds)
+    }
+
+    @Test
+    fun `one fix at the moment it started is not`() {
+        // A START that got a fix and died. Nothing says the Run ever got past its first instant,
+        // and finishing it would put a zero-second Run into history.
+        assertNull(
+            interrupted.finishedFromRecord(
+                samples = emptyList(),
+                track = listOf(fixAt(50.8152, startedAt)),
+                mappedTrack = emptyList(),
+                profile = profile,
+            )
+        )
+    }
+
+    @Test
+    fun `a pause before the first fix is not counted as the wait for it`() {
+        // The runner paused before GPS stored anything and resumed four minutes later, so the first
+        // stored fix is the far side of a pause. Counting start-to-first-fix would hand the Run the
+        // whole pause — and the samples could not argue it back down, since the clock is whichever
+        // record reaches further.
+        val track = listOf(
+            fixAt(50.8152, startedAt + 240_000, startsAfterPause = true),
+            fixAt(50.8152, startedAt + 250_000),
+        )
+
+        val finished = interrupted.finishedFromRecord(samples(30), track, mappedTrack = track, profile = profile)!!
+
+        assertEquals(30, finished.durationSeconds)
+    }
+
+    @Test
     fun `the run's clock is the last second it banked, not the number of samples it saved`() {
         // 292 seconds of running, of which one had no reading — a dropout saves no row. Counting
         // rows would hand that second back and report the run a second shorter than it was.
