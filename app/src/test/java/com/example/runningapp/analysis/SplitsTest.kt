@@ -326,6 +326,29 @@ class SplitsTest {
     }
 
     @Test
+    fun `a climb made during a short pause is not smeared into the run that follows`() {
+        // A pause shorter than half the smoothing window leaves the fixes either side of it close
+        // enough in time to be folded together. A height the runner gained unwitnessed during the
+        // pause then smears into the fixes after they resumed, as a ramp lying entirely on the
+        // recorded side of the break — where re-arming the climb at the break cannot reach it, and it
+        // reads as real climbing.
+        //
+        // The figures here are deliberately absurd — 120 m gained inside two seconds — because that
+        // is what it takes to see it. The barometer tier takes a median, which barely moves for a
+        // handful of foreign values, and the GPS tier's window is only five seconds wide, so nothing
+        // a runner could physically do gets through. This pins the mechanism rather than a bug ever
+        // seen on a run: the windows must not join across a break because the two sides are not one
+        // stretch of ground, and not because their widths happen to make it moot.
+        val track = script {
+            running(2.0, seconds = 300, gps = true)
+            pauseAndMoveOn(meters = 4.0, seconds = 2, climbMeters = 120.0, gps = true)
+            running(2.0, seconds = 300, gps = true)
+        }
+
+        assertEquals(0.0, elevationGainOf(aRun(), track)!!, 1.0)
+    }
+
+    @Test
     fun `a gust of wind is not a hill`() {
         // A one-second pressure spike worth eight metres, on otherwise flat ground. It is past the
         // barometer's two-metre threshold, so without the median it would bank permanently.
@@ -567,10 +590,17 @@ class SplitsTest {
         }
 
         /** The runner pauses, covers [meters] over [seconds] unrecorded, and resumes. */
-        fun pauseAndMoveOn(meters: Double, seconds: Int) {
+        fun pauseAndMoveOn(
+            meters: Double,
+            seconds: Int,
+            climbMeters: Double = 0.0,
+            barometer: Boolean = false,
+            gps: Boolean = false,
+        ) {
             advance(meters)
+            height += climbMeters
             timestamp += seconds * 1_000L
-            add(startsAfterPause = true)
+            add(startsAfterPause = true, barometer = barometer, gps = gps)
         }
 
         /** The signal is lost for [seconds], over [meters] of ground nothing recorded. */

@@ -102,7 +102,7 @@ internal fun elevationOf(track: MeasuredTrack): ElevationProfile? {
             metersAtFix = points
                 .map { point -> point.barometerPressureHpa?.let { heightFromPressure(it.toDouble()) } }
                 .filledFromNeighbours()
-                .medianOver(BAROMETER_SMOOTHING_MILLIS, stampedAt),
+                .medianOver(BAROMETER_SMOOTHING_MILLIS, stampedAt, recordedLeg),
             hysteresisMeters = BAROMETER_HYSTERESIS_METERS,
             recordedLeg = recordedLeg,
         )
@@ -114,7 +114,7 @@ internal fun elevationOf(track: MeasuredTrack): ElevationProfile? {
     // such fix must not cost the whole run its elevation.
     val trusted = points.trustedGpsHeights() ?: return null
     return ElevationProfile(
-        metersAtFix = trusted.meanOver(GPS_SMOOTHING_MILLIS, stampedAt),
+        metersAtFix = trusted.meanOver(GPS_SMOOTHING_MILLIS, stampedAt, recordedLeg),
         hysteresisMeters = GPS_HYSTERESIS_METERS,
         recordedLeg = recordedLeg,
     )
@@ -198,12 +198,18 @@ private fun List<TrackPoint>.trustedGpsHeights(): List<Double>? {
 }
 
 /** A centred moving average, shortened at the ends rather than dropping fixes from either. */
-private fun List<Double>.meanOver(windowMillis: Long, stampedAt: List<Long>): List<Double> =
-    windowedAround(windowMillis, stampedAt) { it.average() }
+private fun List<Double>.meanOver(
+    windowMillis: Long,
+    stampedAt: List<Long>,
+    recordedLeg: List<Boolean>,
+): List<Double> = windowedAround(windowMillis, stampedAt, recordedLeg) { it.average() }
 
 /** A centred median — what kills a one-off spike outright rather than spreading it over its neighbours. */
-private fun List<Double>.medianOver(windowMillis: Long, stampedAt: List<Long>): List<Double> =
-    windowedAround(windowMillis, stampedAt) { neighbours -> neighbours.sorted()[neighbours.size / 2] }
+private fun List<Double>.medianOver(
+    windowMillis: Long,
+    stampedAt: List<Long>,
+    recordedLeg: List<Boolean>,
+): List<Double> = windowedAround(windowMillis, stampedAt, recordedLeg) { it.sorted()[it.size / 2] }
 
 /**
  * Each height folded together with every height recorded within half of [windowMillis] either side
@@ -213,23 +219,32 @@ private fun List<Double>.medianOver(windowMillis: Long, stampedAt: List<Long>): 
  * the half-window they do have. The fixes are in time order ([measureTrack] sorts them), so the
  * window's edges only ever move forwards and the whole walk is linear in the number of fixes.
  *
- * A break in the recording is not treated specially here. It does not need to be — the fixes either
- * side of a gap are far enough apart in time to fall outside each other's window, so the heights
- * never mix; and where a pause is short enough that they do, they are moments apart and mixing them
- * is right. What must not join across a break is the *climb*, and that is
- * [ElevationProfile.gainMetersBetween]'s business.
+ * **A window stops at a break in the recording** and does not reach across it, because the two sides
+ * are not one stretch of ground. A signal gap is longer than the half-window anyway and would never
+ * have mixed, but a *recorded* pause can be a few seconds long — and a runner who spends those
+ * seconds going up something the recording did not witness would otherwise have that climb smeared
+ * across the fixes after they resumed. Refusing to join the climb across the break, which is
+ * [ElevationProfile.gainMetersBetween]'s job, cannot undo that: it re-arms at the break itself, and
+ * the smeared ramp lies entirely on the recorded side of it, where it reads as real climbing.
  */
 private fun List<Double>.windowedAround(
     windowMillis: Long,
     stampedAt: List<Long>,
+    recordedLeg: List<Boolean>,
     of: (List<Double>) -> Double,
 ): List<Double> {
     val half = windowMillis / 2
+    // Which unbroken stretch of the run each fix belongs to. Only fixes sharing one may be folded
+    // together, so the count never has to be compared for order — just for sameness.
+    val stretch = IntArray(size)
+    for (i in 1 until size) stretch[i] = stretch[i - 1] + if (recordedLeg[i - 1]) 0 else 1
     var from = 0
     var to = 0
     return indices.map { i ->
-        while (stampedAt[i] - stampedAt[from] > half) from++
-        while (to < lastIndex && stampedAt[to + 1] - stampedAt[i] <= half) to++
+        // A new stretch starts ahead of where the last one's window ended.
+        if (to < i) to = i
+        while (stampedAt[i] - stampedAt[from] > half || stretch[from] != stretch[i]) from++
+        while (to < lastIndex && stampedAt[to + 1] - stampedAt[i] <= half && stretch[to + 1] == stretch[i]) to++
         of(subList(from, to + 1))
     }
 }
