@@ -41,11 +41,10 @@ object ArchiveNames {
      * rather than parsing every name back into a date. Local time, not UTC: the runner reading the
      * folder is the person these names are for.
      *
-     * Seconds, not minutes, because a name two backups can share is a name one of them has to clear
-     * before it can be promoted — and a folder that accepts the deletion and then refuses the rename
-     * has taken the last good archive away and left a `.part` the next attempt sweeps. A runner on
-     * their first backup would be left with nothing. No two archives can collide now: the archiver
-     * takes one at a time, and no archive is written inside a second.
+     * Seconds, not minutes, because every name two backups can share is a name they can collide on,
+     * and two backups a minute apart are ordinary where two inside one second are not. Rare rather
+     * than impossible, though — an empty history archives in no time — so the archiver never takes
+     * an occupied name: see [Archiver], which keeps the archive already standing there instead.
      */
     private val TIMESTAMP_FORMAT: DateTimeFormatter =
         DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmmss", Locale.UK)
