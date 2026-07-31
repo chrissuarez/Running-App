@@ -15,6 +15,7 @@ import com.example.runningapp.clearedBy
 import com.example.runningapp.isCoachAdjusted
 import com.example.runningapp.HrProfile
 import com.example.runningapp.effectiveMaxHr
+import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
 import com.example.runningapp.recording.SessionRecorder
 import kotlinx.coroutines.flow.Flow
@@ -315,6 +316,61 @@ class SessionRepository(
 
     /** One-shot read of a finished run, for callers that need it once rather than as a stream. */
     suspend fun getSession(sessionId: Long): RunnerSession? = sessionDao.getSessionById(sessionId)
+
+    /**
+     * Finishes any Run a previous process left interrupted, from the seconds it already wrote (#192).
+     *
+     * A Run whose process is killed mid-recording — the system reclaiming memory, a crash, a battery
+     * pull — never reaches the finish that stamps its totals, so its row keeps `endTime = 0` and
+     * every query in the app steps around it. The Run disappears from history, from the export and
+     * from the coach, while every second of it sits in `hr_samples` and `track_points`. This puts it
+     * back: see [finishedFromRecord] for what can be derived and what cannot.
+     *
+     * [startedBeforeMillis] is the moment this process started. A Run that began before then is not
+     * one this process is recording — the service cannot resume a Run across a process death, so it
+     * has no live Run older than itself — and that is the whole of what makes this safe to run at
+     * launch without a flag, a lock or a look at the recorder. A Run started a moment later, while
+     * this pass is still walking the list, is outside the query by construction rather than by
+     * timing.
+     *
+     * Runs one Run at a time and keeps going past a failure: a Run that cannot be rebuilt should
+     * cost the others nothing, and it stays interrupted for the next launch to try again.
+     */
+    suspend fun rescueInterruptedRuns(startedBeforeMillis: Long) {
+        val samples = sampleDao ?: return
+        val settings = settingsRepository ?: return
+        val interruptedIds = sessionDao.getInterruptedSessionIds(startedBeforeMillis)
+        if (interruptedIds.isEmpty()) return
+
+        val profile = settings.userSettingsFlow.first().hrProfile
+        var rescued = 0
+        interruptedIds.forEach { sessionId ->
+            try {
+                val session = sessionDao.getSessionById(sessionId) ?: return@forEach
+                val finished = session.finishedFromRecord(
+                    samples = samples.getSamplesForSessionOnce(sessionId),
+                    track = getTrackPointsForMap(sessionId),
+                    profile = profile,
+                ) ?: return@forEach
+                sessionDao.updateSession(finished)
+                // After the row is finished, not before: this measures the same stored track and
+                // rewrites avgPaceMinPerKm over moving time, which is the pace the app quotes (#163).
+                computeMovingTime(sessionId)
+                rescued++
+                Log.w(
+                    "InterruptedRun",
+                    "Rescued run $sessionId: duration=${finished.durationSeconds}s " +
+                        "distance=${"%.2f".format(finished.distanceKm)}km avgBpm=${finished.avgBpm}"
+                )
+            } catch (e: Exception) {
+                Log.w("InterruptedRun", "Could not rescue run $sessionId; leaving it for next launch", e)
+            }
+        }
+
+        // Only once, and only if something moved: the snapshot is a copy of the whole database, and
+        // a launch that rescued nothing should not pay for one.
+        if (rescued > 0) refreshHistoryBackup?.invoke()
+    }
 
     /**
      * Fills in [RunnerSession.movingTimeSeconds] for runs recorded before #163, so a run already in

@@ -104,6 +104,21 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Finishes any Run a previous process left interrupted, once per process (#192).
+     *
+     * [processStartedAtMillis] is read at construction rather than at the moment the pass runs, and
+     * that is what makes the pass safe: it draws the line before this process can have started a Run
+     * of its own, so nothing it finds can be a Run being recorded now. Reading the clock inside the
+     * pass would move the line to after a runner could have pressed START.
+     *
+     * On the container's own scope, for the same reason the moving-time backfill is — see above.
+     */
+    fun rescueInterruptedRunsOnce() {
+        if (!interruptedRunsRescued.compareAndSet(false, true)) return
+        applicationScope.launch { sessionRepository.rescueInterruptedRuns(processStartedAtMillis) }
+    }
+
+    /**
      * Lives as long as the process, and deliberately never cancelled — the container itself is a
      * process-wide singleton, so there is no shorter lifetime to bind to. SupervisorJob so one
      * failed background pass cannot take the others down with it.
@@ -118,6 +133,14 @@ class AppContainer(context: Context) {
     // A lambda rather than `sessionRepository::setStatedProfile`, so building the queue does not
     // reach through the lazy repository and open the database at container construction.
     private val movingTimeBackfilled = AtomicBoolean(false)
+    private val interruptedRunsRescued = AtomicBoolean(false)
+
+    /**
+     * When this process began, as far as anything here is concerned — the container is built once,
+     * on the way to the first screen, before a Run of this process can exist. See
+     * [rescueInterruptedRunsOnce], which is the whole reason it is recorded.
+     */
+    private val processStartedAtMillis = System.currentTimeMillis()
 
     // Anything a previous process left interrupted is finished before this queue takes its first
     // statement — history and the profile live in different stores, so a statement that dies

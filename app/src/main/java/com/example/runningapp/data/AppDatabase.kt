@@ -190,6 +190,18 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE id = :sessionId")
     suspend fun getSessionById(sessionId: Long): RunnerSession?
 
+    /**
+     * Runs left unfinished by a previous process, oldest first (#192).
+     *
+     * `endTime = 0` is what every other query here reads as "still being recorded", so the cut-off
+     * is what tells a Run that died from the one being recorded right now: [startedBeforeMillis] is
+     * the moment this process started, and a Run that began before that cannot be this process's.
+     * Passing it in rather than reading the clock here keeps the boundary the caller's, and keeps
+     * this query a question about the database rather than about the time.
+     */
+    @Query("SELECT id FROM sessions WHERE endTime = 0 AND startTime < :startedBeforeMillis ORDER BY startTime ASC")
+    suspend fun getInterruptedSessionIds(startedBeforeMillis: Long): List<Long>
+
     /** Finished outdoor runs whose moving time has not been computed yet (#163 backfill). */
     @Query("SELECT id FROM sessions WHERE movingTimeSeconds IS NULL AND endTime > 0 AND runMode = 'outdoor' ORDER BY startTime DESC")
     suspend fun getSessionIdsMissingMovingTime(): List<Long>

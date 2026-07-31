@@ -173,6 +173,11 @@ class MainActivity : ComponentActivity() {
         // once per process, on a scope that outlives this Activity - see the container.
         runningAppContainer().backfillMovingTimeOnce()
 
+        // A Run whose process was killed mid-recording never reached the finish that stamps its
+        // totals, so it is sitting in the database invisible to every screen that reads runs. This
+        // is the launch that finishes it (#192).
+        runningAppContainer().rescueInterruptedRunsOnce()
+
         setContent {
             RunningAppTheme {
                 Surface(
