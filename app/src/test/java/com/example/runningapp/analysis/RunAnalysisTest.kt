@@ -111,6 +111,38 @@ class RunAnalysisTest {
     }
 
     @Test
+    fun `a run that says it banked every second breaks on a single missing one`() {
+        // Rows that carry the wall clock of the second they were banked in come from a run that
+        // wrote one row per second, so there is nothing to infer from their spacing: second 2 has
+        // no row because the strap was lost in it.
+        val chart = requireNotNull(
+            RunAnalysis.of(
+                run = aRun(durationSeconds = 4),
+                samples = secondBySecondSamples(0 to 120, 1 to 121, 3 to 130, 4 to 131)
+            ).chart
+        )
+
+        assertEquals(2, chart.heartRate.size)
+        assertNull(chart.readingAt(2L))
+    }
+
+    @Test
+    fun `a dropout cannot pass itself off as the cadence of a short recording`() {
+        // Three readings, one dropout: the steps are one second and four, and if the recording is
+        // read at its middle the dropout is half of it and elects itself as normal. Old enough not
+        // to say how it was banked, this run must still be read at its tightest spacing.
+        val chart = requireNotNull(
+            RunAnalysis.of(
+                run = aRun(durationSeconds = 5),
+                samples = samples(0 to 120, 1 to 121, 5 to 130)
+            ).chart
+        )
+
+        assertEquals(2, chart.heartRate.size)
+        assertNull(chart.readingAt(3L))
+    }
+
+    @Test
     fun `a run recorded before every second was banked keeps one line through its sparse patches`() {
         // Old history was sampled irregularly; a few seconds between readings is sparseness, not a
         // dropped strap, and must not be drawn as a broken line.
@@ -284,6 +316,7 @@ class RunAnalysisTest {
             runMode = runMode
         )
 
+        /** Readings as history recorded them before a row knew its own wall clock. */
         fun samples(vararg readings: Pair<Number, Int>): List<HrSample> =
             readings.mapIndexed { index, (elapsedSeconds, bpm) ->
                 HrSample(
@@ -294,6 +327,12 @@ class RunAnalysisTest {
                     smoothedBpm = bpm,
                     connectionState = if (bpm > 0) "CONNECTED" else "DISCONNECTED"
                 )
+            }
+
+        /** Readings as a run records them today: a row a second, each stamped with its own moment. */
+        fun secondBySecondSamples(vararg readings: Pair<Number, Int>): List<HrSample> =
+            samples(*readings).map {
+                it.copy(timestampMillis = 1_742_000_000_000 + it.elapsedSeconds * 1000)
             }
     }
 }

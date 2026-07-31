@@ -30,6 +30,9 @@ data class RunAnalysis(
          */
         private const val LONGEST_RECORDING_BREAK_SECONDS = 60L
 
+        /** A Run that banked a second at a time has a hole wherever a single second is missing. */
+        private const val BANKED_EVERY_SECOND = 1L
+
         /** The lowest and highest the beats-per-minute scale is ever allowed to reach. */
         private const val LOWEST_PLAUSIBLE_BPM = 40
         private const val HIGHEST_PLAUSIBLE_BPM = 220
@@ -61,8 +64,14 @@ data class RunAnalysis(
             // The glitch is still drawn; it rides the edge of the frame.
             val lowest = readings.minOf { it.bpm }.coerceIn(LOWEST_PLAUSIBLE_BPM, HIGHEST_PLAUSIBLE_BPM)
             val highest = readings.maxOf { it.bpm }.coerceIn(LOWEST_PLAUSIBLE_BPM, HIGHEST_PLAUSIBLE_BPM)
+            // A row that knows the wall clock of the second it was banked in was written by a Run
+            // that banked a second at a time: that column arrived after that banking did, and no
+            // migration filled it in behind itself. Such a Run says outright how often it wrote, so
+            // there is nothing to infer — a second with no row is a second the Strap was lost in.
+            val bankedEverySecond = samples.any { it.timestampMillis != null }
+
             return RunChart(
-                heartRate = readings.splitWhereNothingWasRecorded(),
+                heartRate = readings.splitWhereNothingWasRecorded(bankedEverySecond),
                 // The Run's own clock, not the last reading's: a Strap that gave up at minute ten of
                 // a half hour leaves a line that stops a third of the way across, which is the truth
                 // about the recording. Runs still being written, and old rows that banked no
@@ -73,8 +82,10 @@ data class RunAnalysis(
             )
         }
 
-        private fun List<HeartRateReading>.splitWhereNothingWasRecorded(): List<HeartRateTrace> {
-            val breakSeconds = recordingBreakSeconds()
+        private fun List<HeartRateReading>.splitWhereNothingWasRecorded(
+            bankedEverySecond: Boolean
+        ): List<HeartRateTrace> {
+            val breakSeconds = recordingBreakSeconds(bankedEverySecond)
             val traces = mutableListOf(mutableListOf(first()))
             zipWithNext { previous, reading ->
                 if (reading.elapsedSeconds - previous.elapsedSeconds > breakSeconds) {
@@ -88,24 +99,32 @@ data class RunAnalysis(
 
         /**
          * How long this Run's recording may say nothing before the line is broken rather than drawn
-         * across — read off the recording itself, because the history holds two kinds of Run.
+         * across, because the history holds two kinds of Run.
          *
-         * A Run recorded since the app banked a second at a time writes a row for each second it had
-         * a beat for and no row at all for the seconds the Strap was lost in, so on those Runs a
-         * couple of missing seconds is a real hole, however short it looks. Older history was
-         * sampled loosely, and the seconds between its readings are simply how it was written down.
+         * A Run that banked a second at a time wrote a row for each second it had a beat for and no
+         * row at all for the seconds the Strap was lost in, so on those Runs a couple of missing
+         * seconds is a real hole however short it looks. Older history was sampled loosely, and the
+         * seconds between its readings are simply how it was written down.
          *
-         * The Run's own typical step between readings is therefore the unit: a step is what this
-         * recording does when nothing is wrong, and anything past twice it is a stretch nothing was
-         * recorded in. Never more than [LONGEST_RECORDING_BREAK_SECONDS], so a Run too short to have
-         * a cadence still breaks on a real silence.
+         * Most Runs say which they are — see [bankedEverySecond]. The ones that do not are read off
+         * their own readings: the spacing this recording keeps when nothing is going wrong is its
+         * cadence, and anything past twice that is a stretch nothing was recorded in. Never more
+         * than [LONGEST_RECORDING_BREAK_SECONDS], so a Run too short to have a cadence still breaks
+         * on a real silence.
          */
-        private fun List<HeartRateReading>.recordingBreakSeconds(): Long {
+        private fun List<HeartRateReading>.recordingBreakSeconds(bankedEverySecond: Boolean): Long {
+            if (bankedEverySecond) return BANKED_EVERY_SECOND
             val steps = zipWithNext { previous, reading -> reading.elapsedSeconds - previous.elapsedSeconds }
             // One reading has no step to measure and no gap to break, so nothing can exceed this.
             if (steps.isEmpty()) return Long.MAX_VALUE
-            val typicalStep = steps.sorted()[steps.size / 2].coerceAtLeast(1L)
-            return (typicalStep * 2).coerceAtMost(LONGEST_RECORDING_BREAK_SECONDS)
+            // The lower of the two middle steps when there is an even number of them, because a
+            // dropout is a step too. A recording of three readings around one dropout has only two
+            // steps, and taking the upper one would crown the dropout itself as this Run's cadence
+            // — leaving it looking normal and the line drawn straight through it. The lower one
+            // cannot be the larger of a pair, and a middle step is still resistant to the odd
+            // duplicated row at the other end.
+            val cadence = steps.sorted()[(steps.size - 1) / 2].coerceAtLeast(1L)
+            return (cadence * 2).coerceAtMost(LONGEST_RECORDING_BREAK_SECONDS)
         }
 
         private fun floorToTen(bpm: Int): Int = bpm / 10 * 10
