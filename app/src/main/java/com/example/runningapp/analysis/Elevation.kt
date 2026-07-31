@@ -107,19 +107,17 @@ internal fun elevationOf(track: MeasuredTrack): ElevationProfile? {
             recordedLeg = recordedLeg,
         )
     }
-    // Every fix must both state a height and say how wrong it might be. A fix that does not say is
-    // not treated as a good one: without the bound there is no way to tell a height worth ten metres
-    // of hysteresis from one worth a hundred, and a run of them would report a confident figure
-    // resting on nothing.
-    if (points.all { it.altitudeMeters != null && it.verticalAccuracyMeters != null }) {
-        val trusted = points.trustedGpsHeights() ?: return null
-        return ElevationProfile(
-            metersAtFix = trusted.meanOver(GPS_SMOOTHING_MILLIS, stampedAt),
-            hysteresisMeters = GPS_HYSTERESIS_METERS,
-            recordedLeg = recordedLeg,
-        )
-    }
-    return null
+    // A fix must both state a height and say how wrong it might be to be believed: without the bound
+    // there is no way to tell a height worth ten metres of hysteresis from one worth a hundred. But a
+    // fix that does not say only loses its own vote — it stands in the run the same way an inaccurate
+    // one does, taken from its trusted neighbours. A phone drops either field on the odd fix, and one
+    // such fix must not cost the whole run its elevation.
+    val trusted = points.trustedGpsHeights() ?: return null
+    return ElevationProfile(
+        metersAtFix = trusted.meanOver(GPS_SMOOTHING_MILLIS, stampedAt),
+        hysteresisMeters = GPS_HYSTERESIS_METERS,
+        recordedLeg = recordedLeg,
+    )
 }
 
 /** How high the runner was at each fix of the track, and how far they must climb for it to count. */
@@ -181,8 +179,9 @@ private fun List<Double?>.filledFromNeighbours(): List<Double> {
 }
 
 /**
- * GPS heights with the ones the fix itself disowns taken from the nearest fix that stood behind its
- * own — or null when no fix in the run did, so there is no height to stand in.
+ * GPS heights with the ones the run does not stand behind — no height, no bound on it, or a bound
+ * past [GPS_VERTICAL_ACCURACY_LIMIT_METERS] — taken from the nearest fix it does stand behind. Null
+ * when no fix in the run does, so there is no height to stand in and nothing to report.
  *
  * The nearest either side, rather than only the last one behind: a run's opening fixes are the
  * likeliest to be disowned, the sky not yet fully acquired, and there is nothing behind them to take.
@@ -191,7 +190,8 @@ private fun List<Double?>.filledFromNeighbours(): List<Double> {
  */
 private fun List<TrackPoint>.trustedGpsHeights(): List<Double>? {
     val trusted = map { point ->
-        point.altitudeMeters!!.takeIf { point.verticalAccuracyMeters!! <= GPS_VERTICAL_ACCURACY_LIMIT_METERS }
+        val within = point.verticalAccuracyMeters?.let { it <= GPS_VERTICAL_ACCURACY_LIMIT_METERS } == true
+        point.altitudeMeters?.takeIf { within }
     }
     if (trusted.all { it == null }) return null
     return trusted.filledFromNeighbours()

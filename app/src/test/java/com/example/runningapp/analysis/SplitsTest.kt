@@ -304,6 +304,19 @@ class SplitsTest {
     }
 
     @Test
+    fun `one fix without a stated vertical accuracy does not cost the run its elevation`() {
+        // A phone drops the accuracy on the odd fix. Read as "this run has no usable heights", a
+        // fifty-metre climb every other fix agrees on would vanish from the whole run.
+        val track = script {
+            running(2.0, seconds = 250, climbMeters = 25.0, gps = true)
+            fixWithoutVerticalAccuracy()
+            running(2.0, seconds = 250, climbMeters = 25.0, gps = true)
+        }
+
+        assertEquals(45.0, elevationGainOf(aRun(), track)!!, 5.5)
+    }
+
+    @Test
     fun `a run where no fix stands behind its height shows no elevation`() {
         // Every fix reports a vertical error past the cutoff. There is no trusted height anywhere to
         // stand in for them, and a figure summed from heights the run itself disowns rests on nothing.
@@ -469,7 +482,7 @@ class SplitsTest {
             startsAfterPause: Boolean = false,
             barometer: Boolean = false,
             gps: Boolean = false,
-            verticalAccuracyMeters: Float = 6f,
+            verticalAccuracyMeters: Float? = 6f,
             source: String = TrackPointSource.GPS,
         ) {
             points += TrackPoint(
@@ -520,6 +533,13 @@ class SplitsTest {
             height += offsetMeters
             add(gps = true, verticalAccuracyMeters = 60f)
             height -= offsetMeters
+        }
+
+        /** One fix the phone gave a height for without saying how wrong it might be. */
+        fun fixWithoutVerticalAccuracy() {
+            advance(2.0)
+            timestamp += 1_000
+            add(gps = true, verticalAccuracyMeters = null)
         }
 
         /**
