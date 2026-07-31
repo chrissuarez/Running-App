@@ -40,9 +40,15 @@ object ArchiveNames {
      * Sorts oldest-first as text, which is what makes [retire] a matter of taking from the front
      * rather than parsing every name back into a date. Local time, not UTC: the runner reading the
      * folder is the person these names are for.
+     *
+     * Seconds, not minutes, because a name two backups can share is a name one of them has to clear
+     * before it can be promoted — and a folder that accepts the deletion and then refuses the rename
+     * has taken the last good archive away and left a `.part` the next attempt sweeps. A runner on
+     * their first backup would be left with nothing. No two archives can collide now: the archiver
+     * takes one at a time, and no archive is written inside a second.
      */
     private val TIMESTAMP_FORMAT: DateTimeFormatter =
-        DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmm", Locale.UK)
+        DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmmss", Locale.UK)
 
     fun archiveName(atEpochMillis: Long, zoneId: ZoneId = ZoneId.systemDefault()): String =
         PREFIX + TIMESTAMP_FORMAT.format(Instant.ofEpochMilli(atEpochMillis).atZone(zoneId)) + EXTENSION
@@ -59,9 +65,23 @@ object ArchiveNames {
      * they called `running-app-archive-family.zip` sits between the same two ends as a real archive
      * and would otherwise be retired as one — the folder's fourth archive deleting a photo album.
      */
-    private val ARCHIVE_NAME = Regex("""^\Q$PREFIX\E\d{4}-\d{2}-\d{2}-\d{4}\Q$EXTENSION\E$""")
+    /**
+     * Four digits as well as six, because the folder is not empty when the format changes.
+     *
+     * Archives written before [TIMESTAMP_FORMAT] gained its seconds are sitting in the runner's
+     * folder wearing `HHmm`, and a rule that no longer recognises them would never retire them
+     * either: three new archives would rotate correctly while the old ones accumulated beside them
+     * for ever, and any `.part` left by an earlier failure would never be swept. They are this app's
+     * files, and the rotation is supposed to be the whole of what this app leaves behind.
+     *
+     * They still sort correctly among the new ones, which is what [retire] depends on: the date
+     * leads, and within one minute the shorter name sorts first — which is the older of the two.
+     */
+    private const val TIMESTAMP = """\d{4}-\d{2}-\d{2}-\d{4}(?:\d{2})?"""
+
+    private val ARCHIVE_NAME = Regex("""^\Q$PREFIX\E$TIMESTAMP\Q$EXTENSION\E$""")
     private val IN_PROGRESS_NAME =
-        Regex("""^\Q$PREFIX\E\d{4}-\d{2}-\d{2}-\d{4}\Q$EXTENSION$IN_PROGRESS_EXTENSION\E$""")
+        Regex("""^\Q$PREFIX\E$TIMESTAMP\Q$EXTENSION$IN_PROGRESS_EXTENSION\E$""")
 
     /** Whether a file in the folder is one of this app's finished archives. */
     fun isArchive(fileName: String): Boolean = ARCHIVE_NAME.matches(fileName)

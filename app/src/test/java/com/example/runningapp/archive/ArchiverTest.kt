@@ -19,7 +19,7 @@ class ArchiverTest {
 
     // 30 July 2026, 07:12 local.
     private val julyMorning = 1_785_391_920_000L
-    private val expectedName = "running-app-archive-2026-07-30-0712.zip"
+    private val expectedName = "running-app-archive-2026-07-30-071200.zip"
     private val expectedInProgressName = "$expectedName.part"
 
     /** A folder in memory, remembering what was done to it and in what order. */
@@ -116,21 +116,21 @@ class ArchiverTest {
     fun `nothing is deleted until the replacement has landed`() = runTest {
         val folder = FakeFolder(
             listOf(
-                "running-app-archive-2026-04-01-0800.zip",
-                "running-app-archive-2026-05-01-0800.zip",
-                "running-app-archive-2026-06-01-0800.zip"
+                "running-app-archive-2026-04-01-080000.zip",
+                "running-app-archive-2026-05-01-080000.zip",
+                "running-app-archive-2026-06-01-080000.zip"
             )
         )
 
         archiver(folder).archiveNow()
 
         val promotion = folder.log.indexOf("rename $expectedInProgressName -> $expectedName")
-        val retirement = folder.log.indexOf("delete running-app-archive-2026-04-01-0800.zip")
+        val retirement = folder.log.indexOf("delete running-app-archive-2026-04-01-080000.zip")
         assertTrue(promotion in 0 until retirement)
         assertEquals(
             listOf(
-                "running-app-archive-2026-05-01-0800.zip",
-                "running-app-archive-2026-06-01-0800.zip",
+                "running-app-archive-2026-05-01-080000.zip",
+                "running-app-archive-2026-06-01-080000.zip",
                 expectedName
             ),
             folder.files.keys.sorted()
@@ -149,14 +149,14 @@ class ArchiverTest {
 
     @Test
     fun `a failed write leaves the previous archives standing and no backup time`() = runTest {
-        val folder = FakeFolder(listOf("running-app-archive-2026-06-01-0800.zip"))
+        val folder = FakeFolder(listOf("running-app-archive-2026-06-01-080000.zip"))
         folder.failWriteOf = expectedInProgressName
         var recordedAt: Long? = null
 
         val outcome = archiver(folder, onArchived = { recordedAt = it }).archiveNow()
 
         assertTrue(outcome is ArchiveOutcome.Failed)
-        assertEquals(listOf("running-app-archive-2026-06-01-0800.zip"), folder.files.keys.toList())
+        assertEquals(listOf("running-app-archive-2026-06-01-080000.zip"), folder.files.keys.toList())
         assertNull(recordedAt)
     }
 
@@ -202,7 +202,7 @@ class ArchiverTest {
     }
 
     @Test
-    fun `backing up twice in the same minute replaces rather than accumulates`() = runTest {
+    fun `backing up twice in the same second replaces rather than accumulates`() = runTest {
         val folder = FakeFolder()
         val archiver = archiver(folder)
 
@@ -215,7 +215,7 @@ class ArchiverTest {
 
     @Test
     fun `wreckage left by an earlier failure is swept up by the next backup`() = runTest {
-        val folder = FakeFolder(listOf("running-app-archive-2026-06-01-0800.zip.part"))
+        val folder = FakeFolder(listOf("running-app-archive-2026-06-01-080000.zip.part"))
 
         archiver(folder).archiveNow()
 

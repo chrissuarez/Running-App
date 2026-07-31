@@ -117,8 +117,11 @@ class AppContainer(context: Context) {
         )
         Archiver(
             folder = {
-                settingsRepository.userSettingsFlow.first().backupFolderUri
-                    ?.let { SafArchiveFolder(appContext, Uri.parse(it)) }
+                // Through the grant check, so a folder restored onto a new phone without the
+                // permission behind it reads as no folder rather than as one that always fails.
+                SafArchiveFolder
+                    .grantedFolder(appContext, settingsRepository.userSettingsFlow.first().backupFolderUri)
+                    ?.let { SafArchiveFolder(appContext, it) }
             },
             contents = { at -> contents.entries(at) },
             onArchived = { at -> settingsRepository.setLastBackupAt(at) },

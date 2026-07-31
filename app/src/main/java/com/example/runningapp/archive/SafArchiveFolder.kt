@@ -135,6 +135,23 @@ class SafArchiveFolder(context: Context, private val treeUri: Uri) : ArchiveFold
         private const val MIME_TYPE = "application/octet-stream"
 
         /**
+         * The stored folder, but only if this install may still write to it.
+         *
+         * The Uri is in DataStore, which Auto Backup restores onto a new phone; the grant behind it
+         * is held by the install that asked for it and is not restored with it. So a runner who
+         * upgrades their phone arrives with a folder that is named in Settings and unreachable in
+         * fact — every backup failing, the monthly job retrying the same dead address for as long as
+         * they never think to tap the row. Treated as no folder at all, the app asks for one, which
+         * is the truth of the situation and the one thing that fixes it.
+         */
+        fun grantedFolder(context: Context, treeUri: String?): Uri? {
+            val uri = treeUri?.takeIf { it.isNotBlank() }?.let(Uri::parse) ?: return null
+            val held = context.applicationContext.contentResolver.persistedUriPermissions
+                .any { it.uri == uri && it.isWritePermission }
+            return uri.takeIf { held }
+        }
+
+        /**
          * Keeps the folder reachable after this process — and this install — has gone away.
          *
          * Called with the Uri the picker returned, on the Activity that launched it, before the

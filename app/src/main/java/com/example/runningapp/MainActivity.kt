@@ -483,6 +483,14 @@ class MainActivity : ComponentActivity() {
                                     pickBackupFolder.launch(null)
                                 },
                                 onBackUpNow = backupViewModel::backUpNow,
+                                // Asked of the system rather than read off the stored Uri: a folder
+                                // restored from another phone keeps its address and loses its
+                                // permission, and a backup section that looks set up and cannot
+                                // write is worse than one that asks for a folder.
+                                backupFolderUri = SafArchiveFolder.grantedFolder(
+                                    this@MainActivity,
+                                    userSettings.backupFolderUri
+                                )?.toString(),
                                 backingUp = backingUp,
                                 backupResult = backupResultMessage(backupOutcome),
                                 onBack = {
