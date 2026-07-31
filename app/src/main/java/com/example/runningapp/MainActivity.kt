@@ -14,6 +14,7 @@ import android.os.IBinder
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -39,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -692,7 +694,27 @@ fun MainScreen(
     // ACTION_START_FOREGROUND so they serialize on the service's main thread.
     val autoConnectContext = LocalContext.current
     val activeStrapAddress = userSettings.activeDeviceAddress
-    LaunchedEffect(hrService, activeStrapAddress, isSessionActive, state.isSimulating) {
+    // Whether this screen is actually in front of the runner. A foreground service may only be
+    // started from the foreground, and stopping a Run re-fires the effect below — so a Run stopped
+    // from the notification, or stopped and pocketed, reached for the strap from the background and
+    // Android killed the app for it (#193).
+    //
+    // A key rather than a check inside the effect, because everything the effect tests is read from
+    // the composition: held as a check, coming back to the screen would either never re-ask the
+    // question or re-ask it against the state of whenever the effect was launched. As a key,
+    // returning to the screen recomposes and the question is asked again, freshly.
+    val autoConnectLifecycle = LocalLifecycleOwner.current.lifecycle
+    var screenIsResumed by remember(autoConnectLifecycle) {
+        mutableStateOf(autoConnectLifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+    DisposableEffect(autoConnectLifecycle) {
+        val observer = LifecycleEventObserver { _, _ ->
+            screenIsResumed = autoConnectLifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        }
+        autoConnectLifecycle.addObserver(observer)
+        onDispose { autoConnectLifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(hrService, activeStrapAddress, isSessionActive, state.isSimulating, screenIsResumed) {
         // Checked at fire time, not as a key: without BLUETOOTH_CONNECT the service's connect
         // path dead-ends immediately, so promoting it to foreground here would strand an idle
         // notification + wake lock just from opening the record screen (Codex P2 #123). The
@@ -701,8 +723,9 @@ fun MainScreen(
             ContextCompat.checkSelfPermission(
                 autoConnectContext, Manifest.permission.BLUETOOTH_CONNECT
             ) == PackageManager.PERMISSION_GRANTED
-        if (canConnect && !isSessionActive && !state.isSimulating && hrService != null &&
-            activeStrapAddress != null && state.connectionStatus == "Disconnected"
+        if (screenIsResumed && canConnect && !isSessionActive && !state.isSimulating &&
+            hrService != null && activeStrapAddress != null &&
+            state.connectionStatus == "Disconnected"
         ) {
             val intent = Intent(autoConnectContext, HrForegroundService::class.java).apply {
                 action = HrForegroundService.ACTION_START_FOREGROUND
@@ -710,7 +733,18 @@ fun MainScreen(
                 // No EXTRA_MAKE_ACTIVE: this is a background attempt, not a user choice — its
                 // verify must not out-promote a strap the user activates while it's in flight.
             }
-            ContextCompat.startForegroundService(autoConnectContext, intent)
+            try {
+                ContextCompat.startForegroundService(autoConnectContext, intent)
+            } catch (e: IllegalStateException) {
+                // The screen went behind something between the check above and this line. Android
+                // refuses a foreground start from the background, and this connect is a convenience
+                // that is already allowed to fail — it waits for the next time the screen comes up.
+                //
+                // Caught as IllegalStateException rather than as ForegroundServiceStartNotAllowed-
+                // Exception, which is its API 31 subclass: this app runs back to API 26, where
+                // naming that class in a catch is naming a class the runtime does not have.
+                Log.w("MainActivity", "Not reaching for the strap: the screen is no longer in front", e)
+            }
         }
     }
 
