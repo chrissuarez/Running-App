@@ -76,7 +76,7 @@ class BackupViewModelTest {
         rebuilt.folderChosen("content://com.android.externalstorage.documents/tree/primary%3ABackups")
         advanceUntilIdle()
 
-        assertEquals(listOf("running-app-archive-2026-07-30-0712.zip"), folder.written)
+        assertEquals(listOf("running-app-archive-2026-07-30-071200.zip"), folder.written)
     }
 
     /** Picking a folder from the row itself is not a request to back up, before or after a death. */

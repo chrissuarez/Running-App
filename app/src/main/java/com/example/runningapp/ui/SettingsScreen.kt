@@ -98,6 +98,14 @@ fun SettingsScreen(
      */
     onPickBackupFolder: (thenBackUp: Boolean) -> Unit,
     onBackUpNow: () -> Unit,
+    /**
+     * The backup folder this install can actually write to, or null when there is none — which
+     * includes a folder named in settings whose permission did not come across with it onto a new
+     * phone. The stored Uri is deliberately not read directly here: a folder the app cannot open is
+     * not a folder the runner has, and saying otherwise would leave them with a backup section that
+     * looks configured and never works.
+     */
+    backupFolderUri: String?,
     backingUp: Boolean,
     /** What the last backup came to, or null when there is nothing to report. */
     backupResult: String?,
@@ -265,7 +273,7 @@ fun SettingsScreen(
                 // the one decision that makes the rest of this section work. A folder that syncs
                 // off the phone is the whole point: a backup on a lost phone is not a backup.
                 subtitle = "Pick a folder that syncs off your phone, like Drive.",
-                value = backupFolderLabel(settings.backupFolderUri),
+                value = backupFolderLabel(backupFolderUri),
                 onClick = { onPickBackupFolder(false) }
             )
             SettingsRow(
@@ -278,7 +286,7 @@ fun SettingsScreen(
                 // missing thing is a folder, so ask for a folder.
                 onClick = {
                     if (backingUp) return@SettingsRow
-                    if (settings.backupFolderUri == null) onPickBackupFolder(true) else onBackUpNow()
+                    if (backupFolderUri == null) onPickBackupFolder(true) else onBackUpNow()
                 }
             )
 

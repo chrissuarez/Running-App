@@ -25,9 +25,9 @@ interface ArchiveFolder {
     /**
      * Writes [fileName], replacing any file already called that.
      *
-     * Replacing rather than refusing is what makes a backup repeatable: two backups in the same
-     * minute share a name, and the second is a complete archive of a database that has only moved
-     * forwards, so it should simply take the first one's place.
+     * Replacing rather than refusing is what makes a backup repeatable: an attempt that died partway
+     * leaves a `.part` under the name the next attempt wants, and that wreckage should simply be
+     * taken over rather than made to block a backup.
      */
     suspend fun write(fileName: String, contents: suspend (OutputStream) -> Unit)
 
@@ -120,16 +120,13 @@ class Archiver(
         }
 
         try {
-            // A name can already be taken by a backup made in the same minute. That archive is
-            // about to be superseded by this one, so it goes rather than blocking the promotion —
-            // some folders would otherwise quietly rename to "…(1).zip", leaving both.
-            //
-            // Its failure is fatal to the promotion rather than shrugged off, because a folder that
-            // kept the old file would make the rename *look* like it worked: the check that the new
-            // name is now in the folder would be satisfied by the very file that should have gone,
-            // and a last-backup time would be recorded for an archive still holding yesterday's
-            // history. Failing here leaves the finished `.part` in place instead, which is the newest
-            // complete copy and what the next attempt promotes.
+            // Names carry seconds and backups are taken one at a time, so this name should be free.
+            // Cleared rather than assumed, because some folders answer an occupied name by quietly
+            // inventing "…(1).zip" and leaving both — and a failure here is fatal to the promotion
+            // rather than shrugged off, because a folder that kept the old file would make the
+            // rename *look* like it worked: the check that the new name is now present would be
+            // satisfied by the very file that should have gone. Failing instead leaves the finished
+            // `.part` in place, which is the newest complete copy in the folder.
             destination.delete(finishedName)
             destination.rename(inProgressName, finishedName)
         } catch (e: Exception) {
