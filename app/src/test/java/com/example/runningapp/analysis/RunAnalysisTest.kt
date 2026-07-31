@@ -21,16 +21,16 @@ class RunAnalysisTest {
     fun `a run's heart rate is drawn over its elapsed clock`() {
         val analysis = RunAnalysis.of(
             run = aRun(durationSeconds = 180),
-            samples = samples(0 to 120, 60 to 130, 120 to 140, 180 to 125)
+            samples = samples(0 to 120, 1 to 130, 2 to 140, 3 to 125)
         )
 
         val chart = requireNotNull(analysis.chart)
         assertEquals(
             listOf(
                 HeartRateReading(0L, 120),
-                HeartRateReading(60L, 130),
-                HeartRateReading(120L, 140),
-                HeartRateReading(180L, 125)
+                HeartRateReading(1L, 130),
+                HeartRateReading(2L, 140),
+                HeartRateReading(3L, 125)
             ),
             chart.heartRate.single().readings
         )
@@ -41,11 +41,11 @@ class RunAnalysisTest {
     fun `readings are charted in the run's own order, whatever order they arrive in`() {
         val analysis = RunAnalysis.of(
             run = aRun(durationSeconds = 120),
-            samples = samples(120 to 140, 0 to 120, 60 to 130)
+            samples = samples(2 to 140, 0 to 120, 1 to 130)
         )
 
         assertEquals(
-            listOf(0L, 60L, 120L),
+            listOf(0L, 1L, 2L),
             requireNotNull(analysis.chart).heartRate.single().readings.map { it.elapsedSeconds }
         )
     }
@@ -54,7 +54,7 @@ class RunAnalysisTest {
     fun `a treadmill run charts the same as an outdoor one`() {
         val analysis = RunAnalysis.of(
             run = aRun(durationSeconds = 120, runMode = "treadmill"),
-            samples = samples(0 to 110, 60 to 120, 120 to 130)
+            samples = samples(0 to 110, 1 to 120, 2 to 130)
         )
 
         assertEquals(3, requireNotNull(analysis.chart).heartRate.single().readings.size)
@@ -76,19 +76,20 @@ class RunAnalysisTest {
     }
 
     @Test
-    fun `the line breaks where the strap dropped out rather than diving to zero`() {
-        // A minute of banked five-second rows with no beat in them: the strap was on the runner's
-        // chest and reporting nothing, which is not a heart rate of zero.
-        val lost = (10L..70L step 5).map { it to 0 }
+    fun `a row with no beat in it is a hole, not a heart rate of zero`() {
+        // No recorder has ever written such a row, but if one is ever found it must break the line
+        // where it sits rather than drag it to the floor.
+        val lost = (2L..60L).map { it to 0 }
         val analysis = RunAnalysis.of(
-            run = aRun(durationSeconds = 90),
-            samples = samples(0 to 120, 5 to 122, *lost.toTypedArray(), 75 to 130, 80 to 132)
+            run = aRun(durationSeconds = 62),
+            samples = samples(0 to 120, 1 to 122, *lost.toTypedArray(), 61 to 130, 62 to 132)
         )
 
         val chart = requireNotNull(analysis.chart)
         assertEquals(2, chart.heartRate.size)
-        assertEquals(listOf(HeartRateReading(0L, 120), HeartRateReading(5L, 122)), chart.heartRate[0].readings)
-        assertEquals(listOf(HeartRateReading(75L, 130), HeartRateReading(80L, 132)), chart.heartRate[1].readings)
+        assertEquals(listOf(HeartRateReading(0L, 120), HeartRateReading(1L, 122)), chart.heartRate[0].readings)
+        assertEquals(listOf(HeartRateReading(61L, 130), HeartRateReading(62L, 132)), chart.heartRate[1].readings)
+        assertNull(chart.readingAt(30L))
     }
 
     @Test
@@ -111,14 +112,13 @@ class RunAnalysisTest {
     }
 
     @Test
-    fun `a run that says it banked every second breaks on a single missing one`() {
-        // Rows that carry the wall clock of the second they were banked in come from a run that
-        // wrote one row per second, so there is nothing to infer from their spacing: second 2 has
-        // no row because the strap was lost in it.
+    fun `a single missing second is a hole like any other`() {
+        // Every run in the history wrote a row for each second it had a beat for, so second 2 has no
+        // row for one reason only: the strap was lost in it.
         val chart = requireNotNull(
             RunAnalysis.of(
                 run = aRun(durationSeconds = 4),
-                samples = secondBySecondSamples(0 to 120, 1 to 121, 3 to 130, 4 to 131)
+                samples = samples(0 to 120, 1 to 121, 3 to 130, 4 to 131)
             ).chart
         )
 
@@ -127,66 +127,10 @@ class RunAnalysisTest {
     }
 
     @Test
-    fun `a dropout cannot pass itself off as the cadence of a short recording`() {
-        // Three readings, one dropout: the steps are one second and four, and if the recording is
-        // read at its middle the dropout is half of it and elects itself as normal. Old enough not
-        // to say how it was banked, this run must still be read at its tightest spacing.
-        val chart = requireNotNull(
-            RunAnalysis.of(
-                run = aRun(durationSeconds = 5),
-                samples = samples(0 to 120, 1 to 121, 5 to 130)
-            ).chart
-        )
-
-        assertEquals(2, chart.heartRate.size)
-        assertNull(chart.readingAt(3L))
-    }
-
-    @Test
-    fun `a recorded no-beat second breaks the line however close the readings around it are`() {
-        // Old history wrote a row for a second with no beat in it. That row says outright that
-        // nothing was measured, and it must be believed rather than left to a judgement about how
-        // far apart the readings either side of it happen to sit.
-        val lost = (11L..20L).map { it to 0 }
-        val chart = requireNotNull(
-            RunAnalysis.of(
-                run = aRun(durationSeconds = 31),
-                samples = samples(0 to 120, 10 to 124, *lost.toTypedArray(), 21 to 128, 31 to 130)
-            ).chart
-        )
-
-        assertEquals(2, chart.heartRate.size)
-        assertEquals(listOf(0L, 10L), chart.heartRate[0].readings.map { it.elapsedSeconds })
-        assertEquals(listOf(21L, 31L), chart.heartRate[1].readings.map { it.elapsedSeconds })
-        assertNull(chart.readingAt(16L))
-    }
-
-    @Test
-    fun `a recorded outage does not set the standard for how long a silence may be`() {
-        // Ninety seconds of recorded no-beat rows, then a separate thirty-second silence nothing was
-        // written in at all. If the outage is counted as one of this run's steps it makes a step of
-        // ninety look ordinary, and the unrecorded silence after it passes as ordinary too.
-        val lost = (11L..100L step 10).map { it to 0 }
-        val chart = requireNotNull(
-            RunAnalysis.of(
-                run = aRun(durationSeconds = 131),
-                samples = samples(0 to 120, 10 to 124, *lost.toTypedArray(), 101 to 128, 131 to 130)
-            ).chart
-        )
-
-        assertEquals(3, chart.heartRate.size)
-        assertEquals(listOf(0L, 10L), chart.heartRate[0].readings.map { it.elapsedSeconds })
-        assertEquals(listOf(101L), chart.heartRate[1].readings.map { it.elapsedSeconds })
-        assertEquals(listOf(131L), chart.heartRate[2].readings.map { it.elapsedSeconds })
-    }
-
-    @Test
-    fun `a run recorded before every second was banked keeps one line through its sparse patches`() {
-        // Old history was sampled irregularly; a few seconds between readings is sparseness, not a
-        // dropped strap, and must not be drawn as a broken line.
+    fun `readings a second apart are one unbroken line`() {
         val analysis = RunAnalysis.of(
             run = aRun(durationSeconds = 30),
-            samples = samples(0 to 120, 10 to 124, 20 to 128, 30 to 130)
+            samples = samples(*(0L..30L).map { it to 120 }.toTypedArray())
         )
 
         assertEquals(1, requireNotNull(analysis.chart).heartRate.size)
@@ -194,9 +138,10 @@ class RunAnalysisTest {
 
     @Test
     fun `a long silence in the recording breaks the line`() {
+        val recorded = ((0L..30L) + (330L..360L)).map { it to 124 }
         val analysis = RunAnalysis.of(
             run = aRun(durationSeconds = 400),
-            samples = samples(0 to 120, 30 to 124, 330 to 128, 360 to 130)
+            samples = samples(*recorded.toTypedArray())
         )
 
         assertEquals(2, requireNotNull(analysis.chart).heartRate.size)
@@ -276,23 +221,26 @@ class RunAnalysisTest {
     fun `dragging across the chart reads out the beat nearest the finger`() {
         val chart = requireNotNull(
             RunAnalysis.of(
-                run = aRun(durationSeconds = 120),
-                samples = samples(0 to 120, 60 to 130, 120 to 140)
+                run = aRun(durationSeconds = 10),
+                samples = samples(*(0L..10L).map { it to (120 + it.toInt()) }.toTypedArray())
             ).chart
         )
 
-        assertEquals(HeartRateReading(60L, 130), chart.readingAt(58L))
-        assertEquals(HeartRateReading(120L, 140), chart.readingAt(119L))
+        assertEquals(HeartRateReading(6L, 126), chart.readingAt(6L))
+        assertEquals(HeartRateReading(10L, 130), chart.readingAt(10L))
+        // Just off either end of the whole recording, which is where a finger dragged to the edge
+        // of the chart lands.
         assertEquals(HeartRateReading(0L, 120), chart.readingAt(-5L))
+        assertEquals(HeartRateReading(10L, 130), chart.readingAt(14L))
     }
 
     @Test
     fun `dragging into a stretch the strap missed reads out nothing`() {
-        val lost = (10L..70L step 5).map { it to 0 }
+        val recorded = ((0L..5L) + (75L..80L)).map { it to 122 }
         val chart = requireNotNull(
             RunAnalysis.of(
-                run = aRun(durationSeconds = 90),
-                samples = samples(0 to 120, 5 to 122, *lost.toTypedArray(), 75 to 130, 80 to 132)
+                run = aRun(durationSeconds = 80),
+                samples = samples(*recorded.toTypedArray())
             ).chart
         )
 
@@ -354,7 +302,6 @@ class RunAnalysisTest {
             runMode = runMode
         )
 
-        /** Readings as history recorded them before a row knew its own wall clock. */
         fun samples(vararg readings: Pair<Number, Int>): List<HrSample> =
             readings.mapIndexed { index, (elapsedSeconds, bpm) ->
                 HrSample(
@@ -365,12 +312,6 @@ class RunAnalysisTest {
                     smoothedBpm = bpm,
                     connectionState = if (bpm > 0) "CONNECTED" else "DISCONNECTED"
                 )
-            }
-
-        /** Readings as a run records them today: a row a second, each stamped with its own moment. */
-        fun secondBySecondSamples(vararg readings: Pair<Number, Int>): List<HrSample> =
-            samples(*readings).map {
-                it.copy(timestampMillis = 1_742_000_000_000 + it.elapsedSeconds * 1000)
             }
     }
 }
