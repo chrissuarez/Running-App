@@ -26,9 +26,11 @@ import com.example.runningapp.tallyZoneSeconds
  *  - **Walk breaks and the run/walk flag** are the Workout's, not the recording's, and nothing in
  *    the record says which Workout was being run. They keep the row's own values.
  *
- * Zone seconds are tallied against the profile passed in, which is the runner's current one rather
- * than whatever was pinned at START — the same choice the #112 re-tally makes for history, and made
- * the same way so a rescued Run bands like its neighbours.
+ * Zone seconds are tallied against the profile passed in rather than whatever was pinned at START,
+ * which is the same choice the #112 re-tally makes for history — and it must be passed the same
+ * profile that re-tally uses, so a rescued Run bands like the neighbours it lands among. See
+ * [SessionRepository.rescueInterruptedRuns] for which profile that is and what keeps the two passes
+ * from disagreeing.
  *
  * Returns null when there is nothing to rebuild from: a Run that recorded no second at all, which
  * is a START that died before its first reading. Such a row is left exactly as it is rather than
@@ -100,8 +102,18 @@ fun RunnerSession.finishedFromRecord(
  *
  * The head — [startTime] to the first fix — counts. The Run's clock starts at START, and the wait
  * for a first satellite fix is time the runner spent running rather than time they spent paused.
- * Everything after it is measured leg by leg, skipping the ones that span a break for the reason
- * [measureMovingTimeSeconds] gives: a pause is not time the Run was counting either.
+ * Everything after it is measured leg by leg, skipping only the legs that cross a *recorded* pause:
+ * the Run's clock stops for a pause, so those seconds were never its to count.
+ *
+ * A pause and only a pause, which is where this parts company with [measureTrackDistanceKm] and
+ * [measureMovingTimeSeconds] — they treat a long gap between fixes as a break too, and here that
+ * would be wrong twice over. A gap is not evidence of a stop: GPS loses the sky in a tunnel or a
+ * stairwell, and [SessionRepository.getTrackPointsForMap] drops every fix too vague to trust, so a
+ * patch of poor reception arrives here as a hole. Meanwhile a real pause needs no guessing at —
+ * every one of them, held down or automatic, is written onto the fix that resumed the Run
+ * ([TrackPoint.startsAfterPause]). Those two together are the difference between the questions:
+ * distance across a gap is ground nothing witnessed the runner cover, but time across a gap is time
+ * that passed with the Run still counting it.
  *
  * This is a floor rather than the Run's clock exactly — the seconds after the last fix are gone with
  * the process that would have written them. It exists so a Run whose samples stop early, or never
@@ -113,7 +125,7 @@ fun measureTrackRecordedSeconds(startTime: Long, points: List<TrackPoint>): Long
     var millis = (firstFix.timestampMillis - startTime).coerceAtLeast(0L)
     for (i in 1 until ordered.size) {
         val legMs = ordered[i].timestampMillis - ordered[i - 1].timestampMillis
-        if (legMs <= 0 || ordered[i].startsAfterPause || legMs > TRACK_BREAK_MS) continue
+        if (legMs <= 0 || ordered[i].startsAfterPause) continue
         millis += legMs
     }
     return millis / 1000

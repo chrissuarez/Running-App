@@ -1,7 +1,9 @@
 package com.example.runningapp.data
 
+import com.example.runningapp.HrProfile
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.UserSettings
+import com.example.runningapp.tallyZoneSeconds
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -130,6 +132,27 @@ class SessionRepositoryRescueTest {
 
         verify(sessionDao).updateSession(any())
         assertEquals(1, backupsRefreshed)
+    }
+
+    @Test
+    fun `a rescued run is banded on the maximum the rest of history is banded on`() = runTest {
+        // A runner who set 181 and later corrected to 195 has history on 181 — the correction is
+        // future-only (#112). A rescue banding this Run on 195 would land the one Run in history
+        // that nobody else's zones agree with.
+        whenever(settingsRepository.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 195, historyMaxHr = 181)))
+        whenever(sessionDao.getInterruptedSessionIds(processStartedAt)).thenReturn(listOf(67L))
+        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 60))
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+
+        repository.rescueInterruptedRuns(processStartedAt)
+
+        val saved = argumentCaptor<RunnerSession>()
+        verify(sessionDao).updateSession(saved.capture())
+        val onHistoryProfile = tallyZoneSeconds(List(60) { 130 }, HrProfile(maxHr = 181))
+        assertEquals(onHistoryProfile.zone2, saved.firstValue.zone2Seconds)
+        assertEquals(onHistoryProfile.zone3, saved.firstValue.zone3Seconds)
     }
 
     @Test
