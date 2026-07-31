@@ -23,6 +23,7 @@ import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.computeRunWalkIntervalAnalytics
 import com.example.runningapp.data.averagePace
 import com.example.runningapp.data.averagePaceText
@@ -38,6 +39,10 @@ fun SessionDetailScreen(
     session: RunnerSession?,
     samples: List<HrSample>,
     intervalStats: List<RunWalkIntervalStat>,
+    // The route, gated for accuracy the way the map gates it. Empty for a treadmill run, and until
+    // it has loaded — the splits table and the elevation line are simply absent until then, which is
+    // the same thing they show for a run that never recorded a route.
+    trackPoints: List<TrackPoint> = emptyList(),
     onDeleteSession: (Long) -> Unit,
     onBack: () -> Unit,
     // A run with no recorded GPS track — a treadmill run, or history from before #37 — has nothing to
@@ -100,18 +105,28 @@ fun SessionDetailScreen(
                     .padding(RunningUiTokens.PagePadding)
             ) {
                 // The page's order (#43): route map, summary, achievements, splits, chart, then the
-                // coaching cards the app already had. The first four of those arrive with their own
-                // tickets (#47, #49, #45) and are simply absent until then — this ticket lands the
-                // order and the chart.
-                SummaryStats(session)
+                // coaching cards the app already had. The map and the achievements card arrive with
+                // their own tickets (#47, #49) and are simply absent until then.
+                //
+                // Worked out once per set of recordings rather than on every recomposition: a long
+                // run is thousands of samples and thousands of fixes, and the runner's finger on the
+                // scrubber recomposes this screen many times a second.
+                val analysis = remember(session, samples, trackPoints) {
+                    RunAnalysis.of(session, samples, trackPoints)
+                }
+
+                SummaryStats(session, elevationGainMeters = analysis.elevationGainMeters)
                 Spacer(modifier = Modifier.height(24.dp))
+
+                if (analysis.splits.isNotEmpty()) {
+                    Text("Splits", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    SplitsTable(splits = analysis.splits)
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
 
                 Text("Heart Rate", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(8.dp))
-                // Worked out once per set of readings rather than on every recomposition: a long run
-                // is thousands of samples, and the runner's finger on the scrubber recomposes this
-                // screen many times a second.
-                val analysis = remember(session, samples) { RunAnalysis.of(session, samples) }
                 RunAnalysisChart(chart = analysis.chart)
                 Spacer(modifier = Modifier.height(24.dp))
 
@@ -157,7 +172,7 @@ fun SessionDetailScreen(
 }
 
 @Composable
-fun SummaryStats(session: RunnerSession) {
+fun SummaryStats(session: RunnerSession, elevationGainMeters: Double? = null) {
     val sdf = SimpleDateFormat("EEEE, MMM d, yyyy 'at' HH:mm", Locale.getDefault())
     val dateStr = sdf.format(Date(session.startTime))
 
@@ -215,6 +230,16 @@ fun SummaryStats(session: RunnerSession) {
                         label = if (session.movingTimeSeconds != null) "Avg Pace (moving)" else "Avg Pace",
                         value = paceLabel
                     )
+                }
+
+                // Only when the run recorded a height to climb (#45). A run whose track is
+                // backfilled breadcrumbs carries a position and nothing else, and a confident
+                // "0 m" would be a claim about the ground rather than about the recording.
+                if (elevationGainMeters != null) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        StatLarge(label = "Elevation Gain", value = "${elevationGainMeters.roundToInt()} m")
+                    }
                 }
             }
 
