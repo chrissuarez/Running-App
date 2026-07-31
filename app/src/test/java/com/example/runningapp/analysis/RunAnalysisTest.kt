@@ -77,18 +77,18 @@ class RunAnalysisTest {
 
     @Test
     fun `the line breaks where the strap dropped out rather than diving to zero`() {
-        // A minute of banked seconds with no beat in them: the strap was on the runner's chest and
-        // reporting nothing, which is not a heart rate of zero.
-        val lost = (10L..70L step 1).map { it to 0 }
+        // A minute of banked five-second rows with no beat in them: the strap was on the runner's
+        // chest and reporting nothing, which is not a heart rate of zero.
+        val lost = (10L..70L step 5).map { it to 0 }
         val analysis = RunAnalysis.of(
             run = aRun(durationSeconds = 90),
-            samples = samples(0 to 120, 5 to 122, *lost.toTypedArray(), 75 to 130, 90 to 132)
+            samples = samples(0 to 120, 5 to 122, *lost.toTypedArray(), 75 to 130, 80 to 132)
         )
 
         val chart = requireNotNull(analysis.chart)
         assertEquals(2, chart.heartRate.size)
         assertEquals(listOf(HeartRateReading(0L, 120), HeartRateReading(5L, 122)), chart.heartRate[0].readings)
-        assertEquals(listOf(HeartRateReading(75L, 130), HeartRateReading(90L, 132)), chart.heartRate[1].readings)
+        assertEquals(listOf(HeartRateReading(75L, 130), HeartRateReading(80L, 132)), chart.heartRate[1].readings)
     }
 
     @Test
@@ -159,6 +159,25 @@ class RunAnalysisTest {
         assertEquals(listOf(0L, 10L), chart.heartRate[0].readings.map { it.elapsedSeconds })
         assertEquals(listOf(21L, 31L), chart.heartRate[1].readings.map { it.elapsedSeconds })
         assertNull(chart.readingAt(16L))
+    }
+
+    @Test
+    fun `a recorded outage does not set the standard for how long a silence may be`() {
+        // Ninety seconds of recorded no-beat rows, then a separate thirty-second silence nothing was
+        // written in at all. If the outage is counted as one of this run's steps it makes a step of
+        // ninety look ordinary, and the unrecorded silence after it passes as ordinary too.
+        val lost = (11L..100L step 10).map { it to 0 }
+        val chart = requireNotNull(
+            RunAnalysis.of(
+                run = aRun(durationSeconds = 131),
+                samples = samples(0 to 120, 10 to 124, *lost.toTypedArray(), 101 to 128, 131 to 130)
+            ).chart
+        )
+
+        assertEquals(3, chart.heartRate.size)
+        assertEquals(listOf(0L, 10L), chart.heartRate[0].readings.map { it.elapsedSeconds })
+        assertEquals(listOf(101L), chart.heartRate[1].readings.map { it.elapsedSeconds })
+        assertEquals(listOf(131L), chart.heartRate[2].readings.map { it.elapsedSeconds })
     }
 
     @Test
@@ -269,11 +288,11 @@ class RunAnalysisTest {
 
     @Test
     fun `dragging into a stretch the strap missed reads out nothing`() {
-        val lost = (10L..70L step 1).map { it to 0 }
+        val lost = (10L..70L step 5).map { it to 0 }
         val chart = requireNotNull(
             RunAnalysis.of(
                 run = aRun(durationSeconds = 90),
-                samples = samples(0 to 120, 5 to 122, *lost.toTypedArray(), 75 to 130, 90 to 132)
+                samples = samples(0 to 120, 5 to 122, *lost.toTypedArray(), 75 to 130, 80 to 132)
             ).chart
         )
 

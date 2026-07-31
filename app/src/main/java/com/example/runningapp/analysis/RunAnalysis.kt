@@ -72,7 +72,7 @@ data class RunAnalysis(
 
             return RunChart(
                 heartRate = recorded.tracesOfWhatWasRecorded(
-                    readings.recordingBreakSeconds(bankedEverySecond)
+                    recorded.recordingBreakSeconds(bankedEverySecond)
                 ),
                 // The Run's own clock, not the last reading's: a Strap that gave up at minute ten of
                 // a half hour leaves a line that stops a third of the way across, which is the truth
@@ -128,10 +128,11 @@ data class RunAnalysis(
          * than [LONGEST_RECORDING_BREAK_SECONDS], so a Run too short to have a cadence still breaks
          * on a real silence.
          */
-        private fun List<HeartRateReading>.recordingBreakSeconds(bankedEverySecond: Boolean): Long {
+        private fun List<HrSample>.recordingBreakSeconds(bankedEverySecond: Boolean): Long {
             if (bankedEverySecond) return BANKED_EVERY_SECOND
-            val steps = zipWithNext { previous, reading -> reading.elapsedSeconds - previous.elapsedSeconds }
-            // One reading has no step to measure and no gap to break, so nothing can exceed this.
+            val steps = stepsNothingWentWrongIn()
+            // Nothing left to judge: either the Run has a single reading, or every step it does have
+            // is a measured outage and has already broken the line on its own account.
             if (steps.isEmpty()) return Long.MAX_VALUE
             // The lower of the two middle steps when there is an even number of them, because a
             // dropout is a step too. A recording of three readings around one dropout has only two
@@ -141,6 +142,29 @@ data class RunAnalysis(
             // duplicated row at the other end.
             val cadence = steps.sorted()[(steps.size - 1) / 2].coerceAtLeast(1L)
             return (cadence * 2).coerceAtMost(LONGEST_RECORDING_BREAK_SECONDS)
+        }
+
+        /**
+         * The steps between readings with nothing recorded between them but the recording going well.
+         *
+         * A step across a no-beat row is a measured outage, not a sign of how often this Run wrote
+         * things down. Counting one as cadence would let a known outage set the standard for normal
+         * and so let the next, unrecorded silence pass as normal too.
+         */
+        private fun List<HrSample>.stepsNothingWentWrongIn(): List<Long> {
+            val steps = mutableListOf<Long>()
+            var previous: HrSample? = null
+            var nothingMeasuredSince = false
+            forEach { sample ->
+                if (sample.rawBpm <= 0) {
+                    nothingMeasuredSince = true
+                    return@forEach
+                }
+                previous?.let { if (!nothingMeasuredSince) steps += sample.elapsedSeconds - it.elapsedSeconds }
+                previous = sample
+                nothingMeasuredSince = false
+            }
+            return steps
         }
 
         private fun floorToTen(bpm: Int): Int = bpm / 10 * 10
