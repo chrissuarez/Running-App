@@ -304,8 +304,19 @@ object DatabaseBackupManager {
      * from that needs the user, and is what #198 is about.
      */
     private fun freeNameSlots(context: Context) {
-        val newest = backupIdsNewestFirst(context, onlyComplete = true).firstOrNull()
-        val retired = retireAllExcept(context, keepId = newest)
+        // A query that didn't answer is not a folder that is empty, and the difference is the whole
+        // safety of this sweep. Read as empty, there would be no snapshot to keep, and the delete
+        // pass below — which asks MediaStore again, and may well get an answer that time — would
+        // take every copy the install has, at the one moment the replacement has not been written
+        // yet. Nothing is deleted until MediaStore has actually said what is there.
+        val complete = backupIdsNewestFirst(context, onlyComplete = true) ?: run {
+            Log.w(TAG, "Could not list existing backups; leaving them alone")
+            return
+        }
+        // A null keep is not the same absence: MediaStore answered and there is no *finished*
+        // snapshot to stand on. What's left is pending leftovers, which restore reads past anyway,
+        // so clearing them costs nothing restorable and frees the slots that matter.
+        val retired = retireAllExcept(context, keepId = complete.firstOrNull())
         if (retired > 0) Log.d(TAG, "Freed $retired backup name slot(s) before writing")
     }
 
@@ -315,9 +326,14 @@ object DatabaseBackupManager {
      * Entries this install doesn't own — a previous install's leftovers — can't be deleted under
      * scoped storage and aren't ours to remove; skip them individually so one refusal can't strand
      * the rest of the sweep.
+     *
+     * A query that doesn't answer retires nothing, for the reason spelled out in [freeNameSlots]:
+     * an unanswered listing must never read as "there is nothing here to keep".
      */
     private fun retireAllExcept(context: Context, keepId: Long?): Int {
-        val stale = backupIdsNewestFirst(context, onlyComplete = false).filter { it != keepId }
+        val stale = backupIdsNewestFirst(context, onlyComplete = false)
+            ?.filter { it != keepId }
+            ?: return 0
         var retired = 0
         stale.forEach { id ->
             val uri = ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
@@ -350,7 +366,7 @@ object DatabaseBackupManager {
      * this install wrote then it is the best copy there is.
      */
     private fun findNewestBackup(context: Context): Uri? {
-        val id = backupIdsNewestFirst(context, onlyComplete = true).firstOrNull() ?: return null
+        val id = backupIdsNewestFirst(context, onlyComplete = true)?.firstOrNull() ?: return null
         return ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, id)
     }
 
@@ -358,8 +374,13 @@ object DatabaseBackupManager {
      * Ids of every backup entry this install can see in the folder, newest first. Scoped storage
      * already limits the query to entries the app owns, which is what makes another install's
      * leftovers invisible here rather than something to filter out.
+     *
+     * **Null means MediaStore did not answer; an empty list means it answered "nothing here".** Two
+     * different facts, and collapsing them is how a sweep talks itself into deleting the last
+     * readable backup — see [freeNameSlots]. A null cursor is rare (the provider dying, or a
+     * transient failure under storage pressure) and is exactly the moment to do nothing.
      */
-    private fun backupIdsNewestFirst(context: Context, onlyComplete: Boolean): List<Long> {
+    private fun backupIdsNewestFirst(context: Context, onlyComplete: Boolean): List<Long>? {
         val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
         val projection = arrayOf(MediaStore.Downloads._ID)
         var selection =
@@ -370,10 +391,12 @@ object DatabaseBackupManager {
         // break ties on _ID — rows are handed out in insertion order, so the higher id is the later
         // write.
         val order = "${MediaStore.Downloads.DATE_MODIFIED} DESC, ${MediaStore.Downloads._ID} DESC"
+        val cursor = context.contentResolver.query(collection, projection, selection, args, order)
+            ?: return null
         val ids = mutableListOf<Long>()
-        context.contentResolver.query(collection, projection, selection, args, order)?.use { cursor ->
-            val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Downloads._ID)
-            while (cursor.moveToNext()) ids += cursor.getLong(idColumn)
+        cursor.use {
+            val idColumn = it.getColumnIndexOrThrow(MediaStore.Downloads._ID)
+            while (it.moveToNext()) ids += it.getLong(idColumn)
         }
         return ids
     }
