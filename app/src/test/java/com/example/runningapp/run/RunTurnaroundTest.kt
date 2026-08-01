@@ -182,6 +182,31 @@ class RunTurnaroundTest {
     }
 
     @Test
+    fun `halfway landing on the second the cool down begins says nothing`() {
+        // 20s warm-up, 2 × (10 run / 10 walk), 60s cool-down: 120 seconds door to door, so halfway
+        // is second 60 — the exact second the last Interval completes and the cool-down begins.
+        val backLoaded = PLANNED_WORKOUT.copy(
+            runDurationSeconds = 10,
+            walkDurationSeconds = 10,
+            totalRepeats = 2,
+            warmUpSeconds = 20,
+            coolDownSeconds = 60,
+        )
+        val driver = Driver()
+        driver.start(config(workout = backLoaded, runMode = RunMode.OUTDOOR))
+
+        val handover = driver.advance(60)
+        assertTrue(
+            "the cool-down begins on this second",
+            "Main workout complete, beginning cool down." in handover.spoken(),
+        )
+        // Halfway is decided before the Intervals move and said after them, so this is the one
+        // second where the two disagree. The runner is heading home either way.
+        assertEquals(emptyList<String>(), handover.held())
+        assertEquals(emptyList<String>(), driver.advance(60).held())
+    }
+
+    @Test
     fun `nothing is taken back when nothing is waiting`() {
         val driver = Driver()
         driver.start(outdoor)
