@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -1359,6 +1360,24 @@ class SessionRepositoryTest {
         // Does not throw: the launch scope has no handler behind it.
         repositoryWithRecords.seedRecordsFromHistory()
 
+        verify(mockSettingsRepo, never()).setHistoryRecordsSeeded()
+    }
+
+    @Test
+    fun `a run deleted while history is being scored leaves the pass owed again`() = runTest {
+        val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory()
+        whenever(mockAchievementDao.getAchievementsForSessions(any())).thenReturn(emptyList())
+        // The delete lands while the pass is measuring, which is the whole window this guards.
+        whenever(mockDao.getAllSessions()).then {
+            runBlocking { repositoryWithRecords.deleteSession(2L) }
+            listOf(aTreadmillRun(id = 1, seconds = 600))
+        }
+
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        // The book is written, but not marked: the delete read history as unseeded so it lifted no
+        // mark of its own, and marking here would stand over a mend that can still be cut short.
+        verify(mockAchievementDao).insertAchievements(any())
         verify(mockSettingsRepo, never()).setHistoryRecordsSeeded()
     }
 
