@@ -59,6 +59,14 @@ A robust Android application designed to track heart rate (HR) during runs and p
     - All sessions and high-resolution HR samples are saved locally to a Room database.
     - View past workout summaries including Avg BPM, Max BPM, and **Time in Zones breakdown**.
     - **Share a run** as a GPX file (track, timestamps, per-point heart rate) from its detail page.
+    - **Personal records**: Gold/silver/bronze at seven records — fastest 1 km, mile, 5 km, 10 km and
+      half marathon, plus longest run and longest time. The distances are contested as a *best
+      effort*: the quickest continuous stretch anywhere inside the run, walk breaks included. A run's
+      detail page shows the medals it took, and nothing when it took none. Treadmill runs and runs
+      with no GPS track contest the longest time only, since their distance was never measured
+      against ground. Every run you have already recorded is scored once in the background at
+      launch, so the book starts out complete; deleting a medal-holder promotes the next-best
+      efforts behind it.
     - **Full archive**: Settings → Backup writes one ZIP — a GPX per run, an `archive.json` of
       everything GPX can't carry, and a snapshot of the database — to a folder you pick once
       (choose a Drive-synced one for offsite backup). Automatic monthly, keeping the last 3, plus a
