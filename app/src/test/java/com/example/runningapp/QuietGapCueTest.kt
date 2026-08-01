@@ -17,6 +17,12 @@ class QuietGapCueTest {
     private val ceiling = QuietGapCue.CEILING_MILLIS
     private val cue = QuietGapCue()
     private val spoken = mutableListOf<String>()
+    private var sequence = 0L
+
+    /** One report from the cue player, stamped in order as [AudioCueManager] stamps them. */
+    private fun speechChanged(speaking: Boolean, nowMillis: Long) {
+        cue.speechChanged(speaking, nowMillis, ++sequence)
+    }
 
     /** One poll, as the service makes it: try to release, and keep whatever was said. */
     private fun poll(nowMillis: Long): Boolean = cue.releaseTo(nowMillis, spoken::add)
@@ -31,7 +37,7 @@ class QuietGapCueTest {
 
     @Test
     fun `a cue held while the app is talking waits`() {
-        cue.speechChanged(speaking = true, nowMillis = T)
+        speechChanged(speaking = true, nowMillis = T)
         cue.hold(TEXT, T)
 
         assertFalse(poll(T))
@@ -41,9 +47,9 @@ class QuietGapCueTest {
 
     @Test
     fun `the wait is not over the instant the talking stops`() {
-        cue.speechChanged(speaking = true, nowMillis = T)
+        speechChanged(speaking = true, nowMillis = T)
         cue.hold(TEXT, T)
-        cue.speechChanged(speaking = false, nowMillis = T + 2_000)
+        speechChanged(speaking = false, nowMillis = T + 2_000)
 
         assertFalse(poll(T + 2_000))
         assertFalse(poll(T + 2_000 + gap - 1))
@@ -55,14 +61,14 @@ class QuietGapCueTest {
     fun `a split announcement counts as the app talking`() {
         cue.hold(TEXT, T)
         // A Split reaches the speaker without passing through the Run, and the wait still sees it.
-        cue.speechChanged(speaking = true, nowMillis = T + 500)
+        speechChanged(speaking = true, nowMillis = T + 500)
 
         assertFalse(poll(T + 1_000))
     }
 
     @Test
     fun `a run that never falls quiet gets its cue at the ceiling`() {
-        cue.speechChanged(speaking = true, nowMillis = T)
+        speechChanged(speaking = true, nowMillis = T)
         cue.hold(TEXT, T)
 
         assertFalse(poll(T + ceiling - 1))
@@ -108,6 +114,20 @@ class QuietGapCueTest {
 
         assertEquals(listOf(TEXT), spoken)
         assertFalse(poll(T + ceiling * 2))
+        assertEquals(listOf(TEXT), spoken)
+    }
+
+    @Test
+    fun `a report that arrives out of order is not believed`() {
+        // The cue player stamped "started" first and "stopped" second; they reach here the other
+        // way round, which is what two threads reporting from outside its lock can do. Believing
+        // the stale "started" would leave the app talking forever as far as this is concerned, and
+        // every cue for the rest of the Run would wait out its full ceiling.
+        cue.speechChanged(speaking = false, nowMillis = T, sequence = 2)
+        cue.speechChanged(speaking = true, nowMillis = T, sequence = 1)
+        cue.hold(TEXT, T)
+
+        assertTrue(poll(T + gap))
         assertEquals(listOf(TEXT), spoken)
     }
 

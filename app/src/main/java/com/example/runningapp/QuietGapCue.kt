@@ -39,10 +39,20 @@ class QuietGapCue(
      */
     private var speaking = false
     private var lastHeardMillis: Long? = null
+    private var lastSequence = 0L
 
-    /** Speech started or finished. Anything that reaches the speaker reports here. */
+    /**
+     * Speech started or finished. Anything that reaches the speaker reports here.
+     *
+     * [sequence] is the order the reports actually happened in, stamped by [AudioCueManager]. They
+     * arrive from two threads and are sent from outside that class's lock, so an older one can
+     * overtake a newer — and a stale "started" landing last would leave this waiting out every
+     * ceiling for the rest of the Run. An overtaken report is dropped rather than believed.
+     */
     @Synchronized
-    fun speechChanged(speaking: Boolean, nowMillis: Long) {
+    fun speechChanged(speaking: Boolean, nowMillis: Long, sequence: Long) {
+        if (sequence <= lastSequence) return
+        lastSequence = sequence
         this.speaking = speaking
         lastHeardMillis = nowMillis
     }

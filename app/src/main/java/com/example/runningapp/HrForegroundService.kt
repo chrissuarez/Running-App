@@ -801,8 +801,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 audioManager,
                 serviceScope,
                 TAG,
-                onCueActivity = { speaking ->
-                    turnaroundCue.speechChanged(speaking, System.currentTimeMillis())
+                onCueActivity = { speaking, sequence ->
+                    turnaroundCue.speechChanged(speaking, System.currentTimeMillis(), sequence)
                 },
             )
         }
