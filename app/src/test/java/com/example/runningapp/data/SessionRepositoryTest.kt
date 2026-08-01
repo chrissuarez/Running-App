@@ -14,6 +14,7 @@ import com.example.runningapp.analysis.RecordType
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -1417,6 +1418,42 @@ class SessionRepositoryTest {
 
         gate.complete(Unit)
         deleting.join()
+    }
+
+    @Test
+    fun `a delete cancelled mid-mend does not hold the mark down for good`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockAchievementDao.getAchievementsForSessions(any())).thenReturn(emptyList())
+        whenever(mockDao.getAllSessions()).thenReturn(listOf(aTreadmillRun(id = 1, seconds = 600)))
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(historyRecordsSeeded = false)))
+        var firstTransaction = true
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            settingsRepository = mockSettingsRepo,
+            inTransaction = { block ->
+                if (firstTransaction) {
+                    firstTransaction = false
+                    gate.await()
+                }
+                block()
+            }
+        )
+
+        // The runner leaves the history screen mid-delete and the view model's scope goes with them.
+        val deleting = launch { repositoryWithRecords.deleteSession(2L) }
+        runCurrent()
+        deleting.cancelAndJoin()
+
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        // The count came down on the way out, so the pass that follows can still call the book
+        // whole. Left up, no delete and no seeding pass in this process could ever mark it again,
+        // and the install would reseed at every launch for as long as it lived.
+        verify(mockSettingsRepo).setHistoryRecordsSeeded()
     }
 
     @Test
