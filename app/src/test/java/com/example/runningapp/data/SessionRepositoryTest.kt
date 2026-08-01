@@ -1319,6 +1319,138 @@ class SessionRepositoryTest {
         verify(mockAchievementDao, never()).deleteAchievementsOfTypes(any())
     }
 
+    // --- Seeding the record book from history, and repairing it after a delete (#50) ------------
+
+    @Test
+    fun `seeding scores the whole history and banks the book`() = runTest {
+        whenever(mockDao.getAllSessions()).thenReturn(
+            listOf(aTreadmillRun(id = 1, seconds = 600), aTreadmillRun(id = 2, seconds = 1_800), aTreadmillRun(id = 3, seconds = 1_200))
+        )
+        val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory()
+
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(
+            listOf(2L to Medal.GOLD, 3L to Medal.SILVER, 1L to Medal.BRONZE),
+            book.firstValue.map { it.sessionId to it.medal },
+        )
+        // Marked only after the book is written, so an interrupted pass is owed again.
+        verify(mockSettingsRepo).setHistoryRecordsSeeded()
+    }
+
+    @Test
+    fun `history already seeded is not measured again`() = runTest {
+        val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory(seeded = true)
+
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        verify(mockDao, never()).getAllSessions()
+        verify(mockAchievementDao, never()).insertAchievements(any())
+    }
+
+    @Test
+    fun `a seeding pass that cannot write the book is owed again at the next launch`() = runTest {
+        whenever(mockDao.getAllSessions()).thenReturn(listOf(aTreadmillRun(id = 1, seconds = 600)))
+        val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory()
+        whenever(mockAchievementDao.insertAchievements(any())).thenThrow(RuntimeException("disk full"))
+
+        // Does not throw: the launch scope has no handler behind it.
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        verify(mockSettingsRepo, never()).setHistoryRecordsSeeded()
+    }
+
+    @Test
+    fun `a run scored while history was being measured keeps its place in the book`() = runTest {
+        whenever(mockDao.getAllSessions()).thenReturn(listOf(aTreadmillRun(id = 1, seconds = 600)))
+        val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory()
+        // Run 9 finished and scored itself after the pass read history: it is not in the list above,
+        // and its row would be wiped by the rewrite if the book did not carry it over.
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(
+            listOf(Achievement(sessionId = 9, type = RecordType.LONGEST_DURATION, medal = Medal.GOLD, value = 3_600.0))
+        )
+
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(
+            listOf(9L to Medal.GOLD, 1L to Medal.SILVER),
+            book.firstValue.map { it.sessionId to it.medal },
+        )
+    }
+
+    @Test
+    fun `deleting a medal holder promotes the next best effort`() = runTest {
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(
+            listOf(Achievement(sessionId = 2, type = RecordType.LONGEST_DURATION, medal = Medal.GOLD, value = 1_800.0))
+        )
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        // What history is once the deleted run is gone.
+        whenever(mockDao.getAllSessions()).thenReturn(
+            listOf(aTreadmillRun(id = 1, seconds = 600), aTreadmillRun(id = 3, seconds = 1_200))
+        )
+        var refreshCount = 0
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithRecords.deleteSession(2L)
+
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockDao).deleteSessionById(2L)
+        // Only the record the deleted run held is rebuilt, and the two runs left move up a place.
+        verify(mockAchievementDao).deleteAchievementsOfTypes(listOf(RecordType.LONGEST_DURATION))
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(
+            listOf(3L to Medal.GOLD, 1L to Medal.SILVER),
+            book.firstValue.map { it.sessionId to it.medal },
+        )
+        assertEquals(1, refreshCount)
+    }
+
+    @Test
+    fun `deleting a run that won nothing leaves the book alone`() = runTest {
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L, 5L))).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao
+        )
+
+        repositoryWithRecords.deleteSessions(listOf(2L, 5L))
+
+        verify(mockDao).deleteSessionsByIds(listOf(2L, 5L))
+        // Not even measured: proving nothing changed must not cost a walk of the whole history.
+        verify(mockDao, never()).getAllSessions()
+        verify(mockAchievementDao, never()).deleteAchievementsOfTypes(any())
+        verify(mockAchievementDao, never()).insertAchievements(any())
+    }
+
+    /** A repository whose history has never been scored, and the book it writes to. */
+    private suspend fun repositoryWithUnseededHistory(
+        seeded: Boolean = false
+    ): Pair<SessionRepository, AchievementDao> {
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(historyRecordsSeeded = seeded)))
+        return SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            settingsRepository = mockSettingsRepo
+        ) to mockAchievementDao
+    }
+
+    /** A finished run with a duration and nothing measured against ground — see [bestEffortsOf]. */
+    private fun aTreadmillRun(id: Long, seconds: Long) =
+        session(id = id, endTime = 1_000L).copy(runMode = "treadmill", durationSeconds = seconds)
+
     private fun fiveKFix(latitude: Double, timestampMillis: Long) = TrackPoint(
         sessionId = 7L,
         latitude = latitude,

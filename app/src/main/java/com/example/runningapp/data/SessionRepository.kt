@@ -17,6 +17,10 @@ import com.example.runningapp.HrProfile
 import com.example.runningapp.effectiveMaxHr
 import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
+import com.example.runningapp.analysis.BestEffort
+import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.analysis.RunEfforts
+import com.example.runningapp.analysis.recordBookOf
 import com.example.runningapp.analysis.standingsAfter
 import com.example.runningapp.analysis.bestEffortsOf
 import com.example.runningapp.recording.SessionRecorder
@@ -142,7 +146,9 @@ class SessionRepository(
     private val inTransaction: suspend (suspend () -> Unit) -> Unit = { it() }
 ) {
     suspend fun deleteSession(sessionId: Long) {
+        val losing = recordsHeldBy(listOf(sessionId))
         sessionDao.deleteSessionById(sessionId)
+        repairRecordBook(losing)
         refreshHistoryBackup?.invoke()
     }
 
@@ -517,6 +523,117 @@ class SessionRepository(
         return earned
     }
 
+    /**
+     * Puts every Run already in history to the record book, once (#50).
+     *
+     * #49 scores a Run as it finishes, which leaves the history recorded before it shipped — years
+     * of it — holding medals nobody ever awarded. This is the pass that awards them: every stored
+     * track measured, the whole book built from all of it at once, so old Runs show the
+     * achievements they earned at the time and the book means "all time" rather than "since the
+     * update".
+     *
+     * Once, because it is minutes of GPS arithmetic over a long history: the mark is stored only
+     * after the rebuilt book has been committed, so a pass killed part-way through — the process
+     * reclaimed, the phone off — simply runs again at the next launch rather than leaving half a
+     * book behind. Nothing is written until the rebuild is complete, so there is no half state to
+     * resume from and nothing to clean up.
+     *
+     * Deliberately *not* gated on the book being empty: a fresh install scores its first Run the
+     * moment it finishes, and a book with one Run in it would look seeded while the rest of a
+     * restored history was still unread. The mark travels with the history it describes — a restored
+     * archive clears it (see [com.example.runningapp.SettingsRepository.restoreArchivedSettings]),
+     * and a Clear-storage wipe takes it with the settings, which is the safe direction: an
+     * unnecessary reseed costs a few minutes of background work and produces the same book.
+     */
+    suspend fun seedRecordsFromHistory() {
+        if (achievementDao == null) return
+        val settings = settingsRepository ?: return
+        if (settings.userSettingsFlow.first().historyRecordsSeeded) return
+
+        try {
+            val book = rebuildRecords(RecordType.entries)
+            // Only now: until this lands, the pass is still owed.
+            settings.setHistoryRecordsSeeded()
+            Log.d("Records", "Seeded the record book from history: ${book.size} medal(s) awarded")
+        } catch (e: Exception) {
+            // Caught rather than left to the launch scope, which has no handler behind it: a book
+            // that cannot be built is a card the runner does not see yet, not a reason to take the
+            // app down on the way to the first screen. Unmarked, so the next launch tries again.
+            Log.w("Records", "Could not seed the record book from history; leaving it for next launch", e)
+        }
+    }
+
+    /** Which records the Runs [sessionIds] are about to lose stand in — read before they go. */
+    private suspend fun recordsHeldBy(sessionIds: List<Long>): List<RecordType> =
+        achievementDao?.getAchievementsForSessions(sessionIds)?.map { it.type }?.distinct().orEmpty()
+
+    /**
+     * Rebuilds the records a deleted Run held, so the places below it move up (#50).
+     *
+     * Only the records it actually held: deleting a Run that never won anything changes nothing
+     * about the book, and must not cost a re-measure of the whole history to prove it.
+     *
+     * Its own attempt, because the Run is already deleted by the time this runs. A book that cannot
+     * be rewritten leaves a record two deep until the next Run contests it, which is a wrong number
+     * on a card; failing here would instead leave the runner staring at a delete that appeared not
+     * to work, with the run gone anyway.
+     */
+    private suspend fun repairRecordBook(types: List<RecordType>) {
+        if (types.isEmpty()) return
+        try {
+            rebuildRecords(types)
+        } catch (e: Exception) {
+            Log.w("Records", "Deleted run(s) held ${types.size} record(s) the book could not be rebuilt for", e)
+        }
+    }
+
+    /**
+     * Measures the whole history and writes [types] of the record book from it, returning what it
+     * wrote (#50).
+     *
+     * The measuring is done outside the transaction and the writing inside it, which is the split
+     * that matters: reading and measuring every stored track is minutes of work, and holding the
+     * database's write lock for it would stall the per-second inserts of a Run being recorded.
+     * Everything that *changes* the book is one commit, so the book is never half rewritten.
+     *
+     * A Run that finished while the measuring was going on has already scored itself, and its rows
+     * would be wiped by the rewrite — so the standing rows of any Run this pass did not see are
+     * carried in as claims of their own. Their stored value is the effort they were awarded for, so
+     * they can be ranked beside the freshly measured ones without measuring them again.
+     */
+    private suspend fun rebuildRecords(types: List<RecordType>): List<Achievement> {
+        val dao = achievementDao ?: return emptyList()
+        // Every finished Run in history: one at a time, because a track is thousands of points and
+        // the whole history's worth of them at once is not something to hold in memory.
+        val measured = sessionDao.getAllSessions().map { session ->
+            RunEfforts(session.id, effortsAt(session, types))
+        }
+        val measuredIds = measured.map { it.sessionId }.toSet()
+
+        var written = emptyList<Achievement>()
+        inTransaction {
+            val unseen = dao.getAllAchievements()
+                .filter { it.type in types && it.sessionId !in measuredIds }
+                .groupBy { it.sessionId }
+                .map { (sessionId, rows) ->
+                    RunEfforts(sessionId, rows.map { BestEffort(it.type, it.value) })
+                }
+            written = recordBookOf(measured + unseen)
+            dao.deleteAchievementsOfTypes(types)
+            dao.insertAchievements(written)
+        }
+        return written
+    }
+
+    /** What one Run is worth at [types], measuring its track only if one of them needs it. */
+    private suspend fun effortsAt(session: RunnerSession, types: List<RecordType>): List<BestEffort> {
+        // The longest time is asked of the Run's own clock; every other record is measured against
+        // ground, so it needs the track read and accuracy-gated first.
+        val overGround = types.any { it != RecordType.LONGEST_DURATION }
+        val track = if (overGround) getTrackPointsForMap(session.id) else emptyList()
+        return bestEffortsOf(session, track).filter { it.type in types }
+    }
+
     /** One-shot read of a run's heart-rate samples, ordered by elapsed second. */
     suspend fun getHrSamples(sessionId: Long): List<HrSample> =
         sampleDao?.getSamplesForSessionOnce(sessionId) ?: emptyList()
@@ -643,7 +760,9 @@ class SessionRepository(
 
     suspend fun deleteSessions(sessionIds: List<Long>) {
         if (sessionIds.isEmpty()) return
+        val losing = recordsHeldBy(sessionIds)
         sessionDao.deleteSessionsByIds(sessionIds)
+        repairRecordBook(losing)
         refreshHistoryBackup?.invoke()
     }
 
