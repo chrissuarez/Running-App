@@ -649,7 +649,7 @@ class SessionRepository(
                 mine = deletesStarted.incrementAndGet()
                 deletesActive.incrementAndGet()
                 wasSeeded = settings?.userSettingsFlow?.first()?.historyRecordsSeeded == true
-                if (wasSeeded) settings.clearHistoryRecordsSeeded()
+                if (wasSeeded) settings?.clearHistoryRecordsSeeded()
             }
         }
         try {
@@ -686,7 +686,7 @@ class SessionRepository(
                 recordBookMark.withLock {
                     deletesActive.decrementAndGet()
                     val onlyDelete = deletesStarted.get() == mine && deletesActive.get() == 0
-                    if (wasSeeded && repaired && onlyDelete) settings.setHistoryRecordsSeeded()
+                    if (wasSeeded && repaired && onlyDelete) settings?.setHistoryRecordsSeeded()
                 }
             }
         }
