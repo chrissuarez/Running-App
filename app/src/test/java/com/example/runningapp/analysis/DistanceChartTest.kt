@@ -149,8 +149,11 @@ class DistanceChartTest {
             script { running(3.0, seconds = 400, climbMeters = 40.0, barometer = true) }
         )!!
 
-        val heights = chart.traces.flatMap { it.points }.mapNotNull { it.elevationMeters }
+        val heights = chart.traces.flatMap { it.points }.mapNotNull { it.metersAboveLowestPoint }
         assertEquals(40.0, heights.last() - heights.first(), 4.0)
+        // Stated against the run's own low point, never as an altitude: the barometer's zero is the
+        // standard atmosphere's sea level, which is about sixty metres out from the real one.
+        assertEquals(0.0, heights.min(), 0.001)
         assertTrue(chart.elevationBand!!.floorMeters <= heights.min())
         assertTrue(chart.elevationBand!!.ceilingMeters >= heights.max())
     }
@@ -159,7 +162,7 @@ class DistanceChartTest {
     fun `a run that recorded no height has no silhouette`() {
         val chart = chartOf(aRun(), script { running(3.0, seconds = 400) })!!
 
-        assertTrue(chart.traces.flatMap { it.points }.all { it.elevationMeters == null })
+        assertTrue(chart.traces.flatMap { it.points }.all { it.metersAboveLowestPoint == null })
         assertNull(chart.elevationBand)
     }
 
@@ -256,7 +259,7 @@ class DistanceChartTest {
         assertEquals(600.0, reading.distanceMeters, 5.0)
         assertEquals(1000.0 / 3.0 / 60.0, reading.paceMinPerKm!!, 0.1)
         assertEquals(140, reading.bpm)
-        assertNotNull(reading.elevationMeters)
+        assertNotNull(reading.metersAboveLowestPoint)
     }
 
     @Test
@@ -324,6 +327,15 @@ class DistanceChartTest {
         val ticks = kilometreTicks(2_020.0)
 
         assertEquals(listOf(0.0, 500.0, 1_000.0, 1_500.0, 2_020.0), ticks)
+    }
+
+    @Test
+    fun `the finish gives the last round tick a label's width of room`() {
+        // Measured on the phone, not guessed: 4.53 km left a tick at 4 km, and the two labels
+        // printed as "4.00 km4.53 km" — touching. A label is most of a step wide on its own.
+        assertEquals(listOf(0.0, 1_000.0, 2_000.0, 3_000.0, 4_530.0), kilometreTicks(4_530.0))
+        // Far enough apart, and both are kept.
+        assertEquals(listOf(0.0, 1_000.0, 2_000.0, 3_000.0, 4_000.0, 4_900.0), kilometreTicks(4_900.0))
     }
 
     @Test

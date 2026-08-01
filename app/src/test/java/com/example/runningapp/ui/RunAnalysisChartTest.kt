@@ -18,10 +18,11 @@ class RunAnalysisChartTest {
     @Test
     fun `the readout says how far in, then pace, heart rate and height`() {
         val readout = readoutFor(
-            DistancePoint(distanceMeters = 1_240.0, paceMinPerKm = 5.7, elevationMeters = 61.4, bpm = 148)
+            DistancePoint(distanceMeters = 1_240.0, paceMinPerKm = 5.7, metersAboveLowestPoint = 18.4, bpm = 148)
         )
 
-        assertEquals("1.24 km · 5:42 /km · 148 bpm · 61 m", readout)
+        // A rise above the run's own low point, not an altitude — the app does not know one.
+        assertEquals("1.24 km · 5:42 /km · 148 bpm · +18 m above the run's low point", readout)
     }
 
     @Test
@@ -29,7 +30,7 @@ class RunAnalysisChartTest {
         // A strapless run over ground with no barometer, at a point banked as rest: the distance is
         // all there is to say, and saying "0 bpm" or "0 m" would be inventing three of them.
         val readout = readoutFor(
-            DistancePoint(distanceMeters = 300.0, paceMinPerKm = null, elevationMeters = null, bpm = null)
+            DistancePoint(distanceMeters = 300.0, paceMinPerKm = null, metersAboveLowestPoint = null, bpm = null)
         )
 
         assertEquals("300 m", readout)
@@ -73,7 +74,7 @@ class RunAnalysisChartTest {
     private fun aPoint(distanceMeters: Double, bpm: Int?) = DistancePoint(
         distanceMeters = distanceMeters,
         paceMinPerKm = null,
-        elevationMeters = null,
+        metersAboveLowestPoint = null,
         bpm = bpm,
     )
 }

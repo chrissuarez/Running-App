@@ -326,11 +326,11 @@ fun RunCombinedChart(chart: DistanceChart, modifier: Modifier = Modifier) {
             // -- The ground, first, so both lines are drawn over it -----------------------------
             if (ground != null) {
                 chart.traces.forEach { trace ->
-                    val heights = trace.points.filter { it.elevationMeters != null }
+                    val heights = trace.points.filter { it.metersAboveLowestPoint != null }
                     if (heights.size < 2) return@forEach
                     val silhouette = Path()
                     silhouette.moveTo(xOf(heights.first().distanceMeters), plotBottom)
-                    heights.forEach { silhouette.lineTo(xOf(it.distanceMeters), yOfHeight(it.elevationMeters!!)) }
+                    heights.forEach { silhouette.lineTo(xOf(it.distanceMeters), yOfHeight(it.metersAboveLowestPoint!!)) }
                     silhouette.lineTo(xOf(heights.last().distanceMeters), plotBottom)
                     silhouette.close()
                     drawPath(path = silhouette, color = silhouetteColor)
@@ -443,7 +443,9 @@ internal fun readoutFor(point: DistancePoint): String = buildList {
     add(formatDistance(point.distanceMeters))
     point.paceMinPerKm?.let { add("${formatMinutesPerKm(it)} /km") }
     point.bpm?.let { add("$it bpm") }
-    point.elevationMeters?.let { add("${it.roundToInt()} m") }
+    // "+18 m" rather than "18 m": the number is a rise above the run's own lowest point, not an
+    // altitude, and the sign is what says so.
+    point.metersAboveLowestPoint?.let { add("+${it.roundToInt()} m above the run's low point") }
 }.joinToString(" · ")
 
 /**
@@ -562,7 +564,7 @@ private fun PreviewRunCombinedChart() {
         DistancePoint(
             distanceMeters = meters.toDouble(),
             paceMinPerKm = 5.4 + up * 1.4,
-            elevationMeters = 40.0 + up * 25.0,
+            metersAboveLowestPoint = 25.0 + up * 25.0,
             bpm = (128 + up * 26).roundToInt(),
         )
     }
