@@ -69,6 +69,29 @@ One completed kilometre of a Run, and the pace it was covered at. Measured by
 distance, unlike an Interval, which is measured by time.
 _Avoid_: lap, mile
 
+**Best Effort**:
+The fastest continuous stretch of a Run covering one of the record distances —
+1 km, a mile, 5 km, 10 km, a half marathon — measured on the clock, so a walk
+break inside it counts against it. Found anywhere in the Run, not at the Split
+boundaries, so a fast middle section counts.
+_Avoid_: PR, personal best (a Best Effort is only a claim until it places)
+
+**Record**:
+One of the seven things a Run can be the best at: the five distances, and the
+longest Run by ground covered and by the clock. The book keeps the all-time top
+three at each.
+_Avoid_: PB, milestone, trophy
+
+**Achievement**:
+A Medal one Run holds at one Record — the only part of a Run's page that is
+banked rather than worked out on read, because it is a fact about a Run relative
+to every other one.
+_Avoid_: award, badge
+
+**Medal**:
+Where an effort placed: gold, silver or bronze. There is no fourth place.
+_Avoid_: rank, position
+
 **Prescription**:
 What the AI coach writes after a Run: the intervals and target zone for the next
 Workout of one Run Type, and nothing else. The coach holds one per Run Type —
