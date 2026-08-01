@@ -131,7 +131,7 @@ fun SessionDetailScreen(
                 val combined = analysis.distanceChart
                 if (combined != null) {
                     Text(
-                        "Pace, Heart Rate & Elevation",
+                        headingFor(combined),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )

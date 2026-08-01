@@ -306,6 +306,29 @@ class DistanceChartTest {
         points.forEach { assertEquals(1000.0 / 2.0 / 60.0, it.paceMinPerKm!!, 0.05) }
     }
 
+    @Test
+    fun `a window takes both legs it straddles, not only the one behind it`() {
+        // Legs longer than half the window — a fix every hundred-and-twenty metres — are the case
+        // where the window's two edges could disagree: each edge cuts through a leg rather than
+        // falling between two. Both are folded in proportionally, so a change of speed reads at the
+        // fix it happened at rather than one fix later.
+        //
+        // Twelve seconds for a leg and then nineteen, over the same ground: the pace at the junction
+        // has to sit between the two, not on the one behind it.
+        val chart = chartOf(
+            aRun(),
+            script {
+                sparse(meters = 120.0, seconds = 12, fixes = 5)
+                sparse(meters = 120.0, seconds = 19, fixes = 5)
+            }
+        )!!
+
+        val junction = chart.traces.single().points.single { it.distanceMeters in 599.0..601.0 }
+        // 100 m of the leg behind at 12 s per 120 m and 100 m of the leg ahead at 19 s per 120 m.
+        val expected = ((12_000.0 + 19_000.0) * (100.0 / 120.0) / 60_000.0) / 0.2
+        assertEquals(expected, junction.paceMinPerKm!!, 0.02)
+    }
+
     // -- The distance axis -----------------------------------------------------------------------
 
     @Test

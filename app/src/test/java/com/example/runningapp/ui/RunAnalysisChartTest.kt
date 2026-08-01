@@ -1,6 +1,9 @@
 package com.example.runningapp.ui
 
+import com.example.runningapp.analysis.DistanceChart
 import com.example.runningapp.analysis.DistancePoint
+import com.example.runningapp.analysis.DistanceTrace
+import com.example.runningapp.analysis.ElevationBand
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -70,6 +73,42 @@ class RunAnalysisChartTest {
 
         assertEquals(emptyList<Any>(), points.stretchesOf { it.bpm })
     }
+
+    // -- What the heading promises ---------------------------------------------------------------
+
+    @Test
+    fun `the heading names all three lines when the run recorded all three`() {
+        assertEquals("Pace, Heart Rate & Elevation", headingFor(aChart(pace = 5.5, bpm = 148, height = 12.0)))
+    }
+
+    @Test
+    fun `the heading leaves out a line the run did not record`() {
+        // A strapless outdoor run — first-class since #110 — and the same run over ground with no
+        // height recorded. Neither draws the line it is missing, so neither heading may promise it.
+        assertEquals("Pace & Elevation", headingFor(aChart(pace = 5.5, bpm = null, height = 12.0)))
+        assertEquals("Pace & Heart Rate", headingFor(aChart(pace = 5.5, bpm = 148, height = null)))
+        assertEquals("Pace", headingFor(aChart(pace = 5.5, bpm = null, height = null)))
+    }
+
+    @Test
+    fun `a chart with nothing measured over its ground says only how far`() {
+        assertEquals("Distance", headingFor(aChart(pace = null, bpm = null, height = null)))
+    }
+
+    /** A one-stretch chart that recorded exactly the series handed in. */
+    private fun aChart(pace: Double?, bpm: Int?, height: Double?) = DistanceChart(
+        traces = listOf(
+            DistanceTrace(
+                (0..2).map { DistancePoint(it * 100.0, paceMinPerKm = pace, metersAboveLowestPoint = height, bpm = bpm) }
+            )
+        ),
+        distanceMetersSpan = 200.0,
+        bpmFloor = 100,
+        bpmCeiling = 160,
+        paceFastestMinPerKm = 5.0,
+        paceSlowestMinPerKm = 6.0,
+        elevationBand = height?.let { ElevationBand(floorMeters = 0.0, ceilingMeters = 20.0) },
+    )
 
     private fun aPoint(distanceMeters: Double, bpm: Int?) = DistancePoint(
         distanceMeters = distanceMeters,

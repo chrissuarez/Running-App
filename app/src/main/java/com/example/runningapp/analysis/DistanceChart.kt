@@ -102,6 +102,17 @@ data class DistanceChart(
      * Unlike the heart-rate chart there is no hole to fall into. A break occupies no distance, so
      * every point of the axis between zero and the Run's own total belongs to some stretch of it.
      */
+    /**
+     * Which of the three lines this Run actually recorded — what the page is allowed to name.
+     *
+     * An outdoor Run without a Strap is a first-class Run (#110) and draws no red line; a Run whose
+     * every second was banked as rest has no pace. Naming a line that is not on the chart, in the
+     * heading or in the key, sends the runner looking for it.
+     */
+    val hasPace: Boolean get() = traces.any { trace -> trace.points.any { it.paceMinPerKm != null } }
+    val hasHeartRate: Boolean get() = traces.any { trace -> trace.points.any { it.bpm != null } }
+    val hasElevation: Boolean get() = elevationBand != null
+
     fun readingAt(distanceMeters: Double): DistancePoint? {
         val first = traces.firstOrNull()?.points?.firstOrNull() ?: return null
         val last = traces.last().points.last()
