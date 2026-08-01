@@ -64,6 +64,44 @@ stated the Reserve is the whole of Max HR, which is exactly the model that came
 before.
 _Avoid_: HRR, working heart rate, Karvonen
 
+**Break**:
+A stretch of a Run the recording does not cover. Three causes, one word: a
+Pause, an Outage, or fixes too vague to trust. Nothing measured off the track
+draws, climbs or joins across a Break — but the straight line between its ends
+is ground the runner Covered, because a straight line is never longer than the
+route they actually ran ([ADR 0007](docs/adr/0007-the-track-is-the-record-of-a-break.md)).
+_Avoid_: gap, dropout, hole
+
+**Pause**:
+A Break the runner caused: the pause button, or auto-pause. The only Break that
+carries no distance and never any Moving time, because the Run itself says it
+happened rather than leaving it to be guessed from a gap. Written down on the
+fix that resumed it.
+_Avoid_: stop, rest (a rest is judged from speed; a Pause is recorded)
+
+**Outage**:
+A Break nobody asked for — the signal lost under trees, in a tunnel, in a
+street of tall buildings. Judged like any other stretch of a Run: the straight
+line over the time it took, Moving or resting by the same speed rule.
+_Avoid_: dropout, signal loss, GPS gap
+
+**Elapsed**:
+The Run's own clock: the wall time it spanned, less its Pauses. What the
+summary calls duration.
+_Avoid_: duration (in prose about the three totals), total time
+
+**Moving**:
+Elapsed, less the spells the runner spent getting nowhere. The clock pace is
+quoted over, judged leg by leg against a 30-minute-mile threshold rather than
+declared by the runner.
+_Avoid_: active time, running time
+
+**Covered**:
+The Run's distance: every accepted-to-accepted leg, including the straight lines
+across its Breaks. One number, quoted by the summary, the Splits and the record
+book alike — a Run's Splits total its Covered distance.
+_Avoid_: distance (when the point is *which* distance), tracked distance
+
 **Split**:
 One completed kilometre of a Run, and the pace it was covered at. Measured by
 distance, unlike an Interval, which is measured by time.
