@@ -250,6 +250,65 @@ class RecordsTest {
         assertTrue(awarded.all { it.medal == Medal.GOLD && it.sessionId == run.id })
     }
 
+    // --- The book built from the whole history (#50) -------------------------------------------
+
+    @Test
+    fun `the book keeps the three best efforts of a whole history, in order`() {
+        val book = recordBookOf(
+            listOf(
+                RunEfforts(sessionId = 1, efforts = listOf(anEffort(320.0))),
+                RunEfforts(sessionId = 2, efforts = listOf(anEffort(300.0))),
+                RunEfforts(sessionId = 3, efforts = listOf(anEffort(400.0))),
+                RunEfforts(sessionId = 4, efforts = listOf(anEffort(310.0))),
+            )
+        )
+
+        assertEquals(
+            listOf(2L to Medal.GOLD, 4L to Medal.SILVER, 1L to Medal.BRONZE),
+            book.map { it.sessionId to it.medal },
+        )
+    }
+
+    @Test
+    fun `an earlier run keeps a record a later one only matches`() {
+        val book = recordBookOf(
+            listOf(
+                RunEfforts(sessionId = 1, efforts = listOf(anEffort(300.0))),
+                RunEfforts(sessionId = 2, efforts = listOf(anEffort(300.0))),
+            )
+        )
+
+        assertEquals(listOf(1L to Medal.GOLD, 2L to Medal.SILVER), book.map { it.sessionId to it.medal })
+    }
+
+    @Test
+    fun `each record is ranked among only the runs that contested it`() {
+        val book = recordBookOf(
+            listOf(
+                RunEfforts(sessionId = 1, efforts = listOf(BestEffort(RecordType.LONGEST_DURATION, 3_600.0))),
+                RunEfforts(sessionId = 2, efforts = listOf(anEffort(300.0), BestEffort(RecordType.LONGEST_DURATION, 1_800.0))),
+                RunEfforts(sessionId = 3, efforts = emptyList()),
+            )
+        )
+
+        assertEquals(
+            listOf(2L to Medal.GOLD),
+            book.filter { it.type == RecordType.FASTEST_1K }.map { it.sessionId to it.medal },
+        )
+        // The longest time is won by the largest number, and the run that contested nothing is
+        // nowhere in the book at all.
+        assertEquals(
+            listOf(1L to Medal.GOLD, 2L to Medal.SILVER),
+            book.filter { it.type == RecordType.LONGEST_DURATION }.map { it.sessionId to it.medal },
+        )
+        assertTrue(book.none { it.sessionId == 3L })
+    }
+
+    @Test
+    fun `a history with nothing worth recording makes an empty book`() {
+        assertEquals(emptyList<Achievement>(), recordBookOf(listOf(RunEfforts(sessionId = 1, efforts = emptyList()))))
+    }
+
     private fun anOutdoorRun(distanceKm: Double) = aRun().copy(distanceKm = distanceKm)
 
     private fun anEffort(seconds: Double) = BestEffort(RecordType.FASTEST_1K, seconds)
