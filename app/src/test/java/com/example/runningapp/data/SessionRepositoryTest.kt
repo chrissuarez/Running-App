@@ -1363,11 +1363,43 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `seeding measures a run's stored track, breadcrumbs and all`() = runTest {
+        // A run recorded as sparse breadcrumbs — no accuracy recorded, which is what history from
+        // before the app kept one looks like. It still covered ground, so it contests the distances.
+        whenever(mockDao.getAllSessions()).thenReturn(
+            listOf(session(id = 1, endTime = 1_000L).copy(runMode = "outdoor", distanceKm = 1.2, durationSeconds = 300))
+        )
+        val mockTrackPointDao: TrackPointDao = mock()
+        whenever(mockTrackPointDao.getTrackPointsForSessionOnce(1L)).thenReturn(
+            (0..300 step 10).map { second ->
+                // 4 m/s north from the equator: 1.2 km in five minutes, fixes ten seconds apart.
+                breadcrumb(sessionId = 1, latitude = second * 4.0 / 111_320.0, timestampMillis = second * 1_000L)
+            }
+        )
+        val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory(
+            trackPointDao = mockTrackPointDao
+        )
+
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(
+            setOf(RecordType.FASTEST_1K, RecordType.LONGEST_DISTANCE, RecordType.LONGEST_DURATION),
+            book.firstValue.map { it.type }.toSet(),
+        )
+        assertEquals(250.0, book.firstValue.single { it.type == RecordType.FASTEST_1K }.value, 15.0)
+    }
+
+    @Test
     fun `a run scored while history was being measured keeps its place in the book`() = runTest {
-        whenever(mockDao.getAllSessions()).thenReturn(listOf(aTreadmillRun(id = 1, seconds = 600)))
+        // Run 9 was still being recorded when the pass read history, so it measures to nothing —
+        // then finished and scored itself. Its rows would be wiped by the rewrite if the book did
+        // not carry over what it never measured an effort for.
+        whenever(mockDao.getAllSessions()).thenReturn(
+            listOf(aTreadmillRun(id = 1, seconds = 600), session(id = 9, endTime = 0L))
+        )
         val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory()
-        // Run 9 finished and scored itself after the pass read history: it is not in the list above,
-        // and its row would be wiped by the rewrite if the book did not carry it over.
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(
             listOf(Achievement(sessionId = 9, type = RecordType.LONGEST_DURATION, medal = Medal.GOLD, value = 3_600.0))
         )
@@ -1434,7 +1466,8 @@ class SessionRepositoryTest {
 
     /** A repository whose history has never been scored, and the book it writes to. */
     private suspend fun repositoryWithUnseededHistory(
-        seeded: Boolean = false
+        seeded: Boolean = false,
+        trackPointDao: TrackPointDao? = null
     ): Pair<SessionRepository, AchievementDao> {
         val mockAchievementDao: AchievementDao = mock()
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
@@ -1442,10 +1475,21 @@ class SessionRepositoryTest {
             .thenReturn(flowOf(UserSettings(historyRecordsSeeded = seeded)))
         return SessionRepository(
             sessionDao = mockDao,
+            trackPointDao = trackPointDao,
             achievementDao = mockAchievementDao,
             settingsRepository = mockSettingsRepo
         ) to mockAchievementDao
     }
+
+    /** A historical fix with no accuracy recorded — always kept, see [acceptedForMap]. */
+    private fun breadcrumb(sessionId: Long, latitude: Double, timestampMillis: Long) = TrackPoint(
+        sessionId = sessionId,
+        latitude = latitude,
+        longitude = 0.0,
+        horizontalAccuracyMeters = null,
+        timestampMillis = timestampMillis,
+        source = TrackPointSource.BACKFILL
+    )
 
     /** A finished run with a duration and nothing measured against ground — see [bestEffortsOf]. */
     private fun aTreadmillRun(id: Long, seconds: Long) =
