@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.floor
 
 // Labels describing a run to the AI coach (#107). Structure comes only from a plan, so the one
@@ -548,9 +549,20 @@ class SessionRepository(
         val settings = settingsRepository ?: return
         if (settings.userSettingsFlow.first().historyRecordsSeeded) return
 
+        // Noted before a line of history is read, and checked again before the mark is written.
+        val deletesBefore = deletesStarted.get()
         try {
             val book = rebuildRecords(RecordType.entries)
-            // Only now: until this lands, the pass is still owed.
+            // Only now: until this lands, the pass is still owed. And not at all if a Run was
+            // deleted while this was measuring: that delete read history as unseeded, so it lifted
+            // no mark of its own and will hand none back, and its own mend can still be cut short —
+            // marking here would stand over a book with a hole in it that nothing can find. Left
+            // unmarked, the next launch reseeds, which is minutes of background work for the right
+            // book.
+            if (deletesStarted.get() != deletesBefore) {
+                Log.d("Records", "A run was deleted while history was being scored; leaving it for next launch")
+                return
+            }
             settings.setHistoryRecordsSeeded()
             Log.d("Records", "Seeded the record book from history: ${book.size} medal(s) awarded")
         } catch (e: Exception) {
@@ -597,6 +609,7 @@ class SessionRepository(
      * cancel a debt this never paid.
      */
     private suspend fun deleteAndRepair(sessionIds: List<Long>, delete: suspend () -> Unit) {
+        deletesStarted.incrementAndGet()
         val settings = settingsRepository
         val wasSeeded = settings?.userSettingsFlow?.first()?.historyRecordsSeeded == true
         if (wasSeeded) settings.clearHistoryRecordsSeeded()
@@ -617,6 +630,26 @@ class SessionRepository(
         if (losing.isNotEmpty()) refreshHistoryBackup?.invoke()
         if (wasSeeded && repaired) settings.setHistoryRecordsSeeded()
     }
+
+    /**
+     * How many deletions have begun in this process, so the seeding pass can tell whether one
+     * happened while it was measuring (#50).
+     *
+     * The two would otherwise interleave into a marked book with a hole in it: a delete that reads
+     * history as unseeded lifts no mark, because the seeding pass owes one already — but if that
+     * pass then finishes and marks history complete, and the delete's own mend is cut short, the
+     * record the deleted Run held stands short with the mark saying otherwise. Nothing later can
+     * find it, since only the top three are ever stored.
+     *
+     * A counter rather than a lock, because the lock would be the wrong shape: seeding is minutes
+     * of arithmetic, and a delete made to wait behind it is a history screen that does not respond.
+     * This lets both run and only refuses the *mark* when they overlapped, which costs a reseed at
+     * the next launch and arrives at the same book.
+     *
+     * In memory only, and that is enough: it exists to catch two things overlapping inside one
+     * process, and a process that dies takes any unwritten mark with it.
+     */
+    private val deletesStarted = AtomicLong(0)
 
     private suspend fun recordsHeldBy(sessionIds: List<Long>): List<RecordType> =
         achievementDao?.getAchievementsForSessions(sessionIds)?.map { it.type }?.distinct().orEmpty()
