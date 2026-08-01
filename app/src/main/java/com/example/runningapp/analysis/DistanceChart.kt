@@ -326,8 +326,7 @@ private fun paceScaleEdge(pace: Double?, headroom: Double, round: (Double) -> Do
  * than by choosing it.
  */
 fun kilometreTicks(spanMeters: Double): List<Double> {
-    val step = DISTANCE_TICK_STEPS.firstOrNull { spanMeters / it <= MAX_DISTANCE_TICKS }
-        ?: DISTANCE_TICK_STEPS.last()
+    val step = distanceTickSteps().first { spanMeters / it <= MAX_DISTANCE_TICKS }
     val ticks = generateSequence(0.0) { it + step }.takeWhile { it < spanMeters }.toMutableList()
     if (ticks.size > 1 && spanMeters - ticks.last() < step * FINISH_LABEL_CLEARANCE) {
         ticks.removeAt(ticks.lastIndex)
@@ -339,7 +338,16 @@ fun kilometreTicks(spanMeters: Double): List<Double> {
 /** How much of a step must separate the last round tick from the finish for both to be printed. */
 private const val FINISH_LABEL_CLEARANCE = 0.75
 
-private val DISTANCE_TICK_STEPS = listOf(200.0, 500.0, 1_000.0, 2_000.0, 5_000.0, 10_000.0)
+/**
+ * The step sizes a distance axis may be ticked at, smallest first and going up for ever: 200 m,
+ * 500 m, 1 km, 2 km, 5 km, 10 km, and on.
+ *
+ * Unbounded rather than a fixed list, because a list runs out. Stopping at 10 km would tick a
+ * hundred-kilometre run eleven times across the same width the handful was chosen to fit.
+ */
+private fun distanceTickSteps(): Sequence<Double> =
+    generateSequence(100.0) { it * 10 }.flatMap { sequenceOf(it * 2, it * 5, it * 10) }
+
 private const val MAX_DISTANCE_TICKS = 6
 
 /** A distance as a runner reads it: kilometres to two places, or whole metres under one. */
