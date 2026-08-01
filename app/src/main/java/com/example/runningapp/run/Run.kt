@@ -242,7 +242,12 @@ object Run {
             // this list. Emitting it before the Interval's own instruction let it be released into
             // the gap between the two and then flushed by the instruction itself, which is the one
             // thing waiting for a gap was meant to prevent (Codex, #212).
-            if (halfway && current.controls.turnaroundCueEnabled) {
+            //
+            // The Phase is asked again for the same reason: the Intervals can hand the Run into its
+            // cool-down on this very second — a Workout whose cool-down is as long as everything
+            // before it puts halfway exactly there — and the runner is heading home from that
+            // second, whichever half of it the arithmetic belongs to.
+            if (halfway && current.controls.turnaroundCueEnabled && current.phase != RunPhase.COOL_DOWN) {
                 current = current.copy(turnaroundHeld = true)
                 effects += RunEffect.SpeakWhenQuiet(TURNAROUND_CUE)
             }
