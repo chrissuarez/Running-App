@@ -415,17 +415,25 @@ class MainActivity : ComponentActivity() {
                                     navigateTo(Routes.MAP)
                                 },
                                 onToggleSimulation = { simulationEnabled, skipPlan, pickedWorkoutId ->
+                                    val simulationIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
+                                        action = HrForegroundService.ACTION_SET_SIMULATION
+                                        putExtra(HrForegroundService.EXTRA_SIMULATION_ENABLED, simulationEnabled)
+                                        putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
+                                        // Turning simulation on starts a run, so it carries the
+                                        // pick for the same reason START does (#174).
+                                        putExtra(HrForegroundService.EXTRA_WORKOUT_ID, pickedWorkoutId)
+                                    }
+                                    // Started from the tap, not from the settings write's coroutine. The
+                                    // write is suspend and lands on Dispatchers.IO, so starting after it
+                                    // put a startForegroundService() an unbounded time after the gesture
+                                    // that justified it — background it in that window and the start is
+                                    // background-initiated: refused outright on Android 12+, and on the
+                                    // clock wherever it is not. Nothing is lost by going first, because
+                                    // the handler reads the toggle off EXTRA_SIMULATION_ENABLED rather
+                                    // than out of settings, exactly as START does with the run mode.
+                                    ContextCompat.startForegroundService(this@MainActivity, simulationIntent)
                                     scope.launch(Dispatchers.IO) {
                                         settingsRepository.setSimulationEnabled(simulationEnabled)
-                                        val simulationIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
-                                            action = HrForegroundService.ACTION_SET_SIMULATION
-                                            putExtra(HrForegroundService.EXTRA_SIMULATION_ENABLED, simulationEnabled)
-                                            putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
-                                            // Turning simulation on starts a run, so it carries the
-                                            // pick for the same reason START does (#174).
-                                            putExtra(HrForegroundService.EXTRA_WORKOUT_ID, pickedWorkoutId)
-                                        }
-                                        ContextCompat.startForegroundService(this@MainActivity, simulationIntent)
                                     }
                                 },
                                 onRunModeChange = { runMode ->

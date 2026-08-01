@@ -65,10 +65,22 @@ so the state needed to decide was already there.
   it does not have to beat Android's start deadline.** Measured, because the docs
   do not say (#135): on API 37 the `startForegroundService()` watchdog is armed
   only for a **background-initiated** start. Every `startForegroundService()` in
-  this app is called from `MainActivity`, and the one that could plausibly run
-  backgrounded — the auto-connect reach for a saved Strap — is gated on the screen
-  being resumed and catches the refusal if it is not. So every start this app
-  makes is foreground-initiated, and on API 37 no start it makes is on the clock.
+  this app is called from `MainActivity`, each one on the main thread from the
+  gesture that justifies it, except the auto-connect reach for a saved Strap —
+  which is gated on the screen being resumed and catches the refusal if it is not.
+  So every start this app makes is foreground-initiated, and on API 37 no start it
+  makes is on the clock.
+
+  That is an invariant the code has to keep, not an observation about it. The
+  simulate toggle broke it until this ADR was written: it started the service from
+  inside the coroutine that wrote the setting, an unbounded time after the tap, so
+  backgrounding the app in that window made the start background-initiated — with
+  no refusal handler, where the auto-connect path has one. The fix was to start
+  from the tap and let the write follow, which is available to any of these calls,
+  because each carries what the service needs on the intent. **A
+  `startForegroundService()` that has to wait for something is the shape to
+  refuse**; if one is ever genuinely needed, it is gated and caught like
+  auto-connect, and this bullet stops applying to it.
 
   Two arms on a Pixel 8a, Android 17 (API 37), app `targetSdk` 34, both with the
   Promotion earned throughout by an in-flight Acquisition so the rule never
