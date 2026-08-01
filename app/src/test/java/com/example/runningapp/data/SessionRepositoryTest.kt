@@ -1383,6 +1383,43 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a delete already under way when scoring starts leaves the pass owed again`() = runTest {
+        val gate = CompletableDeferred<Unit>()
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockAchievementDao.getAchievementsForSessions(any())).thenReturn(emptyList())
+        whenever(mockDao.getAllSessions()).thenReturn(listOf(aTreadmillRun(id = 1, seconds = 600)))
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(historyRecordsSeeded = false)))
+        var firstTransaction = true
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            settingsRepository = mockSettingsRepo,
+            inTransaction = { block ->
+                // Holds the delete open, and only the delete: the pass runs to completion inside it.
+                if (firstTransaction) {
+                    firstTransaction = false
+                    gate.await()
+                }
+                block()
+            }
+        )
+
+        val deleting = launch { repositoryWithRecords.deleteSession(2L) }
+        runCurrent()
+
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        // The delete was already counted when the pass took its baseline, so a count of starts
+        // cannot see it. Only "one is running right now" can, and it is why the pass stays owed.
+        verify(mockSettingsRepo, never()).setHistoryRecordsSeeded()
+
+        gate.complete(Unit)
+        deleting.join()
+    }
+
+    @Test
     fun `seeding measures a run's stored track, breadcrumbs and all`() = runTest {
         // A run recorded as sparse breadcrumbs — no accuracy recorded, which is what history from
         // before the app kept one looks like. It still covered ground, so it contests the distances.
