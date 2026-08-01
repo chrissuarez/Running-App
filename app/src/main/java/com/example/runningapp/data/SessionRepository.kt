@@ -580,8 +580,16 @@ class SessionRepository(
      * first one's failing would cost the runner a deletion that did not stick.
      */
     private suspend fun deleteAndRepair(sessionIds: List<Long>, delete: suspend () -> Unit) {
-        val losing = recordsHeldBy(sessionIds)
-        delete()
+        // Read and removed in one transaction, so nothing can award these Runs a medal in between.
+        // The seeding pass commits a whole book at once and a delete arrives from the history
+        // screen while it may still be running: read outside, a medal landing in that gap would be
+        // cascaded away by the delete and never appear in `losing`, leaving the record it took
+        // vacant with no repair coming and the pass marking history complete over the hole.
+        var losing = emptyList<RecordType>()
+        inTransaction {
+            losing = recordsHeldBy(sessionIds)
+            delete()
+        }
         refreshHistoryBackup?.invoke()
         if (losing.isEmpty()) return
         repairRecordBook(losing)
