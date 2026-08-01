@@ -60,3 +60,42 @@ so the state needed to decide was already there.
   the Promotion, rather than leaving a started service with no notification. A
   live Run is never stopped this way: a run without its notification is degraded,
   a run without its service is over.
+
+- **Unwinding on the next unearned state is soon enough; it does not have to beat
+  Android's start deadline.** Measured, because the docs do not say (#135): the
+  `startForegroundService()` watchdog is armed only for a **background-initiated**
+  start. Every `startForegroundService()` in this app is called from
+  `MainActivity`, and the one that could plausibly run backgrounded — the
+  auto-connect reach for a saved Strap — is gated on the screen being resumed and
+  catches the refusal if it is not. So every start this app makes is
+  foreground-initiated, and no start it makes is on the clock.
+
+  Two arms on a Pixel 8a, Android 17 (API 37), app `targetSdk` 34, both with the
+  Promotion earned throughout by an in-flight Acquisition so the rule never
+  unwound:
+
+  1. A genuine platform refusal — claim `FOREGROUND_SERVICE_TYPE_LOCATION` with
+     the location permissions revoked, so the refusal is thrown from inside
+     Android's own service bookkeeping rather than by us.
+  2. The control — never call `startForeground()` at all.
+
+  Both survived indefinitely: `startForegroundCount=0`, `createdFromFg=true`,
+  `startingBgTimeout=--` from the first reading, no
+  `ForegroundServiceDidNotStartInTimeException`, no ANR. Even *never promoting*
+  does not crash a foreground-initiated start.
+
+  **The invariant this rests on is that every start is foreground-initiated.**
+  Anything that ever starts the service from the background — a receiver, a
+  scheduled job, a start under a temporary allowlist — puts that start on the
+  ~5-second clock and brings the question back. A refused promotion would then
+  have to be answered inside the deadline rather than at the next unearned state,
+  and the only correct answer is the ordinary stop path (`stopRun()` → finalize →
+  `STOPPED` → the rule unwinds), never a bare `stopSelf()`: `onDestroy` finalizes
+  no Run, and run history exists only in Room.
+
+  Note also what the obvious experiment cannot tell you. Patching the app's own
+  `startForeground` wrapper to throw bypasses the platform, so the pending-start
+  obligation is never cleared and the watchdog fires by construction — a
+  guaranteed "armed" answer that proves nothing, and one that would argue for
+  ending a runner's Run on a refused promotion. The refusal has to come from the
+  platform.
