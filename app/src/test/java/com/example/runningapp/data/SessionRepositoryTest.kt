@@ -1497,6 +1497,36 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `the debt is written down before the run is deleted`() = runTest {
+        val order = mutableListOf<String>()
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(emptyList())
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(historyRecordsSeeded = true)))
+        mockSettingsRepo.stub {
+            onBlocking { clearHistoryRecordsSeeded() }.doSuspendableAnswer { order += "owe" }
+            onBlocking { setHistoryRecordsSeeded() }.doSuspendableAnswer { order += "paid" }
+        }
+        mockDao.stub {
+            onBlocking { deleteSessionById(any()) }.doSuspendableAnswer { order += "delete" }
+        }
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            settingsRepository = mockSettingsRepo,
+            refreshHistoryBackup = { order += "backup" }
+        )
+
+        repositoryWithRecords.deleteSession(2L)
+
+        // The debt goes down first, because everything after the delete can be cut short — the
+        // process reclaimed, the screen left mid-backup — and a debt recorded later is one those
+        // endings skip. Lifted even here, where the run turns out to have held nothing: what it held
+        // is not known until it is already gone.
+        assertEquals(listOf("owe", "delete", "backup", "paid"), order)
+    }
+
+    @Test
     fun `a repair that fails leaves history owing a full reseed`() = runTest {
         val mockAchievementDao: AchievementDao = mock()
         whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(
