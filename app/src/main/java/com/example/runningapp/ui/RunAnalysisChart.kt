@@ -404,19 +404,25 @@ fun RunCombinedChart(chart: DistanceChart, modifier: Modifier = Modifier) {
             }
         }
 
-        ChartKey(hasElevation = ground != null)
+        // Only the series the Run actually recorded: an outdoor Run with no Strap draws no red
+        // line, and a key naming one sends the runner looking for it.
+        ChartKey(
+            hasPace = chart.traces.any { trace -> trace.points.any { it.paceMinPerKm != null } },
+            hasHeartRate = chart.traces.any { trace -> trace.points.any { it.bpm != null } },
+            hasElevation = ground != null,
+        )
     }
 }
 
 /** Which line is which, said in words — two coloured lines on one chart are otherwise a guess. */
 @Composable
-private fun ChartKey(hasElevation: Boolean) {
+private fun ChartKey(hasPace: Boolean, hasHeartRate: Boolean, hasElevation: Boolean) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        KeyEntry(PaceLine, "Pace")
-        KeyEntry(HeartRateLine, "Heart rate")
+        if (hasPace) KeyEntry(PaceLine, "Pace")
+        if (hasHeartRate) KeyEntry(HeartRateLine, "Heart rate")
         // The same wash the silhouette is filled with, so the key names the thing on the chart.
         if (hasElevation) KeyEntry(MaterialTheme.colorScheme.onSurface.copy(alpha = SilhouetteAlpha), "Elevation")
     }

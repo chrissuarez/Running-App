@@ -339,6 +339,15 @@ class DistanceChartTest {
     }
 
     @Test
+    fun `an ultra gets a handful of ticks like everything else`() {
+        // The step sizes go up for ever rather than stopping at ten kilometres: a hundred-kilometre
+        // run ticked every ten would print eleven labels across the width the handful is for.
+        listOf(60_000.0, 100_000.0, 250_000.0).forEach { span ->
+            assertTrue("$span m got ${kilometreTicks(span).size} ticks", kilometreTicks(span).size in 3..7)
+        }
+    }
+
+    @Test
     fun `a distance is written the way a runner says it`() {
         assertEquals("640 m", formatDistance(640.0))
         assertEquals("1.00 km", formatDistance(1_000.0))
