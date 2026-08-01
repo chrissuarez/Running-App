@@ -84,15 +84,35 @@ so the state needed to decide was already there.
   `ForegroundServiceDidNotStartInTimeException`, no ANR. Even *never promoting*
   does not crash a foreground-initiated start.
 
-  **This licenses nothing.** `minSdk` is 26, and only API 37 was measured — the
+  **This licenses nothing, and it settles only API 37.** `minSdk` is 26. The
   `createdFromFg` gating that spares a foreground-initiated start is not known to
   hold on the older releases this app still runs on, where the documented contract
   asks for a prompt promotion after every `startForegroundService()` and draws the
   foreground/background line around whether the *start* is allowed at all. So
-  `promoteForStartCommand` stays unconditional and stays on every start path: the
-  finding is a reason not to end a runner's Run over a refused promotion, never a
-  reason to promote later or to skip promoting. Relaxing that needs the same
-  measurement repeated down the supported range.
+  `promoteForStartCommand` stays unconditional and stays on every start path;
+  relaxing that needs this measurement repeated down the range.
+
+  What that leaves open, by the range where a refusal is even reachable:
+
+  - **API 26–30.** `promote()` has no refusal path we know of — `startForeground()`
+    is not restricted by type or by caller state on these releases, and the
+    exception the code catches by name is Android 12's
+    `ForegroundServiceStartNotAllowedException`. Whether the watchdog is armed
+    here is therefore moot: nothing gets refused for it to punish. Reasoned, not
+    measured.
+  - **API 31–36.** The real open window. A refusal is reachable, and the gating is
+    unmeasured. If those releases do arm the watchdog for a foreground-initiated
+    start, then a refused promotion under a live Run — where the Promotion stays
+    earned, so `reconcile()` never unwinds — is a service the platform kills at the
+    deadline, and a Run killed that way is a Run lost, because `onDestroy`
+    finalizes nothing. **Treat this as unresolved**, not as covered by the finding
+    below.
+  - **API 37.** Measured above. Not armed; the next unearned state is soon enough.
+
+  So the #135 conclusion — that a refused promotion is not a reason to end a
+  runner's Run — is established on API 37 and asserted nowhere else. Closing API
+  31–36 means repeating the two arms on a device in that range. If it comes back
+  armed, the answer there is the ordinary stop path, on the terms below.
 
   **The invariant this rests on is that every start is foreground-initiated.**
   Anything that ever starts the service from the background — a receiver, a
