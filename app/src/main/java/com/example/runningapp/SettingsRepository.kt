@@ -59,7 +59,12 @@ data class UserSettings(
     // and a last-backup time is a claim that there is a backup, so it is only ever written after a
     // complete archive has been promoted into place.
     val backupFolderUri: String? = null,
-    val lastBackupAtEpochMillis: Long? = null
+    val lastBackupAtEpochMillis: Long? = null,
+    // Whether every Run already in history has been put to the record book (#50). False until the
+    // one-off seeding pass has completed, and false again whenever different history arrives — see
+    // [SessionRepository.seedRecordsFromHistory]. Scoring history means measuring every stored
+    // track, which is minutes of work and must not happen at every launch; this is what stops it.
+    val historyRecordsSeeded: Boolean = false
 )
 
 /**
@@ -170,6 +175,9 @@ internal object PreferencesKeys {
     val STATEMENT_RESTING_HR = intPreferencesKey("hr_statement_resting_hr")
     val BACKUP_FOLDER_URI = stringPreferencesKey("backup_folder_uri")
     val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
+    // Whether the history already recorded has been scored against the record book (#50). See
+    // UserSettings.historyRecordsSeeded.
+    val HISTORY_RECORDS_SEEDED = booleanPreferencesKey("history_records_seeded")
 }
 
 /**
@@ -286,7 +294,8 @@ class SettingsRepository(private val context: Context) {
                 simulationEnabled = preferences[PreferencesKeys.SIMULATION_ENABLED] ?: false,
                 testingModeEnabled = preferences[PreferencesKeys.TESTING_MODE_ENABLED] ?: false,
                 backupFolderUri = preferences[PreferencesKeys.BACKUP_FOLDER_URI],
-                lastBackupAtEpochMillis = preferences[PreferencesKeys.LAST_BACKUP_AT]
+                lastBackupAtEpochMillis = preferences[PreferencesKeys.LAST_BACKUP_AT],
+                historyRecordsSeeded = preferences[PreferencesKeys.HISTORY_RECORDS_SEEDED] ?: false
             )
         }
 
@@ -580,6 +589,14 @@ class SettingsRepository(private val context: Context) {
     suspend fun setLastBackupAt(atEpochMillis: Long) = put(PreferencesKeys.LAST_BACKUP_AT, atEpochMillis)
 
     /**
+     * Marks the history already recorded as scored against the record book (#50).
+     *
+     * Written only after the book has been rebuilt and committed, so a seeding pass killed
+     * part-way through is simply run again at the next launch.
+     */
+    suspend fun setHistoryRecordsSeeded() = put(PreferencesKeys.HISTORY_RECORDS_SEEDED, true)
+
+    /**
      * Puts back the settings an archive was written with, beside the history from the same archive
      * (#86). Written verbatim, in one edit, and deliberately **not** through [setStatedHeartRates].
      *
@@ -619,6 +636,10 @@ class SettingsRepository(private val context: Context) {
             settings.activeStageId
                 ?.let { preferences[PreferencesKeys.ACTIVE_STAGE_ID] = it }
                 ?: preferences.remove(PreferencesKeys.ACTIVE_STAGE_ID)
+            // The seeding mark describes history that has just been replaced, so it goes with it
+            // (#50): the archive may have been written before the record book existed, and its runs
+            // deserve the same one-off scoring any other unscored history gets at the next launch.
+            preferences.remove(PreferencesKeys.HISTORY_RECORDS_SEEDED)
             preferences.remove(PreferencesKeys.STATEMENT_IN_FLIGHT)
             preferences.remove(PreferencesKeys.STATEMENT_MAX_HR)
             preferences.remove(PreferencesKeys.STATEMENT_RESTING_HR)

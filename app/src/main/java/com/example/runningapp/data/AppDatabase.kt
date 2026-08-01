@@ -224,6 +224,15 @@ interface AchievementDao {
     fun getAchievementsForSessionFlow(sessionId: Long): Flow<List<Achievement>>
 
     /**
+     * What Runs about to be deleted hold, asked once (#50).
+     *
+     * Read *before* the delete, because the rows cascade away with their Run: what is wanted is
+     * which records are about to lose a place, and after the delete there is nothing left to say.
+     */
+    @Query("SELECT * FROM achievements WHERE sessionId IN (:sessionIds)")
+    suspend fun getAchievementsForSessions(sessionIds: List<Long>): List<Achievement>
+
+    /**
      * Clears the records a Run is about to be ranked into, so the rewritten places replace the old
      * ones rather than joining them. Only the types being re-ranked: the rest of the book is
      * untouched by a Run that never contested it.

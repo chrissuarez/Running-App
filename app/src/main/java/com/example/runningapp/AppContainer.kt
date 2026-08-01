@@ -190,6 +190,21 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Puts the history already recorded to the record book, once per process (#50).
+     *
+     * After the rescue pass rather than before it, so a Run a previous process left interrupted is
+     * finished — and therefore eligible — before history is measured. Ordering is a preference, not
+     * a requirement: a rescued Run scores itself, and this pass carries over the rows of any Run it
+     * did not see, so either order leaves the same book.
+     *
+     * On the container's own scope, for the same reason the moving-time backfill is — see above.
+     */
+    fun seedRecordsFromHistoryOnce() {
+        if (!recordsSeeded.compareAndSet(false, true)) return
+        applicationScope.launch { sessionRepository.seedRecordsFromHistory() }
+    }
+
+    /**
      * Lives as long as the process, and deliberately never cancelled — the container itself is a
      * process-wide singleton, so there is no shorter lifetime to bind to. SupervisorJob so one
      * failed background pass cannot take the others down with it.
@@ -205,6 +220,7 @@ class AppContainer(context: Context) {
     // reach through the lazy repository and open the database at container construction.
     private val movingTimeBackfilled = AtomicBoolean(false)
     private val interruptedRunsRescued = AtomicBoolean(false)
+    private val recordsSeeded = AtomicBoolean(false)
 
     /**
      * When this process began, as far as anything here is concerned — the container is built once,
