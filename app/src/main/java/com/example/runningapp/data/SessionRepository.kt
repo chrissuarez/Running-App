@@ -644,15 +644,25 @@ class SessionRepository(
         // Uncancellable, like the leaving below and for the same reason: both suspend, and a
         // cancellation landing after the count was joined but before the block finished would leave
         // a delete counted that is not running. See [deletesActive].
-        withContext(NonCancellable) {
-            recordBookMark.withLock {
-                mine = deletesStarted.incrementAndGet()
-                deletesActive.incrementAndGet()
-                wasSeeded = settings?.userSettingsFlow?.first()?.historyRecordsSeeded == true
-                if (wasSeeded) settings?.clearHistoryRecordsSeeded()
-            }
-        }
+        //
+        // Inside the `try` below, because joining is not one write but three — take a number, join
+        // the count, then read and lower the mark — and the last two suspend on DataStore, which can
+        // throw. A join that got as far as the count and no further would otherwise leave a delete
+        // counted that never ran and never leaves, and that phantom stops every later delete and
+        // every seeding pass in this process from calling the book whole: a full reseed at every
+        // launch, for the life of the install. [joined] is raised the instant the count is joined,
+        // so the leaving below answers for exactly the part that happened.
+        var joined = false
         try {
+            withContext(NonCancellable) {
+                recordBookMark.withLock {
+                    mine = deletesStarted.incrementAndGet()
+                    deletesActive.incrementAndGet()
+                    joined = true
+                    wasSeeded = settings?.userSettingsFlow?.first()?.historyRecordsSeeded == true
+                    if (wasSeeded) settings?.clearHistoryRecordsSeeded()
+                }
+            }
             // Read and removed in one transaction, so nothing can award these Runs a medal in
             // between. The seeding pass commits a whole book at once and a delete arrives from the
             // history screen while it may still be running: read outside, a medal landing in that
@@ -682,7 +692,10 @@ class SessionRepository(
             // the phantom delete left behind would stop every later delete and every seeding pass in
             // this process from ever calling the book whole — a full reseed at every launch, for the
             // life of the install.
-            withContext(NonCancellable) {
+            //
+            // And only if the count was joined, since a join that threw before it landed has
+            // nothing standing in it to take out.
+            if (joined) withContext(NonCancellable) {
                 recordBookMark.withLock {
                     deletesActive.decrementAndGet()
                     val onlyDelete = deletesStarted.get() == mine && deletesActive.get() == 0
