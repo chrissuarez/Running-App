@@ -20,6 +20,7 @@ import com.example.runningapp.HrZone
 import com.example.runningapp.analysis.RunAnalysis
 import com.example.runningapp.analysis.runHeadline
 import com.example.runningapp.ui.theme.RunningUiTokens
+import com.example.runningapp.data.Achievement
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
@@ -43,6 +44,9 @@ fun SessionDetailScreen(
     // it has loaded — the splits table and the elevation line are simply absent until then, which is
     // the same thing they show for a run that never recorded a route.
     trackPoints: List<TrackPoint> = emptyList(),
+    // What this run took a medal for (#49). Empty for the runs that won nothing, which is most of
+    // them, and for every run finished before the record book existed — #50 scores those.
+    achievements: List<Achievement> = emptyList(),
     onDeleteSession: (Long) -> Unit,
     onBack: () -> Unit,
     // A run with no recorded GPS track — a treadmill run, or history from before #37 — has nothing to
@@ -117,6 +121,13 @@ fun SessionDetailScreen(
 
                 SummaryStats(session, elevationGainMeters = analysis.elevationGainMeters)
                 Spacer(modifier = Modifier.height(24.dp))
+
+                if (achievements.isNotEmpty()) {
+                    Text("Achievements", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    AchievementsCard(achievements = achievements)
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
 
                 if (analysis.splits.isNotEmpty()) {
                     Text("Splits", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
