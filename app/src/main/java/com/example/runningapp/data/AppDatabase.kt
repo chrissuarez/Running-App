@@ -5,6 +5,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.runningapp.HrZone
 import com.example.runningapp.HrProfile
+import com.example.runningapp.analysis.Medal
+import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.hrZoneOf
 import kotlinx.coroutines.flow.Flow
 
@@ -175,6 +177,60 @@ data class TrackPoint(
     // while stopped (#84). False on every row recorded before the column existed.
     val startsAfterPause: Boolean = false
 )
+
+/**
+ * A medal one Run won, and the effort it won it with (#49).
+ *
+ * The one thing about records that is banked rather than worked out on read. Everything else the
+ * detail page shows is measured off the stored track each time it is opened, but a medal is a fact
+ * about a Run *relative to every other Run*, and answering "was this a personal best" by re-measuring
+ * the whole history would be an hour of GPS arithmetic to draw one card.
+ *
+ * At most three rows per [type] — the all-time top three — so the table is the record book itself.
+ * [value] is seconds or metres, whichever [RecordType.unit] says; there is no row without a
+ * [RecordType] to read it by. Deleted with its Run, like every other recording of one.
+ */
+@Entity(
+    tableName = "achievements",
+    foreignKeys = [
+        ForeignKey(
+            entity = RunnerSession::class,
+            parentColumns = ["id"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("sessionId"), Index("type")]
+)
+data class Achievement(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sessionId: Long,
+    val type: RecordType,
+    val medal: Medal,
+    val value: Double
+)
+
+@Dao
+interface AchievementDao {
+    @Insert
+    suspend fun insertAchievements(achievements: List<Achievement>)
+
+    /** The whole record book — seven records, three places each, so it is read in one go. */
+    @Query("SELECT * FROM achievements")
+    suspend fun getAllAchievements(): List<Achievement>
+
+    /** What one Run won, for its own page. */
+    @Query("SELECT * FROM achievements WHERE sessionId = :sessionId")
+    fun getAchievementsForSessionFlow(sessionId: Long): Flow<List<Achievement>>
+
+    /**
+     * Clears the records a Run is about to be ranked into, so the rewritten places replace the old
+     * ones rather than joining them. Only the types being re-ranked: the rest of the book is
+     * untouched by a Run that never contested it.
+     */
+    @Query("DELETE FROM achievements WHERE type IN (:types)")
+    suspend fun deleteAchievementsOfTypes(types: List<RecordType>)
+}
 
 @Dao
 interface SessionDao {
@@ -398,8 +454,14 @@ interface RunWalkIntervalStatDao {
 }
 
 @Database(
-    entities = [RunnerSession::class, HrSample::class, RunWalkIntervalStat::class, TrackPoint::class],
-    version = 19,
+    entities = [
+        RunnerSession::class,
+        HrSample::class,
+        RunWalkIntervalStat::class,
+        TrackPoint::class,
+        Achievement::class
+    ],
+    version = 20,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -407,6 +469,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun sampleDao(): SampleDao
     abstract fun runWalkIntervalStatDao(): RunWalkIntervalStatDao
     abstract fun trackPointDao(): TrackPointDao
+    abstract fun achievementDao(): AchievementDao
 
     companion object {
         @Volatile
@@ -443,7 +506,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_15_16,
                     MIGRATION_16_17,
                     MIGRATION_17_18,
-                    MIGRATION_18_19
+                    MIGRATION_18_19,
+                    MIGRATION_19_20
                 )
                 .build()
                 INSTANCE = instance
@@ -1011,5 +1075,35 @@ val MIGRATION_18_19 = object : Migration(18, 19) {
         if (!database.hasColumn("sessions", "movingTimeSeconds")) {
             database.execSQL("ALTER TABLE sessions ADD COLUMN movingTimeSeconds INTEGER")
         }
+    }
+}
+
+/**
+ * The record book (#49): the top three efforts at each record, one row per medal.
+ *
+ * Arrives empty, and fills as Runs finish. The history already recorded is not scored here — that
+ * means measuring every stored track, which is Kotlin's job and a job of its own (#50) — so until
+ * then the book only knows about Runs finished since the app was updated.
+ */
+val MIGRATION_19_20 = object : Migration(19, 20) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `achievements` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `sessionId` INTEGER NOT NULL,
+                `type` TEXT NOT NULL,
+                `medal` TEXT NOT NULL,
+                `value` REAL NOT NULL,
+                FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_achievements_sessionId` ON `achievements` (`sessionId`)"
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_achievements_type` ON `achievements` (`type`)"
+        )
     }
 }

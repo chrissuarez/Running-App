@@ -623,6 +623,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     null
                 }
 
+                // Scored after the track-point inserts have landed, for the same reason moving time
+                // is: a record measured over half a run is a record nobody ran. Its own attempt,
+                // because the Run is already saved and a book that cannot be written must not cost
+                // the runner the backup, the weather or the coach's evaluation below.
+                try {
+                    val earned = sessionRepository.scoreRecords(runRowId)
+                    if (earned.isNotEmpty()) {
+                        Log.d(TAG, "Run $runRowId earned ${earned.size} achievement(s): " +
+                            earned.joinToString { "${it.medal} ${it.type}" })
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not score run $runRowId against the record book", e)
+                }
+
                 Log.d(
                     TAG,
                     "Finalized DB Session: $runRowId. Evidence: duration=${updatedSession.durationSeconds} moving=$movingTime"

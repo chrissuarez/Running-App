@@ -17,6 +17,8 @@ import com.example.runningapp.HrProfile
 import com.example.runningapp.effectiveMaxHr
 import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
+import com.example.runningapp.analysis.standingsAfter
+import com.example.runningapp.analysis.bestEffortsOf
 import com.example.runningapp.recording.SessionRecorder
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -106,6 +108,9 @@ class SessionRepository(
     private val sampleDao: SampleDao? = null,
     private val trackPointDao: TrackPointDao? = null,
     private val intervalStatDao: RunWalkIntervalStatDao? = null,
+    // Null wherever records are not wired (tests, and the archive's read-only container): a run then
+    // finishes without being scored rather than failing to finish.
+    private val achievementDao: AchievementDao? = null,
     private val settingsRepository: SettingsRepository? = null,
     private val coachPrescriptionRepository: CoachPrescriptionRepository? = null,
     private val aiCoachClient: AiCoachClient? = null,
@@ -411,6 +416,14 @@ class SessionRepository(
                 // already somebody's job.
                 Log.w("InterruptedRun", "Rescued run $sessionId but could not measure its moving time", e)
             }
+            try {
+                // A rescued Run has just finished, however long ago it was run, so it is scored like
+                // any other (#49). Its own attempt for the same reason as the moving time above: the
+                // row is already in history, and a book that cannot be written must not undo that.
+                scoreRecords(sessionId)
+            } catch (e: Exception) {
+                Log.w("InterruptedRun", "Rescued run $sessionId but could not score its records", e)
+            }
         }
 
         // Only once, and only if something moved: the snapshot is a copy of the whole database, and
@@ -470,6 +483,38 @@ class SessionRepository(
             avgPaceMinPerKm = averagePaceMinPerKm(movingTime, session.distanceKm),
         )
         return movingTime
+    }
+
+    /**
+     * Scores a finished run against the record book and banks whatever it won (#49).
+     *
+     * Returns the medals *this run* holds afterwards, which is what its own page shows — an empty
+     * list for an ordinary run, and for one that beat nothing.
+     *
+     * Called when a run finishes, and safe to call again: [standingsAfter] drops the run's own standing rows
+     * before ranking it, so a re-score cannot leave it racing itself. The read of the book, the
+     * ranking and the rewrite are one transaction, because a half-written book has a record with two
+     * golds in it and no way to tell which one is real.
+     *
+     * Scoring history recorded before this shipped is a job of its own (#50): it means measuring
+     * every stored track, and it has to happen once rather than every time a run finishes.
+     */
+    suspend fun scoreRecords(sessionId: Long): List<Achievement> {
+        val dao = achievementDao ?: return emptyList()
+        val session = sessionDao.getSessionById(sessionId) ?: return emptyList()
+        // The same accuracy-gated points the map, the splits and the GPX export are built from, so a
+        // fix the run itself refused cannot come back as a record nobody ran.
+        val efforts = bestEffortsOf(session, getTrackPointsForMap(sessionId))
+        if (efforts.isEmpty()) return emptyList()
+
+        var earned = emptyList<Achievement>()
+        inTransaction {
+            val rewritten = standingsAfter(dao.getAllAchievements(), sessionId, efforts)
+            dao.deleteAchievementsOfTypes(efforts.map { it.type })
+            dao.insertAchievements(rewritten)
+            earned = rewritten.filter { it.sessionId == sessionId }
+        }
+        return earned
     }
 
     /** One-shot read of a run's heart-rate samples, ordered by elapsed second. */

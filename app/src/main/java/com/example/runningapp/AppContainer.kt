@@ -111,6 +111,7 @@ class AppContainer(context: Context) {
             sampleDao = database.sampleDao(),
             trackPointDao = database.trackPointDao(),
             intervalStatDao = database.runWalkIntervalStatDao(),
+            achievementDao = database.achievementDao(),
             settingsRepository = settingsRepository,
             coachPrescriptionRepository = coachPrescriptionRepository,
             aiCoachClient = aiCoachClient,
