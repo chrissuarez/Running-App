@@ -616,6 +616,14 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            // The medals this run won (#49), watched rather than read once: a run
+                            // opened straight off the finish line may still be being scored.
+                            val sessionAchievements by produceState<List<com.example.runningapp.data.Achievement>>(initialValue = emptyList(), key1 = sessionId) {
+                                sessionId?.let { id ->
+                                    database.achievementDao().getAchievementsForSessionFlow(id).collect { value = it }
+                                }
+                            }
+
                             // Inside this destination, and gated on the run that asked: an export is
                             // slow enough that the runner can be somewhere else by the time it
                             // lands, and a chooser opening over another screen interrupts whatever
@@ -634,6 +642,7 @@ class MainActivity : ComponentActivity() {
                                 samples = sessionSamples,
                                 intervalStats = sessionIntervalStats,
                                 trackPoints = sessionTrack,
+                                achievements = sessionAchievements,
                                 onDeleteSession = { id ->
                                     sessionDetailViewModel.deleteSession(id)
                                 },

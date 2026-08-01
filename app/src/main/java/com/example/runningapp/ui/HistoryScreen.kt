@@ -187,9 +187,17 @@ fun StatSmall(label: String, value: String) {
     }
 }
 
-private fun formatDuration(seconds: Long): String {
-    val h = seconds / 3600
-    val m = (seconds % 3600) / 60
-    val s = seconds % 60
+/**
+ * A run's length on the clock — hours only when there are hours.
+ *
+ * Shared with the achievements card (#49), which quotes best-effort times: the two are the same
+ * question about the same kind of number, and written twice they would drift into two house styles
+ * on one page.
+ */
+internal fun formatDuration(seconds: Long): String {
+    val safe = seconds.coerceAtLeast(0)
+    val h = safe / 3600
+    val m = (safe % 3600) / 60
+    val s = safe % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
 }
