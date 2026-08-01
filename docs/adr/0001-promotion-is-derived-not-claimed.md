@@ -61,14 +61,14 @@ so the state needed to decide was already there.
   live Run is never stopped this way: a run without its notification is degraded,
   a run without its service is over.
 
-- **Unwinding on the next unearned state is soon enough; it does not have to beat
-  Android's start deadline.** Measured, because the docs do not say (#135): the
-  `startForegroundService()` watchdog is armed only for a **background-initiated**
-  start. Every `startForegroundService()` in this app is called from
-  `MainActivity`, and the one that could plausibly run backgrounded — the
-  auto-connect reach for a saved Strap — is gated on the screen being resumed and
-  catches the refusal if it is not. So every start this app makes is
-  foreground-initiated, and no start it makes is on the clock.
+- **On the measured version, unwinding on the next unearned state is soon enough;
+  it does not have to beat Android's start deadline.** Measured, because the docs
+  do not say (#135): on API 37 the `startForegroundService()` watchdog is armed
+  only for a **background-initiated** start. Every `startForegroundService()` in
+  this app is called from `MainActivity`, and the one that could plausibly run
+  backgrounded — the auto-connect reach for a saved Strap — is gated on the screen
+  being resumed and catches the refusal if it is not. So every start this app
+  makes is foreground-initiated, and on API 37 no start it makes is on the clock.
 
   Two arms on a Pixel 8a, Android 17 (API 37), app `targetSdk` 34, both with the
   Promotion earned throughout by an in-flight Acquisition so the rule never
@@ -83,6 +83,16 @@ so the state needed to decide was already there.
   `startingBgTimeout=--` from the first reading, no
   `ForegroundServiceDidNotStartInTimeException`, no ANR. Even *never promoting*
   does not crash a foreground-initiated start.
+
+  **This licenses nothing.** `minSdk` is 26, and only API 37 was measured — the
+  `createdFromFg` gating that spares a foreground-initiated start is not known to
+  hold on the older releases this app still runs on, where the documented contract
+  asks for a prompt promotion after every `startForegroundService()` and draws the
+  foreground/background line around whether the *start* is allowed at all. So
+  `promoteForStartCommand` stays unconditional and stays on every start path: the
+  finding is a reason not to end a runner's Run over a refused promotion, never a
+  reason to promote later or to skip promoting. Relaxing that needs the same
+  measurement repeated down the supported range.
 
   **The invariant this rests on is that every start is foreground-initiated.**
   Anything that ever starts the service from the background — a receiver, a
