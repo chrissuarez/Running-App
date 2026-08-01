@@ -9,6 +9,8 @@ import com.example.runningapp.SettingsRepository
 import com.example.runningapp.StatedHeartRates
 import com.example.runningapp.UserSettings
 import com.example.runningapp.WorkoutTemplate
+import com.example.runningapp.analysis.Medal
+import com.example.runningapp.analysis.RecordType
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CompletableDeferred
@@ -1279,6 +1281,42 @@ class SessionRepositoryTest {
         assertEquals("treadmill", recentRun.runMode)
         assertNull(recentRun.distanceKm)
         assertNull(recentRun.fastest5kSeconds)
+    }
+
+    @Test
+    fun `scoring a run banks the medals it won and reports them back`() = runTest {
+        val run = session(id = 7, endTime = 1_000L).copy(runMode = "treadmill", durationSeconds = 3_600)
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockDao.getSessionById(7L)).thenReturn(run)
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao
+        )
+
+        val earned = repositoryWithRecords.scoreRecords(7L)
+
+        assertEquals(listOf(RecordType.LONGEST_DURATION), earned.map { it.type })
+        assertEquals(listOf(Medal.GOLD), earned.map { it.medal })
+        // Only the record it actually contested is rewritten: a treadmill run must not be able to
+        // clear the distance records off the book on its way past.
+        verify(mockAchievementDao).deleteAchievementsOfTypes(listOf(RecordType.LONGEST_DURATION))
+        verify(mockAchievementDao).insertAchievements(earned)
+    }
+
+    @Test
+    fun `a run still being recorded is not scored at all`() = runTest {
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockDao.getSessionById(7L)).thenReturn(session(id = 7, endTime = 0L))
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao
+        )
+
+        assertEquals(emptyList<Achievement>(), repositoryWithRecords.scoreRecords(7L))
+
+        verify(mockAchievementDao, never()).insertAchievements(any())
+        verify(mockAchievementDao, never()).deleteAchievementsOfTypes(any())
     }
 
     private fun fiveKFix(latitude: Double, timestampMillis: Long) = TrackPoint(
