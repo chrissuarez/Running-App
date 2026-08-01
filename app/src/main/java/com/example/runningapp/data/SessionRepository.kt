@@ -550,9 +550,14 @@ class SessionRepository(
         val settings = settingsRepository ?: return
         if (settings.userSettingsFlow.first().historyRecordsSeeded) return
 
-        // Noted before a line of history is read, and asked again before the mark is written.
-        val deletesBefore = deletesStarted.get()
-        val deleteRunningBefore = deletesActive.get() != 0
+        // Noted before a line of history is read, and asked again before the mark is written. Both
+        // under the lock, so a delete cannot slip into the gap between looking and deciding.
+        var deletesBefore = 0L
+        var deleteRunningBefore = false
+        recordBookMark.withLock {
+            deletesBefore = deletesStarted.get()
+            deleteRunningBefore = deletesActive.get() != 0
+        }
         try {
             val book = rebuildRecords(RecordType.entries)
             // Only now: until this lands, the pass is still owed. And not at all if a delete ran at
@@ -562,14 +567,18 @@ class SessionRepository(
             // will hand none back, and its own mend can still be cut short: marking here would
             // stand over a book with a hole in it that nothing can find. Left unmarked, the next
             // launch reseeds, which is minutes of background work for the right book.
-            if (deletesStarted.get() != deletesBefore ||
-                deleteRunningBefore ||
-                deletesActive.get() != 0
-            ) {
-                Log.d("Records", "A run was deleted while history was being scored; leaving it for next launch")
-                return
+            // Asked and answered under the lock, so a delete arriving between the question and the
+            // write is one that waits rather than one this write talks over.
+            recordBookMark.withLock {
+                if (deletesStarted.get() != deletesBefore ||
+                    deleteRunningBefore ||
+                    deletesActive.get() != 0
+                ) {
+                    Log.d("Records", "A run was deleted while history was being scored; leaving it for next launch")
+                    return
+                }
+                settings.setHistoryRecordsSeeded()
             }
-            settings.setHistoryRecordsSeeded()
             Log.d("Records", "Seeded the record book from history: ${book.size} medal(s) awarded")
         } catch (e: Exception) {
             // Caught rather than left to the launch scope, which has no handler behind it: a book
@@ -620,15 +629,23 @@ class SessionRepository(
      * direction leave the reseed owed, which the next launch pays.
      */
     private suspend fun deleteAndRepair(sessionIds: List<Long>, delete: suspend () -> Unit) {
-        val mine = deletesStarted.incrementAndGet()
-        deletesActive.incrementAndGet()
         val settings = settingsRepository
-        val wasSeeded: Boolean
-        val repaired: Boolean
-        try {
+        var mine = 0L
+        var wasSeeded = false
+        // Only ever true once the mend has landed, so every way out of the block below — thrown,
+        // cancelled — leaves the debt standing.
+        var repaired = false
+        // Joining is one indivisible act: take a number, join the count, and lift the mark. Held
+        // across the DataStore read and write because that is the check-and-act another delete has
+        // to be kept out of — one entering here between another's read and its write would find the
+        // mark already down, lift nothing, and be owed nothing back.
+        recordBookMark.withLock {
+            mine = deletesStarted.incrementAndGet()
+            deletesActive.incrementAndGet()
             wasSeeded = settings?.userSettingsFlow?.first()?.historyRecordsSeeded == true
             if (wasSeeded) settings.clearHistoryRecordsSeeded()
-
+        }
+        try {
             // Read and removed in one transaction, so nothing can award these Runs a medal in
             // between. The seeding pass commits a whole book at once and a delete arrives from the
             // history screen while it may still be running: read outside, a medal landing in that
@@ -645,13 +662,19 @@ class SessionRepository(
             repaired = repairRecordBook(losing)
             if (losing.isNotEmpty()) refreshHistoryBackup?.invoke()
         } finally {
+            // Leaving is the same act in reverse, and under the same lock: step out of the count,
+            // look around, and hand the mark back only if there is nobody left to speak for. Sampled
+            // and written together, so a delete arriving in between cannot be one this write ignores.
+            //
             // In a finally so a cancelled delete — the runner leaving the history screen — stops
-            // holding every other caller's mark down. It leaves the debt behind it either way.
-            deletesActive.decrementAndGet()
+            // holding every other caller's mark down. It leaves the debt behind it either way, since
+            // `repaired` is only true once the mend has landed.
+            recordBookMark.withLock {
+                deletesActive.decrementAndGet()
+                val onlyDelete = deletesStarted.get() == mine && deletesActive.get() == 0
+                if (wasSeeded && repaired && onlyDelete) settings.setHistoryRecordsSeeded()
+            }
         }
-
-        val onlyDelete = deletesStarted.get() == mine && deletesActive.get() == 0
-        if (wasSeeded && repaired && onlyDelete) settings.setHistoryRecordsSeeded()
     }
 
     /**
@@ -684,6 +707,23 @@ class SessionRepository(
      */
     private val deletesStarted = AtomicLong(0)
     private val deletesActive = AtomicInteger(0)
+
+    /**
+     * Held while the seeding mark is being looked at and moved, and never while anything is
+     * measured (#50).
+     *
+     * The counters say who was working; this is what makes *asking them and acting on the answer*
+     * one act. Sampled and then written without it, a delete could enter in the gap — find the mark
+     * already down so it lifts nothing and is owed nothing back — while the write it arrived after
+     * put the mark up over a mend that had not landed. Every reader of the counters therefore does
+     * its looking and its writing inside here.
+     *
+     * What is *not* inside here is the work: the rebuild, the backup, the delete's own transaction
+     * all happen with the lock released. Nothing held across it takes longer than a DataStore edit,
+     * so a delete never waits on a seeding pass, which is the whole reason these are counters and
+     * not a lock around the work itself.
+     */
+    private val recordBookMark = Mutex()
 
     private suspend fun recordsHeldBy(sessionIds: List<Long>): List<RecordType> =
         achievementDao?.getAchievementsForSessions(sessionIds)?.map { it.type }?.distinct().orEmpty()
