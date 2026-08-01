@@ -147,12 +147,8 @@ class SessionRepository(
      */
     private val inTransaction: suspend (suspend () -> Unit) -> Unit = { it() }
 ) {
-    suspend fun deleteSession(sessionId: Long) {
-        val losing = recordsHeldBy(listOf(sessionId))
-        sessionDao.deleteSessionById(sessionId)
-        repairRecordBook(losing)
-        refreshHistoryBackup?.invoke()
-    }
+    suspend fun deleteSession(sessionId: Long) =
+        deleteAndRepair(listOf(sessionId)) { sessionDao.deleteSessionById(sessionId) }
 
     /**
      * Held across the profile door, so a statement is a read, a re-tally and a store that nothing
@@ -566,6 +562,32 @@ class SessionRepository(
     }
 
     /** Which records the Runs [sessionIds] are about to lose stand in — read before they go. */
+    /**
+     * The one way a Run leaves history: what it held noted, the rows removed, the deletion made
+     * durable, and only then the book mended (#50).
+     *
+     * **The backup is refreshed twice, and the first one is the important one.** The Downloads
+     * snapshot is what a Clear-storage restore reads, so until it is rewritten it still holds the
+     * deleted Run. Mending the book measures every stored track — minutes on a long history — and a
+     * process killed inside that window would leave the deletion committed here and undone there,
+     * so the runner could restore a Run they had deleted. The snapshot therefore goes out the
+     * moment the rows are gone, before anything slow, and the deletion is durable from that point
+     * whatever happens next.
+     *
+     * The second refresh carries the mended book — the promotions behind the deleted Run — into the
+     * snapshot, and is skipped entirely when the Run held nothing, which is the ordinary case. Its
+     * failing costs a restored history a record standing two deep until something contests it; the
+     * first one's failing would cost the runner a deletion that did not stick.
+     */
+    private suspend fun deleteAndRepair(sessionIds: List<Long>, delete: suspend () -> Unit) {
+        val losing = recordsHeldBy(sessionIds)
+        delete()
+        refreshHistoryBackup?.invoke()
+        if (losing.isEmpty()) return
+        repairRecordBook(losing)
+        refreshHistoryBackup?.invoke()
+    }
+
     private suspend fun recordsHeldBy(sessionIds: List<Long>): List<RecordType> =
         achievementDao?.getAchievementsForSessions(sessionIds)?.map { it.type }?.distinct().orEmpty()
 
@@ -573,7 +595,8 @@ class SessionRepository(
      * Rebuilds the records a deleted Run held, so the places below it move up (#50).
      *
      * Only the records it actually held: deleting a Run that never won anything changes nothing
-     * about the book, and must not cost a re-measure of the whole history to prove it.
+     * about the book, and must not cost a re-measure of the whole history to prove it — which is
+     * why [deleteAndRepair] does not call this at all when the list is empty.
      *
      * Its own attempt, because the Run is already deleted by the time this runs. A book that cannot
      * be rewritten leaves a record two deep until the next Run contests it, which is a wrong number
@@ -772,10 +795,7 @@ class SessionRepository(
 
     suspend fun deleteSessions(sessionIds: List<Long>) {
         if (sessionIds.isEmpty()) return
-        val losing = recordsHeldBy(sessionIds)
-        sessionDao.deleteSessionsByIds(sessionIds)
-        repairRecordBook(losing)
-        refreshHistoryBackup?.invoke()
+        deleteAndRepair(sessionIds) { sessionDao.deleteSessionsByIds(sessionIds) }
     }
 
     suspend fun getMaxSessionLoadLast30Days(
