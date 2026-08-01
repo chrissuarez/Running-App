@@ -1,25 +1,32 @@
 package com.example.runningapp
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
  * The cue that waits for a gap (#208).
  *
- * The clock is a plain number passed in, so every wait here is exact rather than slept through.
+ * The clock is a plain number passed in, so every wait here is exact rather than slept through, and
+ * the speaker is a list, so what was said is what the test reads.
  */
 class QuietGapCueTest {
 
     private val gap = QuietGapCue.QUIET_GAP_MILLIS
     private val ceiling = QuietGapCue.CEILING_MILLIS
     private val cue = QuietGapCue()
+    private val spoken = mutableListOf<String>()
+
+    /** One poll, as the service makes it: try to release, and keep whatever was said. */
+    private fun poll(nowMillis: Long): Boolean = cue.releaseTo(nowMillis, spoken::add)
 
     @Test
     fun `a cue held into silence goes at once`() {
         cue.hold(TEXT, T)
 
-        assertEquals(TEXT, cue.release(T))
+        assertTrue(poll(T))
+        assertEquals(listOf(TEXT), spoken)
     }
 
     @Test
@@ -27,8 +34,9 @@ class QuietGapCueTest {
         cue.speechChanged(speaking = true, nowMillis = T)
         cue.hold(TEXT, T)
 
-        assertNull(cue.release(T))
-        assertNull(cue.release(T + gap * 2))
+        assertFalse(poll(T))
+        assertFalse(poll(T + gap * 2))
+        assertEquals(emptyList<String>(), spoken)
     }
 
     @Test
@@ -37,9 +45,10 @@ class QuietGapCueTest {
         cue.hold(TEXT, T)
         cue.speechChanged(speaking = false, nowMillis = T + 2_000)
 
-        assertNull(cue.release(T + 2_000))
-        assertNull(cue.release(T + 2_000 + gap - 1))
-        assertEquals(TEXT, cue.release(T + 2_000 + gap))
+        assertFalse(poll(T + 2_000))
+        assertFalse(poll(T + 2_000 + gap - 1))
+        assertTrue(poll(T + 2_000 + gap))
+        assertEquals(listOf(TEXT), spoken)
     }
 
     @Test
@@ -48,7 +57,7 @@ class QuietGapCueTest {
         // A Split reaches the speaker without passing through the Run, and the wait still sees it.
         cue.speechChanged(speaking = true, nowMillis = T + 500)
 
-        assertNull(cue.release(T + 1_000))
+        assertFalse(poll(T + 1_000))
     }
 
     @Test
@@ -56,21 +65,24 @@ class QuietGapCueTest {
         cue.speechChanged(speaking = true, nowMillis = T)
         cue.hold(TEXT, T)
 
-        assertNull(cue.release(T + ceiling - 1))
-        assertEquals(TEXT, cue.release(T + ceiling))
+        assertFalse(poll(T + ceiling - 1))
+        assertTrue(poll(T + ceiling))
+        assertEquals(listOf(TEXT), spoken)
     }
 
     @Test
     fun `a cue goes exactly once`() {
         cue.hold(TEXT, T)
 
-        assertEquals(TEXT, cue.release(T))
-        assertNull(cue.release(T + ceiling * 2))
+        assertTrue(poll(T))
+        assertFalse(poll(T + ceiling * 2))
+        assertEquals(listOf(TEXT), spoken)
     }
 
     @Test
     fun `nothing held is nothing to say`() {
-        assertNull(cue.release(T))
+        assertFalse(poll(T))
+        assertEquals(emptyList<String>(), spoken)
     }
 
     @Test
@@ -78,7 +90,25 @@ class QuietGapCueTest {
         cue.hold(TEXT, T)
         cue.forget()
 
-        assertNull(cue.release(T + ceiling * 2))
+        assertFalse(poll(T + ceiling * 2))
+        assertEquals(emptyList<String>(), spoken)
+    }
+
+    @Test
+    fun `a withdrawal cannot land between deciding to speak and speaking`() {
+        cue.hold(TEXT, T)
+
+        // The speaker is where the race would be: the poll has committed to this cue, and the Run
+        // withdraws it in that instant. Withdrawing from inside the speaker is the only way a test
+        // can be in that window at all — and the cue must still be gone rather than re-held.
+        cue.releaseTo(T) {
+            cue.forget()
+            spoken += it
+        }
+
+        assertEquals(listOf(TEXT), spoken)
+        assertFalse(poll(T + ceiling * 2))
+        assertEquals(listOf(TEXT), spoken)
     }
 
     private companion object {

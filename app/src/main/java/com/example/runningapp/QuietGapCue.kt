@@ -55,18 +55,29 @@ class QuietGapCue(
     }
 
     /**
-     * The cue to speak now, or null to keep waiting. Asked repeatedly — by a poll, in the service —
-     * and it answers at most once per [hold].
+     * Speak the held cue through [speak] if its wait is over, and answer whether it went. Asked
+     * repeatedly — by a poll, in the service — and it speaks at most once per [hold].
+     *
+     * Deciding and speaking happen together, under the one lock, which is the whole reason this
+     * takes the speaker rather than handing the text back. A [forget] arriving at the same instant
+     * then has only two outcomes: it lands first and there is nothing left to say, or it lands
+     * after and there is nothing left to take back. Handing the text back opened a window between
+     * the two that no amount of cancelling the poll could close — a coroutine is only cancelled
+     * where it suspends, and there is no suspension in that gap (Codex, #212).
      */
     @Synchronized
-    fun release(nowMillis: Long): String? {
-        val text = pendingText ?: return null
-        if (!isQuiet(nowMillis) && nowMillis < speakByMillis) return null
+    fun releaseTo(nowMillis: Long, speak: (String) -> Unit): Boolean {
+        val text = pendingText ?: return false
+        if (!isQuiet(nowMillis) && nowMillis < speakByMillis) return false
         pendingText = null
-        return text
+        speak(text)
+        return true
     }
 
-    /** Drop whatever is held: the Run it belonged to is over. */
+    /**
+     * Drop whatever is held: the Run it belonged to is over, or has moved past what the cue was
+     * going to say. Inert once the cue has gone out, and it waits for a cue going out right now.
+     */
     @Synchronized
     fun forget() {
         pendingText = null
