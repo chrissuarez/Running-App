@@ -82,11 +82,21 @@ data class BestEffort(val type: RecordType, val value: Double)
  * ([com.example.runningapp.data.SessionRepository.getTrackPointsForMap]) — a wild fix left in reads
  * as a sprint, and would put a record on the books nobody ran.
  */
-fun bestEffortsOf(run: RunnerSession, track: List<TrackPoint>): List<BestEffort> {
+fun bestEffortsOf(
+    run: RunnerSession,
+    track: List<TrackPoint>,
+    /**
+     * Which records to contest. Narrowed by a repair that only has to rebuild the records a deleted
+     * Run held (#50), and it is not a filter applied afterwards: each fixed distance is its own
+     * rolling window over the whole track, so measuring the four nobody asked for is four times the
+     * arithmetic thrown away, once per Run in history.
+     */
+    types: Collection<RecordType> = RecordType.entries,
+): List<BestEffort> {
     if (!run.isFinished()) return emptyList()
     // Two fixes is the least a route can be: one fix says only where the Run started.
     val onTheGround = RunMode.ofSettingValue(run.runMode) != RunMode.TREADMILL && track.size >= 2
-    return RecordType.entries.mapNotNull { type ->
+    return RecordType.entries.filter { it in types }.mapNotNull { type ->
         val value = when {
             type == RecordType.LONGEST_DURATION -> run.durationSeconds.takeIf { it > 0 }?.toDouble()
             !onTheGround -> null
