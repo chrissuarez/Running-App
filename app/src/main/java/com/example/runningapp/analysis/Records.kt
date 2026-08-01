@@ -128,12 +128,50 @@ fun standingsAfter(
         // The challenger goes on the end, so a stable sort leaves it behind anything it only equals.
         val ranked = (standing + (sessionId to effort.value))
             .sortedWith(compareBy { (_, value) -> if (effort.type.lowerIsBetter) value else -value })
-        ranked.take(Medal.entries.size).mapIndexed { place, (holder, value) ->
-            Achievement(
-                sessionId = holder,
-                type = effort.type,
-                medal = Medal.entries[place],
-                value = value,
-            )
+        placed(effort.type, ranked)
+    }
+
+/** What one Run was worth at every record it contested — [bestEffortsOf], with its Run attached. */
+data class RunEfforts(val sessionId: Long, val efforts: List<BestEffort>)
+
+/**
+ * The whole record book, built from the whole history at once (#50).
+ *
+ * The other way of arriving at a book than [standingsAfter]: that one puts a single Run to a book
+ * that already exists, this one asks what the book *is*, given every effort ever run. It is how
+ * history first gets on the books, and how the book is repaired after a medal-holding Run is
+ * deleted — in both cases there is no standing order worth trusting, so nothing is carried over
+ * from the old rows.
+ *
+ * Covers only the records the passed-in efforts contested, like [standingsAfter], so a caller
+ * rebuilding two records leaves the other five alone.
+ *
+ * **A tie is kept by the lower session id**, which is the earlier Run: a record is that Run's until
+ * somebody actually beats it, and rebuilding the book must not quietly hand it to whoever ran the
+ * same time later. Ids are the ordering rather than start times because they are what the medal
+ * rows carry, so the rule can be checked against a book without reading history back.
+ */
+fun recordBookOf(runs: List<RunEfforts>): List<Achievement> =
+    runs
+        .flatMap { run -> run.efforts.map { run.sessionId to it } }
+        .groupBy { (_, effort) -> effort.type }
+        .flatMap { (type, claims) ->
+            val ranked = claims
+                .map { (sessionId, effort) -> sessionId to effort.value }
+                .sortedWith(
+                    compareBy<Pair<Long, Double>> { (_, value) -> if (type.lowerIsBetter) value else -value }
+                        .thenBy { (sessionId, _) -> sessionId }
+                )
+            placed(type, ranked)
         }
+
+/** The top of [ranked] — best first — written out as the medal rows that stand at [type]. */
+private fun placed(type: RecordType, ranked: List<Pair<Long, Double>>): List<Achievement> =
+    ranked.take(Medal.entries.size).mapIndexed { place, (holder, value) ->
+        Achievement(
+            sessionId = holder,
+            type = type,
+            medal = Medal.entries[place],
+            value = value,
+        )
     }
