@@ -25,6 +25,7 @@ import com.example.runningapp.analysis.standingsAfter
 import com.example.runningapp.analysis.bestEffortsOf
 import com.example.runningapp.recording.SessionRecorder
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -639,11 +640,17 @@ class SessionRepository(
         // across the DataStore read and write because that is the check-and-act another delete has
         // to be kept out of — one entering here between another's read and its write would find the
         // mark already down, lift nothing, and be owed nothing back.
-        recordBookMark.withLock {
-            mine = deletesStarted.incrementAndGet()
-            deletesActive.incrementAndGet()
-            wasSeeded = settings?.userSettingsFlow?.first()?.historyRecordsSeeded == true
-            if (wasSeeded) settings.clearHistoryRecordsSeeded()
+        //
+        // Uncancellable, like the leaving below and for the same reason: both suspend, and a
+        // cancellation landing after the count was joined but before the block finished would leave
+        // a delete counted that is not running. See [deletesActive].
+        withContext(NonCancellable) {
+            recordBookMark.withLock {
+                mine = deletesStarted.incrementAndGet()
+                deletesActive.incrementAndGet()
+                wasSeeded = settings?.userSettingsFlow?.first()?.historyRecordsSeeded == true
+                if (wasSeeded) settings.clearHistoryRecordsSeeded()
+            }
         }
         try {
             // Read and removed in one transaction, so nothing can award these Runs a medal in
@@ -669,10 +676,18 @@ class SessionRepository(
             // In a finally so a cancelled delete — the runner leaving the history screen — stops
             // holding every other caller's mark down. It leaves the debt behind it either way, since
             // `repaired` is only true once the mend has landed.
-            recordBookMark.withLock {
-                deletesActive.decrementAndGet()
-                val onlyDelete = deletesStarted.get() == mine && deletesActive.get() == 0
-                if (wasSeeded && repaired && onlyDelete) settings.setHistoryRecordsSeeded()
+            //
+            // And uncancellable, because this *is* the cancellation path and taking the lock
+            // suspends: run in the cancelled scope it would throw before the count came down, and
+            // the phantom delete left behind would stop every later delete and every seeding pass in
+            // this process from ever calling the book whole — a full reseed at every launch, for the
+            // life of the install.
+            withContext(NonCancellable) {
+                recordBookMark.withLock {
+                    deletesActive.decrementAndGet()
+                    val onlyDelete = deletesStarted.get() == mine && deletesActive.get() == 0
+                    if (wasSeeded && repaired && onlyDelete) settings.setHistoryRecordsSeeded()
+                }
             }
         }
     }
@@ -704,6 +719,12 @@ class SessionRepository(
      *
      * In memory only, and that is enough: they exist to catch two things overlapping inside one
      * process, and a process that dies takes any unwritten mark with it.
+     *
+     * **[deletesActive] must come back down whatever happens**, which is why both the joining and
+     * the leaving run uncancellable. A delete counted but not running is not a wrong book — it errs
+     * the safe way, refusing the mark — but it never stops erring: every later delete and every
+     * later seeding pass would decline to call the book whole, so the install pays a full reseed at
+     * every launch for as long as it lives.
      */
     private val deletesStarted = AtomicLong(0)
     private val deletesActive = AtomicInteger(0)
