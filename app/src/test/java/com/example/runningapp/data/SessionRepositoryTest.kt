@@ -1451,6 +1451,34 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `the medals a deleted run held are read in the transaction that removes it`() = runTest {
+        val order = mutableListOf<String>()
+        val mockAchievementDao: AchievementDao = mock()
+        mockAchievementDao.stub {
+            onBlocking { getAchievementsForSessions(any()) }
+                .doSuspendableAnswer { order += "read"; emptyList() }
+        }
+        mockDao.stub {
+            onBlocking { deleteSessionById(any()) }.doSuspendableAnswer { order += "delete" }
+        }
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            inTransaction = { block ->
+                order += "begin"
+                block()
+                order += "commit"
+            }
+        )
+
+        repositoryWithRecords.deleteSession(2L)
+
+        // Both inside one transaction: a medal awarded by the seeding pass in between would be
+        // cascaded away by the delete without ever showing up as a record to repair.
+        assertEquals(listOf("begin", "read", "delete", "commit"), order)
+    }
+
+    @Test
     fun `deleting a run that won nothing leaves the book alone`() = runTest {
         val mockAchievementDao: AchievementDao = mock()
         whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L, 5L))).thenReturn(emptyList())

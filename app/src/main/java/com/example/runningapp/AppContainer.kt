@@ -61,6 +61,15 @@ class AppContainer(context: Context) {
         // is the point: Room must not open the database until the restore has finished with it, and
         // this already runs off the main thread for the same reason as the migration read below.
         var restoredSettings: ArchivedSettings? = null
+        // The history about to be replaced is the history the seeding mark describes, so the mark
+        // goes first (#50). Not left to the settings write below: a bare `.db` backup brings no
+        // settings with it, and one written before the record book existed would otherwise restore
+        // into an empty book that the seeding pass declines to fill, at this launch and every one
+        // after. Cleared ahead of the swap so a kill cannot strand it — a restore that then fails
+        // costs one re-measure of unchanged history and arrives at the same book.
+        if (PendingRestore.isArmed(appContext)) {
+            runBlocking { settingsRepository.clearHistoryRecordsSeeded() }
+        }
         PendingRestore.applyIfArmed(appContext) { archived ->
             // Held before the write is attempted rather than after it, deliberately. The migration
             // below has to band the restored runs against the profile they arrived with, and a

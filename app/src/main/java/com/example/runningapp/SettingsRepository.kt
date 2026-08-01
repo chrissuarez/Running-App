@@ -597,6 +597,22 @@ class SettingsRepository(private val context: Context) {
     suspend fun setHistoryRecordsSeeded() = put(PreferencesKeys.HISTORY_RECORDS_SEEDED, true)
 
     /**
+     * Forgets that history has been scored, because the history it described is being replaced (#50).
+     *
+     * Every restore has to come through here, not only the archive one below: a bare `.db` backup
+     * carries no settings at all, so nothing else on that path would clear the mark — and a backup
+     * written before the record book existed would then sit permanently unscored, the seeding pass
+     * standing down at every launch over a mark left by history that is gone.
+     *
+     * Called *before* the swap rather than after it, so there is no window to be killed in. The
+     * cost of clearing it for a restore that then fails is one re-measure of unchanged history,
+     * which produces the same book; the cost of the other order is a history that is never scored.
+     */
+    suspend fun clearHistoryRecordsSeeded() {
+        context.dataStore.edit { it.remove(PreferencesKeys.HISTORY_RECORDS_SEEDED) }
+    }
+
+    /**
      * Puts back the settings an archive was written with, beside the history from the same archive
      * (#86). Written verbatim, in one edit, and deliberately **not** through [setStatedHeartRates].
      *
