@@ -117,6 +117,19 @@ sealed interface RunEffect {
      */
     data class SpeakWhenQuiet(val text: String) : RunEffect
 
+    /**
+     * Drop a [SpeakWhenQuiet] cue that is still waiting: the Run has changed underneath it (#208).
+     *
+     * The price of letting a cue be late is that the Run can move on while it waits — the runner
+     * turns the turnaround off, or skips into the cool-down — and the thing it was going to say is
+     * no longer true. Speaking "turn around" to someone already heading home is worse than losing
+     * the cue, so the rule that a cue may wait comes with a rule that it may be taken back.
+     *
+     * Inert when nothing is waiting, which is most of the time: the Run knows a cue was issued, not
+     * whether the speech layer has since spoken it, and it does not need to.
+     */
+    data object DropWaitingCue : RunEffect
+
     /** Put this on the Run's notification. */
     data class Notify(val text: String) : RunEffect
 
