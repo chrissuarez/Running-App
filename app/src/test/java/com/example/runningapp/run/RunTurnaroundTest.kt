@@ -157,6 +157,31 @@ class RunTurnaroundTest {
     }
 
     @Test
+    fun `halfway landing on an interval is said after the interval's own instruction`() {
+        // 10s warm-up, 3 × (10 run / 10 walk), 8s cool-down: 78 seconds door to door, so halfway is
+        // second 39 — the exact second the second Interval's walk begins.
+        val short = PLANNED_WORKOUT.copy(
+            runDurationSeconds = 10,
+            walkDurationSeconds = 10,
+            totalRepeats = 3,
+            warmUpSeconds = 10,
+            coolDownSeconds = 8,
+        )
+        val driver = Driver()
+        driver.start(config(workout = short, runMode = RunMode.OUTDOOR))
+        driver.advance(38)
+
+        val halfway = driver.advance(1)
+        assertEquals(listOf(TURNAROUND_CUE), halfway.held())
+        // The instruction is registered with the speaker first. Handed over the other way round,
+        // the held cue could be released into the gap between the two and then flushed by the
+        // instruction itself.
+        val instruction = halfway.indexOfFirst { it is RunEffect.Speak }
+        val turnaround = halfway.indexOfFirst { it is RunEffect.SpeakWhenQuiet }
+        assertTrue("expected the interval instruction before the turnaround, got $halfway", instruction in 0 until turnaround)
+    }
+
+    @Test
     fun `nothing is taken back when nothing is waiting`() {
         val driver = Driver()
         driver.start(outdoor)
