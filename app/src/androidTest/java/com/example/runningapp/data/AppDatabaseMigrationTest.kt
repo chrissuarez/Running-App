@@ -5,6 +5,8 @@ import androidx.room.Room
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.runningapp.HrProfile
+import com.example.runningapp.analysis.Medal
+import com.example.runningapp.analysis.RecordType
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -75,7 +77,7 @@ class AppDatabaseMigrationTest {
         // migration between the file's version and today's. It does not disturb what this test
         // asserts — it touches sessions, never track_points.
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
+            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
             .build()
 
         val sessionATrackPoints = runBlockingGet { migratedDb.trackPointDao().getTrackPointsForSessionOnce(1) }
@@ -128,7 +130,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
+            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
             .build()
         val session1 = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val session2 = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
@@ -192,7 +194,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
+            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
             .build()
         val session1 = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val session2 = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
@@ -237,7 +239,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
+            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
             .build()
         // Opening through Room is itself the assertion that the dead columns are gone: Room refuses
         // a database whose column set does not match the entity, and RunnerSession no longer
@@ -285,7 +287,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
+            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
             .build()
         val trackPoints = runBlockingGet { migratedDb.trackPointDao().getTrackPointsForSessionOnce(1) }
         migratedDb.close()
@@ -301,7 +303,7 @@ class AppDatabaseMigrationTest {
         // and the version number says 17 for both. Room refuses a database carrying a column its
         // entities do not declare, so without this the phone cannot open this build at all.
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
+            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
             .build()
         runBlockingGet { migratedDb.sessionDao().insertSession(RunnerSession(startTime = 1_000L, endTime = 2_000L)) }
         migratedDb.close()
@@ -316,7 +318,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val reopened = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
+            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
             .build()
         // Opening at all is the assertion on shape: Room validates every table against today's
         // entities, so it passes only if the boundary column is back. The run itself must still be
@@ -341,7 +343,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
+            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
             .build()
         val session = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val needingBackfill = runBlockingGet { migratedDb.sessionDao().getSessionIdsMissingMovingTime() }
@@ -353,6 +355,49 @@ class AppDatabaseMigrationTest {
         assertEquals(null, session.movingTimeSeconds)
         assertEquals(2259L, session.durationSeconds)
         assertEquals(listOf(1L), needingBackfill)
+    }
+
+    @Test
+    fun migrate19To20_opensAnEmptyRecordBook_whoseMedalsGoWithTheirRun() {
+        val rawDb = openLegacyDatabase()
+        createTrackPointsTable(rawDb)
+        insertLegacySession(rawDb, id = 1)
+        rawDb.version = 12
+        rawDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20)
+            .build()
+
+        // Opening at all is the assertion on shape: Room validates the new table, its columns and
+        // both indices against the entity, so a migration that built it differently fails here.
+        val bookAtFirstOpen = runBlockingGet { migratedDb.achievementDao().getAllAchievements() }
+
+        runBlockingGet {
+            migratedDb.achievementDao().insertAchievements(
+                listOf(
+                    Achievement(
+                        sessionId = 1,
+                        type = RecordType.FASTEST_5K,
+                        medal = Medal.GOLD,
+                        value = 1_500.0,
+                    )
+                )
+            )
+        }
+        val held = runBlockingGet { migratedDb.achievementDao().getAllAchievements() }
+
+        // A medal is a recording of a run like any other, so deleting the run takes it too — the
+        // cascade the migration declares, exercised rather than trusted.
+        runBlockingGet { migratedDb.sessionDao().deleteSessionById(1) }
+        val afterTheRunWasDeleted = runBlockingGet { migratedDb.achievementDao().getAllAchievements() }
+        migratedDb.close()
+
+        // History recorded before this arrives unscored: filling the book is #50's job.
+        assertEquals(emptyList<Achievement>(), bookAtFirstOpen)
+        assertEquals(listOf(RecordType.FASTEST_5K to Medal.GOLD), held.map { it.type to it.medal })
+        assertEquals(1_500.0, held.single().value, 0.001)
+        assertEquals(emptyList<Achievement>(), afterTheRunWasDeleted)
     }
 
     /**
