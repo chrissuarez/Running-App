@@ -6,6 +6,7 @@ import com.example.runningapp.RunType
 import com.example.runningapp.UserSettings
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.pickedOrFirst
+import com.example.runningapp.plannedSeconds
 import com.example.runningapp.targetHrZone
 import com.example.runningapp.withCoachPrescription
 
@@ -185,10 +186,7 @@ private fun envelopeLine(workout: WorkoutTemplate): String = buildList {
 
 /** Rounded to the nearest minute, but never to zero — a run always takes some time. */
 private fun totalMinutes(workout: WorkoutTemplate): Int {
-    val total = workout.warmUpSeconds +
-        workout.totalRepeats * (workout.runDurationSeconds + workout.walkDurationSeconds) +
-        workout.coolDownSeconds
-    return ((total + 30) / 60).coerceAtLeast(1)
+    return ((workout.plannedSeconds + 30) / 60).coerceAtLeast(1).toInt()
 }
 
 /**

@@ -19,6 +19,12 @@ class AudioCueManager(
     private val serviceScope: CoroutineScope,
     private val logTag: String,
     private val cueFocusTimeoutMs: Long = 8_000L,
+    /**
+     * Told true when a cue starts speaking and false when it stops, for anything that needs to know
+     * whether the app is mid-sentence — see [QuietGapCue]. Every cue passes through here, Split
+     * announcements included, so it is the one place that sees all of them.
+     */
+    private val onCueActivity: (speaking: Boolean) -> Unit = {},
 ) {
     private var focusRequest: AudioFocusRequest? = null
     private var currentCueUtteranceId: String? = null
@@ -65,6 +71,7 @@ class AudioCueManager(
             val params = android.os.Bundle()
             params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
             tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+            onCueActivity(true)
             Log.d(logTag, "Playing Cue: $text (utteranceId=$utteranceId)")
         } else {
             Log.w(logTag, "Audio focus request failed")
@@ -146,6 +153,9 @@ class AudioCueManager(
         abandonAudioFocus()
         isCueFocusHeld = false
         currentCueUtteranceId = null
+        // Focus is held for exactly as long as a cue is being spoken — done, error, stop and the
+        // safety timeout all land here — so letting go of it is the app falling quiet.
+        onCueActivity(false)
         Log.d(logTag, "Released cue audio focus: reason=$reason utteranceId=$utteranceId")
     }
 }

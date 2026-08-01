@@ -67,4 +67,10 @@ data class RunControls(
     val coachingEnabled: Boolean = true,
     val autoPauseEnabled: Boolean = false,
     val splitAnnouncementsEnabled: Boolean = false,
+    /**
+     * Whether the halfway "turn around" cue may be spoken (#208). On by default, because the Run it
+     * applies to — outdoors, following a Workout — is an out-and-back for most runners; the runner
+     * doing loops turns it off.
+     */
+    val turnaroundCueEnabled: Boolean = true,
 )

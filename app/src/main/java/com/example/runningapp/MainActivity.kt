@@ -514,6 +514,9 @@ class MainActivity : ComponentActivity() {
                                 onSplitAnnouncementsChange = { enabled ->
                                     scope.launch(Dispatchers.IO) { settingsRepository.setSplitAnnouncementsEnabled(enabled) }
                                 },
+                                onTurnaroundCueChange = { enabled ->
+                                    scope.launch(Dispatchers.IO) { settingsRepository.setTurnaroundCueEnabled(enabled) }
+                                },
                                 onAutoPauseChange = { enabled ->
                                     scope.launch(Dispatchers.IO) { settingsRepository.setAutoPauseEnabled(enabled) }
                                 },

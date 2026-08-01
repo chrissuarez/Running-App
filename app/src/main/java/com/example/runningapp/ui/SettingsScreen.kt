@@ -91,6 +91,7 @@ fun SettingsScreen(
     onTargetZoneChange: (HrZone) -> Unit,
     onCoachingEnabledChange: (Boolean) -> Unit,
     onSplitAnnouncementsChange: (Boolean) -> Unit,
+    onTurnaroundCueChange: (Boolean) -> Unit,
     onAutoPauseChange: (Boolean) -> Unit,
     onAiDataSharingChange: (Boolean) -> Unit,
     onTestingModeChange: (Boolean) -> Unit,
@@ -265,6 +266,14 @@ fun SettingsScreen(
                 label = "Split announcements",
                 checked = settings.splitAnnouncementsEnabled,
                 onCheckedChange = onSplitAnnouncementsChange
+            )
+            SettingsSwitchRow(
+                label = "Turnaround cue",
+                // Says what it does and where, because the runner it does not apply to — treadmill,
+                // no plan, or running loops — should be able to tell at a glance.
+                subtitle = "\"Halfway, turn around\" on an outdoor planned run.",
+                checked = settings.turnaroundCueEnabled,
+                onCheckedChange = onTurnaroundCueChange
             )
             SettingsSwitchRow(
                 label = "Auto-pause",

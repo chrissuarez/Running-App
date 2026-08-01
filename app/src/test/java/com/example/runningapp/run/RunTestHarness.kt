@@ -153,3 +153,7 @@ internal inline fun <reified T : RunEffect> List<RunEffect>.count(): Int =
 
 internal fun List<RunEffect>.spoken(): List<String> =
     filterIsInstance<RunEffect.Speak>().map { it.text }
+
+/** The cues the Run was willing to have wait for a gap. See [RunEffect.SpeakWhenQuiet]. */
+internal fun List<RunEffect>.held(): List<String> =
+    filterIsInstance<RunEffect.SpeakWhenQuiet>().map { it.text }
