@@ -1425,12 +1425,13 @@ class SessionRepositoryTest {
         whenever(mockDao.getAllSessions()).thenReturn(
             listOf(aTreadmillRun(id = 1, seconds = 600), aTreadmillRun(id = 3, seconds = 1_200))
         )
-        var refreshCount = 0
+        val order = mutableListOf<String>()
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
             achievementDao = mockAchievementDao,
-            refreshHistoryBackup = { refreshCount++ }
+            refreshHistoryBackup = { order += "backup" }
         )
+        whenever(mockAchievementDao.insertAchievements(any())).then { order += "rebuild"; Unit }
 
         repositoryWithRecords.deleteSession(2L)
 
@@ -1443,7 +1444,10 @@ class SessionRepositoryTest {
             listOf(3L to Medal.GOLD, 1L to Medal.SILVER),
             book.firstValue.map { it.sessionId to it.medal },
         )
-        assertEquals(1, refreshCount)
+        // The deletion is made durable *before* the minutes-long rebuild, so a process killed inside
+        // it cannot leave a Downloads snapshot a restore would bring the deleted run back from. The
+        // second refresh carries the mended book out too.
+        assertEquals(listOf("backup", "rebuild", "backup"), order)
     }
 
     @Test
