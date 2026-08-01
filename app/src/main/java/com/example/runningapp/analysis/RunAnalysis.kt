@@ -31,6 +31,14 @@ data class RunAnalysis(
      * page then shows no elevation line at all rather than a confident zero.
      */
     val elevationGainMeters: Double? = null,
+    /**
+     * The Run over the ground it covered (#46) — pace and heart rate on an elevation silhouette.
+     *
+     * Null for a treadmill Run and for any Run with no usable track, which is the page's signal to
+     * draw [chart] instead: heart rate over the Run's own clock is the mode every Run can be shown
+     * in, and it is all a Run with no route has to offer.
+     */
+    val distanceChart: DistanceChart? = null,
 ) {
     companion object {
         /**
@@ -46,13 +54,6 @@ data class RunAnalysis(
          * them however tidy the line across it would look.
          */
         private const val RECORDING_BREAK_SECONDS = 1L
-
-        /** The lowest and highest the beats-per-minute scale is ever allowed to reach. */
-        private const val LOWEST_PLAUSIBLE_BPM = 40
-        private const val HIGHEST_PLAUSIBLE_BPM = 220
-
-        /** Air above and below the run's own range, so the line never touches the frame. */
-        private const val BPM_HEADROOM = 5
 
         /**
          * [track] is the Run's route, gated for accuracy the way the map gates it
@@ -71,6 +72,7 @@ data class RunAnalysis(
                 chart = heartRateChart(run, samples),
                 splits = ground.splits,
                 elevationGainMeters = ground.elevationGainMeters,
+                distanceChart = ground.distanceChart,
             )
         }
 
@@ -91,9 +93,6 @@ data class RunAnalysis(
             // glitch reporting a beat no runner has cannot end up with a scale that runs downwards
             // — a run of nothing but such readings would otherwise put its floor above its ceiling.
             // The glitch is still drawn; it rides the edge of the frame.
-            val lowest = readings.minOf { it.bpm }.coerceIn(LOWEST_PLAUSIBLE_BPM, HIGHEST_PLAUSIBLE_BPM)
-            val highest = readings.maxOf { it.bpm }.coerceIn(LOWEST_PLAUSIBLE_BPM, HIGHEST_PLAUSIBLE_BPM)
-
             return RunChart(
                 heartRate = readings.splitWhereNothingWasRecorded(),
                 // The Run's own clock, not the last reading's: a Strap that gave up at minute ten of
@@ -101,8 +100,8 @@ data class RunAnalysis(
                 // about the recording. Runs still being written, and old rows that banked no
                 // duration, fall back to the readings themselves so the chart still has a width.
                 elapsedSecondsSpan = maxOf(run.durationSeconds, readings.last().elapsedSeconds),
-                bpmFloor = floorToTen((lowest - BPM_HEADROOM).coerceAtLeast(LOWEST_PLAUSIBLE_BPM)),
-                bpmCeiling = ceilingToTen((highest + BPM_HEADROOM).coerceAtMost(HIGHEST_PLAUSIBLE_BPM))
+                bpmFloor = bpmFloorFor(readings.map { it.bpm }),
+                bpmCeiling = bpmCeilingFor(readings.map { it.bpm }),
             )
         }
 
@@ -118,11 +117,39 @@ data class RunAnalysis(
             }
             return traces.map { HeartRateTrace(it) }
         }
-
-        private fun floorToTen(bpm: Int): Int = bpm / 10 * 10
-
-        private fun ceilingToTen(bpm: Int): Int = (bpm + 9) / 10 * 10
     }
+}
+
+/** The lowest and highest the beats-per-minute scale is ever allowed to reach. */
+private const val LOWEST_PLAUSIBLE_BPM = 40
+private const val HIGHEST_PLAUSIBLE_BPM = 220
+
+/** Air above and below the run's own range, so the line never touches the frame. */
+private const val BPM_HEADROOM = 5
+
+/**
+ * The floor of the beats-per-minute scale: the lowest beat the Run recorded, given air and rounded
+ * down to a round number.
+ *
+ * Held to what a heart can plausibly do before the scale is worked out, so that a Strap glitch
+ * reporting a beat no runner has cannot end up with a scale that runs downwards — a run of nothing
+ * but such readings would otherwise put its floor above its ceiling. The glitch is still drawn; it
+ * rides the edge of the frame.
+ *
+ * A Run with no heart rate at all still gets a scale, so the combined chart has a frame to draw its
+ * pace and its ground in.
+ */
+internal fun bpmFloorFor(beats: List<Int>): Int {
+    val lowest = (beats.minOrNull() ?: LOWEST_PLAUSIBLE_BPM)
+        .coerceIn(LOWEST_PLAUSIBLE_BPM, HIGHEST_PLAUSIBLE_BPM)
+    return (lowest - BPM_HEADROOM).coerceAtLeast(LOWEST_PLAUSIBLE_BPM) / 10 * 10
+}
+
+/** See [bpmFloorFor] — the same rule at the top of the scale. */
+internal fun bpmCeilingFor(beats: List<Int>): Int {
+    val highest = (beats.maxOrNull() ?: HIGHEST_PLAUSIBLE_BPM)
+        .coerceIn(LOWEST_PLAUSIBLE_BPM, HIGHEST_PLAUSIBLE_BPM)
+    return ((highest + BPM_HEADROOM).coerceAtMost(HIGHEST_PLAUSIBLE_BPM) + 9) / 10 * 10
 }
 
 /** One heart rate, at the second of the Run it was measured in. */

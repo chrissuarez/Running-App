@@ -125,9 +125,23 @@ fun SessionDetailScreen(
                     Spacer(modifier = Modifier.height(24.dp))
                 }
 
-                Text("Heart Rate", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(modifier = Modifier.height(8.dp))
-                RunAnalysisChart(chart = analysis.chart)
+                // An outdoor run is read against the ground it covered and a treadmill run against
+                // its own clock, so the two get different charts and different headings (#46) — the
+                // heading has to say what the bottom axis means or the chart is a guess.
+                val combined = analysis.distanceChart
+                if (combined != null) {
+                    Text(
+                        "Pace, Heart Rate & Elevation",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    RunCombinedChart(chart = combined)
+                } else {
+                    Text("Heart Rate", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    RunAnalysisChart(chart = analysis.chart)
+                }
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Text("Heart Rate Zones", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)

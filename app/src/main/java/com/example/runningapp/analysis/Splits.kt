@@ -78,37 +78,42 @@ data class Split(
  *   rounding each boundary out to the next fix would push whole splits out of shape.
  */
 internal fun groundOf(run: RunnerSession, samples: List<HrSample>, track: List<TrackPoint>): RunGround {
-    val nothing = RunGround(splits = emptyList(), elevationGainMeters = null)
+    val nothing = RunGround(splits = emptyList(), elevationGainMeters = null, distanceChart = null)
     if (RunMode.ofSettingValue(run.runMode) == RunMode.TREADMILL) return nothing
     val measured = measureTrack(track)
     if (measured.legs.isEmpty()) return nothing
     val elevation = elevationOf(measured)
+    val bpmByWallSecond = samples.byWallSecond(run)
     return RunGround(
-        splits = measured.splitAtKilometres(run, samples, elevation).scaledToTheSlowest(),
+        splits = measured.splitAtKilometres(bpmByWallSecond, elevation).scaledToTheSlowest(),
         // The whole run in one pass rather than the sum of the splits' gains, and not meant to match
         // it: each split banks its climbs against its own low point, so a hill straddling a
         // kilometre marker is one climb here and two there. The run's own figure is the one the
         // summary quotes, because it is the one asked about the whole run.
         elevationGainMeters = elevation?.gainMetersBetween(0, measured.points.lastIndex),
+        distanceChart = distanceChartOf(measured, elevation, bpmByWallSecond),
     )
 }
 
 /**
- * Everything the ground under a run says about it: its kilometres, and the metres it climbed.
+ * Everything the ground under a run says about it: its kilometres, the metres it climbed, and the
+ * chart drawn against the distance it covered.
  *
- * The two travel together because they come from one walk of the track, which is the expensive part
- * of the whole page — a geodesic distance per fix, on the main thread, for a run that may be an hour
- * of them. Asking for one and then the other would walk it twice.
+ * They travel together because they come from one walk of the track, which is the expensive part of
+ * the whole page — a geodesic distance per fix, on the main thread, for a run that may be an hour of
+ * them. Asking for one and then the next would walk it once each.
  */
-internal data class RunGround(val splits: List<Split>, val elevationGainMeters: Double?)
+internal data class RunGround(
+    val splits: List<Split>,
+    val elevationGainMeters: Double?,
+    val distanceChart: DistanceChart?,
+)
 
 /** The run's legs walked once, banking a split each time a kilometre of recorded ground is behind. */
 private fun MeasuredTrack.splitAtKilometres(
-    run: RunnerSession,
-    samples: List<HrSample>,
+    bpmByWallSecond: Map<Long, Int>,
     elevation: ElevationProfile?,
 ): List<RawSplit> {
-    val bpmByWallSecond = samples.byWallSecond(run)
     val splits = mutableListOf<RawSplit>()
     var startIndex = 0
     var splitMeters = 0.0
