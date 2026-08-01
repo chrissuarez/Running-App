@@ -578,10 +578,29 @@ class SessionRepository(
      * failing costs a restored history a record standing two deep until something contests it; the
      * first one's failing would cost the runner a deletion that did not stick.
      *
-     * The seeding mark is lifted for the length of the mend, so a mend that never finishes is a
-     * debt the next launch pays rather than a hole nobody can see. See below.
+     * **The seeding mark is lifted first of all, and handed back last.** From the moment the rows
+     * go the medals go with them, so until the book is mended a record the deleted Run held stands
+     * short — and short is a hole nothing else can find: only the top three are ever stored, so the
+     * fourth-best effort that should move up exists nowhere but in the tracks, and no future Run
+     * finishing can promote it. The debt is therefore written down *before* the delete, not after
+     * it: everything between here and the mend can be cut short — the process reclaimed, the view
+     * model's scope cancelled by the runner leaving the screen mid-backup — and a debt recorded
+     * afterwards would be a debt those endings skip. Recorded first, every one of them leaves
+     * history owing a reseed, which the next launch pays.
+     *
+     * Lifted for deletes that turn out to hold nothing too, because what a Run held is not known
+     * until it is already gone. That costs a needless reseed only if the process dies inside the
+     * delete itself, and a reseed of unmoved history arrives at the same book.
+     *
+     * Only if it was marked to begin with: an install whose seeding pass has not finished (or has
+     * failed) is already owed one, and marking it seeded at the end of a two-record repair would
+     * cancel a debt this never paid.
      */
     private suspend fun deleteAndRepair(sessionIds: List<Long>, delete: suspend () -> Unit) {
+        val settings = settingsRepository
+        val wasSeeded = settings?.userSettingsFlow?.first()?.historyRecordsSeeded == true
+        if (wasSeeded) settings.clearHistoryRecordsSeeded()
+
         // Read and removed in one transaction, so nothing can award these Runs a medal in between.
         // The seeding pass commits a whole book at once and a delete arrives from the history
         // screen while it may still be running: read outside, a medal landing in that gap would be
@@ -593,24 +612,10 @@ class SessionRepository(
             delete()
         }
         refreshHistoryBackup?.invoke()
-        if (losing.isEmpty()) return
 
-        // History stops counting as scored for the length of the repair, and counts again only once
-        // it lands. The medals went with the rows, so until the book is mended a record the deleted
-        // Run held stands short — and short is a hole nothing else can find: only the top three are
-        // ever stored, so the fourth-best effort that should move up exists nowhere but in the
-        // tracks, and no future Run finishing can promote it. A repair killed or thrown mid-way
-        // therefore has to leave the whole book owed again, which the next launch pays.
-        //
-        // Only if it was marked to begin with: an install whose seeding pass has not finished (or
-        // failed) is already owed one, and marking it seeded here on the strength of a two-record
-        // repair would cancel a debt this never paid.
-        val settings = settingsRepository
-        val wasSeeded = settings?.userSettingsFlow?.first()?.historyRecordsSeeded == true
-        if (wasSeeded) settings.clearHistoryRecordsSeeded()
         val repaired = repairRecordBook(losing)
+        if (losing.isNotEmpty()) refreshHistoryBackup?.invoke()
         if (wasSeeded && repaired) settings.setHistoryRecordsSeeded()
-        refreshHistoryBackup?.invoke()
     }
 
     private suspend fun recordsHeldBy(sessionIds: List<Long>): List<RecordType> =
@@ -620,8 +625,8 @@ class SessionRepository(
      * Rebuilds the records a deleted Run held, so the places below it move up (#50).
      *
      * Only the records it actually held: deleting a Run that never won anything changes nothing
-     * about the book, and must not cost a re-measure of the whole history to prove it — which is
-     * why [deleteAndRepair] does not call this at all when the list is empty.
+     * about the book, and must not cost a re-measure of the whole history to prove it — so an empty
+     * list is nothing to do rather than a whole history to walk, and counts as mended.
      *
      * Its own attempt, because the Run is already deleted by the time this runs. A book that cannot
      * be rewritten leaves a record two deep until the next Run contests it, which is a wrong number
