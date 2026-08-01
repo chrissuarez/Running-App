@@ -406,25 +406,48 @@ fun RunCombinedChart(chart: DistanceChart, modifier: Modifier = Modifier) {
 
         // Only the series the Run actually recorded: an outdoor Run with no Strap draws no red
         // line, and a key naming one sends the runner looking for it.
-        ChartKey(
-            hasPace = chart.traces.any { trace -> trace.points.any { it.paceMinPerKm != null } },
-            hasHeartRate = chart.traces.any { trace -> trace.points.any { it.bpm != null } },
-            hasElevation = ground != null,
-        )
+        ChartKey(chart)
     }
 }
 
 /** Which line is which, said in words — two coloured lines on one chart are otherwise a guess. */
 @Composable
-private fun ChartKey(hasPace: Boolean, hasHeartRate: Boolean, hasElevation: Boolean) {
+private fun ChartKey(chart: DistanceChart) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        if (hasPace) KeyEntry(PaceLine, "Pace")
-        if (hasHeartRate) KeyEntry(HeartRateLine, "Heart rate")
+        if (chart.hasPace) KeyEntry(PaceLine, PACE_SERIES)
+        if (chart.hasHeartRate) KeyEntry(HeartRateLine, HEART_RATE_SERIES)
         // The same wash the silhouette is filled with, so the key names the thing on the chart.
-        if (hasElevation) KeyEntry(MaterialTheme.colorScheme.onSurface.copy(alpha = SilhouetteAlpha), "Elevation")
+        if (chart.hasElevation) {
+            KeyEntry(MaterialTheme.colorScheme.onSurface.copy(alpha = SilhouetteAlpha), ELEVATION_SERIES)
+        }
+    }
+}
+
+private const val PACE_SERIES = "Pace"
+private const val HEART_RATE_SERIES = "Heart Rate"
+private const val ELEVATION_SERIES = "Elevation"
+
+/**
+ * The chart's heading: the lines it draws, named — and only those.
+ *
+ * Read off the same three flags as the key, so the two cannot disagree. A strapless outdoor run
+ * over flat, barometerless ground draws one line, and a heading promising three would present that
+ * run — a first-class one since #110 — as a chart with two thirds of it missing.
+ */
+internal fun headingFor(chart: DistanceChart): String {
+    val names = buildList {
+        if (chart.hasPace) add(PACE_SERIES)
+        if (chart.hasHeartRate) add(HEART_RATE_SERIES)
+        if (chart.hasElevation) add(ELEVATION_SERIES)
+    }
+    return when (names.size) {
+        // Ground covered but nothing measured over it — all the chart has to say is how far.
+        0 -> "Distance"
+        1 -> names.single()
+        else -> names.dropLast(1).joinToString(", ") + " & " + names.last()
     }
 }
 
