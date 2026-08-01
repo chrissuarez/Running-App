@@ -41,9 +41,7 @@ object Run {
         is RunEvent.HeartRateLost -> RunOutcome(
             state.copy(heartRate = state.heartRate.lost(event.connectionStatus)),
         )
-        // Obeyed from the moment it arrives, which is the whole point of a control (#109): the very
-        // next sample is judged under the new one, so coaching turned off goes quiet at once.
-        is RunEvent.ControlsChanged -> RunOutcome(state.copy(controls = event.controls))
+        is RunEvent.ControlsChanged -> controlsChanged(state, event)
         is RunEvent.PauseToggled -> pauseToggled(state, event.nowMillis)
         // A named direction, so a button the shade has not caught up with asks for nothing.
         is RunEvent.PauseRequested ->
@@ -224,6 +222,7 @@ object Run {
                 // Run must not be told to turn around within sight of home.
                 current = current.copy(turnaroundCued = true)
                 if (current.controls.turnaroundCueEnabled) {
+                    current = current.copy(turnaroundHeld = true)
                     effects += RunEffect.SpeakWhenQuiet(TURNAROUND_CUE)
                 }
             }
@@ -286,6 +285,17 @@ object Run {
         val total = state.projectedMovingSeconds ?: return false
         return state.secondsRunning * 2 >= total
     }
+
+    /**
+     * The cool-down takes back a turnaround still waiting for a gap (#208).
+     *
+     * The runner is heading home from here, whether the Workout ended or they skipped past what was
+     * left of it. "Turn around" was true when it was issued and is not true now, and a cue allowed
+     * to be late is a cue that can be overtaken like this — so it is dropped rather than spoken a
+     * few seconds into the cool-down.
+     */
+    private fun coolDownDropsWaitingCue(state: RunState): List<RunEffect> =
+        if (state.turnaroundHeld) listOf(RunEffect.DropWaitingCue) else emptyList()
 
     /**
      * Bank one second of the Run against the reading that stands at this moment.
@@ -577,8 +587,10 @@ object Run {
                     // unplanned Run has no Interval to complete and never reaches here.
                     phase = RunPhase.COOL_DOWN,
                     phaseSecondsElapsed = 0,
+                    turnaroundHeld = false,
                 ),
-                effects + RunEffect.Speak("Main workout complete, beginning cool down."),
+                effects + coolDownDropsWaitingCue(current) +
+                    RunEffect.Speak("Main workout complete, beginning cool down."),
             )
         } else {
             val begun = beginRunInterval(current, workout, nextRepeat)
@@ -617,6 +629,35 @@ object Run {
         } else {
             RunOutcome(state.copy(pendingRowEffects = state.pendingRowEffects + work))
         }
+    }
+
+    /**
+     * The runner flipped a control mid-Run.
+     *
+     * Obeyed from the moment it arrives, which is the whole point of a control (#109): the very next
+     * sample is judged under the new one, so coaching turned off goes quiet at once.
+     *
+     * "The moment it arrives" is why the clock is settled first, exactly as a pause, a skip or a
+     * STOP settles it. Seconds the runner had already run when they flipped the switch were run
+     * under the old controls; a pulse the phone was slow to deliver must not hand them to the new
+     * one. Without that, enabling the turnaround while a tick was overdue let the catch-up loop
+     * reach a halfway that had already passed and speak it (Codex, #212).
+     *
+     * A control turned off can also take back a cue still waiting for a gap — see [DropWaitingCue].
+     */
+    private fun controlsChanged(state: RunState, event: RunEvent.ControlsChanged): RunOutcome {
+        val settled = accrue(state, event.nowMillis)
+        val current = settled.state
+        val dropped =
+            if (current.turnaroundHeld && !event.controls.turnaroundCueEnabled) {
+                listOf(RunEffect.DropWaitingCue)
+            } else {
+                emptyList()
+            }
+        return RunOutcome(
+            current.copy(controls = event.controls, turnaroundHeld = current.turnaroundHeld && dropped.isEmpty()),
+            settled.effects + dropped,
+        )
     }
 
     /**
@@ -778,10 +819,11 @@ object Run {
                     intervals = null,
                     intervalsFinished = true,
                     trigger = Trigger(),
+                    turnaroundHeld = false,
                 )
                 RunOutcome(
                     skipped,
-                    saved.effects + listOf(
+                    saved.effects + coolDownDropsWaitingCue(state) + listOf(
                         RunEffect.Speak("Starting cool down."),
                         RunEffect.Notify(notificationText(skipped)),
                     ),

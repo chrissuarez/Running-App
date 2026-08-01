@@ -118,4 +118,51 @@ class RunTurnaroundTest {
         // the end to turn around would send them out again.
         assertEquals(emptyList<String>(), driver.advance(200).held())
     }
+
+    @Test
+    fun `switching it on while a pulse is overdue does not uncover a halfway already run`() {
+        val driver = Driver()
+        driver.start(outdoor, RunControls(turnaroundCueEnabled = false))
+        driver.advance(700)
+
+        // The phone dozes: no pulse for a hundred seconds, so the Run's clock still reads 700 and
+        // second 765 has been run but not yet accounted. The switch arrives into that gap.
+        driver.nowMillis += 100_000
+        val flipped = driver.controls(RunControls(turnaroundCueEnabled = true))
+
+        // Those hundred seconds were run with the cue off. Settling them under the new setting is
+        // what used to let the catch-up speak a halfway the runner is already well past.
+        assertEquals(emptyList<String>(), flipped.held())
+        assertEquals(emptyList<String>(), driver.advance(200).held())
+    }
+
+    @Test
+    fun `turning the cue off while it waits takes it back`() {
+        val driver = Driver()
+        driver.start(outdoor)
+        assertEquals(listOf(TURNAROUND_CUE), driver.advance(765).held())
+
+        // It may be up to fifteen seconds from being spoken. The runner has just said they do not
+        // want it.
+        assertTrue(RunEffect.DropWaitingCue in driver.controls(RunControls(turnaroundCueEnabled = false)))
+    }
+
+    @Test
+    fun `skipping into the cool down takes back a turnaround still waiting`() {
+        val driver = Driver()
+        driver.start(outdoor)
+        driver.advance(765)
+
+        assertTrue(RunEffect.DropWaitingCue in driver.skipPhase())
+    }
+
+    @Test
+    fun `nothing is taken back when nothing is waiting`() {
+        val driver = Driver()
+        driver.start(outdoor)
+        driver.advance(460)
+
+        assertTrue(RunEffect.DropWaitingCue !in driver.controls(RunControls(turnaroundCueEnabled = false)))
+        assertTrue(RunEffect.DropWaitingCue !in driver.skipPhase())
+    }
 }

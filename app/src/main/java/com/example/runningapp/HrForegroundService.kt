@@ -476,6 +476,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             is RunEffect.SaveIntervalStat -> saveIntervalStat(effect)
             is RunEffect.Speak -> playCue(effect.text)
             is RunEffect.SpeakWhenQuiet -> holdCue(effect.text)
+            RunEffect.DropWaitingCue -> dropHeldCue()
             is RunEffect.Notify -> updateNotification(effect.text)
             RunEffect.StartGps -> startGps()
             RunEffect.StopGps -> locationTracker?.stop()
@@ -1105,6 +1106,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    /**
+     * Take back a held cue: whatever it was going to say is no longer true (#208).
+     *
+     * Asked for by the Run ([RunEffect.DropWaitingCue]) and by the end of a Run. Inert when nothing
+     * is waiting, so neither caller has to know whether it was already spoken.
+     */
+    private fun dropHeldCue() {
+        heldCueJob?.cancel()
+        heldCueJob = null
+        turnaroundCue.forget()
+    }
+
 
     private var lastNotificationTime = 0L
     private val NOTIFICATION_THROTTLE_MS = 10_000L // 10 seconds in background
@@ -1270,9 +1283,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
         // A cue still waiting for a gap belongs to the Run that has just ended. Speaking it after
         // the runner has stopped would be worse than losing it.
-        heldCueJob?.cancel()
-        heldCueJob = null
-        turnaroundCue.forget()
+        dropHeldCue()
 
         // Mission: Stop the zombie timer loop immediately
         sessionHandler?.removeCallbacks(sessionTimerRunnable)
