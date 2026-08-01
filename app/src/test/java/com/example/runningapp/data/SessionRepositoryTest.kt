@@ -1700,6 +1700,37 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a join that fails part-way leaves no phantom delete behind`() = runTest {
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(
+            listOf(Achievement(sessionId = 2, type = RecordType.LONGEST_DURATION, medal = Medal.GOLD, value = 1_800.0))
+        )
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockDao.getAllSessions()).thenReturn(listOf(aTreadmillRun(id = 1, seconds = 600)))
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(historyRecordsSeeded = true)))
+        // The first delete gets as far as joining the count and no further: lowering the mark throws.
+        whenever(mockSettingsRepo.clearHistoryRecordsSeeded())
+            .thenThrow(IllegalStateException("the settings store is unwell"))
+            .thenAnswer { }
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            settingsRepository = mockSettingsRepo
+        )
+
+        val brokenJoin = runCatching { repositoryWithRecords.deleteSession(2L) }
+        assertEquals(true, brokenJoin.isFailure)
+
+        // Nothing of that delete is left standing in the count, so this one is still the only one
+        // there is and can hand the mark back. Left behind, the phantom would have held the mark
+        // down for the life of the process — a full reseed at every launch.
+        repositoryWithRecords.deleteSession(2L)
+
+        verify(mockSettingsRepo).setHistoryRecordsSeeded()
+    }
+
+    @Test
     fun `a delete on an install still owing its first seeding does not mark it done`() = runTest {
         val mockAchievementDao: AchievementDao = mock()
         whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(
