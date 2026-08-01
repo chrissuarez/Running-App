@@ -1496,6 +1496,76 @@ class SessionRepositoryTest {
         verify(mockAchievementDao, never()).insertAchievements(any())
     }
 
+    @Test
+    fun `a repair that fails leaves history owing a full reseed`() = runTest {
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(
+            listOf(Achievement(sessionId = 2, type = RecordType.LONGEST_DURATION, medal = Medal.GOLD, value = 1_800.0))
+        )
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockDao.getAllSessions()).thenThrow(RuntimeException("history unreadable"))
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(historyRecordsSeeded = true)))
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            settingsRepository = mockSettingsRepo
+        )
+
+        repositoryWithRecords.deleteSession(2L)
+
+        // The medals went with the run and the mend never landed, so the record stands short — and
+        // only the top three are stored, so nothing but a full reseed can find the effort that
+        // should move up. The mark stays lifted and the next launch pays it.
+        verify(mockSettingsRepo).clearHistoryRecordsSeeded()
+        verify(mockSettingsRepo, never()).setHistoryRecordsSeeded()
+    }
+
+    @Test
+    fun `a repair that lands hands the seeded mark back`() = runTest {
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(
+            listOf(Achievement(sessionId = 2, type = RecordType.LONGEST_DURATION, medal = Medal.GOLD, value = 1_800.0))
+        )
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockDao.getAllSessions()).thenReturn(listOf(aTreadmillRun(id = 1, seconds = 600)))
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(historyRecordsSeeded = true)))
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            settingsRepository = mockSettingsRepo
+        )
+
+        repositoryWithRecords.deleteSession(2L)
+
+        verify(mockSettingsRepo).clearHistoryRecordsSeeded()
+        verify(mockSettingsRepo).setHistoryRecordsSeeded()
+    }
+
+    @Test
+    fun `a delete on an install still owing its first seeding does not mark it done`() = runTest {
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(
+            listOf(Achievement(sessionId = 2, type = RecordType.LONGEST_DURATION, medal = Medal.GOLD, value = 1_800.0))
+        )
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockDao.getAllSessions()).thenReturn(listOf(aTreadmillRun(id = 1, seconds = 600)))
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(historyRecordsSeeded = false)))
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            settingsRepository = mockSettingsRepo
+        )
+
+        repositoryWithRecords.deleteSession(2L)
+
+        // A two-record repair is not the seeding pass, and must not cancel a debt it never paid.
+        verify(mockSettingsRepo, never()).setHistoryRecordsSeeded()
+        verify(mockSettingsRepo, never()).clearHistoryRecordsSeeded()
+    }
+
     /** A repository whose history has never been scored, and the book it writes to. */
     private suspend fun repositoryWithUnseededHistory(
         seeded: Boolean = false,

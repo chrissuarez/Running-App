@@ -561,7 +561,6 @@ class SessionRepository(
         }
     }
 
-    /** Which records the Runs [sessionIds] are about to lose stand in — read before they go. */
     /**
      * The one way a Run leaves history: what it held noted, the rows removed, the deletion made
      * durable, and only then the book mended (#50).
@@ -578,6 +577,9 @@ class SessionRepository(
      * snapshot, and is skipped entirely when the Run held nothing, which is the ordinary case. Its
      * failing costs a restored history a record standing two deep until something contests it; the
      * first one's failing would cost the runner a deletion that did not stick.
+     *
+     * The seeding mark is lifted for the length of the mend, so a mend that never finishes is a
+     * debt the next launch pays rather than a hole nobody can see. See below.
      */
     private suspend fun deleteAndRepair(sessionIds: List<Long>, delete: suspend () -> Unit) {
         // Read and removed in one transaction, so nothing can award these Runs a medal in between.
@@ -592,7 +594,22 @@ class SessionRepository(
         }
         refreshHistoryBackup?.invoke()
         if (losing.isEmpty()) return
-        repairRecordBook(losing)
+
+        // History stops counting as scored for the length of the repair, and counts again only once
+        // it lands. The medals went with the rows, so until the book is mended a record the deleted
+        // Run held stands short — and short is a hole nothing else can find: only the top three are
+        // ever stored, so the fourth-best effort that should move up exists nowhere but in the
+        // tracks, and no future Run finishing can promote it. A repair killed or thrown mid-way
+        // therefore has to leave the whole book owed again, which the next launch pays.
+        //
+        // Only if it was marked to begin with: an install whose seeding pass has not finished (or
+        // failed) is already owed one, and marking it seeded here on the strength of a two-record
+        // repair would cancel a debt this never paid.
+        val settings = settingsRepository
+        val wasSeeded = settings?.userSettingsFlow?.first()?.historyRecordsSeeded == true
+        if (wasSeeded) settings.clearHistoryRecordsSeeded()
+        val repaired = repairRecordBook(losing)
+        if (wasSeeded && repaired) settings.setHistoryRecordsSeeded()
         refreshHistoryBackup?.invoke()
     }
 
@@ -609,14 +626,17 @@ class SessionRepository(
      * Its own attempt, because the Run is already deleted by the time this runs. A book that cannot
      * be rewritten leaves a record two deep until the next Run contests it, which is a wrong number
      * on a card; failing here would instead leave the runner staring at a delete that appeared not
-     * to work, with the run gone anyway.
+     * to work, with the run gone anyway. Returns whether it landed, so the caller can leave history
+     * owing a full reseed when it did not.
      */
-    private suspend fun repairRecordBook(types: List<RecordType>) {
-        if (types.isEmpty()) return
-        try {
+    private suspend fun repairRecordBook(types: List<RecordType>): Boolean {
+        if (types.isEmpty()) return true
+        return try {
             rebuildRecords(types)
+            true
         } catch (e: Exception) {
             Log.w("Records", "Deleted run(s) held ${types.size} record(s) the book could not be rebuilt for", e)
+            false
         }
     }
 
@@ -674,7 +694,7 @@ class SessionRepository(
         // ground, so it needs the track read and accuracy-gated first.
         val overGround = types.any { it != RecordType.LONGEST_DURATION }
         val track = if (overGround) getTrackPointsForMap(session.id) else emptyList()
-        return bestEffortsOf(session, track).filter { it.type in types }
+        return bestEffortsOf(session, track, types)
     }
 
     /** One-shot read of a run's heart-rate samples, ordered by elapsed second. */

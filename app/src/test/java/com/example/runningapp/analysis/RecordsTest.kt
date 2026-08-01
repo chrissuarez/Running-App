@@ -127,6 +127,22 @@ class RecordsTest {
         assertNull(efforts.valueOf(RecordType.FASTEST_10K))
     }
 
+    @Test
+    fun `asking for one record measures that record and no other`() {
+        val track = script { running(speedMps = 4.0, seconds = 1_500) } // 6 km at 4:10/km
+
+        val efforts = bestEffortsOf(
+            anOutdoorRun(distanceKm = 6.0),
+            track,
+            types = listOf(RecordType.FASTEST_MILE),
+        )
+
+        // Every fixed distance is its own rolling window over the whole track, so a repair rebuilding
+        // one record must not pay for the four it was not asked about, once per run in history.
+        assertEquals(listOf(RecordType.FASTEST_MILE), efforts.map { it.type })
+        assertEquals(402.0, efforts.valueOf(RecordType.FASTEST_MILE)!!, 4.0)
+    }
+
     // --- Where an effort stands in the book ---------------------------------------------------
 
     @Test
