@@ -126,8 +126,7 @@ fun standingsAfter(
             .sortedBy { it.medal.ordinal }
             .map { it.sessionId to it.value }
         // The challenger goes on the end, so a stable sort leaves it behind anything it only equals.
-        val ranked = (standing + (sessionId to effort.value))
-            .sortedWith(compareBy { (_, value) -> if (effort.type.lowerIsBetter) value else -value })
+        val ranked = (standing + (sessionId to effort.value)).sortedWith(betterFirst(effort.type))
         placed(effort.type, ranked)
     }
 
@@ -158,12 +157,22 @@ fun recordBookOf(runs: List<RunEfforts>): List<Achievement> =
         .flatMap { (type, claims) ->
             val ranked = claims
                 .map { (sessionId, effort) -> sessionId to effort.value }
-                .sortedWith(
-                    compareBy<Pair<Long, Double>> { (_, value) -> if (type.lowerIsBetter) value else -value }
-                        .thenBy { (sessionId, _) -> sessionId }
-                )
+                // The tie broken explicitly rather than by a stable sort: there is no incumbent
+                // order to preserve here, so the earlier Run has to be named as the one that keeps
+                // the record.
+                .sortedWith(betterFirst(type).thenBy { (sessionId, _) -> sessionId })
             placed(type, ranked)
         }
+
+/**
+ * Which of two efforts at [type] is the better one, and so what "best first" means.
+ *
+ * The one place the direction of a record is read, so a record run over a set distance and one that
+ * asks how much was done cannot end up ranked by different rules in the two places a book is built.
+ * Says nothing about ties — that is each caller's own rule, and they differ.
+ */
+private fun betterFirst(type: RecordType): Comparator<Pair<Long, Double>> =
+    compareBy { (_, value) -> if (type.lowerIsBetter) value else -value }
 
 /** The top of [ranked] — best first — written out as the medal rows that stand at [type]. */
 private fun placed(type: RecordType, ranked: List<Pair<Long, Double>>): List<Achievement> =

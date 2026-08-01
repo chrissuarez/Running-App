@@ -24,6 +24,8 @@ import com.example.runningapp.analysis.recordBookOf
 import com.example.runningapp.analysis.standingsAfter
 import com.example.runningapp.analysis.bestEffortsOf
 import com.example.runningapp.recording.SessionRecorder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -597,18 +599,28 @@ class SessionRepository(
      * Everything that *changes* the book is one commit, so the book is never half rewritten.
      *
      * A Run that finished while the measuring was going on has already scored itself, and its rows
-     * would be wiped by the rewrite — so the standing rows of any Run this pass did not see are
-     * carried in as claims of their own. Their stored value is the effort they were awarded for, so
-     * they can be ranked beside the freshly measured ones without measuring them again.
+     * would be wiped by the rewrite — so the standing rows of any Run this pass did not measure an
+     * effort for are carried in as claims of their own. Their stored value is the effort they were
+     * awarded for, so they can be ranked beside the freshly measured ones without measuring again.
+     * "Did not measure an effort for" rather than "did not see": a Run still being recorded when
+     * history was read *is* in the list, and is worth nothing until it finishes — which is exactly
+     * the Run most likely to finish and score itself while this pass is still measuring.
+     *
+     * On [Dispatchers.Default] because the measuring is geodesic arithmetic over every stored
+     * track — minutes of it on a long history. The callers are a launch-time pass and a delete from
+     * the history screen, and the delete arrives on the main thread.
      */
     private suspend fun rebuildRecords(types: List<RecordType>): List<Achievement> {
         val dao = achievementDao ?: return emptyList()
-        // Every finished Run in history: one at a time, because a track is thousands of points and
-        // the whole history's worth of them at once is not something to hold in memory.
-        val measured = sessionDao.getAllSessions().map { session ->
-            RunEfforts(session.id, effortsAt(session, types))
+        // One Run at a time, because a track is thousands of points and the whole history's worth
+        // of them at once is not something to hold in memory. Unfinished Runs are in this list and
+        // measure to nothing, which is what [bestEffortsOf] says they are worth.
+        val measured = withContext(Dispatchers.Default) {
+            sessionDao.getAllSessions().map { session ->
+                RunEfforts(session.id, effortsAt(session, types))
+            }
         }
-        val measuredIds = measured.map { it.sessionId }.toSet()
+        val measuredIds = measured.filter { it.efforts.isNotEmpty() }.map { it.sessionId }.toSet()
 
         var written = emptyList<Achievement>()
         inTransaction {
