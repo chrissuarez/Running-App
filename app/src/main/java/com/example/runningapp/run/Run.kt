@@ -10,6 +10,14 @@ import com.example.runningapp.highCueCondition
 import com.example.runningapp.hrZoneOf
 
 /**
+ * What the coach says at the halfway point of an outdoor Run following a Workout (#208).
+ *
+ * Two short sentences, because it lands on a runner already moving and often already being spoken
+ * to: what has happened, and what to do about it.
+ */
+internal const val TURNAROUND_CUE = "Halfway. Turn around."
+
+/**
  * The Run: a rulebook, not an actor.
  *
  * One entry point takes a [RunEvent] and returns the Run's whole new [RunState] together with an
@@ -207,6 +215,19 @@ object Run {
                 break
             }
 
+            // Halfway, door to door. Asked every second rather than worked out once at START,
+            // because the answer moves: a skip shortens the Run under it. Asked before the
+            // Intervals advance, so it is settled against the Phase this second belongs to.
+            if (turnaroundReached(current)) {
+                // Marked whether or not it is said. Halfway happening is a fact about the Run, not
+                // about the setting: a runner who switches the cue on at minute 40 of a 47-minute
+                // Run must not be told to turn around within sight of home.
+                current = current.copy(turnaroundCued = true)
+                if (current.controls.turnaroundCueEnabled) {
+                    effects += RunEffect.SpeakWhenQuiet(TURNAROUND_CUE)
+                }
+            }
+
             // The Workout's Intervals, on the same second and after the handover, so the second
             // the warm-up ends is also the second the first Interval begins — the runner hears
             // "Starting main workout" and then "Start running, interval 1 of 6" without a gap.
@@ -238,6 +259,32 @@ object Run {
         // an Android fact the Run has no way of knowing and no reason to.
         if (!ended) effects += RunEffect.Notify(notificationText(current))
         return RunOutcome(current, effects)
+    }
+
+    /**
+     * Whether this second is the halfway point of the Run — the moment to turn for home (#208).
+     *
+     * Halfway is measured in time, not distance: a Workout prescribes durations, so the Run knows
+     * its length from START and has no distance target to halve. The clock is moving time — the
+     * same clock the Intervals run on — so a pause pushes the turnaround later by exactly the time
+     * spent standing still.
+     *
+     * Never in the cool-down. A Run reaching its cool-down the ordinary way is past halfway
+     * already; one skipped there has thrown its remaining Intervals away and left halfway behind
+     * it. Either way the runner is heading home, and "turn around" would be actively wrong — so the
+     * one case this also covers, a shortened Run whose halfway lands inside the cool-down, is
+     * rightly silent too.
+     *
+     * The setting is not asked here: whether to *say* it is separate from whether it *happened*.
+     */
+    private fun turnaroundReached(state: RunState): Boolean {
+        if (state.turnaroundCued) return false
+        val config = state.config ?: return false
+        // Nowhere to turn around to on a treadmill; nothing to halve without a Workout.
+        if (config.runMode != RunMode.OUTDOOR || config.workout == null) return false
+        if (state.phase == RunPhase.COOL_DOWN) return false
+        val total = state.projectedMovingSeconds ?: return false
+        return state.secondsRunning * 2 >= total
     }
 
     /**

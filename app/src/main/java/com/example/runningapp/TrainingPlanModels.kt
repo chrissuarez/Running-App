@@ -68,6 +68,24 @@ data class WorkoutTemplate(
 )
 
 /**
+ * The main set: every repeat's run and walk together, and so the whole of the main Phase.
+ *
+ * The warm-up and cool-down envelope is deliberately not in it — see [clearedBy], which compares
+ * two main sets and would have to subtract the envelope back off again.
+ */
+val WorkoutTemplate.mainSetSeconds: Long
+    get() = totalRepeats.toLong() * (runDurationSeconds.toLong() + walkDurationSeconds.toLong())
+
+/**
+ * How long this Workout takes door to door: warm-up, main set and cool-down.
+ *
+ * One home for it, because it is asked for by things that must agree — the card promising "≈ 41
+ * min" before the Run and the Run working out where its halfway point is during it (#208).
+ */
+val WorkoutTemplate.plannedSeconds: Long
+    get() = warmUpSeconds.toLong() + mainSetSeconds + coolDownSeconds.toLong()
+
+/**
  * Whether a main set of [repeats] × ([runSeconds] run + [walkSeconds] walk) is at least as much
  * work as this workout's own — the floor of #170, in one place because it is asked twice: when the
  * coach writes a prescription, and again when one is applied.
@@ -81,8 +99,7 @@ data class WorkoutTemplate(
 fun WorkoutTemplate.clearedBy(runSeconds: Int, walkSeconds: Int, repeats: Int): Boolean {
     val proposedTotal = (runSeconds.toLong() + walkSeconds.toLong()) * repeats.toLong()
     val proposedRunning = runSeconds.toLong() * repeats.toLong()
-    val plannedTotal =
-        (runDurationSeconds.toLong() + walkDurationSeconds.toLong()) * totalRepeats.toLong()
+    val plannedTotal = mainSetSeconds
     val plannedRunning = runDurationSeconds.toLong() * totalRepeats.toLong()
     return proposedTotal >= plannedTotal && proposedRunning >= plannedRunning
 }

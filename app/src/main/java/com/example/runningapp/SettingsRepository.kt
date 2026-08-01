@@ -44,6 +44,8 @@ data class UserSettings(
     val aiDataSharingEnabled: Boolean = true,
     val runMode: String = "treadmill", // "treadmill" or "outdoor"
     val splitAnnouncementsEnabled: Boolean = true,
+    // The halfway "turn around" cue (#208). See RunControls.turnaroundCueEnabled for why it is on.
+    val turnaroundCueEnabled: Boolean = true,
     val autoPauseEnabled: Boolean = true,
     val savedDevices: List<SavedDevice> = emptyList(),
     val activeDeviceAddress: String? = null,
@@ -160,6 +162,7 @@ internal object PreferencesKeys {
     val AI_DATA_SHARING_ENABLED = booleanPreferencesKey("ai_data_sharing_enabled")
     val RUN_MODE = stringPreferencesKey("run_mode")
     val SPLIT_ANNOUNCEMENTS_ENABLED = booleanPreferencesKey("split_announcements_enabled")
+    val TURNAROUND_CUE_ENABLED = booleanPreferencesKey("turnaround_cue_enabled")
     val AUTO_PAUSE_ENABLED = booleanPreferencesKey("auto_pause_enabled")
     val SAVED_DEVICES = stringSetPreferencesKey("saved_devices")
     val ACTIVE_DEVICE_ADDRESS = stringPreferencesKey("active_device_address")
@@ -285,6 +288,7 @@ class SettingsRepository(private val context: Context) {
                 aiDataSharingEnabled = preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] ?: true,
                 runMode = preferences[PreferencesKeys.RUN_MODE] ?: "treadmill",
                 splitAnnouncementsEnabled = preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] ?: true,
+                turnaroundCueEnabled = preferences[PreferencesKeys.TURNAROUND_CUE_ENABLED] ?: true,
                 autoPauseEnabled = preferences[PreferencesKeys.AUTO_PAUSE_ENABLED] ?: true,
                 savedDevices = savedDevices,
                 activeDeviceAddress = preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS],
@@ -429,6 +433,9 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setSplitAnnouncementsEnabled(enabled: Boolean) =
         put(PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED, enabled)
+
+    suspend fun setTurnaroundCueEnabled(enabled: Boolean) =
+        put(PreferencesKeys.TURNAROUND_CUE_ENABLED, enabled)
 
     suspend fun setAutoPauseEnabled(enabled: Boolean) = put(PreferencesKeys.AUTO_PAUSE_ENABLED, enabled)
 

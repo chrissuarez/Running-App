@@ -33,7 +33,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -194,6 +196,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var audioManager: AudioManager? = null
     private var audioCueManager: AudioCueManager? = null
+
+    /** The halfway turnaround, waiting for a gap to be said in (#208), and the poll driving it. */
+    private val turnaroundCue = QuietGapCue()
+    private var heldCueJob: Job? = null
 
     // Mission 4: Location
     private lateinit var fusedLocationClient: FusedLocationProviderClient
@@ -469,6 +475,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             is RunEffect.SaveHrSample -> saveHrSample(effect)
             is RunEffect.SaveIntervalStat -> saveIntervalStat(effect)
             is RunEffect.Speak -> playCue(effect.text)
+            is RunEffect.SpeakWhenQuiet -> holdCue(effect.text)
             is RunEffect.Notify -> updateNotification(effect.text)
             RunEffect.StartGps -> startGps()
             RunEffect.StopGps -> locationTracker?.stop()
@@ -713,6 +720,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         coachingEnabled = settings.coachingEnabled,
         autoPauseEnabled = settings.autoPauseEnabled,
         splitAnnouncementsEnabled = settings.splitAnnouncementsEnabled,
+        turnaroundCueEnabled = settings.turnaroundCueEnabled,
     )
 
     /**
@@ -786,7 +794,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         tts = TextToSpeech(this, this)
-        tts?.let { audioCueManager = AudioCueManager(it, audioManager, serviceScope, TAG) }
+        tts?.let {
+            audioCueManager = AudioCueManager(
+                it,
+                audioManager,
+                serviceScope,
+                TAG,
+                onCueActivity = { speaking ->
+                    turnaroundCue.speechChanged(speaking, System.currentTimeMillis())
+                },
+            )
+        }
         
         
         database = appContainer.database
@@ -1065,6 +1083,28 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         audioCueManager?.playCue(text)
     }
 
+    /**
+     * A cue the Run is willing to have wait for a gap in the speaking (#208).
+     *
+     * The waiting is a poll rather than a subscription because what it waits on is two things at
+     * once — nothing being spoken *and* nothing having been spoken for a moment — and the second of
+     * those is a clock, not an event. See [QuietGapCue] for the rules; there are none here.
+     */
+    private fun holdCue(text: String) {
+        turnaroundCue.hold(text, System.currentTimeMillis())
+        heldCueJob?.cancel()
+        heldCueJob = serviceScope.launch {
+            while (isActive) {
+                val ready = turnaroundCue.release(System.currentTimeMillis())
+                if (ready != null) {
+                    playCue(ready)
+                    return@launch
+                }
+                delay(QuietGapCue.POLL_MILLIS)
+            }
+        }
+    }
+
 
     private var lastNotificationTime = 0L
     private val NOTIFICATION_THROTTLE_MS = 10_000L // 10 seconds in background
@@ -1227,6 +1267,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         Log.d(TAG, "releaseStrapAndTimer - letting go of the strap")
         stopScanning()
         disconnect()
+
+        // A cue still waiting for a gap belongs to the Run that has just ended. Speaking it after
+        // the runner has stopped would be worse than losing it.
+        heldCueJob?.cancel()
+        heldCueJob = null
+        turnaroundCue.forget()
 
         // Mission: Stop the zombie timer loop immediately
         sessionHandler?.removeCallbacks(sessionTimerRunnable)

@@ -105,6 +105,18 @@ sealed interface RunEffect {
     /** Say this out loud. */
     data class Speak(val text: String) : RunEffect
 
+    /**
+     * Say this out loud, but not over anything — wait for a gap in the speaking first (#208).
+     *
+     * Every cue in this app flushes the one before it, so a cue that lands on a second the Run was
+     * already talking on truncates what the runner actually needed to hear. The halfway turnaround
+     * is the one cue that can afford to wait: a few seconds of drift on a turnaround point costs
+     * nothing. How long to wait, and how to tell whether anything is being said, are the cue
+     * player's business — the Run cannot ask the speech layer what it is doing (ADR 0002), so all
+     * it does here is mark the cue as one that may be held.
+     */
+    data class SpeakWhenQuiet(val text: String) : RunEffect
+
     /** Put this on the Run's notification. */
     data class Notify(val text: String) : RunEffect
 

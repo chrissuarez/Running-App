@@ -1,5 +1,8 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.mainSetSeconds
+import com.example.runningapp.plannedSeconds
+
 /**
  * Which of a Run's three stretches it is in. Every Run has all three, in this order.
  *
@@ -69,6 +72,13 @@ data class RunState(
 
     /** Whether the runner skipped the warm-up, which stops it being waited for elsewhere. */
     val warmUpSkipped: Boolean = false,
+
+    /**
+     * Whether the halfway turnaround has already been called (#208). It is said once per Run or not
+     * at all, and [projectedMovingSeconds] keeps moving underneath it, so "have we passed halfway"
+     * is not a question the Run can keep asking without this.
+     */
+    val turnaroundCued: Boolean = false,
 
     /**
      * The Interval the Run is in, or null when there is not one: before the Workout's Intervals
@@ -181,6 +191,32 @@ data class RunState(
             RunPhase.WARM_UP -> config?.warmUpSeconds?.toLong() ?: 0L
             RunPhase.MAIN -> Long.MAX_VALUE
             RunPhase.COOL_DOWN -> config?.coolDownSeconds?.toLong() ?: 0L
+        }
+
+    /**
+     * How long this Run is going to take, in moving seconds, as things stand — the seconds already
+     * run plus the seconds the Workout still has to give. Null for a Run following no Workout,
+     * which has no prescribed length to project.
+     *
+     * A projection rather than a total, because the Run can get shorter mid-flight: skipping the
+     * warm-up throws away the seconds it had left, and skipping to the cool-down throws away the
+     * rest of the Intervals. Both show up here the moment they happen, which is what lets halfway
+     * move with them (#208).
+     *
+     * Door to door: the warm-up counts, because the runner is already moving away from home during
+     * it. Halving the main Phase alone would send them out half a warm-up too far.
+     */
+    val projectedMovingSeconds: Long?
+        get() {
+            val config = config ?: return null
+            val workout = config.workout ?: return null
+            val remaining = when (phase) {
+                RunPhase.WARM_UP -> workout.plannedSeconds - phaseSecondsElapsed
+                RunPhase.MAIN ->
+                    workout.mainSetSeconds - phaseSecondsElapsed + config.coolDownSeconds
+                RunPhase.COOL_DOWN -> config.coolDownSeconds - phaseSecondsElapsed
+            }
+            return secondsRunning + remaining.coerceAtLeast(0)
         }
 
     /** Seconds left in the current Phase, and so 0 for the open-ended main one. */
