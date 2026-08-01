@@ -127,7 +127,20 @@ data class DistanceTrace(val points: List<DistancePoint>)
 data class DistancePoint(
     val distanceMeters: Double,
     val paceMinPerKm: Double?,
-    val elevationMeters: Double?,
+    /**
+     * How far above the Run's own lowest point the runner was, in metres — not how high above sea
+     * level, which this app does not know.
+     *
+     * A barometer measures a pressure, and the height that pressure works out to is a height above
+     * the *standard* atmosphere's sea level rather than today's. The difference is the weather, and
+     * on the run this was first read on it came to about sixty metres: the readout said the runner
+     * was two metres below sea level on ground that is fifty-odd above it.
+     *
+     * [elevationOf] never corrects that offset, deliberately — climb is a sum of differences and the
+     * offset cancels out of every one of them. So the honest number to show is the one the offset
+     * cancels out of here too: how much higher than the bottom of this run.
+     */
+    val metersAboveLowestPoint: Double?,
     val bpm: Int?,
 )
 
@@ -174,11 +187,14 @@ internal fun distanceChartOf(
         bpmByWallSecond.averageBetween(afterSecond = since, toSecond = secondAtFix[i])
     }
 
+    // Heights are re-stated against the Run's own lowest point before anything is drawn or read
+    // out, so no absolute height reaches the screen. See [DistancePoint.metersAboveLowestPoint].
+    val lowest = heights?.minOrNull()
     val drawn = points.indices.map { i ->
         DistancePoint(
             distanceMeters = distanceAtFix[i],
             paceMinPerKm = pace[i],
-            elevationMeters = heights?.get(i),
+            metersAboveLowestPoint = if (heights == null || lowest == null) null else heights[i] - lowest,
             bpm = bpm[i],
         )
     }
@@ -186,7 +202,7 @@ internal fun distanceChartOf(
     val beats = drawn.mapNotNull { it.bpm }
     val paces = drawn.mapNotNull { it.paceMinPerKm }
         .map { it.coerceIn(FASTEST_PLAUSIBLE_PACE_MIN_PER_KM, SLOWEST_PLAUSIBLE_PACE_MIN_PER_KM) }
-    val silhouette = drawn.mapNotNull { it.elevationMeters }
+    val silhouette = drawn.mapNotNull { it.metersAboveLowestPoint }
 
     return DistanceChart(
         traces = drawn.cutAtBreaks(stretchOfFix),
@@ -303,15 +319,25 @@ private fun paceScaleEdge(pace: Double?, headroom: Double, round: (Double) -> Do
  *
  * The finish always gets one, because the total is the number the runner is looking for — unless the
  * last round tick sits close enough to collide with it, in which case the round one gives way.
+ *
+ * "Close enough" is three quarters of a step, which is wider than it sounds it should be. A label
+ * reads "4.53 km" and is most of a step wide on its own, so a 4.53 km run with a tick left at 4 km
+ * printed "4.00 km4.53 km" — the two labels touching, which is how this number was arrived at rather
+ * than by choosing it.
  */
 fun kilometreTicks(spanMeters: Double): List<Double> {
     val step = DISTANCE_TICK_STEPS.firstOrNull { spanMeters / it <= MAX_DISTANCE_TICKS }
         ?: DISTANCE_TICK_STEPS.last()
     val ticks = generateSequence(0.0) { it + step }.takeWhile { it < spanMeters }.toMutableList()
-    if (ticks.size > 1 && spanMeters - ticks.last() < step / 2) ticks.removeAt(ticks.lastIndex)
+    if (ticks.size > 1 && spanMeters - ticks.last() < step * FINISH_LABEL_CLEARANCE) {
+        ticks.removeAt(ticks.lastIndex)
+    }
     ticks += spanMeters
     return ticks
 }
+
+/** How much of a step must separate the last round tick from the finish for both to be printed. */
+private const val FINISH_LABEL_CLEARANCE = 0.75
 
 private val DISTANCE_TICK_STEPS = listOf(200.0, 500.0, 1_000.0, 2_000.0, 5_000.0, 10_000.0)
 private const val MAX_DISTANCE_TICKS = 6
@@ -328,7 +354,8 @@ private fun Map<Long, Int>.averageBetween(afterSecond: Long, toSecond: Long): In
 }
 
 /**
- * The height the silhouette's scale runs between, or null when the Run recorded no height at all.
+ * The band the silhouette's scale runs between, or null when the Run recorded no height at all —
+ * in metres above the Run's own lowest point, like everything else about height here.
  *
  * The two edges are one thing, not two: the Run either has ground to draw or it does not, and a
  * floor without a ceiling is not a state the chart can be in.
