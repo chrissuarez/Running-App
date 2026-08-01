@@ -1096,11 +1096,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         heldCueJob?.cancel()
         heldCueJob = serviceScope.launch {
             while (isActive) {
-                val ready = turnaroundCue.release(System.currentTimeMillis())
-                if (ready != null) {
-                    playCue(ready)
-                    return@launch
-                }
+                // The speaking happens inside the cue's own lock rather than back out here, so a
+                // withdrawal cannot land in between the two. See [QuietGapCue.releaseTo].
+                if (turnaroundCue.releaseTo(System.currentTimeMillis(), ::playCue)) return@launch
                 delay(QuietGapCue.POLL_MILLIS)
             }
         }
