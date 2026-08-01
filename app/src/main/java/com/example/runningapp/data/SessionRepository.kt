@@ -606,10 +606,13 @@ class SessionRepository(
      *
      * Only if it was marked to begin with: an install whose seeding pass has not finished (or has
      * failed) is already owed one, and marking it seeded at the end of a two-record repair would
-     * cancel a debt this never paid.
+     * cancel a debt this never paid. And only if no other delete has begun since — a second one
+     * mending different records is a debt of its own, and this one's mend landing says nothing
+     * about whether that one's will. The last delete standing alone repays; two that overlapped
+     * leave the reseed owed, which the next launch pays.
      */
     private suspend fun deleteAndRepair(sessionIds: List<Long>, delete: suspend () -> Unit) {
-        deletesStarted.incrementAndGet()
+        val mine = deletesStarted.incrementAndGet()
         val settings = settingsRepository
         val wasSeeded = settings?.userSettingsFlow?.first()?.historyRecordsSeeded == true
         if (wasSeeded) settings.clearHistoryRecordsSeeded()
@@ -628,18 +631,22 @@ class SessionRepository(
 
         val repaired = repairRecordBook(losing)
         if (losing.isNotEmpty()) refreshHistoryBackup?.invoke()
-        if (wasSeeded && repaired) settings.setHistoryRecordsSeeded()
+        val aloneInThis = deletesStarted.get() == mine
+        if (wasSeeded && repaired && aloneInThis) settings.setHistoryRecordsSeeded()
     }
 
     /**
-     * How many deletions have begun in this process, so the seeding pass can tell whether one
-     * happened while it was measuring (#50).
+     * How many deletions have begun in this process, so anything about to call history scored can
+     * tell whether one happened while it was working (#50).
      *
-     * The two would otherwise interleave into a marked book with a hole in it: a delete that reads
-     * history as unseeded lifts no mark, because the seeding pass owes one already — but if that
-     * pass then finishes and marks history complete, and the delete's own mend is cut short, the
-     * record the deleted Run held stands short with the mark saying otherwise. Nothing later can
-     * find it, since only the top three are ever stored.
+     * Read by the seeding pass and by a delete's own mend, because either can be overtaken and the
+     * result is the same shape: a marked book with a hole in it. A delete that reads history as
+     * unseeded lifts no mark, because the seeding pass owes one already — but if that pass then
+     * finishes and marks history complete while the delete's mend is cut short, the record the
+     * deleted Run held stands short with the mark saying otherwise. Two overlapping deletes reach
+     * it from the other side: the first one's mend landing says nothing about whether the second's
+     * will, so it must not be the one to call the book whole. Nothing later can find what either
+     * leaves behind, since only the top three are ever stored.
      *
      * A counter rather than a lock, because the lock would be the wrong shape: seeding is minutes
      * of arithmetic, and a delete made to wait behind it is a history screen that does not respond.

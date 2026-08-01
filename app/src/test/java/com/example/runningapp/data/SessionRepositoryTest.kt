@@ -24,6 +24,7 @@ import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.doSuspendableAnswer
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
@@ -1543,6 +1544,38 @@ class SessionRepositoryTest {
         // endings skip. Lifted even here, where the run turns out to have held nothing: what it held
         // is not known until it is already gone.
         assertEquals(listOf("owe", "delete", "backup", "paid"), order)
+    }
+
+    @Test
+    fun `a delete overtaken by another does not call the book whole`() = runTest {
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(any())).thenReturn(
+            listOf(Achievement(sessionId = 2, type = RecordType.LONGEST_DURATION, medal = Medal.GOLD, value = 1_800.0))
+        )
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(historyRecordsSeeded = true)))
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            settingsRepository = mockSettingsRepo
+        )
+        // A second delete begins while the first is still measuring, which the history screen
+        // allows, and does not get as far as mending anything.
+        whenever(mockDao.deleteSessionById(5L)).thenThrow(RuntimeException("the second delete fails"))
+        var overtaken = false
+        whenever(mockDao.getAllSessions()).then {
+            if (!overtaken) {
+                overtaken = true
+                runCatching { runBlocking { repositoryWithRecords.deleteSession(5L) } }
+            }
+            listOf(aTreadmillRun(id = 1, seconds = 600))
+        }
+
+        repositoryWithRecords.deleteSession(2L)
+
+        verify(mockSettingsRepo, atLeastOnce()).clearHistoryRecordsSeeded()
+        verify(mockSettingsRepo, never()).setHistoryRecordsSeeded()
     }
 
     @Test
