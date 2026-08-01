@@ -70,8 +70,17 @@ class AudioCueManager(
 
             val params = android.os.Bundle()
             params.putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
-            tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+            // Announced before the engine is asked to speak, not after. The engine reports done,
+            // error and stop on its own thread, and it may do so before speak() even returns — a
+            // "started" landing after that terminal report would leave the app permanently
+            // mid-sentence in [QuietGapCue]'s eyes, and every later held cue would then wait out
+            // its full ceiling in silence (Codex, #212).
             onCueActivity(true)
+            val queued = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+            if (queued != TextToSpeech.SUCCESS) {
+                // Nothing will be spoken and nothing will report back, so the app is quiet now.
+                releaseCueAudioFocus("speak_rejected", utteranceId)
+            }
             Log.d(logTag, "Playing Cue: $text (utteranceId=$utteranceId)")
         } else {
             Log.w(logTag, "Audio focus request failed")
