@@ -350,21 +350,32 @@ fun RunCombinedChart(chart: DistanceChart, modifier: Modifier = Modifier) {
                     strokeWidth = 1.dp.toPx()
                 )
 
+                // A scale only for a line that is there. The heart-rate scale falls back to 40–220
+                // when nothing was recorded, and a strapless run would carry that whole ladder of
+                // numbers down its right edge with no line against it to read.
+                //
                 // Pace on the left, upside down against the others: faster is a smaller number, and
                 // a runner reads the top of a pace chart as their best stretch.
-                val pace = chart.paceSlowestMinPerKm - fraction * paceRange
-                val paceLabel = textMeasurer.measure(formatMinutesPerKm(pace), style = labelStyle)
-                drawText(
-                    textLayoutResult = paceLabel,
-                    topLeft = Offset(leftPaddingPx - paceLabel.size.width - 4.dp.toPx(), y - paceLabel.size.height / 2)
-                )
+                if (chart.hasPace) {
+                    val pace = chart.paceSlowestMinPerKm - fraction * paceRange
+                    val paceLabel = textMeasurer.measure(formatMinutesPerKm(pace), style = labelStyle)
+                    drawText(
+                        textLayoutResult = paceLabel,
+                        topLeft = Offset(
+                            leftPaddingPx - paceLabel.size.width - 4.dp.toPx(),
+                            y - paceLabel.size.height / 2
+                        )
+                    )
+                }
 
-                val bpm = chart.bpmFloor + fraction * bpmRange
-                val bpmLabel = textMeasurer.measure(bpm.toInt().toString(), style = labelStyle)
-                drawText(
-                    textLayoutResult = bpmLabel,
-                    topLeft = Offset(size.width - rightPaddingPx + 4.dp.toPx(), y - bpmLabel.size.height / 2)
-                )
+                if (chart.hasHeartRate) {
+                    val bpm = chart.bpmFloor + fraction * bpmRange
+                    val bpmLabel = textMeasurer.measure(bpm.toInt().toString(), style = labelStyle)
+                    drawText(
+                        textLayoutResult = bpmLabel,
+                        topLeft = Offset(size.width - rightPaddingPx + 4.dp.toPx(), y - bpmLabel.size.height / 2)
+                    )
+                }
             }
 
             kilometreTicks(span).forEach { meters ->
