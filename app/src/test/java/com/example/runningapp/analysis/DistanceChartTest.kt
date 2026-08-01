@@ -329,6 +329,32 @@ class DistanceChartTest {
         assertEquals(expected, junction.paceMinPerKm!!, 0.02)
     }
 
+    // -- Which lines the run recorded ------------------------------------------------------------
+
+    @Test
+    fun `a strapless run says it has no heart rate to name or scale`() {
+        // The flag the heading, the key and the right-hand scale all read: an outdoor run with no
+        // Strap is a first-class run (#110), and everything about a red line has to be left off it.
+        val chart = chartOf(aRun(), script { running(3.0, seconds = 300, barometer = true) })!!
+
+        assertTrue(chart.hasPace)
+        assertTrue(!chart.hasHeartRate)
+        assertTrue(chart.hasElevation)
+    }
+
+    @Test
+    fun `a run with a strap says it has a heart rate`() {
+        val run = aRun()
+        val chart = chartOf(
+            run,
+            script { running(3.0, seconds = 300) },
+            samples = (0..300).map { aSample(run, second = it, bpm = 140) },
+        )!!
+
+        assertTrue(chart.hasHeartRate)
+        assertTrue(!chart.hasElevation)
+    }
+
     // -- The distance axis -----------------------------------------------------------------------
 
     @Test
