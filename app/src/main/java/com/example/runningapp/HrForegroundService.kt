@@ -1096,10 +1096,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         heldCueJob?.cancel()
         heldCueJob = serviceScope.launch {
             while (isActive) {
+                // Waited before asked, never after. This runs on the main thread while the rest of
+                // the Run's effects for this same second are still being performed on the session
+                // thread — including the Interval instruction the turnaround may have landed on
+                // top of. One poll interval is long enough for that list to finish and short enough
+                // to be inaudible (Codex, #212).
+                delay(QuietGapCue.POLL_MILLIS)
                 // The speaking happens inside the cue's own lock rather than back out here, so a
                 // withdrawal cannot land in between the two. See [QuietGapCue.releaseTo].
                 if (turnaroundCue.releaseTo(System.currentTimeMillis(), ::playCue)) return@launch
-                delay(QuietGapCue.POLL_MILLIS)
             }
         }
     }

@@ -216,15 +216,12 @@ object Run {
             // Halfway, door to door. Asked every second rather than worked out once at START,
             // because the answer moves: a skip shortens the Run under it. Asked before the
             // Intervals advance, so it is settled against the Phase this second belongs to.
-            if (turnaroundReached(current)) {
+            val halfway = turnaroundReached(current)
+            if (halfway) {
                 // Marked whether or not it is said. Halfway happening is a fact about the Run, not
                 // about the setting: a runner who switches the cue on at minute 40 of a 47-minute
                 // Run must not be told to turn around within sight of home.
                 current = current.copy(turnaroundCued = true)
-                if (current.controls.turnaroundCueEnabled) {
-                    current = current.copy(turnaroundHeld = true)
-                    effects += RunEffect.SpeakWhenQuiet(TURNAROUND_CUE)
-                }
             }
 
             // The Workout's Intervals, on the same second and after the handover, so the second
@@ -237,6 +234,17 @@ object Run {
                 val stepped = advanceIntervalSecond(current)
                 current = stepped.state
                 effects += stepped.effects
+            }
+
+            // Decided above, said here: last of everything this second produced. Halfway can land
+            // on the very second an Interval begins, and the cue player is asked to hold this one
+            // the moment it is handed over — on another thread from the one performing the rest of
+            // this list. Emitting it before the Interval's own instruction let it be released into
+            // the gap between the two and then flushed by the instruction itself, which is the one
+            // thing waiting for a gap was meant to prevent (Codex, #212).
+            if (halfway && current.controls.turnaroundCueEnabled) {
+                current = current.copy(turnaroundHeld = true)
+                effects += RunEffect.SpeakWhenQuiet(TURNAROUND_CUE)
             }
 
             // Ten minutes in, on a Run that has a reading to pin. What "drifting up" is measured
