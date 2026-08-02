@@ -33,8 +33,10 @@ private fun connectedTo(address: String, name: String = "Polar H10", promote: Bo
 
 class AcquisitionStatusLineTest {
 
-    // These exact words have been written to hr_samples.connection_state since the first recorded
-    // run. They are not cosmetic: a change here makes every old row disagree with every new one.
+    // "Connected" is the one sentence that reaches hr_samples.connectionState, and it has been
+    // written there since the first recorded run — a change to it makes every old row disagree with
+    // every new one. The outage sentences never reach a row (a no-reading second emits none, #110
+    // and #115); they are pinned here because the screen and the Run read them, not the database.
 
     @Test
     fun `idle reads as disconnected`() {
