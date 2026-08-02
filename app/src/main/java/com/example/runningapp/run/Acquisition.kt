@@ -467,14 +467,18 @@ object Acquisition {
             is AcquisitionPhase.Retrying ->
                 if (context.now < phase.dueAt) {
                     AcquisitionOutcome(state)
+                } else if (!context.canConnect) {
+                    // Permission first, matching every other rule here, and for a reason: the
+                    // adapter's own state is behind this permission, so without it "Bluetooth is
+                    // off" is not something we can know — only something we would be guessing.
+                    // The runner is told the thing they can act on.
+                    blocked(state, AcquisitionBlock.PermissionMissing)
                 } else if (!context.bluetoothOn) {
                     // Bluetooth went off mid-backoff. This used to be the one branch that reached
                     // nothing at all: the retry silently failed to fire and the status sat on
                     // "Reconnecting in Ns..." forever, which by ADR 0001 is a Promotion nobody
                     // releases. Every branch here must reach a phase that is not in flight.
                     blocked(state, AcquisitionBlock.BluetoothUnavailable)
-                } else if (!context.canConnect) {
-                    blocked(state, AcquisitionBlock.PermissionMissing)
                 } else {
                     AcquisitionOutcome(
                         state.copy(

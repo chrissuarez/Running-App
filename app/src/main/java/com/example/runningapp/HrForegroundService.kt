@@ -1489,9 +1489,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      *
      * `isEnabled` is behind BLUETOOTH_CONNECT from Android 12, and this is read for every event on
      * the thread the Run shares. A SecurityException here would take the Run's event loop with it,
-     * on the exact tick whose job was to notice the permission had gone and stop cleanly. Caught
-     * rather than skipped when the permission is missing, so the reason reported stays the true
-     * one: a revoked permission is PermissionMissing, not Bluetooth Off.
+     * on the exact tick whose job was to notice the permission had gone and stop cleanly.
+     *
+     * False is what a refused read reports, and that is a guess — but not one anyone is shown,
+     * because every rule now asks about the permission before it asks about the adapter. Without
+     * the permission the adapter's state is not something we can know, so the runner is told the
+     * thing they can act on.
      */
     private fun bluetoothIsOn(): Boolean = try {
         bluetoothAdapter?.isEnabled == true
@@ -1601,8 +1604,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // map and never close it — the leak this map exists to make impossible.
         val mayDisconnect = hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
         gattCloseScope.launch {
-            if (andDisconnect && mayDisconnect) gatt.disconnect()
-            gatt.close()
+            // The handle is already out of the map, so this is its only chance to be closed —
+            // hence finally. disconnect() can throw if the permission goes between the check above
+            // and this coroutine running, and an exception escaping here would take the process
+            // with it as well as leaking the handle.
+            try {
+                if (andDisconnect && mayDisconnect) gatt.disconnect()
+            } catch (e: Exception) {
+                Log.w(TAG, "disconnect failed for address=$address: ${e.message}")
+            } finally {
+                try {
+                    gatt.close()
+                } catch (e: Exception) {
+                    Log.w(TAG, "close failed for address=$address: ${e.message}")
+                }
+            }
         }
     }
 
@@ -1858,8 +1874,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         doStopScan()
         val mayDisconnect = hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
         openGatts.values.forEach {
-            if (mayDisconnect) it.disconnect()
-            it.close()
+            // Same shape as doCloseGatt: this is the last chance any of these get, and a throw on
+            // one must not cost the rest of them their close.
+            try {
+                if (mayDisconnect) it.disconnect()
+            } catch (e: Exception) {
+                Log.w(TAG, "disconnect failed during destroy: ${e.message}")
+            } finally {
+                try {
+                    it.close()
+                } catch (e: Exception) {
+                    Log.w(TAG, "close failed during destroy: ${e.message}")
+                }
+            }
         }
         openGatts.clear()
 

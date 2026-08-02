@@ -921,6 +921,38 @@ class AcquisitionRetryTest {
             ctx(now = ACQ_T0 + FIRST_RETRY_DELAY_MS, runIsLive = true, canConnect = false),
         )
         assertFalse(outcome.state.inFlight)
+        assertEquals(
+            AcquisitionPhase.Blocked(AcquisitionBlock.PermissionMissing),
+            outcome.state.phase,
+        )
+    }
+
+    @Test
+    fun `a revoked permission is named even when the adapter reads as off`() {
+        // The adapter's own state is behind BLUETOOTH_CONNECT, so a refused read comes back false
+        // and both conditions hold at once. Naming Bluetooth would send the runner to the wrong
+        // switch: the permission is the thing they can act on.
+        val retrying = run(
+            context = ctx(runIsLive = true),
+            events = arrayOf(
+                AcquisitionEvent.ConnectRequested(STRAP, "Polar H10", makeActive = false),
+                AcquisitionEvent.GattDisconnected(STRAP),
+            ),
+        )
+        val outcome = Acquisition.decide(
+            retrying,
+            AcquisitionEvent.Tick,
+            ctx(
+                now = ACQ_T0 + FIRST_RETRY_DELAY_MS,
+                runIsLive = true,
+                canConnect = false,
+                bluetoothOn = false,
+            ),
+        )
+        assertEquals(
+            AcquisitionPhase.Blocked(AcquisitionBlock.PermissionMissing),
+            outcome.state.phase,
+        )
     }
 }
 
