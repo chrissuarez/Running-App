@@ -268,6 +268,23 @@ class AcquisitionScanTest {
     }
 
     @Test
+    fun `blocking mid-scan stops the scan on the way out`() {
+        // Blocked is terminal, so nothing ticks again to stop a scan the runner can no longer
+        // see. A connect tap after the permission was revoked is the way in.
+        val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested()))
+        val outcome = Acquisition.decide(
+            scanning,
+            AcquisitionEvent.ConnectRequested(STRAP, "Polar H10", true),
+            ctx(canConnect = false),
+        )
+        assertEquals(
+            AcquisitionPhase.Blocked(AcquisitionBlock.PermissionMissing),
+            outcome.state.phase,
+        )
+        assertEquals(listOf(AcquisitionEffect.StopScan), outcome.effects)
+    }
+
+    @Test
     fun `bluetooth off blocks the scan`() {
         val outcome = Acquisition.decide(
             AcquisitionState(),
