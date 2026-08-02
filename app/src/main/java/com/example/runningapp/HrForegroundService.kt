@@ -203,10 +203,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * Every GATT this service has opened and not yet closed, by address.
      *
      * A map rather than a field because [Acquisition] speaks only in addresses, and a GATT it has
-     * abandoned still has to be closable when its callbacks turn up later. Touched only on
-     * [sessionHandlerThread] and the IO closes it posts, which are serialised behind it.
+     * abandoned still has to be closable when its callbacks turn up later. Written on
+     * [sessionHandlerThread] with one exception that cannot be moved there — onDestroy's sweep,
+     * which runs on main precisely because the session thread is being stopped — so the map is
+     * concurrent rather than plain.
      */
-    private val openGatts = mutableMapOf<String, BluetoothGatt>()
+    private val openGatts = ConcurrentHashMap<String, BluetoothGatt>()
+
+    /**
+     * Set once, on main, before onDestroy sweeps [openGatts]. Read on the session thread by a
+     * connect that finished too late to be swept, so it can let its own handle go.
+     */
+    @Volatile
+    private var destroyed = false
     private var bluetoothAdapter: BluetoothAdapter? = null
 
     // UUIDs for Heart Rate Service and Measurement Characteristic
@@ -1509,6 +1518,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // they connect, so this is the map's invariant held here, not a path anyone takes.
         doCloseGatt(address, andDisconnect = true)
         openGatts[address] = device.connectGatt(this, false, gattCallback)
+        // connectGatt() is a Binder call and can outlast onDestroy's bounded join, landing a
+        // handle after the destruction sweep has already been and gone. The flag is set before
+        // that sweep, so reading it after the map write is the whole ordering: false means the
+        // sweep has not run yet and will find this, true means it has and will not.
+        if (destroyed) doCloseGatt(address, andDisconnect = true)
     }
 
     private fun doCloseGatt(address: String, andDisconnect: Boolean) {
@@ -1753,6 +1767,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         super.onDestroy()
         Log.d(TAG, "onDestroy called - Clean Exit")
         
+        // 0. Anything that opens a GATT from here on closes it itself; the sweep below is the
+        // last one there will be. Set before the join, so a connect that outlasts it sees this.
+        destroyed = true
+
         // 1. Stop the Acquisition's thread before touching what it owns. quit() rather than
         // quitSafely(): a due ConnectRequested or retry tick would otherwise still run, and
         // opening a GATT after the sweep below leaks a handle with the service already gone.

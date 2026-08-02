@@ -485,6 +485,17 @@ object Acquisition {
         }
 
     /** Blocking ends the Acquisition but keeps what a scan already found. */
+    /**
+     * Stop, and say why.
+     *
+     * A scan is stopped on the way out. Blocked is a terminal phase — the pulse that would tick
+     * again stops with it — so nothing else would ever come along to stop a platform scan the
+     * runner can no longer see any sign of.
+     */
     private fun blocked(state: AcquisitionState, reason: AcquisitionBlock): AcquisitionOutcome =
-        AcquisitionOutcome(state.copy(phase = AcquisitionPhase.Blocked(reason)))
+        AcquisitionOutcome(
+            state.copy(phase = AcquisitionPhase.Blocked(reason)),
+            if (state.phase is AcquisitionPhase.Scanning) listOf(AcquisitionEffect.StopScan)
+            else emptyList(),
+        )
 }
