@@ -183,7 +183,7 @@ object Acquisition {
         is AcquisitionEvent.ScanFailed -> scanFailed(state, event)
         is AcquisitionEvent.ForgetRequested -> forgetRequested(state, event)
         AcquisitionEvent.DisconnectRequested -> disconnectRequested(state)
-        is AcquisitionEvent.GattConnected -> gattConnected(state, event)
+        is AcquisitionEvent.GattConnected -> gattConnected(state, event, context)
         is AcquisitionEvent.GattDisconnected -> gattDisconnected(state, event, context)
         is AcquisitionEvent.ServicesDiscovered -> servicesDiscovered(state, event, context)
         AcquisitionEvent.Tick -> tick(state, context)
@@ -325,10 +325,16 @@ object Acquisition {
     private fun gattConnected(
         state: AcquisitionState,
         event: AcquisitionEvent.GattConnected,
+        context: AcquisitionContext,
     ): AcquisitionOutcome {
         if (state.address != event.address) {
             return AcquisitionOutcome(state, listOf(AcquisitionEffect.CloseGatt(event.address)))
         }
+        // The permission can go between asking for this connection and being told it landed, and
+        // everything Connected leads to needs it: discovery, the subscription, and the readings
+        // themselves. Publishing Connected anyway would leave a terminal phase saying the Strap is
+        // there, with nothing behind it and no tick left to notice.
+        if (!context.canConnect) return blocked(state, AcquisitionBlock.PermissionMissing)
         val phase = state.phase
         val name = when (phase) {
             is AcquisitionPhase.Connecting -> phase.name

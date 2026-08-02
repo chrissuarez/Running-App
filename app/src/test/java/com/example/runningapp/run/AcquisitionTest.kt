@@ -928,6 +928,29 @@ class AcquisitionRetryTest {
     }
 
     @Test
+    fun `a connection that lands after the permission went is not published`() {
+        // Everything Connected leads to needs BLUETOOTH_CONNECT — discovery, the subscription, the
+        // readings. Publishing it would be a terminal phase saying the Strap is there, with
+        // nothing behind it and no tick left to notice.
+        val connecting = AcquisitionState(
+            AcquisitionPhase.Connecting(STRAP, "Polar H10", true, 0, FIRST_RETRY_DELAY_MS),
+        )
+        val outcome = Acquisition.decide(
+            connecting,
+            AcquisitionEvent.GattConnected(STRAP),
+            ctx(canConnect = false),
+        )
+        assertEquals(
+            AcquisitionPhase.Blocked(AcquisitionBlock.PermissionMissing),
+            outcome.state.phase,
+        )
+        assertEquals(
+            listOf(AcquisitionEffect.DisconnectAndCloseGatt(STRAP)),
+            outcome.effects,
+        )
+    }
+
+    @Test
     fun `a revoked permission is named even when the adapter reads as off`() {
         // The adapter's own state is behind BLUETOOTH_CONNECT, so a refused read comes back false
         // and both conditions hold at once. Naming Bluetooth would send the runner to the wrong
