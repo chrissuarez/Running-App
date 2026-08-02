@@ -1520,14 +1520,30 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun doConnectGatt(address: String) {
-        if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) return
-        val device = bluetoothAdapter?.getRemoteDevice(address) ?: return
+        // A connect that does not happen is reported as one that dropped, the same as doStartScan
+        // reporting a scan that never started. The rules already know what to do with a drop —
+        // back off, retry, eventually give up — and the alternative is a Connecting phase with
+        // nothing behind it. Posted, not dispatched: this runs inside a decision.
+        fun didNotConnect(why: String) {
+            Log.w(TAG, "connect_gatt did not open for address=$address: $why")
+            postAcquisitionEvent(AcquisitionEvent.GattDisconnected(address))
+        }
+
+        if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
+            return didNotConnect("no BLUETOOTH_CONNECT")
+        }
+        val device = bluetoothAdapter?.getRemoteDevice(address)
+            ?: return didNotConnect("no adapter, or not an address it knows")
         logBleDecision("connect_gatt", "Opening GATT to address=$address")
         // One handle per address, or the overwritten one is a GATT nothing can close — and a
         // callback from it would be indistinguishable from the new one's. The rules close before
         // they connect, so this is the map's invariant held here, not a path anyone takes.
         doCloseGatt(address, andDisconnect = true)
-        openGatts[address] = device.connectGatt(this, false, gattCallback)
+        // Platform type: Android returns null when it cannot get a GATT client, and the map would
+        // throw on it — on this thread, which is the Run's too.
+        val gatt = device.connectGatt(this, false, gattCallback)
+            ?: return didNotConnect("no GATT client available")
+        openGatts[address] = gatt
         // connectGatt() is a Binder call and can outlast onDestroy's bounded join, landing a
         // handle after the destruction sweep has already been and gone. The flag is set before
         // that sweep, so reading it after the map write is the whole ordering: false means the
