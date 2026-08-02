@@ -166,7 +166,7 @@ class AcquisitionScanTest {
 
     @Test
     fun `a scan starts and is time-boxed`() {
-        val outcome = Acquisition.decide(AcquisitionState(), AcquisitionEvent.ScanRequested, ctx())
+        val outcome = Acquisition.decide(AcquisitionState(), AcquisitionEvent.ScanRequested(), ctx())
         assertEquals(
             AcquisitionPhase.Scanning(endsAt = ACQ_T0 + SCAN_TIMEOUT_MS),
             outcome.state.phase,
@@ -182,7 +182,7 @@ class AcquisitionScanTest {
         val chasing = AcquisitionState(
             AcquisitionPhase.Connecting(STRAP, "Polar H10", true, 0, FIRST_RETRY_DELAY_MS),
         )
-        val outcome = Acquisition.decide(chasing, AcquisitionEvent.ScanRequested, ctx())
+        val outcome = Acquisition.decide(chasing, AcquisitionEvent.ScanRequested(), ctx())
         assertEquals(
             listOf(
                 AcquisitionEffect.StopScan,
@@ -196,15 +196,58 @@ class AcquisitionScanTest {
     @Test
     fun `a scan is declined while connected`() {
         val connected = connectedTo(STRAP)
-        val outcome = Acquisition.decide(connected, AcquisitionEvent.ScanRequested, ctx())
+        val outcome = Acquisition.decide(connected, AcquisitionEvent.ScanRequested(), ctx())
         assertEquals(connected, outcome.state)
         assertTrue(outcome.effects.isEmpty())
     }
 
     @Test
+    fun `a forced scan hangs up on the strap instead of declining`() {
+        val connected = connectedTo(STRAP)
+        val outcome = Acquisition.decide(
+            connected,
+            AcquisitionEvent.ScanRequested(force = true),
+            ctx(),
+        )
+        assertEquals(
+            AcquisitionPhase.Scanning(endsAt = ACQ_T0 + SCAN_TIMEOUT_MS),
+            outcome.state.phase,
+        )
+        assertEquals(
+            listOf(
+                AcquisitionEffect.StopScan,
+                AcquisitionEffect.DisconnectAndCloseGatt(STRAP),
+                AcquisitionEffect.TellRunStrapLost(LOST_DISCONNECTED),
+                AcquisitionEffect.StartScan,
+            ),
+            outcome.effects,
+        )
+    }
+
+    @Test
+    fun `a forced scan over a chase still only lets the gatt go`() {
+        val chasing = AcquisitionState(
+            AcquisitionPhase.Connecting(STRAP, "Polar H10", true, 0, FIRST_RETRY_DELAY_MS),
+        )
+        val outcome = Acquisition.decide(
+            chasing,
+            AcquisitionEvent.ScanRequested(force = true),
+            ctx(),
+        )
+        assertEquals(
+            listOf(
+                AcquisitionEffect.StopScan,
+                AcquisitionEffect.CloseGatt(STRAP),
+                AcquisitionEffect.StartScan,
+            ),
+            outcome.effects,
+        )
+    }
+
+    @Test
     fun `a fresh scan clears what the last one found`() {
         val withResults = AcquisitionState(scanned = listOf(ScannedStrap(STRAP, "Polar H10")))
-        val outcome = Acquisition.decide(withResults, AcquisitionEvent.ScanRequested, ctx())
+        val outcome = Acquisition.decide(withResults, AcquisitionEvent.ScanRequested(), ctx())
         assertTrue(outcome.state.scanned.isEmpty())
     }
 
@@ -214,7 +257,7 @@ class AcquisitionScanTest {
         // ADR 0001 that is a Promotion nobody releases.
         val outcome = Acquisition.decide(
             AcquisitionState(),
-            AcquisitionEvent.ScanRequested,
+            AcquisitionEvent.ScanRequested(),
             ctx(canScan = false),
         )
         assertEquals(
@@ -228,7 +271,7 @@ class AcquisitionScanTest {
     fun `bluetooth off blocks the scan`() {
         val outcome = Acquisition.decide(
             AcquisitionState(),
-            AcquisitionEvent.ScanRequested,
+            AcquisitionEvent.ScanRequested(),
             ctx(bluetoothOn = false),
         )
         assertEquals(
@@ -239,7 +282,7 @@ class AcquisitionScanTest {
 
     @Test
     fun `the scan stops itself when nothing is chosen`() {
-        val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested))
+        val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested()))
         val outcome = Acquisition.decide(
             scanning,
             AcquisitionEvent.Tick,
@@ -251,7 +294,7 @@ class AcquisitionScanTest {
 
     @Test
     fun `the scan keeps running until its deadline`() {
-        val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested))
+        val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested()))
         val outcome = Acquisition.decide(
             scanning,
             AcquisitionEvent.Tick,
@@ -265,7 +308,7 @@ class AcquisitionScanTest {
     fun `what a timed-out scan found stays on offer`() {
         val scanning = run(
             events = arrayOf(
-                AcquisitionEvent.ScanRequested,
+                AcquisitionEvent.ScanRequested(),
                 AcquisitionEvent.StrapSeen(STRAP, "Polar H10"),
             ),
         )
@@ -282,7 +325,7 @@ class AcquisitionScanTest {
         // scanEpoch existed for exactly this. Leaving the phase takes the deadline with it.
         val connecting = run(
             events = arrayOf(
-                AcquisitionEvent.ScanRequested,
+                AcquisitionEvent.ScanRequested(),
                 AcquisitionEvent.ConnectRequested(STRAP, "Polar H10", makeActive = true),
             ),
         )
@@ -298,7 +341,7 @@ class AcquisitionScanTest {
 
 class AcquisitionScanResultsTest {
 
-    private val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested))
+    private val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested()))
 
     @Test
     fun `a named strap is listed`() {
@@ -371,7 +414,7 @@ class AcquisitionConnectTest {
 
     @Test
     fun `connecting stops the scan and chases the strap`() {
-        val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested))
+        val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested()))
         val outcome = Acquisition.decide(
             scanning,
             AcquisitionEvent.ConnectRequested(STRAP, "Polar H10", makeActive = true),
@@ -911,7 +954,7 @@ class AcquisitionReleaseTest {
     fun `disconnecting stops a scan that was running`() {
         // Stop Workout goes through here. A scan left running would keep the Acquisition in flight
         // and the Promotion with it.
-        val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested))
+        val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested()))
         val outcome = Acquisition.decide(
             scanning,
             AcquisitionEvent.DisconnectRequested,
@@ -947,7 +990,7 @@ class AcquisitionAlwaysTerminatesTest {
 
     @Test
     fun `a scan reaches a terminal phase`() {
-        val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested))
+        val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested()))
         assertTrue(scanning.inFlight)
         val after = Acquisition.decide(
             scanning,
