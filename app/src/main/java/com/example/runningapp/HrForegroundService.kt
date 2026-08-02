@@ -1480,8 +1480,24 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             runIsLive = lifecycle.isLive,
             canScan = hasPermission(Manifest.permission.BLUETOOTH_SCAN),
             canConnect = hasPermission(Manifest.permission.BLUETOOTH_CONNECT),
-            bluetoothOn = bluetoothAdapter?.isEnabled == true,
+            bluetoothOn = bluetoothIsOn(),
         )
+    }
+
+    /**
+     * Whether the adapter is on — asked in a way that cannot throw.
+     *
+     * `isEnabled` is behind BLUETOOTH_CONNECT from Android 12, and this is read for every event on
+     * the thread the Run shares. A SecurityException here would take the Run's event loop with it,
+     * on the exact tick whose job was to notice the permission had gone and stop cleanly. Caught
+     * rather than skipped when the permission is missing, so the reason reported stays the true
+     * one: a revoked permission is PermissionMissing, not Bluetooth Off.
+     */
+    private fun bluetoothIsOn(): Boolean = try {
+        bluetoothAdapter?.isEnabled == true
+    } catch (e: SecurityException) {
+        Log.w(TAG, "Could not read the adapter state: ${e.message}")
+        false
     }
 
     private fun hasPermission(permission: String): Boolean =
