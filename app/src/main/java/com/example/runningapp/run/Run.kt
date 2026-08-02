@@ -2,6 +2,7 @@ package com.example.runningapp.run
 
 import com.example.runningapp.CueAction
 import com.example.runningapp.CueCondition
+import com.example.runningapp.CuePriority
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.ZoneBand
 import com.example.runningapp.bandWithHysteresis
@@ -185,7 +186,7 @@ object Run {
             val remaining = limit - current.phaseSecondsElapsed
 
             if (phaseSecond && current.phase != RunPhase.MAIN && remaining == 10L) {
-                effects += RunEffect.Speak("10 seconds of ${current.phase.spokenName} remaining")
+                effects += RunEffect.Speak("10 seconds of ${current.phase.spokenName} remaining", CuePriority.INSTRUCTION)
             }
 
             // A Run with no Workout has a nought-second warm-up, so it hands over on its first
@@ -193,7 +194,7 @@ object Run {
             // is what the Run does today, and this move is not the place to change what it says.
             if (phaseSecond && current.phase == RunPhase.WARM_UP && current.phaseSecondsElapsed >= limit) {
                 current = current.copy(phase = RunPhase.MAIN, phaseSecondsElapsed = 0)
-                effects += RunEffect.Speak("Starting main workout")
+                effects += RunEffect.Speak("Starting main workout", CuePriority.INSTRUCTION)
             } else if (phaseSecond && current.phase == RunPhase.COOL_DOWN && current.phaseSecondsElapsed >= limit) {
                 // Bank the terminating second before ending on it. The Run counts it toward its
                 // duration, so its zone (or no-data) total must count it too, and it writes its HR
@@ -237,11 +238,10 @@ object Run {
             }
 
             // Decided above, said here: last of everything this second produced. Halfway can land
-            // on the very second an Interval begins, and the cue player is asked to hold this one
-            // the moment it is handed over — on another thread from the one performing the rest of
-            // this list. Emitting it before the Interval's own instruction let it be released into
-            // the gap between the two and then flushed by the instruction itself, which is the one
-            // thing waiting for a gap was meant to prevent (Codex, #212).
+            // on the very second an Interval begins, and the queue is first in, first out within a
+            // level — so emitting it after the Interval's own instruction is what keeps the two in
+            // the order the runner needs them, on a second where the instruction is the urgent one.
+            // (It outranks the turnaround anyway; this makes the order not depend on that.)
             //
             // The Phase is asked again for the same reason: the Intervals can hand the Run into its
             // cool-down on this very second — a Workout whose cool-down is as long as everything
@@ -249,7 +249,7 @@ object Run {
             // second, whichever half of it the arithmetic belongs to.
             if (halfway && current.controls.turnaroundCueEnabled && current.phase != RunPhase.COOL_DOWN) {
                 current = current.copy(turnaroundHeld = true)
-                effects += RunEffect.SpeakWhenQuiet(TURNAROUND_CUE)
+                effects += RunEffect.Speak(TURNAROUND_CUE, CuePriority.INFORMATION, CueTag.TURNAROUND)
             }
 
             // Ten minutes in, on a Run that has a reading to pin. What "drifting up" is measured
@@ -300,15 +300,15 @@ object Run {
     }
 
     /**
-     * The cool-down takes back a turnaround still waiting for a gap (#208).
+     * The cool-down takes back a turnaround that has not been spoken yet (#208).
      *
      * The runner is heading home from here, whether the Workout ended or they skipped past what was
-     * left of it. "Turn around" was true when it was issued and is not true now, and a cue allowed
-     * to be late is a cue that can be overtaken like this — so it is dropped rather than spoken a
-     * few seconds into the cool-down.
+     * left of it. "Turn around" was true when it was issued and is not true now, and a cue that may
+     * wait its turn in the queue is a cue that can be overtaken like this — so it is withdrawn
+     * rather than spoken a few seconds into the cool-down.
      */
     private fun coolDownDropsWaitingCue(state: RunState): List<RunEffect> =
-        if (state.turnaroundHeld) listOf(RunEffect.DropWaitingCue) else emptyList()
+        if (state.turnaroundHeld) listOf(RunEffect.WithdrawCue(CueTag.TURNAROUND)) else emptyList()
 
     /**
      * Bank one second of the Run against the reading that stands at this moment.
@@ -429,7 +429,7 @@ object Run {
         RunOutcome(recordRecovery(state), spoken(CueCondition.RETURNED))
 
     private fun spoken(condition: CueCondition): List<RunEffect> =
-        listOfNotNull(coachingCue(condition).spoken?.let(RunEffect::Speak))
+        listOfNotNull(coachingCue(condition).spoken?.let { RunEffect.Speak(it, CuePriority.COACHING) })
 
     /**
      * The runner's heart rate went above target and the coach said so. Where that happened, kept so
@@ -538,6 +538,7 @@ object Run {
             listOf(
                 RunEffect.Speak(
                     "Start running, interval $repeat of ${workout.totalRepeats}.",
+                    CuePriority.INSTRUCTION,
                 ),
             ),
         )
@@ -579,6 +580,7 @@ object Run {
                     ),
                     effects + RunEffect.Speak(
                         "Transition to walking, ${intervals.walkSeconds} seconds.",
+                        CuePriority.INSTRUCTION,
                     ),
                 )
             }
@@ -603,7 +605,7 @@ object Run {
                     turnaroundHeld = false,
                 ),
                 effects + coolDownDropsWaitingCue(current) +
-                    RunEffect.Speak("Main workout complete, beginning cool down."),
+                    RunEffect.Speak("Main workout complete, beginning cool down.", CuePriority.INSTRUCTION),
             )
         } else {
             val begun = beginRunInterval(current, workout, nextRepeat)
@@ -656,14 +658,14 @@ object Run {
      * one. Without that, enabling the turnaround while a tick was overdue let the catch-up loop
      * reach a halfway that had already passed and speak it (Codex, #212).
      *
-     * A control turned off can also take back a cue still waiting for a gap — see [DropWaitingCue].
+     * A control turned off can also take back a cue not yet spoken — see [RunEffect.WithdrawCue].
      */
     private fun controlsChanged(state: RunState, event: RunEvent.ControlsChanged): RunOutcome {
         val settled = accrue(state, event.nowMillis)
         val current = settled.state
         val dropped =
             if (current.turnaroundHeld && !event.controls.turnaroundCueEnabled) {
-                listOf(RunEffect.DropWaitingCue)
+                listOf(RunEffect.WithdrawCue(CueTag.TURNAROUND))
             } else {
                 emptyList()
             }
@@ -755,7 +757,7 @@ object Run {
         if (state.lifecycle != RunLifecycle.RUNNING) return RunOutcome(state)
         // Settles the clock at the moment of the change like a tapped pause — see [changeLifecycle].
         return changeLifecycle(state, nowMillis, RunLifecycle.PAUSED, autoPaused = true) { paused ->
-            listOf(RunEffect.Notify(notificationText(paused)), RunEffect.Speak("Auto-paused."))
+            listOf(RunEffect.Notify(notificationText(paused)), RunEffect.Speak("Auto-paused.", CuePriority.INSTRUCTION))
         }
     }
 
@@ -764,7 +766,7 @@ object Run {
         if (state.lifecycle != RunLifecycle.PAUSED || !state.autoPaused) return RunOutcome(state)
         // Settles the clock at the moment of the change like a tapped resume — see [changeLifecycle].
         return changeLifecycle(state, nowMillis, RunLifecycle.RUNNING, autoPaused = false) { resumed ->
-            listOf(RunEffect.Notify(notificationText(resumed)), RunEffect.Speak("Resuming."))
+            listOf(RunEffect.Notify(notificationText(resumed)), RunEffect.Speak("Resuming.", CuePriority.INSTRUCTION))
         }
     }
 
@@ -816,7 +818,7 @@ object Run {
                 RunOutcome(
                     skipped,
                     listOf(
-                        RunEffect.Speak("Warm up skipped. Starting workout."),
+                        RunEffect.Speak("Warm up skipped. Starting workout.", CuePriority.INSTRUCTION),
                         RunEffect.Notify(notificationText(skipped)),
                     ),
                 )
@@ -837,7 +839,7 @@ object Run {
                 RunOutcome(
                     skipped,
                     saved.effects + coolDownDropsWaitingCue(state) + listOf(
-                        RunEffect.Speak("Starting cool down."),
+                        RunEffect.Speak("Starting cool down.", CuePriority.INSTRUCTION),
                         RunEffect.Notify(notificationText(skipped)),
                     ),
                 )
