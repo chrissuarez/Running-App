@@ -118,7 +118,7 @@ class AudioCueManager(
     }
 
     /**
-     * The engine finished with an utterance — or the safety timeout gave up on it.
+     * The engine finished with an utterance.
      *
      * The report is only acted on if it is about the cue that is speaking now. A callback for a cue
      * that has already been flushed used to reach the release with its check made a moment earlier
@@ -184,13 +184,43 @@ class AudioCueManager(
         }
     }
 
-    /** The engine went quiet without saying so. Checked against the cue of the moment, as ever. */
+    /**
+     * The engine has not reported back in [cueFocusTimeoutMs]. Checked against the cue of the
+     * moment, as ever.
+     *
+     * The timeout is about not holding audio focus forever — it is not a claim that the engine has
+     * finished, and it cannot be, because a slow enough speech rate can carry one short sentence
+     * past it. So it makes the claim true before making it: the utterance is stopped first, and only
+     * then is focus let go of and the app reported quiet (#213).
+     */
     private fun scheduleCueFocusTimeout(utteranceId: String) {
         cueFocusTimeoutJob?.cancel()
         cueFocusTimeoutJob = serviceScope.launch {
             delay(cueFocusTimeoutMs)
-            releaseUtterance("timeout", utteranceId)
+            // What follows must not suspend: it runs inside this job, and [release] cancels the job
+            // as its first act. A suspension point between there and [announce] would be the one
+            // report for this cue swallowed by its own cancellation.
+            announce(stopAndReleaseIfCurrent(utteranceId))
         }
+    }
+
+    @Synchronized
+    private fun stopAndReleaseIfCurrent(utteranceId: String): List<CueActivity> {
+        if (!isCueFocusHeld || utteranceId != currentCueUtteranceId) return emptyList()
+
+        // Disowned before it is stopped, so the engine's own `onStop` for it — which may land on
+        // this very thread, from inside the call below — finds nothing current, reports nothing,
+        // and so cannot reach the listener from under this lock (the #212 deadlock rule). The one
+        // report for this cue is the one [release] returns, made by [announce] afterwards.
+        currentCueUtteranceId = null
+        try {
+            tts.stop()
+        } catch (e: Exception) {
+            // Nothing left to do about the speech, but focus still has to go back: an engine that
+            // fails to stop must not also leave the app holding focus and mid-sentence forever.
+            Log.w(logTag, "Stopping the timed-out cue failed: utteranceId=$utteranceId", e)
+        }
+        return release("timeout", utteranceId)
     }
 
     /**
@@ -206,8 +236,9 @@ class AudioCueManager(
         isCueFocusHeld = false
         currentCueUtteranceId = null
         Log.d(logTag, "Released cue audio focus: reason=$reason utteranceId=$utteranceId")
-        // Focus is held for exactly as long as a cue is being spoken — done, error, stop and the
-        // safety timeout all land here — so letting go of it is the app falling quiet.
+        // Focus is held for exactly as long as a cue is being spoken — done, error, stop, and the
+        // safety timeout once it has stopped the utterance, all land here — so letting go of it is
+        // the app falling quiet.
         return listOf(CueActivity(speaking = false, sequence = ++activitySequence))
     }
 }
