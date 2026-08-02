@@ -947,11 +947,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                 val makeActive = intent.getBooleanExtra(EXTRA_MAKE_ACTIVE, false)
                 if (!isSimulationEnabled) {
-                    // Called inline, not launched: serviceScope is Dispatchers.Main, so a launch
-                    // here would run after onStartCommand returned — and the reconcile at the tail
-                    // would see an idle connection status and demote the acquisition it just
-                    // started. startHardwareSession publishes "Scanning"/"Connecting" synchronously
-                    // and only the GATT connect itself goes to IO, so inline is both safe and true.
+                    // Only posts the event; the phase is published on the session thread a moment
+                    // later. The tail reconcile follows it through the same inbox — see
+                    // [reconcileAfterAcquisition].
                     startHardwareSession(overrideAddress, makeActive)
                 } else {
                     Log.d(TAG, "ACTION_START_FOREGROUND received while simulation is active. Skipping hardware startup.")
@@ -997,8 +995,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     .coversRunStart(currentSettings.activeDeviceAddress)
                 if (!isSimulationEnabled && !coversStart) {
                     val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
-                    // Inline for the same reason as ACTION_START_FOREGROUND above: the
-                    // connection status must be true before the tail reconcile reads it.
                     startHardwareSession(overrideAddress)
                 }
             }
@@ -1041,7 +1037,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // Take back the eager promotion above if the dispatch earned nothing. An intent that
         // changes no state publishes nothing for the subscription in onCreate() to react to, so
         // this call is not redundant with it.
-        if (!deferReconcileToRun) reconcileForegroundPromotion()
+        if (!deferReconcileToRun) reconcileAfterAcquisition()
         return START_STICKY
     }
     
@@ -1300,6 +1296,25 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         promotion.reconcile(state.sessionStatus, state.acquiringStrap)
     }
 
+    /**
+     * The tail reconcile, taken in the Acquisition's own order.
+     *
+     * An intent that starts a chase posts its event to the session thread ([postAcquisitionEvent]),
+     * so the phase it asks for is not published by the time onStartCommand reaches its tail.
+     * Reconciling there reads a still-idle Acquisition and demotes — stopSelf() and all — the scan
+     * or pre-run reconnect the intent just asked for. It used to be true that the status was
+     * published inline; the typed phase (ADR 0007) moved it behind the same inbox as the Run's.
+     *
+     * So take the same queue: a hop through the session thread lands behind whatever this dispatch
+     * posted, and a hop back to main does the deciding where every other Promotion call is made.
+     * Not [deferReconcileToRun]'s trick of leaving it to the subscription — an intent that changes
+     * no state publishes nothing, and its eager promotion would never be handed back (#144).
+     */
+    private fun reconcileAfterAcquisition() {
+        val handler = sessionHandler ?: return reconcileForegroundPromotion()
+        handler.post { serviceScope.launch { reconcileForegroundPromotion() } }
+    }
+
     private fun createNotification(content: String): Notification {
         val stopIntent = Intent(this, HrForegroundService::class.java).apply {
             action = ACTION_STOP_FOREGROUND
@@ -1470,6 +1485,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) return
         val device = bluetoothAdapter?.getRemoteDevice(address) ?: return
         logBleDecision("connect_gatt", "Opening GATT to address=$address")
+        // One handle per address, or the overwritten one is a GATT nothing can close — and a
+        // callback from it would be indistinguishable from the new one's. The rules close before
+        // they connect, so this is the map's invariant held here, not a path anyone takes.
+        doCloseGatt(address, andDisconnect = true)
         openGatts[address] = device.connectGatt(this, false, gattCallback)
     }
 
@@ -1548,16 +1567,40 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    /**
+     * Post what a GATT reported, unless that GATT is not the handle we hold for its address.
+     *
+     * [Acquisition] speaks in addresses, and two chases of the same Strap in quick succession share
+     * one: a `STATE_DISCONNECTED` arriving late from the superseded handle looks exactly like the
+     * live one dropping, and the retry it earns closes the connection that just succeeded.
+     *
+     * Which handle is current is not a rule — it is a fact about objects Android gave us, the same
+     * kind of thing as reading a device's name — so it is answered here rather than by carrying a
+     * BluetoothGatt into the module. Asked on the session thread, because [openGatts] is written
+     * there and this callback arrives on a Binder thread; posting the question is also what puts it
+     * behind the connect that installed the handle.
+     */
+    private fun postFromGatt(gatt: BluetoothGatt?, event: (String) -> AcquisitionEvent) {
+        val address = gatt?.device?.address ?: return
+        sessionHandler?.post {
+            if (openGatts[address] !== gatt) {
+                Log.d(TAG, "Ignoring callback from a superseded GATT for address=$address")
+                return@post
+            }
+            dispatchAcquisitionEvent(event(address))
+        }
+    }
+
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
-            val address = gatt?.device?.address ?: return
-            // Whether this GATT is still the one being chased is [Acquisition]'s to decide. A real
-            // GATT can report itself long after we stopped caring, and the module closes it.
+            // Whether the Strap this handle chases is still the one being chased is
+            // [Acquisition]'s to decide. A real GATT can report itself long after we stopped
+            // caring, and the module closes it.
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED ->
-                    postAcquisitionEvent(AcquisitionEvent.GattConnected(address))
+                    postFromGatt(gatt) { AcquisitionEvent.GattConnected(it) }
                 BluetoothProfile.STATE_DISCONNECTED ->
-                    postAcquisitionEvent(AcquisitionEvent.GattDisconnected(address))
+                    postFromGatt(gatt) { AcquisitionEvent.GattDisconnected(it) }
             }
         }
 
@@ -1571,9 +1614,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             } else {
                 "Unknown"
             }
-            postAcquisitionEvent(
-                AcquisitionEvent.ServicesDiscovered(device.address, name, hasHeartRate),
-            )
+            postFromGatt(gatt) {
+                AcquisitionEvent.ServicesDiscovered(it, name, hasHeartRate)
+            }
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
