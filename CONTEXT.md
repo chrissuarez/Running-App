@@ -110,7 +110,12 @@ _Avoid_: device, monitor, HRM
 
 **Acquisition**:
 The attempt to get a Strap connected: scanning, connecting, or retrying. In
-flight until the Strap is connected, given up on, or blocked.
+flight until the Strap is connected, given up on, or blocked. Those six are its
+whole vocabulary — Scanning, Connecting, Connected, Retrying, Gave up, Blocked.
+Scanning, Connecting and Retrying are the in-flight three, and being in flight is
+what earns Promotion ([ADR 0007](docs/adr/0007-acquisition-is-a-rulebook-too.md)).
+Gave up is not the same as idle: it is the end of a chase, and nothing starts
+another from it.
 _Avoid_: pairing, connecting (as a noun), chasing
 
 **Promotion**:

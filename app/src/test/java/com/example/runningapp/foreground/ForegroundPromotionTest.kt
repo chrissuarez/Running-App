@@ -1,6 +1,10 @@
 package com.example.runningapp.foreground
 
 import com.example.runningapp.SessionStatus
+import com.example.runningapp.run.AcquisitionBlock
+import com.example.runningapp.run.AcquisitionPhase
+import com.example.runningapp.run.AcquisitionState
+import com.example.runningapp.run.FIRST_RETRY_DELAY_MS
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
@@ -22,67 +26,24 @@ private class RecordingHost(var platformGrantsIt: Boolean = true) : PromotionHos
     override fun showNotification(text: String) { calls += "show:$text" }
 }
 
-class IsAcquiringStrapTest {
+// The situations this file exercises, as Acquisition phases. They used to be status strings, and
+// Promotion decided by searching them for four words (ADR 0007).
+private const val TEST_STRAP = "AA:BB:CC:DD:EE:FF"
+private val CONNECTED = AcquisitionPhase.Connected(TEST_STRAP, "Venu 2S")
+private val NOT_FOUND = AcquisitionPhase.GaveUp
+private val NO_PERMISSION = AcquisitionPhase.Blocked(AcquisitionBlock.PermissionMissing)
+private val NO_BLUETOOTH = AcquisitionPhase.Blocked(AcquisitionBlock.BluetoothUnavailable)
+private val SCANNING = AcquisitionPhase.Scanning(endsAt = 0L)
+private val CONNECTING =
+    AcquisitionPhase.Connecting(TEST_STRAP, "Venu 2S", false, 0, FIRST_RETRY_DELAY_MS)
+private val RETRYING =
+    AcquisitionPhase.Retrying(TEST_STRAP, "Venu 2S", false, 1, 0L, 3_000L, 6_000L)
 
-    @Test
-    fun `scanning is an acquisition`() {
-        assertTrue(isAcquiringStrap("Scanning..."))
-    }
+private fun inFlight(phase: AcquisitionPhase) = AcquisitionState(phase).inFlight
 
-    @Test
-    fun `connecting is an acquisition`() {
-        assertTrue(isAcquiringStrap("Connecting to Polar H10..."))
-    }
-
-    @Test
-    fun `reconnecting is an acquisition`() {
-        assertTrue(isAcquiringStrap("Reconnecting in 3s..."))
-    }
-
-    @Test
-    fun `retrying is an acquisition`() {
-        assertTrue(isAcquiringStrap("Disconnected (Retrying)"))
-    }
-
-    // Every terminal state. Each one is a place the old code had to remember to demote.
-
-    @Test
-    fun `connected ends the acquisition`() {
-        assertFalse(isAcquiringStrap("Connected"))
-    }
-
-    @Test
-    fun `strap not found ends the acquisition`() {
-        assertFalse(isAcquiringStrap("Strap not found"))
-    }
-
-    @Test
-    fun `missing permission ends the acquisition`() {
-        assertFalse(isAcquiringStrap("Permission Missing"))
-    }
-
-    @Test
-    fun `no bluetooth adapter ends the acquisition`() {
-        assertFalse(isAcquiringStrap("Bluetooth Off/Unavailable"))
-    }
-
-    @Test
-    fun `a failed scan ends the acquisition`() {
-        // "Scan Failed: 2" contains "Scan" but is not "Scanning" — the distinction the
-        // wake lock now depends on.
-        assertFalse(isAcquiringStrap("Scan Failed: 2"))
-    }
-
-    @Test
-    fun `disconnected is not an acquisition`() {
-        assertFalse(isAcquiringStrap("Disconnected"))
-    }
-
-    @Test
-    fun `idle is not an acquisition`() {
-        assertFalse(isAcquiringStrap(""))
-    }
-}
+// The statuses this file used to assert on are now phases, and which of them are in flight is
+// AcquisitionState.inFlight — asserted in AcquisitionTest against the phase rather than against
+// its sentence (ADR 0007).
 
 class PromotionEarnedTest {
 
@@ -120,60 +81,60 @@ class PromotionEarnedTest {
  */
 class HistoricalLeakTest {
 
-    private fun promotedAfter(status: SessionStatus, connectionStatus: String): Boolean {
+    private fun promotedAfter(status: SessionStatus, phase: AcquisitionPhase): Boolean {
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
         promotion.promoteForStartCommand() // what onStartCommand always does
-        promotion.reconcile(status, isAcquiringStrap(connectionStatus))
+        promotion.reconcile(status, inFlight(phase))
         return promotion.isPromoted
     }
 
     @Test
     fun `4fe74cd - a bare sensor connecting with no run does not hold the foreground`() {
-        assertFalse(promotedAfter(SessionStatus.IDLE, "Connected"))
+        assertFalse(promotedAfter(SessionStatus.IDLE, CONNECTED))
     }
 
     @Test
     fun `4fe74cd - a pre-run reconnect that gives up does not hold the foreground`() {
-        assertFalse(promotedAfter(SessionStatus.IDLE, "Strap not found"))
+        assertFalse(promotedAfter(SessionStatus.IDLE, NOT_FOUND))
     }
 
     @Test
     fun `4fe74cd - an abandoned scan does not hold the foreground`() {
-        assertFalse(promotedAfter(SessionStatus.IDLE, "Disconnected"))
+        assertFalse(promotedAfter(SessionStatus.IDLE, AcquisitionPhase.Idle))
     }
 
     @Test
     fun `0beef0f - a connect dead-ending on permissions does not hold the foreground`() {
-        assertFalse(promotedAfter(SessionStatus.IDLE, "Permission Missing"))
+        assertFalse(promotedAfter(SessionStatus.IDLE, NO_PERMISSION))
     }
 
     @Test
     fun `0beef0f - a connect with no bluetooth adapter does not hold the foreground`() {
-        assertFalse(promotedAfter(SessionStatus.IDLE, "Bluetooth Off/Unavailable"))
+        assertFalse(promotedAfter(SessionStatus.IDLE, NO_BLUETOOTH))
     }
 
     @Test
     fun `3bd4d3e - a strap connecting while the finished run finalizes does not hold it`() {
         // Status is already STOPPED while the finalize coroutine drains its writes. The old
         // guard counted the lingering session id as "in flight" and held forever.
-        assertFalse(promotedAfter(SessionStatus.STOPPED, "Connected"))
+        assertFalse(promotedAfter(SessionStatus.STOPPED, CONNECTED))
     }
 
     @Test
     fun `3bd4d3e - a live run still holds it while a strap connects`() {
-        assertTrue(promotedAfter(SessionStatus.RUNNING, "Connected"))
+        assertTrue(promotedAfter(SessionStatus.RUNNING, CONNECTED))
     }
 
     @Test
     fun `d335ef3 - a START ignored because a run is finalizing does not leak the promotion`() {
         // onStartCommand promoted for Android's deadline, then dispatch ignored the intent.
-        assertFalse(promotedAfter(SessionStatus.STOPPED, "Disconnected"))
+        assertFalse(promotedAfter(SessionStatus.STOPPED, AcquisitionPhase.Idle))
     }
 
     @Test
     fun `d335ef3 - a START that does begin a run keeps the promotion`() {
-        assertTrue(promotedAfter(SessionStatus.RUNNING, "Scanning..."))
+        assertTrue(promotedAfter(SessionStatus.RUNNING, SCANNING))
     }
 }
 
@@ -386,8 +347,8 @@ class UnpromotedStartTest {
 class FollowTest {
 
     /** The service publishes a session status and a connection status; Promotion reads the pair. */
-    private fun MutableStateFlow<Pair<SessionStatus, String>>.asPromotionState() =
-        map { (status, connectionStatus) -> status to isAcquiringStrap(connectionStatus) }
+    private fun MutableStateFlow<Pair<SessionStatus, AcquisitionPhase>>.asPromotionState() =
+        map { (status, phase) -> status to inFlight(phase) }
 
     @Test
     fun `a conflated acquisition does not strand the eager start-command promote`() = runTest {
@@ -395,19 +356,19 @@ class FollowTest {
         // ongoing notification held for minutes with no Run.
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        val published = MutableStateFlow(SessionStatus.IDLE to "Disconnected")
+        val published = MutableStateFlow<Pair<SessionStatus, AcquisitionPhase>>(SessionStatus.IDLE to AcquisitionPhase.Idle)
         val job = launch { promotion.follow(published.asPromotionState()) }
         runCurrent() // the collector takes up the idle state it starts from
 
         // onStartCommand: promote for Android's five-second deadline, publish "Connecting..."
         // inline, then reconcile at the tail while the acquisition is genuinely in flight.
         promotion.promoteForStartCommand()
-        published.value = SessionStatus.IDLE to "Connecting to Venu 2S..."
+        published.value = SessionStatus.IDLE to CONNECTING
         promotion.reconcile(SessionStatus.IDLE, acquiringStrap = true)
 
         // The connect to a bonded device lands ~10ms later, before the collector has run at all,
         // so StateFlow conflates "Connecting..." away and the pair reads unchanged.
-        published.value = SessionStatus.IDLE to "Connected"
+        published.value = SessionStatus.IDLE to CONNECTED
         runCurrent()
 
         assertEquals(listOf("promote", "demote"), host.calls)
@@ -421,12 +382,12 @@ class FollowTest {
         // demote() ends in stopSelf(), and this sees every per-second heartbeat.
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        val published = MutableStateFlow(SessionStatus.IDLE to "Connected")
+        val published = MutableStateFlow<Pair<SessionStatus, AcquisitionPhase>>(SessionStatus.IDLE to CONNECTED)
         val job = launch { promotion.follow(published.asPromotionState()) }
         runCurrent()
 
         repeat(5) {
-            published.value = SessionStatus.IDLE to "Connected"
+            published.value = SessionStatus.IDLE to CONNECTED
             runCurrent()
         }
 
@@ -438,14 +399,14 @@ class FollowTest {
     fun `a run's heartbeat does not re-promote through the subscription`() = runTest {
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        val published = MutableStateFlow(SessionStatus.IDLE to "Disconnected")
+        val published = MutableStateFlow<Pair<SessionStatus, AcquisitionPhase>>(SessionStatus.IDLE to AcquisitionPhase.Idle)
         val job = launch { promotion.follow(published.asPromotionState()) }
         runCurrent()
 
-        published.value = SessionStatus.RUNNING to "Connected"
+        published.value = SessionStatus.RUNNING to CONNECTED
         runCurrent()
         repeat(5) {
-            published.value = SessionStatus.RUNNING to "Connected"
+            published.value = SessionStatus.RUNNING to CONNECTED
             runCurrent()
         }
 
@@ -457,17 +418,17 @@ class FollowTest {
     fun `a full run promotes once and demotes once through the subscription`() = runTest {
         val host = RecordingHost()
         val promotion = ForegroundPromotion(host)
-        val published = MutableStateFlow(SessionStatus.IDLE to "Disconnected")
+        val published = MutableStateFlow<Pair<SessionStatus, AcquisitionPhase>>(SessionStatus.IDLE to AcquisitionPhase.Idle)
         val job = launch { promotion.follow(published.asPromotionState()) }
         runCurrent()
 
         listOf(
-            SessionStatus.IDLE to "Connecting to Venu 2S...",
-            SessionStatus.RUNNING to "Connected",
-            SessionStatus.PAUSED to "Connected",
-            SessionStatus.RUNNING to "Connected",
-            SessionStatus.STOPPING to "Connected",
-            SessionStatus.STOPPED to "Connected",
+            SessionStatus.IDLE to CONNECTING,
+            SessionStatus.RUNNING to CONNECTED,
+            SessionStatus.PAUSED to CONNECTED,
+            SessionStatus.RUNNING to CONNECTED,
+            SessionStatus.STOPPING to CONNECTED,
+            SessionStatus.STOPPED to CONNECTED,
         ).forEach {
             published.value = it
             runCurrent()
@@ -482,17 +443,17 @@ class FollowTest {
     fun `a refused promotion is retried when the state moves, not on every heartbeat`() = runTest {
         val host = RecordingHost(platformGrantsIt = false)
         val promotion = ForegroundPromotion(host)
-        val published = MutableStateFlow(SessionStatus.IDLE to "Disconnected")
+        val published = MutableStateFlow<Pair<SessionStatus, AcquisitionPhase>>(SessionStatus.IDLE to AcquisitionPhase.Idle)
         val job = launch { promotion.follow(published.asPromotionState()) }
         runCurrent()
 
-        published.value = SessionStatus.RUNNING to "Connected"
+        published.value = SessionStatus.RUNNING to CONNECTED
         runCurrent()
         repeat(5) { // refused, and isPromoted stayed false — the key must not churn
-            published.value = SessionStatus.RUNNING to "Connected"
+            published.value = SessionStatus.RUNNING to CONNECTED
             runCurrent()
         }
-        published.value = SessionStatus.RUNNING to "Reconnecting in 3s..."
+        published.value = SessionStatus.RUNNING to RETRYING
         runCurrent()
 
         assertEquals(listOf("promote", "promote"), host.calls)

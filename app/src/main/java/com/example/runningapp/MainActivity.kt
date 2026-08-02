@@ -2,6 +2,9 @@ package com.example.runningapp
 
 import android.Manifest
 import android.bluetooth.BluetoothDevice
+import com.example.runningapp.run.AcquisitionPhase
+import com.example.runningapp.run.AcquisitionState
+import com.example.runningapp.run.ScannedStrap
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -56,7 +59,6 @@ import com.example.runningapp.archive.MonthlyArchiveWorker
 import com.example.runningapp.archive.SafArchiveFolder
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.export.gpxShareChooser
-import com.example.runningapp.foreground.isAcquiringStrap
 import com.example.runningapp.navigation.Routes
 import com.example.runningapp.ui.FeelFeedbackSheet
 import com.example.runningapp.ui.BackupViewModel
@@ -449,7 +451,7 @@ class MainActivity : ComponentActivity() {
                         composable(Routes.MANAGE_DEVICES) {
                             ManageDevicesScreen(
                                 settings = userSettings,
-                                connectionStatus = serviceState?.value?.connectionStatus ?: "Disconnected",
+                                acquisition = serviceState?.value?.acquisition ?: AcquisitionState(),
                                 scannedDevices = serviceState?.value?.scannedDevices ?: emptyList(),
                                 isRunActive = serviceState?.value?.sessionStatus.let {
                                     it == SessionStatus.RUNNING || it == SessionStatus.PAUSED
@@ -879,9 +881,12 @@ fun MainScreen(
             ContextCompat.checkSelfPermission(
                 autoConnectContext, Manifest.permission.BLUETOOTH_CONNECT
             ) == PackageManager.PERMISSION_GRANTED
+        // Idle only, and deliberately not "given up": a chase that ran out of attempts must not be
+        // restarted from here the instant it ends (ADR 0007). The Retry button and START are how it
+        // begins again.
         if (screenIsResumed && canConnect && !isSessionActive && !state.isSimulating &&
             hrService != null && activeStrapAddress != null &&
-            state.connectionStatus == "Disconnected"
+            state.acquisition.phase is AcquisitionPhase.Idle
         ) {
             val intent = Intent(autoConnectContext, HrForegroundService::class.java).apply {
                 action = HrForegroundService.ACTION_START_FOREGROUND
@@ -1092,8 +1097,8 @@ fun MainScreen(
             // only: an active run shows its live controls in the scroll area above.
             if (!isSessionActive) {
                 StartFooter(
-                    connectionStatus = state.connectionStatus,
-                    strapConnected = state.connectionStatus == "Connected",
+                    acquisition = state.acquisition,
+                    strapConnected = state.acquisition.phase is AcquisitionPhase.Connected,
                     isSimulating = state.isSimulating,
                     onStart = { onStartRun(skipPlanToday, selectedRunMode, todaysWorkoutId) },
                     // The activity-level handler re-acquires via the service intent (saved strap
@@ -1144,19 +1149,20 @@ private fun RunModeSelector(runMode: String, onRunModeChange: (String) -> Unit) 
 // gate — START never dies; when there's no strap it says what you'll lose, and starts anyway.
 @Composable
 private fun StartFooter(
-    connectionStatus: String,
+    acquisition: AcquisitionState,
     strapConnected: Boolean,
     isSimulating: Boolean,
     onStart: () -> Unit,
     onRetryStrap: () -> Unit
 ) {
+    val connectionStatus = acquisition.statusLine
     // "Looking for your strap…" is exactly an Acquisition in flight. One definition, shared with
     // the service's START guard and with Promotion — this used to be its own copy of the test.
-    val looking = !isSimulating && isAcquiringStrap(connectionStatus)
-    // The service's terminal give-up state (pre-run reconnect cap). The old key,
-    // contains("Retrying"), matched a status that lives for milliseconds between retry cycles —
-    // this state was designed for the strap-absent case but never actually rendered.
-    val notFound = !isSimulating && connectionStatus == "Strap not found"
+    val looking = !isSimulating && acquisition.inFlight
+    // The terminal give-up phase (pre-run reconnect cap). The key before last was
+    // contains("Retrying"), which matched a status that lived for milliseconds between retry
+    // cycles — this state was designed for the strap-absent case but never actually rendered.
+    val notFound = !isSimulating && acquisition.phase is AcquisitionPhase.GaveUp
 
     Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -1644,8 +1650,8 @@ fun WorkoutView(state: HrState, sessionRepository: SessionRepository, onOpenFull
 @Composable
 fun ManageDevicesScreen(
     settings: UserSettings,
-    connectionStatus: String,
-    scannedDevices: List<BluetoothDevice>,
+    acquisition: AcquisitionState,
+    scannedDevices: List<ScannedStrap>,
     isRunActive: Boolean,
     onSetActive: (String) -> Unit,
     onRemove: (String) -> Unit,
@@ -1665,12 +1671,12 @@ fun ManageDevicesScreen(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        Text("Status: $connectionStatus", style = MaterialTheme.typography.bodySmall)
+        Text("Status: ${acquisition.statusLine}", style = MaterialTheme.typography.bodySmall)
         // Scan is the only way to pair a first strap (#110 removed the record-screen list): find
         // and tap a discovered strap here, and connecting it saves it below. Pairing is a pre-run
         // action — scanning drops the current strap, so it is disabled during an active run to keep
         // it from dropping the live session (the service ignores a mid-run scan for the same reason).
-        val isScanning = connectionStatus.contains("Scanning", ignoreCase = true)
+        val isScanning = acquisition.phase is AcquisitionPhase.Scanning
         Button(
             onClick = onScan,
             enabled = !isScanning && !isRunActive,
@@ -1780,7 +1786,7 @@ private fun formatTime(seconds: Long): String {
 }
 
 @Composable
-fun DeviceListItem(device: BluetoothDevice, onClick: () -> Unit) {
+fun DeviceListItem(device: ScannedStrap, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1789,7 +1795,7 @@ fun DeviceListItem(device: BluetoothDevice, onClick: () -> Unit) {
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
-            Text(text = device.name ?: "Unknown Device", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
+            Text(text = device.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Bold)
             Text(text = device.address, style = MaterialTheme.typography.bodySmall)
         }
     }
