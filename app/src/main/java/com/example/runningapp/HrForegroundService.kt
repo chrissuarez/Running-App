@@ -1430,17 +1430,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * failure a lie about the wrong attempt. Two taps on the same Strap and a `GattDisconnected`
      * meant for the first would close the second's good connection.
      *
-     * The state at the moment of the effect is the whole identity needed: [AcquisitionState] is
-     * immutable and every decision replaces it, so still holding the same instance means no
-     * decision has been taken in between and the failure is still about the current attempt. If
-     * one has, the news is stale and dropped — and whatever superseded it owns the outcome now.
+     * The attempt at the moment of the effect is the whole identity needed. Phases are immutable
+     * and a fresh attempt is always a fresh one, so still holding the same instance means the
+     * failure is still about the attempt that suffered it. The phase rather than the whole state,
+     * because the state changes for reasons that supersede nothing: a `StrapSeen` left over from
+     * the last scan only lengthens the results list, and dropping a startup failure for that would
+     * leave the phase — and the wake lock with it — standing until the 60s deadline.
      *
      * Session thread only, both when called and when it runs.
      */
     private fun reportEffectFailed(event: AcquisitionEvent) {
-        val asked = acquisitionState
+        val asked = acquisitionState.phase
         sessionHandler?.post {
-            if (acquisitionState !== asked) {
+            if (acquisitionState.phase !== asked) {
                 Log.d(TAG, "Dropping $event - the Acquisition has already moved past it")
                 return@post
             }
