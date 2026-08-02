@@ -28,6 +28,14 @@ const val LOST_RETRYING = "Disconnected (Retrying)"
 /** What the Run is told when the Strap goes and we do not mean to get it back. */
 const val LOST_DISCONNECTED = "Disconnected"
 
+/**
+ * The error code for a scan that never got as far as one of Android's own.
+ *
+ * Android's `ScanCallback` codes start at 1, so 0 is free and says "not the scanner's fault" —
+ * there was no scanner, or the call threw before it could report anything.
+ */
+const val SCAN_UNAVAILABLE = 0
+
 /** Something happened that an Acquisition may care about. */
 sealed interface AcquisitionEvent {
 
@@ -57,6 +65,7 @@ sealed interface AcquisitionEvent {
 
     /** The platform refused the scan. */
     data class ScanFailed(val errorCode: Int) : AcquisitionEvent
+
 
     /** The runner removed a saved Strap. */
     data class ForgetRequested(val address: String) : AcquisitionEvent
@@ -488,14 +497,25 @@ object Acquisition {
     /**
      * Stop, and say why.
      *
-     * A scan is stopped on the way out. Blocked is a terminal phase — the pulse that would tick
-     * again stops with it — so nothing else would ever come along to stop a platform scan the
-     * runner can no longer see any sign of.
+     * Whatever was in flight is stopped on the way out. Blocked is terminal and remembers no
+     * address — the pulse that would tick again stops with it, and Forget and Disconnect both
+     * match on an address this phase no longer has — so nothing else would ever come along to
+     * stop the platform scan or let the GATT go. Left behind, that handle would still be the
+     * map's entry for its address and its readings would still pass the identity check.
      */
     private fun blocked(state: AcquisitionState, reason: AcquisitionBlock): AcquisitionOutcome =
         AcquisitionOutcome(
             state.copy(phase = AcquisitionPhase.Blocked(reason)),
-            if (state.phase is AcquisitionPhase.Scanning) listOf(AcquisitionEffect.StopScan)
-            else emptyList(),
+            buildList {
+                if (state.phase is AcquisitionPhase.Scanning) add(AcquisitionEffect.StopScan)
+                state.address?.let {
+                    // Blocked is usually a permission or adapter that has gone, so hanging up may
+                    // not be possible; the effect asks anyway and the service does what it may.
+                    add(AcquisitionEffect.DisconnectAndCloseGatt(it))
+                }
+                if (state.phase is AcquisitionPhase.Connected) {
+                    add(AcquisitionEffect.TellRunStrapLost(LOST_DISCONNECTED))
+                }
+            },
         )
 }

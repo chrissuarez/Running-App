@@ -56,6 +56,7 @@ import com.example.runningapp.run.AcquisitionEvent
 import com.example.runningapp.run.AcquisitionPhase
 import com.example.runningapp.run.AcquisitionState
 import com.example.runningapp.run.CueTag
+import com.example.runningapp.run.SCAN_UNAVAILABLE
 import com.example.runningapp.run.ScannedStrap
 import java.util.concurrent.ConcurrentHashMap
 import com.example.runningapp.run.IntervalKind
@@ -1488,13 +1489,22 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun doStartScan() {
-        val scanner = bluetoothAdapter?.bluetoothLeScanner ?: return
-        if (!hasPermission(Manifest.permission.BLUETOOTH_SCAN)) return
+        // Every way this can fail is told to the Acquisition rather than logged and dropped. The
+        // phase is already Scanning by the time the effect runs, and Scanning is what the UI, the
+        // 60s deadline and the Promotion all believe — so a scan that never started has to end
+        // that phase, not leave it standing until the deadline. Posted rather than dispatched:
+        // this is inside a decision, and the next one waits its turn behind it.
+        val scanner = bluetoothAdapter?.bluetoothLeScanner
+        if (scanner == null || !hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
+            postAcquisitionEvent(AcquisitionEvent.ScanFailed(SCAN_UNAVAILABLE))
+            return
+        }
         try {
             scanner.startScan(scanCallback)
             Log.d(TAG, "BLE scan started")
         } catch (e: Exception) {
             Log.w(TAG, "startScan failed: ${e.message}")
+            postAcquisitionEvent(AcquisitionEvent.ScanFailed(SCAN_UNAVAILABLE))
         }
     }
 

@@ -285,6 +285,41 @@ class AcquisitionScanTest {
     }
 
     @Test
+    fun `blocking mid-chase lets the gatt go`() {
+        // Blocked remembers no address, and Forget and Disconnect both match on one — so a handle
+        // left open here is one nothing can ever reach again, still passing the map's identity
+        // check for its address.
+        val chasing = AcquisitionState(
+            AcquisitionPhase.Connecting(STRAP, "Polar H10", true, 0, FIRST_RETRY_DELAY_MS),
+        )
+        val outcome = Acquisition.decide(
+            chasing,
+            AcquisitionEvent.ConnectRequested(OTHER, "Garmin", true),
+            ctx(canConnect = false),
+        )
+        assertEquals(
+            listOf(AcquisitionEffect.DisconnectAndCloseGatt(STRAP)),
+            outcome.effects,
+        )
+    }
+
+    @Test
+    fun `blocking while connected tells the run the strap is gone`() {
+        val outcome = Acquisition.decide(
+            connectedTo(STRAP),
+            AcquisitionEvent.ScanRequested(force = true),
+            ctx(canScan = false),
+        )
+        assertEquals(
+            listOf(
+                AcquisitionEffect.DisconnectAndCloseGatt(STRAP),
+                AcquisitionEffect.TellRunStrapLost(LOST_DISCONNECTED),
+            ),
+            outcome.effects,
+        )
+    }
+
+    @Test
     fun `bluetooth off blocks the scan`() {
         val outcome = Acquisition.decide(
             AcquisitionState(),
