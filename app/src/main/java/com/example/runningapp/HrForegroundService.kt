@@ -1422,6 +1422,33 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     /**
+     * Report that an effect could not be carried out — but only if nothing has been decided since.
+     *
+     * An effect that fails has to say so, or the phase it belongs to stands with nothing behind it.
+     * It cannot say so where it stands, though, because it is running inside a decision, so the
+     * word goes on the queue — where a request already waiting will be served first and make the
+     * failure a lie about the wrong attempt. Two taps on the same Strap and a `GattDisconnected`
+     * meant for the first would close the second's good connection.
+     *
+     * The state at the moment of the effect is the whole identity needed: [AcquisitionState] is
+     * immutable and every decision replaces it, so still holding the same instance means no
+     * decision has been taken in between and the failure is still about the current attempt. If
+     * one has, the news is stale and dropped — and whatever superseded it owns the outcome now.
+     *
+     * Session thread only, both when called and when it runs.
+     */
+    private fun reportEffectFailed(event: AcquisitionEvent) {
+        val asked = acquisitionState
+        sessionHandler?.post {
+            if (acquisitionState !== asked) {
+                Log.d(TAG, "Dropping $event - the Acquisition has already moved past it")
+                return@post
+            }
+            dispatchAcquisitionEvent(event)
+        }
+    }
+
+    /**
      * The Acquisition's inbox. [sessionHandlerThread] only.
      *
      * Sharing one thread with the Run is what deleted `scanEpoch`, `connectRequestSeq` and
@@ -1492,11 +1519,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // Every way this can fail is told to the Acquisition rather than logged and dropped. The
         // phase is already Scanning by the time the effect runs, and Scanning is what the UI, the
         // 60s deadline and the Promotion all believe — so a scan that never started has to end
-        // that phase, not leave it standing until the deadline. Posted rather than dispatched:
-        // this is inside a decision, and the next one waits its turn behind it.
+        // that phase, not leave it standing until the deadline.
         val scanner = bluetoothAdapter?.bluetoothLeScanner
         if (scanner == null || !hasPermission(Manifest.permission.BLUETOOTH_SCAN)) {
-            postAcquisitionEvent(AcquisitionEvent.ScanFailed(SCAN_UNAVAILABLE))
+            reportEffectFailed(AcquisitionEvent.ScanFailed(SCAN_UNAVAILABLE))
             return
         }
         try {
@@ -1504,7 +1530,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             Log.d(TAG, "BLE scan started")
         } catch (e: Exception) {
             Log.w(TAG, "startScan failed: ${e.message}")
-            postAcquisitionEvent(AcquisitionEvent.ScanFailed(SCAN_UNAVAILABLE))
+            reportEffectFailed(AcquisitionEvent.ScanFailed(SCAN_UNAVAILABLE))
         }
     }
 
@@ -1523,10 +1549,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // A connect that does not happen is reported as one that dropped, the same as doStartScan
         // reporting a scan that never started. The rules already know what to do with a drop —
         // back off, retry, eventually give up — and the alternative is a Connecting phase with
-        // nothing behind it. Posted, not dispatched: this runs inside a decision.
+        // nothing behind it.
         fun didNotConnect(why: String) {
             Log.w(TAG, "connect_gatt did not open for address=$address: $why")
-            postAcquisitionEvent(AcquisitionEvent.GattDisconnected(address))
+            reportEffectFailed(AcquisitionEvent.GattDisconnected(address))
         }
 
         if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
