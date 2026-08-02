@@ -49,7 +49,14 @@ import kotlin.jvm.Volatile
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import java.util.UUID
+import com.example.runningapp.run.Acquisition
+import com.example.runningapp.run.AcquisitionContext
+import com.example.runningapp.run.AcquisitionEffect
+import com.example.runningapp.run.AcquisitionEvent
+import com.example.runningapp.run.AcquisitionPhase
+import com.example.runningapp.run.AcquisitionState
 import com.example.runningapp.run.CueTag
+import com.example.runningapp.run.ScannedStrap
 import java.util.concurrent.ConcurrentHashMap
 import com.example.runningapp.run.IntervalKind
 import com.example.runningapp.run.Run
@@ -72,7 +79,6 @@ import com.example.runningapp.data.TrackPointSource
 import com.example.runningapp.data.averagePaceMinPerKm
 import com.example.runningapp.foreground.ForegroundPromotion
 import com.example.runningapp.foreground.PromotionHost
-import com.example.runningapp.foreground.isAcquiringStrap
 
 // Exactly the Run's lifecycle, under the screen's older names — [RunLifecycle.asSessionStatus] is
 // the only thing that writes it, so there is no value here a Run cannot be in.
@@ -87,10 +93,13 @@ enum class StructuredWorkoutPhase { RUN, WALK }
 private const val SIMULATION_OVERSHOOT_BPM = 10
 
 data class HrState(
-    val connectionStatus: String = "Disconnected",
+    /**
+     * Where the Acquisition has got to (ADR 0007). It used to be a sentence, and eleven places read
+     * the sentence — including Promotion, which decided a wake lock by searching it for four words.
+     */
+    val acquisition: AcquisitionState = AcquisitionState(),
     val sessionStatus: SessionStatus = SessionStatus.IDLE,
     val bpm: Int = 0,
-    val scannedDevices: List<BluetoothDevice> = emptyList(),
 
     val avgBpm: Int = 0,
     // The live screen's fallback coach line: how long until the coach next has something to say.
@@ -151,11 +160,17 @@ data class HrState(
     /**
      * Is an Acquisition in flight — scanning, connecting, or retrying a Strap?
      *
-     * Derived, so it cannot go stale, and named once so the three things that need it (the START
-     * guard, the record screen's spinner, and Promotion) cannot drift apart. They already had:
-     * the service's copy of this test omitted "Scanning".
+     * Asked of the phase rather than of its sentence. The three things that need it — the START
+     * guard, the record screen's spinner, and Promotion — had already drifted apart once when this
+     * was spelled by searching text: the service's copy omitted "Scanning".
      */
-    val acquiringStrap: Boolean get() = isAcquiringStrap(connectionStatus)
+    val acquiringStrap: Boolean get() = acquisition.inFlight
+
+    /** What the runner is told, and what a heart-rate row records. See [AcquisitionState]. */
+    val connectionStatus: String get() = acquisition.statusLine
+
+    /** Straps this scan has turned up. They outlive the scan, to still be tappable after it ends. */
+    val scannedDevices: List<ScannedStrap> get() = acquisition.scanned
 }
 
 class HrForegroundService : Service(), TextToSpeech.OnInitListener {
@@ -178,7 +193,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private val _hrState = MutableStateFlow(HrState())
     val hrState: StateFlow<HrState> = _hrState.asStateFlow()
 
-    private var bluetoothGatt: BluetoothGatt? = null
+    /**
+     * Every GATT this service has opened and not yet closed, by address.
+     *
+     * A map rather than a field because [Acquisition] speaks only in addresses, and a GATT it has
+     * abandoned still has to be closable when its callbacks turn up later. Touched only on
+     * [sessionHandlerThread] and the IO closes it posts, which are serialised behind it.
+     */
+    private val openGatts = mutableMapOf<String, BluetoothGatt>()
     private var bluetoothAdapter: BluetoothAdapter? = null
 
     // UUIDs for Heart Rate Service and Measurement Characteristic
@@ -186,12 +208,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private val HEART_RATE_MEASUREMENT_UUID = UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb")
     private val CLIENT_CHARACTERISTIC_CONFIG_UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-    // Reconnection & Rate Limiting State
-    // Volatile: written on the main thread (connect/forget/scan paths) and read by GATT
-    // callbacks on binder threads to reject stale discoveries.
-    @Volatile private var targetDeviceAddress: String? = null
-    private var reconnectDelay = 3000L
-    private var isReconnecting = false
+    /**
+     * The Acquisition's whole state (ADR 0007).
+     *
+     * Touched ONLY on [sessionHandlerThread], exactly like [runState] — which is what let the scan
+     * epoch, the connect sequence counter and the connect lock all go. Every path that used to
+     * write a piece of this from whichever thread it happened to be on now posts an event instead.
+     */
+    private var acquisitionState = AcquisitionState()
     private var isActivityBound = false
     
     // TTS & Audio Focus
@@ -234,15 +258,23 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         override fun run() {
             // Simulation feeds the Run ordinary heart-rate events, so it and a real Strap drive
             // identical code — there is no simulated branch anywhere inside the Run.
-            if (isSimulationEnabled) updateSimulationData()
+            // Simulation feeds a Run, so it only has anything to say while one is live — the pulse
+            // now also runs before a Run, for the Acquisition's sake.
+            if (isSimulationEnabled && runState.lifecycle.isLive) updateSimulationData()
             dispatchRunEvent(RunEvent.Tick(System.currentTimeMillis()))
+            // The Acquisition holds its own deadlines — when a scan gives up, when a retry is due —
+            // and this is how it learns the time (ADR 0007). A Run that is not live ignores its own
+            // tick, so this costs nothing when only the Acquisition needs it.
+            dispatchAcquisitionEvent(AcquisitionEvent.Tick)
             val lifecycle = runState.lifecycle
-            // A Run that is over stops the pulse; STOP itself also drops the pending one, so this
-            // is the belt to that braces — a Run cannot end and leave a tick still arriving.
-            if (lifecycle != RunLifecycle.IDLE && lifecycle != RunLifecycle.STOPPED) {
+            // The pulse runs while the app is promoted, which is ADR 0001's own rule: a live Run or
+            // an in-flight Acquisition. A Run that is over stops it, unless a Strap is still being
+            // chased — and STOP drops the pending tick too, so this is the belt to that braces.
+            val runNeedsIt = lifecycle != RunLifecycle.IDLE && lifecycle != RunLifecycle.STOPPED
+            if (runNeedsIt || acquisitionState.inFlight) {
                 sessionHandler?.postDelayed(this, 1000)
             } else {
-                Log.d(TAG, "Timer loop exiting - lifecycle is $lifecycle")
+                Log.d(TAG, "Timer loop exiting - lifecycle is $lifecycle, no acquisition in flight")
             }
         }
     }
@@ -275,18 +307,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var simulationBpm = 70
     private var simulationDirection = 1
 
-    private var reconnectAttemptCount = 0
     @Volatile private var lastHrTimestamp = 0L
-    // With no run active, stop chasing an unreachable strap after this many attempts and land on
-    // the terminal "Strap not found" state (each attempt already costs a ~30s connectGatt timeout
-    // plus backoff). Mid-run reconnects are uncapped by design (#110).
-    private val PRE_RUN_RECONNECT_MAX_ATTEMPTS = 3
-    // A discovery scan with no user selection stops itself after this long (nothing ever
-    // auto-connects from a scan, so an abandoned one would otherwise run forever).
-    private val SCAN_TIMEOUT_MS = 60_000L
-    // Bumped on every startScanning()/stopScanning(); lets the scan-timeout coroutine tell
-    // whether ITS scan is still the live one.
-    @Volatile private var scanEpoch = 0
 
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
@@ -965,28 +986,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // user just chose in Manage Devices. Let an in-progress connect finish and join
                 // the run instead.
                 //
-                // "Retrying" ("Disconnected (Retrying)") counts as in flight: a reconnect
-                // coroutine is already scheduled and a parallel connect here would be torn down
-                // by it. A bare scan does NOT: nothing ever auto-connects from scan results
-                // (the callback only fills the Discovered list), so deferring to one leaves the
-                // whole run strapless while the scanner burns battery — let startHardwareSession
-                // take over (connectToDevice stops the scan first; with no saved strap it just
-                // rescans, which is where we already were).
-                val connStatus = _hrState.value.connectionStatus
-                // "Connected" completes acquisition only when the connected strap IS the
-                // active one: Set Active in Manage Devices writes only the settings and
-                // leaves the old GATT up, so a START after switching straps must re-acquire
-                // the newly chosen device instead of recording HR from the old one (Codex P2
-                // #123). With no saved active strap, whatever is connected is the sensor.
-                val activeAddress = currentSettings.activeDeviceAddress
-                val connectedActiveStrap = connStatus == "Connected" &&
-                    (activeAddress == null || targetDeviceAddress == activeAddress)
-                // A bare scan deliberately does NOT count (see above), so this is the shared
-                // Acquisition test minus scanning — not a fourth hand-rolled copy of it.
-                val acquisitionInFlight = connectedActiveStrap ||
-                    (_hrState.value.acquiringStrap &&
-                        !connStatus.contains("Scanning", ignoreCase = true))
-                if (!isSimulationEnabled && !acquisitionInFlight) {
+                // Retrying counts as in flight: a retry is already scheduled and a parallel
+                // connect here would be torn down by it. A bare scan does NOT — nothing ever
+                // auto-connects from scan results, so deferring to one leaves the whole run
+                // strapless while the scanner burns battery. Both of those, and the rule that a
+                // connected Strap only counts when it is the active one, are
+                // [AcquisitionState.coversRunStart] — asked of the phase rather than spelled here
+                // for a fourth time.
+                val coversStart = _hrState.value.acquisition
+                    .coversRunStart(currentSettings.activeDeviceAddress)
+                if (!isSimulationEnabled && !coversStart) {
                     val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
                     // Inline for the same reason as ACTION_START_FOREGROUND above: the
                     // connection status must be true before the tail reconcile reads it.
@@ -1014,7 +1023,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     Log.d(TAG, "Ignoring Force Scan - a run is active (status=$status)")
                 } else if (!isSimulationEnabled) {
                     logBleDecision("force_scan", "User requested a fresh scan; skipping saved-device reconnect")
-                    if (_hrState.value.connectionStatus == "Connected") {
+                    if (_hrState.value.acquisition.phase is AcquisitionPhase.Connected) {
                         disconnect()
                     }
                     startScanning()
@@ -1132,7 +1141,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val statusChanged = currentState.sessionStatus != lastNotificationStatus
 
         val isCritical = zoneChanged || phaseChanged || statusChanged ||
-            currentState.connectionStatus.contains("Failed")
+            currentState.acquisition.phase is AcquisitionPhase.Blocked
 
         if (!isCritical && isBackground && (now - lastNotificationTime < NOTIFICATION_THROTTLE_MS)) {
             // Skip non-critical update while in background to save system resources
@@ -1269,7 +1278,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      */
     private fun releaseStrapAndTimer() {
         Log.d(TAG, "releaseStrapAndTimer - letting go of the strap")
-        stopScanning()
+        // One event: the Acquisition stops whatever it was doing, scan included.
         disconnect()
 
         // A cue still waiting its turn belongs to the Run that has just ended. Speaking it after
@@ -1355,425 +1364,216 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    // --- BLE Logic ---
+    // ------------------------------------------------------------------------------------------
+    // The Acquisition: events in, one published state out, effects performed.
+    //
+    // Everything below is translation. The rules — when a scan gives up, how long to back off,
+    // whether a callback is stale, which Strap becomes active — are in [Acquisition] and are
+    // tested there. See docs/adr/0007-acquisition-is-a-rulebook-too.md.
+    // ------------------------------------------------------------------------------------------
 
-    fun startScanning() {
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
-            // Publishing the terminal status IS the release: the Acquisition is over, so
-            // Promotion is no longer earned. Nothing to demote by hand (0beef0f).
-            _hrState.update { it.copy(connectionStatus = "Permission Missing") }
-            return
-        }
-        
-        // Allow scanning even if connecting/reconnecting, but NOT if already connected
-        if (_hrState.value.connectionStatus == "Connected") {
-            Log.d(TAG, "startScanning() - Already connected, ignoring")
-            return
-        }
-
-        Log.d(TAG, "startScanning() - Resetting connection state and starting fresh scan")
-        logBleDecision("scan_reset", "Clearing reconnect target and scanned device list before scan")
-
-        // ABORT any current connection attempts or reconnect loops. Supersede any queued
-        // connect and close under the connect lock (see disconnect()).
-        isReconnecting = false
-        targetDeviceAddress = null
-        synchronized(gattConnectLock) {
-            ++connectRequestSeq
-            bluetoothGatt?.close()
-            bluetoothGatt = null
-        }
-
-        _hrState.update { it.copy(connectionStatus = "Scanning...", scannedDevices = emptyList()) }
-
-        val scanner = bluetoothAdapter?.bluetoothLeScanner
-        if (scanner == null) {
-            Log.e(TAG, "startScanning() - Bluetooth scanner unavailable!")
-            _hrState.update { it.copy(connectionStatus = "Bluetooth Off/Unavailable") }
-            return
-        }
-
-        try {
-            // Some devices need a stop before a start or it fails silently
-            scanner.stopScan(scanCallback)
-        } catch (e: Exception) {
-            Log.w(TAG, "Stop scan failed during reset: ${e.message}")
-        }
-
-        scanner.startScan(scanCallback)
-        Log.d(TAG, "startScanning() - BLE scan started")
-
-        // A scan has no natural end: nothing auto-connects from it, so an abandoned one would
-        // burn the scanner — and the Promotion it earns as an Acquisition — indefinitely.
-        // Time-box it; the epoch guard cancels the timeout when a tap/connect stops this scan
-        // and possibly starts another.
-        val myEpoch = ++scanEpoch
-        serviceScope.launch {
-            delay(SCAN_TIMEOUT_MS)
-            if (myEpoch == scanEpoch &&
-                _hrState.value.connectionStatus.contains("Scanning", ignoreCase = true)
-            ) {
-                Log.d(TAG, "Scan timed out after ${SCAN_TIMEOUT_MS / 1000}s with no selection")
-                stopScanning()
-                _hrState.update { it.copy(connectionStatus = "Disconnected") }
-            }
-        }
-    }
-
-    private val scanCallback = object : android.bluetooth.le.ScanCallback() {
-        override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult?) {
-            result?.device?.let { device ->
-                if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                    Log.d(TAG, "Scan result: name=${device.name ?: "<unnamed>"} address=${device.address}")
-                }
-                _hrState.update { currentState ->
-                    val currentList = currentState.scannedDevices
-                    if (currentList.none { it.address == device.address }) {
-                        if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                            if (device.name != null) {
-                                currentState.copy(scannedDevices = currentList + device)
-                            } else {
-                                currentState
-                            }
-                        } else {
-                            currentState
-                        }
-                    } else {
-                        currentState
-                    }
-                }
-            }
-        }
-        
-        override fun onScanFailed(errorCode: Int) {
-            Log.e(TAG, "BLE scan failed with errorCode=$errorCode")
-            // Only report the failure if we're still in the scanning state: a late callback
-            // delivered after the user already tapped a discovered strap must not overwrite
-            // "Connecting to X..." and mask a genuinely in-flight GATT connect.
-            _hrState.update {
-                if (it.connectionStatus.contains("Scanning", ignoreCase = true)) {
-                    it.copy(connectionStatus = "Scan Failed: $errorCode")
-                } else {
-                    it
-                }
-            }
-        }
-    }
-    
-    fun connectToDevice(address: String, promoteToActive: Boolean = true) {
-        logBleDecision("connect_by_address", "Preparing direct connection to address=$address promote=$promoteToActive")
-        stopScanning()
-
-        // Step 3: Deep Cleanup / State Sanitization
-        reconnectAttemptCount = 0
-        reconnectDelay = 3000L
-
-        // Only an explicit user tap (EXTRA_MAKE_ACTIVE on the connect intent) may promote the
-        // strap to active on verification — and only THIS strap: the pending promotion is
-        // address-typed, so a stale verify of some other strap can never consume it. Background
-        // paths (record-screen auto-connect, saved-strap reconnect, retries via the device
-        // overload) clear it instead, so auto-connecting strap A while the user makes strap B
-        // active can no longer steal the active slot back (Codex P2 #123).
-        promoteOnVerifyAddress = if (promoteToActive) address else null
-        targetDeviceAddress = address
-        val device = bluetoothAdapter?.getRemoteDevice(address)
-        if (device == null) {
-            // No adapter (Bluetooth unavailable): a dead-end, so say so. Ending the Acquisition
-            // is what releases the Promotion (0beef0f).
-            _hrState.update { it.copy(connectionStatus = "Bluetooth Off/Unavailable") }
-            return
-        }
-        connectToDevice(device)
+    /** Post an Acquisition event from any thread. Its inbox is the Run's. */
+    private fun postAcquisitionEvent(event: AcquisitionEvent) {
+        sessionHandler?.post { dispatchAcquisitionEvent(event) }
     }
 
     /**
-     * Manage Devices "Forget" (#110): if the forgotten strap is the one we're connected to or
-     * chasing, release it — otherwise the retry loop keeps reconnecting it and the verify path
-     * re-saves (and re-activates) a device the user just removed. Deliberately narrower than
-     * [disconnect]: touches only connection state, never the run or workout state, so forgetting
-     * a strap mid-run behaves like a plain dropout (#110: a sensor going away never ends a run).
+     * The Acquisition's inbox. [sessionHandlerThread] only.
+     *
+     * Sharing one thread with the Run is what deleted `scanEpoch`, `connectRequestSeq` and
+     * `gattConnectLock`: two connects can no longer interleave, so the last one simply wins, and
+     * `runIsLive` below is a fact rather than a snapshot read across threads.
+     */
+    private fun dispatchAcquisitionEvent(event: AcquisitionEvent) {
+        val wasInFlight = acquisitionState.inFlight
+        val outcome = Acquisition.decide(acquisitionState, event, acquisitionContext())
+        acquisitionState = outcome.state
+        _hrState.update { it.copy(acquisition = outcome.state) }
+        outcome.effects.forEach { performAcquisition(it) }
+        // An Acquisition taking off needs the pulse, and pre-run there may be no Run to have
+        // started it. Edge-triggered: a chase that is already under way has one already, and
+        // starting it again every tick would be a busy loop.
+        if (!wasInFlight && outcome.state.inFlight) startSessionTimerLoop()
+    }
+
+    /**
+     * What is true right now. Read fresh for every decision and never remembered, so a permission
+     * revoked or Bluetooth switched off mid-chase is just a different context on the next tick.
+     */
+    private fun acquisitionContext(): AcquisitionContext {
+        val lifecycle = runState.lifecycle
+        return AcquisitionContext(
+            now = System.currentTimeMillis(),
+            runIsLive = lifecycle.isLive,
+            canScan = hasPermission(Manifest.permission.BLUETOOTH_SCAN),
+            canConnect = hasPermission(Manifest.permission.BLUETOOTH_CONNECT),
+            bluetoothOn = bluetoothAdapter?.isEnabled == true,
+        )
+    }
+
+    private fun hasPermission(permission: String): Boolean =
+        ActivityCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+    /**
+     * Do one thing the Acquisition asked for.
+     *
+     * No branching on state and no state of its own, deliberately — the same discipline as the
+     * Run's [perform]. Anything that looks like a decision here belongs in [Acquisition].
+     */
+    private fun performAcquisition(effect: AcquisitionEffect) {
+        when (effect) {
+            AcquisitionEffect.StartScan -> doStartScan()
+            AcquisitionEffect.StopScan -> doStopScan()
+            is AcquisitionEffect.ConnectGatt -> doConnectGatt(effect.address)
+            is AcquisitionEffect.CloseGatt -> doCloseGatt(effect.address, andDisconnect = false)
+            is AcquisitionEffect.DisconnectAndCloseGatt ->
+                doCloseGatt(effect.address, andDisconnect = true)
+            is AcquisitionEffect.DiscoverServices -> doDiscoverServices(effect.address)
+            is AcquisitionEffect.SubscribeToHeartRate -> doSubscribe(effect.address)
+            is AcquisitionEffect.SaveStrap -> serviceScope.launch {
+                settingsRepository.saveDevice(effect.address, effect.name, effect.makeActive)
+            }
+            is AcquisitionEffect.TellRunStrapLost -> {
+                // The Run is told the reading is gone rather than sent a zero, so the outage is
+                // banked as no-data instead of being fabricated from the last packet.
+                _hrState.update { it.copy(bpm = 0) }
+                dispatchRunEvent(
+                    RunEvent.HeartRateLost(effect.status, System.currentTimeMillis()),
+                )
+            }
+        }
+    }
+
+    private fun doStartScan() {
+        val scanner = bluetoothAdapter?.bluetoothLeScanner ?: return
+        if (!hasPermission(Manifest.permission.BLUETOOTH_SCAN)) return
+        try {
+            scanner.startScan(scanCallback)
+            Log.d(TAG, "BLE scan started")
+        } catch (e: Exception) {
+            Log.w(TAG, "startScan failed: ${e.message}")
+        }
+    }
+
+    private fun doStopScan() {
+        if (!hasPermission(Manifest.permission.BLUETOOTH_SCAN)) return
+        try {
+            // Some devices need a stop before a start or the next scan fails silently, so this is
+            // asked for even when nothing is scanning.
+            bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        } catch (e: Exception) {
+            Log.w(TAG, "stopScan failed: ${e.message}")
+        }
+    }
+
+    private fun doConnectGatt(address: String) {
+        if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) return
+        val device = bluetoothAdapter?.getRemoteDevice(address) ?: return
+        logBleDecision("connect_gatt", "Opening GATT to address=$address")
+        openGatts[address] = device.connectGatt(this, false, gattCallback)
+    }
+
+    private fun doCloseGatt(address: String, andDisconnect: Boolean) {
+        val gatt = openGatts.remove(address) ?: return
+        // close() needs no permission; disconnect() does. Gating both would drop the GATT from the
+        // map and never close it — the leak this map exists to make impossible.
+        val mayDisconnect = hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
+        serviceScope.launch(Dispatchers.IO) {
+            if (andDisconnect && mayDisconnect) gatt.disconnect()
+            gatt.close()
+        }
+    }
+
+    private fun doDiscoverServices(address: String) {
+        if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) return
+        val gatt = openGatts[address] ?: return
+        gatt.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
+        gatt.discoverServices()
+    }
+
+    private fun doSubscribe(address: String) {
+        if (!hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) return
+        val gatt = openGatts[address] ?: return
+        val characteristic = gatt.getService(HEART_RATE_SERVICE_UUID)
+            ?.getCharacteristic(HEART_RATE_MEASUREMENT_UUID) ?: return
+        gatt.setCharacteristicNotification(characteristic, true)
+        val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID) ?: return
+        descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+        gatt.writeDescriptor(descriptor)
+    }
+
+    // --- The ways in ---
+
+    /** Manage Devices, and the record screen's auto-connect. */
+    fun connectToDevice(address: String, promoteToActive: Boolean = true) {
+        val name = if (hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
+            bluetoothAdapter?.getRemoteDevice(address)?.name
+        } else {
+            null
+        }
+        postAcquisitionEvent(AcquisitionEvent.ConnectRequested(address, name, promoteToActive))
+    }
+
+    fun startScanning() {
+        postAcquisitionEvent(AcquisitionEvent.ScanRequested)
+    }
+
+    /**
+     * Manage Devices "Forget" (#110). Narrower than [disconnect]: it touches only the Acquisition,
+     * never the Run, so forgetting a Strap mid-Run behaves like a plain dropout.
      */
     fun forgetDevice(address: String) {
-        // Before the target check: a pending promotion must never outlive the user forgetting
-        // the strap — a late onServicesDiscovered would otherwise re-save it as active right
-        // after removeDevice (Codex P2 #123).
-        if (promoteOnVerifyAddress == address) promoteOnVerifyAddress = null
-        if (targetDeviceAddress != address) return
-        logBleDecision("forget_device", "Releasing forgotten device address=$address")
-        targetDeviceAddress = null
-        isReconnecting = false
-        // Supersede any queued connect and close under the same lock, so an in-flight
-        // connect coroutine can't re-establish the strap right after this teardown.
-        synchronized(gattConnectLock) { ++connectRequestSeq }
-        serviceScope.launch(Dispatchers.IO) {
-            if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                synchronized(gattConnectLock) {
-                    bluetoothGatt?.disconnect()
-                    bluetoothGatt?.close()
-                    bluetoothGatt = null
-                }
-            }
-        }
-        _hrState.update { it.copy(connectionStatus = "Disconnected", bpm = 0) }
-        // The smoothed reading is the Run's, so it is told the Strap is gone rather than having
-        // the number taken out from under it.
-        postRunEvent(RunEvent.HeartRateLost("Disconnected", System.currentTimeMillis()))
-    }
-
-    private fun stopScanning() {
-         ++scanEpoch // cancels any pending scan-timeout for the scan being stopped
-         if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
-             bluetoothAdapter?.bluetoothLeScanner?.stopScan(scanCallback)
-             Log.d(TAG, "stopScanning() - stopScan invoked")
-         }
-    }
-
-    // Serializes the close-old/connect-new handoff and makes the LAST requested connect win.
-    // Two connect requests in quick succession (auto-connect effect vs a Manage Devices tap,
-    // or a double-tap in the device list) each launch an IO coroutine; without this, their
-    // close()/connectGatt() steps can interleave — leaking a live GATT whose callbacks keep
-    // firing for a strap nobody asked for, unreachable by disconnect().
-    private val gattConnectLock = Any()
-    @Volatile private var connectRequestSeq = 0
-
-    // Address of the strap an explicit user tap chose, pending promotion to active when its HR
-    // service verifies; consumed by onServicesDiscovered only on an exact address match.
-    // Background connects (auto-connect, reconnects, retries) null it rather than set it.
-    @Volatile private var promoteOnVerifyAddress: String? = null
-
-    private fun connectToDevice(device: BluetoothDevice) {
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
-            // A silent return here would dead-end the Acquisition without ending it: no retry, no
-            // scan timeout, and a status still reading "Connecting" — so Promotion would stay
-            // earned forever (0beef0f). Say why; that publish is the release.
-            _hrState.update { it.copy(connectionStatus = "Permission Missing") }
-            return
-        }
-
-        isReconnecting = false
-        val deviceName = if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-            device.name ?: device.address
-        } else {
-            device.address
-        }
-        _hrState.update { it.copy(connectionStatus = "Connecting to $deviceName...") }
-
-        // Mission: Robust Bluetooth - Close old connection and connect on IO
-        val mySeq = synchronized(gattConnectLock) { ++connectRequestSeq }
-        serviceScope.launch(Dispatchers.IO) {
-            synchronized(gattConnectLock) {
-                if (mySeq != connectRequestSeq) {
-                    Log.d(TAG, "Skipping superseded connect request #$mySeq (latest=$connectRequestSeq)")
-                    return@launch
-                }
-                bluetoothGatt?.close()
-                bluetoothGatt = null
-
-                Log.d(TAG, "Connecting to GATT on IO thread...")
-                // connectGatt() is non-blocking (results arrive on the callback), so holding the
-                // lock across it is safe.
-                bluetoothGatt = device.connectGatt(this@HrForegroundService, false, gattCallback)
-            }
-        }
-    }
-    
-    private fun attemptReconnect() {
-         if (targetDeviceAddress == null) return
-
-         // A live run retries forever — a dropout never ends or freezes a run (#110). With no run,
-         // the endless loop served no one: a strap left in a drawer kept the record screen on
-         // "Looking for your strap…" indefinitely (the terminal "Strap not found" state existed in
-         // the footer but was keyed to a status string that only lived for milliseconds). Give up
-         // after a few attempts and land on the stable, actionable state instead; the footer's
-         // Retry button and START itself both re-acquire from there.
-         val status = _hrState.value.sessionStatus
-         val runActive = status == SessionStatus.RUNNING || status == SessionStatus.PAUSED
-         if (!runActive && reconnectAttemptCount >= PRE_RUN_RECONNECT_MAX_ATTEMPTS) {
-             Log.d(TAG, "Giving up pre-run reconnect after $reconnectAttemptCount attempts")
-             targetDeviceAddress = null
-             isReconnecting = false
-             // The chase is over. Publishing the terminal status ends the Acquisition, which is
-             // what releases the Promotion — no thread hop needed, unlike the hand-rolled demote
-             // this replaces (4fe74cd).
-             _hrState.update { it.copy(connectionStatus = "Strap not found") }
-             return
-         }
-
-         isReconnecting = true
-         val delayMs = reconnectDelay
-
-         reconnectAttemptCount++
-         _hrState.update { it.copy(connectionStatus = "Reconnecting in ${delayMs/1000}s...") }
-
-         serviceScope.launch {
-             delay(delayMs)
-             reconnectDelay = (reconnectDelay * 2).coerceAtMost(30000L)
-             val addr = targetDeviceAddress
-             if (addr != null) {
-                 // Retry via the device overload directly: the String overload is the fresh-connect
-                 // entry point and zeroes reconnectAttemptCount/reconnectDelay, which made the
-                 // attempt counter reset every cycle — the give-up cap above could never trip.
-                 val device = bluetoothAdapter?.getRemoteDevice(addr)
-                 if (device != null) connectToDevice(device)
-             }
-         }
+        postAcquisitionEvent(AcquisitionEvent.ForgetRequested(address))
     }
 
     fun disconnect() {
-        targetDeviceAddress = null
-        // Supersede any queued connect and close under the same lock (see forgetDevice).
-        synchronized(gattConnectLock) { ++connectRequestSeq }
-        serviceScope.launch(Dispatchers.IO) {
-            if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                synchronized(gattConnectLock) {
-                    bluetoothGatt?.disconnect()
-                    bluetoothGatt?.close()
-                    bluetoothGatt = null
-                }
-            }
-        }
-        // No sessionStatus write here: disconnecting is no longer stopping (#110). Every current
-        // caller runs when no run is live (STOP ends the Run itself; FORCE_SCAN is blocked
-        // mid-run), and the old unconditional STOPPED write was a landmine — any future mid-run
-        // caller would have silently killed the run and orphaned its DB row.
-        //
-        // Nor any of the Run's fields, which this used to blank as well. They belong to the Run and
-        // reach the published state through one write; a Run that is over publishes the blanks
-        // itself, and a Run that is not over must not have them taken from underneath it.
-        _hrState.update { it.copy(connectionStatus = "Disconnected", bpm = 0) }
-        // The Strap is gone, so the coach must not keep reasoning about its last reading.
-        postRunEvent(RunEvent.HeartRateLost("Disconnected", System.currentTimeMillis()))
+        postAcquisitionEvent(AcquisitionEvent.DisconnectRequested)
+    }
 
-        reconnectAttemptCount = 0
+    // --- The ways out: Android calling back ---
+
+    private val scanCallback = object : android.bluetooth.le.ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: android.bluetooth.le.ScanResult?) {
+            val device = result?.device ?: return
+            // The name is read here, inside the permission that covers it, and a plain value
+            // travels on. The published state used to carry BluetoothDevice objects all the way to
+            // the device list, where reading .name was outside any check.
+            val name = if (hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) device.name else null
+            postAcquisitionEvent(AcquisitionEvent.StrapSeen(device.address, name))
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            Log.e(TAG, "BLE scan failed with errorCode=$errorCode")
+            postAcquisitionEvent(AcquisitionEvent.ScanFailed(errorCode))
+        }
     }
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
-            if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) return
-
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                val deviceAddress = gatt?.device?.address ?: ""
-                // A delayed connect from a GATT that forgetDevice()/startScanning()/a superseding
-                // connect already abandoned must not publish "Connected", discover services, or
-                // subscribe — it would keep feeding HR from a strap the user just forgot or
-                // replaced (Codex P2 #123). Those paths clear or repoint targetDeviceAddress
-                // before closing the old GATT, so a mismatch here is always stale: close it and
-                // bail before touching any state. Every legitimate connect sets the target first.
-                if (deviceAddress != targetDeviceAddress) {
-                    Log.d(TAG, "Ignoring stale STATE_CONNECTED for $deviceAddress (target=$targetDeviceAddress)")
-                    serviceScope.launch(Dispatchers.IO) {
-                        synchronized(gattConnectLock) {
-                            gatt?.close()
-                            if (bluetoothGatt == gatt) bluetoothGatt = null
-                        }
-                    }
-                    return
-                }
-
-                reconnectDelay = 3000L
-                isReconnecting = false
-                reconnectAttemptCount = 0
-
-                // The strap is a sensor, not the run's gate (#110): connecting only reports the
-                // sensor, it never starts a run or opens a DB record. START owns that now. A run
-                // that is already going (including reconnecting after a dropout) simply keeps its
-                // status; a bare connect with no run leaves the session IDLE.
-                _hrState.update { it.copy(connectionStatus = "Connected") }
-
-                // GPS is not started here any more. It is the Run's to ask for, and the Run asks
-                // once its row id has landed — which is exactly the ordering this had to spell out
-                // by hand (mode pinned at START, and the id committed, or a fast connect would
-                // start GPS early and clip the route's beginning off the map, Codex P2 #123).
-                // A reconnect mid-Run finds location already running; LocationTracker.start() is a
-                // no-op when it is.
-
-                gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_BALANCED)
-                gatt?.discoverServices()
-
-                // A bare sensor connect (pre-run pairing) doesn't need — or deserve — a
-                // Promotion; only a Run does. Publishing "Connected" above ends the Acquisition
-                // and says so (4fe74cd).
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                if (targetDeviceAddress != null) {
-                    // Heart rate can't gate the middle of a run any more than it gates the start
-                    // (#110): a strap dropout leaves the run RUNNING and merely stops zone cues.
-                    // The elapsed clock, distance, pace and the plan's intervals keep advancing;
-                    // only the (HR-driven) coaching goes quiet until the strap reconnects. We keep
-                    // retrying in the background, but a lost strap never freezes or ends the run.
-                    //
-                    // The Run is told the reading is gone rather than sent a zero, so the outage is
-                    // banked as no-data instead of being fabricated from the last packet — and so a
-                    // dropout can never be mistaken for something the coach should reason about.
-                    _hrState.update { it.copy(
-                        connectionStatus = "Disconnected (Retrying)",
-                        bpm = 0,
-                    ) }
-                    postRunEvent(
-                        RunEvent.HeartRateLost("Disconnected (Retrying)", System.currentTimeMillis())
-                    )
-
-                    serviceScope.launch(Dispatchers.IO) {
-                        gatt?.close()
-                        if (bluetoothGatt == gatt) bluetoothGatt = null
-                        attemptReconnect()
-                    }
-                } else {
-                     // Intentional disconnect (no target to chase). Session status is untouched:
-                     // a sensor going away is never a run ending (#110).
-                     _hrState.update { it.copy(connectionStatus = "Disconnected") }
-                     serviceScope.launch(Dispatchers.IO) {
-                        gatt?.close()
-                        if (bluetoothGatt == gatt) bluetoothGatt = null
-                     }
-                }
+            val address = gatt?.device?.address ?: return
+            // Whether this GATT is still the one being chased is [Acquisition]'s to decide. A real
+            // GATT can report itself long after we stopped caring, and the module closes it.
+            when (newState) {
+                BluetoothProfile.STATE_CONNECTED ->
+                    postAcquisitionEvent(AcquisitionEvent.GattConnected(address))
+                BluetoothProfile.STATE_DISCONNECTED ->
+                    postAcquisitionEvent(AcquisitionEvent.GattDisconnected(address))
             }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                val service = gatt?.getService(HEART_RATE_SERVICE_UUID)
-                val characteristic = service?.getCharacteristic(HEART_RATE_MEASUREMENT_UUID)
-                
-                if (characteristic != null) {
-                    // Mission: Post-Connection Persistence - Save as active ONLY when HR service is verified
-                    gatt?.device?.let { device ->
-                        val deviceName = if (ActivityCompat.checkSelfPermission(this@HrForegroundService, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                            device.name ?: "Unknown"
-                        } else "Unknown"
-                        val deviceAddress = device.address
-                        // Persist only the strap still being chased. forgetDevice() and every
-                        // superseding path (a new connect, startScanning) clear or repoint
-                        // targetDeviceAddress before closing the old GATT, but its callbacks can
-                        // still land afterwards — and even a makeActive=false save would re-add a
-                        // just-forgotten strap to the saved list (Codex P2 #123). A closed GATT's
-                        // discovery has no business persisting anything.
-                        if (deviceAddress != targetDeviceAddress) {
-                            Log.d(TAG, "Ignoring stale onServicesDiscovered for $deviceAddress (target=$targetDeviceAddress)")
-                            return@let
-                        }
-                        // Promote to active ONLY the strap an explicit Connect tap chose. No
-                        // fallback terms: currentSettings is an async DataStore snapshot that can
-                        // lag the user's latest selection, so "already active" / "nothing active"
-                        // read from it could re-promote a strap the user just replaced or forgot
-                        // (Codex P2 #123). Neither fallback is needed — saveDevice(makeActive =
-                        // false) leaves the active preference untouched for an already-active
-                        // strap, and every first-pairing path is an explicit tap that sets
-                        // promoteOnVerifyAddress.
-                        val makeActive = deviceAddress == promoteOnVerifyAddress
-                        if (makeActive) promoteOnVerifyAddress = null
-                        serviceScope.launch {
-                            settingsRepository.saveDevice(deviceAddress, deviceName, makeActive)
-                        }
-                    }
-
-                    if (ActivityCompat.checkSelfPermission(this@HrForegroundService, android.Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                        gatt.setCharacteristicNotification(characteristic, true)
-                        val descriptor = characteristic.getDescriptor(CLIENT_CHARACTERISTIC_CONFIG_UUID)
-                        descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                        gatt.writeDescriptor(descriptor)
-                    }
-                }
+            val device = gatt?.device ?: return
+            if (status != BluetoothGatt.GATT_SUCCESS) return
+            val hasHeartRate = gatt.getService(HEART_RATE_SERVICE_UUID)
+                ?.getCharacteristic(HEART_RATE_MEASUREMENT_UUID) != null
+            val name = if (hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
+                device.name ?: "Unknown"
+            } else {
+                "Unknown"
             }
+            postAcquisitionEvent(
+                AcquisitionEvent.ServicesDiscovered(device.address, name, hasHeartRate),
+            )
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
@@ -1881,14 +1681,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         super.onDestroy()
         Log.d(TAG, "onDestroy called - Clean Exit")
         
-        // 1. Clean up Bluetooth precisely
-        stopScanning()
-        targetDeviceAddress = null
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-            bluetoothGatt?.disconnect()
-            bluetoothGatt?.close()
-            bluetoothGatt = null
+        // 1. Clean up Bluetooth precisely. Destruction can be system-initiated and arrive with no
+        // event loop left to run a decision on, so this reaches past [Acquisition] and closes what
+        // is open directly — the same exception onDestroy already makes for the wake lock.
+        doStopScan()
+        val mayDisconnect = hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
+        openGatts.values.forEach {
+            if (mayDisconnect) it.disconnect()
+            it.close()
         }
+        openGatts.clear()
         
         // 2. Kill all background loops and threads
         serviceScope.cancel() 

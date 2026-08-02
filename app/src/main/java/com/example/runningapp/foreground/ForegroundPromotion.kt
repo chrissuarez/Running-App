@@ -3,23 +3,9 @@ package com.example.runningapp.foreground
 import com.example.runningapp.SessionStatus
 import kotlinx.coroutines.flow.Flow
 
-/**
- * Is an Acquisition in flight — is the app scanning for, connecting to, or retrying a Strap?
- *
- * The single definition. It used to be spelled twice by searching status text (the START guard
- * in HrForegroundService and the record screen's spinner in MainActivity) and the two copies
- * disagreed: one omitted "Scanning". Promotion now depends on the answer, so there is exactly
- * one of it.
- *
- * Everything not listed here is terminal — connected, given up on, or blocked. Unrecognised text
- * reads as terminal on purpose: the failure this whole module exists to prevent is a Promotion
- * nobody releases, so an unknown status should fail towards releasing it.
- */
-fun isAcquiringStrap(connectionStatus: String): Boolean =
-    connectionStatus.contains("Scanning", ignoreCase = true) ||
-        connectionStatus.contains("Connecting", ignoreCase = true) ||
-        connectionStatus.contains("Reconnecting", ignoreCase = true) ||
-        connectionStatus.contains("Retrying", ignoreCase = true)
+// Whether an Acquisition is in flight used to be answered here, by searching the status text for
+// four words — one of which was matched against a string built by interpolating the Strap's own
+// name. It is now AcquisitionState.inFlight, a property of a typed phase (ADR 0007).
 
 /**
  * What the Android service can do on Promotion's behalf. Behind an interface so the decision
