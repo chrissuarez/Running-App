@@ -188,7 +188,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // final seconds. Like weatherFetchScope, it survives onDestroy() so a background stop still
     // flushes the tail before the snapshot.
     private val recorderWriteScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    
+
+    // Letting a GATT go outlives the service too. The handle leaves [openGatts] the moment the
+    // Acquisition is done with it, and the state that says so publishes before the close runs — so
+    // a terminal phase can reach stopSelf() and onDestroy() in between. On serviceScope that
+    // cancels the close, and onDestroy's own sweep can no longer see the handle to finish the job.
+    private val gattCloseScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
     // Exposed state for UI
     private val _hrState = MutableStateFlow(HrState())
     val hrState: StateFlow<HrState> = _hrState.asStateFlow()
@@ -991,11 +997,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // connected Strap only counts when it is the active one, are
                 // [AcquisitionState.coversRunStart] — asked of the phase rather than spelled here
                 // for a fourth time.
-                val coversStart = _hrState.value.acquisition
-                    .coversRunStart(currentSettings.activeDeviceAddress)
-                if (!isSimulationEnabled && !coversStart) {
+                //
+                // Asked on the Acquisition's own thread rather than of the published snapshot: a
+                // strap chosen in Manage Devices a moment before START is still an event in the
+                // queue, and main would read the Idle state it has not replaced yet — then start a
+                // scan, or a connect to the older active strap, that wins last and closes the GATT
+                // the runner just picked.
+                if (!isSimulationEnabled) {
                     val overrideAddress = intent.getStringExtra(EXTRA_DEVICE_ADDRESS)
-                    startHardwareSession(overrideAddress)
+                    val activeAddress = currentSettings.activeDeviceAddress
+                    sessionHandler?.post {
+                        if (!acquisitionState.coversRunStart(activeAddress)) {
+                            startHardwareSession(overrideAddress)
+                        }
+                    }
                 }
             }
             ACTION_STOP_FOREGROUND -> {
@@ -1497,7 +1512,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // close() needs no permission; disconnect() does. Gating both would drop the GATT from the
         // map and never close it — the leak this map exists to make impossible.
         val mayDisconnect = hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
-        serviceScope.launch(Dispatchers.IO) {
+        gattCloseScope.launch {
             if (andDisconnect && mayDisconnect) gatt.disconnect()
             gatt.close()
         }
