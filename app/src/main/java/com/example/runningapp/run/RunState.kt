@@ -81,15 +81,15 @@ data class RunState(
     val turnaroundCued: Boolean = false,
 
     /**
-     * Whether a turnaround cue has been handed to the speech layer to say at the next gap (#208).
+     * Whether a turnaround cue has been handed to the speech layer to say in its turn (#208).
      *
-     * The price of a cue allowed to be late is that it can be overtaken: the runner turns the cue
-     * off, or skips into the cool-down, while it is still waiting. This is what lets the Run take it
-     * back — see [RunEffect.DropWaitingCue].
+     * The price of a cue that waits its turn in the queue is that it can be overtaken: the runner
+     * turns the cue off, or skips into the cool-down, while it is still queued. This is what lets
+     * the Run take it back — see [RunEffect.WithdrawCue].
      *
      * It is never cleared by the cue being spoken, because the Run cannot see the speech layer
-     * (ADR 0002). A drop asked for after the cue was already said is inert, which is why it does not
-     * need to.
+     * (ADR 0002). A withdrawal asked for after the cue was already said is inert, which is why it
+     * does not need to.
      */
     val turnaroundHeld: Boolean = false,
 

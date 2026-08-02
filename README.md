@@ -54,9 +54,13 @@ A robust Android application designed to track heart rate (HR) during runs and p
     - **Simulation Mode**: Test coaching logic and UI without a physical heart rate strap using realistic mock data.
     - **GPS Tracking**: Records distance and calculates pace using a 15-second sliding window for stability.
     - **Split Announcements**: Automatic voice alerts for every 1km covered.
+    - **One Voice Queue**: Every spoken cue goes through a single ordered queue — navigation, then
+      instructions (interval and phase changes, auto-pause), then coaching, then information
+      (splits, turnaround). Cues play one at a time, back to back; nothing is cut off mid-sentence
+      and nothing is dropped.
     - **Turnaround Cue**: On an outdoor run following a plan, "Halfway. Turn around." once, at half
       the run's total moving time — warm-up to cool-down, so an out-and-back gets you home. It
-      waits for a gap in the speaking rather than cutting off an interval cue, moves with a pause
+      takes its turn in the cue queue rather than cutting off an interval cue, moves with a pause
       or a skipped warm-up, and says nothing at all if you skip to the cool-down. Toggle in
       Settings, on by default.
     - Start, Pause, Resume, and Stop controls with immediate UI synchronization.

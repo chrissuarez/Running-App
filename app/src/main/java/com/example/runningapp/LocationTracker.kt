@@ -21,7 +21,7 @@ class LocationTracker(
     private val context: Context,
     private val fusedLocationClient: FusedLocationProviderClient,
     private val logTag: String,
-    playCue: (String) -> Unit,
+    announceSplit: (String) -> Unit,
     private val getSessionStatus: () -> SessionStatus,
     isSplitAnnouncementsEnabled: () -> Boolean,
     onMetricsUpdated: (distanceKm: Double, paceMinPerKm: Double, lastLocation: Location?) -> Unit,
@@ -44,7 +44,7 @@ class LocationTracker(
 
     private val sessionRecorder = SessionRecorder(
         clock = Clock { System.currentTimeMillis() },
-        playSplitCue = playCue,
+        playSplitCue = announceSplit,
         isSplitAnnouncementsEnabled = isSplitAnnouncementsEnabled,
         onMetricsUpdated = { metrics -> onMetricsUpdated(metrics.distanceKm, metrics.paceMinPerKm, lastLocation) },
         logDecision = ::logDecision,

@@ -397,7 +397,10 @@ class MainActivity : ComponentActivity() {
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
                                 },
                                 onTestCue = {
-                                    hrService?.playCue("Target heart rate reached. Keep it up!")
+                                    hrService?.enqueueCue(
+                                        "Target heart rate reached. Keep it up!",
+                                        CuePriority.INFORMATION,
+                                    )
                                 },
                                 onOpenSettings = {
                                     navigateTo(Routes.SETTINGS)

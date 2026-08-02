@@ -1,7 +1,17 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.CuePriority
 import com.example.runningapp.RunType
 import com.example.runningapp.ZoneSeconds
+
+/**
+ * A name for a cue the Run may want back before it is spoken, so the service knows which one
+ * [RunEffect.WithdrawCue] means. There is one of them, and the Run can have at most one outstanding.
+ */
+enum class CueTag {
+    /** The halfway turnaround (#208), taken back when the Run enters its cool-down. */
+    TURNAROUND,
+}
 
 /**
  * The numbers a finished Run is saved with.
@@ -102,33 +112,35 @@ sealed interface RunEffect {
         val sample: HrSampleReading,
     ) : RunEffect
 
-    /** Say this out loud. */
-    data class Speak(val text: String) : RunEffect
+    /**
+     * Say this out loud, in its turn.
+     *
+     * [priority] is where it sits in the queue against everything else waiting (#53); the Run says
+     * how urgent its own cue is and nothing more. When and how it is actually said — what is
+     * mid-sentence, what else is queued — is the speech layer's business, which the Run cannot ask
+     * about (ADR 0002).
+     *
+     * A [tag] names a cue the Run may later want back — see [WithdrawCue]. Most carry none.
+     */
+    data class Speak(
+        val text: String,
+        val priority: CuePriority,
+        val tag: CueTag? = null,
+    ) : RunEffect
 
     /**
-     * Say this out loud, but not over anything — wait for a gap in the speaking first (#208).
+     * Take back a cue that has not been spoken yet: the Run has changed underneath it (#208).
      *
-     * Every cue in this app flushes the one before it, so a cue that lands on a second the Run was
-     * already talking on truncates what the runner actually needed to hear. The halfway turnaround
-     * is the one cue that can afford to wait: a few seconds of drift on a turnaround point costs
-     * nothing. How long to wait, and how to tell whether anything is being said, are the cue
-     * player's business — the Run cannot ask the speech layer what it is doing (ADR 0002), so all
-     * it does here is mark the cue as one that may be held.
+     * The price of a queue that never drops a cue is that the Run can move on while one waits — the
+     * runner turns the turnaround off, or skips into the cool-down — and the thing it was going to
+     * say is no longer true. Speaking "turn around" to someone already heading home is worse than
+     * losing the cue, so the rule that a cue is never dropped comes with a rule that its producer
+     * may take it back.
+     *
+     * Inert when nothing of that [tag] is waiting, which is most of the time: the Run knows a cue
+     * was issued, not whether the speech layer has since spoken it, and it does not need to.
      */
-    data class SpeakWhenQuiet(val text: String) : RunEffect
-
-    /**
-     * Drop a [SpeakWhenQuiet] cue that is still waiting: the Run has changed underneath it (#208).
-     *
-     * The price of letting a cue be late is that the Run can move on while it waits — the runner
-     * turns the turnaround off, or skips into the cool-down — and the thing it was going to say is
-     * no longer true. Speaking "turn around" to someone already heading home is worse than losing
-     * the cue, so the rule that a cue may wait comes with a rule that it may be taken back.
-     *
-     * Inert when nothing is waiting, which is most of the time: the Run knows a cue was issued, not
-     * whether the speech layer has since spoken it, and it does not need to.
-     */
-    data object DropWaitingCue : RunEffect
+    data class WithdrawCue(val tag: CueTag) : RunEffect
 
     /** Put this on the Run's notification. */
     data class Notify(val text: String) : RunEffect
@@ -140,12 +152,13 @@ sealed interface RunEffect {
     data object StopGps : RunEffect
 
     /**
-     * Let go of the sensor and audio session: the Run has ended and needs neither.
+     * Let go of the sensor: the Run has ended and does not need it.
      *
      * Emitted whenever the Run finishes, including when it ends *itself* — the cool-down timer
      * reaching zero or a skip out of cool-down — where nothing calls back in to stop it. The
-     * button and notification STOP release these directly too, so a Run ended that way sees an
-     * idempotent second release; the strap and audio session are #128's and both no-op the repeat.
+     * button and notification STOP release it directly too, so a Run ended that way sees an
+     * idempotent second release, which the strap no-ops (#128). Speech is not released here: the
+     * queue lets go of audio focus when it drains, whether or not a Run is still on (#53).
      * Symmetric with [StopGps]: the Run does not own the strap, it signals that it is done with it.
      */
     data object ReleaseStrap : RunEffect

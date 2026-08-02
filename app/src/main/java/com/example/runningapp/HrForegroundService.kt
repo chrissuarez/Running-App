@@ -49,6 +49,8 @@ import kotlin.jvm.Volatile
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import java.util.UUID
+import com.example.runningapp.run.CueTag
+import java.util.concurrent.ConcurrentHashMap
 import com.example.runningapp.run.IntervalKind
 import com.example.runningapp.run.Run
 import com.example.runningapp.run.RunConfig
@@ -197,9 +199,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var audioManager: AudioManager? = null
     private var audioCueManager: AudioCueManager? = null
 
-    /** The halfway turnaround, waiting for a gap to be said in (#208), and the poll driving it. */
-    private val turnaroundCue = QuietGapCue()
-    private var heldCueJob: Job? = null
+    /**
+     * The queue tickets for cues the Run may still want back, by the name it knows them under
+     * (#53). Written from the thread performing the Run's effects and read from there and from the
+     * STOP path, which is the binder's, so it is a map that stands two of them.
+     */
+    private val outstandingCues = ConcurrentHashMap<CueTag, Long>()
 
     // Mission 4: Location
     private lateinit var fusedLocationClient: FusedLocationProviderClient
@@ -474,16 +479,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             is RunEffect.FinalizeRun -> finalizeRun(effect)
             is RunEffect.SaveHrSample -> saveHrSample(effect)
             is RunEffect.SaveIntervalStat -> saveIntervalStat(effect)
-            is RunEffect.Speak -> playCue(effect.text)
-            is RunEffect.SpeakWhenQuiet -> holdCue(effect.text)
-            RunEffect.DropWaitingCue -> dropHeldCue()
+            is RunEffect.Speak -> speakCue(effect)
+            is RunEffect.WithdrawCue -> withdrawCue(effect.tag)
             is RunEffect.Notify -> updateNotification(effect.text)
             RunEffect.StartGps -> startGps()
             RunEffect.StopGps -> locationTracker?.stop()
-            RunEffect.ReleaseStrap -> {
-                audioCueManager?.releaseForSessionStop()
-                releaseStrapAndTimer()
-            }
+            RunEffect.ReleaseStrap -> releaseStrapAndTimer()
         }
     }
 
@@ -801,8 +802,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 audioManager,
                 serviceScope,
                 TAG,
+                // Nothing acts on this; it is here to be read in logcat when a run's cues are
+                // being checked on the phone, which is the only way this ticket's back-to-back
+                // rule can be verified (#53).
                 onCueActivity = { speaking, sequence ->
-                    turnaroundCue.speechChanged(speaking, System.currentTimeMillis(), sequence)
+                    Log.d(TAG, "Cue queue ${if (speaking) "speaking" else "quiet"} (seq=$sequence)")
                 },
             )
         }
@@ -816,7 +820,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             context = this,
             fusedLocationClient = fusedLocationClient,
             logTag = TAG,
-            playCue = { playCue(it) },
+            announceSplit = { enqueueCue(it, CuePriority.INFORMATION) },
             getSessionStatus = { _hrState.value.sessionStatus },
             isSplitAnnouncementsEnabled = { currentSettings.splitAnnouncementsEnabled },
             onMetricsUpdated = { distanceKm, paceMinPerKm, lastLocation ->
@@ -1072,7 +1076,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // STOP after the Run already finished itself — where the Run emits no effect to release
         // by. A STOP that does end a live Run also gets RunEffect.ReleaseStrap; both acts are
         // idempotent, so the overlap is harmless. See the effect's own note.
-        audioCueManager?.releaseForSessionStop()
         releaseStrapAndTimer()
     }
 
@@ -1080,45 +1083,30 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         audioCueManager?.onTtsInit(status)
     }
     
-    fun playCue(text: String) {
-        audioCueManager?.playCue(text)
+    /**
+     * Say something, in its turn among everything else waiting (#53). The one way anything in this
+     * app speaks — the split announcements and the UI's target-reached cue come through here too.
+     */
+    fun enqueueCue(text: String, priority: CuePriority) {
+        audioCueManager?.enqueue(text, priority)
+    }
+
+    /** The Run's [RunEffect.Speak], keeping the ticket for one it may ask to have back. */
+    private fun speakCue(effect: RunEffect.Speak) {
+        val ticket = audioCueManager?.enqueue(effect.text, effect.priority) ?: return
+        effect.tag?.let { outstandingCues[it] = ticket }
     }
 
     /**
-     * A cue the Run is willing to have wait for a gap in the speaking (#208).
+     * Take back a cue that has not been spoken: whatever it was going to say is no longer true
+     * (#208). Asked for by the Run ([RunEffect.WithdrawCue]) and by the end of a Run.
      *
-     * The waiting is a poll rather than a subscription because what it waits on is two things at
-     * once — nothing being spoken *and* nothing having been spoken for a moment — and the second of
-     * those is a clock, not an event. See [QuietGapCue] for the rules; there are none here.
+     * Inert when there is nothing to take back, and inert in the queue when the cue has already
+     * gone out — so no caller has to know which of those it is.
      */
-    private fun holdCue(text: String) {
-        turnaroundCue.hold(text, System.currentTimeMillis())
-        heldCueJob?.cancel()
-        heldCueJob = serviceScope.launch {
-            while (isActive) {
-                // Waited before asked, never after. This runs on the main thread while the rest of
-                // the Run's effects for this same second are still being performed on the session
-                // thread — including the Interval instruction the turnaround may have landed on
-                // top of. One poll interval is long enough for that list to finish and short enough
-                // to be inaudible (Codex, #212).
-                delay(QuietGapCue.POLL_MILLIS)
-                // The speaking happens inside the cue's own lock rather than back out here, so a
-                // withdrawal cannot land in between the two. See [QuietGapCue.releaseTo].
-                if (turnaroundCue.releaseTo(System.currentTimeMillis(), ::playCue)) return@launch
-            }
-        }
-    }
-
-    /**
-     * Take back a held cue: whatever it was going to say is no longer true (#208).
-     *
-     * Asked for by the Run ([RunEffect.DropWaitingCue]) and by the end of a Run. Inert when nothing
-     * is waiting, so neither caller has to know whether it was already spoken.
-     */
-    private fun dropHeldCue() {
-        heldCueJob?.cancel()
-        heldCueJob = null
-        turnaroundCue.forget()
+    private fun withdrawCue(tag: CueTag) {
+        val ticket = outstandingCues.remove(tag) ?: return
+        audioCueManager?.withdraw(ticket)
     }
 
 
@@ -1284,9 +1272,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         stopScanning()
         disconnect()
 
-        // A cue still waiting for a gap belongs to the Run that has just ended. Speaking it after
-        // the runner has stopped would be worse than losing it.
-        dropHeldCue()
+        // A cue still waiting its turn belongs to the Run that has just ended. Speaking it after
+        // the runner has stopped would be worse than losing it — and the queue itself drops
+        // nothing, so this is the producer taking it back.
+        withdrawCue(CueTag.TURNAROUND)
 
         // Mission: Stop the zombie timer loop immediately
         sessionHandler?.removeCallbacks(sessionTimerRunnable)

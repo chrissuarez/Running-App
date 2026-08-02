@@ -1,5 +1,6 @@
 package com.example.runningapp.run
 
+import com.example.runningapp.CuePriority
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -25,13 +26,15 @@ class RunTurnaroundTest {
     }
 
     @Test
-    fun `the turnaround is one that may wait for a gap, not one that cuts in`() {
+    fun `the turnaround waits its turn behind everything else, and can be taken back`() {
         val driver = Driver()
         driver.start(outdoor)
 
-        val effects = driver.advance(765)
-        assertEquals(listOf(TURNAROUND_CUE), effects.held())
-        assertTrue("the turnaround must not be spoken immediately", TURNAROUND_CUE !in effects.spoken())
+        val cue = driver.advance(765).filterIsInstance<RunEffect.Speak>().single { it.text == TURNAROUND_CUE }
+        // Bottom of the order, so it is said after anything the runner has to act on (#53) — and
+        // named, so the Run can take it back if it stops being true before it goes out.
+        assertEquals(CuePriority.INFORMATION, cue.priority)
+        assertEquals(CueTag.TURNAROUND, cue.tag)
     }
 
     @Test
@@ -144,7 +147,7 @@ class RunTurnaroundTest {
 
         // It may be up to fifteen seconds from being spoken. The runner has just said they do not
         // want it.
-        assertTrue(RunEffect.DropWaitingCue in driver.controls(RunControls(turnaroundCueEnabled = false)))
+        assertTrue(RunEffect.WithdrawCue(CueTag.TURNAROUND) in driver.controls(RunControls(turnaroundCueEnabled = false)))
     }
 
     @Test
@@ -153,7 +156,7 @@ class RunTurnaroundTest {
         driver.start(outdoor)
         driver.advance(765)
 
-        assertTrue(RunEffect.DropWaitingCue in driver.skipPhase())
+        assertTrue(RunEffect.WithdrawCue(CueTag.TURNAROUND) in driver.skipPhase())
     }
 
     @Test
@@ -173,11 +176,11 @@ class RunTurnaroundTest {
 
         val halfway = driver.advance(1)
         assertEquals(listOf(TURNAROUND_CUE), halfway.held())
-        // The instruction is registered with the speaker first. Handed over the other way round,
-        // the held cue could be released into the gap between the two and then flushed by the
-        // instruction itself.
-        val instruction = halfway.indexOfFirst { it is RunEffect.Speak }
-        val turnaround = halfway.indexOfFirst { it is RunEffect.SpeakWhenQuiet }
+        // The instruction is enqueued first, so it is the first thing said on this second whatever
+        // the priorities are — the queue is first in, first out within a level and speaks in
+        // priority order across levels, and this cue is below the instruction on both counts.
+        val instruction = halfway.indexOfFirst { it is RunEffect.Speak && it.tag == null }
+        val turnaround = halfway.indexOfFirst { it is RunEffect.Speak && it.tag == CueTag.TURNAROUND }
         assertTrue("expected the interval instruction before the turnaround, got $halfway", instruction in 0 until turnaround)
     }
 
@@ -212,7 +215,7 @@ class RunTurnaroundTest {
         driver.start(outdoor)
         driver.advance(460)
 
-        assertTrue(RunEffect.DropWaitingCue !in driver.controls(RunControls(turnaroundCueEnabled = false)))
-        assertTrue(RunEffect.DropWaitingCue !in driver.skipPhase())
+        assertTrue(RunEffect.WithdrawCue(CueTag.TURNAROUND) !in driver.controls(RunControls(turnaroundCueEnabled = false)))
+        assertTrue(RunEffect.WithdrawCue(CueTag.TURNAROUND) !in driver.skipPhase())
     }
 }
