@@ -21,7 +21,7 @@ The thing that made this worth doing was not the line count. It was `connectionS
 - The input to nine decisions — `== "Connected"`, `== "Strap not found"`, `.contains("Failed")`.
 - Promotion's own predicate. [ADR 0001](./0001-promotion-is-derived-not-claimed.md) says promoted ⇔
   a Run is live or an Acquisition is in flight, and "in flight" was four substring matches.
-- A database column, `hr_samples.connection_state`.
+- A database column, `hr_samples.connectionState`.
 
 One of those strings is built by interpolating the Strap's own name — `"Connecting to $name..."` —
 and then matched with `.contains("Connecting")`. **The wake lock was being held or released on a
@@ -32,11 +32,19 @@ The phase is now typed, and `CONTEXT.md` had already written the vocabulary: an 
 flight until the Strap is connected, given up on, or blocked". Scanning, Connecting, Connected,
 Retrying, Gave up, Blocked. The domain model described the machine; the code just never had it.
 
-**The string survives at one edge, deliberately.** `hr_samples.connection_state` has stored those
-exact words since the first recorded run, and `statusLine` reproduces them verbatim. A typed column
-would make every old row disagree with every new one, and buy the runner nothing. Everywhere the
-status is *reasoned about* it is typed; the sentence is generated at the edge where a sentence is
-what is wanted.
+**The string survives at one edge, deliberately.** `hr_samples.connectionState` has stored a status
+sentence since the first recorded run, and `statusLine` reproduces the vocabulary verbatim. A typed
+column would make every old row disagree with every new one, and buy the runner nothing. Everywhere
+the status is *reasoned about* it is typed; the sentence is generated at the edge where a sentence
+is what is wanted.
+
+Worth being exact about what that column actually holds, because it is easy to assume more. In
+practice the only value ever stored is `"Connected"` — 26,303 rows of real history, no exceptions.
+A dropout writes no row at all: `Run.bankSecond` banks the second as no-data and returns *before*
+emitting `SaveHrSample` whenever there is no reading (#110, #115), so `"Disconnected (Retrying)"`
+reaches the screen and the Run, never a row. The compatibility being preserved here is therefore
+narrow and worth stating plainly: old rows say `"Connected"` and new rows must keep saying
+`"Connected"`. That is the whole of it, and it was confirmed against the phone rather than assumed.
 
 ## One thread, and three pieces of concurrency machinery deleted
 

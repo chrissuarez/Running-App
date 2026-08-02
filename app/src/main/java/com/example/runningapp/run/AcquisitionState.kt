@@ -161,9 +161,14 @@ data class AcquisitionState(
      * What the runner is told, and what a heart-rate row records.
      *
      * The phase is the truth; this is its sentence. It stays a string at this one edge because
-     * `hr_samples.connection_state` has been storing these exact words since the first run ever
-     * recorded, and a typed column would make every old row disagree with every new one for no gain
-     * the runner can see.
+     * `hr_samples.connectionState` has been storing one since the first run ever recorded, and a
+     * typed column would make every old row disagree with every new one for no gain the runner can
+     * see.
+     *
+     * Only `"Connected"` has ever actually reached a row, though — a second with no reading is
+     * banked as no-data by [Run.bankSecond] and emits no row at all (#110, #115), so the outage
+     * sentences below are written to the screen and to the Run, never to the database. Keep
+     * `"Connected"` spelled exactly as it is; the rest are free to change wording.
      */
     val statusLine: String
         get() = when (val p = phase) {
