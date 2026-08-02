@@ -327,6 +327,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_RESUME_SESSION = "ACTION_RESUME_SESSION"
         const val ACTION_FORCE_SCAN = "ACTION_FORCE_SCAN"
         const val ACTION_SET_SIMULATION = "ACTION_SET_SIMULATION"
+        // How long onDestroy waits for the session thread's current message to finish before it
+        // sweeps the GATTs that message might be touching. Bounded because onDestroy runs on main
+        // and an ANR is worse than a handle closed a beat late.
+        private const val SESSION_THREAD_JOIN_TIMEOUT_MS = 500L
         const val EXTRA_DEVICE_ADDRESS = "EXTRA_DEVICE_ADDRESS"
         // Set only by explicit Connect taps: marks the connect as a user choice whose strap may
         // be promoted to active on verification. Background auto-connects omit it.
@@ -1034,10 +1038,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     Log.d(TAG, "Ignoring Force Scan - a run is active (status=$status)")
                 } else if (!isSimulationEnabled) {
                     logBleDecision("force_scan", "User requested a fresh scan; skipping saved-device reconnect")
-                    if (_hrState.value.acquisition.phase is AcquisitionPhase.Connected) {
-                        disconnect()
-                    }
-                    startScanning()
+                    // Whether a Strap has to be hung up on first is the Acquisition's to answer,
+                    // on its own thread: a connect completing right now is a GattConnected still
+                    // in the queue, and the snapshot read here would say Connecting.
+                    postAcquisitionEvent(AcquisitionEvent.ScanRequested(force = true))
                 } else {
                     Log.d(TAG, "Ignoring Force Scan - Simulation Mode is active.")
                 }
@@ -1549,7 +1553,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     fun startScanning() {
-        postAcquisitionEvent(AcquisitionEvent.ScanRequested)
+        postAcquisitionEvent(AcquisitionEvent.ScanRequested())
     }
 
     /**
@@ -1596,13 +1600,22 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * behind the connect that installed the handle.
      */
     private fun postFromGatt(gatt: BluetoothGatt?, event: (String) -> AcquisitionEvent) {
+        onSessionThreadIfCurrent(gatt) { dispatchAcquisitionEvent(event(it)) }
+    }
+
+    /**
+     * Run [action] on the session thread, but only if [gatt] is still the handle we hold for its
+     * address. A superseded handle keeps delivering until its close lands, and that close is now
+     * asynchronous — so this is the one gate everything a GATT says has to pass, readings included.
+     */
+    private fun onSessionThreadIfCurrent(gatt: BluetoothGatt?, action: (String) -> Unit) {
         val address = gatt?.device?.address ?: return
         sessionHandler?.post {
             if (openGatts[address] !== gatt) {
                 Log.d(TAG, "Ignoring callback from a superseded GATT for address=$address")
                 return@post
             }
-            dispatchAcquisitionEvent(event(address))
+            action(address)
         }
     }
 
@@ -1635,9 +1648,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-            if (characteristic.uuid == HEART_RATE_MEASUREMENT_UUID) {
-                handleHeartRate(value)
-            }
+            if (characteristic.uuid != HEART_RATE_MEASUREMENT_UUID) return
+            // Copied because the packet is Android's buffer and we are about to leave its thread.
+            val packet = value.copyOf()
+            onSessionThreadIfCurrent(gatt) { handleHeartRate(packet) }
         }
     }
 
@@ -1739,7 +1753,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         super.onDestroy()
         Log.d(TAG, "onDestroy called - Clean Exit")
         
-        // 1. Clean up Bluetooth precisely. Destruction can be system-initiated and arrive with no
+        // 1. Stop the Acquisition's thread before touching what it owns. quit() rather than
+        // quitSafely(): a due ConnectRequested or retry tick would otherwise still run, and
+        // opening a GATT after the sweep below leaks a handle with the service already gone.
+        // join() waits out the one message that may be running right now, so the sweep is alone
+        // with [openGatts] instead of racing it.
+        sessionHandler?.removeCallbacks(sessionTimerRunnable)
+        sessionHandlerThread?.quit()
+        sessionHandlerThread?.join(SESSION_THREAD_JOIN_TIMEOUT_MS)
+        sessionHandlerThread = null
+        sessionHandler = null
+
+        // 2. Clean up Bluetooth precisely. Destruction can be system-initiated and arrive with no
         // event loop left to run a decision on, so this reaches past [Acquisition] and closes what
         // is open directly — the same exception onDestroy already makes for the wake lock.
         doStopScan()
@@ -1749,13 +1774,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             it.close()
         }
         openGatts.clear()
-        
-        // 2. Kill all background loops and threads
-        serviceScope.cancel() 
-        sessionHandler?.removeCallbacks(sessionTimerRunnable)
-        sessionHandlerThread?.quitSafely()
-        sessionHandlerThread = null
-        
+
+        // 3. Kill the remaining background loops
+        serviceScope.cancel()
+
         locationTracker?.shutdown()
 
         // The one wake-lock release outside Promotion, and deliberately so: destruction can be

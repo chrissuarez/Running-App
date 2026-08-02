@@ -31,8 +31,15 @@ const val LOST_DISCONNECTED = "Disconnected"
 /** Something happened that an Acquisition may care about. */
 sealed interface AcquisitionEvent {
 
-    /** Look for Straps. */
-    data object ScanRequested : AcquisitionEvent
+    /**
+     * Look for Straps.
+     *
+     * [force] is the Force Scan tap, and it is the difference between "scan if that makes sense"
+     * and "scan regardless" — including tearing down a Strap already connected. It rides on the
+     * event rather than being decided by the caller because whether we are connected is only
+     * knowable here: a caller reading the published state can be a `GattConnected` behind.
+     */
+    data class ScanRequested(val force: Boolean = false) : AcquisitionEvent
 
     /**
      * Chase this Strap. [makeActive] is true only for an explicit Connect tap — every background
@@ -161,7 +168,7 @@ object Acquisition {
         event: AcquisitionEvent,
         context: AcquisitionContext,
     ): AcquisitionOutcome = when (event) {
-        AcquisitionEvent.ScanRequested -> scanRequested(state, context)
+        is AcquisitionEvent.ScanRequested -> scanRequested(state, event, context)
         is AcquisitionEvent.ConnectRequested -> connectRequested(state, event, context)
         is AcquisitionEvent.StrapSeen -> strapSeen(state, event)
         is AcquisitionEvent.ScanFailed -> scanFailed(state, event)
@@ -177,20 +184,32 @@ object Acquisition {
      * Start a fresh scan, abandoning whatever was in flight.
      *
      * Already connected is the one case that declines: a scan tears the Strap down, and nothing
-     * asks for one while holding a good connection except by accident.
+     * asks for one while holding a good connection except by accident. A Force Scan tap is not an
+     * accident, so it tears the Strap down instead of declining.
      */
     private fun scanRequested(
         state: AcquisitionState,
+        event: AcquisitionEvent.ScanRequested,
         context: AcquisitionContext,
     ): AcquisitionOutcome {
         if (!context.canScan) return blocked(state, AcquisitionBlock.PermissionMissing)
         if (!context.bluetoothOn) return blocked(state, AcquisitionBlock.BluetoothUnavailable)
-        if (state.phase is AcquisitionPhase.Connected) return AcquisitionOutcome(state)
+        val connected = state.phase is AcquisitionPhase.Connected
+        if (connected && !event.force) return AcquisitionOutcome(state)
 
         val effects = buildList {
             // Some devices need a stop before a start or the scan fails silently.
             add(AcquisitionEffect.StopScan)
-            state.address?.let { add(AcquisitionEffect.CloseGatt(it)) }
+            state.address?.let {
+                // A live connection is hung up on, not just let go of; anything in flight has
+                // nothing to hang up.
+                if (connected) {
+                    add(AcquisitionEffect.DisconnectAndCloseGatt(it))
+                    add(AcquisitionEffect.TellRunStrapLost(LOST_DISCONNECTED))
+                } else {
+                    add(AcquisitionEffect.CloseGatt(it))
+                }
+            }
             add(AcquisitionEffect.StartScan)
         }
         return AcquisitionOutcome(
