@@ -1491,16 +1491,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * the thread the Run shares. A SecurityException here would take the Run's event loop with it,
      * on the exact tick whose job was to notice the permission had gone and stop cleanly.
      *
-     * False is what a refused read reports, and that is a guess — but not one anyone is shown,
-     * because every rule now asks about the permission before it asks about the adapter. Without
-     * the permission the adapter's state is not something we can know, so the runner is told the
-     * thing they can act on.
+     * A refused read is answered true, because the honest answer is "unknown" and false is the one
+     * thing we would be making up. Reporting it off puts "Bluetooth Off/Unavailable" on screen
+     * over a permission the runner took away, and sends them to a switch that is already on. Every
+     * rule that needs the adapter asks about the permission that guards it first, so an unknown
+     * that is really off costs at most one attempt, which fails and ends in a block of its own.
+     *
+     * A scan, notably, needs no BLUETOOTH_CONNECT at all — so saying "off" here would have stopped
+     * a scan that would have worked.
      */
     private fun bluetoothIsOn(): Boolean = try {
         bluetoothAdapter?.isEnabled == true
     } catch (e: SecurityException) {
-        Log.w(TAG, "Could not read the adapter state: ${e.message}")
-        false
+        Log.w(TAG, "Could not read the adapter state, assuming on: ${e.message}")
+        true
     }
 
     private fun hasPermission(permission: String): Boolean =
@@ -1595,11 +1599,29 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // handle after the destruction sweep has already been and gone. The flag is set before
         // that sweep, so reading it after the map write is the whole ordering: false means the
         // sweep has not run yet and will find this, true means it has and will not.
-        if (destroyed) doCloseGatt(address, andDisconnect = true)
+        //
+        // Closed by the handle rather than by looking the address up again: the sweep's clear()
+        // can take this entry out from under us between the write above and the read here, and
+        // then neither of us would close what we are both holding.
+        if (destroyed) {
+            openGatts.remove(address, gatt)
+            releaseHandle(address, gatt, andDisconnect = true)
+        }
     }
 
     private fun doCloseGatt(address: String, andDisconnect: Boolean) {
         val gatt = openGatts.remove(address) ?: return
+        releaseHandle(address, gatt, andDisconnect)
+    }
+
+    /**
+     * Let a handle go, having already taken it out of [openGatts].
+     *
+     * Takes the handle rather than the address because whoever removed it is the one who owns
+     * closing it — looking it up again would be a second chance for something else to have taken
+     * it, and then nobody closes it.
+     */
+    private fun releaseHandle(address: String, gatt: BluetoothGatt, andDisconnect: Boolean) {
         // close() needs no permission; disconnect() does. Gating both would drop the GATT from the
         // map and never close it — the leak this map exists to make impossible.
         val mayDisconnect = hasPermission(Manifest.permission.BLUETOOTH_CONNECT)
