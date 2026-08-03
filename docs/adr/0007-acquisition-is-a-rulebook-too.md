@@ -161,8 +161,11 @@ chase one the runner just removed — and the discovery behind that connect woul
 back. A disconnect needs no such rule: it leaves the block entirely.
 
 The resume asks the same permission question every other connect here asks: without
-BLUETOOTH_CONNECT it says `PermissionMissing` rather than connecting, and the interrupted Strap
-rides along on that block too, so nothing is lost by saying so.
+BLUETOOTH_CONNECT it says `PermissionMissing` rather than connecting. That is the end of the road
+rather than a pause — the Strap rides along on the new block, but nothing reads it again while the
+adapter stays on, so that Run finishes strapless. It is still the honest answer: without the
+permission there is no connect to be had, and granting it restarts the process, which takes the Run
+with it.
 
 ## Considered options
 

@@ -117,12 +117,12 @@ sealed interface AcquisitionPhase {
      */
     data class Blocked(
         val reason: AcquisitionBlock,
-        val interrupted: InterruptedChase? = null,
+        val interrupted: InterruptedStrap? = null,
     ) : AcquisitionPhase
 }
 
 /** The Strap a block stopped, kept only so [AcquisitionPhase.Blocked] can name it again later. */
-data class InterruptedChase(
+data class InterruptedStrap(
     val address: String,
     val name: String,
 )

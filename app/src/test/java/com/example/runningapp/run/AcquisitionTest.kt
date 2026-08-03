@@ -902,7 +902,7 @@ class AcquisitionRetryTest {
         assertEquals(
             AcquisitionPhase.Blocked(
                 AcquisitionBlock.BluetoothUnavailable,
-                InterruptedChase(STRAP, "Polar H10"),
+                InterruptedStrap(STRAP, "Polar H10"),
             ),
             outcome.state.phase,
         )
@@ -927,7 +927,7 @@ class AcquisitionRetryTest {
         assertEquals(
             AcquisitionPhase.Blocked(
                 AcquisitionBlock.PermissionMissing,
-                InterruptedChase(STRAP, "Polar H10"),
+                InterruptedStrap(STRAP, "Polar H10"),
             ),
             outcome.state.phase,
         )
@@ -949,7 +949,7 @@ class AcquisitionRetryTest {
         assertEquals(
             AcquisitionPhase.Blocked(
                 AcquisitionBlock.PermissionMissing,
-                InterruptedChase(STRAP, "Polar H10"),
+                InterruptedStrap(STRAP, "Polar H10"),
             ),
             outcome.state.phase,
         )
@@ -984,7 +984,7 @@ class AcquisitionRetryTest {
         assertEquals(
             AcquisitionPhase.Blocked(
                 AcquisitionBlock.PermissionMissing,
-                InterruptedChase(STRAP, "Polar H10"),
+                InterruptedStrap(STRAP, "Polar H10"),
             ),
             outcome.state.phase,
         )
@@ -1179,7 +1179,7 @@ class AcquisitionAdapterTest {
         assertEquals(
             AcquisitionPhase.Blocked(
                 AcquisitionBlock.BluetoothUnavailable,
-                InterruptedChase(STRAP, "Polar H10"),
+                InterruptedStrap(STRAP, "Polar H10"),
             ),
             outcome.state.phase,
         )
@@ -1217,7 +1217,7 @@ class AcquisitionAdapterTest {
         assertEquals(
             AcquisitionPhase.Blocked(
                 AcquisitionBlock.BluetoothUnavailable,
-                InterruptedChase(STRAP, "Polar H10"),
+                InterruptedStrap(STRAP, "Polar H10"),
             ),
             outcome.state.phase,
         )
@@ -1382,6 +1382,13 @@ class AcquisitionAdapterMidRunTest {
 
     private val midRun = ctx(runIsLive = true)
 
+    /** Halfway through the bounce: the adapter has gone and the block remembers the Strap. */
+    private fun blockedMidOutage(start: AcquisitionState = connectedTo(STRAP)) = Acquisition.decide(
+        start,
+        AcquisitionEvent.BluetoothStateChanged(on = false),
+        midRun,
+    ).state
+
     /** Off and on again, as the two broadcasts arrive. */
     private fun bounce(start: AcquisitionState, context: AcquisitionContext): AcquisitionOutcome {
         val off = Acquisition.decide(
@@ -1447,11 +1454,12 @@ class AcquisitionAdapterMidRunTest {
         // A scan has no Strap of its own — nothing ever auto-connects from one — and neither does
         // Idle. There is nothing here to hand back.
         val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested()))
-        listOf(scanning, AcquisitionState()).forEach { start ->
-            listOf(midRun, ctx()).forEach { context ->
+        listOf("a scan" to scanning, "idle" to AcquisitionState()).forEach { (what, start) ->
+            listOf("mid-run" to midRun, "pre-run" to ctx()).forEach { (when_, context) ->
+                val case = "blocked from $what, $when_"
                 val outcome = bounce(start, context)
-                assertEquals(AcquisitionPhase.Idle, outcome.state.phase)
-                assertTrue(outcome.effects.isEmpty())
+                assertEquals(case, AcquisitionPhase.Idle, outcome.state.phase)
+                assertTrue(case, outcome.effects.isEmpty())
             }
         }
     }
@@ -1501,11 +1509,7 @@ class AcquisitionAdapterMidRunTest {
     fun `the permission going during the outage is said instead of connected without it`() {
         // The resume asks for the same connect the retry rule asks for, and it is not ours to make
         // without BLUETOOTH_CONNECT. The Strap is kept, so nothing is lost by saying so.
-        val off = Acquisition.decide(
-            connectedTo(STRAP),
-            AcquisitionEvent.BluetoothStateChanged(on = false),
-            midRun,
-        ).state
+        val off = blockedMidOutage()
         val outcome = Acquisition.decide(
             off,
             AcquisitionEvent.BluetoothStateChanged(on = true),
@@ -1514,7 +1518,7 @@ class AcquisitionAdapterMidRunTest {
         assertEquals(
             AcquisitionPhase.Blocked(
                 AcquisitionBlock.PermissionMissing,
-                InterruptedChase(STRAP, "Polar H10"),
+                InterruptedStrap(STRAP, "Polar H10"),
             ),
             outcome.state.phase,
         )
@@ -1526,14 +1530,10 @@ class AcquisitionAdapterMidRunTest {
         // The whole reason the two are separate: a blocked phase's GATT is already closed, so a
         // non-null address here would have Disconnect hang up a dead handle and a fresh scan close
         // it a second time.
-        val blocked = Acquisition.decide(
-            connectedTo(STRAP),
-            AcquisitionEvent.BluetoothStateChanged(on = false),
-            midRun,
-        ).state
+        val blocked = blockedMidOutage()
         assertEquals(null, blocked.address)
         assertEquals(
-            InterruptedChase(STRAP, "Polar H10"),
+            InterruptedStrap(STRAP, "Polar H10"),
             (blocked.phase as AcquisitionPhase.Blocked).interrupted,
         )
 
@@ -1552,11 +1552,7 @@ class AcquisitionAdapterMidRunTest {
     fun `forgetting the strap mid-outage takes the memory with it`() {
         // Otherwise the adapter coming back would chase a Strap the runner just removed, and the
         // discovery behind that connect would save it straight back.
-        val blocked = Acquisition.decide(
-            connectedTo(STRAP),
-            AcquisitionEvent.BluetoothStateChanged(on = false),
-            midRun,
-        ).state
+        val blocked = blockedMidOutage()
         val forgotten = Acquisition.decide(
             blocked,
             AcquisitionEvent.ForgetRequested(STRAP),
@@ -1579,11 +1575,7 @@ class AcquisitionAdapterMidRunTest {
 
     @Test
     fun `forgetting some other strap leaves the memory alone`() {
-        val blocked = Acquisition.decide(
-            connectedTo(STRAP),
-            AcquisitionEvent.BluetoothStateChanged(on = false),
-            midRun,
-        ).state
+        val blocked = blockedMidOutage()
         val outcome = Acquisition.decide(
             blocked,
             AcquisitionEvent.ForgetRequested(OTHER),
@@ -1595,11 +1587,7 @@ class AcquisitionAdapterMidRunTest {
 
     @Test
     fun `a run that ends while still blocked resumes nothing`() {
-        val blocked = Acquisition.decide(
-            connectedTo(STRAP),
-            AcquisitionEvent.BluetoothStateChanged(on = false),
-            midRun,
-        ).state
+        val blocked = blockedMidOutage()
         val outcome = Acquisition.decide(
             blocked,
             AcquisitionEvent.BluetoothStateChanged(on = true),
