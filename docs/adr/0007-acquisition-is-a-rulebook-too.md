@@ -83,6 +83,52 @@ kept in agreement.
 Anyone reading `HrForegroundService` will see a timer ticking with no Run in progress and reach for
 it. It is deliberate, and this is the paragraph saying so.
 
+## The adapter is the one thing that has to arrive
+
+Everything else about Bluetooth is asked for — permissions and the adapter's state are read fresh in
+`AcquisitionContext` on every decision, which is what makes a permission revoked mid-chase need no
+handling at all. The adapter's *own* switch cannot work that way, and #221 is the proof: a Strap
+connected when the runner turns Bluetooth off sat reading "Connected" indefinitely.
+
+Two things have to be true at once for that, and both are. Android delivers **no GATT disconnect
+callback** when the adapter goes off, so nothing arrives. And the pulse that would ask runs only
+while an Acquisition is in flight — so `Connected` and `Blocked`, the two terminal phases that
+outlive the tick, are exactly the two the adapter can go stale under. Nothing was asking, and
+nothing was telling.
+
+So `BluetoothStateChanged` is an event, from an `ACTION_STATE_CHANGED` receiver the app had never
+registered. It carries the broadcast's own `EXTRA_STATE` rather than a fresh read, because that read
+is behind BLUETOOTH_CONNECT and deliberately answers "on" when refused, while the broadcast needs no
+permission and knows.
+
+The two directions are not symmetric, and that is the decision worth recording.
+
+- **Off** ends whatever was happening, including a `Connected` whose GATT is dead whether or not
+  Android ever says so. A refused scan is overtaken by it — that block's reason is no longer what
+  stands between the runner and a Strap.
+- **On** clears only the block it caused, and stops at `Idle`. It says a radio is available again,
+  not that anyone asked for a Strap. `Idle` is also what the record screen's auto-connect waits for,
+  so a saved Strap is picked back up by the screen that already owns the question of when an
+  unasked-for connect is welcome.
+
+Three phases the adapter going off leaves exactly as it found them, and the third is the one worth
+being careful about. `PermissionMissing` outranks it, because that is what the runner can act on and
+because without the permission the adapter's state was never ours to read. An existing
+`BluetoothUnavailable` stands because the off state arrives twice as a rule — Android sends
+turning-off first — and hanging up the same GATT twice is not idempotent.
+
+And **`GaveUp` is left alone**, which is the asymmetry biting back. `GaveUp` exists separately from
+`Idle` for exactly one reason: the record screen auto-connects from `Idle`. Block a given-up chase
+and the clear-to-`Idle` above hands it straight back — so switching Bluetooth off and on again would
+restart the chase that had just run out of attempts, by a route neither phase's own rule can see.
+"Strap not found" is no less true for the adapter being off.
+
+The cost of stopping at `Idle` is that Bluetooth going off and coming back **mid-Run** leaves the
+Run without a Strap until the runner reconnects: that auto-connect is gated on no session being
+active. It is not a regression — today that case reads "Connected" and records nothing — and
+re-chasing from here would mean the phase carrying an address through a block that is defined as
+remembering none. Re-acquiring mid-Run belongs to whoever asks for it next, with a rule of its own.
+
 ## Considered options
 
 **Leaving the string as the interface** and extracting only the logic. Cheapest, and it would have

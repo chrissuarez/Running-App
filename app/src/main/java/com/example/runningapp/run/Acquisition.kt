@@ -86,6 +86,14 @@ sealed interface AcquisitionEvent {
         val hasHeartRateService: Boolean,
     ) : AcquisitionEvent
 
+    /**
+     * The Bluetooth adapter was switched on or off (#221).
+     *
+     * The one thing about the adapter that has to arrive rather than be asked for on a tick — see
+     * the ADR. [on] is the broadcast's own word for it, not a fresh read of the adapter.
+     */
+    data class BluetoothStateChanged(val on: Boolean) : AcquisitionEvent
+
     /** The pulse. Carries no time of its own — the time is context. */
     data object Tick : AcquisitionEvent
 }
@@ -186,7 +194,62 @@ object Acquisition {
         is AcquisitionEvent.GattConnected -> gattConnected(state, event, context)
         is AcquisitionEvent.GattDisconnected -> gattDisconnected(state, event, context)
         is AcquisitionEvent.ServicesDiscovered -> servicesDiscovered(state, event, context)
+        is AcquisitionEvent.BluetoothStateChanged -> bluetoothStateChanged(state, event)
         AcquisitionEvent.Tick -> tick(state, context)
+    }
+
+    /**
+     * The adapter came or went (#221). See the ADR for why this arrives instead of being asked for.
+     *
+     * Two opposite jobs, and the asymmetry between them is the point. Going off ends whatever was
+     * happening, including a `Connected` whose GATT is dead whether or not Android ever says so.
+     * Coming back on only clears the block it caused: it says a radio is available again, not that
+     * anyone asked for a Strap, so it stops at `Idle` rather than resurrecting a chase.
+     *
+     * Three phases outrank the adapter going off, and each for its own reason — see
+     * [survivesTheAdapterGoingOff]. Nothing here reads the context: the broadcast is the adapter's
+     * own word about itself, and there is nothing a fresh read could add to it.
+     */
+    private fun bluetoothStateChanged(
+        state: AcquisitionState,
+        event: AcquisitionEvent.BluetoothStateChanged,
+    ): AcquisitionOutcome {
+        val phase = state.phase
+        if (event.on) {
+            val unblocks = phase is AcquisitionPhase.Blocked &&
+                phase.reason == AcquisitionBlock.BluetoothUnavailable
+            if (!unblocks) return AcquisitionOutcome(state)
+            // Idle, and nothing more. It is also what the record screen's auto-connect waits for,
+            // so a saved Strap is picked back up by the screen that already owns the question of
+            // when an unasked-for connect is welcome.
+            return AcquisitionOutcome(state.copy(phase = AcquisitionPhase.Idle))
+        }
+        if (survivesTheAdapterGoingOff(phase)) return AcquisitionOutcome(state)
+        return blocked(state, AcquisitionBlock.BluetoothUnavailable)
+    }
+
+    /**
+     * Phases the adapter switching off leaves exactly as they are.
+     *
+     * - **A missing permission** outranks it: that is the thing the runner can act on, and without
+     *   the permission the adapter's state was never ours to read in the first place.
+     * - **Already off** would otherwise hang up a GATT the first one let go of. Android sends the
+     *   turning-off state before the off one, so this event arrives twice as a rule.
+     * - **Gave up** must stay given up. Blocking it would be cleared back to `Idle` when the adapter
+     *   returns, and `Idle` is what the record screen auto-connects from — so a Bluetooth toggle
+     *   would restart the very chase that ran out of attempts. That is the one thing keeping
+     *   [AcquisitionPhase.GaveUp] separate from `Idle` exists to prevent, and "Strap not found" is
+     *   no less true for the adapter being off.
+     *
+     * A scan the platform refused is not on the list: its reason has been overtaken by a switch the
+     * runner can flip, and it clears back to `Idle` like any other adapter block.
+     */
+    private fun survivesTheAdapterGoingOff(phase: AcquisitionPhase): Boolean = when (phase) {
+        is AcquisitionPhase.Blocked ->
+            phase.reason == AcquisitionBlock.PermissionMissing ||
+                phase.reason == AcquisitionBlock.BluetoothUnavailable
+        AcquisitionPhase.GaveUp -> true
+        else -> false
     }
 
     /**
