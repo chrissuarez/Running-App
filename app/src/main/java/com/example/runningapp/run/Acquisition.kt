@@ -236,8 +236,11 @@ object Acquisition {
                 return AcquisitionOutcome(state.copy(phase = AcquisitionPhase.Idle))
             }
             // Permission first, as everywhere else here: the connect below is the same connect the
-            // retry rule makes, and it is not ours to ask for without BLUETOOTH_CONNECT. The block
-            // carries the interrupted Strap forward, so this loses nothing.
+            // retry rule makes, and it is not ours to ask for without BLUETOOTH_CONNECT. This is
+            // the end of the road and not a pause — the Strap rides along on the new block, but
+            // nothing reads it again while the adapter stays on, so the Run finishes strapless.
+            // That is the honest answer: without the permission there is no connect to be had, and
+            // granting it restarts the process anyway, taking the Run with it.
             if (!context.canConnect) return blocked(state, AcquisitionBlock.PermissionMissing)
             return AcquisitionOutcome(
                 state.copy(
@@ -603,9 +606,8 @@ object Acquisition {
             else -> AcquisitionOutcome(state)
         }
 
-    /** Blocking ends the Acquisition but keeps what a scan already found. */
     /**
-     * Stop, and say why.
+     * Stop, and say why. What a scan already found is kept.
      *
      * Whatever was in flight is stopped on the way out. Blocked is terminal and its
      * `state.address` is null — the pulse that would tick again stops with it, and Forget and
@@ -641,10 +643,10 @@ object Acquisition {
      * memory forward: a refused scan or a lost permission arriving on top does not un-interrupt the
      * chase the first block stopped.
      */
-    private fun interruptedBy(phase: AcquisitionPhase): InterruptedChase? = when (phase) {
-        is AcquisitionPhase.Connecting -> InterruptedChase(phase.address, phase.name)
-        is AcquisitionPhase.Connected -> InterruptedChase(phase.address, phase.name)
-        is AcquisitionPhase.Retrying -> InterruptedChase(phase.address, phase.name)
+    private fun interruptedBy(phase: AcquisitionPhase): InterruptedStrap? = when (phase) {
+        is AcquisitionPhase.Connecting -> InterruptedStrap(phase.address, phase.name)
+        is AcquisitionPhase.Connected -> InterruptedStrap(phase.address, phase.name)
+        is AcquisitionPhase.Retrying -> InterruptedStrap(phase.address, phase.name)
         is AcquisitionPhase.Blocked -> phase.interrupted
         else -> null
     }
