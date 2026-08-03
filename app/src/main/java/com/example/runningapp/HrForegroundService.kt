@@ -13,8 +13,10 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.Binder
@@ -29,6 +31,7 @@ import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -218,6 +221,32 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     @Volatile
     private var destroyed = false
     private var bluetoothAdapter: BluetoothAdapter? = null
+
+    /**
+     * The adapter switching on or off, told to the Acquisition as an event (#221).
+     *
+     * Everything else it needs to know about Bluetooth it asks for on a tick; this is the one thing
+     * that has to arrive, and ADR 0007 says why. What travels is the broadcast's own `EXTRA_STATE`
+     * rather than a fresh read of the adapter, which is behind BLUETOOTH_CONNECT and answers "on"
+     * when it is refused — this needs no permission.
+     *
+     * `TURNING_OFF` counts as off so the GATT is hung up while the adapter can still do it. The
+     * `OFF` that follows is the repeat the rule takes as a no-op.
+     */
+    private val bluetoothStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
+            val on = when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
+                BluetoothAdapter.STATE_OFF, BluetoothAdapter.STATE_TURNING_OFF -> false
+                BluetoothAdapter.STATE_ON -> true
+                // TURNING_ON is not on yet, and anything unrecognised is not news. Either way the
+                // state that follows says so plainly.
+                else -> return
+            }
+            Log.d(TAG, "Bluetooth adapter reported ${if (on) "on" else "off"}")
+            postAcquisitionEvent(AcquisitionEvent.BluetoothStateChanged(on))
+        }
+    }
 
     // UUIDs for Heart Rate Service and Measurement Characteristic
     private val HEART_RATE_SERVICE_UUID = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb")
@@ -903,7 +932,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // Mission: Dedicated Session Thread
         sessionHandlerThread = HandlerThread("SessionTrackingThread").apply { start() }
         sessionHandler = Handler(sessionHandlerThread!!.looper)
-        
+
+        // After the inbox exists, because the receiver posts to it: a broadcast landing between the
+        // two would be the one piece of news the Acquisition never hears (#221). Not exported —
+        // ACTION_STATE_CHANGED is the system's to send, and nothing else may fake one.
+        ContextCompat.registerReceiver(
+            this,
+            bluetoothStateReceiver,
+            IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+
         createNotificationChannel()
     }
 
@@ -1878,6 +1917,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // 0. Anything that opens a GATT from here on closes it itself; the sweep below is the
         // last one there will be. Set before the join, so a connect that outlasts it sees this.
         destroyed = true
+
+        // 0b. Stop listening to the adapter before the inbox this posts to goes away. A broadcast
+        // arriving after the thread has quit would be dropped anyway, but an unregister left undone
+        // is a leaked receiver the framework complains about by name. Registration is unconditional
+        // in onCreate, so this can only throw if destruction arrives without one — caught rather
+        // than guarded by a flag that would say the same thing twice.
+        try {
+            unregisterReceiver(bluetoothStateReceiver)
+        } catch (e: IllegalArgumentException) {
+            Log.w(TAG, "Bluetooth state receiver was never registered: ${e.message}")
+        }
 
         // 1. Stop the Acquisition's thread before touching what it owns. quit() rather than
         // quitSafely(): a due ConnectRequested or retry tick would otherwise still run, and

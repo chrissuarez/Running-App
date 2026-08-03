@@ -1142,3 +1142,205 @@ class AcquisitionAlwaysTerminatesTest {
         }
     }
 }
+
+/**
+ * The adapter being switched off is news that arrives, not a question anyone was asking (#221).
+ * See docs/adr/0007 for why it cannot be asked for.
+ *
+ * Every case here passes a plain [ctx]: the broadcast is the adapter's own word about itself, and
+ * the rule reads nothing from the context to weigh against it — including whether a Run is live.
+ */
+class AcquisitionAdapterTest {
+
+    private val connected = connectedTo(STRAP)
+
+    @Test
+    fun `switching bluetooth off blocks a connection android never reports as lost`() {
+        // No GATT disconnect callback arrives for this, so without the event the phase sat on
+        // "Connected" — and the Run went on banking a Strap that was gone.
+        val outcome = Acquisition.decide(
+            connected,
+            AcquisitionEvent.BluetoothStateChanged(on = false),
+            ctx(),
+        )
+        assertEquals(AcquisitionPhase.Blocked(AcquisitionBlock.BluetoothUnavailable), outcome.state.phase)
+        assertEquals(
+            listOf(
+                AcquisitionEffect.DisconnectAndCloseGatt(STRAP),
+                AcquisitionEffect.TellRunStrapLost(LOST_DISCONNECTED),
+            ),
+            outcome.effects,
+        )
+    }
+
+    @Test
+    fun `switching bluetooth off stops a scan`() {
+        val scanning = run(events = arrayOf(AcquisitionEvent.ScanRequested()))
+        val outcome = Acquisition.decide(
+            scanning,
+            AcquisitionEvent.BluetoothStateChanged(on = false),
+            ctx(),
+        )
+        assertTrue(outcome.effects.contains(AcquisitionEffect.StopScan))
+        assertFalse(outcome.state.inFlight)
+    }
+
+    @Test
+    fun `switching bluetooth off ends a chase`() {
+        val chasing = run(
+            events = arrayOf(AcquisitionEvent.ConnectRequested(STRAP, "Polar H10", makeActive = true)),
+        )
+        val outcome = Acquisition.decide(
+            chasing,
+            AcquisitionEvent.BluetoothStateChanged(on = false),
+            ctx(),
+        )
+        assertEquals(AcquisitionPhase.Blocked(AcquisitionBlock.BluetoothUnavailable), outcome.state.phase)
+        assertFalse(outcome.state.inFlight)
+    }
+
+    @Test
+    fun `switching bluetooth off says so with nothing in flight at all`() {
+        // "Disconnected" is true but useless when the reason no Strap can be reached is a switch the
+        // runner can flip.
+        val outcome = Acquisition.decide(
+            AcquisitionState(),
+            AcquisitionEvent.BluetoothStateChanged(on = false),
+            ctx(),
+        )
+        assertEquals(
+            AcquisitionPhase.Blocked(AcquisitionBlock.BluetoothUnavailable),
+            outcome.state.phase,
+        )
+        assertTrue(outcome.effects.isEmpty())
+    }
+
+    @Test
+    fun `switching bluetooth off overtakes a refused scan`() {
+        // That block's reason has been overtaken: the platform refusing the scanner is no longer
+        // what stands between the runner and a Strap.
+        val outcome = Acquisition.decide(
+            AcquisitionState(AcquisitionPhase.Blocked(AcquisitionBlock.ScanFailed(2))),
+            AcquisitionEvent.BluetoothStateChanged(on = false),
+            ctx(),
+        )
+        assertEquals(
+            AcquisitionPhase.Blocked(AcquisitionBlock.BluetoothUnavailable),
+            outcome.state.phase,
+        )
+    }
+
+    @Test
+    fun `switching bluetooth off does not overwrite a missing permission`() {
+        // The permission is the thing the runner can act on, and without it the adapter's state is
+        // not ours to read anyway — the same order every other rule here keeps.
+        val blocked = AcquisitionState(AcquisitionPhase.Blocked(AcquisitionBlock.PermissionMissing))
+        val outcome = Acquisition.decide(
+            blocked,
+            AcquisitionEvent.BluetoothStateChanged(on = false),
+            ctx(canScan = false, canConnect = false),
+        )
+        assertEquals(blocked, outcome.state)
+        assertTrue(outcome.effects.isEmpty())
+    }
+
+    @Test
+    fun `a chase that gave up is not blocked, so a toggle cannot restart it`() {
+        // GaveUp is only separate from Idle to stop the record screen auto-connecting a chase that
+        // ran out of attempts. Blocking it here would clear back to Idle when the adapter returns
+        // and hand that chase straight back.
+        val gaveUp = AcquisitionState(AcquisitionPhase.GaveUp)
+        val off = Acquisition.decide(
+            gaveUp,
+            AcquisitionEvent.BluetoothStateChanged(on = false),
+            ctx(),
+        ).state
+        assertEquals(AcquisitionPhase.GaveUp, off.phase)
+
+        val backOn = Acquisition.decide(
+            off,
+            AcquisitionEvent.BluetoothStateChanged(on = true),
+            ctx(),
+        ).state
+        assertEquals(AcquisitionPhase.GaveUp, backOn.phase)
+    }
+
+    @Test
+    fun `a repeated off changes nothing`() {
+        // Android broadcasts the turning-off state before the off one, and both mean the same thing
+        // here. The second must not hang up a GATT the first already let go of.
+        val once = Acquisition.decide(
+            connected,
+            AcquisitionEvent.BluetoothStateChanged(on = false),
+            ctx(),
+        ).state
+        val twice = Acquisition.decide(
+            once,
+            AcquisitionEvent.BluetoothStateChanged(on = false),
+            ctx(),
+        )
+        assertEquals(once, twice.state)
+        assertTrue(twice.effects.isEmpty())
+    }
+
+    @Test
+    fun `switching bluetooth back on clears the block to idle`() {
+        // Idle and not a fresh chase: the runner switched a radio back on, they did not ask for a
+        // Strap. Idle is also what the record screen's auto-connect waits for, so a saved Strap is
+        // picked up again there rather than from here.
+        val blocked = AcquisitionState(AcquisitionPhase.Blocked(AcquisitionBlock.BluetoothUnavailable))
+        val outcome = Acquisition.decide(
+            blocked,
+            AcquisitionEvent.BluetoothStateChanged(on = true),
+            ctx(),
+        )
+        assertEquals(AcquisitionPhase.Idle, outcome.state.phase)
+        assertTrue(outcome.effects.isEmpty())
+        assertFalse(outcome.state.inFlight)
+    }
+
+    @Test
+    fun `switching bluetooth back on leaves every other block alone`() {
+        listOf(AcquisitionBlock.PermissionMissing, AcquisitionBlock.ScanFailed(2)).forEach { reason ->
+            val blocked = AcquisitionState(AcquisitionPhase.Blocked(reason))
+            val outcome = Acquisition.decide(
+                blocked,
+                AcquisitionEvent.BluetoothStateChanged(on = true),
+                ctx(),
+            )
+            assertEquals(blocked, outcome.state)
+            assertTrue(outcome.effects.isEmpty())
+        }
+    }
+
+    @Test
+    fun `switching bluetooth on does not disturb what is already under way`() {
+        listOf(connected, run(events = arrayOf(AcquisitionEvent.ScanRequested()))).forEach { state ->
+            val outcome = Acquisition.decide(
+                state,
+                AcquisitionEvent.BluetoothStateChanged(on = true),
+                ctx(),
+            )
+            assertEquals(state, outcome.state)
+            assertTrue(outcome.effects.isEmpty())
+        }
+    }
+
+    @Test
+    fun `what a scan found survives the adapter going off`() {
+        // The same rule every other block keeps: the results outlive the scan, and a tap on one of
+        // them while the adapter is off is refused by the connect rule, not by an empty list.
+        val scanned = run(
+            events = arrayOf(
+                AcquisitionEvent.ScanRequested(),
+                AcquisitionEvent.StrapSeen(STRAP, "Polar H10"),
+            ),
+        )
+        val outcome = Acquisition.decide(
+            scanned,
+            AcquisitionEvent.BluetoothStateChanged(on = false),
+            ctx(),
+        )
+        assertEquals(scanned.scanned, outcome.state.scanned)
+    }
+}
