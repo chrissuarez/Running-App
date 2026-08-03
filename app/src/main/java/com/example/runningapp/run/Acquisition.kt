@@ -194,7 +194,7 @@ object Acquisition {
         is AcquisitionEvent.GattConnected -> gattConnected(state, event, context)
         is AcquisitionEvent.GattDisconnected -> gattDisconnected(state, event, context)
         is AcquisitionEvent.ServicesDiscovered -> servicesDiscovered(state, event, context)
-        is AcquisitionEvent.BluetoothStateChanged -> bluetoothStateChanged(state, event)
+        is AcquisitionEvent.BluetoothStateChanged -> bluetoothStateChanged(state, event, context)
         AcquisitionEvent.Tick -> tick(state, context)
     }
 
@@ -206,23 +206,53 @@ object Acquisition {
      * Coming back on only clears the block it caused: it says a radio is available again, not that
      * anyone asked for a Strap, so it stops at `Idle` rather than resurrecting a chase.
      *
+     * With a Run live, that stop is one short (#224). The record screen's auto-connect, which is
+     * what picks the Strap back up pre-Run, is gated on there being no live session — so the Run
+     * would finish strapless, against the standing rule that mid-Run reconnects are uncapped and a
+     * dropout is always chased (#110). So mid-Run, and only mid-Run, the block hands back the Strap
+     * it interrupted and the chase starts again.
+     *
      * Three phases outrank the adapter going off, and each for its own reason — see
-     * [survivesTheAdapterGoingOff]. Nothing here reads the context: the broadcast is the adapter's
-     * own word about itself, and there is nothing a fresh read could add to it.
+     * [survivesTheAdapterGoingOff]. The off direction still reads nothing from the context: the
+     * broadcast is the adapter's own word about itself, and there is nothing a fresh read could add.
      */
     private fun bluetoothStateChanged(
         state: AcquisitionState,
         event: AcquisitionEvent.BluetoothStateChanged,
+        context: AcquisitionContext,
     ): AcquisitionOutcome {
         val phase = state.phase
         if (event.on) {
-            val unblocks = phase is AcquisitionPhase.Blocked &&
-                phase.reason == AcquisitionBlock.BluetoothUnavailable
-            if (!unblocks) return AcquisitionOutcome(state)
+            val blockedPhase = phase as? AcquisitionPhase.Blocked
+            if (blockedPhase?.reason != AcquisitionBlock.BluetoothUnavailable) {
+                return AcquisitionOutcome(state)
+            }
             // Idle, and nothing more. It is also what the record screen's auto-connect waits for,
             // so a saved Strap is picked back up by the screen that already owns the question of
-            // when an unasked-for connect is welcome.
-            return AcquisitionOutcome(state.copy(phase = AcquisitionPhase.Idle))
+            // when an unasked-for connect is welcome. A block that interrupted nothing — one that
+            // arrived while scanning, or from Idle — has no Strap to resume either way.
+            val interrupted = blockedPhase.interrupted
+            if (!context.runIsLive || interrupted == null) {
+                return AcquisitionOutcome(state.copy(phase = AcquisitionPhase.Idle))
+            }
+            // Permission first, as everywhere else here: the connect below is the same connect the
+            // retry rule makes, and it is not ours to ask for without BLUETOOTH_CONNECT. The block
+            // carries the interrupted Strap forward, so this loses nothing.
+            if (!context.canConnect) return blocked(state, AcquisitionBlock.PermissionMissing)
+            return AcquisitionOutcome(
+                state.copy(
+                    phase = AcquisitionPhase.Connecting(
+                        address = interrupted.address,
+                        name = interrupted.name,
+                        // Nobody tapped anything: an outage waited out is not a choice of Strap.
+                        promoteOnVerify = false,
+                        // A fresh chase, like any other connect. Mid-Run the cap does not apply.
+                        attempt = 0,
+                        nextDelayMs = FIRST_RETRY_DELAY_MS,
+                    ),
+                ),
+                listOf(AcquisitionEffect.ConnectGatt(interrupted.address)),
+            )
         }
         if (survivesTheAdapterGoingOff(phase)) return AcquisitionOutcome(state)
         return blocked(state, AcquisitionBlock.BluetoothUnavailable)
@@ -354,6 +384,13 @@ object Acquisition {
         // Narrower than a disconnect on purpose: it touches only the Acquisition, never the Run.
         // Forgetting a Strap mid-Run behaves like a plain dropout — a sensor going away never ends
         // a Run (#110).
+        val phase = state.phase
+        if (phase is AcquisitionPhase.Blocked && phase.interrupted?.address == event.address) {
+            // A block remembering this Strap forgets it too, or the adapter coming back mid-Run
+            // would chase one the runner just removed — and the discovery behind that connect
+            // would save it straight back. There is no GATT to close: the block already did.
+            return AcquisitionOutcome(state.copy(phase = phase.copy(interrupted = null)))
+        }
         if (state.address != event.address) return AcquisitionOutcome(state)
         return AcquisitionOutcome(
             state.copy(phase = AcquisitionPhase.Idle),
@@ -570,15 +607,19 @@ object Acquisition {
     /**
      * Stop, and say why.
      *
-     * Whatever was in flight is stopped on the way out. Blocked is terminal and remembers no
-     * address — the pulse that would tick again stops with it, and Forget and Disconnect both
-     * match on an address this phase no longer has — so nothing else would ever come along to
-     * stop the platform scan or let the GATT go. Left behind, that handle would still be the
-     * map's entry for its address and its readings would still pass the identity check.
+     * Whatever was in flight is stopped on the way out. Blocked is terminal and its
+     * `state.address` is null — the pulse that would tick again stops with it, and Forget and
+     * Disconnect both match on an address this phase no longer has — so nothing else would ever
+     * come along to stop the platform scan or let the GATT go. Left behind, that handle would
+     * still be the map's entry for its address and its readings would still pass the identity
+     * check.
+     *
+     * The Strap itself is remembered, separately, on the phase: see
+     * [AcquisitionPhase.Blocked.interrupted]. That is a name to chase again, not a handle to close.
      */
     private fun blocked(state: AcquisitionState, reason: AcquisitionBlock): AcquisitionOutcome =
         AcquisitionOutcome(
-            state.copy(phase = AcquisitionPhase.Blocked(reason)),
+            state.copy(phase = AcquisitionPhase.Blocked(reason, interruptedBy(state.phase))),
             buildList {
                 if (state.phase is AcquisitionPhase.Scanning) add(AcquisitionEffect.StopScan)
                 state.address?.let {
@@ -591,4 +632,20 @@ object Acquisition {
                 }
             },
         )
+
+    /**
+     * The Strap a block is about to interrupt, for [AcquisitionPhase.Blocked] to remember (#224).
+     *
+     * A scan has no Strap of its own — nothing auto-connects from one — and neither does `Idle`, so
+     * both leave this null and their blocks resume nothing. One block overtaking another carries the
+     * memory forward: a refused scan or a lost permission arriving on top does not un-interrupt the
+     * chase the first block stopped.
+     */
+    private fun interruptedBy(phase: AcquisitionPhase): InterruptedChase? = when (phase) {
+        is AcquisitionPhase.Connecting -> InterruptedChase(phase.address, phase.name)
+        is AcquisitionPhase.Connected -> InterruptedChase(phase.address, phase.name)
+        is AcquisitionPhase.Retrying -> InterruptedChase(phase.address, phase.name)
+        is AcquisitionPhase.Blocked -> phase.interrupted
+        else -> null
+    }
 }

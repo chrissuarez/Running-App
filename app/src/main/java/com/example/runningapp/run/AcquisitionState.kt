@@ -102,9 +102,30 @@ sealed interface AcquisitionPhase {
      */
     data object GaveUp : AcquisitionPhase
 
-    /** Cannot proceed. See [AcquisitionBlock]. */
-    data class Blocked(val reason: AcquisitionBlock) : AcquisitionPhase
+    /**
+     * Cannot proceed. See [AcquisitionBlock].
+     *
+     * [interrupted] is the Strap this block stopped, if it stopped one — so the adapter coming back
+     * mid-Run can resume the chase it took away (#224). It is deliberately **not**
+     * [AcquisitionState.address], and the two must not be collapsed: `address` is what the
+     * GATT-closing paths and the Forget and Disconnect identity checks match on, and a blocked
+     * phase's GATT has already been closed on the way in. A non-null `address` here would have
+     * Disconnect try to hang up a dead handle and a fresh scan try to close it a second time. This
+     * is a memory, not a live connection.
+     *
+     * Null when there was nothing to interrupt — blocked while scanning, or from [Idle].
+     */
+    data class Blocked(
+        val reason: AcquisitionBlock,
+        val interrupted: InterruptedChase? = null,
+    ) : AcquisitionPhase
 }
+
+/** The Strap a block stopped, kept only so [AcquisitionPhase.Blocked] can name it again later. */
+data class InterruptedChase(
+    val address: String,
+    val name: String,
+)
 
 /**
  * The whole of an Acquisition: where it has got to, and what it has seen.

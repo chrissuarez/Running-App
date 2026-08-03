@@ -106,10 +106,11 @@ The two directions are not symmetric, and that is the decision worth recording.
 - **Off** ends whatever was happening, including a `Connected` whose GATT is dead whether or not
   Android ever says so. A refused scan is overtaken by it — that block's reason is no longer what
   stands between the runner and a Strap.
-- **On** clears only the block it caused, and stops at `Idle`. It says a radio is available again,
-  not that anyone asked for a Strap. `Idle` is also what the record screen's auto-connect waits for,
-  so a saved Strap is picked back up by the screen that already owns the question of when an
-  unasked-for connect is welcome.
+- **On** clears only the block it caused, and pre-Run stops at `Idle`. It says a radio is available
+  again, not that anyone asked for a Strap. `Idle` is also what the record screen's auto-connect
+  waits for, so a saved Strap is picked back up by the screen that already owns the question of when
+  an unasked-for connect is welcome.
+- **On, with a Run live**, resumes the chase the block interrupted (#224). See below.
 
 Three phases the adapter going off leaves exactly as it found them, and the third is the one worth
 being careful about. `PermissionMissing` outranks it, because that is what the runner can act on and
@@ -123,11 +124,45 @@ and the clear-to-`Idle` above hands it straight back — so switching Bluetooth 
 restart the chase that had just run out of attempts, by a route neither phase's own rule can see.
 "Strap not found" is no less true for the adapter being off.
 
-The cost of stopping at `Idle` is that Bluetooth going off and coming back **mid-Run** leaves the
-Run without a Strap until the runner reconnects: that auto-connect is gated on no session being
-active. It is not a regression — today that case reads "Connected" and records nothing — and
-re-chasing from here would mean the phase carrying an address through a block that is defined as
-remembering none. Re-acquiring mid-Run belongs to whoever asks for it next, with a rule of its own.
+### Mid-Run, `Idle` is one stop short
+
+Stopping at `Idle` works pre-Run only because something else is waiting there. Mid-Run nothing is:
+the record screen's auto-connect is gated on no session being active, so Bluetooth going off and
+back on left the Run recording no heart rate for the rest of its life (#224). That cuts against the
+standing rule that mid-Run reconnects are uncapped and every dropout is chased (#110) — a switch
+flipped and flipped back should not be the one dropout we give up on.
+
+So the rule has a mid-Run branch: the block hands back the Strap it interrupted and the chase starts
+again, as a fresh `Connecting` with a `ConnectGatt`. Pre-Run is untouched, and so is who owns the
+question — the screen still decides when an unasked-for connect is welcome, because pre-Run there is
+still a screen to ask.
+
+Three things about that resumed chase are deliberate. It **does not promote the Strap to active**:
+waiting out an outage is not a tap, and a promotion surviving the bounce would let a Bluetooth
+toggle overwrite the active Strap. Its **retry count starts over**, which costs nothing since the
+cap is pre-Run only. And **only a block that actually interrupted something** resumes — one that
+arrived while scanning, or from `Idle`, has no Strap of its own, because nothing ever auto-connects
+from a scan.
+
+The alternative was having the service re-issue a connect from the saved active Strap. It works, and
+it was rejected: it moves "when is an unasked-for connect welcome" back outside the rulebook, which
+is the thing this ADR exists to prevent. It would also chase the *active* Strap rather than the one
+the Run was actually using.
+
+The subtlety is where the address lives. `Blocked` now carries an `interrupted` Strap, and it is
+kept **separate from `AcquisitionState.address`**, which stays null for a blocked phase. `address`
+is what the GATT-closing paths and the Forget and Disconnect identity checks match on, and a blocked
+phase's GATT was already closed on the way in — a non-null `address` would have Disconnect try to
+hang up a dead handle and a fresh scan try to close it a second time. One is a live connection; the
+other is only a name to chase again.
+
+Forgetting that Strap during the outage takes the memory with it, or the adapter's return would
+chase one the runner just removed — and the discovery behind that connect would save it straight
+back. A disconnect needs no such rule: it leaves the block entirely.
+
+The resume asks the same permission question every other connect here asks: without
+BLUETOOTH_CONNECT it says `PermissionMissing` rather than connecting, and the interrupted Strap
+rides along on that block too, so nothing is lost by saying so.
 
 ## Considered options
 
@@ -157,6 +192,10 @@ have meant a bridge built only to be deleted, and two half-machines to reason ab
   means a wake lock. One branch already failed this: when a retry came due with Bluetooth switched
   off, `getRemoteDevice()` returned null and nothing happened at all — the status sat on
   "Reconnecting in Ns..." indefinitely. That is now `Blocked`.
+- **`Blocked` remembers a Strap but has no address.** The two are separate fields for separate
+  jobs: `interrupted` is a name to chase again once the adapter returns mid-Run, `address` is a
+  handle the closing and identity paths match on. Collapsing them would have Disconnect hang up a
+  GATT that was closed when the block was raised.
 - **A stale disconnect no longer schedules a retry.** The old check asked whether *any* Strap was
   being chased; it now asks whether the Strap that dropped is that one. Same class of fix as the
   stale-connect guard beside it, which already worked this way.
