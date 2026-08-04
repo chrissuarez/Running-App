@@ -1,0 +1,77 @@
+# A Stated Distance is a real distance
+
+For half the year the runner trains indoors. Winter takes the pavement away, the treadmill takes its
+place, and until now the app could not see any of it: a treadmill Run recorded a heart rate, a
+duration, and `distanceKm = 0.0`. No distance, so no pace. No distance, so nothing in the weekly
+volume. No distance in what the coach is sent, so a winter of work looked to the coach like a winter
+of nothing, and no Stage could be graduated out of.
+
+So the runner states the distance — the number the treadmill's console showed — and **the app treats
+it as a distance like any other**. It sets the pace, it counts toward the volume, it goes to the
+coach, it can graduate a Stage, and it can take the longest-distance Record.
+
+That last one reverses a rule this repository argues for in prose today. `Records.kt` says a
+treadmill Run "contests the longest time and nothing else", because "its distance is a number the
+machine reported, never measured against ground, so letting it hold a distance record would put an
+unverifiable claim above every measured one". The reasoning was sound and the conclusion is now
+wrong, for a reason that was never in front of it: **a record book that cannot record the longest
+run of the runner's winter has a hole in it exactly where the winter went.** Unverifiable is not the
+same as untrue, and the app already stakes far more than a medal on numbers the runner simply
+states — every zone edge in it is a percentage of a Reserve built from two typed-in heart rates
+([ADR 0004](./0004-zones-from-heart-rate-reserve.md)). A distance is not the place to start
+doubting them.
+
+## The five fastest-* Records stay barred, and nothing fakes a way in
+
+A Best Effort is the quickest continuous stretch covering 1 km, a mile, 5 km, 10 km or a half —
+found *anywhere inside a Run* by a rolling window over its track. A treadmill Run has no track. Not
+a poor one, not a sparse one: none. There is no stretch to find, so there is no Best Effort, so
+those five Records are unreachable and stay so.
+
+The tempting move is to derive one: distance ÷ duration gives an average pace, an average pace gives
+a 5K time, and the number would slot straight into `fastest5kSeconds` where everything downstream
+already reads it. **Rejected.** It is not the same measurement wearing the same name — a negative
+split is under-credited by it and a fast start is over-credited, and once it is in that field
+nothing downstream can tell it from a stretch someone actually ran. The whole point of measuring a
+best effort on the clock is that it is the runner's best, not their average.
+
+So a Stage requirement phrased as a distance and a time — *"Run a 5K in 24:59 or faster"* — is
+judged on a treadmill Run by the coach, in prose, from the distance and the duration it is already
+sent. Graduation is an AI judgement here already; this asks it to do the job it was given rather
+than building machinery to hand it a number that would be a guess.
+
+## Only a treadmill Run can hold one, and that is what makes it free
+
+A stated distance is available to treadmill Runs and to nothing else. An outdoor Run whose GPS
+recorded nothing cannot be rescued this way, however tempting.
+
+That restriction is doing real work. It leaves `runMode` as the sole thing distinguishing a stated
+distance from a measured one, which means:
+
+- The existing `distanceKm` column carries both, and **there is no migration**.
+- `0.0` keeps its current meaning — nobody stated one — because no treadmill Run is ever legitimately
+  zero kilometres long.
+- Every rule that needs to know which kind of distance it is holding already asks `runMode`, and
+  `Records.kt` gates on `runMode` today.
+
+Admit outdoor Runs and all three of those go: provenance needs its own column, a migration, and a
+rewrite of every rule that currently says "measured" by saying "outdoor".
+
+## Consequences
+
+- **`Records.kt`'s eligibility prose is now wrong where it stands and must be rewritten**, not
+  patched around. The treadmill bullet reverses for the longest distance and holds for the fastest
+  five, and it should say why on both counts.
+- **The other unverifiable case is untouched.** A Run with no usable track — old history from before
+  the app kept one, or a Run whose every fix was too vague to trust — still contests no distance
+  Record. It carries a total measured against ground nobody can now see, and unlike a treadmill Run
+  nobody has stood behind that number since.
+- **A treadmill Run shows no live distance or pace while it is being run.** The number arrives after
+  the Run, from a console that was in front of the runner the whole time. Nothing is lost by the
+  phone learning it late.
+- **A distance nobody stated reads as a dash, not as `0.00 km`** — on the History row and on the
+  Run's own page, for every Run with no distance rather than as a treadmill special case. A zero was
+  always a lie about a treadmill Run; it is the same lie about an outdoor Run the GPS lost.
+- **A stated distance has to be correctable.** It reaches the volume, the coach, graduation and the
+  record book, so a mistyped one is not a cosmetic error and cannot be write-once. It is editable on
+  the Run's page.

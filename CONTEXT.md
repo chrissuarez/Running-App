@@ -69,6 +69,15 @@ One completed kilometre of a Run, and the pace it was covered at. Measured by
 distance, unlike an Interval, which is measured by time.
 _Avoid_: lap, mile
 
+**Stated Distance**:
+How far a treadmill Run went: the number the machine's console showed, told to the app by the
+runner. Stated rather than measured, exactly as a Max HR or a resting heart rate is — the app never
+works it out and never guesses it, and a Run nobody stated one for has no distance at all rather
+than a distance of zero. Every rule that counts distance counts a stated one
+([ADR 0008](docs/adr/0008-a-stated-distance-is-a-real-distance.md)), save a Best Effort, which needs
+a route to find a stretch inside.
+_Avoid_: manual distance, entered distance, treadmill distance
+
 **Best Effort**:
 The fastest continuous stretch of a Run covering one of the record distances —
 1 km, a mile, 5 km, 10 km, a half marathon — measured on the clock, so a walk
