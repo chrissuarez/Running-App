@@ -62,14 +62,38 @@ class RecordsTest {
     }
 
     @Test
-    fun `a treadmill run contests the longest time and nothing else`() {
-        // A treadmill run reports a distance of its own, and it was never measured against ground.
+    fun `a treadmill run's stated distance contests the longest distance`() {
+        // The winter the record book could not see (#231, ADR 0008): a stated distance is a
+        // distance, so the longest Run of an indoor season is the longest Run.
         val run = aRun(runMode = "treadmill").copy(distanceKm = 42.0)
 
         val efforts = bestEffortsOf(run, track = emptyList())
 
-        assertEquals(listOf(RecordType.LONGEST_DURATION), efforts.map { it.type })
+        assertEquals(42_000.0, efforts.valueOf(RecordType.LONGEST_DISTANCE)!!, 0.001)
         assertEquals(600.0, efforts.valueOf(RecordType.LONGEST_DURATION)!!, 0.001)
+    }
+
+    @Test
+    fun `a treadmill run contests none of the fastest five, however far it went`() {
+        // Not a matter of trust: a Best Effort is a stretch found inside the Run, and there is no
+        // track to find one in. Nothing derives one from the average pace to get around that.
+        val run = aRun(runMode = "treadmill").copy(distanceKm = 42.0)
+
+        val efforts = bestEffortsOf(run, track = emptyList())
+
+        assertEquals(
+            listOf(RecordType.LONGEST_DISTANCE, RecordType.LONGEST_DURATION),
+            efforts.map { it.type },
+        )
+    }
+
+    @Test
+    fun `a treadmill run nobody stated a distance for contests the longest time only`() {
+        // Zero is what a Run with no stated distance stores, and it is an absence rather than a Run
+        // of no length — so it enters nothing.
+        val efforts = bestEffortsOf(aRun(runMode = "treadmill"), track = emptyList())
+
+        assertEquals(listOf(RecordType.LONGEST_DURATION), efforts.map { it.type })
     }
 
     @Test
@@ -248,7 +272,7 @@ class RecordsTest {
         val awarded = standingsAfter(book, sessionId = 2, efforts = listOf(anEffort(290.0)))
 
         // Only the type the run had an effort at comes back: the caller rewrites those and nothing
-        // else, so a treadmill run can never disturb the distance records.
+        // else, so a Run that contested one record cannot disturb the six it did not.
         assertEquals(setOf(RecordType.FASTEST_1K), awarded.map { it.type }.toSet())
     }
 

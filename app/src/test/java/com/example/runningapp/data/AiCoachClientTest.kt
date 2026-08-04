@@ -63,8 +63,55 @@ class AiCoachClientTest {
         assertTrue(prompt.contains("whole run including its warm-up and cool-down, so it is NOT a 5K time"))
         assertTrue(
             prompt.contains(
-                "If the stage requirement asks for a 5K in a time, judge it ONLY from fastest5kSeconds."
+                "If the stage requirement asks for a 5K in a time, judge it ONLY from fastest5kSeconds"
             )
+        )
+    }
+
+    @Test
+    fun `a treadmill Run's stated distance can answer a requirement of exactly that distance`() {
+        // The one thing two numbers settle (#231, ADR 0008): a stated distance and a whole-Run
+        // duration are a time over the whole Run. 5 km in 24:30 graduates a 5K in 24:59.
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                graduationRequirement = "Run a 5K in 24:59 or faster.",
+                recentRuns = oneRunWalkSession.recentRuns.map {
+                    it.copy(runMode = "treadmill", distanceKm = 5.0, fastest5kSeconds = null, durationSeconds = 1470)
+                }
+            )
+        )
+
+        assertTrue(prompt.contains("\"runMode\":\"treadmill\""))
+        assertTrue(prompt.contains("\"distanceKm\":5.0"))
+        assertTrue(
+            prompt.contains(
+                "its distanceKm and durationSeconds establish a time for the WHOLE run and nothing shorter"
+            )
+        )
+    }
+
+    @Test
+    fun `a treadmill Run longer than the requirement is declined rather than guessed at`() {
+        // 6 km in 30:00 may hold a sub-25 5K and may not, and the splits to say which were never
+        // handed over. Ruling either way is deriving a best effort from an average pace, which is
+        // what ADR 0008 refuses — with a graduation that cannot be taken back behind it.
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                graduationRequirement = "Run a 5K in 24:59 or faster.",
+                recentRuns = oneRunWalkSession.recentRuns.map {
+                    it.copy(runMode = "treadmill", distanceKm = 6.0, fastest5kSeconds = null, durationSeconds = 1800)
+                }
+            )
+        )
+
+        assertTrue(
+            prompt.contains(
+                "If that treadmill run went FURTHER than the requirement's distance, you cannot tell " +
+                    "how fast the requirement's distance alone was covered"
+            )
+        )
+        assertTrue(
+            prompt.contains("Never divide a distance by a duration to estimate a pace or a shorter-distance time.")
         )
     }
 
