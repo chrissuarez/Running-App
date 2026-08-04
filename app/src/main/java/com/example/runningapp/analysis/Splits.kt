@@ -1,5 +1,6 @@
 package com.example.runningapp.analysis
 
+import com.example.runningapp.HrProfile
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.MeasuredTrack
 import com.example.runningapp.data.RunnerSession
@@ -77,8 +78,18 @@ data class Split(
  *   moment — but a run backfilled from sparse breadcrumbs can have legs hundreds of metres long, and
  *   rounding each boundary out to the next fix would push whole splits out of shape.
  */
-internal fun groundOf(run: RunnerSession, samples: List<HrSample>, track: List<TrackPoint>): RunGround {
-    val nothing = RunGround(splits = emptyList(), elevationGainMeters = null, distanceChart = null)
+internal fun groundOf(
+    run: RunnerSession,
+    samples: List<HrSample>,
+    track: List<TrackPoint>,
+    profile: HrProfile?,
+): RunGround {
+    val nothing = RunGround(
+        splits = emptyList(),
+        elevationGainMeters = null,
+        distanceChart = null,
+        trackMap = null,
+    )
     if (RunMode.ofSettingValue(run.runMode) == RunMode.TREADMILL) return nothing
     val measured = measureTrack(track)
     if (measured.legs.isEmpty()) return nothing
@@ -92,6 +103,7 @@ internal fun groundOf(run: RunnerSession, samples: List<HrSample>, track: List<T
         // summary quotes, because it is the one asked about the whole run.
         elevationGainMeters = elevation?.gainMetersBetween(0, measured.points.lastIndex),
         distanceChart = distanceChartOf(measured, elevation, bpmByWallSecond),
+        trackMap = trackMapOf(measured, bpmByWallSecond, profile),
     )
 }
 
@@ -107,6 +119,7 @@ internal data class RunGround(
     val splits: List<Split>,
     val elevationGainMeters: Double?,
     val distanceChart: DistanceChart?,
+    val trackMap: TrackMap?,
 )
 
 /** The run's legs walked once, banking a split each time a kilometre of recorded ground is behind. */

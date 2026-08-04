@@ -664,6 +664,13 @@ class MainActivity : ComponentActivity() {
                                 intervalStats = sessionIntervalStats,
                                 trackPoints = sessionTrack,
                                 achievements = sessionAchievements,
+                                // The maximum history is banded against rather than the one in
+                                // force: a future-only Max HR correction must not recolour a run's
+                                // route away from the zone bars further down its own page.
+                                hrProfile = HrProfile(
+                                    maxHr = userSettings.historyMaxHr,
+                                    restingHr = userSettings.restingHr
+                                ),
                                 onDeleteSession = { id ->
                                     sessionDetailViewModel.deleteSession(id)
                                 },

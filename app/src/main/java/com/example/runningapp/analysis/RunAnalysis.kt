@@ -1,5 +1,6 @@
 package com.example.runningapp.analysis
 
+import com.example.runningapp.HrProfile
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
@@ -39,6 +40,11 @@ data class RunAnalysis(
      * in, and it is all a Run with no route has to offer.
      */
     val distanceChart: DistanceChart? = null,
+    /**
+     * The Run's route as the map draws it (#47) — null for a treadmill Run, and for any Run whose
+     * recording holds no route, which is the page's signal to show no map at all.
+     */
+    val trackMap: TrackMap? = null,
 ) {
     companion object {
         /**
@@ -61,18 +67,25 @@ data class RunAnalysis(
          * in would read as a sprint and put a split on the page nobody ran. Defaults to nothing, so
          * a caller that only wants the chart (a treadmill Run, a Run whose track has not loaded yet)
          * need not pretend to have one.
+         *
+         * [profile] is the heart rates history is banded against — the Run's route is coloured by
+         * the zones they slice (#47), so the map and the zone bars below it are reading the same
+         * Run under the same numbers. Null where they are not known, and the route is then drawn in
+         * one colour rather than in guessed ones.
          */
         fun of(
             run: RunnerSession,
             samples: List<HrSample>,
             track: List<TrackPoint> = emptyList(),
+            profile: HrProfile? = null,
         ): RunAnalysis {
-            val ground = groundOf(run, samples, track)
+            val ground = groundOf(run, samples, track, profile)
             return RunAnalysis(
                 chart = heartRateChart(run, samples),
                 splits = ground.splits,
                 elevationGainMeters = ground.elevationGainMeters,
                 distanceChart = ground.distanceChart,
+                trackMap = ground.trackMap,
             )
         }
 
