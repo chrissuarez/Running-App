@@ -1,7 +1,9 @@
 package com.example.runningapp.ui
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -38,6 +40,23 @@ class StatedDistanceTest {
         assertNull(statedDistanceKmOf("-4"))
         assertNull(statedDistanceKmOf("five"))
         assertNull(statedDistanceKmOf("5.2.1"))
+    }
+
+    @Test
+    fun `something typed that is not a distance is rejected rather than ignored`() {
+        // What holds Save shut at the finish, so an unreadable number is never dropped silently.
+        assertTrue(statedDistanceIsRejected("0"))
+        assertTrue(statedDistanceIsRejected("-4"))
+        assertTrue(statedDistanceIsRejected("five"))
+        assertTrue(statedDistanceIsRejected("5.2.1"))
+    }
+
+    @Test
+    fun `saying nothing is not a rejection`() {
+        // A blank field is a runner who did not state a distance, which is allowed everywhere.
+        assertFalse(statedDistanceIsRejected(""))
+        assertFalse(statedDistanceIsRejected("   "))
+        assertFalse(statedDistanceIsRejected("5,2"))
     }
 
     @Test
