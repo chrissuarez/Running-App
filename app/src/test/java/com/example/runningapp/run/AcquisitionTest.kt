@@ -278,7 +278,11 @@ class AcquisitionScanTest {
             ctx(canConnect = false),
         )
         assertEquals(
-            AcquisitionPhase.Blocked(AcquisitionBlock.PermissionMissing),
+            // A scan has no Strap of its own, but the tap that ended it does.
+            AcquisitionPhase.Blocked(
+                AcquisitionBlock.PermissionMissing,
+                InterruptedStrap(STRAP, "Polar H10"),
+            ),
             outcome.state.phase,
         )
         assertEquals(listOf(AcquisitionEffect.StopScan), outcome.effects)
@@ -519,7 +523,10 @@ class AcquisitionConnectTest {
             ctx(canConnect = false),
         )
         assertEquals(
-            AcquisitionPhase.Blocked(AcquisitionBlock.PermissionMissing),
+            AcquisitionPhase.Blocked(
+                AcquisitionBlock.PermissionMissing,
+                InterruptedStrap(STRAP, "Polar H10"),
+            ),
             outcome.state.phase,
         )
         assertFalse(outcome.state.inFlight)
@@ -533,7 +540,12 @@ class AcquisitionConnectTest {
             ctx(bluetoothOn = false),
         )
         assertEquals(
-            AcquisitionPhase.Blocked(AcquisitionBlock.BluetoothUnavailable),
+            // The tap is remembered even from Idle: mid-Run it is what the adapter coming back
+            // chases, and pre-Run nothing reads it (#224).
+            AcquisitionPhase.Blocked(
+                AcquisitionBlock.BluetoothUnavailable,
+                InterruptedStrap(STRAP, "Polar H10"),
+            ),
             outcome.state.phase,
         )
     }
@@ -1595,5 +1607,102 @@ class AcquisitionAdapterMidRunTest {
         )
         assertEquals(AcquisitionPhase.Idle, outcome.state.phase)
         assertTrue(outcome.effects.isEmpty())
+    }
+
+    @Test
+    fun `a strap tapped during the outage is the one the adapter coming back chases`() {
+        // Manage Devices lists saved Straps whether or not the adapter is on, so a runner whose
+        // heart rate has just died can tap the other one mid-outage. That tap is the newer intent:
+        // resuming the Strap it asked to replace would connect the wrong one and look like the tap
+        // was never registered.
+        val blocked = blockedMidOutage()
+        val asked = Acquisition.decide(
+            blocked,
+            AcquisitionEvent.ConnectRequested(OTHER, "Other Strap", makeActive = true),
+            ctx(runIsLive = true, bluetoothOn = false),
+        )
+        assertEquals(
+            AcquisitionPhase.Blocked(
+                AcquisitionBlock.BluetoothUnavailable,
+                InterruptedStrap(OTHER, "Other Strap"),
+            ),
+            asked.state.phase,
+        )
+        assertTrue(asked.effects.isEmpty())
+
+        val backOn = Acquisition.decide(
+            asked.state,
+            AcquisitionEvent.BluetoothStateChanged(on = true),
+            midRun,
+        )
+        assertEquals(
+            AcquisitionPhase.Connecting(
+                address = OTHER,
+                name = "Other Strap",
+                promoteOnVerify = false,
+                attempt = 0,
+                nextDelayMs = FIRST_RETRY_DELAY_MS,
+            ),
+            backOn.state.phase,
+        )
+        assertEquals(listOf(AcquisitionEffect.ConnectGatt(OTHER)), backOn.effects)
+    }
+
+    @Test
+    fun `a nameless strap tapped during the outage is remembered by its address`() {
+        val asked = Acquisition.decide(
+            blockedMidOutage(),
+            AcquisitionEvent.ConnectRequested(OTHER, name = null, makeActive = true),
+            ctx(runIsLive = true, bluetoothOn = false),
+        )
+        assertEquals(
+            AcquisitionPhase.Blocked(
+                AcquisitionBlock.BluetoothUnavailable,
+                InterruptedStrap(OTHER, OTHER),
+            ),
+            asked.state.phase,
+        )
+    }
+
+    @Test
+    fun `a strap tapped without the permission is remembered too`() {
+        // PermissionMissing is the end of the road for the resume, but the memory should still name
+        // what was actually asked for: a later block carries it forward, and a stale Strap riding
+        // along would be a lie about what the runner chose.
+        val asked = Acquisition.decide(
+            blockedMidOutage(),
+            AcquisitionEvent.ConnectRequested(OTHER, "Other Strap", makeActive = true),
+            ctx(runIsLive = true, canScan = false, canConnect = false, bluetoothOn = false),
+        )
+        assertEquals(
+            AcquisitionPhase.Blocked(
+                AcquisitionBlock.PermissionMissing,
+                InterruptedStrap(OTHER, "Other Strap"),
+            ),
+            asked.state.phase,
+        )
+    }
+
+    @Test
+    fun `tapping a strap pre-run still leaves the record screen to pick one up`() {
+        // The tap is remembered the same way, but nothing resumes off it pre-Run: Idle is where the
+        // record screen's auto-connect takes over, and it owns the question of what to connect.
+        val blocked = Acquisition.decide(
+            connectedTo(STRAP),
+            AcquisitionEvent.BluetoothStateChanged(on = false),
+            ctx(),
+        ).state
+        val asked = Acquisition.decide(
+            blocked,
+            AcquisitionEvent.ConnectRequested(OTHER, "Other Strap", makeActive = true),
+            ctx(bluetoothOn = false),
+        )
+        val backOn = Acquisition.decide(
+            asked.state,
+            AcquisitionEvent.BluetoothStateChanged(on = true),
+            ctx(),
+        )
+        assertEquals(AcquisitionPhase.Idle, backOn.state.phase)
+        assertTrue(backOn.effects.isEmpty())
     }
 }
