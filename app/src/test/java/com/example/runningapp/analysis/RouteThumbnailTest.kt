@@ -117,10 +117,14 @@ class RouteThumbnailTest {
      * A phone left on a desk does not record the same point sixty times: accepted fixes wander tens
      * of metres around a runner who never moved. Scaled to fill the square, that wander is the most
      * confident-looking drawing in the list and means nothing at all.
+     *
+     * Wandered 28 m in each direction, which a fix accepted at the 30 m gate is entitled to and
+     * then some — two such fixes can sit 60 m apart with nobody having moved, which is where the
+     * minimum comes from.
      */
     @Test
     fun `a run that only wandered where it stood is not drawn`() {
-        assertNull(thumbnailOf(route { jitteredInPlace(seconds = 60, meters = 20.0) }))
+        assertNull(thumbnailOf(route { jitteredInPlace(seconds = 60, meters = 28.0) }))
     }
 
     /**
