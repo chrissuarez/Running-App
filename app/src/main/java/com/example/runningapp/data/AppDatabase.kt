@@ -138,6 +138,12 @@ data class MaxSessionLoad30dProjection(
     val maxDurationSeconds: Long?
 )
 
+/** How many medals one Run holds — what the trophy badge on its History row counts (#51). */
+data class SessionMedalCount(
+    val sessionId: Long,
+    val medals: Int
+)
+
 object TrackPointSource {
     const val GPS = "GPS"
     const val BACKFILL = "BACKFILL"
@@ -222,6 +228,17 @@ interface AchievementDao {
     /** What one Run won, for its own page. */
     @Query("SELECT * FROM achievements WHERE sessionId = :sessionId")
     fun getAchievementsForSessionFlow(sessionId: Long): Flow<List<Achievement>>
+
+    /**
+     * How many medals each Run holds, counted in the database rather than by reading the book out
+     * and tallying it here (#51).
+     *
+     * The whole history in one row per Run that won anything, because the History list asks about
+     * twenty Runs at once and a query per row is twenty round trips to draw one screen. A Run with
+     * no medals is simply absent, which is the same answer as a zero.
+     */
+    @Query("SELECT sessionId, COUNT(*) AS medals FROM achievements GROUP BY sessionId")
+    fun getMedalCountsFlow(): Flow<List<SessionMedalCount>>
 
     /**
      * What Runs about to be deleted hold, asked once (#50).

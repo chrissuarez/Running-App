@@ -3,17 +3,92 @@ package com.example.runningapp.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.runningapp.analysis.RouteThumbnail
+import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.SessionRepository
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+/**
+ * One run as the History list shows it (#51): the recording, what it won, and where it went.
+ *
+ * [thumbnail] is null for a treadmill run, for a run with no route worth drawing, and — briefly —
+ * for an outdoor run whose route is still being read. The row draws nothing in all three cases, so
+ * a route arriving a moment after the list does is a drawing appearing rather than a row moving.
+ */
+data class HistoryRow(
+    val session: RunnerSession,
+    val medals: Int,
+    val thumbnail: RouteThumbnail?,
+)
 
 class HistoryViewModel(
-    private val sessionRepository: SessionRepository
+    private val sessionRepository: SessionRepository,
+    /** Where a route's shape is worked out — anywhere but the thread drawing the list. */
+    private val routeDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
 
     private val _selectedSessionIds = MutableStateFlow<Set<Long>>(emptySet())
     val selectedSessionIds = _selectedSessionIds.asStateFlow()
+
+    /**
+     * The routes worked out so far, kept for as long as the list is.
+     *
+     * Held here rather than re-read per emission because the list re-emits for reasons that have
+     * nothing to do with routes — a medal scored, a run deleted, a selection made — and a run's
+     * route cannot change once it is finished.
+     *
+     * A run with nothing to draw is kept as a null rather than left out, so "asked and there is no
+     * route" is not read back as "not asked yet" and re-read for the life of the screen.
+     */
+    private val thumbnails = MutableStateFlow<Map<Long, RouteThumbnail?>>(emptyMap())
+
+    val rows: StateFlow<List<HistoryRow>> = combine(
+        sessionRepository.recentSessionsFlow(),
+        sessionRepository.medalCountsFlow(),
+        thumbnails,
+    ) { sessions, medals, drawn ->
+        sessions.map { session ->
+            HistoryRow(
+                session = session,
+                medals = medals[session.id] ?: 0,
+                thumbnail = drawn[session.id],
+            )
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    init {
+        drawRoutesAsRunsArrive()
+    }
+
+    /**
+     * Works out the shape of each outdoor run's route, newest first, one at a time.
+     *
+     * Off the list's path entirely: the rows are handed over the moment the database has them, and
+     * each route appears in its row as it is worked out — on [routeDispatcher], never on the thread
+     * drawing the list, and never twice for the same run.
+     */
+    private fun drawRoutesAsRunsArrive() {
+        viewModelScope.launch {
+            sessionRepository.recentSessionsFlow().collect { sessions ->
+                sessions.filter { it.runMode == "outdoor" && !thumbnails.value.containsKey(it.id) }
+                    .forEach { session ->
+                        val drawn = withContext(routeDispatcher) {
+                            sessionRepository.getRouteThumbnail(session.id)
+                        }
+                        thumbnails.value += session.id to drawn
+                    }
+            }
+        }
+    }
 
     fun toggleSelection(sessionId: Long) {
         _selectedSessionIds.value = if (_selectedSessionIds.value.contains(sessionId)) {

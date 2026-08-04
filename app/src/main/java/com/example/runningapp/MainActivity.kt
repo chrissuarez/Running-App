@@ -309,7 +309,10 @@ class MainActivity : ComponentActivity() {
                     val gpxShareReady by sessionDetailViewModel.gpxShareReady.collectAsState()
                     val gpxShareFailed by sessionDetailViewModel.gpxShareFailed.collectAsState()
                     val selectedSessionIds by historyViewModel.selectedSessionIds.collectAsState()
-                    val historySessions by database.sessionDao().getLast20Sessions().collectAsState(initial = emptyList())
+                    // Through the view model rather than straight off the DAO: a History row is the
+                    // run plus what it won and where it went (#51), and only the view model has
+                    // those.
+                    val historyRows by historyViewModel.rows.collectAsState()
 
                     val forceMainSignal by forceMainToken
                     LaunchedEffect(forceMainSignal) {
@@ -588,7 +591,7 @@ class MainActivity : ComponentActivity() {
                         }
                         composable(Routes.HISTORY) {
                             HistoryScreen(
-                                sessions = historySessions,
+                                rows = historyRows,
                                 selectedSessionIds = selectedSessionIds,
                                 onToggleSelection = { id -> historyViewModel.toggleSelection(id) },
                                 onClearSelection = { historyViewModel.clearSelection() },
