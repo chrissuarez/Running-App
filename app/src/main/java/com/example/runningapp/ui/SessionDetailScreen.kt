@@ -2,6 +2,7 @@ package com.example.runningapp.ui
 
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
@@ -26,6 +27,7 @@ import com.example.runningapp.data.Achievement
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.data.isFinished
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.computeRunWalkIntervalAnalytics
 import com.example.runningapp.data.averagePace
@@ -54,6 +56,9 @@ fun SessionDetailScreen(
     hrProfile: HrProfile? = null,
     onDeleteSession: (Long) -> Unit,
     onBack: () -> Unit,
+    // How far a treadmill Run went, told to the app (#231). Null means the number would be refused
+    // anyway — an outdoor Run, or a Run still being recorded — and the card is then read-only.
+    onStateDistance: ((Long, Double?) -> Unit)? = null,
     // A run with no recorded GPS track — a treadmill run, or history from before #37 — has nothing to
     // put in a GPX file, so Share is left off the bar entirely rather than offered greyed out (#84).
     canShareGpx: Boolean = false,
@@ -162,7 +167,15 @@ fun SessionDetailScreen(
                     Spacer(modifier = Modifier.height(24.dp))
                 }
 
-                SummaryStats(session, elevationGainMeters = analysis.elevationGainMeters)
+                SummaryStats(
+                    session = session,
+                    elevationGainMeters = analysis.elevationGainMeters,
+                    // Asked of the Run rather than of the screen: only a finished treadmill Run can
+                    // be told a distance, and the repository refuses anything else regardless.
+                    onStateDistance = onStateDistance
+                        ?.takeIf { session.isFinished() && session.runMode == "treadmill" }
+                        ?.let { state -> { km: Double? -> state(session.id, km) } },
+                )
                 Spacer(modifier = Modifier.height(24.dp))
 
                 if (achievements.isNotEmpty()) {
@@ -251,10 +264,34 @@ private fun RunChartSection(analysis: RunAnalysis, scrubber: ChartScrubber) {
     }
 }
 
+/**
+ * The Run's numbers.
+ *
+ * [onStateDistance] is how far the Run went, told to the app — offered only where a distance can be
+ * stated at all, which is a finished treadmill Run and nothing else (#231, ADR 0008). Null leaves
+ * the card read-only, which is what an outdoor Run gets: its distance is measured, and one whose GPS
+ * recorded nothing is deliberately not rescued this way.
+ */
 @Composable
-fun SummaryStats(session: RunnerSession, elevationGainMeters: Double? = null) {
+fun SummaryStats(
+    session: RunnerSession,
+    elevationGainMeters: Double? = null,
+    onStateDistance: ((Double?) -> Unit)? = null,
+) {
     val sdf = SimpleDateFormat("EEEE, MMM d, yyyy 'at' HH:mm", Locale.getDefault())
     val dateStr = sdf.format(Date(session.startTime))
+    var showDistanceDialog by remember { mutableStateOf(false) }
+
+    if (showDistanceDialog && onStateDistance != null) {
+        StatedDistanceDialog(
+            distanceKm = session.distanceKm,
+            onDismiss = { showDistanceDialog = false },
+            onState = { km ->
+                showDistanceDialog = false
+                onStateDistance(km)
+            }
+        )
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
@@ -295,23 +332,44 @@ fun SummaryStats(session: RunnerSession, elevationGainMeters: Double? = null) {
                 StatLarge(label = "In Target", value = formatDurationLarge(session.inTargetZoneSeconds))
             }
 
-            if (session.runMode == "outdoor") {
-                Spacer(modifier = Modifier.height(16.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    StatLarge(label = "Distance", value = "%.2f km".format(session.distanceKm))
-                    // Derived, not read from the stored column (#163). The label says which clock
-                    // the number is over, because it is not always the same one: a measured run is
-                    // paced over its moving time, and a treadmill run or one with no usable track
-                    // falls back to its duration. #163 asked for that to be said rather than left
-                    // to be inferred from whether the Moving row above happens to be there.
-                    val paceLabel = session.averagePaceText
-                        .let { if (session.averagePace > 0) "$it min/km" else it }
-                    StatLarge(
-                        label = if (session.movingTimeSeconds != null) "Avg Pace (moving)" else "Avg Pace",
-                        value = paceLabel
-                    )
-                }
+            // On every Run, not only an outdoor one (#231). A treadmill Run can be told how far it
+            // went, and a Run with no distance says so with a dash rather than with "0.00 km",
+            // which was always a lie about a treadmill Run and is the same lie about an outdoor Run
+            // the GPS lost.
+            Spacer(modifier = Modifier.height(16.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                StatLarge(
+                    label = "Distance",
+                    value = if (session.distanceKm > 0.0) "%.2f km".format(session.distanceKm) else "--"
+                )
+                // Derived, not read from the stored column (#163). The label says which clock
+                // the number is over, because it is not always the same one: a measured run is
+                // paced over its moving time, and a treadmill run or one with no usable track
+                // falls back to its duration. #163 asked for that to be said rather than left
+                // to be inferred from whether the Moving row above happens to be there.
+                val paceLabel = session.averagePaceText
+                    .let { if (session.averagePace > 0) "$it min/km" else it }
+                StatLarge(
+                    label = if (session.movingTimeSeconds != null) "Avg Pace (moving)" else "Avg Pace",
+                    value = paceLabel
+                )
+            }
 
+            // The way in for a number the app cannot measure. On the Run's own page rather than only
+            // on the sheet at the finish, because a Stated Distance has to be correctable: it
+            // reaches the volume, the coach and the record book, so a mistyped one is not cosmetic
+            // (ADR 0008).
+            if (onStateDistance != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(
+                    onClick = { showDistanceDialog = true },
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text(if (session.distanceKm > 0.0) "Correct the distance" else "Add the distance")
+                }
+            }
+
+            if (session.runMode == "outdoor") {
                 // Only when the run recorded a height to climb (#45). A run whose track is
                 // backfilled breadcrumbs carries a position and nothing else, and a confident
                 // "0 m" would be a claim about the ground rather than about the recording.
