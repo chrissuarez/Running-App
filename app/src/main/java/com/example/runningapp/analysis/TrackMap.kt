@@ -30,8 +30,14 @@ data class TrackMap(
     val start: MapFix,
     val finish: MapFix,
 ) {
-    /** Every fix the map draws, for framing the camera on the route as a whole. */
-    val framedFixes: List<MapFix> get() = stretches.flatMap { it.fixes }
+    /**
+     * Everything the map draws, for framing the camera on the route as a whole.
+     *
+     * The markers are in it as well as the lines, because they are not always on one: a Run that
+     * paused in its opening seconds starts at a fix no line holds, and framing on the lines alone
+     * would push its own start marker off the edge of the card.
+     */
+    val framedFixes: List<MapFix> get() = stretches.flatMap { it.fixes } + start + finish
 }
 
 /** One fix of the Run as the map needs it: where, and nothing else. */
@@ -79,7 +85,7 @@ internal fun trackMapOf(
     val legs = measured.legs
     if (legs.isEmpty()) return null
 
-    val zoneAtFix = zoneAtEachFix(points, legs.brokenAt(), bpmByWallSecond, profile)
+    val zoneAtFix = zoneAtEachFix(points, stretchOfEachFix(legs), bpmByWallSecond, profile)
 
     val stretches = mutableListOf<TrackStretch>()
     var fixes = mutableListOf<MapFix>()
@@ -114,24 +120,7 @@ internal fun trackMapOf(
     )
 }
 
-/**
- * Which unbroken stretch of the recording each fix belongs to — the number goes up at every break.
- *
- * The same walk [distanceChartOf] makes, and for the same reason: a fix that resumes the recording
- * has nothing before it to have been measured over.
- */
-private fun List<com.example.runningapp.data.TrackLeg>.brokenAt(): IntArray {
-    val stretchOfFix = IntArray(size + 1)
-    forEachIndexed { i, leg -> stretchOfFix[i + 1] = stretchOfFix[i] + if (leg.recorded) 0 else 1 }
-    return stretchOfFix
-}
-
-/**
- * The zone every heart rate recorded since the previous fix averages to, at each fix.
- *
- * The first fix of each stretch counts only its own second: the beats before it were measured over
- * ground the recording did not witness.
- */
+/** The zone the heart rates measured over the ground since the previous fix average to, at each fix. */
 private fun zoneAtEachFix(
     points: List<TrackPoint>,
     stretchOfFix: IntArray,
@@ -139,13 +128,7 @@ private fun zoneAtEachFix(
     profile: HrProfile?,
 ): List<HrZone?> {
     if (profile == null) return points.map { null }
-    val secondAtFix = points.map { it.timestampMillis / 1000 }
-    return points.indices.map { i ->
-        val startsStretch = i == 0 || stretchOfFix[i] != stretchOfFix[i - 1]
-        val since = if (startsStretch) secondAtFix[i] - 1 else secondAtFix[i - 1]
-        bpmByWallSecond.averageBetween(afterSecond = since, toSecond = secondAtFix[i])
-            ?.let { hrZoneOf(it, profile) }
-    }
+    return bpmAtEachFix(points, stretchOfFix, bpmByWallSecond).map { it?.let { bpm -> hrZoneOf(bpm, profile) } }
 }
 
 private fun TrackPoint.asMapFix() = MapFix(latitude = latitude, longitude = longitude)

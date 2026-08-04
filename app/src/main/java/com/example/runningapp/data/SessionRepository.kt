@@ -15,6 +15,7 @@ import com.example.runningapp.clearedBy
 import com.example.runningapp.isCoachAdjusted
 import com.example.runningapp.HrProfile
 import com.example.runningapp.effectiveMaxHr
+import com.example.runningapp.historyHrProfile
 import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
 import com.example.runningapp.analysis.BestEffort
@@ -381,7 +382,7 @@ class SessionRepository(
         // correction. Banding this Run on the current maximum would land it beside runs on the
         // earlier one — the very drag the one-shot exists to prevent, arriving one Run at a time.
         val current = settings.userSettingsFlow.first()
-        val profile = HrProfile(maxHr = current.historyMaxHr, restingHr = current.restingHr)
+        val profile = current.historyHrProfile
         var rescued = 0
         interruptedIds.forEach { sessionId ->
             try {

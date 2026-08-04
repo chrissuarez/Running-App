@@ -4,6 +4,7 @@ import com.example.runningapp.HrProfile
 import com.example.runningapp.HrZone
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.data.TrackPoint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
@@ -132,6 +133,21 @@ class TrackMapTest {
     }
 
     @Test
+    fun `the camera is framed on the markers as well as the lines`() {
+        val run = aRun()
+        // Paused in its opening seconds: the fix the runner set off from is on no drawn line at
+        // all, and framing on the lines alone would put the start marker off the edge of the card.
+        val track = script {
+            pauseAndMoveOn(meters = 300.0, seconds = 60)
+            running(speedMps = 3.0, seconds = 5)
+        }
+
+        val map = requireNotNull(analyse(run, track, beats(run, 0..80, 140)).trackMap)
+
+        assertTrue(map.framedFixes.containsAll(listOf(map.start, map.finish)))
+    }
+
+    @Test
     fun `a treadmill run has no route to draw`() {
         val run = aRun(runMode = "treadmill")
 
@@ -180,7 +196,7 @@ class TrackMapTest {
         assertTrue(map.stretches.all { it.fixes.size >= 2 })
     }
 
-    private fun analyse(run: RunnerSession, track: List<com.example.runningapp.data.TrackPoint>, samples: List<HrSample>) =
+    private fun analyse(run: RunnerSession, track: List<TrackPoint>, samples: List<HrSample>) =
         RunAnalysis.of(run, samples, track, profile)
 
     /** One heart rate per second of [seconds], all of them [bpm]. */

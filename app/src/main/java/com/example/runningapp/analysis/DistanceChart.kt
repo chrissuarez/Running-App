@@ -175,28 +175,17 @@ internal fun distanceChartOf(
     val legs = measured.legs
     if (legs.isEmpty()) return null
 
-    // Where along the run each fix sits, and which unbroken stretch it belongs to. A leg that
-    // recorded nothing carries no ground, so the axis does not advance across a break.
+    // Where along the run each fix sits. A leg that recorded nothing carries no ground, so the axis
+    // does not advance across a break.
     val distanceAtFix = DoubleArray(points.size)
-    val stretchOfFix = IntArray(points.size)
-    legs.forEachIndexed { i, leg ->
-        distanceAtFix[i + 1] = distanceAtFix[i] + leg.meters
-        stretchOfFix[i + 1] = stretchOfFix[i] + if (leg.recorded) 0 else 1
-    }
+    legs.forEachIndexed { i, leg -> distanceAtFix[i + 1] = distanceAtFix[i] + leg.meters }
+    val stretchOfFix = stretchOfEachFix(legs)
     val span = distanceAtFix.last()
     if (span <= 0.0) return null
 
     val pace = measured.smoothedPaceAtEachFix(distanceAtFix, stretchOfFix)
     val heights = elevation?.metersAtFix
-    // Every heart rate recorded since the previous fix, so a sparsely recorded track folds its beats
-    // in rather than throwing all but one of them away. The first fix of each stretch counts only
-    // its own second: the beats before it were measured over ground the recording did not witness.
-    val secondAtFix = points.map { it.timestampMillis / 1000 }
-    val bpm = points.indices.map { i ->
-        val startsStretch = i == 0 || stretchOfFix[i] != stretchOfFix[i - 1]
-        val since = if (startsStretch) secondAtFix[i] - 1 else secondAtFix[i - 1]
-        bpmByWallSecond.averageBetween(afterSecond = since, toSecond = secondAtFix[i])
-    }
+    val bpm = bpmAtEachFix(points, stretchOfFix, bpmByWallSecond)
 
     // Heights are re-stated against the Run's own lowest point before anything is drawn or read
     // out, so no absolute height reaches the screen. See [DistancePoint.metersAboveLowestPoint].
@@ -364,13 +353,6 @@ private const val MAX_DISTANCE_TICKS = 6
 /** A distance as a runner reads it: kilometres to two places, or whole metres under one. */
 fun formatDistance(meters: Double): String =
     if (meters < 1_000) "${meters.roundToInt()} m" else "%.2f km".format(meters / 1_000)
-
-/** The average of every heart rate recorded in `(afterSecond, toSecond]`, or null where none was. */
-internal fun Map<Long, Int>.averageBetween(afterSecond: Long, toSecond: Long): Int? {
-    if (isEmpty()) return null
-    val readings = ((afterSecond + 1)..toSecond).mapNotNull { this[it] }
-    return if (readings.isEmpty()) null else readings.average().roundToInt()
-}
 
 /**
  * The band the silhouette's scale runs between, or null when the Run recorded no height at all —
