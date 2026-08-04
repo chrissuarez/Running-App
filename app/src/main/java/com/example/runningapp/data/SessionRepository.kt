@@ -20,6 +20,8 @@ import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
 import com.example.runningapp.analysis.BestEffort
 import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.analysis.RouteThumbnail
+import com.example.runningapp.analysis.routeThumbnailOf
 import com.example.runningapp.analysis.RunEfforts
 import com.example.runningapp.analysis.recordBookOf
 import com.example.runningapp.analysis.standingsAfter
@@ -342,6 +344,32 @@ class SessionRepository(
 
     /** One-shot read of a finished run, for callers that need it once rather than as a stream. */
     suspend fun getSession(sessionId: Long): RunnerSession? = sessionDao.getSessionById(sessionId)
+
+    /** The runs the History list shows, newest first. */
+    fun recentSessionsFlow(): Flow<List<RunnerSession>> = sessionDao.getLast20Sessions()
+
+    /**
+     * How many medals each run holds, keyed by run, for the History list's trophy badges (#51).
+     *
+     * A stream, so a run scored the moment it finishes gets its badge without the list being left
+     * and re-entered. Empty where records are not wired at all.
+     */
+    fun medalCountsFlow(): Flow<Map<Long, Int>> =
+        achievementDao?.getMedalCountsFlow()?.map { counts ->
+            counts.associate { it.sessionId to it.medals }
+        } ?: flowOf(emptyMap())
+
+    /**
+     * The shape of a run's route, for the drawing beside it in the History list (#51).
+     *
+     * Thousands of fixes read and walked, so it belongs on a thread the runner is not waiting on —
+     * this is asked for a screenful of runs at a time while they are scrolling them. The caller
+     * chooses that thread ([com.example.runningapp.ui.HistoryViewModel]).
+     *
+     * Null for a run with no route: a treadmill run, or one whose fixes were all too poor to draw.
+     */
+    suspend fun getRouteThumbnail(sessionId: Long): RouteThumbnail? =
+        routeThumbnailOf(measureTrack(getTrackPointsForMap(sessionId)))
 
     /**
      * Finishes any Run a previous process left interrupted, from the seconds it already wrote (#192).
