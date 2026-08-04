@@ -366,7 +366,7 @@ fun formatDistance(meters: Double): String =
     if (meters < 1_000) "${meters.roundToInt()} m" else "%.2f km".format(meters / 1_000)
 
 /** The average of every heart rate recorded in `(afterSecond, toSecond]`, or null where none was. */
-private fun Map<Long, Int>.averageBetween(afterSecond: Long, toSecond: Long): Int? {
+internal fun Map<Long, Int>.averageBetween(afterSecond: Long, toSecond: Long): Int? {
     if (isEmpty()) return null
     val readings = ((afterSecond + 1)..toSecond).mapNotNull { this[it] }
     return if (readings.isEmpty()) null else readings.average().roundToInt()

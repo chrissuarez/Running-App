@@ -10,12 +10,14 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
+import com.example.runningapp.HrProfile
 import com.example.runningapp.HrZone
 import com.example.runningapp.analysis.RunAnalysis
 import com.example.runningapp.analysis.runHeadline
@@ -47,6 +49,9 @@ fun SessionDetailScreen(
     // What this run took a medal for (#49). Empty for the runs that won nothing, which is most of
     // them, and for every run finished before the record book existed — #50 scores those.
     achievements: List<Achievement> = emptyList(),
+    // The heart rates history is banded against, which the route map colours its zones by (#47).
+    // Null where they are not known, and the route is then drawn in one colour.
+    hrProfile: HrProfile? = null,
     onDeleteSession: (Long) -> Unit,
     onBack: () -> Unit,
     // A run with no recorded GPS track — a treadmill run, or history from before #37 — has nothing to
@@ -57,6 +62,9 @@ fun SessionDetailScreen(
     onShareFailureShown: () -> Unit = {}
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    // Kept across a rotation or a process death, so a runner who turned the phone sideways to look
+    // at their route is still looking at it afterwards.
+    var showFullScreenMap by rememberSaveable { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(shareFailed) {
@@ -64,6 +72,25 @@ fun SessionDetailScreen(
             snackbarHostState.showSnackbar("Couldn't create the GPX file for this run")
             onShareFailureShown()
         }
+    }
+
+    // Worked out once per set of recordings rather than on every recomposition: a long run is
+    // thousands of samples and thousands of fixes, and the runner's finger on the scrubber
+    // recomposes this screen many times a second.
+    val analysis = remember(session, samples, trackPoints, hrProfile) {
+        session?.let { RunAnalysis.of(it, samples, trackPoints, hrProfile) }
+    }
+
+    // The full-screen map replaces the page rather than being a destination of its own: the route is
+    // already worked out here, and closing it puts the runner back exactly where they were (#47).
+    val trackMap = analysis?.trackMap
+    if (session != null && showFullScreenMap && trackMap != null) {
+        RunTrackMapFullScreen(
+            trackMap = trackMap,
+            title = runHeadline(session),
+            onBack = { showFullScreenMap = false }
+        )
+        return
     }
 
     Scaffold(
@@ -96,7 +123,9 @@ fun SessionDetailScreen(
             )
         }
     ) { padding ->
-        if (session == null) {
+        // Both or neither: the analysis is worked out from the run, so it is only missing while the
+        // run itself is still being read.
+        if (session == null || analysis == null) {
             Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
@@ -109,14 +138,11 @@ fun SessionDetailScreen(
                     .padding(RunningUiTokens.PagePadding)
             ) {
                 // The page's order (#43): route map, summary, achievements, splits, chart, then the
-                // coaching cards the app already had. The map and the achievements card arrive with
-                // their own tickets (#47, #49) and are simply absent until then.
-                //
-                // Worked out once per set of recordings rather than on every recomposition: a long
-                // run is thousands of samples and thousands of fixes, and the runner's finger on the
-                // scrubber recomposes this screen many times a second.
-                val analysis = remember(session, samples, trackPoints) {
-                    RunAnalysis.of(session, samples, trackPoints)
+                // coaching cards the app already had. A treadmill run, and any run whose recording
+                // holds no route, simply has no map — the page starts at the summary instead.
+                if (trackMap != null) {
+                    RunTrackMapCard(trackMap = trackMap, onOpenFullScreen = { showFullScreenMap = true })
+                    Spacer(modifier = Modifier.height(24.dp))
                 }
 
                 SummaryStats(session, elevationGainMeters = analysis.elevationGainMeters)
