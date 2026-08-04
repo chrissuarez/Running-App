@@ -49,6 +49,18 @@ private val PreviewHeight = 200.dp
 /** Thicker than the live map's trail: this one is read at a glance rather than followed. */
 private const val RouteLineWidth = 5.0
 
+/**
+ * How a stretch the Run recorded no heart rate over is drawn: thinner, and part way to transparent.
+ *
+ * The colour alone would not say it. The app's amber (`colorScheme.primary`, `0xFFFFA000`) sits a
+ * hair from Tempo's own `0xFFF2C037`, and at five pixels of line on a map the two are the same
+ * colour — so a Strap that dropped out would read as Zone 3, which is exactly the misreading this
+ * map exists to prevent. Thin and faint is the drawing saying it does not know, in a way that
+ * survives being the only stretch on the screen with nothing beside it to compare against.
+ */
+private const val NoHeartRateLineWidth = 3.0
+private const val NoHeartRateLineOpacity = 0.65
+
 private const val MarkerRadius = 7.0
 private const val MarkerStrokeWidth = 2.5
 
@@ -193,9 +205,11 @@ private fun TrackMapSurface(trackMap: TrackMap, interactive: Boolean, modifier: 
         style = { MapboxStandardStyle(standardStyleState = standardStyleState) }
     ) {
         trackMap.stretches.forEach { stretch ->
+            val zone = stretch.zone
             PolylineAnnotation(points = stretch.fixes.map { it.asPoint() }) {
-                lineColor = stretch.zone?.let { zoneChartColor(it) } ?: noHeartRateColor
-                lineWidth = RouteLineWidth
+                lineColor = if (zone == null) noHeartRateColor else zoneChartColor(zone)
+                lineWidth = if (zone == null) NoHeartRateLineWidth else RouteLineWidth
+                lineOpacity = if (zone == null) NoHeartRateLineOpacity else 1.0
                 lineJoin = LineJoin.ROUND
             }
         }

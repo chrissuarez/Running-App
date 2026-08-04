@@ -351,6 +351,17 @@ val UserSettings.targetHrZone: HrZone get() = HrZone.coachingTargetOfNumberOrDef
 /** The runner's stated heart rates, as the zone functions take them. */
 val UserSettings.hrProfile: HrProfile get() = HrProfile(maxHr, restingHr)
 
+/**
+ * The heart rates *history* is banded against, which is not always the pair in force.
+ *
+ * They part the moment a Max HR correction lands: that change is future-only, so every run already
+ * read keeps the maximum it was banded on (#112, #172). Anything that reads a finished run — the
+ * zone re-tally, the interrupted-run rescue, the route map's colours (#47) — has to ask for this
+ * pair rather than [hrProfile], or it lands a run beside its neighbours on a number they were never
+ * read under.
+ */
+val UserSettings.historyHrProfile: HrProfile get() = HrProfile(historyMaxHr, restingHr)
+
 fun hrZoneOf(bpm: Int, settings: UserSettings): HrZone? = hrZoneOf(bpm, settings.hrProfile)
 
 fun zoneBandOf(bpm: Int, settings: UserSettings): ZoneBand =
