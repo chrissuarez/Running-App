@@ -300,12 +300,16 @@ private class ThumbnailStroke(
 @Composable
 private fun TreadmillDrawing() {
     ThumbnailCanvas { stroked ->
-        // The deck.
+        // Deck, arm and console in one unbroken line, the way a route is drawn: the console tilts
+        // back over the deck because that is the side the runner reads it from, and joined to the
+        // arm rather than floating above it, which at this size read as a detached tick.
         stroked {
             moveTo(0.09f, 0.72f)
             lineTo(0.64f, 0.72f)
+            lineTo(0.80f, 0.32f)
+            lineTo(0.62f, 0.26f)
         }
-        // Its two feet, splayed the way a machine's are, which is most of what says this is a
+        // The deck's two feet, splayed the way a machine's are — most of what says this is a
         // machine and not a bar.
         stroked {
             moveTo(0.16f, 0.72f)
@@ -314,15 +318,6 @@ private fun TreadmillDrawing() {
         stroked {
             moveTo(0.57f, 0.72f)
             lineTo(0.61f, 0.82f)
-        }
-        // The arm, raked back from the far end of the deck, and the console tilted at the top of it.
-        stroked {
-            moveTo(0.64f, 0.72f)
-            lineTo(0.80f, 0.32f)
-        }
-        stroked {
-            moveTo(0.68f, 0.29f)
-            lineTo(0.89f, 0.22f)
         }
     }
 }
