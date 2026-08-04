@@ -60,7 +60,11 @@ class AiCoachClientTest {
         )
 
         assertTrue(prompt.contains("\"fastest5kSeconds\":1620"))
-        assertTrue(prompt.contains("whole run including its warm-up and cool-down, so it is NOT a 5K time"))
+        assertTrue(
+            prompt.contains(
+                "whole run including its warm-up and cool-down, so on a GPS-recorded run it is NOT a 5K time"
+            )
+        )
         assertTrue(
             prompt.contains(
                 "If the stage requirement asks for a 5K in a time, judge it ONLY from fastest5kSeconds"

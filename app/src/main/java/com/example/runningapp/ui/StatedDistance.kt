@@ -42,6 +42,31 @@ fun statedDistanceFieldText(distanceKm: Double): String =
     if (distanceKm > 0.0) "%.2f".format(distanceKm) else ""
 
 /**
+ * Where the console's number is typed, wherever it is asked for (#231).
+ *
+ * One field rather than two alike, because the sheet at the finish and the Run's own page are asking
+ * the same question and a decimal keyboard that appeared in one place and not the other would be a
+ * difference nobody chose. [label] is all that changes: at the finish the console is in front of the
+ * runner, and afterwards it is not.
+ */
+@Composable
+fun StatedDistanceField(
+    typed: String,
+    label: String,
+    onTyped: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedTextField(
+        value = typed,
+        onValueChange = onTyped,
+        label = { Text(label) },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+        modifier = modifier.fillMaxWidth()
+    )
+}
+
+/**
  * Asks for the number the console showed, or corrects one already stated (#231).
  *
  * Correctable rather than write-once, because a stated distance reaches the volume, the coach and
@@ -73,13 +98,10 @@ fun StatedDistanceDialog(
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.height(16.dp))
-                OutlinedTextField(
-                    value = typed,
-                    onValueChange = { typed = it },
-                    label = { Text("Distance (km)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth()
+                StatedDistanceField(
+                    typed = typed,
+                    label = "Distance (km)",
+                    onTyped = { typed = it }
                 )
             }
         },

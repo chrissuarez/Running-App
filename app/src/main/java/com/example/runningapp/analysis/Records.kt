@@ -5,8 +5,8 @@ import com.example.runningapp.data.FIVE_K_METERS
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.isFinished
+import com.example.runningapp.data.isTreadmill
 import com.example.runningapp.data.measureFastestEffortSeconds
-import com.example.runningapp.run.RunMode
 
 /**
  * Something a Run can be the runner's best at (#49).
@@ -100,7 +100,7 @@ fun bestEffortsOf(
     types: Collection<RecordType> = RecordType.entries,
 ): List<BestEffort> {
     if (!run.isFinished()) return emptyList()
-    val treadmill = RunMode.ofSettingValue(run.runMode) == RunMode.TREADMILL
+    val treadmill = run.isTreadmill()
     // Two fixes is the least a route can be: one fix says only where the Run started.
     val hasRoute = !treadmill && track.size >= 2
     // A distance somebody stands behind: measured off a route that is still there, or stated by the

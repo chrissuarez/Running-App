@@ -8,6 +8,7 @@ import com.example.runningapp.HrProfile
 import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.hrZoneOf
+import com.example.runningapp.run.RunMode
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "sessions")
@@ -59,6 +60,16 @@ data class RunnerSession(
  * written to — the state anything reading a run as a whole (the GPX export, #84) must wait for.
  */
 fun RunnerSession.isFinished(): Boolean = endTime > 0
+
+/**
+ * Whether the Run was recorded on a treadmill — the one thing that distinguishes two Runs now that
+ * the four session types are gone (#94), and the sole thing separating a Stated Distance from a
+ * measured one (#231, ADR 0008).
+ *
+ * Asked here rather than by comparing `runMode` against a string wherever it comes up: an unknown
+ * value has to fall the same way everywhere, and [RunMode.ofSettingValue] is where that is decided.
+ */
+fun RunnerSession.isTreadmill(): Boolean = RunMode.ofSettingValue(runMode) == RunMode.TREADMILL
 
 /** The five zone columns, reachable by zone rather than by name. */
 fun RunnerSession.secondsInZone(zone: HrZone): Long = when (zone) {

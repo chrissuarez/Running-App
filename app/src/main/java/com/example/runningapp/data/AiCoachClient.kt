@@ -90,7 +90,7 @@ internal fun buildEvaluationPrompt(
     // One wrong true advances the stored stage on the spot, so fastest5kSeconds is the only field
     // allowed to answer, and its absence is stated as an absence rather than left to inference.
     appendLine("The recent runs data also includes 'runMode' ('outdoor' for a GPS-recorded run, 'treadmill' for one with no GPS), 'distanceKm' (how far the run went — measured by GPS outdoors, or read off the treadmill console and stated by the runner; null when the run has no distance at all), and 'fastest5kSeconds' (the quickest continuous 5K inside that run, measured from its GPS track, null when the run never covered 5K in one continuous stretch of recording).")
-    appendLine("durationSeconds is the whole run including its warm-up and cool-down, so it is NOT a 5K time and must never be compared to one.")
+    appendLine("durationSeconds is the whole run including its warm-up and cool-down, so on a GPS-recorded run it is NOT a 5K time and must never be compared to one; the single exception is the treadmill case set out below.")
     appendLine("CRITICAL RULE: If the stage requirement asks for a 5K in a time, judge it ONLY from fastest5kSeconds, EXCEPT in the one case in the next rule. If fastest5kSeconds is null, set graduatedToNextStage to false, and say in coachMessage that this run does not contain a measured 5K — because it was a treadmill run with no distance recorded when runMode is 'treadmill', or because the run did not cover a continuous 5K otherwise.")
     // The one thing a treadmill Run's two numbers can settle, and the fence around it (#231, ADR
     // 0008). A stated distance plus a whole-run duration is a time over the whole run and nothing
