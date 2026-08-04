@@ -332,8 +332,16 @@ object Acquisition {
         event: AcquisitionEvent.ConnectRequested,
         context: AcquisitionContext,
     ): AcquisitionOutcome {
-        if (!context.canConnect) return blocked(state, AcquisitionBlock.PermissionMissing)
-        if (!context.bluetoothOn) return blocked(state, AcquisitionBlock.BluetoothUnavailable)
+        // A tap that cannot be honoured now is still the Strap the runner asked for, so it is what
+        // the block remembers — not whatever the tap was about to replace. Otherwise the adapter
+        // coming back mid-Run would resume the old Strap and the choice would go unheard (#224).
+        val asked = InterruptedStrap(event.address, event.name ?: event.address)
+        if (!context.canConnect) {
+            return blocked(state, AcquisitionBlock.PermissionMissing, asked)
+        }
+        if (!context.bluetoothOn) {
+            return blocked(state, AcquisitionBlock.BluetoothUnavailable, asked)
+        }
 
         val effects = buildList {
             add(AcquisitionEffect.StopScan)
@@ -618,10 +626,18 @@ object Acquisition {
      *
      * The Strap itself is remembered, separately, on the phase: see
      * [AcquisitionPhase.Blocked.interrupted]. That is a name to chase again, not a handle to close.
+     *
+     * [interrupted] defaults to whatever the phase was chasing. A blocked [ConnectRequested] passes
+     * the Strap the runner just asked for instead: the tap is the newer intent of the two, and
+     * carrying the old one forward would quietly connect the wrong Strap when the adapter returns.
      */
-    private fun blocked(state: AcquisitionState, reason: AcquisitionBlock): AcquisitionOutcome =
+    private fun blocked(
+        state: AcquisitionState,
+        reason: AcquisitionBlock,
+        interrupted: InterruptedStrap? = interruptedBy(state.phase),
+    ): AcquisitionOutcome =
         AcquisitionOutcome(
-            state.copy(phase = AcquisitionPhase.Blocked(reason, interruptedBy(state.phase))),
+            state.copy(phase = AcquisitionPhase.Blocked(reason, interrupted)),
             buildList {
                 if (state.phase is AcquisitionPhase.Scanning) add(AcquisitionEffect.StopScan)
                 state.address?.let {

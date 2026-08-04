@@ -144,6 +144,16 @@ cap is pre-Run only. And **only a block that actually interrupted something** re
 arrived while scanning, or from `Idle`, has no Strap of its own, because nothing ever auto-connects
 from a scan.
 
+A tap is the exception to that last part, and it outranks whatever was already being chased. Manage
+Devices lists saved Straps whether or not the adapter is on, so a runner whose heart rate has just
+died can tap the other one mid-outage — and a connect that cannot be honoured now still blocks. The
+block remembers **the Strap that was asked for**, not the one the tap was about to replace:
+carrying the old one forward would have the adapter's return connect the wrong Strap and look, to
+the runner, as though the tap was never registered. The same holds from `Idle` or a scan, where the
+tap is the only Strap in the picture. What a tap does *not* carry through is the promotion — the
+resumed chase never promotes, so a Strap tapped mid-outage connects without becoming the active
+one.
+
 The alternative was having the service re-issue a connect from the saved active Strap. It works, and
 it was rejected: it moves "when is an unasked-for connect welcome" back outside the rulebook, which
 is the thing this ADR exists to prevent. It would also chase the *active* Strap rather than the one
