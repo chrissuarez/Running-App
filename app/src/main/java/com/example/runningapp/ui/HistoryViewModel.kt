@@ -74,7 +74,24 @@ class HistoryViewModel(
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    init {
+    /** Whether the pass below has been set going, so opening History twice does not start two. */
+    private var drawing = false
+
+    /**
+     * Start working the routes out — called when History is opened, and not before.
+     *
+     * This view model belongs to the activity rather than to the screen, so it exists from the
+     * moment the app launches whether or not the runner ever opens History. Reading and simplifying
+     * twenty tracks is thousands of stored fixes apiece; done at launch it is that much database
+     * and arithmetic competing with the thing the runner did open the app to do, which is often to
+     * start a Run. So the pass waits to be asked for.
+     *
+     * Safe to call on every visit: routes already worked out are kept ([thumbnails]), and the
+     * collector is only ever started once.
+     */
+    fun drawRoutesWhileHistoryIsOpen() {
+        if (drawing) return
+        drawing = true
         drawRoutesAsRunsArrive()
     }
 

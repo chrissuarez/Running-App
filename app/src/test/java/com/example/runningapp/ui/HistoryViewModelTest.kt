@@ -194,7 +194,11 @@ class HistoryViewModelTest {
         verify(trackPointDao).getTrackPointsForSessionOnce(7)
     }
 
-    private fun viewModel() = HistoryViewModel(
+    /** The view model as History itself has it: made, and then opened. */
+    private fun viewModel() = unopenedViewModel().also { it.drawRoutesWhileHistoryIsOpen() }
+
+    /** The view model as the rest of the app has it — made at launch, with History never opened. */
+    private fun unopenedViewModel() = HistoryViewModel(
         SessionRepository(
             sessionDao = sessionDao,
             trackPointDao = trackPointDao,
@@ -202,6 +206,42 @@ class HistoryViewModelTest {
         ),
         routeDispatcher = dispatcher,
     )
+
+    /**
+     * This view model belongs to the activity, so it is made at launch whether or not the runner
+     * goes anywhere near History. Reading and simplifying twenty tracks then is thousands of stored
+     * fixes competing with what the app was actually opened to do — often to start a Run.
+     */
+    @Test
+    fun `no route is read until History is opened`() = runTest(dispatcher) {
+        sessions.value = listOf(aRun(id = 7))
+        whenever(trackPointDao.getTrackPointsForSessionOnce(7)).thenReturn(aRoute(sessionId = 7))
+
+        val viewModel = unopenedViewModel()
+        advanceUntilIdle()
+
+        verify(trackPointDao, never()).getTrackPointsForSessionOnce(7)
+
+        viewModel.drawRoutesWhileHistoryIsOpen()
+        advanceUntilIdle()
+
+        assertNotNull(viewModel.rows.value.single().thumbnail)
+    }
+
+    /** Leaving History and coming back must not set a second pass going over the same runs. */
+    @Test
+    fun `opening History again does not read the same route twice`() = runTest(dispatcher) {
+        sessions.value = listOf(aRun(id = 7))
+        whenever(trackPointDao.getTrackPointsForSessionOnce(7)).thenReturn(aRoute(sessionId = 7))
+
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        viewModel.drawRoutesWhileHistoryIsOpen()
+        sessions.value = listOf(aRun(id = 7), aRun(id = 8, runMode = "treadmill"))
+        advanceUntilIdle()
+
+        verify(trackPointDao).getTrackPointsForSessionOnce(7)
+    }
 
     private fun aRun(id: Long, runMode: String = "outdoor") = RunnerSession(
         id = id,

@@ -590,6 +590,10 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         composable(Routes.HISTORY) {
+                            // The routes are worked out from here on, not from launch: the view
+                            // model outlives this screen, and twenty tracks read and simplified is
+                            // work nobody asked for until History is on screen (#51).
+                            LaunchedEffect(Unit) { historyViewModel.drawRoutesWhileHistoryIsOpen() }
                             HistoryScreen(
                                 rows = historyRows,
                                 selectedSessionIds = selectedSessionIds,
