@@ -102,6 +102,13 @@ distances, so the next Long Run is judged against a season that is actually ther
 number arrived late is judged on its duration and its heart rate, as it is today. A Stage graduated
 one Run later is a small loss; a Stage graduated by a typo, with no way back, is not.
 
+**And that has to hold even when the runner is quick.** The Run's own evaluation is still in flight
+while the sheet is on screen — it reads the last three Runs out of the database on its way to
+asking the coach — so a number typed fast enough would slip into the judgement of its own Run,
+which is the single case where a typo can graduate a Stage nothing can ungraduate. So the
+evaluation judges the Run **as it stood when it was finalized**. A number that arrives after that
+waits for the next one, which is where this section already had it going.
+
 ## Consequences
 
 - **`Records.kt`'s eligibility prose is now wrong where it stands and must be rewritten**, not
