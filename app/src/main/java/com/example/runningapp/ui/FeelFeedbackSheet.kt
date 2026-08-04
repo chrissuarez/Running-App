@@ -34,6 +34,10 @@ fun FeelFeedbackSheet(
 
     val selectedEffort = if (effortChosen) sliderPosition.roundToInt() else null
     val statedDistance = statedDistanceKmOf(typedDistance)
+    // A distance typed but not understood holds Save shut, even when there is an effort or a note to
+    // save alongside it. Saving around it would dismiss the sheet and drop the number the runner is
+    // looking at on the console, with nothing said and no way back to it.
+    val distanceRejected = statedDistanceIsRejected(typedDistance)
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
@@ -106,7 +110,8 @@ fun FeelFeedbackSheet(
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = { onSave(selectedEffort, note.trim().ifBlank { null }, statedDistance) },
-                    enabled = selectedEffort != null || note.isNotBlank() || statedDistance != null
+                    enabled = !distanceRejected &&
+                        (selectedEffort != null || note.isNotBlank() || statedDistance != null)
                 ) {
                     Text("Save")
                 }

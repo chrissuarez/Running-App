@@ -37,6 +37,17 @@ fun statedDistanceKmOf(typed: String): Double? {
     return number.takeIf { it.isFinite() && it > 0.0 }
 }
 
+/**
+ * True when what is typed was meant to be a distance and is not one (#231).
+ *
+ * Blank is not a rejection: a runner who typed nothing has said nothing, and everywhere the field
+ * appears that is allowed. It is the half-typed `5.2.1`, the `0` and the `five` that have to stop a
+ * Save, because the alternative is a number the runner watched themselves type being dropped on the
+ * way out.
+ */
+fun statedDistanceIsRejected(typed: String): Boolean =
+    typed.isNotBlank() && statedDistanceKmOf(typed) == null
+
 /** A distance already stated, as the field should show it back — empty when there is none. */
 fun statedDistanceFieldText(distanceKm: Double): String =
     if (distanceKm > 0.0) "%.2f".format(distanceKm) else ""
@@ -48,6 +59,9 @@ fun statedDistanceFieldText(distanceKm: Double): String =
  * the same question and a decimal keyboard that appeared in one place and not the other would be a
  * difference nobody chose. [label] is all that changes: at the finish the console is in front of the
  * runner, and afterwards it is not.
+ *
+ * The field says so itself when what is typed is not a distance, so that a Save the runner cannot
+ * press is never a mystery.
  */
 @Composable
 fun StatedDistanceField(
@@ -56,11 +70,16 @@ fun StatedDistanceField(
     onTyped: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val rejected = statedDistanceIsRejected(typed)
     OutlinedTextField(
         value = typed,
         onValueChange = onTyped,
         label = { Text(label) },
         singleLine = true,
+        isError = rejected,
+        supportingText = if (rejected) {
+            { Text("Enter a distance in kilometres, like 5.2") }
+        } else null,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         modifier = modifier.fillMaxWidth()
     )
