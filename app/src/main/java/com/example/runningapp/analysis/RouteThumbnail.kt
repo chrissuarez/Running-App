@@ -6,7 +6,6 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
-import kotlin.math.min
 
 /**
  * The Run's route reduced to the shape of it, for the little drawing beside a Run in the History
@@ -80,15 +79,15 @@ fun routeThumbnailOf(measured: MeasuredTrack): RouteThumbnail? {
     // The long side fills the square; the short one keeps its proportion and is centred in the room
     // that leaves.
     val scale = 1.0 / span
-    val leftPadding = (1.0 - spanX * scale) / 2.0
-    val bottomPadding = (1.0 - spanY * scale) / 2.0
+    val sidePadding = (1.0 - spanX * scale) / 2.0
+    val topAndBottomPadding = (1.0 - spanY * scale) / 2.0
 
     val drawn = strokes.map { stretch ->
         stretch.map { fix ->
             ThumbPoint(
-                x = (leftPadding + (fix.longitude * eastWest - westmost) * scale).toFloat(),
+                x = (sidePadding + (fix.longitude * eastWest - westmost) * scale).toFloat(),
                 // Flipped, because a thumbnail's y grows downwards and north is up.
-                y = (1.0 - bottomPadding - (fix.latitude - southmost) * scale).toFloat(),
+                y = (1.0 - topAndBottomPadding - (fix.latitude - southmost) * scale).toFloat(),
             )
         }
     }.map(::simplified).filter { it.size >= 2 }
@@ -96,28 +95,9 @@ fun routeThumbnailOf(measured: MeasuredTrack): RouteThumbnail? {
     return if (drawn.isEmpty()) null else RouteThumbnail(drawn)
 }
 
-/**
- * The track cut at its breaks: the stretches the recording covers, each of two fixes or more.
- *
- * A single fix between two breaks is not a line — nothing was recorded either side of it, so there
- * is no ground of its own to draw.
- */
-private fun recordedStretches(measured: MeasuredTrack): List<List<TrackPoint>> {
-    val points = measured.points
-    val stretches = mutableListOf<List<TrackPoint>>()
-    var current = mutableListOf<TrackPoint>()
-    measured.legs.forEachIndexed { i, leg ->
-        if (!leg.recorded) {
-            if (current.size >= 2) stretches += current
-            current = mutableListOf()
-            return@forEachIndexed
-        }
-        if (current.isEmpty()) current += points[i]
-        current += points[i + 1]
-    }
-    if (current.size >= 2) stretches += current
-    return stretches
-}
+/** The track cut at its breaks: the fixes of each stretch the recording covers. */
+private fun recordedStretches(measured: MeasuredTrack): List<List<TrackPoint>> =
+    measured.unbrokenLegs.map { unbroken -> measured.points.subList(unbroken.first, unbroken.last + 2) }
 
 /**
  * The same line with everything too small to see taken out of it (Ramer-Douglas-Peucker).

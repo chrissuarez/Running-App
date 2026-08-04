@@ -349,7 +349,7 @@ class SessionRepository(
     fun recentSessionsFlow(): Flow<List<RunnerSession>> = sessionDao.getLast20Sessions()
 
     /**
-     * How many medals each run holds, keyed by run, for the History list's trophy badges (#51).
+     * How many medals each run holds, keyed by run, for the History list's medal badges (#51).
      *
      * A stream, so a run scored the moment it finishes gets its badge without the list being left
      * and re-entered. Empty where records are not wired at all.

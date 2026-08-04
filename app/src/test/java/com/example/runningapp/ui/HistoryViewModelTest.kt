@@ -154,6 +154,27 @@ class HistoryViewModelTest {
     }
 
     /**
+     * A run appears in History the moment it starts, with a track of a few seconds. Drawing that
+     * would bank the first minute as the shape of the whole run — and nothing here asks twice.
+     */
+    @Test
+    fun `a run still being recorded is drawn once it finishes, not before`() = runTest(dispatcher) {
+        val running = aRun(id = 7).copy(endTime = 0, durationSeconds = 0)
+        sessions.value = listOf(running)
+        whenever(trackPointDao.getTrackPointsForSessionOnce(7)).thenReturn(aRoute(sessionId = 7))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        assertNull(viewModel.rows.value.single().thumbnail)
+        verify(trackPointDao, never()).getTrackPointsForSessionOnce(7)
+
+        sessions.value = listOf(aRun(id = 7))
+        advanceUntilIdle()
+
+        assertNotNull(viewModel.rows.value.single().thumbnail)
+    }
+
+    /**
      * Scrolling a list must not re-read the same run's track over and over. The list re-emits
      * whenever anything about it changes — a medal scored, a run deleted — and each emission
      * re-reading every route would put thousands of database rows and an hour of GPS arithmetic

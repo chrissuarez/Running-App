@@ -138,7 +138,7 @@ data class MaxSessionLoad30dProjection(
     val maxDurationSeconds: Long?
 )
 
-/** How many medals one Run holds — what the trophy badge on its History row counts (#51). */
+/** How many medals one Run holds — what the medal badge on its History row counts (#51). */
 data class SessionMedalCount(
     val sessionId: Long,
     val medals: Int

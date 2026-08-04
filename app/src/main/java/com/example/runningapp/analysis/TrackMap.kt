@@ -154,21 +154,21 @@ internal fun trackMapOf(
         if (fixes.size >= 2) stretches += TrackStretch(fixes, zone)
         fixes = mutableListOf()
     }
-    legs.forEachIndexed { i, leg ->
-        if (!leg.recorded) {
-            close()
-            return@forEachIndexed
+    // Drawn a break at a time ([MeasuredTrack.unbrokenLegs]), and cut again inside each wherever the
+    // zone changes.
+    measured.unbrokenLegs.forEach { unbroken ->
+        for (i in unbroken) {
+            // The leg's colour is the zone at the fix that *ends* it: that reading was measured over
+            // this stretch of ground, and the one before it belongs to the leg before.
+            if (fixes.isEmpty() || zoneAtFix[i + 1] != zone) {
+                close()
+                zone = zoneAtFix[i + 1]
+                fixes += points[i].asMapFix()
+            }
+            fixes += points[i + 1].asMapFix()
         }
-        // The leg's colour is the zone at the fix that *ends* it: that reading was measured over
-        // this stretch of ground, and the one before it belongs to the leg before.
-        if (fixes.isEmpty() || zoneAtFix[i + 1] != zone) {
-            close()
-            zone = zoneAtFix[i + 1]
-            fixes += points[i].asMapFix()
-        }
-        fixes += points[i + 1].asMapFix()
+        close()
     }
-    close()
 
     if (stretches.isEmpty()) return null
     val distanceAtFix = distanceAtEachFix(legs)
