@@ -313,6 +313,17 @@ interface SessionDao {
     @Query("UPDATE sessions SET movingTimeSeconds = :movingTimeSeconds, avgPaceMinPerKm = :avgPaceMinPerKm WHERE id = :sessionId")
     suspend fun setMovingTime(sessionId: Long, movingTimeSeconds: Long, avgPaceMinPerKm: Double)
 
+    /**
+     * Writes a Stated Distance and the pace that follows from it (#231).
+     *
+     * The two together, because pace is quoted from the stored column in the archive and the export:
+     * a distance written without it would leave a Run reading as fast as it did when it had gone
+     * nowhere. Zero is how a distance is withdrawn, which is the same zero a Run nobody stated one
+     * for has carried all along.
+     */
+    @Query("UPDATE sessions SET distanceKm = :distanceKm, avgPaceMinPerKm = :avgPaceMinPerKm WHERE id = :sessionId")
+    suspend fun setStatedDistance(sessionId: Long, distanceKm: Double, avgPaceMinPerKm: Double)
+
     @Query("UPDATE sessions SET perceivedEffort = :effort, sessionNote = :note WHERE id = :sessionId")
     suspend fun updateFeelFeedback(sessionId: Long, effort: Int?, note: String?)
 

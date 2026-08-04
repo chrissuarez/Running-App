@@ -751,7 +751,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         // once inside evaluateAndAdjustPlan (#176) — asking it here too would be the
                         // same rule in two places, free to drift apart.
                         Log.d("AiCoach", "Triggering AI evaluation after session finalization for stage: $stageId")
-                        sessionRepository.evaluateAndAdjustPlan(stageId, totals.runType)
+                        // The row as it was written a moment ago, handed over rather than left to
+                        // be read back: the feel sheet is on screen from the moment STOP was
+                        // pressed, and a distance stated into it must not join the judgement of the
+                        // Run it belongs to (#231).
+                        sessionRepository.evaluateAndAdjustPlan(stageId, totals.runType, updatedSession)
                     } else {
                         Log.d(
                             "AiCoach",

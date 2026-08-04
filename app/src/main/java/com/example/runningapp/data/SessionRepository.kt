@@ -27,6 +27,7 @@ import com.example.runningapp.analysis.recordBookOf
 import com.example.runningapp.analysis.standingsAfter
 import com.example.runningapp.analysis.bestEffortsOf
 import com.example.runningapp.recording.SessionRecorder
+import com.example.runningapp.run.RunMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -67,13 +68,17 @@ data class AiRecentRun(
     val sessionType: String,
     val timestamp: Long,
     /**
-     * How the Run was recorded — "outdoor" or "treadmill". Sent so the coach can tell a distance it
-     * was not given from a distance that does not exist: a treadmill Run has no GPS and so no
-     * distance to send, and saying "I wasn't told" about it would be wrong in the other direction
-     * (#182).
+     * How the Run was recorded — "outdoor" or "treadmill". Sent because it says what kind of
+     * evidence the Run can carry: a treadmill Run has no GPS, so it never has a [fastest5kSeconds]
+     * to be judged on, and its [distanceKm] is a whole-Run total the runner stated rather than a
+     * route (#182, #231).
      */
     val runMode: String,
-    /** The ground the Run covered, in kilometres. Null for a Run that recorded no distance. */
+    /**
+     * How far the Run went, in kilometres — measured against ground on an outdoor Run, and told to
+     * the app off the console on a treadmill one, which counts the same everywhere (ADR 0008). Null
+     * for a Run with no distance at all, which is a thing unknown rather than a Run of no length.
+     */
     val distanceKm: Double?,
     /**
      * The quickest continuous 5K inside the Run, in seconds — the only number here that answers a
@@ -154,7 +159,7 @@ class SessionRepository(
     private val inTransaction: suspend (suspend () -> Unit) -> Unit = { it() }
 ) {
     suspend fun deleteSession(sessionId: Long) =
-        deleteAndRepair(listOf(sessionId)) { sessionDao.deleteSessionById(sessionId) }
+        changeAndRepair(listOf(sessionId)) { sessionDao.deleteSessionById(sessionId) }
 
     /**
      * Held across the profile door, so a statement is a read, a re-tally and a store that nothing
@@ -619,8 +624,19 @@ class SessionRepository(
     }
 
     /**
-     * The one way a Run leaves history: what it held noted, the rows removed, the deletion made
-     * durable, and only then the book mended (#50).
+     * The one way a Run leaves history, and the one way a medal it holds is written down to a
+     * smaller number: what it held noted, the change made durable, and only then the book mended
+     * (#50, #231).
+     *
+     * Both are the same shape, which is why they are the same function. A deletion takes a medal off
+     * the book; a distance corrected downward demotes one. Either way the Run behind it — the one
+     * that should move up — exists nowhere but in history, because only the top three are banked, so
+     * neither can be put right by re-scoring one Run. Nothing here is about the deletion in
+     * particular except the words: [change] is whatever the sessions are about to be made into, and
+     * [mendOnly] narrows the mend where the caller knows which record can have moved. Everything
+     * below says "delete" because deletion is where all of it was worked out, and every line of it
+     * holds for a correction unchanged — including the counters ([deletesStarted], [deletesActive]),
+     * which count anything that can leave the book standing short, not deletions specifically.
      *
      * **The backup is refreshed twice, and the first one is the important one.** The Downloads
      * snapshot is what a Clear-storage restore reads, so until it is rewritten it still holds the
@@ -658,7 +674,11 @@ class SessionRepository(
      * running once this one has stepped out of the count. Deletes that overlapped in either
      * direction leave the reseed owed, which the next launch pays.
      */
-    private suspend fun deleteAndRepair(sessionIds: List<Long>, delete: suspend () -> Unit) {
+    private suspend fun changeAndRepair(
+        sessionIds: List<Long>,
+        mendOnly: Collection<RecordType>? = null,
+        change: suspend () -> Unit,
+    ) {
         val settings = settingsRepository
         var mine = 0L
         var wasSeeded = false
@@ -700,8 +720,8 @@ class SessionRepository(
             // over the hole.
             var losing = emptyList<RecordType>()
             inTransaction {
-                losing = recordsHeldBy(sessionIds)
-                delete()
+                losing = recordsHeldBy(sessionIds).filter { mendOnly == null || it in mendOnly }
+                change()
             }
             refreshHistoryBackup?.invoke()
 
@@ -980,25 +1000,114 @@ class SessionRepository(
     ) {
         if (effort == null && note.isNullOrBlank()) return
         val trimmedNote = note?.trim()?.ifEmpty { null }
-        repeat(20) {
-            val session = sessionDao.getSessionById(sessionId) ?: return
-            if (session.endTime > 0) {
-                sessionDao.updateFeelFeedback(sessionId, effort, trimmedNote)
-                // Fold this user-entered history into the Downloads snapshot too, or a Clear-storage
-                // restore before the next run would bring the run back without it.
-                refreshHistoryBackup?.invoke()
-                return
-            }
-            kotlinx.coroutines.delay(finalizeWaitStepMillis)
-        }
-        // Finalize never landed (should not happen) — save the user's input rather than drop it.
+        awaitFinalized(sessionId, finalizeWaitStepMillis) ?: return
         sessionDao.updateFeelFeedback(sessionId, effort, trimmedNote)
+        // Fold this user-entered history into the Downloads snapshot too, or a Clear-storage
+        // restore before the next run would bring the run back without it.
         refreshHistoryBackup?.invoke()
+    }
+
+    /**
+     * States how far a treadmill Run went, or corrects a number already stated (#231).
+     *
+     * The runner reads it off the console after the Run; everything else here follows from it being
+     * a distance like any other ([ADR 0008](docs/adr/0008-a-stated-distance-is-a-real-distance.md)).
+     * Null withdraws one, which stores the same zero a Run nobody stated one for has always carried.
+     *
+     * **Only a treadmill Run**, which is what keeps this to one column and no migration: an outdoor
+     * Run's distance is measured, and a Run whose GPS recorded nothing is not rescued this way. A
+     * Run that is not one is refused rather than corrected quietly.
+     *
+     * **It waits for the Run to be finished**, because the sheet that asks for the number is on
+     * screen from the moment STOP is pressed while `finalizeRun` is still writing the row — and it
+     * writes the row whole, so a distance landing first would be overwritten by a zero seconds
+     * later.
+     *
+     * **The record book is replayed, because scoring is a function of history** (ADR 0008). A first
+     * statement or a correction upward is scored like any Run finishing. A correction *downward*
+     * rebuilds the longest-distance record from all of history instead: only the top three are ever
+     * banked, so the Run that should move up behind a demoted medal exists nowhere but in the
+     * sessions, and re-scoring this Run alone cannot find it. That is the mend a deletion already
+     * owes, which is why it goes through the same door.
+     *
+     * **The Run's own Stage evaluation is not re-run and cannot be** — see
+     * [evaluateAndAdjustPlan]. What a stated distance buys the coach is every evaluation after it.
+     *
+     * Either way the history backup is refreshed: the one `finalizeRun` took went out before the
+     * number existed, and a Run restored from it would come back with the distance gone.
+     */
+    suspend fun stateDistance(
+        sessionId: Long,
+        distanceKm: Double?,
+        finalizeWaitStepMillis: Long = 250L
+    ) {
+        if (distanceKm != null && (!distanceKm.isFinite() || distanceKm <= 0.0)) {
+            Log.w("StatedDistance", "Refusing $distanceKm km for run $sessionId: not a distance")
+            return
+        }
+        val session = awaitFinalized(sessionId, finalizeWaitStepMillis) ?: return
+        if (RunMode.ofSettingValue(session.runMode) != RunMode.TREADMILL) {
+            Log.w("StatedDistance", "Refusing a stated distance for run $sessionId: it is not a treadmill Run")
+            return
+        }
+        val stated = distanceKm ?: 0.0
+        // Nothing to write, and so nothing to re-score or re-snapshot: re-opening the sheet and
+        // pressing save on the number already there must not cost a walk of the record book.
+        if (stated == session.distanceKm) return
+
+        val write: suspend () -> Unit = {
+            sessionDao.setStatedDistance(
+                sessionId = sessionId,
+                distanceKm = stated,
+                // The same clock the app quotes this Run's pace over (#163) — its own duration,
+                // there being no moving time to measure without a track.
+                avgPaceMinPerKm = averagePaceMinPerKm(session.paceClockSeconds, stated),
+            )
+        }
+
+        if (stated < session.distanceKm) {
+            // Only the longest distance can have moved: the duration is untouched, and a treadmill
+            // Run contests none of the fastest five. Rebuilding the rest would be minutes of GPS
+            // arithmetic to arrive at the book that is already there.
+            changeAndRepair(listOf(sessionId), mendOnly = listOf(RecordType.LONGEST_DISTANCE), change = write)
+        } else {
+            write()
+            try {
+                scoreRecords(sessionId)
+            } catch (e: Exception) {
+                // Its own attempt, as everywhere else the book is written: the number is stored by
+                // this point, and a book that cannot be written must not read as a distance that
+                // did not save. The next Run to contest the record scores against the stored one.
+                Log.w("StatedDistance", "Stated $stated km for run $sessionId but could not score it", e)
+            }
+            refreshHistoryBackup?.invoke()
+        }
+    }
+
+    /**
+     * The Run once its totals have been written, or null when there is no such row.
+     *
+     * Both doors a runner can reach a finished Run through immediately — the feel sheet and a stated
+     * distance — are open from the moment STOP is pressed, while `finalizeRun` is still assembling
+     * the row it will write whole. Waiting is what stops those writes being overwritten a second
+     * later by the finalize that was already in flight.
+     *
+     * A finalize that never lands is not a reason to throw the runner's input away: the write goes
+     * ahead after the wait, which is the lesser of the two losses.
+     */
+    private suspend fun awaitFinalized(sessionId: Long, waitStepMillis: Long): RunnerSession? {
+        repeat(20) {
+            val session = sessionDao.getSessionById(sessionId) ?: return null
+            if (session.isFinished()) return session
+            kotlinx.coroutines.delay(waitStepMillis)
+        }
+        Log.w("SessionRepository", "Run $sessionId never finalized; writing to it anyway")
+        return sessionDao.getSessionById(sessionId)
     }
 
     suspend fun deleteSessions(sessionIds: List<Long>) {
         if (sessionIds.isEmpty()) return
-        deleteAndRepair(sessionIds) { sessionDao.deleteSessionsByIds(sessionIds) }
+        changeAndRepair(sessionIds) { sessionDao.deleteSessionsByIds(sessionIds) }
     }
 
     suspend fun getMaxSessionLoadLast30Days(
@@ -1012,7 +1121,19 @@ class SessionRepository(
         )
     }
 
-    suspend fun getAiTrainingContext(stageId: String): AiTrainingContext {
+    /**
+     * What the coach is told, for a judgement about [stageId].
+     *
+     * [asFinalized] is the Run just finished, as its row stood when `finalizeRun` wrote it — passed
+     * in rather than read back, and used in place of the stored row wherever it turns up in the last
+     * three. A stated distance can land between the finalize and this read (the sheet asking for it
+     * is on screen the whole time), and a Run must be judged on what it was when it ended: see
+     * [evaluateAndAdjustPlan]. Null everywhere the context is asked for outside a finish.
+     */
+    suspend fun getAiTrainingContext(
+        stageId: String,
+        asFinalized: RunnerSession? = null,
+    ): AiTrainingContext {
         val stage = TrainingPlanProvider
             .getAllPlans()
             .asSequence()
@@ -1020,7 +1141,8 @@ class SessionRepository(
             .firstOrNull { it.id == stageId }
             ?: throw IllegalArgumentException("Stage not found for id: $stageId")
 
-        val recentRuns = sessionDao.getLast3AiEligibleCompletedSessions().map { session ->
+        val recentRuns = sessionDao.getLast3AiEligibleCompletedSessions().map { stored ->
+            val session = if (stored.id == asFinalized?.id) asFinalized else stored
             // The label the coach sees for a past run: whether it followed a Workout at all.
             // Whether a run is *evaluated* is no longer this — that is its Run Type (#176) — but a
             // recorded run carries no Run Type of its own, so this stays the label.
@@ -1030,8 +1152,10 @@ class SessionRepository(
                 sessionType = if (session.isRunWalkMode) AI_LABEL_RUN_WALK else AI_LABEL_OPEN_RUN,
                 timestamp = session.startTime,
                 runMode = session.runMode,
-                // Zero is what a treadmill Run stores, and it is not a distance the coach should be
-                // reasoning from — a Run that covered no ground is a Run whose distance is unknown.
+                // Zero is a distance nobody stated or measured rather than a Run that covered no
+                // ground, so it is sent as "unknown" and never as a nought the coach can reason
+                // from. A treadmill Run's Stated Distance is sent exactly like a measured one
+                // (#231) — that is the whole of what makes an indoor winter visible here.
                 distanceKm = session.distanceKm.takeIf { it > 0 },
                 // Measured from the stored track rather than read off the Run: nothing records where
                 // the warm-up ended, so the fastest window is the only way to a 5K time the Phases
@@ -1058,8 +1182,23 @@ class SessionRepository(
      * Run returns here before the coach is asked anything, and no Prescription slot of theirs is ever
      * written. Both are still recorded in full and still count toward the 30-day load; those happen
      * on the way in, before this is called.
+     *
+     * [finalizedRun] is the Run just finished, as its row stood at the finish. **A distance stated
+     * after that does not join this judgement** (#231, ADR 0008): the sheet asking for one is on
+     * screen while this is still in flight, and this reads the last three Runs out of the database
+     * on its way to the coach — so without the row, a number typed quickly enough would be judged
+     * as though it had been there all along. That is the one case where a typo could graduate a
+     * Stage, and a graduation cannot be taken back. A Run's own Stage evaluation is not replayed
+     * when a distance arrives later, for the same reason: it is a judgement made once, about one
+     * Run, under the Stage in force at that moment, and nothing records what that was. What a stated
+     * distance buys the coach is every evaluation *after* it — which is where an indoor winter was
+     * going missing.
      */
-    suspend fun evaluateAndAdjustPlan(stageId: String, runType: RunType?) {
+    suspend fun evaluateAndAdjustPlan(
+        stageId: String,
+        runType: RunType?,
+        finalizedRun: RunnerSession? = null,
+    ) {
         val settingsRepo = settingsRepository ?: return
         val coachClient = aiCoachClient ?: return
         if (runType == null || !runType.isCoachAdjusted) {
@@ -1110,7 +1249,7 @@ class SessionRepository(
                 return
             }
             Log.d("AiCoach", "Starting AI evaluation of a $runType run for stage: $stageId")
-            val context = getAiTrainingContext(stageId)
+            val context = getAiTrainingContext(stageId, asFinalized = finalizedRun)
             Log.d("AiCoach", "Sending prompt to Gemini with ${context.recentRuns.size} recent runs.")
             val response = coachClient.evaluateProgress(context)
             if (response == null) {

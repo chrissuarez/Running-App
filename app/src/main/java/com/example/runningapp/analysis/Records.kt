@@ -61,15 +61,21 @@ data class BestEffort(val type: RecordType, val value: Double)
  * runner took, and a best effort that quietly skipped it would be a time nobody ran.
  *
  * Who may compete:
- * - **A treadmill Run contests the longest time and nothing else.** Its distance is a number the
- *   machine reported, never measured against ground, so letting it hold a distance record would put
- *   an unverifiable claim above every measured one.
- * - **A Run with no usable track contests no distance record**, for the same reason. The fastest
- *   stretches need the track by construction — there is no ground to have covered quickly — but the
- *   longest *distance* is asked of the Run's own total, and a Run can carry one with nothing left of
- *   its route: history recorded before the app kept a track, and a Run whose every fix was too vague
- *   to trust. That total was measured against ground nobody can now see, which is as unverifiable as
- *   a treadmill's, so the track is asked for explicitly here.
+ * - **A treadmill Run contests the longest distance and the longest time, and none of the fastest
+ *   five.** Its distance is a Stated Distance — the console's number, told to the app by the runner
+ *   — and it counts as a distance like any other, because a record book that cannot hold the longest
+ *   Run of the runner's winter has a hole in it exactly where the winter went
+ *   ([ADR 0008](docs/adr/0008-a-stated-distance-is-a-real-distance.md)). The
+ *   fastest five stay out for a reason that is not about trust at all: a Best Effort is the quickest
+ *   stretch found *inside* a Run by a rolling window over its track, and a treadmill Run has no
+ *   track — not a poor one, none — so there is no stretch to find. Nothing derives one from an
+ *   average pace to get around that; an average is not the measurement those records are of.
+ * - **An outdoor Run with no usable track contests no distance record.** The fastest stretches need
+ *   the track by construction, and the longest *distance* is asked of the Run's own total, which a
+ *   Run can carry with nothing left of its route: history recorded before the app kept a track, and
+ *   a Run whose every fix was too vague to trust. That total was measured against ground nobody can
+ *   now see, and unlike a treadmill Run's, nobody has stood behind it since — so the track is asked
+ *   for explicitly here.
  * - **A Run still being recorded is worth nothing.** Its totals are not written yet, so it would
  *   compete on a duration and a distance that are only as much of it as has happened so far.
  *
@@ -94,15 +100,20 @@ fun bestEffortsOf(
     types: Collection<RecordType> = RecordType.entries,
 ): List<BestEffort> {
     if (!run.isFinished()) return emptyList()
+    val treadmill = RunMode.ofSettingValue(run.runMode) == RunMode.TREADMILL
     // Two fixes is the least a route can be: one fix says only where the Run started.
-    val onTheGround = RunMode.ofSettingValue(run.runMode) != RunMode.TREADMILL && track.size >= 2
+    val hasRoute = !treadmill && track.size >= 2
+    // A distance somebody stands behind: measured off a route that is still there, or stated by the
+    // runner off the console in front of them. A zero is nobody having stated one rather than a Run
+    // of no length, so it contests nothing either way.
+    val hasDistance = (treadmill || hasRoute) && run.distanceKm > 0.0
     return RecordType.entries.filter { it in types }.mapNotNull { type ->
-        val value = when {
-            type == RecordType.LONGEST_DURATION -> run.durationSeconds.takeIf { it > 0 }?.toDouble()
-            !onTheGround -> null
-            type == RecordType.LONGEST_DISTANCE ->
-                (run.distanceKm * 1_000.0).takeIf { run.distanceKm > 0.0 }
-            else -> measureFastestEffortSeconds(track, type.distanceMeters!!)?.toDouble()
+        val value = when (type) {
+            RecordType.LONGEST_DURATION -> run.durationSeconds.takeIf { it > 0 }?.toDouble()
+            RecordType.LONGEST_DISTANCE -> (run.distanceKm * 1_000.0).takeIf { hasDistance }
+            // The rolling window needs a route to run over, so this is the one place a treadmill
+            // Run genuinely has nothing to offer.
+            else -> if (hasRoute) measureFastestEffortSeconds(track, type.distanceMeters!!)?.toDouble() else null
         }
         value?.let { BestEffort(type, it) }
     }

@@ -336,6 +336,157 @@ class SessionRepositoryTest {
         verify(mockDao).updateFeelFeedback(sessionId, 3, null)
     }
 
+    // --- Stating how far a treadmill Run went (#231, ADR 0008) ---------------------------------
+
+    @Test
+    fun `a stated distance is written with the pace that follows from it`() = runTest {
+        // 5 km in 25 minutes is 5:00/km, measured over the Run's own clock: there is no track to
+        // measure a moving time from.
+        whenever(mockDao.getSessionById(42L)).thenReturn(aTreadmillRun(id = 42, seconds = 1_500))
+        var refreshCount = 0
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.stateDistance(42L, distanceKm = 5.0)
+
+        verify(mockDao).setStatedDistance(42L, 5.0, 5.0)
+        // The snapshot finalizeRun took went out before the number existed, so a Run restored from
+        // it would come back with the distance gone.
+        assertEquals(1, refreshCount)
+    }
+
+    @Test
+    fun `a stated distance waits for the Run to be finished before it is written`() = runTest {
+        // The sheet asking for the number is on screen from the moment STOP is pressed, and
+        // finalizeRun writes the row whole — so a distance landing first would be overwritten.
+        val stillWriting = aTreadmillRun(id = 42, seconds = 1_500).copy(endTime = 0L)
+        whenever(mockDao.getSessionById(42L))
+            .thenReturn(stillWriting, aTreadmillRun(id = 42, seconds = 1_500))
+
+        repository.stateDistance(42L, distanceKm = 5.0, finalizeWaitStepMillis = 1L)
+
+        verify(mockDao, times(1)).setStatedDistance(42L, 5.0, 5.0)
+    }
+
+    @Test
+    fun `only a treadmill Run can be told a distance`() = runTest {
+        // An outdoor Run's distance is measured, and one whose GPS recorded nothing is not rescued
+        // this way — that restriction is what keeps a stated distance to one column and no
+        // migration (ADR 0008).
+        whenever(mockDao.getSessionById(42L))
+            .thenReturn(session(id = 42, endTime = 1_000L).copy(runMode = "outdoor"))
+
+        repository.stateDistance(42L, distanceKm = 5.0)
+
+        verify(mockDao, never()).setStatedDistance(any(), any(), any())
+    }
+
+    @Test
+    fun `a number that is not a distance is refused before anything is read`() = runTest {
+        repository.stateDistance(42L, distanceKm = -3.0)
+        repository.stateDistance(42L, distanceKm = 0.0)
+        repository.stateDistance(42L, distanceKm = Double.NaN)
+
+        verify(mockDao, never()).getSessionById(any())
+        verify(mockDao, never()).setStatedDistance(any(), any(), any())
+    }
+
+    @Test
+    fun `stating the number already there costs nothing`() = runTest {
+        whenever(mockDao.getSessionById(42L))
+            .thenReturn(aTreadmillRun(id = 42, seconds = 1_500).copy(distanceKm = 5.0))
+        var refreshCount = 0
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.stateDistance(42L, distanceKm = 5.0)
+
+        verify(mockDao, never()).setStatedDistance(any(), any(), any())
+        assertEquals(0, refreshCount)
+    }
+
+    @Test
+    fun `a stated distance is scored against the record book`() = runTest {
+        val run = aTreadmillRun(id = 42, seconds = 1_500)
+        whenever(mockDao.getSessionById(42L)).thenReturn(run, run.copy(distanceKm = 12.0))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao
+        )
+
+        repositoryWithRecords.stateDistance(42L, distanceKm = 12.0)
+
+        // Scored from the row as it stands *after* the write, or the Run would be ranked on the
+        // distance it no longer has. The longest Run of an indoor winter takes the record (ADR 0008).
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(
+            listOf(RecordType.LONGEST_DISTANCE to 12_000.0, RecordType.LONGEST_DURATION to 1_500.0),
+            book.firstValue.map { it.type to it.value },
+        )
+    }
+
+    @Test
+    fun `a distance corrected downward rebuilds the record it held, promoting the run behind it`() = runTest {
+        val medalHolder = aTreadmillRun(id = 2, seconds = 1_500).copy(distanceKm = 12.0)
+        whenever(mockDao.getSessionById(2L)).thenReturn(medalHolder)
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(
+            listOf(Achievement(sessionId = 2, type = RecordType.LONGEST_DISTANCE, medal = Medal.GOLD, value = 12_000.0))
+        )
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        // History as it stands once the typo is corrected: the 9 km Run that was second exists
+        // nowhere but here — only the top three are banked, so re-scoring Run 2 alone could not
+        // find it.
+        whenever(mockDao.getAllSessions()).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_200).copy(distanceKm = 9.0),
+                medalHolder.copy(distanceKm = 1.25),
+            )
+        )
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao
+        )
+
+        repositoryWithRecords.stateDistance(2L, distanceKm = 1.25)
+
+        verify(mockDao).setStatedDistance(2L, 1.25, 20.0)
+        val book = argumentCaptor<List<Achievement>>()
+        // Only the longest distance is rebuilt: the duration is untouched by a distance, and a
+        // treadmill Run contests none of the fastest five.
+        verify(mockAchievementDao).deleteAchievementsOfTypes(listOf(RecordType.LONGEST_DISTANCE))
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(
+            listOf(1L to Medal.GOLD, 2L to Medal.SILVER),
+            book.firstValue.map { it.sessionId to it.medal },
+        )
+    }
+
+    @Test
+    fun `withdrawing a distance leaves the Run with none, rather than one of zero`() = runTest {
+        val run = aTreadmillRun(id = 42, seconds = 1_500).copy(distanceKm = 5.0)
+        whenever(mockDao.getSessionById(42L)).thenReturn(run)
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao
+        )
+
+        repositoryWithRecords.stateDistance(42L, distanceKm = null)
+
+        // A zero is what a Run nobody stated a distance for has always carried, and it contests no
+        // distance record — so the pace goes with it.
+        verify(mockDao).setStatedDistance(42L, 0.0, 0.0)
+    }
+
     @Test
     fun `getTrackPointsForMap keeps BACKFILL points and only accurate GPS points`() = runTest {
         val sessionId = 7L
@@ -1284,6 +1435,42 @@ class SessionRepositoryTest {
         assertEquals("treadmill", recentRun.runMode)
         assertNull(recentRun.distanceKm)
         assertNull(recentRun.fastest5kSeconds)
+    }
+
+    @Test
+    fun `a treadmill Run's stated distance reaches the coach like a measured one`() = runTest {
+        // Where the winter was going missing (#231): with a distance the Run counts toward the
+        // volume the next Long Run is judged against, instead of looking like a Run that never
+        // happened.
+        val treadmillRun = aTreadmillRun(id = 8, seconds = 1_500).copy(distanceKm = 5.0)
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(listOf(treadmillRun))
+
+        val recentRun = repository.getAiTrainingContext("sub_30_bridge").recentRuns.single()
+
+        assertEquals(5.0, recentRun.distanceKm!!, 0.001)
+        // Still no 5K: a Best Effort is a stretch found inside a route, and there is no route.
+        assertNull(recentRun.fastest5kSeconds)
+    }
+
+    @Test
+    fun `a distance typed fast cannot join its own Run's evaluation`() = runTest {
+        // The evaluation of the Run just finished is still in flight while the sheet asking for the
+        // number is on screen, and it reads the sessions out of the database on its way to the
+        // coach. Judged on a number typed since, a typo could graduate a Stage nothing can
+        // un-graduate (#231, ADR 0008) — so the Run is judged as it stood when it was finalized.
+        val asFinalized = aTreadmillRun(id = 8, seconds = 1_500)
+        val olderRun = aTreadmillRun(id = 7, seconds = 1_800).copy(distanceKm = 6.0)
+        whenever(mockDao.getLast3AiEligibleCompletedSessions())
+            .thenReturn(listOf(asFinalized.copy(distanceKm = 5.0), olderRun))
+
+        val recentRuns = repository
+            .getAiTrainingContext("sub_30_bridge", asFinalized = asFinalized)
+            .recentRuns
+
+        assertNull(recentRuns.first().distanceKm)
+        // Only that Run: a distance stated for an earlier one is history, and history is what the
+        // coach is meant to be reading.
+        assertEquals(6.0, recentRuns.last().distanceKm!!, 0.001)
     }
 
     @Test
