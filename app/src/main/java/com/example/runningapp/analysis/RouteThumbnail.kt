@@ -2,7 +2,6 @@ package com.example.runningapp.analysis
 
 import com.example.runningapp.data.MeasuredTrack
 import com.example.runningapp.data.TrackPoint
-import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
@@ -52,11 +51,29 @@ data class ThumbPoint(val x: Float, val y: Float)
 private const val THUMBNAIL_DETAIL = 0.01
 
 /**
+ * How much ground a Run has to cover before its route is a shape rather than a scatter.
+ *
+ * A Run that never left the spot does not stand perfectly still on the record: fixes accepted at
+ * the read-side accuracy gate wander tens of metres around a runner who never moved, and the
+ * thumbnail scales whatever span it is given to fill the square. So a phone left on a desk, or a
+ * Run stopped in the first seconds, would be drawn as a confident scribble across the row —
+ * the most eye-catching thing in the list, and pure noise.
+ *
+ * Fifty metres, because that is under the width of the ground a stationary fix can wander over and
+ * well under any distance whose shape a runner would recognise. Anything smaller is drawn as
+ * nothing at all, which is the honest answer.
+ */
+private const val SHAPE_MINIMUM_METERS = 50.0
+
+/** Metres in a degree of latitude — the span is measured in degrees and the minimum in metres. */
+private const val METERS_PER_DEGREE = 111_320.0
+
+/**
  * The shape of a Run's route, or null when there is none to draw.
  *
  * Null for a treadmill Run, a Run whose track has not loaded, a Run of fewer than two fixes, and a
- * Run that never left the spot it started from. The row then shows what it shows today — no
- * drawing, rather than a dot claiming to be a route.
+ * Run that covered less ground than [SHAPE_MINIMUM_METERS]. The row then shows what it shows today
+ * — no drawing, rather than a dot claiming to be a route.
  */
 fun routeThumbnailOf(measured: MeasuredTrack): RouteThumbnail? {
     val strokes = recordedStretches(measured)
@@ -74,7 +91,7 @@ fun routeThumbnailOf(measured: MeasuredTrack): RouteThumbnail? {
     val spanX = eastmost - westmost
     val spanY = northmost - southmost
     val span = max(spanX, spanY)
-    if (span <= 0.0) return null
+    if (span * METERS_PER_DEGREE < SHAPE_MINIMUM_METERS) return null
 
     // The long side fills the square; the short one keeps its proportion and is centred in the room
     // that leaves.
@@ -138,12 +155,27 @@ private fun simplified(line: List<ThumbPoint>): List<ThumbPoint> {
     return line.filterIndexed { i, _ -> keep[i] }
 }
 
-/** How far [point] sits from the line through [start] and [end] — from [start] itself if the two meet. */
+/**
+ * How far [point] sits from the stretch of line actually drawn between [start] and [end] — from
+ * whichever end it lies beyond, when it lies beyond one of them.
+ *
+ * Measured from the drawn stretch rather than from the endless line it sits on, because an
+ * out-and-back that turns for home before it gets back to where it started is the case that tells
+ * the two apart. Two kilometres out and one back leaves the turnaround a kilometre past the finish
+ * and *exactly on* the line through start and finish: measured against that line it is nothing
+ * worth keeping, both halves collapse, and the run is drawn as a one-kilometre stroll in a straight
+ * line — the wrong shape, in the one view that is read at a glance. Measured against the stretch,
+ * the turnaround is a kilometre from the nearer end, and it survives.
+ */
 private fun distanceToLine(point: ThumbPoint, start: ThumbPoint, end: ThumbPoint): Double {
     val dx = (end.x - start.x).toDouble()
     val dy = (end.y - start.y).toDouble()
-    val length = hypot(dx, dy)
-    if (length == 0.0) return hypot((point.x - start.x).toDouble(), (point.y - start.y).toDouble())
-    val cross = dx * (start.y - point.y) - dy * (start.x - point.x)
-    return abs(cross) / length
+    val lengthSquared = dx * dx + dy * dy
+    val fromStartX = (point.x - start.x).toDouble()
+    val fromStartY = (point.y - start.y).toDouble()
+    if (lengthSquared == 0.0) return hypot(fromStartX, fromStartY)
+    // How far along the stretch the point sits, as a fraction of it — held inside the two ends, so
+    // anything past either one is measured from that end rather than from open ground beyond it.
+    val along = ((fromStartX * dx + fromStartY * dy) / lengthSquared).coerceIn(0.0, 1.0)
+    return hypot(fromStartX - along * dx, fromStartY - along * dy)
 }
