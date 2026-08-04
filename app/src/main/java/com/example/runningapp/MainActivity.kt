@@ -383,12 +383,14 @@ class MainActivity : ComponentActivity() {
                                             (it.sessionStatus == SessionStatus.RUNNING || it.sessionStatus == SessionStatus.PAUSED)
                                         ) {
                                             feelSheetSessionId = it.activeDbSessionId
-                                            // The Run's own pinned mode (HrState.activeRunMode),
-                                            // falling back to the setting only if the Run is
-                                            // already down — an outdoor Run would then be asked for
-                                            // a distance it cannot be told, and the repository
-                                            // refuses that anyway.
-                                            feelSheetRunMode = it.activeRunMode ?: userSettings.runMode
+                                            // The Run's own pinned mode (HrState.activeRunMode) and
+                                            // nothing else. Falling back to the live setting would
+                                            // let an outdoor Run be asked for a distance it cannot
+                                            // be told, and the repository refuses one with only a
+                                            // log — so the runner would type a number and watch it
+                                            // vanish. Unknown asks nothing; the Run's own page is
+                                            // still there.
+                                            feelSheetRunMode = it.activeRunMode
                                         }
                                     }
                                      val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
@@ -722,16 +724,15 @@ class MainActivity : ComponentActivity() {
 
                     feelSheetSessionId?.let { sessionId ->
                         FeelFeedbackSheet(
-                            // Asked of a treadmill Run only, and of the mode the Run was pinned to
-                            // rather than the setting in force: the runner may have moved the
-                            // selector while the sheet was up.
-                            askForDistance = feelSheetRunMode != RunMode.OUTDOOR.settingValue,
+                            // A treadmill Run, said positively: anything else — an outdoor Run, or a
+                            // Run whose mode is not known — is not asked.
+                            askForDistance = feelSheetRunMode == RunMode.TREADMILL.settingValue,
                             onSave = { effort, note, distanceKm ->
                                 scope.launch(Dispatchers.IO) {
                                     sessionRepository.saveFeelFeedback(sessionId, effort, note)
-                                    // After the feedback, so the one backup a stated distance takes
-                                    // carries both. Only when there is one: stating nothing must
-                                    // not cost a second snapshot of the whole database.
+                                    // After the feedback, so the snapshot the distance takes carries
+                                    // both. Only when there is one: stating nothing must not cost a
+                                    // second copy of the whole database.
                                     if (distanceKm != null) {
                                         sessionRepository.stateDistance(sessionId, distanceKm)
                                     }

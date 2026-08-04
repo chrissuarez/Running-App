@@ -1,13 +1,11 @@
 package com.example.runningapp.ui
 
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
@@ -53,13 +51,10 @@ fun FeelFeedbackSheet(
             // First, and above the effort slider: it is the one field here the runner cannot fill in
             // later from memory, because the console clears itself the moment they step off.
             if (askForDistance) {
-                OutlinedTextField(
-                    value = typedDistance,
-                    onValueChange = { typedDistance = it },
-                    label = { Text("Distance on the console (km)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    modifier = Modifier.fillMaxWidth()
+                StatedDistanceField(
+                    typed = typedDistance,
+                    label = "Distance on the console (km)",
+                    onTyped = { typedDistance = it }
                 )
                 Spacer(modifier = Modifier.height(20.dp))
             }

@@ -28,6 +28,7 @@ import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.isFinished
+import com.example.runningapp.data.isTreadmill
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.computeRunWalkIntervalAnalytics
 import com.example.runningapp.data.averagePace
@@ -173,7 +174,7 @@ fun SessionDetailScreen(
                     // Asked of the Run rather than of the screen: only a finished treadmill Run can
                     // be told a distance, and the repository refuses anything else regardless.
                     onStateDistance = onStateDistance
-                        ?.takeIf { session.isFinished() && session.runMode == "treadmill" }
+                        ?.takeIf { session.isFinished() && session.isTreadmill() }
                         ?.let { state -> { km: Double? -> state(session.id, km) } },
                 )
                 Spacer(modifier = Modifier.height(24.dp))

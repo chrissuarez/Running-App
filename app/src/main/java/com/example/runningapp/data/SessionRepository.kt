@@ -27,7 +27,6 @@ import com.example.runningapp.analysis.recordBookOf
 import com.example.runningapp.analysis.standingsAfter
 import com.example.runningapp.analysis.bestEffortsOf
 import com.example.runningapp.recording.SessionRecorder
-import com.example.runningapp.run.RunMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -725,7 +724,7 @@ class SessionRepository(
             }
             refreshHistoryBackup?.invoke()
 
-            repaired = repairRecordBook(losing)
+            repaired = repairRecordBook(losing, remeasured = sessionIds)
             if (losing.isNotEmpty()) refreshHistoryBackup?.invoke()
         } finally {
             // Leaving is the same act in reverse, and under the same lock: step out of the count,
@@ -824,10 +823,10 @@ class SessionRepository(
      * to work, with the run gone anyway. Returns whether it landed, so the caller can leave history
      * owing a full reseed when it did not.
      */
-    private suspend fun repairRecordBook(types: List<RecordType>): Boolean {
+    private suspend fun repairRecordBook(types: List<RecordType>, remeasured: List<Long>): Boolean {
         if (types.isEmpty()) return true
         return try {
-            rebuildRecords(types)
+            rebuildRecords(types, remeasured)
             true
         } catch (e: Exception) {
             Log.w("Records", "Deleted run(s) held ${types.size} record(s) the book could not be rebuilt for", e)
@@ -852,11 +851,21 @@ class SessionRepository(
      * history was read *is* in the list, and is worth nothing until it finishes — which is exactly
      * the Run most likely to finish and score itself while this pass is still measuring.
      *
+     * [remeasured] is the Runs this rebuild was called *for*, whose standing rows are therefore
+     * never carried in — the whole point of the pass is to replace them. Without it a Run that now
+     * measures to nothing is indistinguishable from one that was never measured, and its old row
+     * comes straight back: a Stated Distance withdrawn would keep the medal it held at the number it
+     * no longer has (#231). Empty for the seeding pass, which is measuring history rather than
+     * mending it, and harmless for a deletion, whose rows have already cascaded away.
+     *
      * On [Dispatchers.Default] because the measuring is geodesic arithmetic over every stored
      * track — minutes of it on a long history. The callers are a launch-time pass and a delete from
      * the history screen, and the delete arrives on the main thread.
      */
-    private suspend fun rebuildRecords(types: List<RecordType>): List<Achievement> {
+    private suspend fun rebuildRecords(
+        types: List<RecordType>,
+        remeasured: List<Long> = emptyList(),
+    ): List<Achievement> {
         val dao = achievementDao ?: return emptyList()
         // One Run at a time, because a track is thousands of points and the whole history's worth
         // of them at once is not something to hold in memory. Unfinished Runs are in this list and
@@ -866,7 +875,8 @@ class SessionRepository(
                 RunEfforts(session.id, effortsAt(session, types))
             }
         }
-        val measuredIds = measured.filter { it.efforts.isNotEmpty() }.map { it.sessionId }.toSet()
+        val measuredIds =
+            measured.filter { it.efforts.isNotEmpty() }.map { it.sessionId }.toSet() + remeasured
 
         var written = emptyList<Achievement>()
         inTransaction {
@@ -1046,7 +1056,7 @@ class SessionRepository(
             return
         }
         val session = awaitFinalized(sessionId, finalizeWaitStepMillis) ?: return
-        if (RunMode.ofSettingValue(session.runMode) != RunMode.TREADMILL) {
+        if (!session.isTreadmill()) {
             Log.w("StatedDistance", "Refusing a stated distance for run $sessionId: it is not a treadmill Run")
             return
         }

@@ -488,6 +488,41 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a withdrawn distance gives up the medal it held, rather than keeping it at a number the Run no longer has`() = runTest {
+        val medalHolder = aTreadmillRun(id = 2, seconds = 1_500).copy(distanceKm = 12.0)
+        whenever(mockDao.getSessionById(2L)).thenReturn(medalHolder)
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(
+            listOf(Achievement(sessionId = 2, type = RecordType.LONGEST_DISTANCE, medal = Medal.GOLD, value = 12_000.0))
+        )
+        // The book still holds Run 2's gold while the rebuild is measuring, which is what the
+        // rebuild has to see past: a Run that now measures to nothing must not have its old row
+        // carried back in as a claim of its own.
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(
+            listOf(Achievement(sessionId = 2, type = RecordType.LONGEST_DISTANCE, medal = Medal.GOLD, value = 12_000.0))
+        )
+        whenever(mockDao.getAllSessions()).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_200).copy(distanceKm = 9.0),
+                medalHolder.copy(distanceKm = 0.0),
+            )
+        )
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao
+        )
+
+        repositoryWithRecords.stateDistance(2L, distanceKm = null)
+
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(
+            listOf(1L to 9_000.0),
+            book.firstValue.map { it.sessionId to it.value },
+        )
+    }
+
+    @Test
     fun `getTrackPointsForMap keeps BACKFILL points and only accurate GPS points`() = runTest {
         val sessionId = 7L
         val accurateGps = trackPoint(sessionId, lon = 1.0, accuracy = 15f, source = TrackPointSource.GPS)
