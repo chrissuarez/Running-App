@@ -27,6 +27,20 @@ internal fun stretchOfEachFix(legs: List<TrackLeg>): IntArray {
 }
 
 /**
+ * How far along the Run each fix sits, in metres of recorded ground.
+ *
+ * A leg that recorded nothing carries no ground ([com.example.runningapp.data.TrackLeg]), so the
+ * axis does not advance across a break: the fix the runner paused on and the fix they resumed on
+ * are at the same distance. That is what lets the chart's x axis and the map's route be read against
+ * each other (#48) — both are counting the same metres.
+ */
+internal fun distanceAtEachFix(legs: List<TrackLeg>): DoubleArray {
+    val distanceAtFix = DoubleArray(legs.size + 1)
+    legs.forEachIndexed { i, leg -> distanceAtFix[i + 1] = distanceAtFix[i] + leg.meters }
+    return distanceAtFix
+}
+
+/**
  * Every heart rate recorded since the previous fix, averaged, at each fix — null where none was.
  *
  * Averaged rather than sampled, so a sparsely recorded track folds its beats in rather than throwing

@@ -238,12 +238,17 @@ fun RunAnalysisChart(chart: RunChart?, modifier: Modifier = Modifier) {
  * came for, and heart rate on the right. The silhouette gets none: it is the shape of the ground,
  * not a figure to read off, and the metres under the finger are in the readout for anyone who wants
  * the number.
+ *
+ * [scrubber] is where the finger is, in metres along the Run — the route map above the chart reads
+ * the same number to put a dot on the ground the finger is over (#48).
  */
 @Composable
-fun RunCombinedChart(chart: DistanceChart, modifier: Modifier = Modifier) {
-    // Where the finger is, in metres along the Run. Null whenever nobody is touching the chart.
-    var scrubbedMeters by remember(chart) { mutableStateOf<Double?>(null) }
-    val scrubbed = scrubbedMeters
+fun RunCombinedChart(
+    chart: DistanceChart,
+    modifier: Modifier = Modifier,
+    scrubber: ChartScrubber = rememberChartScrubber(),
+) {
+    val scrubbed = scrubber.distanceMeters
     val scrubbedPoint = scrubbed?.let { chart.readingAt(it) }
 
     val textMeasurer = rememberTextMeasurer()
@@ -281,18 +286,20 @@ fun RunCombinedChart(chart: DistanceChart, modifier: Modifier = Modifier) {
                 .height(ChartHeight)
                 .background(Color.Black.copy(alpha = 0.05f))
                 .padding(ChartInset)
-                .pointerInput(chart) {
+                .pointerInput(chart, scrubber) {
                     fun metersUnder(x: Float): Double =
                         x.toFractionOfRun(leftPaddingPx, size.width - leftPaddingPx - rightPaddingPx) *
                             span
-                    // Horizontal only, so the page underneath keeps its vertical scroll.
+                    // Horizontal only, so the page underneath keeps its vertical scroll. Lifting the
+                    // finger puts it back to null, which is what takes the dot off the map as well
+                    // as the line off the chart.
                     detectHorizontalDragGestures(
-                        onDragStart = { position -> scrubbedMeters = metersUnder(position.x) },
-                        onDragEnd = { scrubbedMeters = null },
-                        onDragCancel = { scrubbedMeters = null },
+                        onDragStart = { position -> scrubber.distanceMeters = metersUnder(position.x) },
+                        onDragEnd = { scrubber.distanceMeters = null },
+                        onDragCancel = { scrubber.distanceMeters = null },
                         onHorizontalDrag = { change, _ ->
                             change.consume()
-                            scrubbedMeters = metersUnder(change.position.x)
+                            scrubber.distanceMeters = metersUnder(change.position.x)
                         }
                     )
                 }
@@ -533,7 +540,7 @@ private fun DrawScope.drawSeries(points: List<Offset>, color: Color) {
  * Both charts scrub the same way and differ only in what the axis counts, so the pixels become a
  * fraction here and the caller turns that into seconds or metres.
  */
-private fun Float.toFractionOfRun(plotLeft: Float, plotWidth: Float): Float {
+internal fun Float.toFractionOfRun(plotLeft: Float, plotWidth: Float): Float {
     if (plotWidth <= 0f) return 0f
     return ((this - plotLeft) / plotWidth).coerceIn(0f, 1f)
 }

@@ -70,6 +70,17 @@ private const val MarkerRadius = 7.0
 private const val MarkerStrokeWidth = 2.5
 
 /**
+ * The dot the chart's scrubber puts on the route (#48): bigger than the start and finish markers,
+ * because it is the thing the runner is moving and has to be able to follow with their eye.
+ *
+ * In the app's amber, the same colour a stretch with no heart rate is drawn in — which is a
+ * collision only in the abstract. That stretch is a thin, faded line that is part of the route; this
+ * is a fat ringed disc that exists only while a finger is on the chart and moves as it moves.
+ */
+private const val ScrubDotRadius = 9.0
+private const val ScrubDotStrokeWidth = 3.0
+
+/**
  * How much room is left around the route when the camera is framed on it, in pixels.
  *
  * Enough that the start and finish markers — drawn either side of the fix they mark — are not
@@ -88,15 +99,29 @@ private const val FrameImmediately = 0L
  * would trap the runner's finger halfway down their own run. Two things hold that: the map's own
  * gestures are off, and a transparent layer over it takes the taps — [clickable] hands vertical
  * drags back to the scrolling column rather than claiming them.
+ *
+ * [scrubber] is where the runner's finger is on the chart further down the page, and it is what puts
+ * the dot on the route (#48) — so a pace dip or a heart-rate spike is answered with the place it
+ * happened. A page whose Run has no distance chart to drag simply never puts anything in it, and so
+ * never draws a dot.
  */
 @Composable
-fun RunTrackMapCard(trackMap: TrackMap, onOpenFullScreen: () -> Unit, modifier: Modifier = Modifier) {
+fun RunTrackMapCard(
+    trackMap: TrackMap,
+    onOpenFullScreen: () -> Unit,
+    scrubber: ChartScrubber,
+    modifier: Modifier = Modifier,
+) {
     Card(modifier = modifier.fillMaxWidth()) {
         Box(modifier = Modifier.fillMaxWidth().height(PreviewHeight)) {
             TrackMapSurface(
                 trackMap = trackMap,
                 interactive = false,
                 showScaleBar = false,
+                // Read here, inside the map's own content, rather than passed in as a value: a drag
+                // then repaints the dot and leaves the rest of the page — this card, the chart's
+                // frame, the cards around them — exactly as it was.
+                scrubbedFix = { scrubber.distanceMeters?.let(trackMap::fixAt) },
                 modifier = Modifier.fillMaxSize()
             )
             Box(
@@ -173,6 +198,8 @@ private fun TrackMapSurface(
     showScaleBar: Boolean = true,
     /** Room to leave at the top for whatever is drawn over the map — see [RunTrackMapFullScreen]. */
     topInsetPixels: Double = 0.0,
+    /** Where on the route the chart's scrubber is pointing, or null when nothing is (#48). */
+    scrubbedFix: () -> MapFix? = { null },
 ) {
     val isDaytime = remember(trackMap) {
         SunriseSunsetCalculator.isDaytime(
@@ -235,6 +262,7 @@ private fun TrackMapSurface(
     val noHeartRateColor = MaterialTheme.colorScheme.primary
     val markerFill = MaterialTheme.colorScheme.onSurface
     val markerStroke = MaterialTheme.colorScheme.surface
+    val scrubDotFill = MaterialTheme.colorScheme.primary
 
     MapboxMap(
         modifier = modifier,
@@ -267,6 +295,16 @@ private fun TrackMapSurface(
             circleColor = markerFill
             circleStrokeColor = markerStroke
             circleStrokeWidth = MarkerStrokeWidth
+        }
+        // Last, so it is drawn over the route and over both markers: the runner's finger has to be
+        // findable even where it is on top of where they set off from.
+        scrubbedFix()?.let { fix ->
+            CircleAnnotation(point = fix.asPoint()) {
+                circleRadius = ScrubDotRadius
+                circleColor = scrubDotFill
+                circleStrokeColor = markerStroke
+                circleStrokeWidth = ScrubDotStrokeWidth
+            }
         }
     }
 }

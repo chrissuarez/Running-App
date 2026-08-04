@@ -95,6 +95,31 @@ class RunAnalysisChartTest {
         assertEquals("Distance", headingFor(aChart(pace = null, bpm = null, height = null)))
     }
 
+    // -- Where the finger is, in the Run's own units (#48) ---------------------------------------
+
+    @Test
+    fun `a finger across the plot reads from the start of the run to the end of it`() {
+        // A plot two hundred pixels wide, starting thirty-six in — the chart's left gutter.
+        assertEquals(0f, 36f.toFractionOfRun(plotLeft = 36f, plotWidth = 200f), 1e-6f)
+        assertEquals(0.5f, 136f.toFractionOfRun(plotLeft = 36f, plotWidth = 200f), 1e-6f)
+        assertEquals(1f, 236f.toFractionOfRun(plotLeft = 36f, plotWidth = 200f), 1e-6f)
+    }
+
+    @Test
+    fun `a finger dragged off either side of the plot reads its nearest end`() {
+        // Into the gutter, and past the right edge of the chart altogether: both are the runner
+        // still dragging, and the readout follows to the end of the run rather than blanking.
+        assertEquals(0f, 0f.toFractionOfRun(plotLeft = 36f, plotWidth = 200f), 1e-6f)
+        assertEquals(1f, 500f.toFractionOfRun(plotLeft = 36f, plotWidth = 200f), 1e-6f)
+    }
+
+    @Test
+    fun `a plot with no width to it reads the start of the run`() {
+        // A chart measured before it has been laid out. Nothing to divide by, and no place along the
+        // run that a pixel means — so the run's own beginning, rather than a not-a-number.
+        assertEquals(0f, 120f.toFractionOfRun(plotLeft = 36f, plotWidth = 0f), 1e-6f)
+    }
+
     /** A one-stretch chart that recorded exactly the series handed in. */
     private fun aChart(pace: Double?, bpm: Int?, height: Double?) = DistanceChart(
         traces = listOf(
