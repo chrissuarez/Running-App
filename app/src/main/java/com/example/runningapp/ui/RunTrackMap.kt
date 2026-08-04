@@ -20,9 +20,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.analysis.MapFix
@@ -31,7 +35,7 @@ import com.example.runningapp.map.SunriseSunsetCalculator
 import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.ui.workout.zoneChartColor
 import com.mapbox.geojson.Point
-import com.mapbox.maps.CameraOptions
+import com.mapbox.geojson.MultiPoint
 import com.mapbox.maps.EdgeInsets
 import com.mapbox.maps.extension.compose.MapboxMap
 import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
@@ -43,6 +47,7 @@ import com.mapbox.maps.extension.compose.style.standard.MapboxStandardStyle
 import com.mapbox.maps.extension.compose.style.standard.rememberStandardStyleState
 import com.mapbox.maps.extension.style.layers.properties.generated.LineJoin
 import com.mapbox.maps.plugin.gestures.generated.GesturesSettings
+import com.mapbox.maps.plugin.viewport.data.OverviewViewportStateOptions
 
 private val PreviewHeight = 200.dp
 
@@ -72,6 +77,9 @@ private const val MarkerStrokeWidth = 2.5
  */
 private const val FramePaddingPixels = 48.0
 
+/** The frame is the Run's own shape; there is nothing to animate to on arrival. */
+private const val FrameImmediately = 0L
+
 /**
  * The Run's route at the top of its detail page (#47): auto-framed, coloured by the zone the
  * runner's heart was in, and tappable for a full-screen version of the same map.
@@ -85,7 +93,12 @@ private const val FramePaddingPixels = 48.0
 fun RunTrackMapCard(trackMap: TrackMap, onOpenFullScreen: () -> Unit, modifier: Modifier = Modifier) {
     Card(modifier = modifier.fillMaxWidth()) {
         Box(modifier = Modifier.fillMaxWidth().height(PreviewHeight)) {
-            TrackMapSurface(trackMap = trackMap, interactive = false, modifier = Modifier.fillMaxSize())
+            TrackMapSurface(
+                trackMap = trackMap,
+                interactive = false,
+                showScaleBar = false,
+                modifier = Modifier.fillMaxSize()
+            )
             Box(
                 modifier = Modifier
                     .matchParentSize()
@@ -105,10 +118,22 @@ fun RunTrackMapCard(trackMap: TrackMap, onOpenFullScreen: () -> Unit, modifier: 
 @Composable
 fun RunTrackMapFullScreen(trackMap: TrackMap, title: String, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
+    // The bar lies over the map rather than beside it, so the route is framed into the space left
+    // under it. Measured rather than assumed: the bar is as tall as the status bar above it makes
+    // it, and a guessed height puts the top of the route behind the title.
+    var barHeightPixels by remember { mutableStateOf(0) }
     Box(modifier = Modifier.fillMaxSize()) {
-        TrackMapSurface(trackMap = trackMap, interactive = true, modifier = Modifier.fillMaxSize())
+        TrackMapSurface(
+            trackMap = trackMap,
+            interactive = true,
+            topInsetPixels = barHeightPixels.toDouble(),
+            modifier = Modifier.fillMaxSize()
+        )
         Surface(
-            modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter),
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .onSizeChanged { barHeightPixels = it.height },
             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
             contentColor = MaterialTheme.colorScheme.onSurface,
             tonalElevation = 4.dp
@@ -141,7 +166,14 @@ fun RunTrackMapFullScreen(trackMap: TrackMap, title: String, onBack: () -> Unit)
  * back in daylight colours in the dark.
  */
 @Composable
-private fun TrackMapSurface(trackMap: TrackMap, interactive: Boolean, modifier: Modifier = Modifier) {
+private fun TrackMapSurface(
+    trackMap: TrackMap,
+    interactive: Boolean,
+    modifier: Modifier = Modifier,
+    showScaleBar: Boolean = true,
+    /** Room to leave at the top for whatever is drawn over the map — see [RunTrackMapFullScreen]. */
+    topInsetPixels: Double = 0.0,
+) {
     val isDaytime = remember(trackMap) {
         SunriseSunsetCalculator.isDaytime(
             latitude = trackMap.finish.latitude,
@@ -172,25 +204,31 @@ private fun TrackMapSurface(trackMap: TrackMap, interactive: Boolean, modifier: 
 
     val mapViewportState = rememberMapViewportState()
     val framed = remember(trackMap) {
-        trackMap.framedFixes.map { Point.fromLngLat(it.longitude, it.latitude) }
+        MultiPoint.fromLngLats(trackMap.framedFixes.map { it.asPoint() })
     }
     // Framed on the whole route rather than on a guessed zoom: Mapbox works out the camera that
     // holds every fix inside the space this map has, which is the only way a 500 m loop and a half
     // marathon both arrive filling the card.
-    LaunchedEffect(framed) {
-        mapViewportState.setCameraOptions(
-            mapViewportState.cameraForCoordinates(
-                framed,
-                CameraOptions.Builder().build(),
-                EdgeInsets(
-                    FramePaddingPixels,
-                    FramePaddingPixels,
-                    FramePaddingPixels,
-                    FramePaddingPixels
-                ),
-                null,
-                null,
-            )
+    //
+    // Through the viewport's overview state rather than by working the camera out once, because
+    // once is too early: the frame is asked for as this map enters composition, before it has been
+    // laid out and so before its size is known, and a route framed for the wrong size runs off the
+    // edge. The overview state holds the route in view until the runner pans away from it.
+    LaunchedEffect(framed, topInsetPixels) {
+        mapViewportState.transitionToOverviewState(
+            OverviewViewportStateOptions.Builder()
+                .geometry(framed)
+                .geometryPadding(
+                    EdgeInsets(
+                        FramePaddingPixels,
+                        FramePaddingPixels,
+                        FramePaddingPixels,
+                        FramePaddingPixels
+                    )
+                )
+                .padding(EdgeInsets(topInsetPixels, 0.0, 0.0, 0.0))
+                .animationDurationMs(FrameImmediately)
+                .build()
         )
     }
 
@@ -200,6 +238,9 @@ private fun TrackMapSurface(trackMap: TrackMap, interactive: Boolean, modifier: 
 
     MapboxMap(
         modifier = modifier,
+        // No scale bar on the preview: it lands across the top of a card two hundred pixels tall,
+        // over the route it is supposed to be helping read. The full-screen map has room for it.
+        scaleBar = { if (showScaleBar) ScaleBar() },
         mapViewportState = mapViewportState,
         mapState = mapState,
         style = { MapboxStandardStyle(standardStyleState = standardStyleState) }
