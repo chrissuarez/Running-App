@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Placeable
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -183,23 +184,32 @@ fun SessionItem(
                 }
             }
             Column(modifier = Modifier.weight(1f)) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(text = dateStr, fontWeight = FontWeight.Bold)
-                        MedalBadge(medals = row.medals)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (isSelected) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = "Selected",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
+                HeaderRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    start = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(text = dateStr, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                            MedalBadge(medals = row.medals)
                         }
-                        Text(text = formatDuration(session.durationSeconds))
+                    },
+                    end = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (isSelected) {
+                                Icon(
+                                    imageVector = Icons.Default.CheckCircle,
+                                    contentDescription = "Selected",
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                            }
+                            Text(
+                                text = formatDuration(session.durationSeconds),
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
-                }
+                )
                 Spacer(modifier = Modifier.height(8.dp))
                 StatsRow(stats = historyRowStats(session), modifier = Modifier.fillMaxWidth())
             }
@@ -334,6 +344,56 @@ private fun MedalBadge(medals: Int) {
 
 /** How far apart the stats columns sit. */
 private val StatColumnGap = 8.dp
+
+/** The least room left between the date and the clock before the whole line starts to shrink. */
+private val HeaderGap = 8.dp
+
+/**
+ * The line above the stats: when the Run was, and how long it took, pushed to opposite ends (#232).
+ *
+ * Shrunk as one thing when the two ends stop fitting, for the same reason the stats below are
+ * ([fitToWidthScale]) — at 320dp with the system text turned up, a date carrying a medal count
+ * leaves the clock beside it too little room, and what a plain Row does about that is break the
+ * clock into one digit per line.
+ */
+@Composable
+private fun HeaderRow(
+    start: @Composable () -> Unit,
+    end: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Layout(
+        modifier = modifier,
+        content = { start(); end() }
+    ) { measurables, constraints ->
+        val gap = HeaderGap.roundToPx()
+        // Measured with no width limit, so each end settles on one line before either is asked to
+        // give width back.
+        val (startPlaceable, endPlaceable) = measurables.map { it.measure(Constraints()) }
+        val scale = fitToWidthScale(
+            contentWidth = startPlaceable.width + gap + endPlaceable.width,
+            availableWidth = constraints.maxWidth
+        )
+        val height = (maxOf(startPlaceable.height, endPlaceable.height) * scale).roundToInt()
+            .coerceIn(constraints.minHeight, constraints.maxHeight)
+        val width = ((startPlaceable.width + gap + endPlaceable.width) * scale).roundToInt()
+            .coerceIn(constraints.minWidth, constraints.maxWidth)
+
+        layout(width, height) {
+            fun placeAt(placeable: Placeable, x: Int) {
+                // Centred on the line, so the clock still sits level with the date once one of the
+                // two has shrunk further than the other.
+                placeable.placeWithLayer(x, ((height - placeable.height * scale) / 2f).roundToInt()) {
+                    scaleX = scale
+                    scaleY = scale
+                    transformOrigin = TransformOrigin(0f, 0f)
+                }
+            }
+            placeAt(startPlaceable, 0)
+            placeAt(endPlaceable, width - (endPlaceable.width * scale).roundToInt())
+        }
+    }
+}
 
 /**
  * A Run's numbers, in columns of equal width, on one line each (#232).
