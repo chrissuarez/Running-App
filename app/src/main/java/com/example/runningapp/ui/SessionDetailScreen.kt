@@ -144,12 +144,21 @@ fun SessionDetailScreen(
                 // The page's order (#43): route map, summary, achievements, splits, chart, then the
                 // coaching cards the app already had. A treadmill run, and any run whose recording
                 // holds no route, simply has no map — the page starts at the summary instead.
+                //
+                // Where there is a map the chart comes straight after it, ahead of the summary,
+                // rather than at the bottom (#48). The two are one instrument: a finger on the chart
+                // puts a dot on the route. Measured on the phone with the order #43 asked for, the
+                // map is two screens above the chart while the finger is on it — a link the runner
+                // would never once see. A run with no map has nothing to sit under and nothing to
+                // link to, so its chart stays where it was.
                 if (trackMap != null) {
                     RunTrackMapCard(
                         trackMap = trackMap,
                         onOpenFullScreen = { showFullScreenMap = true },
                         scrubber = scrubber,
                     )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    RunChartSection(analysis = analysis, scrubber = scrubber)
                     Spacer(modifier = Modifier.height(24.dp))
                 }
 
@@ -170,24 +179,10 @@ fun SessionDetailScreen(
                     Spacer(modifier = Modifier.height(24.dp))
                 }
 
-                // An outdoor run is read against the ground it covered and a treadmill run against
-                // its own clock, so the two get different charts and different headings (#46) — the
-                // heading has to say what the bottom axis means or the chart is a guess.
-                val combined = analysis.distanceChart
-                if (combined != null) {
-                    Text(
-                        headingFor(combined),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    RunCombinedChart(chart = combined, scrubber = scrubber)
-                } else {
-                    Text("Heart Rate", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    RunAnalysisChart(chart = analysis.chart)
+                if (trackMap == null) {
+                    RunChartSection(analysis = analysis, scrubber = scrubber)
+                    Spacer(modifier = Modifier.height(24.dp))
                 }
-                Spacer(modifier = Modifier.height(24.dp))
 
                 Text("Heart Rate Zones", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(8.dp))
@@ -227,6 +222,32 @@ fun SessionDetailScreen(
                 }
             }
         )
+    }
+}
+
+/**
+ * The Run's chart and the heading that says what its bottom axis means.
+ *
+ * An outdoor run is read against the ground it covered and a treadmill run against its own clock, so
+ * the two get different charts and different headings (#46) — the heading has to say what the bottom
+ * axis means or the chart is a guess. Its own function because the page shows it in one of two
+ * places depending on whether the Run has a route to sit under.
+ */
+@Composable
+private fun RunChartSection(analysis: RunAnalysis, scrubber: ChartScrubber) {
+    val combined = analysis.distanceChart
+    if (combined != null) {
+        Text(
+            headingFor(combined),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        RunCombinedChart(chart = combined, scrubber = scrubber)
+    } else {
+        Text("Heart Rate", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(8.dp))
+        RunAnalysisChart(chart = analysis.chart)
     }
 }
 
