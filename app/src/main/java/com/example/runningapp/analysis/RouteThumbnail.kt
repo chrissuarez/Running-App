@@ -2,6 +2,7 @@ package com.example.runningapp.analysis
 
 import com.example.runningapp.data.MeasuredTrack
 import com.example.runningapp.data.TrackPoint
+import com.example.runningapp.recording.SessionRecorder
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
@@ -59,11 +60,17 @@ private const val THUMBNAIL_DETAIL = 0.01
  * Run stopped in the first seconds, would be drawn as a confident scribble across the row —
  * the most eye-catching thing in the list, and pure noise.
  *
- * Fifty metres, because that is under the width of the ground a stationary fix can wander over and
- * well under any distance whose shape a runner would recognise. Anything smaller is drawn as
- * nothing at all, which is the honest answer.
+ * Taken from the accuracy gate rather than picked, because the gate is what decides how far that
+ * wander can reach: a fix is accepted at up to
+ * [SessionRecorder.ACCURACY_THRESHOLD_METERS] of error, so two accepted fixes from a runner who
+ * never moved can sit twice that apart — one wrong by the full amount in each direction. Anything
+ * inside that width is ground the recording cannot swear the runner covered, and a route drawn
+ * from it would be drawn from the error alone.
+ *
+ * It costs nothing worth keeping. Sixty metres of running has no shape to recognise a Run by, which
+ * is the only thing the drawing is for.
  */
-private const val SHAPE_MINIMUM_METERS = 50.0
+private val SHAPE_MINIMUM_METERS = 2 * SessionRecorder.ACCURACY_THRESHOLD_METERS
 
 /** Metres in a degree of latitude — the span is measured in degrees and the minimum in metres. */
 private const val METERS_PER_DEGREE = 111_320.0
