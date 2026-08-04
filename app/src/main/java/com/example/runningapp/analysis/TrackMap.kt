@@ -29,7 +29,62 @@ data class TrackMap(
      */
     val start: MapFix,
     val finish: MapFix,
+    /**
+     * The whole route in order, each fix with how far along the Run it sits — what [fixAt] reads.
+     *
+     * Every fix the recording holds, not only the ones on a drawn line: a fix either side of a
+     * break is still a place the runner was, and the scrubber has to be able to point at it.
+     */
+    val route: List<RouteFix>,
 ) {
+    /**
+     * Where the runner was after [distanceMeters] of the Run — how a finger on the chart becomes a
+     * dot on the map (#48).
+     *
+     * Asked in metres because that is the chart's own x axis ([DistanceChart]), and both are counted
+     * off the same walk of the same track, so the two cannot disagree about where a spike happened.
+     *
+     * The nearest fix the Run actually recorded, on the same rule the chart reads out by
+     * ([DistanceChart.readingAt]) — the dot and the readout are one answer to one question, and they
+     * must name the same second of the Run. Not a point worked out between two fixes: that would
+     * slide the dot along ground the chart's own line is standing still over, and on a route drawn
+     * two hundred pixels tall a second of running is a tenth of a pixel anyway.
+     *
+     * Null past either end of the recording. There is no ground out there to point at.
+     */
+    fun fixAt(distanceMeters: Double): MapFix? {
+        if (route.isEmpty()) return null
+        if (distanceMeters < route.first().distanceMeters) return null
+        if (distanceMeters > route.last().distanceMeters) return null
+
+        val next = firstFixAtOrPast(distanceMeters)
+        val ahead = route[next]
+        val behind = route.getOrNull(next - 1) ?: return ahead.fix
+        // Half way between two fixes reads as the earlier one, which is what the chart does with the
+        // same tie — it takes the first of the points nearest the finger.
+        val nearerBehind = distanceMeters - behind.distanceMeters <= ahead.distanceMeters - distanceMeters
+        return if (nearerBehind) behind.fix else ahead.fix
+    }
+
+    /**
+     * The first fix at or past [distanceMeters], found by halving rather than by scanning.
+     *
+     * The scrubber asks this on every frame of a drag, and an hour-long Run is thousands of fixes.
+     *
+     * *First*, so a distance a break sits on answers with the fix the runner stopped at rather than
+     * the one they resumed at — which is the point the chart reads out there, and the readout and
+     * the dot must not name different halves of the Run.
+     */
+    private fun firstFixAtOrPast(distanceMeters: Double): Int {
+        var low = 0
+        var high = route.lastIndex
+        while (low < high) {
+            val middle = (low + high) / 2
+            if (route[middle].distanceMeters < distanceMeters) low = middle + 1 else high = middle
+        }
+        return low
+    }
+
     /**
      * Everything the map draws, for framing the camera on the route as a whole.
      *
@@ -42,6 +97,9 @@ data class TrackMap(
 
 /** One fix of the Run as the map needs it: where, and nothing else. */
 data class MapFix(val latitude: Double, val longitude: Double)
+
+/** One fix of the Run and how far into it the runner had run to reach it. */
+data class RouteFix(val distanceMeters: Double, val fix: MapFix)
 
 /**
  * A stretch of the route drawn as one line, in one colour.
@@ -113,10 +171,12 @@ internal fun trackMapOf(
     close()
 
     if (stretches.isEmpty()) return null
+    val distanceAtFix = distanceAtEachFix(legs)
     return TrackMap(
         stretches = stretches,
         start = points.first().asMapFix(),
         finish = points.last().asMapFix(),
+        route = points.mapIndexed { i, point -> RouteFix(distanceAtFix[i], point.asMapFix()) },
     )
 }
 

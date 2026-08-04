@@ -175,10 +175,9 @@ internal fun distanceChartOf(
     val legs = measured.legs
     if (legs.isEmpty()) return null
 
-    // Where along the run each fix sits. A leg that recorded nothing carries no ground, so the axis
-    // does not advance across a break.
-    val distanceAtFix = DoubleArray(points.size)
-    legs.forEachIndexed { i, leg -> distanceAtFix[i + 1] = distanceAtFix[i] + leg.meters }
+    // Where along the run each fix sits — the same axis the route map measures itself along, so a
+    // finger on this chart finds the right ground on that map (#48).
+    val distanceAtFix = distanceAtEachFix(legs)
     val stretchOfFix = stretchOfEachFix(legs)
     val span = distanceAtFix.last()
     if (span <= 0.0) return null

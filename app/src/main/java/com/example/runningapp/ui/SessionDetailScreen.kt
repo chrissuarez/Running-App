@@ -81,6 +81,10 @@ fun SessionDetailScreen(
         session?.let { RunAnalysis.of(it, samples, trackPoints, hrProfile) }
     }
 
+    // What the map and the chart both read: where the runner's finger is on the chart, in metres
+    // along the Run (#48).
+    val scrubber = rememberChartScrubber()
+
     // The full-screen map replaces the page rather than being a destination of its own: the route is
     // already worked out here, and closing it puts the runner back exactly where they were (#47).
     val trackMap = analysis?.trackMap
@@ -141,7 +145,11 @@ fun SessionDetailScreen(
                 // coaching cards the app already had. A treadmill run, and any run whose recording
                 // holds no route, simply has no map — the page starts at the summary instead.
                 if (trackMap != null) {
-                    RunTrackMapCard(trackMap = trackMap, onOpenFullScreen = { showFullScreenMap = true })
+                    RunTrackMapCard(
+                        trackMap = trackMap,
+                        onOpenFullScreen = { showFullScreenMap = true },
+                        scrubber = scrubber,
+                    )
                     Spacer(modifier = Modifier.height(24.dp))
                 }
 
@@ -173,7 +181,7 @@ fun SessionDetailScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    RunCombinedChart(chart = combined)
+                    RunCombinedChart(chart = combined, scrubber = scrubber)
                 } else {
                     Text("Heart Rate", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
