@@ -63,6 +63,21 @@ class SessionDetailViewModel(
     }
 
     /**
+     * States how far a treadmill Run went, or corrects what was stated before (#231).
+     *
+     * Null withdraws it. Everything that follows from the number — the pace, the record book, the
+     * backup, and what a correction downward owes — is the repository's
+     * ([com.example.runningapp.data.SessionRepository.stateDistance]); this is only the thread it
+     * runs on. Nothing is reported back: the row is watched, so the card redraws with the new
+     * number of its own accord.
+     */
+    fun stateDistance(sessionId: Long, distanceKm: Double?) {
+        viewModelScope.launch {
+            sessionRepository.stateDistance(sessionId, distanceKm)
+        }
+    }
+
+    /**
      * Exports a run as GPX and announces the file on [gpxShareReady] (#84). Anything that leaves the
      * runner with nothing to share — no GPS track, no writable file — reports on [gpxShareFailed] so
      * the screen can say so, because a share sheet that never opens looks like a broken button.

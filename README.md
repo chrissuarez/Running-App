@@ -51,6 +51,12 @@ A robust Android application designed to track heart rate (HR) during runs and p
 - **Session Management**:
     - **Phases**: Supports **Warm-up**, **Main Workout**, and **Cool-down** phases.
     - **Run Modes**: Choose between **Treadmill** (HR only) and **Outdoor** (GPS tracking).
+    - **Treadmill distance**: A treadmill run has no GPS, so you tell it the distance — the number
+      the console showed, typed into the sheet at the end of the run or onto the run's own page
+      later, and correctable there whenever. It counts as a distance like any other: your pace, your
+      weekly volume, what the coach sees, and the longest-run record. The five fastest-* records
+      still need a GPS track, because those are the quickest stretch found *inside* a run. A run
+      nobody stated a distance for shows a dash rather than 0.00 km.
     - **Simulation Mode**: Test coaching logic and UI without a physical heart rate strap using realistic mock data.
     - **GPS Tracking**: Records distance and calculates pace using a 15-second sliding window for stability.
     - **Split Announcements**: Automatic voice alerts for every 1km covered.
@@ -71,9 +77,10 @@ A robust Android application designed to track heart rate (HR) during runs and p
     - **Personal records**: Gold/silver/bronze at seven records — fastest 1 km, mile, 5 km, 10 km and
       half marathon, plus longest run and longest time. The distances are contested as a *best
       effort*: the quickest continuous stretch anywhere inside the run, walk breaks included. A run's
-      detail page shows the medals it took, and nothing when it took none. Treadmill runs and runs
-      with no GPS track contest the longest time only, since their distance was never measured
-      against ground. Every run you have already recorded is scored once in the background at
+      detail page shows the medals it took, and nothing when it took none. A treadmill run
+      contests the longest run and the longest time — a stated distance is a real distance — but
+      never the five fastest, which need a track to find a stretch inside. A run with no GPS track
+      and no stated distance contests the longest time only. Every run you have already recorded is scored once in the background at
       launch, so the book starts out complete; deleting a medal-holder promotes the next-best
       efforts behind it.
     - **Full archive**: Settings → Backup writes one ZIP — a GPX per run, an `archive.json` of

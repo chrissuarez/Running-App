@@ -4,6 +4,7 @@ import android.Manifest
 import android.bluetooth.BluetoothDevice
 import com.example.runningapp.run.AcquisitionPhase
 import com.example.runningapp.run.AcquisitionState
+import com.example.runningapp.run.RunMode
 import com.example.runningapp.run.ScannedStrap
 import android.content.ComponentName
 import android.content.Context
@@ -239,6 +240,10 @@ class MainActivity : ComponentActivity() {
                     }
                     val scope = rememberCoroutineScope()
                     var feelSheetSessionId by rememberSaveable { mutableStateOf<Long?>(null) }
+                    // The mode the finished Run was recorded in, kept beside its id: the sheet asks
+                    // a treadmill Run how far it went (#231), and by the time it is on screen the
+                    // Run is over and no longer has a mode to be asked for.
+                    var feelSheetRunMode by rememberSaveable { mutableStateOf<String?>(null) }
 
                     val navController = rememberNavController()
                     val navigateTo: (String) -> Unit = { route ->
@@ -378,6 +383,12 @@ class MainActivity : ComponentActivity() {
                                             (it.sessionStatus == SessionStatus.RUNNING || it.sessionStatus == SessionStatus.PAUSED)
                                         ) {
                                             feelSheetSessionId = it.activeDbSessionId
+                                            // The Run's own pinned mode (HrState.activeRunMode),
+                                            // falling back to the setting only if the Run is
+                                            // already down — an outdoor Run would then be asked for
+                                            // a distance it cannot be told, and the repository
+                                            // refuses that anyway.
+                                            feelSheetRunMode = it.activeRunMode ?: userSettings.runMode
                                         }
                                     }
                                      val intent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
@@ -679,6 +690,9 @@ class MainActivity : ComponentActivity() {
                                     sessionDetailViewModel.deleteSession(id)
                                 },
                                 onBack = { navigateTo(Routes.HISTORY) },
+                                onStateDistance = { id, distanceKm ->
+                                    sessionDetailViewModel.stateDistance(id, distanceKm)
+                                },
                                 canShareGpx = hasTrack,
                                 onShareGpx = { id -> sessionDetailViewModel.shareGpx(id) },
                                 shareFailed = gpxShareFailed != null && gpxShareFailed == sessionId,
@@ -708,9 +722,19 @@ class MainActivity : ComponentActivity() {
 
                     feelSheetSessionId?.let { sessionId ->
                         FeelFeedbackSheet(
-                            onSave = { effort, note ->
+                            // Asked of a treadmill Run only, and of the mode the Run was pinned to
+                            // rather than the setting in force: the runner may have moved the
+                            // selector while the sheet was up.
+                            askForDistance = feelSheetRunMode != RunMode.OUTDOOR.settingValue,
+                            onSave = { effort, note, distanceKm ->
                                 scope.launch(Dispatchers.IO) {
                                     sessionRepository.saveFeelFeedback(sessionId, effort, note)
+                                    // After the feedback, so the one backup a stated distance takes
+                                    // carries both. Only when there is one: stating nothing must
+                                    // not cost a second snapshot of the whole database.
+                                    if (distanceKm != null) {
+                                        sessionRepository.stateDistance(sessionId, distanceKm)
+                                    }
                                 }
                                 feelSheetSessionId = null
                             },
