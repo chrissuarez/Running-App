@@ -291,30 +291,38 @@ private class ThumbnailStroke(
  * what kind of Run it was; it earns its square by keeping the text edge still down a list that mixes
  * indoor and outdoor Runs. So it is stroked at the same weight and in the same colour as a route —
  * the list has to read as one family of squares, not as an icon set beside a drawing.
+ *
+ * Drawn in profile, in as few lines as it can be and still be a treadmill: at 56dp anything closer
+ * together than about four of these hundredths is a smudge. Chosen from seven candidates against
+ * the real list — the ones that lost were either too dense to survive the size (a head-on view, a
+ * running figure) or closed shapes that read as an icon rather than as a drawn line.
  */
 @Composable
 private fun TreadmillDrawing() {
     ThumbnailCanvas { stroked ->
-        // The deck, seen from the side and slightly above, so it is a running belt rather than a bar.
+        // The deck.
         stroked {
-            moveTo(0.06f, 0.78f)
-            lineTo(0.66f, 0.78f)
-            lineTo(0.80f, 0.62f)
-            lineTo(0.20f, 0.62f)
-            close()
+            moveTo(0.09f, 0.72f)
+            lineTo(0.64f, 0.72f)
         }
-        // The upright, from the far end of the deck to the console.
+        // Its two feet, splayed the way a machine's are, which is most of what says this is a
+        // machine and not a bar.
         stroked {
-            moveTo(0.74f, 0.68f)
-            lineTo(0.80f, 0.36f)
+            moveTo(0.16f, 0.72f)
+            lineTo(0.12f, 0.82f)
         }
-        // The console.
         stroked {
-            moveTo(0.62f, 0.32f)
-            lineTo(0.92f, 0.32f)
-            lineTo(0.92f, 0.18f)
-            lineTo(0.62f, 0.18f)
-            close()
+            moveTo(0.57f, 0.72f)
+            lineTo(0.61f, 0.82f)
+        }
+        // The arm, raked back from the far end of the deck, and the console tilted at the top of it.
+        stroked {
+            moveTo(0.64f, 0.72f)
+            lineTo(0.80f, 0.32f)
+        }
+        stroked {
+            moveTo(0.68f, 0.29f)
+            lineTo(0.89f, 0.22f)
         }
     }
 }
