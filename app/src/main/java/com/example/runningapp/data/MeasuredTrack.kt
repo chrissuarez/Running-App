@@ -37,7 +37,37 @@ data class TrackLeg(
  * both have to be measuring the same run the same way, or a run's splits would not add up to its
  * own pace.
  */
-data class MeasuredTrack(val points: List<TrackPoint>, val legs: List<TrackLeg>)
+data class MeasuredTrack(val points: List<TrackPoint>, val legs: List<TrackLeg>) {
+    /**
+     * The runs of consecutive legs the recording covers, as ranges of leg index — where a line may
+     * be drawn without inventing ground.
+     *
+     * One rule, in one place, because everything that draws a route has to cut it at the same
+     * moments: the route map on a run's page ([com.example.runningapp.analysis.trackMapOf]) and the
+     * thumbnail beside it in History ([com.example.runningapp.analysis.routeThumbnailOf]). Written
+     * twice they would drift, and the same run would be a loop in one view and an out-and-back in
+     * the other.
+     *
+     * Legs rather than fixes, so a caller that has something to say about each leg — the colour the
+     * heart rate makes it, say — can still say it. Stretch `a..b` covers `points[a]` through
+     * `points[b + 1]`, so every stretch is at least two fixes and is therefore a line.
+     */
+    val unbrokenLegs: List<IntRange>
+        get() {
+            val stretches = mutableListOf<IntRange>()
+            var start: Int? = null
+            legs.forEachIndexed { i, leg ->
+                if (leg.recorded) {
+                    if (start == null) start = i
+                } else {
+                    start?.let { stretches += it..i - 1 }
+                    start = null
+                }
+            }
+            start?.let { stretches += it..legs.lastIndex }
+            return stretches
+        }
+}
 
 /**
  * Walks a finished run's track, judging each leg moving or resting the way Strava does for an

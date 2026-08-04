@@ -5,7 +5,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.runningapp.analysis.RouteThumbnail
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.data.isFinished
 import com.example.runningapp.data.SessionRepository
+import com.example.runningapp.run.RunMode
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,8 +53,15 @@ class HistoryViewModel(
      */
     private val thumbnails = MutableStateFlow<Map<Long, RouteThumbnail?>>(emptyMap())
 
+    /**
+     * The runs the list shows, read from the database once however many things here want them —
+     * the rows themselves, and the pass that works their routes out.
+     */
+    private val sessions: StateFlow<List<RunnerSession>> = sessionRepository.recentSessionsFlow()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     val rows: StateFlow<List<HistoryRow>> = combine(
-        sessionRepository.recentSessionsFlow(),
+        sessions,
         sessionRepository.medalCountsFlow(),
         thumbnails,
     ) { sessions, medals, drawn ->
@@ -78,8 +87,8 @@ class HistoryViewModel(
      */
     private fun drawRoutesAsRunsArrive() {
         viewModelScope.launch {
-            sessionRepository.recentSessionsFlow().collect { sessions ->
-                sessions.filter { it.runMode == "outdoor" && !thumbnails.value.containsKey(it.id) }
+            sessions.collect { sessions ->
+                sessions.filter { it.needsDrawing }
                     .forEach { session ->
                         val drawn = withContext(routeDispatcher) {
                             sessionRepository.getRouteThumbnail(session.id)
@@ -89,6 +98,19 @@ class HistoryViewModel(
             }
         }
     }
+
+    /**
+     * Whether this run's route is worth working out now.
+     *
+     * A run still being recorded is not: its row appears in History the moment it starts, and its
+     * track is a handful of fixes that will be a whole route by the time it is stopped. Answering
+     * for it would bank that first minute as the shape of the run and never look again, because
+     * nothing here asks twice. It is drawn when it finishes, which is when it has a shape.
+     */
+    private val RunnerSession.needsDrawing: Boolean
+        get() = runMode == RunMode.OUTDOOR.settingValue &&
+            isFinished() &&
+            !thumbnails.value.containsKey(id)
 
     fun toggleSelection(sessionId: Long) {
         _selectedSessionIds.value = if (_selectedSessionIds.value.contains(sessionId)) {

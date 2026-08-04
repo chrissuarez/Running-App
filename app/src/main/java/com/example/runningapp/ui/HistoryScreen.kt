@@ -25,6 +25,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.analysis.RouteThumbnail
+import com.example.runningapp.run.RunMode
 import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.data.averagePaceText
 import com.example.runningapp.data.inTargetZoneSeconds
@@ -163,15 +164,20 @@ fun SessionItem(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Nothing at all where there is no route to draw — a treadmill Run, or one recorded
-            // before the app kept tracks. The row keeps its old shape rather than reserving an
-            // empty square for a drawing that is never coming.
-            row.thumbnail?.let { RouteThumbnailImage(it) }
+            // The square is held open for every outdoor Run, drawn or not: the route is worked out
+            // after the row is on screen, and a row that widened when its drawing arrived would
+            // shuffle the list under the runner's finger. Treadmill Runs never have one, so they
+            // keep the row they have today.
+            if (session.runMode == RunMode.OUTDOOR.settingValue) {
+                Box(modifier = Modifier.size(ThumbnailSize)) {
+                    row.thumbnail?.let { RouteThumbnailDrawing(it) }
+                }
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(text = dateStr, fontWeight = FontWeight.Bold)
-                        TrophyBadge(medals = row.medals)
+                        MedalBadge(medals = row.medals)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (isSelected) {
@@ -188,7 +194,7 @@ fun SessionItem(
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     StatSmall(label = "Avg HR", value = "${session.avgBpm}")
-                    if (session.runMode == "outdoor") {
+                    if (session.runMode == RunMode.OUTDOOR.settingValue) {
                         StatSmall(label = "Dist", value = "%.2f km".format(session.distanceKm))
                         // Derived, not read from the stored column (#163).
                         StatSmall(label = "Pace", value = session.averagePaceText)
@@ -205,18 +211,14 @@ private val ThumbnailSize = 56.dp
 private val ThumbnailLineWidth = 2.dp
 
 /**
- * The shape of where a Run went, drawn beside it in the list (#51).
- *
- * A line and nothing else: no map under it and no zone colours on it. At this size streets are a
- * smudge and five colours are a smear, and the question a runner is asking while scrolling is only
- * "which run was that?" — which the shape answers on its own. The Run's own page has the map that
- * answers the rest ([RunTrackMapCard]).
+ * The shape of where a Run went, drawn beside it in the list (#51) — see [RouteThumbnail] for why
+ * it is an outline and not a map.
  *
  * Each stroke is a stretch the recording actually covers, so a Run that paused is drawn as two
  * lines with a gap between them rather than one line across ground nobody witnessed.
  */
 @Composable
-private fun RouteThumbnailImage(thumbnail: RouteThumbnail) {
+private fun RouteThumbnailDrawing(thumbnail: RouteThumbnail) {
     val line = MaterialTheme.colorScheme.primary
     val stroke = with(LocalDensity.current) { ThumbnailLineWidth.toPx() }
     Canvas(modifier = Modifier.size(ThumbnailSize)) {
@@ -249,7 +251,7 @@ private fun RouteThumbnailImage(thumbnail: RouteThumbnail) {
  * ([AchievementsCard]).
  */
 @Composable
-private fun TrophyBadge(medals: Int) {
+private fun MedalBadge(medals: Int) {
     if (medals <= 0) return
     Text(
         text = "🏆 $medals",
