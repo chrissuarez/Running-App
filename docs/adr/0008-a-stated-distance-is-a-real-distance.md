@@ -40,6 +40,15 @@ judged on a treadmill Run by the coach, in prose, from the distance and the dura
 sent. Graduation is an AI judgement here already; this asks it to do the job it was given rather
 than building machinery to hand it a number that would be a guess.
 
+**But it is only asked what those two numbers can answer.** A 6 km Run in 30 minutes may hold a
+sub-25-minute 5K and may not, depending entirely on splits the console never handed over, and a
+coach ruling on it either way would be doing the derivation this section has just rejected — with
+`evaluateAndAdjustPlan` advancing the stored Stage the moment it answered yes. So the rule the coach
+is given is that a stated distance and a whole-Run duration establish a time **over the whole Run and
+nothing shorter**: 5 km in 24:30 graduates a *5K in 24:59* Stage, 6 km in 30:00 does not, and where
+the Run is longer than the requirement the coach declines rather than guesses. A Stage held one
+winter longer is a smaller loss than a Stage graduated out of on a number nobody ran.
+
 ## Only a treadmill Run can hold one, and that is what makes it free
 
 A stated distance is available to treadmill Runs and to nothing else. An outdoor Run whose GPS
@@ -68,10 +77,19 @@ rewrite of every rule that currently says "measured" by saying "outdoor".
   nobody has stood behind that number since.
 - **A treadmill Run shows no live distance or pace while it is being run.** The number arrives after
   the Run, from a console that was in front of the runner the whole time. Nothing is lost by the
-  phone learning it late.
+  phone learning it late — **provided the work that already ran without it runs again.**
+  `finalizeRun` has scored the record book and asked the coach to evaluate the Stage before the
+  sheet is ever answered, both on a Run it believed had gone no distance. Stating the distance is
+  therefore not a write to a column: it re-scores that Run's records and re-runs its Stage
+  evaluation, and so does every later correction. The pass over a distance-less treadmill Run is a
+  provisional one, not the last word.
 - **A distance nobody stated reads as a dash, not as `0.00 km`** — on the History row and on the
   Run's own page, for every Run with no distance rather than as a treadmill special case. A zero was
   always a lie about a treadmill Run; it is the same lie about an outdoor Run the GPS lost.
-- **A stated distance has to be correctable.** It reaches the volume, the coach, graduation and the
-  record book, so a mistyped one is not a cosmetic error and cannot be write-once. It is editable on
-  the Run's page.
+- **A stated distance has to be correctable, and a correction downward has to rebuild.** It reaches
+  the volume, the coach, graduation and the record book, so a mistyped one is not a cosmetic error
+  and cannot be write-once: it is editable on the Run's page. Raising one is ordinary re-scoring.
+  **Lowering one that is holding a longest-distance medal is not** — only the top three are ever
+  banked, so the Run that should move up behind it exists nowhere but in history, and re-scoring the
+  corrected Run cannot find it. That correction rebuilds the longest-distance record from all of
+  history, the same mend a deletion owes and for the same reason, and refreshes the backup after it.
