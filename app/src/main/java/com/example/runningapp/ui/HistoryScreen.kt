@@ -201,21 +201,7 @@ fun SessionItem(
                     }
                 }
                 Spacer(modifier = Modifier.height(8.dp))
-                // Four columns of equal width, on every row, so the distance and the pace are in
-                // the same place all the way down the list (#232). Equal width rather than each
-                // column taking what it needs: what is being read is the column, not the row.
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(StatColumnGap)
-                ) {
-                    historyRowStats(session).forEach { stat ->
-                        StatSmall(
-                            label = stat.label,
-                            value = stat.value,
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
+                StatsRow(stats = historyRowStats(session), modifier = Modifier.fillMaxWidth())
             }
         }
     }
@@ -234,20 +220,38 @@ private val ThumbnailLineWidth = 2.dp
  */
 @Composable
 private fun RouteThumbnailDrawing(thumbnail: RouteThumbnail) {
+    ThumbnailCanvas { stroked ->
+        thumbnail.strokes.forEach { stretch ->
+            stroked {
+                stretch.forEachIndexed { i, point ->
+                    if (i == 0) moveTo(point.x, point.y) else lineTo(point.x, point.y)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The square every History row holds open, and the one line weight and colour everything in it is
+ * drawn with — so a route and a treadmill read as one family of squares rather than as a drawing
+ * beside an icon (#232).
+ *
+ * [content] is handed the one thing it needs: a way to stroke a line whose points are fractions of
+ * the square, from (0,0) at the top left to (1,1) at the bottom right — the square [RouteThumbnail]
+ * already speaks in.
+ */
+@Composable
+private fun ThumbnailCanvas(content: (stroked: (ThumbnailStroke.() -> Unit) -> Unit) -> Unit) {
     val line = MaterialTheme.colorScheme.primary
     val stroke = with(LocalDensity.current) { ThumbnailLineWidth.toPx() }
     Canvas(modifier = Modifier.size(ThumbnailSize)) {
-        // Inset by half the line's width, so a route that runs along the edge of its own box is
-        // drawn whole rather than shaved in half by it.
+        // Inset by half the line's width, so anything drawn along the edge of the square is drawn
+        // whole rather than shaved in half by it.
         val inset = stroke / 2f
         val span = size.minDimension - stroke
-        thumbnail.strokes.forEach { stretch ->
+        content { build ->
             val path = Path()
-            stretch.forEachIndexed { i, point ->
-                val x = inset + point.x * span
-                val y = inset + point.y * span
-                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-            }
+            ThumbnailStroke(path, inset, span).build()
             drawPath(
                 path = path,
                 color = line,
@@ -255,6 +259,18 @@ private fun RouteThumbnailDrawing(thumbnail: RouteThumbnail) {
             )
         }
     }
+}
+
+/** A line being drawn in the thumbnail's square, in fractions of it rather than in pixels. */
+private class ThumbnailStroke(
+    private val path: Path,
+    private val inset: Float,
+    private val span: Float,
+) {
+    fun moveTo(x: Float, y: Float) = path.moveTo(at(x), at(y))
+    fun lineTo(x: Float, y: Float) = path.lineTo(at(x), at(y))
+    fun close() = path.close()
+    private fun at(fraction: Float) = inset + fraction * span
 }
 
 /**
@@ -268,41 +284,26 @@ private fun RouteThumbnailDrawing(thumbnail: RouteThumbnail) {
  */
 @Composable
 private fun TreadmillDrawing() {
-    val line = MaterialTheme.colorScheme.primary
-    val stroke = with(LocalDensity.current) { ThumbnailLineWidth.toPx() }
-    Canvas(modifier = Modifier.size(ThumbnailSize)) {
-        // Laid out in fractions of the square, the same way a route is, and inset by half the
-        // line's width so nothing drawn at the edge is shaved in half by it.
-        val inset = stroke / 2f
-        val span = size.minDimension - stroke
-        fun x(fraction: Float) = inset + fraction * span
-        fun y(fraction: Float) = inset + fraction * span
-
-        fun stroked(build: Path.() -> Unit) = drawPath(
-            path = Path().apply(build),
-            color = line,
-            style = Stroke(width = stroke, cap = StrokeCap.Round, join = StrokeJoin.Round)
-        )
-
+    ThumbnailCanvas { stroked ->
         // The deck, seen from the side and slightly above, so it is a running belt rather than a bar.
         stroked {
-            moveTo(x(0.06f), y(0.78f))
-            lineTo(x(0.66f), y(0.78f))
-            lineTo(x(0.80f), y(0.62f))
-            lineTo(x(0.20f), y(0.62f))
+            moveTo(0.06f, 0.78f)
+            lineTo(0.66f, 0.78f)
+            lineTo(0.80f, 0.62f)
+            lineTo(0.20f, 0.62f)
             close()
         }
         // The upright, from the far end of the deck to the console.
         stroked {
-            moveTo(x(0.74f), y(0.68f))
-            lineTo(x(0.80f), y(0.36f))
+            moveTo(0.74f, 0.68f)
+            lineTo(0.80f, 0.36f)
         }
         // The console.
         stroked {
-            moveTo(x(0.62f), y(0.32f))
-            lineTo(x(0.92f), y(0.32f))
-            lineTo(x(0.92f), y(0.18f))
-            lineTo(x(0.62f), y(0.18f))
+            moveTo(0.62f, 0.32f)
+            lineTo(0.92f, 0.32f)
+            lineTo(0.92f, 0.18f)
+            lineTo(0.62f, 0.18f)
             close()
         }
     }
@@ -331,58 +332,81 @@ private fun MedalBadge(medals: Int) {
     )
 }
 
-/** How far apart the four stats columns sit. */
+/** How far apart the stats columns sit. */
 private val StatColumnGap = 8.dp
 
-@Composable
-fun StatSmall(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(modifier = modifier) {
-        FitToWidth {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                softWrap = false
-            )
-        }
-        FitToWidth {
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                softWrap = false
-            )
-        }
-    }
-}
-
 /**
- * Draws whatever is inside it at its natural size, shrunk just enough to fit the width it is given
- * (#232) — see [fitToWidthScale] for why shrinking rather than clipping, ellipsising or wrapping.
+ * A Run's numbers, in columns of equal width, on one line each (#232).
  *
- * The content is measured with no width limit, so it settles on one line and its own size first,
- * and only then is told how much of that it may keep.
+ * Laid out by hand rather than as a Row of Columns because the row has one size, not four: each
+ * label and value is measured at the size it would like to be, and then the whole row is shrunk by
+ * whatever its widest number needs to fit its column ([fitToWidthScale]). Shrinking each cell on its
+ * own would leave four different type sizes side by side and the values sitting at four different
+ * heights, which costs the list exactly what the reorder bought it — one line to read across, and
+ * two columns to read down.
  */
 @Composable
-private fun FitToWidth(content: @Composable () -> Unit) {
-    Layout(content = content) { measurables, constraints ->
-        val placeable = measurables.first()
-            .measure(constraints.copy(minWidth = 0, maxWidth = Constraints.Infinity))
-        val scale = fitToWidthScale(placeable.width, constraints.maxWidth)
-        val width = placeable.width
-            .coerceAtMost(constraints.maxWidth)
-            .coerceAtLeast(constraints.minWidth)
-        val height = (placeable.height * scale).roundToInt()
+private fun StatsRow(stats: List<HistoryStat>, modifier: Modifier = Modifier) {
+    Layout(
+        modifier = modifier,
+        content = {
+            stats.forEach { stat ->
+                Text(
+                    text = stat.label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    softWrap = false
+                )
+                Text(
+                    text = stat.value,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    softWrap = false
+                )
+            }
+        }
+    ) { measurables, constraints ->
+        if (measurables.isEmpty()) return@Layout layout(constraints.minWidth, constraints.minHeight) {}
+        val gap = StatColumnGap.roundToPx()
+        val columns = measurables.size / 2
+        // Measured with no width limit, so every label and value settles on one line at its own
+        // size before anything is asked to give width back.
+        val placeables = measurables.map { it.measure(Constraints()) }
+        val columnWidth = if (constraints.hasBoundedWidth) {
+            statColumnWidth(constraints.maxWidth, gap, columns)
+        } else {
+            // Nothing to share out: the columns take the widest number among them, so they stay
+            // equal even when the row is being measured rather than laid out.
+            placeables.maxOf { it.width }
+        }
+        val scale = placeables.minOf { fitToWidthScale(it.width, columnWidth) }
+
+        val rowHeight = (0 until columns)
+            .maxOf { placeables[it * 2].height + placeables[it * 2 + 1].height }
+        val height = (rowHeight * scale).roundToInt()
             .coerceIn(constraints.minHeight, constraints.maxHeight)
+        val width = (columns * columnWidth + (columns - 1) * gap)
+            .coerceIn(constraints.minWidth, constraints.maxWidth)
+
         layout(width, height) {
-            // Anchored at the top left, so a shrunk column still starts where the unshrunk one
-            // beside it does and the list keeps one left edge per column.
-            placeable.placeWithLayer(0, 0) {
-                scaleX = scale
-                scaleY = scale
-                transformOrigin = TransformOrigin(0f, 0f)
+            repeat(columns) { column ->
+                val label = placeables[column * 2]
+                val value = placeables[column * 2 + 1]
+                val x = column * (columnWidth + gap)
+                // Anchored at each column's own left edge, so the columns line up down the list
+                // whether or not that row had to shrink.
+                label.placeWithLayer(x, 0) {
+                    scaleX = scale
+                    scaleY = scale
+                    transformOrigin = TransformOrigin(0f, 0f)
+                }
+                value.placeWithLayer(x, (label.height * scale).roundToInt()) {
+                    scaleX = scale
+                    scaleY = scale
+                    transformOrigin = TransformOrigin(0f, 0f)
+                }
             }
         }
     }
@@ -410,7 +434,7 @@ internal fun formatDuration(seconds: Long): String {
 // four columns. These previews are the check — the same three rows at an ordinary size, at 320dp,
 // and at 320dp with the system text turned up. Four columns, in the same places, in all three.
 
-private fun previewSession(
+private fun previewRun(
     id: Long,
     runMode: RunMode,
     distanceKm: Double,
@@ -442,19 +466,19 @@ private fun previewRows(): List<HistoryRow> {
     return listOf(
         // A treadmill Run nobody stated a distance for: a square, and two dashes waiting for one.
         HistoryRow(
-            session = previewSession(1, RunMode.TREADMILL, 0.0, 2_530, 152, 1_684),
+            session = previewRun(1, RunMode.TREADMILL, 0.0, 2_530, 152, 1_684),
             medals = 0,
             thumbnail = null,
         ),
         // A treadmill Run that was told how far it went.
         HistoryRow(
-            session = previewSession(2, RunMode.TREADMILL, 7.25, 2_700, 145, 1_500),
+            session = previewRun(2, RunMode.TREADMILL, 7.25, 2_700, 145, 1_500),
             medals = 1,
             thumbnail = null,
         ),
         // An outdoor Run, with the widest numbers the row is likely to carry.
         HistoryRow(
-            session = previewSession(3, RunMode.OUTDOOR, 21.10, 7_890, 148, 5_592),
+            session = previewRun(3, RunMode.OUTDOOR, 21.10, 7_890, 148, 5_592),
             medals = 2,
             thumbnail = outAndBack,
         ),
