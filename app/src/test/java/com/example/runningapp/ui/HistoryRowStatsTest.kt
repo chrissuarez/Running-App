@@ -7,7 +7,7 @@ import org.junit.Test
 
 class HistoryRowStatsTest {
 
-    private fun session(
+    private fun runOf(
         runMode: RunMode = RunMode.OUTDOOR,
         distanceKm: Double = 8.2,
         durationSeconds: Long = 3_090,
@@ -28,7 +28,7 @@ class HistoryRowStatsTest {
 
     @Test
     fun `the row reads distance, pace, heart rate, target - in that order`() {
-        val stats = historyRowStats(session())
+        val stats = historyRowStats(runOf())
 
         assertEquals(listOf("Dist", "Pace", "Avg HR", "Target"), stats.map { it.label })
         assertEquals(listOf("8.20", "6:17", "148", "33:12"), stats.map { it.value })
@@ -36,7 +36,7 @@ class HistoryRowStatsTest {
 
     @Test
     fun `a treadmill run with a stated distance reads the same four columns`() {
-        val stats = historyRowStats(session(runMode = RunMode.TREADMILL, distanceKm = 5.0, durationSeconds = 1_800))
+        val stats = historyRowStats(runOf(runMode = RunMode.TREADMILL, distanceKm = 5.0, durationSeconds = 1_800))
 
         assertEquals(listOf("Dist", "Pace", "Avg HR", "Target"), stats.map { it.label })
         assertEquals("5.00", stats[0].value)
@@ -45,7 +45,7 @@ class HistoryRowStatsTest {
 
     @Test
     fun `a treadmill run nobody stated a distance for keeps its columns and dashes the two it lacks`() {
-        val stats = historyRowStats(session(runMode = RunMode.TREADMILL, distanceKm = 0.0, durationSeconds = 2_530))
+        val stats = historyRowStats(runOf(runMode = RunMode.TREADMILL, distanceKm = 0.0, durationSeconds = 2_530))
 
         assertEquals(listOf("Dist", "Pace", "Avg HR", "Target"), stats.map { it.label })
         assertEquals(listOf("--", "--", "148", "33:12"), stats.map { it.value })
@@ -53,7 +53,7 @@ class HistoryRowStatsTest {
 
     @Test
     fun `an outdoor run whose GPS recorded nothing dashes too, rather than claiming zero`() {
-        val stats = historyRowStats(session(runMode = RunMode.OUTDOOR, distanceKm = 0.0))
+        val stats = historyRowStats(runOf(runMode = RunMode.OUTDOOR, distanceKm = 0.0))
 
         assertEquals("--", stats[0].value)
         assertEquals("--", stats[1].value)
@@ -61,7 +61,7 @@ class HistoryRowStatsTest {
 
     @Test
     fun `pace is measured over moving time when the run has one`() {
-        val stats = historyRowStats(session(distanceKm = 5.0, durationSeconds = 1_800, movingTimeSeconds = 1_500))
+        val stats = historyRowStats(runOf(distanceKm = 5.0, durationSeconds = 1_800, movingTimeSeconds = 1_500))
 
         assertEquals("5:00", stats[1].value)
     }
@@ -78,6 +78,32 @@ class HistoryRowStatsTest {
     fun `a stats row too wide for its column is shrunk exactly enough to fit`() {
         assertEquals(0.5f, fitToWidthScale(contentWidth = 800, availableWidth = 400))
         assertEquals(0.8f, fitToWidthScale(contentWidth = 500, availableWidth = 400))
+    }
+
+    @Test
+    fun `the columns share the row equally, and the gaps come out first`() {
+        assertEquals(100, statColumnWidth(rowWidth = 424, gapWidth = 8, columns = 4))
+        // A row that will not divide evenly leaves the remainder unclaimed rather than widening one
+        // column: four equal columns is the whole point.
+        assertEquals(100, statColumnWidth(rowWidth = 427, gapWidth = 8, columns = 4))
+    }
+
+    @Test
+    fun `a row with no width limit yet has no width to share out`() {
+        assertEquals(Int.MAX_VALUE, statColumnWidth(rowWidth = Int.MAX_VALUE, gapWidth = 8, columns = 4))
+    }
+
+    @Test
+    fun `a row narrower than its own gaps gives its columns nothing rather than a negative width`() {
+        assertEquals(0, statColumnWidth(rowWidth = 10, gapWidth = 8, columns = 4))
+    }
+
+    @Test
+    fun `on the narrowest screen the app supports, a column is 41dp wide`() {
+        // 320dp at 2x density: page padding, card padding, the 56dp square and its 12dp gap leave
+        // 188dp of row, and four columns and three 8dp gaps have to live in it (#232).
+        val rowWidthPx = 188 * 2
+        assertEquals(82, statColumnWidth(rowWidth = rowWidthPx, gapWidth = 8 * 2, columns = 4))
     }
 
     @Test
