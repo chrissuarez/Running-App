@@ -6,6 +6,8 @@ import com.example.runningapp.data.TrackPointSource
 import com.example.runningapp.data.measureTrack
 import com.example.runningapp.recording.geodesicDistanceMeters
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -111,6 +113,31 @@ class RouteThumbnailTest {
         assertNull(thumbnailOf(route { standingStill(seconds = 60) }))
     }
 
+    /**
+     * A phone left on a desk does not record the same point sixty times: accepted fixes wander tens
+     * of metres around a runner who never moved. Scaled to fill the square, that wander is the most
+     * confident-looking drawing in the list and means nothing at all.
+     */
+    @Test
+    fun `a run that only wandered where it stood is not drawn`() {
+        assertNull(thumbnailOf(route { jitteredInPlace(seconds = 60, meters = 20.0) }))
+    }
+
+    /**
+     * Two out and one back leaves the turnaround a kilometre past the finish and dead on the line
+     * between start and finish. Judged against that line it is worth nothing, and the whole run
+     * flattens into the one-kilometre straight it plainly was not.
+     */
+    @Test
+    fun `an out-and-back that stops short of home keeps its turnaround`() {
+        val thumbnail = requireNotNull(thumbnailOf(route { east(2_000.0); east(-1_000.0) }))
+
+        val line = thumbnail.strokes.single()
+        assertEquals("the turnaround is the far end of the box", 1f, line.maxOf { it.x }, 0.01f)
+        assertTrue("the run has to turn, not run straight: was ${line.size} points", line.size >= 3)
+        assertEquals("and it finishes half way back", 0.5f, line.last().x, 0.01f)
+    }
+
     @Test
     fun `detail too small for a thumbnail to show is left out of it`() {
         val thumbnail = requireNotNull(thumbnailOf(route { east(3_000.0) }))
@@ -179,6 +206,27 @@ internal class RouteScript(private val startLatitude: Double) {
             timestamp += 1_000
             add()
         }
+    }
+
+    /**
+     * [seconds] of fixes from a runner who never moved, wandering up to [meters] from the spot in
+     * each direction — which is what a stationary phone actually records.
+     *
+     * Wandered by trigonometry rather than at random, so the shape under test is the same shape
+     * every time it is run.
+     */
+    fun jitteredInPlace(seconds: Int, meters: Double) {
+        val stood = latitude to longitude
+        repeat(seconds) { i ->
+            latitude = stood.first
+            longitude = stood.second
+            moveNorth(meters * cos(i.toDouble()))
+            moveEast(meters * sin(i * 1.7))
+            timestamp += 1_000
+            add()
+        }
+        latitude = stood.first
+        longitude = stood.second
     }
 
     /** The runner stops, covers [meters] east unrecorded, and starts again. */
