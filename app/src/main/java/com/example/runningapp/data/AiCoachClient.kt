@@ -141,9 +141,19 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
     )
     appendLine(
         "Fitness is their Effort Scores averaged over the last 42 days and Fatigue the same over " +
-            "the last 7, so Fatigue above Fitness means they are carrying more work than they have " +
-            "absorbed. Form is Fitness minus Fatigue: above +10 is fresh, below -10 is fatigued, " +
-            "and between the two is neutral."
+            "the last 7, both weighted so the recent days count for most, so Fatigue above Fitness " +
+            "means they are carrying more work than they have absorbed."
+    )
+    // Said outright, because the three numbers above do not satisfy it: Form is read before the
+    // day's training is added, so it is yesterday's pair and not today's. A model told "Form is
+    // Fitness minus Fatigue" and handed 10, 27 and -18 has been given arithmetic that does not
+    // hold, and the cheapest way for it to resolve that is to trust its own subtraction over the
+    // number the runner is looking at.
+    appendLine(
+        "Form is how fresh they are today: yesterday's Fitness less yesterday's Fatigue, asked " +
+            "before today's run had cost them anything. So it will not equal the difference of the " +
+            "two numbers above, which today's run has already moved — use the Form figure as given. " +
+            "Above +10 is fresh, below -10 is fatigued, and between the two is neutral."
     )
     // Skipped rather than written empty on the case that should not arise — a scored run is a
     // finished run, so a curve exists only where a week does. An empty list here would otherwise

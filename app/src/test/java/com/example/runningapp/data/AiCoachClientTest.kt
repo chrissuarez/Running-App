@@ -210,10 +210,35 @@ class AiCoachClientTest {
         assertTrue(prompt.contains("Fitness 42, Fatigue 61, Form -19 (fatigued)."))
         assertTrue(prompt.contains("210, not measured, 340, 120."))
         // Said in the prompt rather than left to the model's own idea of the bands.
-        assertTrue(prompt.contains("above +10 is fresh, below -10 is fatigued"))
+        assertTrue(prompt.contains("+10 is fresh, below -10 is fatigued"))
         assertTrue(prompt.contains("ease off when the runner is fatigued"))
         // The fence: a tired week must not cost a runner a Stage they have already earned.
         assertTrue(prompt.contains("These numbers must never change graduatedToNextStage."))
+    }
+
+    @Test
+    fun `the coach is told Form is yesterday's pair, not the difference of the two numbers sent`() {
+        // The real triple from the #66 device test: 10 - 27 is -17, and Form was -18. Form is read
+        // before the day's training lands, so it is yesterday's answer — the three numbers do not
+        // subtract, and a coach told they do would trust its own arithmetic over the Progress screen.
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                fitnessAndForm = AiFitnessAndForm(
+                    fitness = 10,
+                    fatigue = 27,
+                    form = -18,
+                    verdict = FormVerdict.FATIGUED,
+                    weeklyEffortScores = listOf(47, 224, 199, 66)
+                )
+            )
+        )
+
+        assertTrue(prompt.contains("yesterday's Fitness less yesterday's Fatigue"))
+        assertTrue(prompt.contains("will not equal the difference of the two numbers above"))
+        // The curves are weighted, not flat means — the wording the Progress screen's own model uses.
+        assertTrue(prompt.contains("weighted so the recent days count for most"))
+        // And the claim the fix removes must not creep back.
+        assertFalse(prompt.contains("Form is Fitness minus Fatigue"))
     }
 
     @Test
