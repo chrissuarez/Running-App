@@ -78,6 +78,19 @@ class SessionDetailViewModel(
     }
 
     /**
+     * Says how a Run felt, or changes what was said before (#80).
+     *
+     * What "nothing" means — an effort withdrawn, a note emptied — is the repository's
+     * ([com.example.runningapp.data.SessionRepository.editFeelFeedback]); this is only the thread it
+     * runs on. Nothing is reported back: the row is watched, so the card redraws of its own accord.
+     */
+    fun saveFeelFeedback(sessionId: Long, effort: Int?, note: String?) {
+        viewModelScope.launch {
+            sessionRepository.editFeelFeedback(sessionId, effort, note)
+        }
+    }
+
+    /**
      * Exports a run as GPX and announces the file on [gpxShareReady] (#84). Anything that leaves the
      * runner with nothing to share — no GPS track, no writable file — reports on [gpxShareFailed] so
      * the screen can say so, because a share sheet that never opens looks like a broken button.

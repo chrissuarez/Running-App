@@ -1018,6 +1018,36 @@ class SessionRepository(
     }
 
     /**
+     * Changes what the runner said about a Run, from the Run's own page (#80).
+     *
+     * The same two columns [saveFeelFeedback] writes, under a different rule: **nothing left to say
+     * is an instruction here**, not a skip. A runner who empties a note is asking for it to be gone,
+     * so nulls are written rather than treated as an absent answer — which is the one thing the
+     * sheet at the finish must never do, where "nothing" means the runner walked past it.
+     *
+     * A Run still being recorded is refused outright rather than waited for: `finalizeRun` writes
+     * the row whole, and unlike the sheet — which is on screen while that write is in flight — this
+     * page is reached long afterwards, so an unfinished row here is a Run that has no business being
+     * edited at all.
+     *
+     * Nothing changed writes nothing, so re-opening the dialog and pressing Save costs neither a row
+     * update nor a copy of the whole database.
+     */
+    suspend fun editFeelFeedback(sessionId: Long, effort: Int?, note: String?) {
+        val session = sessionDao.getSessionById(sessionId) ?: return
+        if (!session.isFinished()) {
+            Log.w("FeelFeedback", "Refusing an edit for run $sessionId: it is not finished")
+            return
+        }
+        val trimmedNote = note?.trim()?.ifEmpty { null }
+        if (effort == session.perceivedEffort && trimmedNote == session.sessionNote) return
+        sessionDao.updateFeelFeedback(sessionId, effort, trimmedNote)
+        // As at the finish: this is history the runner typed, and a Clear-storage restore that
+        // brought the Run back without it would lose the only copy.
+        refreshHistoryBackup?.invoke()
+    }
+
+    /**
      * States how far a treadmill Run went, or corrects a number already stated (#231).
      *
      * The runner reads it off the console after the Run; everything else here follows from it being

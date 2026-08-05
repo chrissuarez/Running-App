@@ -60,6 +60,9 @@ fun SessionDetailScreen(
     // How far a treadmill Run went, told to the app (#231). Null means the number would be refused
     // anyway — an outdoor Run, or a Run still being recorded — and the card is then read-only.
     onStateDistance: ((Long, Double?) -> Unit)? = null,
+    // How the Run felt, said or changed after the fact (#80). Null leaves the card read-only, which
+    // is what a Run still being recorded gets — the repository refuses one anyway.
+    onSaveFeelFeedback: ((Long, Int?, String?) -> Unit)? = null,
     // A run with no recorded GPS track — a treadmill run, or history from before #37 — has nothing to
     // put in a GPX file, so Share is left off the bar entirely rather than offered greyed out (#84).
     canShareGpx: Boolean = false,
@@ -176,6 +179,20 @@ fun SessionDetailScreen(
                     onStateDistance = onStateDistance
                         ?.takeIf { session.isFinished() && session.isTreadmill() }
                         ?.let { state -> { km: Double? -> state(session.id, km) } },
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Directly under the numbers the app measured, because this is the same run
+                // described the only way the app cannot measure. Shown even when there is nothing
+                // there yet: the sheet at the finish is skippable and easy to miss, and a page that
+                // showed the card only once it had something to show would give a runner who
+                // skipped it no way back in at all (#80).
+                FeelFeedbackCard(
+                    effort = session.perceivedEffort,
+                    note = session.sessionNote,
+                    onSave = onSaveFeelFeedback
+                        ?.takeIf { session.isFinished() }
+                        ?.let { save -> { effort: Int?, note: String? -> save(session.id, effort, note) } }
                 )
                 Spacer(modifier = Modifier.height(24.dp))
 
@@ -397,6 +414,73 @@ fun SummaryStats(
                             value = "Run/Walk"
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * How the Run felt, in the runner's own words — and the way in to say it, or to take it back (#80).
+ *
+ * [onSave] null is a card that only reports: a Run still being recorded cannot be described yet.
+ * With nothing said and no way in there is nothing to draw, so the card stands down entirely rather
+ * than showing an empty heading.
+ */
+@Composable
+private fun FeelFeedbackCard(
+    effort: Int?,
+    note: String?,
+    onSave: ((Int?, String?) -> Unit)?,
+) {
+    var showDialog by remember { mutableStateOf(false) }
+    val noteText = note?.trim()?.ifBlank { null }
+    if (effort == null && noteText == null && onSave == null) return
+
+    if (showDialog && onSave != null) {
+        FeelFeedbackDialog(
+            effort = effort,
+            note = noteText,
+            onDismiss = { showDialog = false },
+            onSave = { chosenEffort, typedNote ->
+                showDialog = false
+                onSave(chosenEffort, typedNote)
+            }
+        )
+    }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
+            Text(
+                text = "How it felt",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            val effortText = feelEffortText(effort)
+            if (effortText != null) {
+                StatLarge(label = "Effort", value = effortText)
+            } else {
+                Text(
+                    text = "No effort rated",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (noteText != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(text = noteText, style = MaterialTheme.typography.bodyMedium)
+            }
+
+            if (onSave != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(
+                    onClick = { showDialog = true },
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text(feelEditLabel(effort = effort, note = noteText))
                 }
             }
         }
