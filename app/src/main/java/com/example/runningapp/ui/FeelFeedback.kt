@@ -29,7 +29,7 @@ import kotlin.math.roundToInt
  * A note of nothing but spaces is no note: a Run nobody wrote about and a Run whose note was emptied
  * are the same absence, and the page has one way of showing it.
  */
-fun feelNoteOf(typed: String): String? = typed.trim().ifBlank { null }
+fun feelNoteOf(typed: String?): String? = typed?.trim()?.ifBlank { null }
 
 /**
  * Whether what is in front of the runner differs from what the Run already holds (#80).
@@ -44,11 +44,11 @@ fun feelEditHasChanges(
     effort: Int?,
     typedNote: String
 ): Boolean =
-    effort != storedEffort || feelNoteOf(typedNote) != feelNoteOf(storedNote.orEmpty())
+    effort != storedEffort || feelNoteOf(typedNote) != feelNoteOf(storedNote)
 
 /** The way in, named for whether the Run has anything to say yet (#80). */
 fun feelEditLabel(effort: Int?, note: String?): String =
-    if (effort == null && feelNoteOf(note.orEmpty()) == null) "Add effort or note" else "Edit effort or note"
+    if (effort == null && feelNoteOf(note) == null) "Add effort / note" else "Edit effort / note"
 
 /** An effort as the page says it back, or null on a Run that was never rated. */
 fun feelEffortText(effort: Int?): String? = effort?.let { "$it / 10" }
@@ -136,6 +136,12 @@ fun FeelFeedbackDialog(
                     effort = chosenEffort,
                     onEffortChosen = { chosenEffort = it }
                 )
+                // A rating can be taken back the way a note can, and for the same reason: a slider
+                // records a number on the first touch, so a Run can be rated by accident. Offered
+                // only where there is one to remove.
+                if (chosenEffort != null) {
+                    TextButton(onClick = { chosenEffort = null }) { Text("Clear the effort") }
+                }
                 Spacer(modifier = Modifier.height(16.dp))
                 OutlinedTextField(
                     value = typedNote,
