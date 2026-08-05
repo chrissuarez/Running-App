@@ -738,6 +738,7 @@ class MainActivity : ComponentActivity() {
                             ProgressScreen(
                                 state = progressState,
                                 onRangeChosen = { progressViewModel.rangeChosen(it) },
+                                onMeasureChosen = { progressViewModel.measureChosen(it) },
                                 onBack = { navigateTo(Routes.MAIN) }
                             )
                         }

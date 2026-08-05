@@ -6,7 +6,10 @@ import androidx.lifecycle.viewModelScope
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.training.ProgressDay
 import com.example.runningapp.training.ProgressRange
+import com.example.runningapp.training.TrainingWeek
+import com.example.runningapp.training.WeeklyMeasure
 import com.example.runningapp.training.progressCurve
+import com.example.runningapp.training.weeklyVolumeOf
 import com.example.runningapp.training.within
 import java.time.LocalDate
 import java.time.ZoneId
@@ -21,16 +24,20 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 /**
- * The Progress screen's picture of training (#63): today's three numbers, and the stretch of curve
- * the chosen range shows.
+ * The Progress screen's picture of training (#63, #64): today's three numbers, the stretch of curve
+ * the chosen range shows, and the weeks of volume underneath it.
  *
  * [today] is null until there is a scored Run to build a curve from — a new phone, or a history the
- * backfill has not reached yet. The screen says so rather than drawing zeroes.
+ * backfill has not reached yet. The screen says so rather than drawing zeroes. [weeks] can be there
+ * when [today] is not: a Run recorded without a Strap has no Score to curve, but it is still a week
+ * of training.
  */
 data class ProgressUiState(
     val range: ProgressRange = ProgressRange.THREE_MONTHS,
     val today: ProgressDay? = null,
     val curve: List<ProgressDay> = emptyList(),
+    val measure: WeeklyMeasure = WeeklyMeasure.DISTANCE,
+    val weeks: List<TrainingWeek> = emptyList(),
 )
 
 class ProgressViewModel(
@@ -56,6 +63,12 @@ class ProgressViewModel(
     private val _range = MutableStateFlow(ProgressRange.THREE_MONTHS)
 
     /**
+     * What the weekly bars are counting. Distance to begin with: it is the number a runner states a
+     * week in without being asked which one they mean.
+     */
+    private val _measure = MutableStateFlow(WeeklyMeasure.DISTANCE)
+
+    /**
      * The whole curve, from the runner's first Run to today.
      *
      * Built off the main thread ([Dispatchers.Default]): a year of history is a few hundred days of
@@ -73,22 +86,45 @@ class ProgressViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
+     * Every week of training from the runner's first Run to today, built and windowed exactly as the
+     * curve above is — whole on one side of the range picker, filtered on the other. Switching
+     * between distance, time and Effort is then a re-read of weeks already totalled rather than
+     * three rollups kept in step.
+     */
+    private val weeks: StateFlow<List<TrainingWeek>> = sessionRepository.runVolumesFlow()
+        .map { runs -> weeklyVolumeOf(runs, through = today(), zone = zone) }
+        .flowOn(curveDispatcher)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
      * The window is measured back from the curve's own last day rather than from today asked afresh.
      * The two are the same day except across a midnight the screen was left open through, and there
      * the curve is what the numbers above it were read off — a window ending on a day the curve does
      * not reach would put "today's" numbers under a chart that stops short of them.
+     *
+     * The weeks are windowed against that same day, so one pick moves both charts to the same
+     * stretch of time. Where there is no curve to take it from — Runs recorded without a Strap —
+     * the last week the runner has stands in, which is the same day by another route.
      */
-    val state: StateFlow<ProgressUiState> = combine(curve, _range) { curve, range ->
-        val lastDay = curve.lastOrNull()
-        ProgressUiState(
-            range = range,
-            today = lastDay,
-            curve = lastDay?.let { curve.within(range, endingOn = it.date) } ?: emptyList(),
-        )
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, ProgressUiState())
+    val state: StateFlow<ProgressUiState> =
+        combine(curve, weeks, _range, _measure) { curve, weeks, range, measure ->
+            val lastDay = curve.lastOrNull()
+            val endingOn = lastDay?.date ?: weeks.lastOrNull()?.startingOn
+            ProgressUiState(
+                range = range,
+                today = lastDay,
+                curve = lastDay?.let { curve.within(range, endingOn = it.date) } ?: emptyList(),
+                measure = measure,
+                weeks = endingOn?.let { weeks.within(range, endingOn = it) } ?: emptyList(),
+            )
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, ProgressUiState())
 
     fun rangeChosen(range: ProgressRange) {
         _range.value = range
+    }
+
+    fun measureChosen(measure: WeeklyMeasure) {
+        _measure.value = measure
     }
 }
 

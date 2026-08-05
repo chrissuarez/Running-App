@@ -3,6 +3,8 @@ package com.example.runningapp.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,19 +36,24 @@ import androidx.compose.ui.unit.dp
 import com.example.runningapp.training.FormVerdict
 import com.example.runningapp.training.ProgressDay
 import com.example.runningapp.training.ProgressRange
+import com.example.runningapp.training.TrainingWeek
+import com.example.runningapp.training.WeeklyMeasure
 import com.example.runningapp.training.formVerdictOf
 import com.example.runningapp.ui.theme.RunningAppTheme
 import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
 import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
 import com.patrykandpatrick.vico.compose.chart.Chart
+import com.patrykandpatrick.vico.compose.chart.column.columnChart
 import com.patrykandpatrick.vico.compose.chart.line.lineChart
 import com.patrykandpatrick.vico.compose.chart.line.lineSpec
 import com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec
+import com.patrykandpatrick.vico.compose.component.lineComponent
 import com.patrykandpatrick.vico.compose.m3.style.m3ChartStyle
 import com.patrykandpatrick.vico.compose.style.ProvideChartStyle
 import com.patrykandpatrick.vico.core.axis.AxisItemPlacer
 import com.patrykandpatrick.vico.core.axis.AxisPosition
 import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
+import com.patrykandpatrick.vico.core.component.shape.Shapes
 import com.patrykandpatrick.vico.core.entry.ChartEntryModelProducer
 import com.patrykandpatrick.vico.core.entry.entryOf
 import java.time.LocalDate
@@ -63,20 +70,30 @@ import kotlin.math.roundToInt
 private val FitnessColour = Color(0xFF1565C0)
 private val FatigueColour = Color(0xFFEF6C00)
 
+/**
+ * The weekly bars. A third colour rather than either curve's, because the bars are not a third
+ * reading of the same thing — Fitness and Fatigue are what training cost, and volume is what was
+ * done. Teal is far enough from both to be told apart at a glance and, unlike a green, is still
+ * distinguishable from the amber above it without relying on hue alone.
+ */
+private val VolumeColour = Color(0xFF00796B)
+
 private val AxisDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM")
 
 /**
- * How the runner's training is going (#63): today's Fitness, Fatigue and Form in words and numbers,
- * and the two curves that got them there.
+ * How the runner's training is going (#63, #64): today's Fitness, Fatigue and Form in words and
+ * numbers, the two curves that got them there, and the weeks of volume underneath.
  *
  * The numbers come first and the chart second on purpose — the runner should be able to get the
- * verdict without reading a chart at all (spec #60, story 7).
+ * verdict without reading a chart at all (spec #60, story 7). The weeks come last because they are
+ * the record of what was done, read after the verdict on what it added up to.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProgressScreen(
     state: ProgressUiState,
     onRangeChosen: (ProgressRange) -> Unit,
+    onMeasureChosen: (WeeklyMeasure) -> Unit,
     onBack: () -> Unit,
 ) {
     Scaffold(
@@ -106,17 +123,36 @@ fun ProgressScreen(
             // a slot table that no longer describes itself — on the phone, an
             // `ArrayIndexOutOfBoundsException` inside Scaffold as the screen appeared.
             val today = state.today
-            if (today == null) {
+            if (today == null && state.weeks.isEmpty()) {
                 Text(
-                    "No scored runs yet. Once a run with heart rate is recorded, your Fitness, " +
-                        "Fatigue and Form appear here.",
+                    "No finished runs yet. Once a run is recorded, your training shows up here.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             } else {
-                TodayCard(today)
+                if (today == null) {
+                    // Weeks without a curve: every Run so far was recorded without heart rate, so
+                    // there is volume to show and nothing to score it with. The weeks below are
+                    // still the runner's training, so they are drawn rather than withheld.
+                    Text(
+                        "No scored runs yet. Once a run with heart rate is recorded, your Fitness, " +
+                            "Fatigue and Form appear here.",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                } else {
+                    TodayCard(today)
+                }
                 RangePicker(selected = state.range, onRangeChosen = onRangeChosen)
-                FitnessFatigueChart(days = state.curve)
-                ChartKey()
+                if (today != null) {
+                    FitnessFatigueChart(days = state.curve)
+                    ChartKey()
+                }
+                if (state.weeks.isNotEmpty()) {
+                    WeeklyVolume(
+                        weeks = state.weeks,
+                        measure = state.measure,
+                        onMeasureChosen = onMeasureChosen,
+                    )
+                }
             }
         }
     }
@@ -274,6 +310,130 @@ private fun FitnessFatigueChart(days: List<ProgressDay>) {
     }
 }
 
+/**
+ * The weeks of training, one bar each, in whichever measure the toggle is on (#64).
+ *
+ * One chart with a toggle above it rather than three charts stacked: the weeks and their order do
+ * not change between measures, only the heights, and three charts would ask the runner to find the
+ * same week three times.
+ */
+@Composable
+private fun WeeklyVolume(
+    weeks: List<TrainingWeek>,
+    measure: WeeklyMeasure,
+    onMeasureChosen: (WeeklyMeasure) -> Unit,
+) {
+    Text(
+        text = "Weekly volume",
+        style = MaterialTheme.typography.titleMedium,
+    )
+    MeasurePicker(selected = measure, onMeasureChosen = onMeasureChosen)
+    WeeklyVolumeChart(weeks = weeks, measure = measure)
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun MeasurePicker(selected: WeeklyMeasure, onMeasureChosen: (WeeklyMeasure) -> Unit) {
+    // A FlowRow and not a Row: "Effort Score" is spelled out in full (CONTEXT.md), and three chips
+    // holding it do not fit across 320dp with the text scaled to 1.3× — in a Row the last one is
+    // simply cut off the edge, with no way to reach it.
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        WeeklyMeasure.entries.forEach { measure ->
+            FilterChip(
+                selected = measure == selected,
+                onClick = { onMeasureChosen(measure) },
+                label = { Text(measure.label) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun WeeklyVolumeChart(weeks: List<TrainingWeek>, measure: WeeklyMeasure) {
+    // Built with its data in hand, and rebuilt when the weeks or the measure change — the same rule
+    // the curve chart above records: a Vico chart measured against an empty model throws.
+    val producer = remember(weeks, measure) {
+        ChartEntryModelProducer(
+            weeks.mapIndexed { index, week ->
+                entryOf(index.toFloat(), measure.amountOf(week).toFloat())
+            }
+        )
+    }
+
+    val firstWeek = weeks.first().startingOn
+    val weekLabels = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
+        firstWeek.plusWeeks(value.toLong()).format(AxisDateFormat)
+    }
+    val amounts = AxisValueFormatter<AxisPosition.Vertical.Start> { value, _ ->
+        amountText(measure, value.toDouble())
+    }
+    val labelEvery = (weeks.size / 3).coerceAtLeast(1)
+
+    val total = weeks.sumOf { measure.amountOf(it) }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(200.dp)
+            .semantics {
+                contentDescription = "Weekly ${measure.label} from " +
+                    "${firstWeek.format(AxisDateFormat)} to " +
+                    "${weeks.last().startingOn.format(AxisDateFormat)}, " +
+                    "${amountText(measure, total)} ${measure.unit} in total".trim()
+            }
+    ) {
+        ProvideChartStyle(m3ChartStyle()) {
+            Chart(
+                chart = columnChart(
+                    columns = listOf(
+                        lineComponent(
+                            color = VolumeColour,
+                            // Vico scales this by the zoom it fits the chart at, so one thickness
+                            // holds for thirteen weeks and for fifty-two.
+                            thickness = 8.dp,
+                            shape = Shapes.roundedCornerShape(topLeftPercent = 20, topRightPercent = 20),
+                        )
+                    )
+                ),
+                chartModelProducer = producer,
+                startAxis = rememberStartAxis(valueFormatter = amounts),
+                bottomAxis = rememberBottomAxis(
+                    valueFormatter = weekLabels,
+                    itemPlacer = AxisItemPlacer.Horizontal.default(
+                        spacing = labelEvery,
+                        offset = labelEvery / 2,
+                        addExtremeLabelPadding = true,
+                    ),
+                    guideline = null,
+                ),
+                // The whole range at once, as above: the range chips are the only thing that decides
+                // how much is shown.
+                chartScrollSpec = rememberChartScrollSpec(isScrollEnabled = false),
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+    Text(
+        text = "Each bar is one week, Monday to Sunday",
+        style = MaterialTheme.typography.labelMedium,
+    )
+}
+
+/**
+ * A weekly total as it is written down the axis and read out loud.
+ *
+ * A tenth for distance and hours, because a week is 42.4 km and 3.5 hours and rounding either to a
+ * whole would throw away a real difference between two weeks. Nothing after the point for an Effort
+ * Score, which is a whole number to begin with. The trailing ".0" goes either way — an axis of
+ * "10.0, 20.0, 30.0" is three decimals standing for nothing.
+ */
+private fun amountText(measure: WeeklyMeasure, amount: Double): String = when (measure) {
+    WeeklyMeasure.EFFORT -> amount.roundToInt().toString()
+    else -> "%.1f".format(amount).removeSuffix(".0")
+}
+
 @Composable
 private fun ChartKey() {
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -294,14 +454,25 @@ private fun ProgressScreenPreview() {
             form = 20.0 + index * 0.4 - (25.0 + 10 * kotlin.math.sin(index / 4.0)),
         )
     }
+    val weeks = (0 until 13).map { index ->
+        TrainingWeek(
+            startingOn = start.plusWeeks(index.toLong()),
+            distanceKm = 20.0 + (index % 4) * 8.0,
+            timeSeconds = 7_200L + (index % 4) * 1_800L,
+            effortScore = 200 + (index % 4) * 60,
+        )
+    }
     RunningAppTheme {
         ProgressScreen(
             state = ProgressUiState(
                 range = ProgressRange.THREE_MONTHS,
                 today = days.last(),
                 curve = days,
+                measure = WeeklyMeasure.DISTANCE,
+                weeks = weeks,
             ),
             onRangeChosen = {},
+            onMeasureChosen = {},
             onBack = {},
         )
     }

@@ -174,6 +174,22 @@ data class ScoredRunProjection(
     val effortScore: Int
 )
 
+/**
+ * A finished Run reduced to what a week of training is totalled from (#64): the day it began, and
+ * the three things a week can be counted in.
+ *
+ * [movingTimeSeconds] comes back beside [durationSeconds] rather than instead of it because a Run
+ * recorded before #163, or on a treadmill, has no moving time at all — the caller picks, the same
+ * way [paceClockSeconds] does.
+ */
+data class RunVolumeProjection(
+    val startTime: Long,
+    val distanceKm: Double,
+    val durationSeconds: Long,
+    val movingTimeSeconds: Long?,
+    val effortScore: Int?
+)
+
 /** How many medals one Run holds — what the medal badge on its History row counts (#51). */
 data class SessionMedalCount(
     val sessionId: Long,
@@ -514,6 +530,26 @@ interface SessionDao {
         """
     )
     fun getScoredRunsFlow(): Flow<List<ScoredRunProjection>>
+
+    /**
+     * Every finished Run in history, oldest first — what the weekly volume bars are totalled from
+     * (#64).
+     *
+     * Every finished Run and not only the scored ones, unlike [getScoredRunsFlow]: a Run recorded
+     * without a Strap has no Effort Score to give, but it still covered ground and still took an
+     * hour, and a week that leaves it out is not the week the runner ran.
+     *
+     * The whole history rather than the range showing, for the plainer reason this time — the
+     * window is a filter over the weeks, so switching range is not another trip to the database.
+     */
+    @Query(
+        """
+        SELECT startTime, distanceKm, durationSeconds, movingTimeSeconds, effortScore FROM sessions
+        WHERE endTime > 0
+        ORDER BY startTime ASC
+        """
+    )
+    fun getRunVolumesFlow(): Flow<List<RunVolumeProjection>>
 
     @Query("DELETE FROM sessions WHERE id = :sessionId")
     suspend fun deleteSessionById(sessionId: Long)
