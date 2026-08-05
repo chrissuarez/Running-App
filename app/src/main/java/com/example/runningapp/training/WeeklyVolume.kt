@@ -31,12 +31,16 @@ data class VolumeRun(
  * [startingOn] is always a Monday. The week the runner is in is included and totals only what has
  * happened in it so far, which is what makes the last bar shorter than the ones before it on any
  * day but a Sunday night.
+ *
+ * [effortScore] keeps the distinction [VolumeRun] makes: null is a week nothing measured — no Run in
+ * it wore a Strap — while 0 is a week that was measured and scored nothing, which is what a week of
+ * walking recorded on a Strap comes to.
  */
 data class TrainingWeek(
     val startingOn: LocalDate,
     val distanceKm: Double,
     val timeSeconds: Long,
-    val effortScore: Int,
+    val effortScore: Int?,
 )
 
 /**
@@ -50,20 +54,19 @@ enum class WeeklyMeasure(val label: String, val unit: String) {
     // rates a Run out of ten (CONTEXT.md).
     EFFORT_SCORE("Effort Score", "");
 
-    /** The week's total in the unit this measure is read in — kilometres, hours, or Score. */
+    /**
+     * The week's total in the unit this measure is read in — kilometres, hours, or Score.
+     *
+     * A week with nothing measured draws at zero height, the same as a week measured at zero: the
+     * bar has no way to say "unknown". What the two mean apart is said in words instead, by the
+     * screen, when every bar in the range is flat.
+     */
     fun amountOf(week: TrainingWeek): Double = when (this) {
         DISTANCE -> week.distanceKm
         TIME -> week.timeSeconds / 3_600.0
-        EFFORT_SCORE -> week.effortScore.toDouble()
+        EFFORT_SCORE -> (week.effortScore ?: 0).toDouble()
     }
 }
-
-/** The Monday of the week this instant fell in, in the runner's own zone. */
-private fun weekStartOf(startedAtMillis: Long, zone: ZoneId): LocalDate =
-    Instant.ofEpochMilli(startedAtMillis)
-        .atZone(zone)
-        .toLocalDate()
-        .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
 
 /**
  * Every week from the one the runner's first Run fell in to the one containing [through], each with
@@ -88,16 +91,22 @@ fun weeklyVolumeOf(
 
     val totals = HashMap<LocalDate, TrainingWeek>()
     runs.forEach { run ->
-        val weekStart = weekStartOf(run.startedAtMillis, zone)
-        if (weekStart.isAfter(lastWeek)) return@forEach
+        // Dated, not weeked: a Run stamped Sunday while the runner is on Wednesday shares the
+        // current week's Monday, so a week-level guard would let tomorrow into today's bar.
+        val ranOn = Instant.ofEpochMilli(run.startedAtMillis).atZone(zone).toLocalDate()
+        if (ranOn.isAfter(through)) return@forEach
+        val weekStart = ranOn.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val soFar = totals[weekStart] ?: emptyWeek(weekStart)
         totals[weekStart] = soFar.copy(
             distanceKm = soFar.distanceKm + run.distanceKm,
             timeSeconds = soFar.timeSeconds + run.timeSeconds,
-            // A Run with no Score adds nothing, so a week of unmeasured Runs comes out at no Effort
-            // rather than being credited with a zero it did not earn. The same distinction the
-            // Score itself makes (#61).
-            effortScore = soFar.effortScore + (run.effortScore ?: 0),
+            // A Run with no Score adds nothing and leaves the week's Score as it found it, so a week
+            // of unmeasured Runs stays null rather than being credited with a zero it did not earn.
+            // The same distinction the Score itself makes (#61).
+            effortScore = when {
+                run.effortScore == null -> soFar.effortScore
+                else -> (soFar.effortScore ?: 0) + run.effortScore
+            },
         )
     }
 
@@ -111,7 +120,7 @@ fun weeklyVolumeOf(
 }
 
 private fun emptyWeek(startingOn: LocalDate) =
-    TrainingWeek(startingOn = startingOn, distanceKm = 0.0, timeSeconds = 0, effortScore = 0)
+    TrainingWeek(startingOn = startingOn, distanceKm = 0.0, timeSeconds = 0, effortScore = null)
 
 /**
  * The stretch of weeks a [ProgressRange] shows, sharing the picker with the curves above.
