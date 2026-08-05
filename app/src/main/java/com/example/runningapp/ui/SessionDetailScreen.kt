@@ -434,7 +434,7 @@ private fun FeelFeedbackCard(
     onSave: ((Int?, String?) -> Unit)?,
 ) {
     var showDialog by remember { mutableStateOf(false) }
-    val noteText = note?.trim()?.ifBlank { null }
+    val noteText = feelNoteOf(note)
     if (effort == null && noteText == null && onSave == null) return
 
     if (showDialog && onSave != null) {

@@ -91,8 +91,10 @@ class FeelFeedbackTest {
 
     @Test
     fun `the way in says whether there is anything there yet`() {
-        assertEquals("Add effort or note", feelEditLabel(effort = null, note = null))
-        assertEquals("Edit effort or note", feelEditLabel(effort = 6, note = null))
-        assertEquals("Edit effort or note", feelEditLabel(effort = null, note = "Felt strong"))
+        assertEquals("Add effort / note", feelEditLabel(effort = null, note = null))
+        assertEquals("Edit effort / note", feelEditLabel(effort = 6, note = null))
+        assertEquals("Edit effort / note", feelEditLabel(effort = null, note = "Felt strong"))
+        // A note of nothing but spaces is nothing said, so the way in still says "Add".
+        assertEquals("Add effort / note", feelEditLabel(effort = null, note = "   "))
     }
 }

@@ -3,6 +3,10 @@ package com.example.runningapp.ui
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasSetTextAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -131,6 +135,133 @@ class SessionDetailScreenTest {
         composeRule.onNodeWithContentDescription("Delete run").assertIsDisplayed()
         composeRule.onAllNodesWithContentDescription("Share run as GPX").assertCountEquals(0)
     }
+
+    // --- Saying afterwards how a Run felt (#80) ------------------------------------------------
+
+    @Test
+    fun sessionDetailScreen_offersAWayInForARunNothingWasSaidAbout() {
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = finishedSession(),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = {},
+                    onSaveFeelFeedback = { _, _, _ -> }
+                )
+            }
+        }
+
+        // The sheet at the finish is skippable, so a Run nobody rated still has to be ratable.
+        composeRule.onNodeWithText("No effort rated").assertIsDisplayed()
+        composeRule.onNodeWithText("Add effort / note").assertIsDisplayed()
+    }
+
+    @Test
+    fun sessionDetailScreen_showsWhatWasSaidAndOffersToChangeIt() {
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = finishedSession(effort = 7, note = "Felt strong"),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = {},
+                    onSaveFeelFeedback = { _, _, _ -> }
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("7 / 10").assertIsDisplayed()
+        composeRule.onNodeWithText("Felt strong").assertIsDisplayed()
+        composeRule.onNodeWithText("Edit effort / note").assertIsDisplayed()
+    }
+
+    @Test
+    fun sessionDetailScreen_clearsANoteBackToNothing() {
+        var savedEffort: Int? = -1
+        var savedNote: String? = "untouched"
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = finishedSession(effort = 7, note = "Felt strong"),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = {},
+                    onSaveFeelFeedback = { _, effort, note ->
+                        savedEffort = effort
+                        savedNote = note
+                    }
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Edit effort / note").performClick()
+        // The note is on screen twice with the dialog open — on the card behind it and in the field
+        // being edited — so the field is asked for by being the thing that takes typing.
+        composeRule.onNode(hasSetTextAction() and hasText("Felt strong")).performTextClearance()
+        composeRule.onNodeWithText("Save").performClick()
+
+        // Emptied, not blank: what reaches the repository is the absence itself.
+        assertEquals(7, savedEffort)
+        assertEquals(null, savedNote)
+    }
+
+    @Test
+    fun sessionDetailScreen_takesBackAnEffortThatWasRatedByAccident() {
+        var savedEffort: Int? = -1
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = finishedSession(effort = 7, note = "Felt strong"),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = {},
+                    onSaveFeelFeedback = { _, effort, _ -> savedEffort = effort }
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Edit effort / note").performClick()
+        composeRule.onNodeWithText("Clear the effort").performClick()
+        composeRule.onNodeWithText("Save").performClick()
+
+        assertEquals(null, savedEffort)
+    }
+
+    @Test
+    fun sessionDetailScreen_leavesSaveShutUntilSomethingChanges() {
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = finishedSession(effort = 7, note = "Felt strong"),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = {},
+                    onSaveFeelFeedback = { _, _, _ -> }
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Edit effort / note").performClick()
+        composeRule.onNodeWithText("Save").assertIsNotEnabled()
+    }
+
+    private fun finishedSession(effort: Int? = null, note: String? = null) = RunnerSession(
+        id = 1L,
+        startTime = 1_742_000_000_000,
+        endTime = 1_742_000_180_000,
+        durationSeconds = 1800,
+        avgBpm = 130,
+        maxBpm = 150,
+        targetZone = 2,
+        perceivedEffort = effort,
+        sessionNote = note
+    )
 
     private fun plainSession() = RunnerSession(
         id = 1L,
