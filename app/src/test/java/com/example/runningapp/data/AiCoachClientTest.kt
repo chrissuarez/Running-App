@@ -1,5 +1,6 @@
 package com.example.runningapp.data
 
+import com.example.runningapp.training.FormVerdict
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -190,6 +191,59 @@ class AiCoachClientTest {
 
         assertFalse(prompt.contains("walkBreak", ignoreCase = true))
         assertFalse(prompt.contains("HR-triggered", ignoreCase = true))
+    }
+
+    @Test
+    fun `the coach is told what the runner is carrying, and what the weeks behind it came to`() {
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                fitnessAndForm = AiFitnessAndForm(
+                    fitness = 42,
+                    fatigue = 61,
+                    form = -19,
+                    verdict = FormVerdict.FATIGUED,
+                    weeklyEffortScores = listOf(210, null, 340, 120)
+                )
+            )
+        )
+
+        assertTrue(prompt.contains("Fitness 42, Fatigue 61, Form -19 (fatigued)."))
+        assertTrue(prompt.contains("210, not measured, 340, 120."))
+        // Said in the prompt rather than left to the model's own idea of the bands.
+        assertTrue(prompt.contains("above +10 is fresh, below -10 is fatigued"))
+        assertTrue(prompt.contains("ease off when the runner is fatigued"))
+        // The fence: a tired week must not cost a runner a Stage they have already earned.
+        assertTrue(prompt.contains("These numbers must never change graduatedToNextStage."))
+    }
+
+    @Test
+    fun `with no scored history the coach is told nothing about fatigue at all`() {
+        val prompt = buildEvaluationPrompt(oneRunWalkSession)
+
+        listOf("Fitness", "Fatigue", "Form ", "Effort Score", "fresh").forEach { word ->
+            assertFalse("prompt mentions $word with no scored history", prompt.contains(word))
+        }
+    }
+
+    @Test
+    fun `a week nobody measured is named as such and never sent as a zero`() {
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                fitnessAndForm = AiFitnessAndForm(
+                    fitness = 30,
+                    fatigue = 12,
+                    form = 18,
+                    verdict = FormVerdict.FRESH,
+                    weeklyEffortScores = listOf(null, null)
+                )
+            )
+        )
+
+        assertTrue(prompt.contains("not measured, not measured."))
+        // A week nobody measured is told apart from a week of rest, which is sent as a 0 — opposite
+        // news for a coach reading fatigue.
+        assertTrue(prompt.contains("0 is a week of rest"))
+        assertTrue(prompt.contains("training you cannot see"))
     }
 
     @Test
