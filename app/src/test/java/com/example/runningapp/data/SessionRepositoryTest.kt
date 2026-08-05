@@ -336,6 +336,82 @@ class SessionRepositoryTest {
         verify(mockDao).updateFeelFeedback(sessionId, 3, null)
     }
 
+    // --- Changing what was said about a Run, from its own page (#80) ---------------------------
+
+    @Test
+    fun `editFeelFeedback writes an effort and a note onto a finished Run`() = runTest {
+        val finished = RunnerSession(startTime = 1_000L, endTime = 2_000L)
+        whenever(mockDao.getSessionById(42L)).thenReturn(finished)
+        var refreshCount = 0
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.editFeelFeedback(42L, effort = 7, note = "  Felt strong  ")
+
+        verify(mockDao).updateFeelFeedback(42L, 7, "Felt strong")
+        assertEquals(1, refreshCount)
+    }
+
+    @Test
+    fun `editFeelFeedback empties a note that is cleared`() = runTest {
+        // The difference from the sheet at the finish: nothing left to save is exactly what a
+        // runner clearing a note is asking for, so it is written rather than treated as a skip.
+        val finished = RunnerSession(
+            startTime = 1_000L,
+            endTime = 2_000L,
+            perceivedEffort = 7,
+            sessionNote = "Felt strong"
+        )
+        whenever(mockDao.getSessionById(42L)).thenReturn(finished)
+
+        repository.editFeelFeedback(42L, effort = null, note = "")
+
+        verify(mockDao).updateFeelFeedback(42L, null, null)
+    }
+
+    @Test
+    fun `editFeelFeedback leaves the row alone when nothing changed`() = runTest {
+        val finished = RunnerSession(
+            startTime = 1_000L,
+            endTime = 2_000L,
+            perceivedEffort = 7,
+            sessionNote = "Felt strong"
+        )
+        whenever(mockDao.getSessionById(42L)).thenReturn(finished)
+        var refreshCount = 0
+        val repositoryWithBackup = SessionRepository(
+            sessionDao = mockDao,
+            refreshHistoryBackup = { refreshCount++ }
+        )
+
+        repositoryWithBackup.editFeelFeedback(42L, effort = 7, note = "Felt strong")
+
+        verify(mockDao, never()).updateFeelFeedback(any(), anyOrNull(), anyOrNull())
+        assertEquals(0, refreshCount)
+    }
+
+    @Test
+    fun `editFeelFeedback refuses a Run that is still being recorded`() = runTest {
+        val unfinished = RunnerSession(startTime = 1_000L, endTime = 0L)
+        whenever(mockDao.getSessionById(42L)).thenReturn(unfinished)
+
+        repository.editFeelFeedback(42L, effort = 7, note = "Felt strong")
+
+        // finalizeRun writes the row whole, so anything landing before it would be overwritten.
+        verify(mockDao, never()).updateFeelFeedback(any(), anyOrNull(), anyOrNull())
+    }
+
+    @Test
+    fun `editFeelFeedback refuses a Run that is not there`() = runTest {
+        whenever(mockDao.getSessionById(42L)).thenReturn(null)
+
+        repository.editFeelFeedback(42L, effort = 7, note = "Felt strong")
+
+        verify(mockDao, never()).updateFeelFeedback(any(), anyOrNull(), anyOrNull())
+    }
+
     // --- Stating how far a treadmill Run went (#231, ADR 0008) ---------------------------------
 
     @Test

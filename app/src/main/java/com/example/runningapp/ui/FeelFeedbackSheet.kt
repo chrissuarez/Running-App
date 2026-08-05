@@ -8,7 +8,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.roundToInt
 
 /**
  * What the runner has to say about the Run just finished — and, on a treadmill Run, the one thing
@@ -27,12 +26,10 @@ fun FeelFeedbackSheet(
     askForDistance: Boolean = false
 ) {
     val sheetState = rememberModalBottomSheetState()
-    var sliderPosition by remember { mutableStateOf(5f) }
-    var effortChosen by remember { mutableStateOf(false) }
+    var selectedEffort by remember { mutableStateOf<Int?>(null) }
     var note by remember { mutableStateOf("") }
     var typedDistance by remember { mutableStateOf("") }
 
-    val selectedEffort = if (effortChosen) sliderPosition.roundToInt() else null
     val statedDistance = statedDistanceKmOf(typedDistance)
     // A distance typed but not understood holds Save shut, even when there is an effort or a note to
     // save alongside it. Saving around it would dismiss the sheet and drop the number the runner is
@@ -63,28 +60,11 @@ fun FeelFeedbackSheet(
                 Spacer(modifier = Modifier.height(20.dp))
             }
 
-            Text(
-                text = selectedEffort?.let { "Effort: $it / 10" } ?: "Tap the slider to rate your effort",
-                fontWeight = FontWeight.Bold,
-                fontSize = 16.sp
+            // The same control the Run's own page asks the same question with (#80).
+            EffortSlider(
+                effort = selectedEffort,
+                onEffortChosen = { selectedEffort = it }
             )
-            Slider(
-                value = sliderPosition,
-                onValueChange = {
-                    sliderPosition = it
-                    effortChosen = true
-                },
-                valueRange = 1f..10f,
-                steps = 8
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text("Easy")
-                Text("Moderate")
-                Text("Max effort")
-            }
 
             Spacer(modifier = Modifier.height(20.dp))
 
@@ -109,7 +89,7 @@ fun FeelFeedbackSheet(
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
-                    onClick = { onSave(selectedEffort, note.trim().ifBlank { null }, statedDistance) },
+                    onClick = { onSave(selectedEffort, feelNoteOf(note), statedDistance) },
                     enabled = !distanceRejected &&
                         (selectedEffort != null || note.isNotBlank() || statedDistance != null)
                 ) {

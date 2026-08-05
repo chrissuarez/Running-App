@@ -695,6 +695,9 @@ class MainActivity : ComponentActivity() {
                                 onStateDistance = { id, distanceKm ->
                                     sessionDetailViewModel.stateDistance(id, distanceKm)
                                 },
+                                onSaveFeelFeedback = { id, effort, note ->
+                                    sessionDetailViewModel.saveFeelFeedback(id, effort, note)
+                                },
                                 canShareGpx = hasTrack,
                                 onShareGpx = { id -> sessionDetailViewModel.shareGpx(id) },
                                 shareFailed = gpxShareFailed != null && gpxShareFailed == sessionId,
