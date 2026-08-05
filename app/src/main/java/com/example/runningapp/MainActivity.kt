@@ -219,6 +219,11 @@ class MainActivity : ComponentActivity() {
         // the background, and off this Activity's lifetime - see the container.
         runningAppContainer().seedRecordsFromHistoryOnce()
 
+        // Every Run recorded before the Effort Score shipped has the beats to work one out and no
+        // Score stored, so history would read as unscored until each Run was run again (#62). This
+        // is the launch that scores it, from the samples those Runs already kept.
+        runningAppContainer().backfillEffortScoresOnce()
+
         // Keeps the monthly full archive scheduled (#85). Called on every launch and cheap every
         // time: an existing schedule is left exactly where it is, so this only ever creates the job
         // the first time, or after the runner has cleared the app's data.

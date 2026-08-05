@@ -83,7 +83,10 @@ What a Run cost the runner, as one number: every second weighted by the Zone it 
 through 5, and nothing at all below Zone 1, because idling is not training. Weighted second by
 second and never off a Run's average heart rate, which is what lets a run/walk Run score its running
 as running instead of having the walk breaks averaged into it. Banked when the Run finishes, and
-absent rather than zero on a Run that recorded no heart rate at all.
+absent rather than zero on a Run that recorded no heart rate at all. A Run finished before the Score
+existed is scored afterwards from the beats it kept, so history carries the same number as today's
+Runs; that pass re-derives its own work list from the Runs still missing a Score, which is what makes
+it safe to stop half way through and to run again.
 _Avoid_: suffer score, relative effort, training load; and on screen, the bare word "Effort", which
 is already what the runner rates a Run out of ten. A Best Effort is a different thing again — a
 stretch of a Run rather than a number about the whole of it.

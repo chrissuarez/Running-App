@@ -451,6 +451,33 @@ interface SessionDao {
         effortScore: Int?
     )
 
+    /**
+     * The finished Runs that have no Effort Score yet — the backfill's work list (#62).
+     *
+     * Re-derived from the rows themselves rather than tracked in a flag, which is what makes the
+     * pass resumable: a process killed half way through leaves the Runs it reached scored and the
+     * rest still on this list, so the next launch picks up exactly where it stopped without anything
+     * having to have been written down.
+     *
+     * Newest first, so a history too long to finish in one launch is scored from the end the runner
+     * is actually looking at.
+     *
+     * A Run that recorded no beats has no Score to compute and stays on this list for ever. That
+     * costs one read of its (empty) samples per launch and nothing else — see
+     * [SessionRepository.backfillEffortScores] for why that is preferred to storing a zero.
+     */
+    @Query("SELECT id FROM sessions WHERE endTime > 0 AND effortScore IS NULL ORDER BY startTime DESC")
+    suspend fun getSessionIdsMissingEffort(): List<Long>
+
+    /**
+     * Stores what a finished Run cost, on its own (#62).
+     *
+     * Unconditional, unlike [updateZoneSecondsAndEffort], which moves a Score only where one already
+     * exists: this is the one place a Score is written where there was none.
+     */
+    @Query("UPDATE sessions SET effortScore = :effortScore WHERE id = :sessionId")
+    suspend fun setEffortScore(sessionId: Long, effortScore: Int)
+
     @Query("DELETE FROM sessions WHERE id = :sessionId")
     suspend fun deleteSessionById(sessionId: Long)
 

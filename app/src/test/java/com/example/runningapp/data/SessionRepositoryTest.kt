@@ -3,6 +3,7 @@ package com.example.runningapp.data
 import com.example.runningapp.CoachPrescription
 import com.example.runningapp.CoachPrescriptionRepository
 import com.example.runningapp.CoachWriteScope
+import com.example.runningapp.HrProfile
 import com.example.runningapp.MAX_MAX_HR
 import com.example.runningapp.RunType
 import com.example.runningapp.SettingsRepository
@@ -2106,6 +2107,121 @@ class SessionRepositoryTest {
     /** A finished run with a duration and nothing measured against ground — see [bestEffortsOf]. */
     private fun aTreadmillRun(id: Long, seconds: Long) =
         session(id = id, endTime = 1_000L).copy(runMode = "treadmill", durationSeconds = seconds)
+
+    // --- Scoring the history recorded before the Effort Score shipped (#62) ---
+    //
+    // At Max HR 181 with no resting heart rate stated, the Zone 3 floor is 127 and the Zone 1 floor
+    // is 91 — so a minute at 130 is 60 seconds weighted 3, which is a Score of 3.
+
+    private fun repositoryScoring(samples: SampleDao) = SessionRepository(
+        sessionDao = mockDao,
+        sampleDao = samples,
+        settingsRepository = mockSettingsRepo
+    )
+
+    @Test
+    fun `the backfill scores every finished run that has no score yet`() = runTest {
+        val mockSampleDao: SampleDao = mock()
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(historyMaxHr = 181)))
+        whenever(mockDao.getSessionIdsMissingEffort()).thenReturn(listOf(7L, 8L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(List(60) { 130 })
+        whenever(mockSampleDao.getRawBpmsForSession(8L)).thenReturn(List(120) { 150 })
+
+        repositoryScoring(mockSampleDao).backfillEffortScores()
+
+        verify(mockDao).setEffortScore(7L, 3)
+        verify(mockDao).setEffortScore(8L, 8)
+    }
+
+    @Test
+    fun `a run that recorded no beats is left unscored rather than stored as a zero`() = runTest {
+        // Zero is a real answer here — an hour spent below Zone 1 — so a Run with nothing to
+        // measure must not be written down as one.
+        val mockSampleDao: SampleDao = mock()
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(historyMaxHr = 181)))
+        whenever(mockDao.getSessionIdsMissingEffort()).thenReturn(listOf(9L))
+        whenever(mockSampleDao.getRawBpmsForSession(9L)).thenReturn(emptyList())
+
+        repositoryScoring(mockSampleDao).backfillEffortScores()
+
+        verify(mockDao, never()).setEffortScore(any(), any())
+    }
+
+    @Test
+    fun `a run spent entirely below zone 1 scores zero, which is a measurement`() = runTest {
+        val mockSampleDao: SampleDao = mock()
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(historyMaxHr = 181)))
+        whenever(mockDao.getSessionIdsMissingEffort()).thenReturn(listOf(9L))
+        whenever(mockSampleDao.getRawBpmsForSession(9L)).thenReturn(List(600) { 70 })
+
+        repositoryScoring(mockSampleDao).backfillEffortScores()
+
+        verify(mockDao).setEffortScore(9L, 0)
+    }
+
+    @Test
+    fun `running the backfill again once history is scored writes nothing`() = runTest {
+        val mockSampleDao: SampleDao = mock()
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(historyMaxHr = 181)))
+        whenever(mockDao.getSessionIdsMissingEffort()).thenReturn(emptyList())
+
+        repositoryScoring(mockSampleDao).backfillEffortScores()
+
+        verify(mockDao, never()).setEffortScore(any(), any())
+        verify(mockSampleDao, never()).getRawBpmsForSession(any())
+    }
+
+    @Test
+    fun `a run that cannot be scored costs the rest of the pass nothing`() = runTest {
+        // It stays unscored, so the next launch's work list picks it up again — which is the same
+        // mechanism that makes a pass killed half way through resumable.
+        val mockSampleDao: SampleDao = mock()
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(historyMaxHr = 181)))
+        whenever(mockDao.getSessionIdsMissingEffort()).thenReturn(listOf(7L, 8L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenThrow(IllegalStateException("unreadable"))
+        whenever(mockSampleDao.getRawBpmsForSession(8L)).thenReturn(List(60) { 130 })
+
+        repositoryScoring(mockSampleDao).backfillEffortScores()
+
+        verify(mockDao, never()).setEffortScore(eq(7L), any())
+        verify(mockDao).setEffortScore(8L, 3)
+    }
+
+    @Test
+    fun `the backfill scores against a heart-rate profile it is handed`() = runTest {
+        // The reuse the Max HR change needs: the same pass, against a maximum nobody has stored.
+        val mockSampleDao: SampleDao = mock()
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(historyMaxHr = 181)))
+        whenever(mockDao.getSessionIdsMissingEffort()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(List(60) { 130 })
+
+        // At Max HR 140 the same minute at 130 is Zone 5 rather than Zone 3.
+        repositoryScoring(mockSampleDao).backfillEffortScores(HrProfile(maxHr = 140))
+
+        verify(mockDao).setEffortScore(7L, 5)
+    }
+
+    @Test
+    fun `with nothing handed in, history is scored against the maximum it is banded on`() = runTest {
+        // Not the maximum in force: after a future-only correction those differ, and scoring
+        // against the stored one would put these Runs on a profile their zone times are not on.
+        val mockSampleDao: SampleDao = mock()
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 145, historyMaxHr = 181)))
+        whenever(mockDao.getSessionIdsMissingEffort()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(List(60) { 130 })
+
+        repositoryScoring(mockSampleDao).backfillEffortScores()
+
+        verify(mockDao).setEffortScore(7L, 3)
+    }
+
+    @Test
+    fun `with no samples wired there is nothing to score from`() = runTest {
+        repository.backfillEffortScores()
+
+        verify(mockDao, never()).getSessionIdsMissingEffort()
+    }
 
     private fun fiveKFix(latitude: Double, timestampMillis: Long) = TrackPoint(
         sessionId = 7L,

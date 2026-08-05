@@ -330,6 +330,88 @@ class SessionRepository(
     }
 
     /**
+     * Scores the Runs already in history from the beats they wrote down (#62).
+     *
+     * A Run finished before v21 has every second of its heart rate stored and no Effort Score, so
+     * the trends built on those Scores would start empty and fill in one Run a week. This is what
+     * lets them tell the runner's real story from the first launch after the update: the same
+     * arithmetic the Run would have banked as it ran ([effortScoreOf]), applied afterwards to the
+     * samples it kept.
+     *
+     * **Idempotent and resumable, and by the same means**: the work list is the Runs that have no
+     * Score ([SessionDao.getSessionIdsMissingEffort]), asked fresh every time. A process killed
+     * half way through leaves the Runs it reached scored, and the next launch asks again and gets
+     * the remainder. Once history is scored the list comes back empty and the pass writes nothing.
+     * Nothing is written down about the pass's own progress, so there is no mark to be left stale by
+     * a restore, a Clear-storage, or an archive dropped in from another phone.
+     *
+     * Deliberately **not** one transaction, which is where this parts company with the re-tally
+     * above ([recomputeZoneSecondsAndEffortForAllRuns]). A re-tally moves history from one Max HR to
+     * another and half of that is a history that cannot be compared with itself; this only ever adds
+     * a number where there was none, so a half-finished pass is a history that is partly scored —
+     * which is exactly the state it is built to resume from. Rolling it back would throw away work
+     * and buy nothing.
+     *
+     * A Run that recorded no beats — no Strap, or a Strap that never connected — is left with no
+     * Score rather than a zero, because zero is a real answer here (an hour spent below Zone 1) and
+     * the two must not be confused. It stays on the work list for ever at the cost of one read of
+     * its empty samples per launch, which is cheaper than any of the ways of remembering that it was
+     * already looked at.
+     *
+     * [profile] is the heart-rate profile to score against, and null — what the launch pass passes —
+     * means the one history is already banded on ([UserSettings.historyMaxHr]), which is the same
+     * number the re-tally and the rescue pass use. Not the stored maximum: after a future-only Max HR
+     * correction those differ, and scoring against the stored one would put these Runs on a profile
+     * their own zone times are not on.
+     *
+     * Read **inside** the lock rather than by the caller, which is why the maximum is a nullable
+     * parameter rather than a required one: a profile read outside would be the very staleness the
+     * lock is here to prevent, since a statement could land between the read and the pass.
+     *
+     * Being able to point the pass at an arbitrary maximum is #62's own requirement, held against the
+     * Max HR change to come. Worth being exact about what it will and will not do there: this only
+     * ever scores Runs that have **no** Score, so once history is scored it is the re-tally
+     * ([recomputeZoneSecondsAndEffortForAllRuns]) that moves those Scores to a new maximum, and this
+     * that catches anything the re-tally had nothing to move.
+     *
+     * Holds [statedProfile] for the same reason the rescue pass does: this writes Scores, the
+     * re-tally rewrites them, and both can run at launch. Under the lock a Run is either scored
+     * before the re-tally walks history — and therefore re-banded by it — or scored afterwards
+     * against the profile the re-tally has finished storing. Unserialized, a Score computed against
+     * the old maximum could land after the re-tally had already passed that row. The cost is that a
+     * heart rate stated while this is running waits for it — the same bargain the re-tally strikes,
+     * and bounded the same way: one read and one write per Run, and no file IO.
+     *
+     * The Downloads snapshot is not refreshed. A Score is a pure re-derivation from samples that are
+     * never pruned, so a snapshot taken before this pass restores to a history this pass scores
+     * again on the next launch — nothing is lost, and a launch should not pay for a copy of the whole
+     * database to carry a number it can rebuild.
+     *
+     * One Run at a time, keeping going past a failure: a Run whose samples cannot be read should cost
+     * the others nothing, and it stays unscored for the next launch to try again.
+     */
+    suspend fun backfillEffortScores(profile: HrProfile? = null) = statedProfile.withLock {
+        val samples = sampleDao ?: return@withLock
+        val against = profile
+            ?: settingsRepository?.userSettingsFlow?.first()?.historyHrProfile
+            ?: return@withLock
+        val sessionIds = sessionDao.getSessionIdsMissingEffort()
+        if (sessionIds.isEmpty()) return@withLock
+        var scored = 0
+        sessionIds.forEach { sessionId ->
+            try {
+                val score = effortScoreOf(samples.getRawBpmsForSession(sessionId), against)
+                    ?: return@forEach
+                sessionDao.setEffortScore(sessionId, score)
+                scored++
+            } catch (e: Exception) {
+                Log.w("Effort", "Could not score run $sessionId; leaving it for next launch", e)
+            }
+        }
+        Log.d("Effort", "Scored $scored of ${sessionIds.size} unscored run(s)")
+    }
+
+    /**
      * Track points accepted for map drawing (#38): BACKFILL points are historical breadcrumbs with
      * no recorded GPS accuracy and are always kept; GPS points must meet the same
      * [SessionRecorder.ACCURACY_THRESHOLD_METERS] bar applied live during recording, so what the

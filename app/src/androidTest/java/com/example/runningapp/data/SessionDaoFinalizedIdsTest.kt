@@ -79,6 +79,34 @@ class SessionDaoFinalizedIdsTest {
         }
     }
 
+    /**
+     * The backfill's work list (#62), which is the whole of what makes that pass resumable: it is
+     * re-derived from the rows every time rather than remembered. Both halves of the `WHERE` matter
+     * and neither can be shown against a mock.
+     */
+    @Test
+    fun getSessionIdsMissingEffort_isTheFinishedRunsWithNoScore_newestFirst() {
+        runBlocking {
+            val older = sessionDao.insertSession(session(startTime = 1_000L, endTime = 2_000L))
+            val newer = sessionDao.insertSession(session(startTime = 3_000L, endTime = 4_000L))
+            sessionDao.insertSession(
+                session(startTime = 5_000L, endTime = 6_000L).copy(effortScore = 40)
+            )
+            // Still recording: the recorder will finalize this row with a Score of its own.
+            sessionDao.insertSession(session(startTime = 7_000L, endTime = 0L))
+
+            assertEquals(listOf(newer, older), sessionDao.getSessionIdsMissingEffort())
+
+            // And once a Run has been scored it drops off the list, so running the pass again is a
+            // pass over nothing.
+            sessionDao.setEffortScore(newer, 12)
+            sessionDao.setEffortScore(older, 0)
+
+            assertEquals(emptyList<Long>(), sessionDao.getSessionIdsMissingEffort())
+            assertEquals(0, sessionDao.getSessionById(older)!!.effortScore)
+        }
+    }
+
     private fun session(startTime: Long, endTime: Long) = RunnerSession(
         startTime = startTime,
         endTime = endTime

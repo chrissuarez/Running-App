@@ -207,6 +207,7 @@ fun SessionItem(
                                 maxLines = 1,
                                 softWrap = false
                             )
+                            EffortScoreBadge(score = session.effortScore)
                         }
                     }
                 )
@@ -342,6 +343,39 @@ private fun MedalBadge(medals: Int) {
             .semantics {
                 contentDescription = if (medals == 1) "1 achievement" else "$medals achievements"
             }
+    )
+}
+
+/**
+ * What this Run cost, at the end of its row (#62) — the number that makes a hard week look different
+ * from an easy one at a glance while scrolling.
+ *
+ * At the right-hand end, after the clock, so it is the thing the rows are flush against: a Score is
+ * two or three digits and its left edge moves, while what is being read down the list is one column
+ * of numbers to compare. The four stats below stay four ([historyRowStats]) — a fifth column would
+ * take about 31dp on the narrowest screen the app supports and shrink the whole row to fit it, which
+ * is the price of the reorder #232 paid for.
+ *
+ * Written as a bolt rather than as a labelled number, for the reason `CONTEXT.md` gives: on screen
+ * the bare word "Effort" already means how the runner *rated* the Run out of ten, and there is no
+ * room on this line for "Effort Score" in full. The screen reader is told the whole name.
+ *
+ * Nothing at all for a Run with no Score — one recorded without a Strap, or one the backfill has not
+ * reached yet. Not a dash: the stats below dash a number the Run *could* have and does not, and this
+ * is a number that Run can never have.
+ */
+@Composable
+private fun EffortScoreBadge(score: Int?) {
+    if (score == null) return
+    Text(
+        text = "⚡ $score",
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        softWrap = false,
+        modifier = Modifier
+            .padding(start = 8.dp)
+            .semantics { contentDescription = "Effort Score $score" }
     )
 }
 
@@ -504,6 +538,7 @@ private fun previewRun(
     durationSeconds: Long,
     avgBpm: Int,
     inTargetSeconds: Long,
+    effortScore: Int? = null,
 ) = RunnerSession(
     id = id,
     startTime = 1_754_300_000_000L + id * 86_400_000L,
@@ -514,6 +549,7 @@ private fun previewRun(
     distanceKm = distanceKm,
     targetZone = 2,
     zone2Seconds = inTargetSeconds,
+    effortScore = effortScore,
 )
 
 private fun previewRows(): List<HistoryRow> {
@@ -528,6 +564,7 @@ private fun previewRows(): List<HistoryRow> {
     )
     return listOf(
         // A treadmill Run nobody stated a distance for: a square, and two dashes waiting for one.
+        // Recorded without a Strap, so it has no Effort Score and shows none (#62).
         HistoryRow(
             session = previewRun(1, RunMode.TREADMILL, 0.0, 2_530, 152, 1_684),
             medals = 0,
@@ -535,13 +572,14 @@ private fun previewRows(): List<HistoryRow> {
         ),
         // A treadmill Run that was told how far it went.
         HistoryRow(
-            session = previewRun(2, RunMode.TREADMILL, 7.25, 2_700, 145, 1_500),
+            session = previewRun(2, RunMode.TREADMILL, 7.25, 2_700, 145, 1_500, effortScore = 62),
             medals = 1,
             thumbnail = null,
         ),
-        // An outdoor Run, with the widest numbers the row is likely to carry.
+        // An outdoor Run, with the widest numbers the row is likely to carry — a date carrying two
+        // medals at one end and a three-digit Score at the other.
         HistoryRow(
-            session = previewRun(3, RunMode.OUTDOOR, 21.10, 7_890, 148, 5_592),
+            session = previewRun(3, RunMode.OUTDOOR, 21.10, 7_890, 148, 5_592, effortScore = 284),
             medals = 2,
             thumbnail = outAndBack,
         ),
