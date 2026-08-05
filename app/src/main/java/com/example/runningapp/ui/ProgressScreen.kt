@@ -52,9 +52,15 @@ import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
-/** The colours the two curves are read by, here and in the key beneath them. */
-private val FitnessColour = Color(0xFF2E7D32)
-private val FatigueColour = Color(0xFFC62828)
+/**
+ * The colours the two curves are read by, here and in the key beneath them.
+ *
+ * Blue and amber rather than the green and red these numbers are usually drawn in: red/green is the
+ * one pair a colour-blind runner cannot separate, and there is nothing else on the chart to tell the
+ * curves apart by. They also differ in lightness, so the pair survives being seen in sunlight.
+ */
+private val FitnessColour = Color(0xFF1565C0)
+private val FatigueColour = Color(0xFFEF6C00)
 
 private val AxisDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM")
 
@@ -139,15 +145,15 @@ private fun TodayCard(today: ProgressDay) {
 }
 
 /**
- * The one-line reading of Form.
+ * The one-line reading of Form: the band's own word, and what it says about the runner.
  *
- * Says what the number means for the next run rather than only naming the band, because "neutral"
- * on its own tells a runner nothing they can act on.
+ * A description and never advice. What to do about being fatigued is the coach's to say, on the
+ * screen the coach speaks from — this screen reports.
  */
 private fun verdictLineOf(verdict: FormVerdict): String = when (verdict) {
-    FormVerdict.FRESH -> "You're fresh — a good day for hard work."
-    FormVerdict.NEUTRAL -> "You're neutral — carrying a normal amount of fatigue."
-    FormVerdict.FATIGUED -> "You're fatigued — go easy or take a rest day."
+    FormVerdict.FRESH -> "Fresh — you're carrying less fatigue than fitness."
+    FormVerdict.NEUTRAL -> "Neutral — fitness and fatigue are close to balanced."
+    FormVerdict.FATIGUED -> "Fatigued — you're carrying more fatigue than fitness."
 }
 
 @Composable
@@ -183,10 +189,10 @@ private fun RangePicker(selected: ProgressRange, onRangeChosen: (ProgressRange) 
  */
 @Composable
 private fun FitnessFatigueChart(days: List<ProgressDay>) {
-    if (days.isEmpty()) {
-        Text("Nothing recorded in this range.", style = MaterialTheme.typography.bodyMedium)
-        return
-    }
+    // A guard on [days.first] below rather than a state the runner can reach: every range ends on
+    // the curve's own last day, so a curve that exists has at least that one day in every window,
+    // and a curve that does not exist never gets this far ([ProgressScreen]).
+    if (days.isEmpty()) return
 
     val producer = remember { ChartEntryModelProducer() }
     LaunchedEffect(days) {
