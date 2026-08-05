@@ -164,6 +164,24 @@ class WeeklyVolumeTest {
     }
 
     @Test
+    fun `the clocks going forward does not move a Run into the next week`() {
+        // Sunday 29 March 2026 is the morning the UK clocks go forward, and 01:30 that day is the
+        // hour that does not exist locally — the epoch it resolves to is 02:30 BST. It is still the
+        // Sunday, so it still belongs to the week that started on the Monday before it, and a week
+        // boundary worked out on a fixed number of hours rather than on the calendar would put it
+        // in the next one.
+        val dstSunday = LocalDate.of(2026, 3, 29)
+        val weeks = weeklyVolumeOf(
+            listOf(runAt(dstSunday, hour = 1, minute = 30, km = 9.0)),
+            through = dstSunday,
+            zone = zone,
+        )
+
+        assertEquals(LocalDate.of(2026, 3, 23), weeks.single().startingOn)
+        assertEquals(9.0, weeks.single().distanceKm, 0.001)
+    }
+
+    @Test
     fun `a range keeps only the weeks that begin inside it`() {
         val weeks = weeklyVolumeOf(
             listOf(runAt(monday, km = 5.0)),
@@ -210,6 +228,6 @@ class WeeklyVolumeTest {
         assertEquals(42.2, WeeklyMeasure.DISTANCE.amountOf(week), 0.001)
         // Hours, not seconds: a bar axis labelled 5400 is not a number anybody trains in.
         assertEquals(1.5, WeeklyMeasure.TIME.amountOf(week), 0.001)
-        assertEquals(300.0, WeeklyMeasure.EFFORT.amountOf(week), 0.001)
+        assertEquals(300.0, WeeklyMeasure.EFFORT_SCORE.amountOf(week), 0.001)
     }
 }
