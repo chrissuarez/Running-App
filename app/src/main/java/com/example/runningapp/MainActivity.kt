@@ -1286,6 +1286,17 @@ private fun StartFooter(
     }
 }
 
+/**
+ * How much room each bottom-bar button gives away to padding.
+ *
+ * Far tighter than a button's usual 24dp a side, because five of them share the width of the phone:
+ * at the default 24dp the labels had only ~26dp of text space left and every one of them ellipsized
+ * — including the two that begin the same way, leaving "Pr…" next to "Pr…" (#63). The buttons still
+ * meet the minimum touch target through [RunningUiTokens.MinTouchTarget]; it is only the ink inside
+ * them that moves.
+ */
+private val BottomBarButtonPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)
+
 @Composable
 private fun MainBottomBar(
     onOpenHistory: () -> Unit,
@@ -1305,7 +1316,8 @@ private fun MainBottomBar(
                 enabled = false,
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+                    .heightIn(min = RunningUiTokens.MinTouchTarget),
+                contentPadding = BottomBarButtonPadding
             ) {
                 Text(
                     text = "Home",
@@ -1319,7 +1331,8 @@ private fun MainBottomBar(
                 onClick = onOpenHistory,
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+                    .heightIn(min = RunningUiTokens.MinTouchTarget),
+                contentPadding = BottomBarButtonPadding
             ) {
                 Text(
                     text = "History",
@@ -1335,7 +1348,8 @@ private fun MainBottomBar(
                 onClick = onOpenProgress,
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+                    .heightIn(min = RunningUiTokens.MinTouchTarget),
+                contentPadding = BottomBarButtonPadding
             ) {
                 Text(
                     text = "Progress",
@@ -1349,7 +1363,8 @@ private fun MainBottomBar(
                 onClick = onOpenManageDevices,
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+                    .heightIn(min = RunningUiTokens.MinTouchTarget),
+                contentPadding = BottomBarButtonPadding
             ) {
                 Text(
                     text = "Devices",
@@ -1363,7 +1378,8 @@ private fun MainBottomBar(
                 onClick = onOpenSettings,
                 modifier = Modifier
                     .weight(1f)
-                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+                    .heightIn(min = RunningUiTokens.MinTouchTarget),
+                contentPadding = BottomBarButtonPadding
             ) {
                 Text(
                     text = "Prefs",
