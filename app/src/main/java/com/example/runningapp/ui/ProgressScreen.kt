@@ -363,7 +363,28 @@ private fun WeeklyVolume(
         labelOf = { it.label },
         onChosen = onMeasureChosen,
     )
-    WeeklyVolumeChart(weeks = weeks, measure = measure)
+    // Nothing to draw and something to say. A chart whose every week is zero has no height to
+    // scale against, so Vico draws a frame with no bars and no numbers down the side — which is
+    // exactly what a runner with no Effort Scores yet meets the moment they tap that chip, and an
+    // empty frame reads as a chart that broke rather than as a measure they have nothing in.
+    if (weeks.all { measure.amountOf(it) == 0.0 }) {
+        Text(
+            text = nothingRecorded(measure),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    } else {
+        WeeklyVolumeChart(weeks = weeks, measure = measure)
+    }
+}
+
+/** Why this measure has no bars, said in the runner's terms rather than the chart's. */
+private fun nothingRecorded(measure: WeeklyMeasure): String = when (measure) {
+    // The one a runner meets by accident: every Run so far was recorded without a Strap, so there
+    // is training to show and nothing scoring it. Says what would change that.
+    WeeklyMeasure.EFFORT_SCORE ->
+        "No Effort Scores in these weeks. A run needs heart rate recorded to be scored."
+    WeeklyMeasure.DISTANCE -> "No distance recorded in these weeks."
+    WeeklyMeasure.TIME -> "No time recorded in these weeks."
 }
 
 @Composable
