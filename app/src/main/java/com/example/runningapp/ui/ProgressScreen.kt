@@ -22,7 +22,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,8 +41,10 @@ import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
 import com.patrykandpatrick.vico.compose.chart.Chart
 import com.patrykandpatrick.vico.compose.chart.line.lineChart
 import com.patrykandpatrick.vico.compose.chart.line.lineSpec
+import com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec
 import com.patrykandpatrick.vico.compose.m3.style.m3ChartStyle
 import com.patrykandpatrick.vico.compose.style.ProvideChartStyle
+import com.patrykandpatrick.vico.core.axis.AxisItemPlacer
 import com.patrykandpatrick.vico.core.axis.AxisPosition
 import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
 import com.patrykandpatrick.vico.core.entry.ChartEntryModelProducer
@@ -98,6 +99,12 @@ fun ProgressScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            // An if/else and never an early `return@Column` from this lambda: the curve arrives a
+            // moment after the screen opens, so the empty branch is what every visit composes first
+            // and the filled one is what replaces it. A return out of a composable lambda skips the
+            // groups the compiler opened for the rest of it, and the composition that follows reads
+            // a slot table that no longer describes itself — on the phone, an
+            // `ArrayIndexOutOfBoundsException` inside Scaffold as the screen appeared.
             val today = state.today
             if (today == null) {
                 Text(
@@ -105,13 +112,12 @@ fun ProgressScreen(
                         "Fatigue and Form appear here.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                return@Column
+            } else {
+                TodayCard(today)
+                RangePicker(selected = state.range, onRangeChosen = onRangeChosen)
+                FitnessFatigueChart(days = state.curve)
+                ChartKey()
             }
-
-            TodayCard(today)
-            RangePicker(selected = state.range, onRangeChosen = onRangeChosen)
-            FitnessFatigueChart(days = state.curve)
-            ChartKey()
         }
     }
 }
@@ -167,6 +173,7 @@ private fun Metric(label: String, value: Double) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RangePicker(selected: ProgressRange, onRangeChosen: (ProgressRange) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -194,9 +201,13 @@ private fun FitnessFatigueChart(days: List<ProgressDay>) {
     // and a curve that does not exist never gets this far ([ProgressScreen]).
     if (days.isEmpty()) return
 
-    val producer = remember { ChartEntryModelProducer() }
-    LaunchedEffect(days) {
-        producer.setEntries(
+    // The days are handed to the producer as it is built, not pushed into an empty one from a
+    // LaunchedEffect afterwards. An effect runs after the frame it was composed in, so the chart got
+    // measured once against no data at all — and a Vico chart measured with an empty model throws
+    // (`ChartValuesProvider.Empty#getChartValues shouldn't be used`). Rebuilt whenever the days
+    // change, which is a new range or a new Score landing.
+    val producer = remember(days) {
+        ChartEntryModelProducer(
             days.mapIndexed { index, day -> entryOf(index.toFloat(), day.fitness.toFloat()) },
             days.mapIndexed { index, day -> entryOf(index.toFloat(), day.fatigue.toFloat()) },
         )
@@ -206,6 +217,17 @@ private fun FitnessFatigueChart(days: List<ProgressDay>) {
     val dateLabels = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
         firstDay.plusDays(value.toLong()).format(AxisDateFormat)
     }
+    // Whole numbers up the side, to read against the whole numbers in the card above. Vico's own
+    // formatter would label these 46.71 and 42.04, which is a precision none of this is measured to.
+    val wholeNumbers = AxisValueFormatter<AxisPosition.Vertical.Start> { value, _ ->
+        value.roundToInt().toString()
+    }
+    // Three dates along the bottom whatever the range. One label per day is what Vico would
+    // otherwise attempt, and at a day apart there is no room for "5 May" — every label came out as
+    // "5 …", a chart of days that never says which month it is in. Three and not more because the
+    // narrowest screen this has to survive is 320dp with the text scaled to 1.3×, and at four the
+    // months went back to being cut short there.
+    val labelEvery = (days.size / 3).coerceAtLeast(1)
 
     Box(
         modifier = Modifier
@@ -225,8 +247,27 @@ private fun FitnessFatigueChart(days: List<ProgressDay>) {
                     )
                 ),
                 chartModelProducer = producer,
-                startAxis = rememberStartAxis(),
-                bottomAxis = rememberBottomAxis(valueFormatter = dateLabels),
+                startAxis = rememberStartAxis(valueFormatter = wholeNumbers),
+                bottomAxis = rememberBottomAxis(
+                    valueFormatter = dateLabels,
+                    itemPlacer = AxisItemPlacer.Horizontal.default(
+                        spacing = labelEvery,
+                        // Start half a step in, so the first date has the chart's edge to spread
+                        // into. Labelled from day one it is the axis's own left edge that cuts it,
+                        // and "5 Aug" arrived as "..".
+                        offset = labelEvery / 2,
+                        addExtremeLabelPadding = true,
+                    ),
+                    // No vertical guidelines. Vico draws one per day rather than one per label, and
+                    // over a year that is 366 dashed lines — a hatch the curves had to be read
+                    // through. The horizontal ones off the value axis are the ones that help.
+                    guideline = null,
+                ),
+                // The whole range at once, which is the only thing the range chips can mean. Left
+                // to itself Vico gives every day a fixed width and lets the chart scroll: a year
+                // and three months then looked identical — both drew their first ten days and hid
+                // the rest off the right-hand edge. Scrolling off, Vico fits what it is given.
+                chartScrollSpec = rememberChartScrollSpec(isScrollEnabled = false),
                 modifier = Modifier.fillMaxSize(),
             )
         }
