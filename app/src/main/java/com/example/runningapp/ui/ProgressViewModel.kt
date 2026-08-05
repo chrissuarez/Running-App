@@ -40,6 +40,14 @@ data class ProgressUiState(
     val weeks: List<TrainingWeek> = emptyList(),
 )
 
+/**
+ * The weeks of training and the day they were totalled through — the day their range has to be
+ * measured back from, kept with them so the two cannot drift apart.
+ *
+ * [through] is null only before the first read of the history has come back.
+ */
+private data class VolumeToDate(val through: LocalDate?, val weeks: List<TrainingWeek>)
+
 class ProgressViewModel(
     sessionRepository: SessionRepository,
     /** The zone the runner's calendar days are in — which day a Run belongs to depends on it. */
@@ -91,10 +99,13 @@ class ProgressViewModel(
      * between distance, time and Effort is then a re-read of weeks already totalled rather than
      * three rollups kept in step.
      */
-    private val weeks: StateFlow<List<TrainingWeek>> = sessionRepository.runVolumesFlow()
-        .map { runs -> weeklyVolumeOf(runs, through = today(), zone = zone) }
+    private val weeks: StateFlow<VolumeToDate> = sessionRepository.runVolumesFlow()
+        .map { runs ->
+            val through = today()
+            VolumeToDate(through, weeklyVolumeOf(runs, through = through, zone = zone))
+        }
         .flowOn(curveDispatcher)
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, VolumeToDate(through = null, weeks = emptyList()))
 
     /**
      * The window is measured back from the curve's own last day rather than from today asked afresh.
@@ -104,18 +115,20 @@ class ProgressViewModel(
      *
      * The weeks are windowed against that same day, so one pick moves both charts to the same
      * stretch of time. Where there is no curve to take it from — Runs recorded without a Strap —
-     * the last week the runner has stands in, which is the same day by another route.
+     * the day the weeks themselves were totalled through stands in, which is the same day by another
+     * route. Not the last week's Monday: on any day but a Monday that would measure the range back
+     * from up to six days early and let in a leading week the runner did not ask for.
      */
     val state: StateFlow<ProgressUiState> =
-        combine(curve, weeks, _range, _measure) { curve, weeks, range, measure ->
+        combine(curve, weeks, _range, _measure) { curve, volume, range, measure ->
             val lastDay = curve.lastOrNull()
-            val endingOn = lastDay?.date ?: weeks.lastOrNull()?.startingOn
+            val endingOn = lastDay?.date ?: volume.through
             ProgressUiState(
                 range = range,
                 today = lastDay,
                 curve = lastDay?.let { curve.within(range, endingOn = it.date) } ?: emptyList(),
                 measure = measure,
-                weeks = endingOn?.let { weeks.within(range, endingOn = it) } ?: emptyList(),
+                weeks = endingOn?.let { volume.weeks.within(range, endingOn = it) } ?: emptyList(),
             )
         }.stateIn(viewModelScope, SharingStarted.Eagerly, ProgressUiState())
 
