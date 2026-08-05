@@ -18,6 +18,7 @@ import com.example.runningapp.effectiveMaxHr
 import com.example.runningapp.historyHrProfile
 import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
+import com.example.runningapp.training.ScoredRun
 import com.example.runningapp.training.effortScoreOf
 import com.example.runningapp.analysis.BestEffort
 import com.example.runningapp.analysis.RecordType
@@ -439,6 +440,15 @@ class SessionRepository(
 
     /** The runs the History list shows, newest first. */
     fun recentSessionsFlow(): Flow<List<RunnerSession>> = sessionDao.getLast20Sessions()
+
+    /**
+     * Every scored Run in history, oldest first — what the Progress screen builds its curves from
+     * (#63). See [SessionDao.getScoredRunsFlow] for why it is all of history and only the scored
+     * part of it.
+     */
+    fun scoredRunsFlow(): Flow<List<ScoredRun>> = sessionDao.getScoredRunsFlow().map { rows ->
+        rows.map { ScoredRun(startedAtMillis = it.startTime, effortScore = it.effortScore) }
+    }
 
     /**
      * How many medals each run holds, keyed by run, for the History list's medal badges (#51).

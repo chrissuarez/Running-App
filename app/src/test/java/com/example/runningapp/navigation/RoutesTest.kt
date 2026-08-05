@@ -20,7 +20,8 @@ class RoutesTest {
             Routes.HISTORY,
             Routes.SESSION_DETAIL,
             Routes.TRAINING_PLAN,
-            Routes.MAP
+            Routes.MAP,
+            Routes.PROGRESS
         )
         assertEquals(routes.size, routes.toSet().size)
     }

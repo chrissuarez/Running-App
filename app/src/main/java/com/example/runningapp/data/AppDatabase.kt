@@ -162,6 +162,18 @@ data class MaxSessionLoad30dProjection(
     val maxDurationSeconds: Long?
 )
 
+/**
+ * A finished Run reduced to the two things the Fitness and Fatigue curves need (#63): the day it
+ * began, and what it cost.
+ *
+ * A projection rather than the whole row because the curves are read over a runner's entire history
+ * at once — hundreds of rows of route, weather and zone times, to add up one integer per day.
+ */
+data class ScoredRunProjection(
+    val startTime: Long,
+    val effortScore: Int
+)
+
 /** How many medals one Run holds — what the medal badge on its History row counts (#51). */
 data class SessionMedalCount(
     val sessionId: Long,
@@ -477,6 +489,31 @@ interface SessionDao {
      */
     @Query("UPDATE sessions SET effortScore = :effortScore WHERE id = :sessionId")
     suspend fun setEffortScore(sessionId: Long, effortScore: Int)
+
+    /**
+     * Every scored Run in history, oldest first — the whole input to the Fitness and Fatigue
+     * curves (#63).
+     *
+     * The whole history and not a window of it, however short a range the Progress screen is showing:
+     * a 42-day average of the last three months would start from zero three months ago and read as a
+     * runner who has just taken up running. The window is applied to the drawn curve, not to what it
+     * is built from.
+     *
+     * A Run with no Score is left out rather than counted as zero, which is the same distinction the
+     * backfill makes (#62): no Score means nothing was measured, and a day of unmeasured training is
+     * not a day of rest. Runs still in progress are out too, as everywhere else, by `endTime > 0`.
+     *
+     * A stream, so a Score arriving from the backfill redraws the curves under the runner rather than
+     * waiting for the screen to be left and re-entered.
+     */
+    @Query(
+        """
+        SELECT startTime, effortScore FROM sessions
+        WHERE endTime > 0 AND effortScore IS NOT NULL
+        ORDER BY startTime ASC
+        """
+    )
+    fun getScoredRunsFlow(): Flow<List<ScoredRunProjection>>
 
     @Query("DELETE FROM sessions WHERE id = :sessionId")
     suspend fun deleteSessionById(sessionId: Long)
