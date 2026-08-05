@@ -78,6 +78,16 @@ than a distance of zero. Every rule that counts distance counts a stated one
 a route to find a stretch inside.
 _Avoid_: manual distance, entered distance, treadmill distance
 
+**Effort Score**:
+What a Run cost the runner, as one number: every second weighted by the Zone it was spent in — 1
+through 5, and nothing at all below Zone 1, because idling is not training. Weighted second by
+second and never off a Run's average heart rate, which is what lets a run/walk Run score its running
+as running instead of having the walk breaks averaged into it. Banked when the Run finishes, and
+absent rather than zero on a Run that recorded no heart rate at all.
+_Avoid_: suffer score, relative effort, training load; and on screen, the bare word "Effort", which
+is already what the runner rates a Run out of ten. A Best Effort is a different thing again — a
+stretch of a Run rather than a number about the whole of it.
+
 **Best Effort**:
 The fastest continuous stretch of a Run covering one of the record distances —
 1 km, a mile, 5 km, 10 km, a half marathon — measured on the clock, so a walk

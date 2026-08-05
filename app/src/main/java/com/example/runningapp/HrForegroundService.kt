@@ -675,6 +675,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     zone4Seconds = totals.zoneSeconds.zone4,
                     zone5Seconds = totals.zoneSeconds.zone5,
                     noDataSeconds = totals.noDataSeconds,
+                    effortScore = totals.effortScore,
                     walkBreaksCount = totals.walkBreaks,
                     isRunWalkMode = totals.isRunWalkMode,
                 )

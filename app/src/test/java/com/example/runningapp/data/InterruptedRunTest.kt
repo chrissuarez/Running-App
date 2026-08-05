@@ -239,6 +239,34 @@ class InterruptedRunTest {
     }
 
     @Test
+    fun `a rescued run is scored from the beats it wrote down`() {
+        // Ten minutes at 150 bpm, which is Zone 3 of this profile — weight 3, so ten minutes of it
+        // is 30.
+        val finished = interrupted.finishedFromRecord(
+            samples(600, bpm = { 150 }),
+            track = emptyList(),
+            mappedTrack = emptyList(),
+            profile = profile,
+        )!!
+
+        assertEquals(30, finished.effortScore)
+    }
+
+    @Test
+    fun `a rescued run that recorded no heart rate has no score`() {
+        val track = (0..9).map { fixAt(50.8152, startedAt + 30_000 + it * 1_000L) }
+
+        val finished = interrupted.finishedFromRecord(
+            samples = emptyList(),
+            track = track,
+            mappedTrack = track,
+            profile = profile,
+        )!!
+
+        assertNull(finished.effortScore)
+    }
+
+    @Test
     fun `the run ends when the recording died, not when the app noticed`() {
         val finished = interrupted.finishedFromRecord(samples(292), track = emptyList(), mappedTrack = emptyList(), profile = profile)!!
 

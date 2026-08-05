@@ -5,6 +5,8 @@ import com.example.runningapp.HrZone
 import com.example.runningapp.ZoneBand
 import com.example.runningapp.ZoneSeconds
 import com.example.runningapp.plusSecondIn
+import com.example.runningapp.training.effortScoreOfWeightedSeconds
+import com.example.runningapp.training.effortWeightOf
 import com.example.runningapp.zoneBandOf
 import kotlin.math.roundToInt
 
@@ -34,9 +36,27 @@ data class RunTally(
     val bpmSum: Long = 0,
     /** Seconds that had a reading to average — the divisor for [averageBpm]. */
     val bpmSeconds: Long = 0,
+    /**
+     * Each second's zone weight, added up — what the Run's Effort score is made of (#61).
+     *
+     * Banked as the Run goes rather than re-derived from the saved samples afterwards, for the
+     * reason [zoneSeconds] is: these are the seconds the runner was actually coached through, under
+     * the profile pinned at START. Seconds below Zone 1 add nothing, which is what separates this
+     * from [zoneSeconds] — see [effortWeightOf].
+     */
+    val effortWeightedSeconds: Long = 0,
 ) {
     /** The Run's mean heart rate over the seconds that had one, and 0 for a Run with none. */
     val averageBpm: Int get() = if (bpmSeconds > 0) (bpmSum / bpmSeconds).toInt() else 0
+
+    /**
+     * What the Run cost, or null for a Run that never read a heart rate at all.
+     *
+     * A Run with beats always has a score even if every one of them was below Zone 1: that is a 0,
+     * and it says the hour was easy. A Run with no beats has nothing to say.
+     */
+    val effortScore: Int?
+        get() = if (bpmSeconds > 0) effortScoreOfWeightedSeconds(effortWeightedSeconds) else null
 
     /**
      * One second with a reading, in the [zone] its caller resolved it to.
@@ -45,6 +65,11 @@ data class RunTally(
      * same act as deciding whether there was a reading at all — see [Run]'s `bankSecond`. That is
      * what leaves this with no "and if it had no zone" branch to write: #115's dead one, which
      * banked a no-data second from inside a positive-reading guard, has nowhere to go.
+     *
+     * [effortWeightedSeconds] is the one thing here that goes back to the [bpm], because [zone] is
+     * not enough to answer it: Zone 1 swallows everything below its lower edge so no second vanishes
+     * from the chart, and the load model must not credit that time as training (#99). What the
+     * second charts as and what it cost are genuinely two questions.
      */
     fun bank(zone: HrZone, bpm: Int, profile: HrProfile, targetZone: HrZone): RunTally = copy(
         zoneSeconds = zoneSeconds.plusSecondIn(zone),
@@ -54,6 +79,7 @@ data class RunTally(
         maxBpm = maxOf(maxBpm, bpm),
         bpmSum = bpmSum + bpm,
         bpmSeconds = bpmSeconds + 1,
+        effortWeightedSeconds = effortWeightedSeconds + effortWeightOf(bpm, profile),
     )
 
     /** One second with none. */

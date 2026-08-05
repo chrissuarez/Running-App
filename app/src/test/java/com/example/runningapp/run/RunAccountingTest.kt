@@ -2,6 +2,7 @@ package com.example.runningapp.run
 
 import com.example.runningapp.HrProfile
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -196,6 +197,69 @@ class RunAccountingTest {
         assertEquals(10L, finalize.totals.zoneSeconds.zone2)
         assertEquals(5L, finalize.totals.noDataSeconds)
         assertEquals(15L, finalize.totals.durationSeconds)
+    }
+
+    @Test
+    fun `the finished run is saved with what it cost`() {
+        val driver = Driver()
+        driver.start()
+        // Twenty minutes at 150 bpm — Zone 3 of a Max HR of 190, so weight 3.
+        driver.advanceWith(seconds = 20 * 60, bpm = ABOVE_TARGET)
+
+        val finalize = driver.stop().only<RunEffect.FinalizeRun>()
+
+        assertEquals(60, finalize.totals.effortScore)
+    }
+
+    @Test
+    fun `a walk break is scored as the walking it was, not averaged into the running`() {
+        val steady = Driver()
+        steady.start()
+        steady.advanceWith(seconds = 20 * 60, bpm = 132)
+
+        val runWalk = Driver()
+        runWalk.start()
+        // The same twenty minutes and the same average of 132, half run hard and half walked off.
+        repeat(4) {
+            runWalk.advanceWith(seconds = 150, bpm = 174)
+            runWalk.advanceWith(seconds = 150, bpm = 90)
+        }
+
+        val steadyScore = steady.stop().only<RunEffect.FinalizeRun>().totals.effortScore!!
+        val runWalkScore = runWalk.stop().only<RunEffect.FinalizeRun>().totals.effortScore!!
+
+        assertTrue("run/walk $runWalkScore should beat steady $steadyScore", runWalkScore > steadyScore)
+    }
+
+    @Test
+    fun `an unplanned walk on a treadmill is scored like any other run`() {
+        // #61 scores every kind of session that has a heart rate — a Zone 2 walk and a treadmill
+        // Run included. There is one recorder, so this is true by construction; pinned because the
+        // ticket asks for it by name.
+        val driver = Driver()
+        driver.start(config = config(workout = null, runMode = RunMode.TREADMILL))
+        driver.advanceWith(seconds = 30 * 60, bpm = 120)
+
+        assertEquals(60, driver.stop().only<RunEffect.FinalizeRun>().totals.effortScore)
+    }
+
+    @Test
+    fun `a run that read no heart rate has no score rather than a zero`() {
+        val driver = Driver()
+        driver.start()
+        driver.advance(45)
+
+        assertNull(driver.stop().only<RunEffect.FinalizeRun>().totals.effortScore)
+    }
+
+    @Test
+    fun `seconds below zone 1 cost nothing`() {
+        val driver = Driver()
+        driver.start()
+        // 90 bpm is under Zone 1's lower edge of 95: a heart rate, but not training.
+        driver.advanceWith(seconds = 20 * 60, bpm = 90)
+
+        assertEquals(0, driver.stop().only<RunEffect.FinalizeRun>().totals.effortScore)
     }
 
     @Test

@@ -251,6 +251,61 @@ class SessionDetailScreenTest {
         composeRule.onNodeWithText("Save").assertIsNotEnabled()
     }
 
+    // --- What the Run cost (#61) ----------------------------------------------------------------
+
+    @Test
+    fun sessionDetailScreen_showsTheEffortScoreOfARunThatHasOne() {
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = finishedSession().copy(effortScore = 145),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Effort Score").assertIsDisplayed()
+        composeRule.onNodeWithText("145").assertIsDisplayed()
+    }
+
+    @Test
+    fun sessionDetailScreen_showsAnEffortScoreOfZeroRatherThanHidingIt() {
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = finishedSession().copy(effortScore = 0),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = {}
+                )
+            }
+        }
+
+        // A Run spent entirely below Zone 1 cost nothing, and that is a measurement.
+        composeRule.onNodeWithText("Effort Score").assertIsDisplayed()
+    }
+
+    @Test
+    fun sessionDetailScreen_saysNothingAboutARunThatWasNeverScored() {
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = finishedSession(),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = {}
+                )
+            }
+        }
+
+        composeRule.onAllNodesWithText("Effort Score").assertCountEquals(0)
+    }
+
     private fun finishedSession(effort: Int? = null, note: String? = null) = RunnerSession(
         id = 1L,
         startTime = 1_742_000_000_000,

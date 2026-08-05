@@ -18,6 +18,7 @@ import com.example.runningapp.effectiveMaxHr
 import com.example.runningapp.historyHrProfile
 import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
+import com.example.runningapp.training.effortScoreOf
 import com.example.runningapp.analysis.BestEffort
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.analysis.RouteThumbnail
@@ -255,7 +256,7 @@ class SessionRepository(
                 settings.beginStatement(maxHr, restingHr)
                 // All of history or none of it — see [inTransaction]. Half a re-tally is the split
                 // this whole rule exists to prevent.
-                inTransaction { recomputeZoneSecondsForAllRuns(samples, historyProfile) }
+                inTransaction { recomputeZoneSecondsAndEffortForAllRuns(samples, historyProfile) }
                 rebandedAgainst = historyMaxHr
             }
         }
@@ -309,16 +310,21 @@ class SessionRepository(
      * a history half-moved, and file IO inside a database transaction holds the write lock open for
      * the length of a file copy.
      */
-    private suspend fun recomputeZoneSecondsForAllRuns(samples: SampleDao, profile: HrProfile) {
+    private suspend fun recomputeZoneSecondsAndEffortForAllRuns(samples: SampleDao, profile: HrProfile) {
         sessionDao.getFinalizedSessionIds().forEach { sessionId ->
-            val tally = tallyZoneSeconds(samples.getRawBpmsForSession(sessionId), profile)
-            sessionDao.updateZoneSeconds(
+            val bpms = samples.getRawBpmsForSession(sessionId)
+            val tally = tallyZoneSeconds(bpms, profile)
+            sessionDao.updateZoneSecondsAndEffort(
                 sessionId = sessionId,
                 zone1 = tally.zone1,
                 zone2 = tally.zone2,
                 zone3 = tally.zone3,
                 zone4 = tally.zone4,
-                zone5 = tally.zone5
+                zone5 = tally.zone5,
+                // From the same beats and the same edges as the tally above, so a Run's Effort Score
+                // and its zone chart never part company (#61). Only a Run that already has a Score
+                // is rewritten — see [SessionDao.updateZoneSecondsAndEffort].
+                effortScore = effortScoreOf(bpms, profile)
             )
         }
     }

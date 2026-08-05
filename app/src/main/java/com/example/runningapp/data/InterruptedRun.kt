@@ -3,6 +3,7 @@ package com.example.runningapp.data
 import com.example.runningapp.HrProfile
 import com.example.runningapp.recording.geodesicDistanceMeters
 import com.example.runningapp.tallyZoneSeconds
+import com.example.runningapp.training.effortScoreOf
 
 /**
  * Rebuilds the totals of a Run that stopped without finishing, from what it managed to write down
@@ -117,6 +118,11 @@ fun RunnerSession.finishedFromRecord(
         zone3Seconds = zones.zone3,
         zone4Seconds = zones.zone4,
         zone5Seconds = zones.zone5,
+        // Scored from the same beats and the same profile as the zones above, so a rescued Run
+        // carries the number a finished one would have banked as it ran (#61). A Run whose samples
+        // are all gone gets null rather than a zero — it recorded no heart rate, so there is
+        // nothing to say about what it cost.
+        effortScore = effortScoreOf(bpms, profile),
         // Only where the Run has none. A rescued Run is stamped once, at the moment it is rescued;
         // re-running the pass must not overwrite a start position that is already there.
         startLatitude = startLatitude ?: firstFix?.latitude,

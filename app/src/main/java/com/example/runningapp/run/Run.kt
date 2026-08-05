@@ -887,6 +887,7 @@ object Run {
             maxBpm = current.tally.maxBpm,
             zoneSeconds = current.tally.zoneSeconds,
             noDataSeconds = current.tally.noDataSeconds,
+            effortScore = current.tally.effortScore,
             walkBreaks = current.walkBreaks,
         )
         val finalized = emitOrHold(current, PendingRowWork.Finalize(totals))

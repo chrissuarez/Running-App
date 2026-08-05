@@ -50,6 +50,35 @@ class SessionDaoFinalizedIdsTest {
         }
     }
 
+    /**
+     * The re-tally re-scores what it re-bands, but only where there is a Score to move (#61). The
+     * guard is a `CASE` inside the statement, so — like the `WHERE` above — a mock cannot show it.
+     */
+    @Test
+    fun updateZoneSecondsAndEffort_movesAScoreThatExistsAndLeavesUnscoredHistoryAlone() {
+        runBlocking {
+            val scored = sessionDao.insertSession(
+                session(startTime = 1_000L, endTime = 2_000L).copy(effortScore = 40)
+            )
+            val neverScored = sessionDao.insertSession(session(startTime = 3_000L, endTime = 4_000L))
+
+            listOf(scored, neverScored).forEach { id ->
+                sessionDao.updateZoneSecondsAndEffort(
+                    sessionId = id,
+                    zone1 = 1, zone2 = 2, zone3 = 3, zone4 = 4, zone5 = 5,
+                    effortScore = 61
+                )
+            }
+
+            // The scored run follows its new zone times; the unscored one keeps its null, because
+            // scoring history is the backfill's job (#62) and a re-tally must not do half of it.
+            assertEquals(61, sessionDao.getSessionById(scored)!!.effortScore)
+            assertEquals(null, sessionDao.getSessionById(neverScored)!!.effortScore)
+            // Both were re-banded either way.
+            assertEquals(2L, sessionDao.getSessionById(neverScored)!!.zone2Seconds)
+        }
+    }
+
     private fun session(startTime: Long, endTime: Long) = RunnerSession(
         startTime = startTime,
         endTime = endTime
