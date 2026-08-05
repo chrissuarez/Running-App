@@ -173,6 +173,23 @@ class ProgressViewModelTest {
         assertEquals(12.0, viewModel.state.value.weeks.last().distanceKm, 0.001)
     }
 
+    @Test
+    fun `with no scored runs the range is still measured back from today`() = runTest(dispatcher) {
+        // Wednesday 5 August 2026, and no Scores at all, so the weeks have to carry the day they
+        // were totalled through themselves. Measured back from the last week's Monday instead, three
+        // months would start on the Sunday and let in the week beginning 4 May.
+        runVolumes.value = listOf(
+            volumeOn(today.minusYears(1), km = 10.0),
+            volumeOn(today.minusDays(1), km = 10.0),
+        )
+
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.today)
+        assertEquals(LocalDate.of(2026, 5, 11), viewModel.state.value.weeks.first().startingOn)
+    }
+
     private fun viewModel() = ProgressViewModel(
         SessionRepository(sessionDao = sessionDao),
         zone = zone,
