@@ -5,6 +5,7 @@ import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -117,7 +118,8 @@ class WeeklyVolumeTest {
         assertEquals(0.0, weeks[1].distanceKm, 0.001)
         assertEquals(0.0, weeks[2].distanceKm, 0.001)
         assertEquals(0L, weeks[1].timeSeconds)
-        assertEquals(0, weeks[1].effortScore)
+        // Zero kilometres but no Score at all: nothing was measured in a week nobody ran in.
+        assertNull(weeks[1].effortScore)
     }
 
     @Test
@@ -144,6 +146,44 @@ class WeeklyVolumeTest {
 
         assertEquals(1, weeks.size)
         assertEquals(5.0, weeks.single().distanceKm, 0.001)
+    }
+
+    @Test
+    fun `a Run stamped later this week cannot land in the bar for the week in progress`() {
+        // Wednesday, with a Run dated the coming Sunday: it shares this week's Monday, so a guard
+        // that only compared week starts would count tomorrow's training in today's bar.
+        val wednesday = monday.plusDays(2)
+        val weeks = weeklyVolumeOf(
+            listOf(runAt(monday, km = 5.0), runAt(monday.plusDays(6), km = 99.0)),
+            through = wednesday,
+            zone = zone,
+        )
+
+        assertEquals(5.0, weeks.single().distanceKm, 0.001)
+    }
+
+    @Test
+    fun `a week of Runs that all scored zero is a measured zero, not a missing Score`() {
+        // A Strap was worn and the whole week stayed below Zone 1 — 0 is the answer, and it has to
+        // read differently from a week that measured nothing at all.
+        val weeks = weeklyVolumeOf(
+            listOf(runAt(monday, km = 5.0, score = 0), runAt(monday.plusDays(1), km = 4.0, score = 0)),
+            through = monday.plusDays(6),
+            zone = zone,
+        )
+
+        assertEquals(0, weeks.single().effortScore)
+    }
+
+    @Test
+    fun `a week whose Runs were all unmeasured has no Effort Score at all`() {
+        val weeks = weeklyVolumeOf(
+            listOf(runAt(monday, km = 5.0, score = null)),
+            through = monday.plusDays(6),
+            zone = zone,
+        )
+
+        assertNull(weeks.single().effortScore)
     }
 
     @Test
@@ -229,5 +269,8 @@ class WeeklyVolumeTest {
         // Hours, not seconds: a bar axis labelled 5400 is not a number anybody trains in.
         assertEquals(1.5, WeeklyMeasure.TIME.amountOf(week), 0.001)
         assertEquals(300.0, WeeklyMeasure.EFFORT_SCORE.amountOf(week), 0.001)
+        // A bar cannot draw "unknown", so an unmeasured week is flat like a measured zero. The two
+        // are told apart in words on the screen, not in height.
+        assertEquals(0.0, WeeklyMeasure.EFFORT_SCORE.amountOf(week.copy(effortScore = null)), 0.001)
     }
 }

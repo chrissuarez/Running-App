@@ -369,7 +369,7 @@ private fun WeeklyVolume(
     // empty frame reads as a chart that broke rather than as a measure they have nothing in.
     if (weeks.all { measure.amountOf(it) == 0.0 }) {
         Text(
-            text = nothingRecorded(measure),
+            text = nothingRecorded(measure, weeks),
             style = MaterialTheme.typography.bodyMedium,
         )
     } else {
@@ -378,11 +378,17 @@ private fun WeeklyVolume(
 }
 
 /** Why this measure has no bars, said in the runner's terms rather than the chart's. */
-private fun nothingRecorded(measure: WeeklyMeasure): String = when (measure) {
-    // The one a runner meets by accident: every Run so far was recorded without a Strap, so there
-    // is training to show and nothing scoring it. Says what would change that.
+private fun nothingRecorded(measure: WeeklyMeasure, weeks: List<TrainingWeek>): String = when (measure) {
+    // Two different flat charts, and telling a runner to put a Strap on when they were wearing one
+    // would be wrong: a Score of 0 is a measurement, earned by a week spent below Zone 1.
     WeeklyMeasure.EFFORT_SCORE ->
-        "No Effort Scores in these weeks. A run needs heart rate recorded to be scored."
+        if (weeks.any { it.effortScore != null }) {
+            "Every run in these weeks scored 0. Effort Score counts time at Zone 1 and above."
+        } else {
+            // The one a runner meets by accident: every Run so far was recorded without a Strap, so
+            // there is training to show and nothing scoring it. Says what would change that.
+            "No Effort Scores in these weeks. A run needs heart rate recorded to be scored."
+        }
     WeeklyMeasure.DISTANCE -> "No distance recorded in these weeks."
     WeeklyMeasure.TIME -> "No time recorded in these weeks."
 }
