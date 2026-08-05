@@ -12,6 +12,7 @@ import com.example.runningapp.UserSettings
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.training.FormVerdict
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CompletableDeferred
@@ -38,6 +39,12 @@ import org.mockito.kotlin.stub
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import java.time.LocalDate
+import java.time.ZoneOffset
+
+/** Monday 5 January 2026, midday UTC — the first day of the training weeks these tests read. */
+private const val DAY_MILLIS_2026_01_05 = 1_767_614_400_000L
+private const val ONE_DAY_MILLIS = 24L * 60 * 60 * 1000
 
 class SessionRepositoryTest {
 
@@ -51,6 +58,11 @@ class SessionRepositoryTest {
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo
         )
+        // A history with nothing scored in it, which is what most of these tests are about — a mock
+        // left unstubbed answers a suspending read with null rather than an empty list. Tests that
+        // care about the curves stub these over.
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(emptyList()))
+        whenever(mockDao.getRunVolumesFlow()).thenReturn(flowOf(emptyList()))
     }
 
     @Test
@@ -1611,6 +1623,103 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `the coach is told what the runner is carrying, on the same numbers the Progress screen shows`() = runTest {
+        // A hard week — seven days at an Effort Score of 100 — and then a week off it, with one Run
+        // in that week that wore no Strap. Read on the Sunday of the second week (#66).
+        val hardWeek = (0..6).map { day ->
+            ScoredRunProjection(startTime = DAY_MILLIS_2026_01_05 + day * ONE_DAY_MILLIS, effortScore = 100)
+        }
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(hardWeek))
+        whenever(mockDao.getRunVolumesFlow()).thenReturn(flowOf(
+            hardWeek.map { volumeRow(startTime = it.startTime, effortScore = it.effortScore) } +
+                volumeRow(startTime = DAY_MILLIS_2026_01_05 + 7 * ONE_DAY_MILLIS, effortScore = null)
+        ))
+
+        val state = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            zone = ZoneOffset.UTC,
+            today = LocalDate.of(2026, 1, 18)
+        ).fitnessAndForm!!
+
+        // Fitness remembers the hard week; Fatigue has already let most of it go, and Form — the
+        // gap between the two, read as of yesterday — still says the runner is carrying it.
+        assertEquals(13, state.fitness)
+        assertEquals(23, state.fatigue)
+        assertEquals(-14, state.form)
+        assertEquals(FormVerdict.FATIGUED, state.verdict)
+        // Two weeks of history, oldest first — and the strapless week is null rather than a zero,
+        // which is the difference between a week nobody measured and a week nobody ran.
+        assertEquals(listOf(700, null), state.weeklyEffortScores)
+    }
+
+    @Test
+    fun `a week the runner rested is sent as a zero, not as a week nothing measured`() = runTest {
+        // Opposite news for a coach reading fatigue: a week off is the rest that earns a harder next
+        // Run, while "nothing measured" is training the app could not see. The weeks themselves
+        // cannot tell the two apart — both come back with no Effort Score (#66).
+        val oneScoredRun = ScoredRunProjection(startTime = DAY_MILLIS_2026_01_05, effortScore = 100)
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(listOf(oneScoredRun)))
+        whenever(mockDao.getRunVolumesFlow()).thenReturn(
+            flowOf(listOf(volumeRow(startTime = DAY_MILLIS_2026_01_05, effortScore = 100)))
+        )
+
+        val state = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            zone = ZoneOffset.UTC,
+            today = LocalDate.of(2026, 1, 18)
+        ).fitnessAndForm!!
+
+        // One week of training, then a week in which nothing at all was run.
+        assertEquals(listOf(100, 0), state.weeklyEffortScores)
+    }
+
+    @Test
+    fun `only the last four weeks of Effort Score reach the coach`() = runTest {
+        // Six weeks of one scored Run each, so the block is a compact reading of the recent past
+        // rather than a runner's whole training history pasted into a prompt.
+        val weekly = (0..5).map { week ->
+            ScoredRunProjection(
+                startTime = DAY_MILLIS_2026_01_05 + week * 7 * ONE_DAY_MILLIS,
+                effortScore = 10 * (week + 1)
+            )
+        }
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(weekly))
+        whenever(mockDao.getRunVolumesFlow()).thenReturn(
+            flowOf(weekly.map { volumeRow(startTime = it.startTime, effortScore = it.effortScore) })
+        )
+
+        val state = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            zone = ZoneOffset.UTC,
+            today = LocalDate.of(2026, 2, 15)
+        ).fitnessAndForm!!
+
+        assertEquals(listOf(30, 40, 50, 60), state.weeklyEffortScores)
+    }
+
+    @Test
+    fun `with no scored Run in history the coach is told nothing about fatigue`() = runTest {
+        // A new phone, or a runner who has never run with a Strap: there is no curve to read, and
+        // zeroes would read as six weeks of doing nothing.
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(emptyList()))
+        whenever(mockDao.getRunVolumesFlow()).thenReturn(
+            flowOf(listOf(volumeRow(startTime = DAY_MILLIS_2026_01_05, effortScore = null)))
+        )
+
+        val context = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            zone = ZoneOffset.UTC,
+            today = LocalDate.of(2026, 1, 18)
+        )
+
+        assertNull(context.fitnessAndForm)
+    }
+
+    @Test
     fun `scoring a run banks the medals it won and reports them back`() = runTest {
         val run = session(id = 7, endTime = 1_000L).copy(runMode = "treadmill", durationSeconds = 3_600)
         val mockAchievementDao: AchievementDao = mock()
@@ -2230,6 +2339,14 @@ class SessionRepositoryTest {
         horizontalAccuracyMeters = 5f,
         timestampMillis = timestampMillis,
         source = TrackPointSource.GPS
+    )
+
+    private fun volumeRow(startTime: Long, effortScore: Int?) = RunVolumeProjection(
+        startTime = startTime,
+        distanceKm = 5.0,
+        durationSeconds = 1_800,
+        movingTimeSeconds = null,
+        effortScore = effortScore
     )
 
     private fun session(id: Long, endTime: Long) = RunnerSession(

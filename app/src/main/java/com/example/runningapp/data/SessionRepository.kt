@@ -19,8 +19,13 @@ import com.example.runningapp.historyHrProfile
 import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
 import com.example.runningapp.training.ScoredRun
+import com.example.runningapp.training.TrainingWeek
 import com.example.runningapp.training.VolumeRun
 import com.example.runningapp.training.effortScoreOf
+import com.example.runningapp.training.FormVerdict
+import com.example.runningapp.training.formVerdictOf
+import com.example.runningapp.training.progressCurve
+import com.example.runningapp.training.weeklyVolumeOf
 import com.example.runningapp.analysis.BestEffort
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.analysis.RouteThumbnail
@@ -40,9 +45,12 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.time.LocalDate
+import java.time.ZoneId
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.floor
+import kotlin.math.roundToInt
 
 // Labels describing a run to the AI coach (#107). Structure comes only from a plan, so the one
 // distinction the coach needs is whether the run followed a run/walk workout; these are derived
@@ -91,10 +99,38 @@ data class AiRecentRun(
     val fastest5kSeconds: Long?
 )
 
+/**
+ * How much training the runner is carrying, as the coach is told it (#66) — the same three numbers
+ * the Progress screen shows, plus the weeks they were built out of.
+ *
+ * Whole numbers, exactly as the screen rounds them: a Fitness of 31.4 is not measured to a tenth of
+ * anything, and the coach reading a different number from the runner would be two answers to one
+ * question.
+ *
+ * [weeklyEffortScores] runs oldest week first and ends with the week in progress, which is short by
+ * definition — most of it has not been run yet. Null is a week nothing measured, which is not a week
+ * of rest: no Run in it wore a Strap, so there was no heart rate to score. The same distinction
+ * [TrainingWeek.effortScore] makes.
+ */
+data class AiFitnessAndForm(
+    val fitness: Int,
+    val fatigue: Int,
+    val form: Int,
+    /** What the Form number means in a word — its own type, so it can only be one of the three. */
+    val verdict: FormVerdict,
+    val weeklyEffortScores: List<Int?>
+)
+
 data class AiTrainingContext(
     val currentStageTitle: String,
     val graduationRequirement: String,
-    val recentRuns: List<AiRecentRun>
+    val recentRuns: List<AiRecentRun>,
+    /**
+     * Null when there is no scored history to read it from — a new phone, or a runner who has never
+     * run with a Strap. The coach is then told nothing about fatigue rather than being told zeroes,
+     * which would read as a runner who has done nothing for six weeks (#66).
+     */
+    val fitnessAndForm: AiFitnessAndForm? = null
 )
 
 data class Max30dLoad(
@@ -121,6 +157,23 @@ internal fun coachTargetZone(
         ?: return workoutTargetZone ?: settingsTargetZone
     return HrZone.coachingTargetOfNumberOrDefault(recognised.number).number
 }
+
+/** How many weeks of Effort Score totals the coach is shown (#66). */
+private const val AI_WEEKS_OF_EFFORT = 4
+
+/**
+ * A week's Effort Score as the coach is told it: the total, or null for a week nothing measured.
+ *
+ * A week with no Run in it at all is 0 and not null, which the week itself cannot say — [weeklyVolumeOf]
+ * fills a week nobody ran in with the same null a week of strapless Runs comes to. The two are
+ * opposite news for a coach reading fatigue: a week off is the rest that earns a harder next Run,
+ * and told as "nothing measured" it would read as training the app failed to see.
+ *
+ * A week with no Run is a week with no time and no ground covered, which is how it is told apart
+ * here — the same rows, read for a different question.
+ */
+private fun TrainingWeek.effortScoreForCoach(): Int? =
+    effortScore ?: 0.takeIf { timeSeconds == 0L && distanceKm == 0.0 }
 
 class SessionRepository(
     private val sessionDao: SessionDao,
@@ -1292,6 +1345,10 @@ class SessionRepository(
     suspend fun getAiTrainingContext(
         stageId: String,
         asFinalized: RunnerSession? = null,
+        /** The zone the runner's calendar days are in — which day and week a Run falls in. */
+        zone: ZoneId = ZoneId.systemDefault(),
+        /** What day the curves are read through. The Run that prompted this has already landed. */
+        today: LocalDate = LocalDate.now(zone),
     ): AiTrainingContext {
         val stage = TrainingPlanProvider
             .getAllPlans()
@@ -1329,7 +1386,35 @@ class SessionRepository(
         return AiTrainingContext(
             currentStageTitle = stage.title,
             graduationRequirement = stage.graduationRequirementText,
-            recentRuns = recentRuns
+            recentRuns = recentRuns,
+            fitnessAndForm = fitnessAndFormThrough(today = today, zone = zone)
+        )
+    }
+
+    /**
+     * The runner's Fitness, Fatigue and Form, and the last [AI_WEEKS_OF_EFFORT] weeks of Effort
+     * Score behind them — or null when no Run in history has a Score to build a curve from (#66).
+     *
+     * Worked out from the same reads and the same arithmetic the Progress screen uses, so the coach
+     * and the runner are looking at one set of numbers rather than two that agree most of the time.
+     *
+     * The Run just finished is in this: its Score is written on the finish path before the coach is
+     * asked anything. It moves Fitness and Fatigue and cannot move Form, which is yesterday's
+     * answer by design — freshness is a question asked before today's Run had cost anything.
+     */
+    private suspend fun fitnessAndFormThrough(today: LocalDate, zone: ZoneId): AiFitnessAndForm? {
+        // The screen's own reads, taken once — the coach is asked its question at a moment, and
+        // there is nothing on the far side of a sent prompt for a later emission to redraw.
+        val curveToday = progressCurve(scoredRunsFlow().first(), through = today, zone = zone)
+            .lastOrNull()
+            ?: return null
+        val weeks = weeklyVolumeOf(runVolumesFlow().first(), through = today, zone = zone)
+        return AiFitnessAndForm(
+            fitness = curveToday.fitness.roundToInt(),
+            fatigue = curveToday.fatigue.roundToInt(),
+            form = curveToday.form.roundToInt(),
+            verdict = formVerdictOf(curveToday.form),
+            weeklyEffortScores = weeks.takeLast(AI_WEEKS_OF_EFFORT).map { it.effortScoreForCoach() }
         )
     }
 

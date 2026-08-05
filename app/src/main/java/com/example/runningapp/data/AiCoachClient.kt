@@ -116,7 +116,55 @@ internal fun buildEvaluationPrompt(
     appendLine("  \"graduatedToNextStage\": Boolean,")
     appendLine("  \"coachMessage\": String")
     appendLine("}")
+    context.fitnessAndForm?.let { appendFitnessAndForm(it) }
     appendLine("Current stage title: ${context.currentStageTitle}")
     appendLine("Recent runs (JSON):")
     appendLine(gson.toJson(context.recentRuns))
+}
+
+/**
+ * What the runner is carrying, told to the coach so the next prescription can answer it (#66).
+ *
+ * The numbers are explained, not just stated: a bare "Form -14" is a figure from someone else's
+ * model, while the sentence below says what it was measured over and where its lines are, so the
+ * coach reads the same meaning the runner does on the Progress screen.
+ *
+ * Intervals only, and said so twice over. Graduation is a judgement about evidence — did this Run
+ * meet the requirement — and a tired week is not evidence about a Run. Left unfenced, a model given
+ * a fatigue reading will hold a runner back from a Stage they have already earned, which is the one
+ * decision here that writes itself into the stored plan.
+ */
+private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
+    appendLine(
+        "The runner's current training state, from the Effort Scores of their past runs: " +
+            "Fitness ${state.fitness}, Fatigue ${state.fatigue}, Form ${state.form} (${state.verdict.word})."
+    )
+    appendLine(
+        "Fitness is their Effort Scores averaged over the last 42 days and Fatigue the same over " +
+            "the last 7, so Fatigue above Fitness means they are carrying more work than they have " +
+            "absorbed. Form is Fitness minus Fatigue: above +10 is fresh, below -10 is fatigued, " +
+            "and between the two is neutral."
+    )
+    // Skipped rather than written empty on the case that should not arise — a scored run is a
+    // finished run, so a curve exists only where a week does. An empty list here would otherwise
+    // print a sentence promising totals and then listing none.
+    if (state.weeklyEffortScores.isNotEmpty()) {
+        appendLine(
+            "Weekly Effort Score totals, oldest week first, the last one being the week in progress: " +
+                state.weeklyEffortScores.joinToString { it?.toString() ?: "not measured" } + "."
+        )
+        appendLine(
+            "0 is a week of rest — no running, or none hard enough to score. \"not measured\" is a " +
+                "week that was run with no heart rate recorded, so it is training you cannot see " +
+                "rather than rest."
+        )
+    }
+    appendLine(
+        "Let this shape the intervals you prescribe for the next run: ease off when the runner is " +
+            "fatigued, and give them more when they are fresh."
+    )
+    appendLine(
+        "CRITICAL RULE: These numbers must never change graduatedToNextStage. Graduation is judged " +
+            "only from the recent runs' evidence against the stage requirement, exactly as above."
+    )
 }
