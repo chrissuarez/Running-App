@@ -51,7 +51,20 @@ data class RunnerSession(
     // The run minus the spells the runner spent going nowhere, computed from the recorded track
     // the way Strava computes it (#163). Null until it has been computed: a run recorded before
     // v19, a run still being written, or a run with no GPS track to compute it from.
-    val movingTimeSeconds: Long? = null
+    val movingTimeSeconds: Long? = null,
+    /**
+     * What the Run cost the runner: Edwards zone-weighted TRIMP over its own seconds (#61), banked
+     * at the finish because it is a fact about the Run rather than a view of it.
+     *
+     * Null is "no score", and it is not the same as a zero. A Run that recorded no heart rate at all
+     * — no Strap, or one that never read — has nothing to score and shows nothing; a Run that spent
+     * every second below Zone 1 scores 0, which is a measurement of a very easy hour. Also null on
+     * every Run recorded before v21, until the history backfill (#62) reaches them.
+     *
+     * Deliberately unrelated to [perceivedEffort]: that is how the Run *felt*, and it must never
+     * feed this or anything derived from it.
+     */
+    val effortScore: Int? = null
 )
 
 /**
@@ -404,6 +417,18 @@ interface SessionDao {
     @Query("SELECT id FROM sessions WHERE endTime > 0")
     suspend fun getFinalizedSessionIds(): List<Long>
 
+    /**
+     * Re-derives what a finished Run is banded as — its zone seconds and, with them, what it cost.
+     *
+     * The two travel in one statement because they are read off the same beats against the same
+     * zone edges (#61): a Run whose zone times move to new edges while its Effort Score stays on the
+     * old ones would show a runner two numbers about one hour that no longer describe the same
+     * seconds — the very thing #99 says must agree by construction.
+     *
+     * A Run that has no Score keeps none. Scoring history is the backfill's job (#62), and a
+     * re-tally that quietly scored some of it would leave that pass unable to tell what it had
+     * already reached from what it had not.
+     */
     @Query(
         """
         UPDATE sessions
@@ -411,17 +436,19 @@ interface SessionDao {
             zone2Seconds = :zone2,
             zone3Seconds = :zone3,
             zone4Seconds = :zone4,
-            zone5Seconds = :zone5
+            zone5Seconds = :zone5,
+            effortScore = CASE WHEN effortScore IS NULL THEN NULL ELSE :effortScore END
         WHERE id = :sessionId
         """
     )
-    suspend fun updateZoneSeconds(
+    suspend fun updateZoneSecondsAndEffort(
         sessionId: Long,
         zone1: Long,
         zone2: Long,
         zone3: Long,
         zone4: Long,
-        zone5: Long
+        zone5: Long,
+        effortScore: Int?
     )
 
     @Query("DELETE FROM sessions WHERE id = :sessionId")
@@ -509,7 +536,7 @@ interface RunWalkIntervalStatDao {
         TrackPoint::class,
         Achievement::class
     ],
-    version = 20,
+    version = 21,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -555,7 +582,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_16_17,
                     MIGRATION_17_18,
                     MIGRATION_18_19,
-                    MIGRATION_19_20
+                    MIGRATION_19_20,
+                    MIGRATION_20_21
                 )
                 .build()
                 INSTANCE = instance
@@ -1153,5 +1181,21 @@ val MIGRATION_19_20 = object : Migration(19, 20) {
         database.execSQL(
             "CREATE INDEX IF NOT EXISTS `index_achievements_type` ON `achievements` (`type`)"
         )
+    }
+}
+
+/**
+ * Effort (#61): what each Run cost, banked per Run.
+ *
+ * Every existing Run keeps a null, which is exactly the truth about them — nobody has scored them
+ * yet — and is the state the history backfill (#62) looks for. Scoring them here is not an option
+ * anyway: the score is weighted per second of `hr_samples` against the runner's zones, which is
+ * Kotlin's arithmetic and not SQL's, the same division of labour [MIGRATION_18_19] makes.
+ */
+val MIGRATION_20_21 = object : Migration(20, 21) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        if (!database.hasColumn("sessions", "effortScore")) {
+            database.execSQL("ALTER TABLE sessions ADD COLUMN effortScore INTEGER")
+        }
     }
 }

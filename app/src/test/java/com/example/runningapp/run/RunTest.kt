@@ -1326,5 +1326,6 @@ private fun Driver.totalsOf(
     maxBpm = state.tally.maxBpm,
     zoneSeconds = state.tally.zoneSeconds,
     noDataSeconds = state.tally.noDataSeconds,
+    effortScore = state.tally.effortScore,
     walkBreaks = state.walkBreaks,
 )

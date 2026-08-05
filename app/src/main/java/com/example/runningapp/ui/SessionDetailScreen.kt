@@ -350,6 +350,22 @@ fun SummaryStats(
                 StatLarge(label = "In Target", value = formatDurationLarge(session.inTargetZoneSeconds))
             }
 
+            // What the Run cost (#61). Only for a Run that has a score: a Run recorded without a
+            // Strap, or one from before v21 that the backfill has not reached, shows nothing rather
+            // than a zero — a zero here means an hour spent below Zone 1, which is a real answer and
+            // must not be confused with an absent one.
+            //
+            // "Effort Score" in full because the card below says "Effort" for how the Run *felt*
+            // (#80), and the two numbers are unrelated by design — one is measured off the runner's
+            // heart, the other is the runner's own word for the same hour.
+            val effortScore = session.effortScore
+            if (effortScore != null) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    StatLarge(label = "Effort Score", value = "$effortScore")
+                }
+            }
+
             // On every Run, not only an outdoor one (#231). A treadmill Run can be told how far it
             // went, and a Run with no distance says so with a dash rather than with "0.00 km",
             // which was always a lie about a treadmill Run and is the same lie about an outdoor Run

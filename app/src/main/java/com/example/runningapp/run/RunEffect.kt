@@ -35,6 +35,14 @@ data class RunTotals(
     val maxBpm: Int,
     val zoneSeconds: ZoneSeconds,
     val noDataSeconds: Long,
+    /**
+     * What the Run cost, Edwards zone-weighted (#61) — null for a Run that read no heart rate at
+     * all, which has nothing to score.
+     *
+     * Carried with the totals rather than worked out from the saved samples afterwards, so the Run
+     * is scored under the profile it was recorded and coached under.
+     */
+    val effortScore: Int?,
     /** How many times the coach sent the runner walking because their heart rate was high. */
     val walkBreaks: Int,
 ) {
