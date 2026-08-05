@@ -214,6 +214,25 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Scores the history recorded before the Effort Score shipped, once per process (#62).
+     *
+     * Started after the rescue pass, though nothing makes them run in that order: both are launched
+     * on the same scope and neither waits for the other. Nothing needs the order — a rescued Run is
+     * scored as it is finished, and one this pass ran past while it was still interrupted is on the
+     * next launch's list. What does keep the two from colliding is the lock they share
+     * ([SessionRepository.backfillEffortScores]), not the order they are started in.
+     *
+     * On the container's own scope, for the same reason the moving-time backfill is — see above.
+     * That matters more here than anywhere: the pass is resumable, but a pass cancelled because the
+     * runner backed out of an Activity would not be *resumed* for the life of the process, leaving
+     * the trends built on these Scores reading half a history.
+     */
+    fun backfillEffortScoresOnce() {
+        if (!effortScored.compareAndSet(false, true)) return
+        applicationScope.launch { sessionRepository.backfillEffortScores() }
+    }
+
+    /**
      * Lives as long as the process, and deliberately never cancelled — the container itself is a
      * process-wide singleton, so there is no shorter lifetime to bind to. SupervisorJob so one
      * failed background pass cannot take the others down with it.
@@ -230,6 +249,7 @@ class AppContainer(context: Context) {
     private val movingTimeBackfilled = AtomicBoolean(false)
     private val interruptedRunsRescued = AtomicBoolean(false)
     private val recordsSeeded = AtomicBoolean(false)
+    private val effortScored = AtomicBoolean(false)
 
     /**
      * When this process began, as far as anything here is concerned — the container is built once,
