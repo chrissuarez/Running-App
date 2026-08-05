@@ -19,6 +19,7 @@ import com.example.runningapp.historyHrProfile
 import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
 import com.example.runningapp.training.ScoredRun
+import com.example.runningapp.training.VolumeRun
 import com.example.runningapp.training.effortScoreOf
 import com.example.runningapp.analysis.BestEffort
 import com.example.runningapp.analysis.RecordType
@@ -448,6 +449,26 @@ class SessionRepository(
      */
     fun scoredRunsFlow(): Flow<List<ScoredRun>> = sessionDao.getScoredRunsFlow().map { rows ->
         rows.map { ScoredRun(startedAtMillis = it.startTime, effortScore = it.effortScore) }
+    }
+
+    /**
+     * Every finished Run in history, oldest first — what the weekly volume bars are totalled from
+     * (#64). See [SessionDao.getRunVolumesFlow] for why it is every finished Run and all of history.
+     *
+     * A week's time is counted on the same clock its pace is: moving time where the Run's track has
+     * given one, and the Run's own duration where it has not ([paceClockSeconds]). Counting duration
+     * everywhere would credit a week for the minutes spent standing at crossings; counting moving
+     * time everywhere would leave every treadmill Run out of the week entirely.
+     */
+    fun runVolumesFlow(): Flow<List<VolumeRun>> = sessionDao.getRunVolumesFlow().map { rows ->
+        rows.map {
+            VolumeRun(
+                startedAtMillis = it.startTime,
+                distanceKm = it.distanceKm,
+                timeSeconds = it.movingTimeSeconds ?: it.durationSeconds,
+                effortScore = it.effortScore,
+            )
+        }
     }
 
     /**
