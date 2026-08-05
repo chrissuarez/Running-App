@@ -70,6 +70,9 @@ import com.example.runningapp.ui.RestoreViewModelFactory
 import com.example.runningapp.ui.HistoryScreen
 import com.example.runningapp.ui.HistoryViewModel
 import com.example.runningapp.ui.HistoryViewModelFactory
+import com.example.runningapp.ui.ProgressScreen
+import com.example.runningapp.ui.ProgressViewModel
+import com.example.runningapp.ui.ProgressViewModelFactory
 import com.example.runningapp.ui.SessionDetailScreen
 import com.example.runningapp.ui.SessionDetailViewModel
 import com.example.runningapp.ui.SessionDetailViewModelFactory
@@ -431,6 +434,9 @@ class MainActivity : ComponentActivity() {
                                 onOpenHistory = {
                                     navigateTo(Routes.HISTORY)
                                 },
+                                onOpenProgress = {
+                                    navigateTo(Routes.PROGRESS)
+                                },
                                 onOpenManageDevices = {
                                     navigateTo(Routes.MANAGE_DEVICES)
                                 },
@@ -721,6 +727,20 @@ class MainActivity : ComponentActivity() {
                                 onBack = { navigateTo(Routes.MAIN) }
                             )
                         }
+                        composable(Routes.PROGRESS) {
+                            // Scoped to the screen rather than to the Activity, unlike History's:
+                            // building the curves reads every scored Run the phone holds, and that
+                            // is not work a launch should do for a screen nobody has opened (#63).
+                            val progressViewModel: ProgressViewModel = viewModel(
+                                factory = ProgressViewModelFactory(sessionRepository)
+                            )
+                            val progressState by progressViewModel.state.collectAsState()
+                            ProgressScreen(
+                                state = progressState,
+                                onRangeChosen = { progressViewModel.rangeChosen(it) },
+                                onBack = { navigateTo(Routes.MAIN) }
+                            )
+                        }
                         composable(Routes.MAP) {
                             FullScreenMapScreen(
                                 state = serviceState.value,
@@ -837,6 +857,7 @@ fun MainScreen(
     onTestCue: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenProgress: () -> Unit,
     onOpenManageDevices: () -> Unit,
     onOpenTrainingPlan: () -> Unit,
     onOpenFullScreenMap: () -> Unit,
@@ -960,6 +981,7 @@ fun MainScreen(
         bottomBar = {
             MainBottomBar(
                 onOpenHistory = onOpenHistory,
+                onOpenProgress = onOpenProgress,
                 onOpenManageDevices = onOpenManageDevices,
                 onOpenSettings = onOpenSettings
             )
@@ -1267,6 +1289,7 @@ private fun StartFooter(
 @Composable
 private fun MainBottomBar(
     onOpenHistory: () -> Unit,
+    onOpenProgress: () -> Unit,
     onOpenManageDevices: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
@@ -1300,6 +1323,22 @@ private fun MainBottomBar(
             ) {
                 Text(
                     text = "History",
+                    maxLines = 1,
+                    softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 13.sp
+                )
+            }
+            // Beside History, because the two answer the same question at different lengths: what
+            // one run was, and what all of them add up to (#63).
+            FilledTonalButton(
+                onClick = onOpenProgress,
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+            ) {
+                Text(
+                    text = "Progress",
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis,

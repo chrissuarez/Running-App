@@ -91,6 +91,28 @@ _Avoid_: suffer score, relative effort, training load; and on screen, the bare w
 is already what the runner rates a Run out of ten. A Best Effort is a different thing again — a
 stretch of a Run rather than a number about the whole of it.
 
+**Fitness**:
+What the runner has built: their Effort Scores averaged over the last 42 days,
+with the recent days counting for most. Slow to move by design — six weeks of
+training is what it takes to raise it, and a fortnight off is what it takes to
+lose much of it.
+_Avoid_: CTL, chronic load, form (Form is the difference between this and
+Fatigue)
+
+**Fatigue**:
+What the runner is still carrying: the same Effort Scores over the last 7 days.
+The same arithmetic as Fitness on a shorter memory, so a hard weekend shows up
+here within days and in Fitness barely at all.
+_Avoid_: ATL, acute load, tiredness
+
+**Form**:
+How fresh the runner is today: yesterday's Fitness less yesterday's Fatigue.
+Yesterday's rather than today's, because freshness is a question asked in the
+morning, before today's Run has cost anything. Above +10 is fresh, below −10 is
+fatigued, and the band between is neutral.
+_Avoid_: TSB, training stress balance, freshness as a name for it — "fresh" is
+one of its three verdicts, and the number itself is Form
+
 **Best Effort**:
 The fastest continuous stretch of a Run covering one of the record distances —
 1 km, a mile, 5 km, 10 km, a half marathon — measured on the clock, so a walk
