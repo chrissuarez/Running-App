@@ -127,8 +127,10 @@ fun FeelFeedbackDialog(
         text = {
             Column {
                 Text(
-                    "Your own words about this run. The coach sees them; they never change what " +
-                        "your heart rate says about it.",
+                    // Says only what is true today: the coach is not told any of this yet (#83),
+                    // and the Effort score the app computes is heart rate's, not this number's.
+                    "Your own words about this run, kept alongside it. They never change what your " +
+                        "heart rate says about it.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.height(16.dp))
