@@ -19,7 +19,7 @@ private const val FATIGUE_DAYS = 7.0
 private const val FORM_BAND = 10.0
 
 /**
- * One finished Run as the curves see it: when it began, and what it cost ([effortWeightOf]).
+ * One finished Run as the curves see it: when it began, and what it cost ([effortScoreOf]).
  *
  * The start is what places a Run on a calendar day, so a Run that crosses midnight belongs wholly to
  * the day it set off on — the day the runner would say they ran.

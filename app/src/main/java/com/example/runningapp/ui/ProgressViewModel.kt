@@ -15,7 +15,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -38,19 +37,23 @@ class ProgressViewModel(
     sessionRepository: SessionRepository,
     /** The zone the runner's calendar days are in — which day a Run belongs to depends on it. */
     private val zone: ZoneId = ZoneId.systemDefault(),
-    /** Today, asked each time rather than fixed at construction so a screen left open overnight is right. */
+    /**
+     * What day it is, asked each time the curve is built rather than fixed at construction.
+     *
+     * A screen left open across midnight keeps yesterday's last day until something moves — a Score
+     * landing, or the screen being opened again. That is the honest thing to show: nothing has been
+     * measured on the new day yet, and the curve would only gain a day of rest nobody has taken.
+     */
     private val today: () -> LocalDate = { LocalDate.now(zone) },
     /** Where the curves are worked out — anywhere but the thread drawing them. */
     curveDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
 
-    private val _range = MutableStateFlow(ProgressRange.THREE_MONTHS)
-
     /**
      * The range every chart on this screen shares — the Fitness/Fatigue curve here, and the weekly
      * volume chart to come. One pick, one window.
      */
-    val range: StateFlow<ProgressRange> = _range.asStateFlow()
+    private val _range = MutableStateFlow(ProgressRange.THREE_MONTHS)
 
     /**
      * The whole curve, from the runner's first Run to today.
@@ -69,11 +72,18 @@ class ProgressViewModel(
         .flowOn(curveDispatcher)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    /**
+     * The window is measured back from the curve's own last day rather than from today asked afresh.
+     * The two are the same day except across a midnight the screen was left open through, and there
+     * the curve is what the numbers above it were read off — a window ending on a day the curve does
+     * not reach would put "today's" numbers under a chart that stops short of them.
+     */
     val state: StateFlow<ProgressUiState> = combine(curve, _range) { curve, range ->
+        val lastDay = curve.lastOrNull()
         ProgressUiState(
             range = range,
-            today = curve.lastOrNull(),
-            curve = curve.within(range, endingOn = today()),
+            today = lastDay,
+            curve = lastDay?.let { curve.within(range, endingOn = it.date) } ?: emptyList(),
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ProgressUiState())
 
