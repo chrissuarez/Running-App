@@ -48,13 +48,13 @@ enum class WeeklyMeasure(val label: String, val unit: String) {
     TIME("Time", "hours"),
     // "Effort Score" in full and never the bare word: "Effort" on screen is already how the runner
     // rates a Run out of ten (CONTEXT.md).
-    EFFORT("Effort Score", "");
+    EFFORT_SCORE("Effort Score", "");
 
     /** The week's total in the unit this measure is read in — kilometres, hours, or Score. */
     fun amountOf(week: TrainingWeek): Double = when (this) {
         DISTANCE -> week.distanceKm
         TIME -> week.timeSeconds / 3_600.0
-        EFFORT -> week.effortScore.toDouble()
+        EFFORT_SCORE -> week.effortScore.toDouble()
     }
 }
 

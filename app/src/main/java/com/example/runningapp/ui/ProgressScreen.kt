@@ -209,18 +209,61 @@ private fun Metric(label: String, value: Double) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RangePicker(selected: ProgressRange, onRangeChosen: (ProgressRange) -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        ProgressRange.entries.forEach { range ->
+    ChipPicker(
+        options = ProgressRange.entries,
+        selected = selected,
+        labelOf = { it.label },
+        onChosen = onRangeChosen,
+    )
+}
+
+/**
+ * A row of chips to pick one of a short list by.
+ *
+ * A FlowRow and not a Row: the narrowest screen this has to survive is 320dp with the text scaled
+ * to 1.3×, and "Distance / Time / Effort Score" does not fit across it. In a Row the last chip is
+ * simply cut off the edge with no way to reach it; wrapped, it drops to a second line.
+ */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun <T> ChipPicker(
+    options: List<T>,
+    selected: T,
+    labelOf: (T) -> String,
+    onChosen: (T) -> Unit,
+) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        options.forEach { option ->
             FilterChip(
-                selected = range == selected,
-                onClick = { onRangeChosen(range) },
-                label = { Text(range.label) },
+                selected = option == selected,
+                onClick = { onChosen(option) },
+                label = { Text(labelOf(option)) },
             )
         }
     }
+}
+
+/**
+ * Three dates along the bottom of a chart, whatever the range.
+ *
+ * One label per entry is what Vico would otherwise attempt, and at a day apart there is no room for
+ * "5 May" — every label came out as "5 …", a chart of days that never says which month it is in.
+ * Three and not more because of the same 320dp-at-1.3× screen: at four the months went back to
+ * being cut short there. The half-step offset gives the first date the chart's edge to spread into;
+ * labelled from entry one it is the axis's own left edge that cuts it, and "5 Aug" arrived as "..".
+ */
+private fun threeLabelPlacer(entries: Int): AxisItemPlacer.Horizontal {
+    val labelEvery = (entries / 3).coerceAtLeast(1)
+    return AxisItemPlacer.Horizontal.default(
+        spacing = labelEvery,
+        offset = labelEvery / 2,
+        addExtremeLabelPadding = true,
+    )
 }
 
 /**
@@ -258,12 +301,6 @@ private fun FitnessFatigueChart(days: List<ProgressDay>) {
     val wholeNumbers = AxisValueFormatter<AxisPosition.Vertical.Start> { value, _ ->
         value.roundToInt().toString()
     }
-    // Three dates along the bottom whatever the range. One label per day is what Vico would
-    // otherwise attempt, and at a day apart there is no room for "5 May" — every label came out as
-    // "5 …", a chart of days that never says which month it is in. Three and not more because the
-    // narrowest screen this has to survive is 320dp with the text scaled to 1.3×, and at four the
-    // months went back to being cut short there.
-    val labelEvery = (days.size / 3).coerceAtLeast(1)
 
     Box(
         modifier = Modifier
@@ -286,14 +323,7 @@ private fun FitnessFatigueChart(days: List<ProgressDay>) {
                 startAxis = rememberStartAxis(valueFormatter = wholeNumbers),
                 bottomAxis = rememberBottomAxis(
                     valueFormatter = dateLabels,
-                    itemPlacer = AxisItemPlacer.Horizontal.default(
-                        spacing = labelEvery,
-                        // Start half a step in, so the first date has the chart's edge to spread
-                        // into. Labelled from day one it is the axis's own left edge that cuts it,
-                        // and "5 Aug" arrived as "..".
-                        offset = labelEvery / 2,
-                        addExtremeLabelPadding = true,
-                    ),
+                    itemPlacer = threeLabelPlacer(days.size),
                     // No vertical guidelines. Vico draws one per day rather than one per label, and
                     // over a year that is 366 dashed lines — a hatch the curves had to be read
                     // through. The horizontal ones off the value axis are the ones that help.
@@ -327,28 +357,13 @@ private fun WeeklyVolume(
         text = "Weekly volume",
         style = MaterialTheme.typography.titleMedium,
     )
-    MeasurePicker(selected = measure, onMeasureChosen = onMeasureChosen)
+    ChipPicker(
+        options = WeeklyMeasure.entries,
+        selected = measure,
+        labelOf = { it.label },
+        onChosen = onMeasureChosen,
+    )
     WeeklyVolumeChart(weeks = weeks, measure = measure)
-}
-
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
-@Composable
-private fun MeasurePicker(selected: WeeklyMeasure, onMeasureChosen: (WeeklyMeasure) -> Unit) {
-    // A FlowRow and not a Row: "Effort Score" is spelled out in full (CONTEXT.md), and three chips
-    // holding it do not fit across 320dp with the text scaled to 1.3× — in a Row the last one is
-    // simply cut off the edge, with no way to reach it.
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        WeeklyMeasure.entries.forEach { measure ->
-            FilterChip(
-                selected = measure == selected,
-                onClick = { onMeasureChosen(measure) },
-                label = { Text(measure.label) },
-            )
-        }
-    }
 }
 
 @Composable
@@ -370,7 +385,6 @@ private fun WeeklyVolumeChart(weeks: List<TrainingWeek>, measure: WeeklyMeasure)
     val amounts = AxisValueFormatter<AxisPosition.Vertical.Start> { value, _ ->
         amountText(measure, value.toDouble())
     }
-    val labelEvery = (weeks.size / 3).coerceAtLeast(1)
 
     val total = weeks.sumOf { measure.amountOf(it) }
     Box(
@@ -381,11 +395,14 @@ private fun WeeklyVolumeChart(weeks: List<TrainingWeek>, measure: WeeklyMeasure)
                 contentDescription = "Weekly ${measure.label} from " +
                     "${firstWeek.format(AxisDateFormat)} to " +
                     "${weeks.last().startingOn.format(AxisDateFormat)}, " +
-                    "${amountText(measure, total)} ${measure.unit} in total".trim()
+                    "${totalText(measure, total)} in total"
             }
     ) {
         ProvideChartStyle(m3ChartStyle()) {
             Chart(
+                // Bars sit on zero without being asked to: Vico's column chart takes the value
+                // axis's floor as `minY.coerceAtMost(0f)`, so a block of 38-to-42 km weeks is drawn
+                // as the near-identical weeks it was rather than as a tenfold climb.
                 chart = columnChart(
                     columns = listOf(
                         lineComponent(
@@ -401,11 +418,7 @@ private fun WeeklyVolumeChart(weeks: List<TrainingWeek>, measure: WeeklyMeasure)
                 startAxis = rememberStartAxis(valueFormatter = amounts),
                 bottomAxis = rememberBottomAxis(
                     valueFormatter = weekLabels,
-                    itemPlacer = AxisItemPlacer.Horizontal.default(
-                        spacing = labelEvery,
-                        offset = labelEvery / 2,
-                        addExtremeLabelPadding = true,
-                    ),
+                    itemPlacer = threeLabelPlacer(weeks.size),
                     guideline = null,
                 ),
                 // The whole range at once, as above: the range chips are the only thing that decides
@@ -422,16 +435,29 @@ private fun WeeklyVolumeChart(weeks: List<TrainingWeek>, measure: WeeklyMeasure)
 }
 
 /**
- * A weekly total as it is written down the axis and read out loud.
+ * A weekly total as it is written down the axis.
  *
  * A tenth for distance and hours, because a week is 42.4 km and 3.5 hours and rounding either to a
  * whole would throw away a real difference between two weeks. Nothing after the point for an Effort
- * Score, which is a whole number to begin with. The trailing ".0" goes either way — an axis of
+ * Score, which is a whole number to begin with, and none for a round distance either — an axis of
  * "10.0, 20.0, 30.0" is three decimals standing for nothing.
+ *
+ * Whether there is a tenth to show is decided on the number and not on the string it formats to. A
+ * phone set to a comma-decimal locale writes 20.0 as "20,0", and a rule that struck off a trailing
+ * ".0" would leave every one of those labels carrying a decimal the others had lost.
  */
-private fun amountText(measure: WeeklyMeasure, amount: Double): String = when (measure) {
-    WeeklyMeasure.EFFORT -> amount.roundToInt().toString()
-    else -> "%.1f".format(amount).removeSuffix(".0")
+private fun amountText(measure: WeeklyMeasure, amount: Double): String {
+    if (measure == WeeklyMeasure.EFFORT_SCORE) return amount.roundToInt().toString()
+    val tenths = (amount * 10).roundToInt()
+    return if (tenths % 10 == 0) (tenths / 10).toString() else "%.1f".format(amount)
+}
+
+/** A total with the unit it is counted in, for the chart's spoken description. */
+private fun totalText(measure: WeeklyMeasure, total: Double): String {
+    val amount = amountText(measure, total)
+    // An Effort Score has no unit — it is a number and nothing per anything — so there is nothing
+    // to put after it, and a blank one would be read out as a stumble.
+    return if (measure.unit.isEmpty()) amount else "$amount ${measure.unit}"
 }
 
 @Composable
