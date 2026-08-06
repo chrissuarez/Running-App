@@ -186,6 +186,14 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
     // targets Zone 2. So the instruction asks for the hold and, more importantly, for it to be said
     // — an unqualified "ease off" would leave the runner reading a promise of a lighter day over a
     // main set the floor had just put back to the stage's.
+    // Which reading governs, said because the block prints two of them. Form is where today began,
+    // and a runner who began it fresh can have finished the Run carrying more than they have
+    // absorbed — so the pair the prescription answers to is the one today's Run has already moved.
+    appendLine(
+        "Ask Fitness and Fatigue, not Form, what the next run should be: those two are after " +
+            "today's run and Form is where today started. Fatigue above Fitness is a runner to " +
+            "hold, whatever Form reads."
+    )
     appendLine(
         "Let this shape the next run. When they are fresh you may prescribe more: longer intervals " +
             "or more repeats. When they are fatigued the answer is to hold, because the stage's " +
