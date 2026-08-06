@@ -1,5 +1,7 @@
 package com.example.runningapp.data
 
+import com.example.runningapp.RunType
+import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.training.FormVerdict
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -21,6 +23,16 @@ class AiCoachClientTest {
                 fastest5kSeconds = 1620
             )
         )
+    )
+
+    private val longRunWorkout = WorkoutTemplate(
+        id = "base_long",
+        title = "Long run",
+        targetZone = 2,
+        runDurationSeconds = 180,
+        walkDurationSeconds = 60,
+        totalRepeats = 6,
+        runType = RunType.LONG
     )
 
     @Test
@@ -370,5 +382,73 @@ class AiCoachClientTest {
 
         assertTrue(prompt.contains("\"nextTargetZone\": Int (optional, 1-5)"))
         assertTrue(prompt.contains("Omit nextTargetZone to leave the workout's own target zone alone."))
+    }
+
+    @Test
+    fun `the coach is shown the Workout its numbers replace`() {
+        // Without this the coach adjusts intervals it has never seen (#246), and the floor (#170)
+        // and the ceiling measure the answer against numbers it was never told.
+        val prompt = buildEvaluationPrompt(oneRunWalkSession.copy(stageWorkout = longRunWorkout))
+
+        assertTrue(prompt.contains("180s of running then 60s of walking, 6 times, targeting Zone 2"))
+    }
+
+    @Test
+    fun `the envelope is not sent, because there is no field to answer it with`() {
+        // Warm-up and cool-down are the Workout's own and the schema has no field for either, so a
+        // coach handed them has two numbers and no rule attached to them. Its own numbers, not the
+        // WorkoutTemplate defaults, so a hard-coded 480 could not pass this.
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                stageWorkout = longRunWorkout.copy(warmUpSeconds = 900, coolDownSeconds = 240)
+            )
+        )
+
+        assertFalse(prompt.contains("900s"))
+        assertFalse(prompt.contains("240s"))
+    }
+
+    @Test
+    fun `keeping the Workout as it is is a sayable answer`() {
+        val prompt = buildEvaluationPrompt(oneRunWalkSession.copy(stageWorkout = longRunWorkout))
+
+        assertTrue(
+            prompt.contains(
+                "returning those same three numbers is how you say to keep this workout as it is"
+            )
+        )
+    }
+
+    @Test
+    fun `the coach is told where the floor is, in the numbers it is measured in`() {
+        val prompt = buildEvaluationPrompt(oneRunWalkSession.copy(stageWorkout = longRunWorkout))
+
+        assertTrue(prompt.contains("at least as much work as that workout"))
+        assertTrue(prompt.contains("discarded"))
+    }
+
+    @Test
+    fun `the Workout is never evidence about a Run`() {
+        // The one way this block could do harm: a plan's numbers read as something the runner did.
+        // Graduation is judged from the recent runs alone (#246).
+        val prompt = buildEvaluationPrompt(oneRunWalkSession.copy(stageWorkout = longRunWorkout))
+
+        assertTrue(
+            prompt.contains(
+                "It is what you prescribe against, never evidence about any run"
+            )
+        )
+        assertTrue(prompt.contains("must never change graduatedToNextStage"))
+    }
+
+    @Test
+    fun `with no Workout attached the coach is told nothing about one`() {
+        val prompt = buildEvaluationPrompt(oneRunWalkSession)
+
+        assertFalse(prompt.contains("The stage's own workout for this kind of run"))
+        assertFalse(prompt.contains("targeting Zone"))
+        assertFalse(prompt.contains("keep this workout as it is"))
+        assertFalse(prompt.contains("That workout is a floor"))
+        assertFalse(prompt.contains("never evidence about any run"))
     }
 }

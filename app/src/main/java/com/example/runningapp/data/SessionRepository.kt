@@ -140,7 +140,20 @@ data class AiTrainingContext(
      * run with a Strap. The coach is then told nothing about fatigue rather than being told zeroes,
      * which would read as a runner who has done nothing for six weeks (#66).
      */
-    val fitnessAndForm: AiFitnessAndForm? = null
+    val fitnessAndForm: AiFitnessAndForm? = null,
+    /**
+     * The Stage's own Workout of the kind of Run that just finished — the intervals the coach's
+     * answer replaces (#246). Why the coach is shown it, and what it is told about it, is
+     * `appendStageWorkout`.
+     *
+     * The Workout itself rather than a restatement of it, so the numbers the coach is told are the
+     * same object the floor measures its answer against and cannot drift from them.
+     *
+     * Null wherever there is no Workout to prescribe against — every read outside a finish. A
+     * finish never gets here with one missing: [evaluateAndAdjustPlan] returns without asking the
+     * coach anything when the Stage offers no Workout of the Run's kind.
+     */
+    val stageWorkout: WorkoutTemplate? = null
 )
 
 data class Max30dLoad(
@@ -1359,6 +1372,12 @@ class SessionRepository(
         zone: ZoneId = ZoneId.systemDefault(),
         /** What day the curves are read through. The Run that prompted this has already landed. */
         today: LocalDate = LocalDate.now(zone),
+        /**
+         * The Stage's Workout of the kind of Run that finished — see [AiTrainingContext.stageWorkout].
+         * Passed in rather than looked up here, because the caller has already resolved it to decide
+         * whether to ask the coach at all, and two lookups are two things to disagree.
+         */
+        stageWorkout: WorkoutTemplate? = null,
     ): AiTrainingContext {
         val stage = TrainingPlanProvider
             .getAllPlans()
@@ -1410,7 +1429,8 @@ class SessionRepository(
                     asFinalized.effortScore != null &&
                         !Instant.ofEpochMilli(asFinalized.startTime).atZone(zone).toLocalDate().isAfter(today)
                     )
-            )
+            ),
+            stageWorkout = stageWorkout
         )
     }
 
@@ -1523,7 +1543,11 @@ class SessionRepository(
                 return
             }
             Log.d("AiCoach", "Starting AI evaluation of a $runType run for stage: $stageId")
-            val context = getAiTrainingContext(stageId, asFinalized = finalizedRun)
+            val context = getAiTrainingContext(
+                stageId,
+                asFinalized = finalizedRun,
+                stageWorkout = stageWorkoutOfKind
+            )
             Log.d("AiCoach", "Sending prompt to Gemini with ${context.recentRuns.size} recent runs.")
             val response = coachClient.evaluateProgress(context)
             if (response == null) {
