@@ -1690,6 +1690,33 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a Run stamped in the future is not claimed as inside the numbers either`() = runTest {
+        // A clock corrected backwards mid-Run leaves the Run dated after today, and progressCurve
+        // drops it rather than let a wrong clock bend today's figures. A Score is then not enough to
+        // say the Run is in them.
+        val scoredButAhead = aTreadmillRun(id = 11, seconds = 3_600).copy(
+            effortScore = 140,
+            startTime = DAY_MILLIS_2026_01_05 + 30 * ONE_DAY_MILLIS
+        )
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(listOf(scoredButAhead))
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(
+            flowOf(listOf(ScoredRunProjection(startTime = DAY_MILLIS_2026_01_05, effortScore = 100)))
+        )
+        whenever(mockDao.getRunVolumesFlow()).thenReturn(
+            flowOf(listOf(volumeRow(startTime = DAY_MILLIS_2026_01_05, effortScore = 100)))
+        )
+
+        val state = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            asFinalized = scoredButAhead,
+            zone = ZoneOffset.UTC,
+            today = LocalDate.of(2026, 1, 18)
+        ).fitnessAndForm!!
+
+        assertFalse(state.todaysRunIsInTheNumbers)
+    }
+
+    @Test
     fun `a week the runner rested is sent as a zero, not as a week nothing measured`() = runTest {
         // Opposite news for a coach reading fatigue: a week off is the rest that earns a harder next
         // Run, while "nothing measured" is training the app could not see. The weeks themselves

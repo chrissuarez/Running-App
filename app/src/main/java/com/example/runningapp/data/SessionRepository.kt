@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.concurrent.atomic.AtomicInteger
@@ -1399,9 +1400,16 @@ class SessionRepository(
             fitnessAndForm = fitnessAndFormThrough(
                 today = today,
                 zone = zone,
-                // A Run that heard no beats earns no Score, so the curves never see it. True with no
-                // finalized Run at all: nothing ran, so there is nothing missing from the numbers.
-                todaysRunIsInTheNumbers = asFinalized == null || asFinalized.effortScore != null
+                // A Run that heard no beats earns no Score, so the curves never see it. Nor do they
+                // see one dated after [today] — a clock corrected backwards mid-Run leaves a Run
+                // stamped in the future, and progressCurve drops it rather than let it bend today.
+                // Asked here the same way it is asked there, so the flag cannot claim a Run the
+                // curves declined. True with no finalized Run at all: nothing ran, so there is
+                // nothing missing from the numbers.
+                todaysRunIsInTheNumbers = asFinalized == null || (
+                    asFinalized.effortScore != null &&
+                        !Instant.ofEpochMilli(asFinalized.startTime).atZone(zone).toLocalDate().isAfter(today)
+                    )
             )
         )
     }
