@@ -268,18 +268,37 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
     // — an unqualified "ease off" would leave the runner reading a promise of a lighter day over a
     // main set the floor had just put back to the stage's.
     //
-    // What the message may claim is fenced to what this side can keep. The floor guarantees the
-    // work will not be lighter and nothing here guarantees it will not be heavier, so the coach is
-    // asked not to add rather than to announce a plan unchanged — a promise only a hold enforced on
-    // the write could make, which is #248.
+    // What the message may claim is fenced to what this side can keep, and the hold is now kept:
+    // above Fitness, Fatigue puts the workout's own three numbers on the next run whatever comes
+    // back (#248, holdAiResponseAtWorkout). So the coach is told the outcome rather than asked for
+    // it, and is free to announce the intervals unchanged — the one promise this side can make good
+    // on. Everywhere else it still cannot name numbers: the 110% ceiling can trim a harder
+    // prescription on its way through, and a message promising intervals the runner never sees is
+    // the thing these fences exist to prevent.
+    //
+    // The promise is the *intervals*, said that narrowly on both sides. The hold takes the three
+    // durations and leaves nextTargetZone where the coach put it, so "the workout unchanged" would
+    // be a wider claim than the write keeps — a held runner could be handed the stage's intervals
+    // at a harder zone under a message calling the day the same. Zone is asked for rather than
+    // enforced, because holding it belongs with the floor's own treatment of it and not here.
     appendLine(
         "Let this shape the next run. When they are fresh you may prescribe more: longer intervals " +
-            "or more repeats. When they are fatigued the answer is to hold, because the stage's " +
-            "own workout is a floor — a prescription asking for less work than it is discarded and " +
-            "the stage's numbers stand — so do not try to prescribe a lighter one. Add nothing to " +
-            "it either, and say in coachMessage that this is not a week to be adding work to while " +
-            "they absorb what they are carrying. Never promise them a lighter, shorter or easier " +
-            "next run, and never promise them a specific set of intervals."
+            "or more repeats. When Fatigue is above Fitness the next run's intervals are the " +
+            "stage's own workout, held exactly as they stand: whatever three numbers you return, " +
+            "that workout's own are what the runner is given. Say so in coachMessage — that this " +
+            "is not a week to be adding work to while they absorb what they are carrying, and that " +
+            "the next run's intervals are the stage's workout unchanged. Do not raise " +
+            "nextTargetZone on a runner you are holding either. Never promise them a lighter, " +
+            "shorter or easier run than that workout, because there is no lighter one to give " +
+            "them. When they are not carrying that load, never promise a specific set of intervals."
+    )
+    // The one case where the sentence above would be describing a run nobody is going to do: a
+    // graduation clears every prescription and moves the stage on, so there is no held workout left
+    // to have been unchanged. Graduation is judged from the runs alone (the rule below), so a
+    // fatigued runner can still earn one — and then the debrief has to be about that.
+    appendLine(
+        "That last paragraph is about the next run under THIS stage. If you are graduating them, " +
+            "say nothing about holding the workout: the stage is changing and so are its intervals."
     )
     appendLine(
         "CRITICAL RULE: These numbers must never change graduatedToNextStage. Graduation is judged " +
