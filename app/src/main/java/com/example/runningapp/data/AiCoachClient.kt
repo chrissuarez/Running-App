@@ -182,16 +182,19 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
                 "ceiling."
         )
     }
-    // A strapless Run is the one case where the numbers understate the day rather than lag it: no
-    // heart rate is no Effort Score, so the curves never see the Run at all. Left unsaid, a hard
-    // hour without a Strap reads to the coach as an hour of rest — the one reading that turns a
-    // hard day into permission to prescribe a harder one.
+    // The case where the numbers understate the day rather than lag it: the Run is outside them
+    // altogether. Left unsaid, a hard hour reads to the coach as an hour of rest — the one reading
+    // that turns a hard day into permission to prescribe a harder one.
+    //
+    // Why it is outside them is not said, because there is more than one why — no heart rate to
+    // score, or a date the curves declined — and the coach's move is the same for both. A sentence
+    // naming one cause would be wrong about the other in front of a JSON block that contradicts it:
+    // a future-dated Run is sent with its average heart rate showing.
     if (!state.todaysRunIsInTheNumbers) {
         appendLine(
-            "Today's run recorded no heart rate, so it has no Effort Score and none of the three " +
-                "numbers above contain it: they are the load as it stood before today. Treat " +
-                "today's cost as unmeasured rather than as nothing, and do not prescribe a harder " +
-                "next run on the strength of them."
+            "Today's run is not inside the three numbers above: they are the load as it stood " +
+                "before it. Treat today's cost as unmeasured rather than as nothing, and do not " +
+                "prescribe a harder next run on the strength of them."
         )
     }
     // Which reading governs, said because the block prints two of them. Form is where today began,
