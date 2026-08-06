@@ -256,9 +256,10 @@ class AiCoachClientTest {
     }
 
     @Test
-    fun `a Run that heard no beats is named as missing from the numbers, not left as rest`() {
-        // No heart rate is no Effort Score, so the curves never see the Run — and a hard strapless
-        // hour that reads as an hour of rest is the one reading that buys a harder next Run.
+    fun `a Run outside the numbers is named as missing from them, not left as rest`() {
+        // A hard hour the curves never saw, reading to the coach as an hour of rest, is the one
+        // reading that buys a harder next Run. Why they never saw it is not said — no beats to
+        // score and a date they declined are the same news, and the same move.
         val prompt = buildEvaluationPrompt(
             oneRunWalkSession.copy(
                 fitnessAndForm = AiFitnessAndForm(
@@ -272,7 +273,10 @@ class AiCoachClientTest {
             )
         )
 
-        assertTrue(prompt.contains("none of the three numbers above contain it"))
+        assertTrue(prompt.contains("Today's run is not inside the three numbers above"))
+        // Why it is outside them is not claimed: a future-dated Run is excluded too, and is sent
+        // with its average heart rate showing in the JSON below.
+        assertFalse(prompt.contains("recorded no heart rate, so it has no Effort Score"))
         assertTrue(prompt.contains("Treat today's cost as unmeasured rather than as nothing"))
         assertTrue(prompt.contains("do not prescribe a harder next run on the strength of them"))
         // And the timing is told once: the line naming which reading governs must not turn round and
@@ -281,7 +285,7 @@ class AiCoachClientTest {
     }
 
     @Test
-    fun `a Run with a Score says nothing about being missing from the numbers`() {
+    fun `a Run the numbers do contain says nothing about being missing from them`() {
         val prompt = buildEvaluationPrompt(
             oneRunWalkSession.copy(
                 fitnessAndForm = AiFitnessAndForm(
@@ -295,7 +299,7 @@ class AiCoachClientTest {
             )
         )
 
-        assertFalse(prompt.contains("recorded no heart rate, so it has no Effort Score"))
+        assertFalse(prompt.contains("Today's run is not inside the three numbers above"))
     }
 
     @Test
