@@ -219,13 +219,19 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
     // targets Zone 2. So the instruction asks for the hold and, more importantly, for it to be said
     // — an unqualified "ease off" would leave the runner reading a promise of a lighter day over a
     // main set the floor had just put back to the stage's.
+    //
+    // What the message may claim is fenced to what this side can keep. The floor guarantees the
+    // work will not be lighter and nothing here guarantees it will not be heavier, so the coach is
+    // asked not to add rather than to announce a plan unchanged — a promise only a hold enforced on
+    // the write could make, which is #248.
     appendLine(
         "Let this shape the next run. When they are fresh you may prescribe more: longer intervals " +
             "or more repeats. When they are fatigued the answer is to hold, because the stage's " +
             "own workout is a floor — a prescription asking for less work than it is discarded and " +
-            "the stage's numbers stand — so do not try to prescribe a lighter one. Say the hold in " +
-            "coachMessage instead: that the plan stays as it is while they absorb the work. Never " +
-            "promise them a lighter, shorter or easier next run."
+            "the stage's numbers stand — so do not try to prescribe a lighter one. Add nothing to " +
+            "it either, and say in coachMessage that this is not a week to be adding work to while " +
+            "they absorb what they are carrying. Never promise them a lighter, shorter or easier " +
+            "next run, and never promise them a specific set of intervals."
     )
     appendLine(
         "CRITICAL RULE: These numbers must never change graduatedToNextStage. Graduation is judged " +

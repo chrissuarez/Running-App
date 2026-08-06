@@ -218,7 +218,11 @@ class AiCoachClientTest {
         // Fatigue buys a hold, not a lighter day: the #170 floor discards a lighter main set, so a
         // coach told to ease off would promise one the runner never gets.
         assertTrue(prompt.contains("When they are fatigued the answer is to hold"))
-        assertTrue(prompt.contains("Never promise them a lighter, shorter or easier next run."))
+        assertTrue(prompt.contains("Add nothing to it either"))
+        // Nothing may be promised that this side cannot keep: the floor stops a lighter Run, and
+        // only a hold enforced on the write (#248) could stop a heavier one.
+        assertTrue(prompt.contains("never promise them a specific set of intervals"))
+        assertFalse(prompt.contains("the plan stays as it is"))
         // The fence: a tired week must not cost a runner a Stage they have already earned.
         assertTrue(prompt.contains("These numbers must never change graduatedToNextStage."))
     }
