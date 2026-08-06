@@ -169,17 +169,19 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
                 "rather than rest."
         )
     }
-    // Easing is asked for in the one currency the floor lets through. A prescription for less work
-    // than the stage's own workout is discarded outright (#170), so "ease off" left unqualified
-    // buys a fatigued runner nothing and costs them the truth: the intervals snap back to the
-    // stage's while the message they read promises a lighter day.
+    // Fatigue buys a hold, not a lighter day, because this app has no lever for one. A prescription
+    // under the stage's own workout is discarded (#170), and a lower target zone is no way round it
+    // either: Zone 1 is snapped back to Zone 2 (#117) and every workout the coach adjusts already
+    // targets Zone 2. So the instruction asks for the hold and, more importantly, for it to be said
+    // — an unqualified "ease off" would leave the runner reading a promise of a lighter day over a
+    // main set the floor had just put back to the stage's.
     appendLine(
-        "Let this shape the next run. The stage's own intervals are a floor: a prescription asking " +
-            "for less work than them is discarded, so it is not a way to ease anyone off. Ease a " +
-            "fatigued runner off with a lower nextTargetZone, and by holding the intervals at the " +
-            "stage's own rather than adding to them; give a fresh runner more by prescribing " +
-            "longer intervals or more repeats. Never promise in coachMessage a lighter or shorter " +
-            "set of intervals than the ones you prescribe."
+        "Let this shape the next run. When they are fresh you may prescribe more: longer intervals " +
+            "or more repeats. When they are fatigued the answer is to hold, because the stage's " +
+            "own workout is a floor — a prescription asking for less work than it is discarded and " +
+            "the stage's numbers stand — so do not try to prescribe a lighter one. Say the hold in " +
+            "coachMessage instead: that the plan stays as it is while they absorb the work. Never " +
+            "promise them a lighter, shorter or easier next run."
     )
     appendLine(
         "CRITICAL RULE: These numbers must never change graduatedToNextStage. Graduation is judged " +

@@ -211,9 +211,10 @@ class AiCoachClientTest {
         assertTrue(prompt.contains("210, not measured, 340, 120."))
         // Said in the prompt rather than left to the model's own idea of the bands.
         assertTrue(prompt.contains("+10 is fresh, below -10 is fatigued"))
-        // Easing is steered at the target zone, because the #170 floor discards a lighter main set.
-        assertTrue(prompt.contains("The stage's own intervals are a floor"))
-        assertTrue(prompt.contains("Ease a fatigued runner off with a lower nextTargetZone"))
+        // Fatigue buys a hold, not a lighter day: the #170 floor discards a lighter main set, so a
+        // coach told to ease off would promise one the runner never gets.
+        assertTrue(prompt.contains("When they are fatigued the answer is to hold"))
+        assertTrue(prompt.contains("Never promise them a lighter, shorter or easier next run."))
         // The fence: a tired week must not cost a runner a Stage they have already earned.
         assertTrue(prompt.contains("These numbers must never change graduatedToNextStage."))
     }
