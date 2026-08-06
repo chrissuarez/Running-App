@@ -1,6 +1,8 @@
 package com.example.runningapp.data
 
+import com.example.runningapp.COACH_PRESCRIPTION_MAX_AGE_DAYS
 import com.example.runningapp.CoachPrescription
+import com.example.runningapp.CoachPrescriptions
 import com.example.runningapp.CoachPrescriptionRepository
 import com.example.runningapp.CoachWriteScope
 import com.example.runningapp.HrProfile
@@ -1734,6 +1736,160 @@ class SessionRepositoryTest {
         assertEquals(3, prescribed.firstValue.totalRepeats)
         // The debrief is untouched: the hold is about the intervals, not about what was said.
         verify(mockSettingsRepo).setLatestCoachMessage(eq("Not a week to be adding work to."), any())
+    }
+
+    @Test
+    fun `an unreachable coach still holds a standing prescription at the workout`() = runTest {
+        // Silence is not neutral (#248). Last week's 4 x 11 min stands for a fortnight and overrides
+        // the stage's Long run every time one is started, so a runner who is fatigued *today* would
+        // be handed exactly the harder intervals the hold exists to take away — because the network
+        // was down. Fatigue is measured on this side, so the hold does not need a reply.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = fatiguedRunnerEvaluating(mockPrescriptions, mockCoach)
+        val standing = CoachPrescription(
+            targetZone = 3,
+            runDurationSeconds = 660,
+            walkDurationSeconds = 60,
+            totalRepeats = 4,
+            prescribedAtEpochMillis = System.currentTimeMillis() - ONE_DAY_MILLIS
+        )
+        whenever(mockPrescriptions.prescriptionsFlow)
+            .thenReturn(flowOf(CoachPrescriptions(mapOf(RunType.LONG to standing))))
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(null)
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        val held = argumentCaptor<CoachPrescription>()
+        verify(mockPrescriptions).prescribe(
+            eq(RunType.LONG),
+            held.capture(),
+            eq(CoachWriteScope("5k_sub_25", "base_builder"))
+        )
+        // Stage 1's own Long run: 3 x (10 min + 2 min).
+        assertEquals(600, held.firstValue.runDurationSeconds)
+        assertEquals(120, held.firstValue.walkDurationSeconds)
+        assertEquals(3, held.firstValue.totalRepeats)
+        // Kept from the prescription being pared back: the hold has no view on how hard the Run is,
+        // and re-stamping would hand a fortnight-old prescription another fortnight to stand.
+        assertEquals(3, held.firstValue.targetZone)
+        assertEquals(standing.prescribedAtEpochMillis, held.firstValue.prescribedAtEpochMillis)
+        // Nothing was learned about the runner, so nothing is said about them.
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(anyOrNull(), any())
+    }
+
+    @Test
+    fun `an unreachable coach leaves a standing prescription alone for an absorbed runner`() = runTest {
+        // No hold to apply, so the no-response path is what it always was: an evaluation that failed
+        // writes nothing, and last week's prescription goes on standing.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = fatiguedRunnerEvaluating(mockPrescriptions, mockCoach, absorbed = true)
+        whenever(mockPrescriptions.prescriptionsFlow).thenReturn(
+            flowOf(
+                CoachPrescriptions(
+                    mapOf(
+                        RunType.LONG to CoachPrescription(
+                            targetZone = 3,
+                            runDurationSeconds = 660,
+                            walkDurationSeconds = 60,
+                            totalRepeats = 4,
+                            prescribedAtEpochMillis = System.currentTimeMillis() - ONE_DAY_MILLIS
+                        )
+                    )
+                )
+            )
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(null)
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+    }
+
+    @Test
+    fun `an unreachable coach writes nothing for a fatigued runner with no prescription standing`() =
+        runTest {
+            // Nothing standing means the plan runs as written, which is the workout — already where
+            // the hold would put them. Writing one would be the app inventing a prescription on a
+            // day the coach said nothing.
+            val mockPrescriptions: CoachPrescriptionRepository = mock()
+            val mockCoach: AiCoachClient = mock()
+            val repo = fatiguedRunnerEvaluating(mockPrescriptions, mockCoach)
+            whenever(mockPrescriptions.prescriptionsFlow).thenReturn(flowOf(CoachPrescriptions.NONE))
+            whenever(mockCoach.evaluateProgress(any())).thenReturn(null)
+
+            repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+            verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+        }
+
+    @Test
+    fun `an unreachable coach does not rewrite a prescription that has already expired`() = runTest {
+        // Past 14 days the workout is already what runs, so there is nothing to hold back — and a
+        // write here would leave a fresh-looking record of a decision nobody made today.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = fatiguedRunnerEvaluating(mockPrescriptions, mockCoach)
+        whenever(mockPrescriptions.prescriptionsFlow).thenReturn(
+            flowOf(
+                CoachPrescriptions(
+                    mapOf(
+                        RunType.LONG to CoachPrescription(
+                            targetZone = 3,
+                            runDurationSeconds = 660,
+                            walkDurationSeconds = 60,
+                            totalRepeats = 4,
+                            prescribedAtEpochMillis = System.currentTimeMillis() -
+                                (COACH_PRESCRIPTION_MAX_AGE_DAYS + 1) * ONE_DAY_MILLIS
+                        )
+                    )
+                )
+            )
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(null)
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+    }
+
+    /**
+     * A repository set up to evaluate a stage 1 Long Run for a runner carrying today's hard session:
+     * one 200-point Run dated now puts Fatigue above Fitness, because the 7-day curve takes most of
+     * it and the 42-day curve barely any. [absorbed] dates the same Run far enough back that both
+     * curves have had it, which is the runner the hold must not touch.
+     */
+    private suspend fun fatiguedRunnerEvaluating(
+        prescriptions: CoachPrescriptionRepository,
+        coach: AiCoachClient,
+        absorbed: Boolean = false
+    ): SessionRepository {
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = prescriptions,
+            aiCoachClient = coach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        val runDay = System.currentTimeMillis() - if (absorbed) 30 * ONE_DAY_MILLIS else 0L
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(
+            flowOf(listOf(ScoredRunProjection(startTime = runDay, effortScore = 200)))
+        )
+        whenever(mockDao.getRunVolumesFlow()).thenReturn(
+            flowOf(listOf(volumeRow(startTime = runDay, effortScore = 200)))
+        )
+        return repo
     }
 
     @Test

@@ -4,7 +4,9 @@ import android.util.Log
 import androidx.annotation.VisibleForTesting
 import com.example.runningapp.CoachPrescription
 import com.example.runningapp.CoachPrescriptionRepository
+import com.example.runningapp.COACH_PRESCRIPTION_MAX_AGE_DAYS
 import com.example.runningapp.CoachWriteScope
+import com.example.runningapp.isFreshAt
 import com.example.runningapp.HrZone
 import com.example.runningapp.RunType
 import com.example.runningapp.SettingsRepository
@@ -1551,8 +1553,18 @@ class SessionRepository(
             Log.d("AiCoach", "Sending prompt to Gemini with ${context.recentRuns.size} recent runs.")
             val response = coachClient.evaluateProgress(context)
             if (response == null) {
-                // Any standing prescription is deliberately left alone — see evaluateProgress.
+                // No new prescription is written — see evaluateProgress. But a prescription already
+                // standing keeps overriding the Stage's workout for up to 14 days, so on a fatigued
+                // runner an unreachable coach would hand them exactly the harder intervals the hold
+                // exists to take away (#248). The hold does not need the coach: it is read off the
+                // training state, which was measured here.
                 Log.d("AiCoach", "No new prescription: the coach could not be reached. stageId=$stageId")
+                holdStandingPrescriptionAtWorkout(
+                    runType = runType,
+                    workout = stageWorkoutOfKind,
+                    fitnessAndForm = context.fitnessAndForm,
+                    scope = CoachWriteScope(settings.activePlanId, settings.activeStageId)
+                )
                 return
             }
             // Ceiling first, then floor: the floor wins where they disagree (#170). The ceiling is
@@ -1760,6 +1772,59 @@ class SessionRepository(
         if (fitnessAndForm.fatigue <= fitnessAndForm.fitness) return response
 
         return response.atIntervalsOf(workout)
+    }
+
+    /**
+     * The same hold, applied to the Prescription already standing when the coach cannot be reached
+     * (#248).
+     *
+     * A failed evaluation writes nothing, which is right for a *judgement* — nothing new was
+     * learned about the runner. But a Prescription stands for up to 14 days
+     * ([COACH_PRESCRIPTION_MAX_AGE_DAYS]) and overrides the Stage's Workout for every Run of its
+     * kind in that window, so silence is not neutral: an earlier, harder Prescription would carry
+     * the runner straight through the day the hold exists for. The hold is not the coach's opinion —
+     * it is read off Fitness and Fatigue, which were measured on this side before the round trip —
+     * so it can be applied without a reply.
+     *
+     * Only the three interval numbers change. The stamp is kept as it was: this pares an existing
+     * Prescription back, it does not make a new one, and re-stamping would quietly extend the life
+     * of numbers the coach wrote a fortnight ago. The target zone is kept for the reason the hold
+     * always keeps it — how much work, not how hard.
+     *
+     * The standing debrief is left as written, as it is on every other held or clamped path: the
+     * floor and the ceiling already change the numbers after the coach has described them, so a
+     * debrief is a note about a Run, not a caption on three integers.
+     *
+     * Nothing standing means the plan runs as written, which is the Workout — already where the hold
+     * would put it. A stale one is already ignored by whoever runs the workout, and rewriting it
+     * would say the app had done something on a day it had not.
+     */
+    private suspend fun holdStandingPrescriptionAtWorkout(
+        runType: RunType,
+        workout: WorkoutTemplate,
+        fitnessAndForm: AiFitnessAndForm?,
+        scope: CoachWriteScope
+    ) {
+        val prescriptions = coachPrescriptionRepository ?: return
+        if (fitnessAndForm == null) return
+        if (fitnessAndForm.fatigue <= fitnessAndForm.fitness) return
+
+        val standing = prescriptions.prescriptionsFlow.first()[runType] ?: return
+        if (!standing.isFreshAt(System.currentTimeMillis())) return
+        val held = standing.copy(
+            runDurationSeconds = workout.runDurationSeconds,
+            walkDurationSeconds = workout.walkDurationSeconds,
+            totalRepeats = workout.totalRepeats
+        )
+        if (held == standing) return
+
+        Log.d(
+            "AiCoach",
+            "Holding the standing $runType prescription at the stage workout: " +
+                "${held.runDurationSeconds}s Run / ${held.walkDurationSeconds}s Walk " +
+                "x${held.totalRepeats}"
+        )
+        prescriptions.prescribe(runType = runType, prescription = held, scope = scope)
     }
 
     /**
