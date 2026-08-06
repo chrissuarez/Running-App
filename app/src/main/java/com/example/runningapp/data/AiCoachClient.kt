@@ -169,9 +169,17 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
                 "rather than rest."
         )
     }
+    // Easing is asked for in the one currency the floor lets through. A prescription for less work
+    // than the stage's own workout is discarded outright (#170), so "ease off" left unqualified
+    // buys a fatigued runner nothing and costs them the truth: the intervals snap back to the
+    // stage's while the message they read promises a lighter day.
     appendLine(
-        "Let this shape the intervals you prescribe for the next run: ease off when the runner is " +
-            "fatigued, and give them more when they are fresh."
+        "Let this shape the next run. The stage's own intervals are a floor: a prescription asking " +
+            "for less work than them is discarded, so it is not a way to ease anyone off. Ease a " +
+            "fatigued runner off with a lower nextTargetZone, and by holding the intervals at the " +
+            "stage's own rather than adding to them; give a fresh runner more by prescribing " +
+            "longer intervals or more repeats. Never promise in coachMessage a lighter or shorter " +
+            "set of intervals than the ones you prescribe."
     )
     appendLine(
         "CRITICAL RULE: These numbers must never change graduatedToNextStage. Graduation is judged " +
