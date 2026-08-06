@@ -275,6 +275,9 @@ class AiCoachClientTest {
         assertTrue(prompt.contains("none of the three numbers above contain it"))
         assertTrue(prompt.contains("Treat today's cost as unmeasured rather than as nothing"))
         assertTrue(prompt.contains("do not prescribe a harder next run on the strength of them"))
+        // And the timing is told once: the line naming which reading governs must not turn round and
+        // call the same pair post-run.
+        assertFalse(prompt.contains("those two are after today's run"))
     }
 
     @Test

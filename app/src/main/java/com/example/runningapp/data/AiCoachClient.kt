@@ -182,12 +182,6 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
                 "ceiling."
         )
     }
-    // Fatigue buys a hold, not a lighter day, because this app has no lever for one. A prescription
-    // under the stage's own workout is discarded (#170), and a lower target zone is no way round it
-    // either: Zone 1 is snapped back to Zone 2 (#117) and every workout the coach adjusts already
-    // targets Zone 2. So the instruction asks for the hold and, more importantly, for it to be said
-    // — an unqualified "ease off" would leave the runner reading a promise of a lighter day over a
-    // main set the floor had just put back to the stage's.
     // A strapless Run is the one case where the numbers understate the day rather than lag it: no
     // heart rate is no Effort Score, so the curves never see the Run at all. Left unsaid, a hard
     // hour without a Strap reads to the coach as an hour of rest — the one reading that turns a
@@ -202,12 +196,26 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
     }
     // Which reading governs, said because the block prints two of them. Form is where today began,
     // and a runner who began it fresh can have finished the Run carrying more than they have
-    // absorbed — so the pair the prescription answers to is the one today's Run has already moved.
+    // absorbed — so the pair the prescription answers to is the one nearest to now. How near that
+    // is depends on the Run: it is after it wherever there was a Score to move it, and no later
+    // than the day before otherwise, which is the sentence's own caveat rather than the one above
+    // repeated. Two tellings of the same timing, free to contradict each other, is exactly what the
+    // rest of this block exists to avoid.
     appendLine(
-        "Ask Fitness and Fatigue, not Form, what the next run should be: those two are after " +
-            "today's run and Form is where today started. Fatigue above Fitness is a runner to " +
-            "hold, whatever Form reads."
+        "Ask Fitness and Fatigue, not Form, what the next run should be: " +
+            if (state.todaysRunIsInTheNumbers) {
+                "those two are after today's run and Form is where today started."
+            } else {
+                "of the three they are the closest to now, though as said above none of them " +
+                    "contains today's run."
+            } + " Fatigue above Fitness is a runner to hold, whatever Form reads."
     )
+    // Fatigue buys a hold, not a lighter day, because this app has no lever for one. A prescription
+    // under the stage's own workout is discarded (#170), and a lower target zone is no way round it
+    // either: Zone 1 is snapped back to Zone 2 (#117) and every workout the coach adjusts already
+    // targets Zone 2. So the instruction asks for the hold and, more importantly, for it to be said
+    // — an unqualified "ease off" would leave the runner reading a promise of a lighter day over a
+    // main set the floor had just put back to the stage's.
     appendLine(
         "Let this shape the next run. When they are fresh you may prescribe more: longer intervals " +
             "or more repeats. When they are fatigued the answer is to hold, because the stage's " +
