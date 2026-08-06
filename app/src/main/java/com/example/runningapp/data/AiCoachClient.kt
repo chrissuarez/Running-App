@@ -2,6 +2,7 @@ package com.example.runningapp.data
 
 import android.util.Log
 import com.example.runningapp.BuildConfig
+import com.example.runningapp.WorkoutTemplate
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
@@ -116,10 +117,57 @@ internal fun buildEvaluationPrompt(
     appendLine("  \"graduatedToNextStage\": Boolean,")
     appendLine("  \"coachMessage\": String")
     appendLine("}")
+    context.stageWorkout?.let { appendStageWorkout(it) }
     context.fitnessAndForm?.let { appendFitnessAndForm(it) }
     appendLine("Current stage title: ${context.currentStageTitle}")
     appendLine("Recent runs (JSON):")
     appendLine(gson.toJson(context.recentRuns))
+}
+
+/**
+ * The Workout the coach's three numbers replace, told to it before it picks them (#246).
+ *
+ * Both clamps are measured against this Workout — the floor discards anything asking for less work
+ * than it (#170) and the ceiling trims the other side — so a coach that never saw it could only
+ * land inside that band by luck. Shown, "keep this as it is" and "add a little to this" become
+ * things it can say on purpose, rather than guesses the clamps clean up after.
+ *
+ * The floor is stated in the same two measures the code applies (`clearedBy`): total seconds and
+ * running seconds, both of which have to clear. A one-line "at least as much work" would leave the
+ * coach free to satisfy it the way the floor exists to refuse — six 30s runs padded out with long
+ * walks matching a six-by-three-minute Workout second for second on a sixth of the running.
+ *
+ * The warm-up and cool-down are deliberately not sent. The schema has no field for either, so they
+ * are two numbers the coach could not act on — and the one rule that counts them, the 110% ceiling,
+ * is not described here at all. Handed a figure with no rule attached to it, a model is left to
+ * invent one.
+ *
+ * Last, and said as hard as the fatigue block says its own version: this is the plan's intention,
+ * never a record of anything the runner did. A Workout read as evidence would graduate a Stage on
+ * the strength of numbers nobody ran — and a graduation cannot be taken back.
+ */
+private fun StringBuilder.appendStageWorkout(workout: WorkoutTemplate) {
+    appendLine(
+        "The stage's own workout for this kind of run, which is what your intervals adjust: " +
+            "${workout.runDurationSeconds}s of running then ${workout.walkDurationSeconds}s of " +
+            "walking, ${workout.totalRepeats} times, targeting Zone ${workout.targetZone}."
+    )
+    appendLine(
+        "nextRunDurationSeconds, nextWalkDurationSeconds and nextRepeats replace exactly those " +
+            "three numbers, so returning those same three numbers is how you say to keep this " +
+            "workout as it is."
+    )
+    appendLine(
+        "That workout is a floor. Prescribe at least as much work as that workout, measured two " +
+            "ways: repeats × (run + walk) seconds, and repeats × run seconds. If either comes to " +
+            "less than the workout's own, your intervals are discarded and the workout's three " +
+            "numbers stand — so a shorter run interval cannot be bought back with a longer walk."
+    )
+    appendLine(
+        "CRITICAL RULE: this workout is the plan's intention, not a record of anything the runner " +
+            "did. It is what you prescribe against, never evidence about any run, and must never " +
+            "change graduatedToNextStage — that is judged from the recent runs alone."
+    )
 }
 
 /**

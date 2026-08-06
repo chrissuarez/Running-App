@@ -8,6 +8,7 @@ import com.example.runningapp.MAX_MAX_HR
 import com.example.runningapp.RunType
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.StatedHeartRates
+import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.UserSettings
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.analysis.Medal
@@ -1493,6 +1494,56 @@ class SessionRepositoryTest {
         verify(mockSettingsRepo, never()).setCoachingEnabled(any())
         verify(mockSettingsRepo, never()).setTargetZone(any())
         verify(mockSettingsRepo, never()).setStatedHeartRates(any(), anyOrNull(), anyOrNull())
+    }
+
+    @Test
+    fun `the coach is asked about the same workout its answer is floored at`() = runTest {
+        // The floor and the ceiling both measure the answer against this Workout, so the coach is
+        // shown it before it answers (#246) — the same one resolved for the Run Type that finished,
+        // not a second lookup that could drift from it.
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mock(),
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 660,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 4,
+                graduatedToNextStage = false,
+                coachMessage = "Good session."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        val asked = argumentCaptor<AiTrainingContext>()
+        verify(mockCoach).evaluateProgress(asked.capture())
+        // Stage 1's Long run, stated rather than resolved again here: an oracle built from the same
+        // call production makes would pass on a wrong resolution.
+        val shown = asked.firstValue.stageWorkout
+        assertEquals(RunType.LONG, shown?.runType)
+        assertEquals(600, shown?.runDurationSeconds)
+        assertEquals(120, shown?.walkDurationSeconds)
+        assertEquals(3, shown?.totalRepeats)
+        // And it is the very Workout the floor is applied against, not a second lookup beside it.
+        assertEquals(
+            TrainingPlanProvider.resolveWorkoutOfType("5k_sub_25", "base_builder", RunType.LONG),
+            shown
+        )
     }
 
     @Test
