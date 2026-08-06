@@ -23,7 +23,9 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
@@ -1651,6 +1653,40 @@ class SessionRepositoryTest {
         // Two weeks of history, oldest first — and the strapless week is null rather than a zero,
         // which is the difference between a week nobody measured and a week nobody ran.
         assertEquals(listOf(700, null), state.weeklyEffortScores)
+    }
+
+    @Test
+    fun `a Run that wore no Strap is not inside the numbers the coach is given`() = runTest {
+        // No heart rate is no Effort Score, so the curves cannot see the Run that just finished —
+        // and told nothing, a coach reads a hard strapless hour as an hour of rest (#66).
+        val strapless = aTreadmillRun(id = 9, seconds = 3_600).copy(effortScore = null)
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(listOf(strapless))
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(
+            flowOf(listOf(ScoredRunProjection(startTime = DAY_MILLIS_2026_01_05, effortScore = 100)))
+        )
+        whenever(mockDao.getRunVolumesFlow()).thenReturn(
+            flowOf(listOf(volumeRow(startTime = DAY_MILLIS_2026_01_05, effortScore = 100)))
+        )
+
+        val state = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            asFinalized = strapless,
+            zone = ZoneOffset.UTC,
+            today = LocalDate.of(2026, 1, 18)
+        ).fitnessAndForm!!
+
+        assertFalse(state.todaysRunIsInTheNumbers)
+        // The same Run with a Score is inside them, which is the case the flag has to tell apart.
+        val scored = strapless.copy(effortScore = 140)
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(listOf(scored))
+        assertTrue(
+            repository.getAiTrainingContext(
+                "sub_30_bridge",
+                asFinalized = scored,
+                zone = ZoneOffset.UTC,
+                today = LocalDate.of(2026, 1, 18)
+            ).fitnessAndForm!!.todaysRunIsInTheNumbers
+        )
     }
 
     @Test

@@ -118,7 +118,16 @@ data class AiFitnessAndForm(
     val form: Int,
     /** What the Form number means in a word — its own type, so it can only be one of the three. */
     val verdict: FormVerdict,
-    val weeklyEffortScores: List<Int?>
+    val weeklyEffortScores: List<Int?>,
+    /**
+     * Whether the Run that prompted this is inside [fitness] and [fatigue].
+     *
+     * False for a Run that recorded no heart rate: it earns no Effort Score, so the curves cannot
+     * see it and the numbers above are the load as it stood *before* it. Told to the coach rather
+     * than hidden, because the alternative is a strapless hour reading as an hour of rest — the one
+     * reading that turns a hard day into permission to prescribe a harder one.
+     */
+    val todaysRunIsInTheNumbers: Boolean
 )
 
 data class AiTrainingContext(
@@ -1387,7 +1396,13 @@ class SessionRepository(
             currentStageTitle = stage.title,
             graduationRequirement = stage.graduationRequirementText,
             recentRuns = recentRuns,
-            fitnessAndForm = fitnessAndFormThrough(today = today, zone = zone)
+            fitnessAndForm = fitnessAndFormThrough(
+                today = today,
+                zone = zone,
+                // A Run that heard no beats earns no Score, so the curves never see it. True with no
+                // finalized Run at all: nothing ran, so there is nothing missing from the numbers.
+                todaysRunIsInTheNumbers = asFinalized == null || asFinalized.effortScore != null
+            )
         )
     }
 
@@ -1398,11 +1413,17 @@ class SessionRepository(
      * Worked out from the same reads and the same arithmetic the Progress screen uses, so the coach
      * and the runner are looking at one set of numbers rather than two that agree most of the time.
      *
-     * The Run just finished is in this: its Score is written on the finish path before the coach is
-     * asked anything. It moves Fitness and Fatigue and cannot move Form, which is yesterday's
-     * answer by design — freshness is a question asked before today's Run had cost anything.
+     * The Run just finished is in this wherever it has a Score, which is written on the finish path
+     * before the coach is asked anything. It moves Fitness and Fatigue and cannot move Form, which
+     * is the pair as the day opened by design — freshness is a question asked before the day's
+     * training had cost anything. A Run that recorded no heart rate has no Score and so is in none
+     * of the three; [AiFitnessAndForm.todaysRunIsInTheNumbers] is how the coach is told.
      */
-    private suspend fun fitnessAndFormThrough(today: LocalDate, zone: ZoneId): AiFitnessAndForm? {
+    private suspend fun fitnessAndFormThrough(
+        today: LocalDate,
+        zone: ZoneId,
+        todaysRunIsInTheNumbers: Boolean,
+    ): AiFitnessAndForm? {
         // The screen's own reads, taken once — the coach is asked its question at a moment, and
         // there is nothing on the far side of a sent prompt for a later emission to redraw.
         val curveToday = progressCurve(scoredRunsFlow().first(), through = today, zone = zone)
@@ -1414,7 +1435,8 @@ class SessionRepository(
             fatigue = curveToday.fatigue.roundToInt(),
             form = curveToday.form.roundToInt(),
             verdict = formVerdictOf(curveToday.form),
-            weeklyEffortScores = weeks.takeLast(AI_WEEKS_OF_EFFORT).map { it.effortScoreForCoach() }
+            weeklyEffortScores = weeks.takeLast(AI_WEEKS_OF_EFFORT).map { it.effortScoreForCoach() },
+            todaysRunIsInTheNumbers = todaysRunIsInTheNumbers
         )
     }
 
