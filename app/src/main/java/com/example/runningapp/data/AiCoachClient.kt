@@ -177,7 +177,9 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
         appendLine(
             "0 is a week of rest — no running, or none hard enough to score. \"not measured\" is a " +
                 "week that was run with no heart rate recorded, so it is training you cannot see " +
-                "rather than rest."
+                "rather than rest. A week's number counts only the runs that recorded heart rate, " +
+                "so a week holding both kinds is a floor under what was actually run, never a " +
+                "ceiling."
         )
     }
     // Fatigue buys a hold, not a lighter day, because this app has no lever for one. A prescription
@@ -186,6 +188,18 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
     // targets Zone 2. So the instruction asks for the hold and, more importantly, for it to be said
     // — an unqualified "ease off" would leave the runner reading a promise of a lighter day over a
     // main set the floor had just put back to the stage's.
+    // A strapless Run is the one case where the numbers understate the day rather than lag it: no
+    // heart rate is no Effort Score, so the curves never see the Run at all. Left unsaid, a hard
+    // hour without a Strap reads to the coach as an hour of rest — the one reading that turns a
+    // hard day into permission to prescribe a harder one.
+    if (!state.todaysRunIsInTheNumbers) {
+        appendLine(
+            "Today's run recorded no heart rate, so it has no Effort Score and none of the three " +
+                "numbers above contain it: they are the load as it stood before today. Treat " +
+                "today's cost as unmeasured rather than as nothing, and do not prescribe a harder " +
+                "next run on the strength of them."
+        )
+    }
     // Which reading governs, said because the block prints two of them. Form is where today began,
     // and a runner who began it fresh can have finished the Run carrying more than they have
     // absorbed — so the pair the prescription answers to is the one today's Run has already moved.

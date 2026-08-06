@@ -202,7 +202,8 @@ class AiCoachClientTest {
                     fatigue = 61,
                     form = -19,
                     verdict = FormVerdict.FATIGUED,
-                    weeklyEffortScores = listOf(210, null, 340, 120)
+                    weeklyEffortScores = listOf(210, null, 340, 120),
+                    todaysRunIsInTheNumbers = true
                 )
             )
         )
@@ -234,7 +235,8 @@ class AiCoachClientTest {
                     fatigue = 27,
                     form = -18,
                     verdict = FormVerdict.FATIGUED,
-                    weeklyEffortScores = listOf(47, 224, 199, 66)
+                    weeklyEffortScores = listOf(47, 224, 199, 66),
+                    todaysRunIsInTheNumbers = true
                 )
             )
         )
@@ -251,6 +253,67 @@ class AiCoachClientTest {
         assertTrue(prompt.contains("weighted so the recent days count for most"))
         // And the claim the fix removes must not creep back.
         assertFalse(prompt.contains("Form is Fitness minus Fatigue"))
+    }
+
+    @Test
+    fun `a Run that heard no beats is named as missing from the numbers, not left as rest`() {
+        // No heart rate is no Effort Score, so the curves never see the Run — and a hard strapless
+        // hour that reads as an hour of rest is the one reading that buys a harder next Run.
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                fitnessAndForm = AiFitnessAndForm(
+                    fitness = 30,
+                    fatigue = 12,
+                    form = 18,
+                    verdict = FormVerdict.FRESH,
+                    weeklyEffortScores = listOf(210, 120),
+                    todaysRunIsInTheNumbers = false
+                )
+            )
+        )
+
+        assertTrue(prompt.contains("none of the three numbers above contain it"))
+        assertTrue(prompt.contains("Treat today's cost as unmeasured rather than as nothing"))
+        assertTrue(prompt.contains("do not prescribe a harder next run on the strength of them"))
+    }
+
+    @Test
+    fun `a Run with a Score says nothing about being missing from the numbers`() {
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                fitnessAndForm = AiFitnessAndForm(
+                    fitness = 30,
+                    fatigue = 12,
+                    form = 18,
+                    verdict = FormVerdict.FRESH,
+                    weeklyEffortScores = listOf(210, 120),
+                    todaysRunIsInTheNumbers = true
+                )
+            )
+        )
+
+        assertFalse(prompt.contains("recorded no heart rate, so it has no Effort Score"))
+    }
+
+    @Test
+    fun `a week holding both measured and strapless Runs is told as a floor, not a total`() {
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                fitnessAndForm = AiFitnessAndForm(
+                    fitness = 30,
+                    fatigue = 12,
+                    form = 18,
+                    verdict = FormVerdict.FRESH,
+                    weeklyEffortScores = listOf(210, 120),
+                    todaysRunIsInTheNumbers = true
+                )
+            )
+        )
+
+        // A week's number counts only what wore a Strap, so a mixed week understates itself — said
+        // outright, because a coach reading it as the whole week prescribes on a week that was bigger.
+        assertTrue(prompt.contains("counts only the runs that recorded heart rate"))
+        assertTrue(prompt.contains("a floor under what was actually run, never a ceiling"))
     }
 
     @Test
@@ -271,7 +334,8 @@ class AiCoachClientTest {
                     fatigue = 12,
                     form = 18,
                     verdict = FormVerdict.FRESH,
-                    weeklyEffortScores = listOf(null, null)
+                    weeklyEffortScores = listOf(null, null),
+                    todaysRunIsInTheNumbers = true
                 )
             )
         )
