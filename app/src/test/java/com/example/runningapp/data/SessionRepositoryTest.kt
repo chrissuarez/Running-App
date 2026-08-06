@@ -278,6 +278,91 @@ class SessionRepositoryTest {
         assertEquals(2, floored.nextRepeats)
     }
 
+    /** A runner carrying more than they have absorbed: Fatigue above Fitness (#248). */
+    private val carryingIt = AiFitnessAndForm(
+        fitness = 13,
+        fatigue = 23,
+        form = -14,
+        verdict = FormVerdict.FATIGUED,
+        weeklyEffortScores = listOf(700, 200),
+        todaysRunIsInTheNumbers = true
+    )
+
+    /**
+     * 6 x (300s run + 60s walk) — more work than the stage's own workout, so the floor has no say
+     * and nothing but the hold would take it back down.
+     */
+    private val harder = AiCoachResponse(
+        nextRunDurationSeconds = 300,
+        nextWalkDurationSeconds = 60,
+        nextRepeats = 6,
+        nextTargetZone = 3,
+        graduatedToNextStage = false,
+        coachMessage = "Adding a bit today."
+    )
+
+    @Test
+    fun `holdAiResponse gives a fatigued runner the workout, whatever the coach asked for`() {
+        val held = repository.holdAiResponseAtWorkout(harder, introIntervals, carryingIt)
+
+        assertEquals(180, held.nextRunDurationSeconds)
+        assertEquals(60, held.nextWalkDurationSeconds)
+        assertEquals(6, held.nextRepeats)
+        // The hold is about how much work, not how hard: the coach's target zone stands, exactly as
+        // it does under the floor.
+        assertEquals(3, held.nextTargetZone)
+        assertEquals("Adding a bit today.", held.coachMessage)
+    }
+
+    @Test
+    fun `holdAiResponse leaves a runner who has absorbed their training alone`() {
+        val fresh = carryingIt.copy(fitness = 30, fatigue = 12, form = 18, verdict = FormVerdict.FRESH)
+        val held = repository.holdAiResponseAtWorkout(harder, introIntervals, fresh)
+
+        assertEquals(300, held.nextRunDurationSeconds)
+        assertEquals(6, held.nextRepeats)
+    }
+
+    @Test
+    fun `holdAiResponse holds on the pair, not on the Form verdict, where the two disagree`() {
+        // Form is where the day started; the pair is where it stands after today's Run. A runner who
+        // began the day level can finish it carrying more than they have absorbed, and still print
+        // "neutral" — the pair is what the coach was told to read, so it is what is held to.
+        val movedToday = carryingIt.copy(
+            fitness = 20,
+            fatigue = 26,
+            form = 2,
+            verdict = FormVerdict.NEUTRAL
+        )
+
+        val held = repository.holdAiResponseAtWorkout(harder, introIntervals, movedToday)
+
+        assertEquals(180, held.nextRunDurationSeconds)
+        assertEquals(6, held.nextRepeats)
+    }
+
+    @Test
+    fun `holdAiResponse reads level Fitness and Fatigue as absorbed, the same way the prompt does`() {
+        // "Fatigue above Fitness" is the line the coach is given, on these same rounded numbers —
+        // equal is not above it, in the prompt or here.
+        val level = carryingIt.copy(fitness = 23, fatigue = 23, form = 0, verdict = FormVerdict.NEUTRAL)
+        val held = repository.holdAiResponseAtWorkout(harder, introIntervals, level)
+
+        assertEquals(300, held.nextRunDurationSeconds)
+        assertEquals(6, held.nextRepeats)
+    }
+
+    @Test
+    fun `holdAiResponse passes the response through with no training state to read`() {
+        // No scored history at all, so there is no fatigue reading to hold anyone on — the coach was
+        // told nothing about it either.
+        assertEquals(
+            300,
+            repository.holdAiResponseAtWorkout(harder, introIntervals, fitnessAndForm = null)
+                .nextRunDurationSeconds
+        )
+    }
+
     @Test
     fun `saveFeelFeedback updates the row when the session is already finalized`() = runTest {
         val sessionId = 42L
@@ -1589,6 +1674,66 @@ class SessionRepositoryTest {
         assertEquals(600, prescribed.firstValue.runDurationSeconds)
         assertEquals(120, prescribed.firstValue.walkDurationSeconds)
         assertEquals(3, prescribed.firstValue.totalRepeats)
+    }
+
+    @Test
+    fun `a fatigued runner is prescribed the stage's own workout, not the coach's harder one`() = runTest {
+        // The hold the coach is asked for, kept on the write (#248). One hard Run today is enough to
+        // put Fatigue above Fitness — the 7-day curve takes most of it and the 42-day curve barely
+        // any — so the coach's 4 x 11 min, which clears the floor and would otherwise stand, is
+        // replaced by stage 1's own Long run of 3 x (10 min + 2 min).
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        // Dated now, because the curves this reads are taken through today.
+        val today = System.currentTimeMillis()
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(
+            flowOf(listOf(ScoredRunProjection(startTime = today, effortScore = 200)))
+        )
+        whenever(mockDao.getRunVolumesFlow()).thenReturn(
+            flowOf(listOf(volumeRow(startTime = today, effortScore = 200)))
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 660,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 4,
+                nextTargetZone = 2,
+                graduatedToNextStage = false,
+                coachMessage = "Not a week to be adding work to."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        // The state the coach was shown is the state the hold was read from — one reading, not two.
+        val asked = argumentCaptor<AiTrainingContext>()
+        verify(mockCoach).evaluateProgress(asked.capture())
+        val shown = asked.firstValue.fitnessAndForm!!
+        assertTrue(shown.fatigue > shown.fitness)
+
+        val prescribed = argumentCaptor<CoachPrescription>()
+        verify(mockPrescriptions).prescribe(eq(RunType.LONG), prescribed.capture(), any())
+        assertEquals(600, prescribed.firstValue.runDurationSeconds)
+        assertEquals(120, prescribed.firstValue.walkDurationSeconds)
+        assertEquals(3, prescribed.firstValue.totalRepeats)
+        // The debrief is untouched: the hold is about the intervals, not about what was said.
+        verify(mockSettingsRepo).setLatestCoachMessage(eq("Not a week to be adding work to."), any())
     }
 
     @Test

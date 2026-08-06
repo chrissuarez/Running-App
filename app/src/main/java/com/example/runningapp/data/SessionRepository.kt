@@ -1558,13 +1558,23 @@ class SessionRepository(
             // Ceiling first, then floor: the floor wins where they disagree (#170). The ceiling is
             // measured against recorded runs, so a run cut short drags it below the plan — the
             // stage's own workout is the commitment and outranks that.
-            val clampedResponse = floorAiResponseAtWorkout(
-                clampAiResponseByRecentLoad(
-                    response,
-                    warmUpSeconds = stageWorkoutOfKind.warmUpSeconds,
-                    coolDownSeconds = stageWorkoutOfKind.coolDownSeconds
+            //
+            // The hold is applied last and outranks both (#248), because it is not a bound on the
+            // three numbers but a statement of what they are: on a fatigued runner they are the
+            // workout's own, so there is nothing left for a floor or a ceiling to have a view on.
+            // Read from the state the coach was shown rather than a second read of the curves — the
+            // rule the runner is held to has to be the one the coach was asked to follow.
+            val clampedResponse = holdAiResponseAtWorkout(
+                floorAiResponseAtWorkout(
+                    clampAiResponseByRecentLoad(
+                        response,
+                        warmUpSeconds = stageWorkoutOfKind.warmUpSeconds,
+                        coolDownSeconds = stageWorkoutOfKind.coolDownSeconds
+                    ),
+                    stageWorkoutOfKind
                 ),
-                stageWorkoutOfKind
+                stageWorkoutOfKind,
+                context.fitnessAndForm
             )
             Log.d(
                 "AiCoach",
@@ -1709,12 +1719,62 @@ class SessionRepository(
         )
         if (clearsFloor) return response
 
-        return response.copy(
+        return response.atIntervalsOf(workout)
+    }
+
+    /**
+     * A runner carrying more than they have absorbed gets the Stage's own Workout, whatever the
+     * coach returned (#248).
+     *
+     * The coach is asked to hold when Fatigue is above Fitness (#66), and asking was all there was:
+     * the floor below refuses a Prescription *under* the Workout and the 110% ceiling caps it
+     * against recorded load, leaving a wide band in which a tired runner could be handed more work
+     * than the plan asks for — under a debrief saying this is not a week to be adding work to. This
+     * makes the hold a rule of the app rather than an instruction a model may or may not follow.
+     *
+     * Held *at* the Workout rather than under it, because there is no lighter day to prescribe: the
+     * floor is the same three numbers, so easing below them is not a thing this app can express. So
+     * the hold is the Workout's numbers whole — the same move the floor makes, for the same reason
+     * that a half-held Prescription would be a shape nobody asked for.
+     *
+     * Fatigue above Fitness is the reading, not [AiFitnessAndForm.verdict] — the two disagree, and
+     * on purpose. The verdict is Form's band, which is where the day *started*, while the pair is
+     * where it stands now; a runner can finish a hard Run carrying more than they have absorbed and
+     * still print "neutral". The pair is the line the coach is given, so it is the line held to.
+     * Read off the same rounded whole numbers the coach was shown, and level is absorbed in both
+     * places.
+     *
+     * The target zone and the message are left alone: this is how much work, not how hard, and not
+     * what was said. What the coach may claim about either is fenced in the prompt.
+     *
+     * Nothing to read is nothing to hold on — no [fitnessAndForm] is a runner with no scored history
+     * at all, who was told nothing about fatigue either.
+     */
+    @VisibleForTesting(otherwise = VisibleForTesting.PRIVATE)
+    internal fun holdAiResponseAtWorkout(
+        response: AiCoachResponse,
+        workout: WorkoutTemplate,
+        fitnessAndForm: AiFitnessAndForm?
+    ): AiCoachResponse {
+        if (fitnessAndForm == null) return response
+        if (fitnessAndForm.fatigue <= fitnessAndForm.fitness) return response
+
+        return response.atIntervalsOf(workout)
+    }
+
+    /**
+     * The Workout's three numbers put on a response whole, which is what both the floor (#170) and
+     * the hold (#248) do when they refuse the coach's own — one move, so the two rules cannot end up
+     * disagreeing about what "the Workout's intervals" are.
+     *
+     * The target zone is not among them: neither rule has a view on how hard the Run is.
+     */
+    private fun AiCoachResponse.atIntervalsOf(workout: WorkoutTemplate): AiCoachResponse =
+        copy(
             nextRunDurationSeconds = workout.runDurationSeconds,
             nextWalkDurationSeconds = workout.walkDurationSeconds,
             nextRepeats = workout.totalRepeats
         )
-    }
 
     private fun computePlannedTotalSeconds(
         runSeconds: Int,
