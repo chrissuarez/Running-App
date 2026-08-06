@@ -211,6 +211,9 @@ class AiCoachClientTest {
         assertTrue(prompt.contains("210, not measured, 340, 120."))
         // Said in the prompt rather than left to the model's own idea of the bands.
         assertTrue(prompt.contains("+10 is fresh, below -10 is fatigued"))
+        // A runner who began the day fresh can have finished the Run carrying more than they have
+        // absorbed, so the prescription answers to the pair today's Run moved, not to Form.
+        assertTrue(prompt.contains("Fatigue above Fitness is a runner to hold, whatever Form reads."))
         // Fatigue buys a hold, not a lighter day: the #170 floor discards a lighter main set, so a
         // coach told to ease off would promise one the runner never gets.
         assertTrue(prompt.contains("When they are fatigued the answer is to hold"))
