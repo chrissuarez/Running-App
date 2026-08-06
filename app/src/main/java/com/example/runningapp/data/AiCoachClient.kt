@@ -145,15 +145,26 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
             "means they are carrying more work than they have absorbed."
     )
     // Said outright, because the three numbers above do not satisfy it: Form is read before the
-    // day's training is added, so it is yesterday's pair and not today's. A model told "Form is
-    // Fitness minus Fatigue" and handed 10, 27 and -18 has been given arithmetic that does not
-    // hold, and the cheapest way for it to resolve that is to trust its own subtraction over the
-    // number the runner is looking at.
+    // day's effort is added, so it is the pair as today opened and not as it closes. A model told
+    // "Form is Fitness minus Fatigue" and handed 10, 27 and -18 has been given arithmetic that does
+    // not hold, and the cheapest way for it to resolve that is to trust its own subtraction over
+    // the number the runner is looking at.
+    //
+    // Said as "the start of today" rather than "before today's run", which is the same sentence
+    // only until a Run crosses midnight: effort is banked on the day a Run *started*, so one begun
+    // at 23:40 is already inside the pair today's Form is read from.
+    //
+    // The rounding is owned up to for the same reason. Verdict and figure are the Progress screen's
+    // own pairing — the word off the raw Form, the number rounded — so a raw 10.2 prints "10
+    // (fresh)" against a stated line of +10. Matching the screen is the point; leaving the coach to
+    // reconcile it is not.
     appendLine(
-        "Form is how fresh they are today: yesterday's Fitness less yesterday's Fatigue, asked " +
-            "before today's run had cost them anything. So it will not equal the difference of the " +
-            "two numbers above, which today's run has already moved — use the Form figure as given. " +
-            "Above +10 is fresh, below -10 is fatigued, and between the two is neutral."
+        "Form is how fresh they were at the start of today: Fitness less Fatigue as the pair stood " +
+            "before any of today's training was counted. The two numbers above are that same pair " +
+            "after it, so Form will not equal their difference — use the Form figure as given. " +
+            "Above +10 is fresh, below -10 is fatigued, and between the two is neutral. The word " +
+            "in brackets is that verdict, read off the unrounded Form; all three numbers are " +
+            "rounded to whole points, so one can print a point the wrong side of a line."
     )
     // Skipped rather than written empty on the case that should not arise — a scored run is a
     // finished run, so a curve exists only where a week does. An empty list here would otherwise

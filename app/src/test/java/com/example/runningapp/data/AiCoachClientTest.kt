@@ -236,8 +236,14 @@ class AiCoachClientTest {
             )
         )
 
-        assertTrue(prompt.contains("yesterday's Fitness less yesterday's Fatigue"))
-        assertTrue(prompt.contains("will not equal the difference of the two numbers above"))
+        assertTrue(prompt.contains("Form is how fresh they were at the start of today"))
+        assertTrue(prompt.contains("will not equal their difference"))
+        // "The start of today", not "before today's run": a Run begun at 23:40 banks its effort on
+        // the day it started, so it is already inside the pair today's Form is read from.
+        assertFalse(prompt.contains("before today's run"))
+        // The verdict is read off the raw Form and the figures are rounded, exactly as the Progress
+        // screen pairs them — so a raw 10.2 prints "10 (fresh)" against a stated line of +10.
+        assertTrue(prompt.contains("rounded to whole points"))
         // The curves are weighted, not flat means — the wording the Progress screen's own model uses.
         assertTrue(prompt.contains("weighted so the recent days count for most"))
         // And the claim the fix removes must not creep back.
