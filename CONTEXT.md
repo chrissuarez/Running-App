@@ -69,6 +69,35 @@ One completed kilometre of a Run, and the pace it was covered at. Measured by
 distance, unlike an Interval, which is measured by time.
 _Avoid_: lap, mile
 
+**Break**:
+Any stretch of a Run the recording does not cover — a Pause or an Outage.
+Nothing that reads the *shape* of a Run may join across one: no line is drawn
+over it, no climb is banked across it, no window of pace or height reaches
+through it. That is the whole of what a Break withholds; whether it carries
+ground is a question about which kind of Break it is.
+_Avoid_: dropout (a Strap drops out; a recording breaks), blackout
+
+**Pause**:
+A Break the Run wrote down — held down by the runner or reached automatically.
+The Run's clock stops, GPS is torn down, and the runner was not running, so a
+Pause carries no ground at all and no seconds the Run counted.
+_Avoid_: stoppage, rest stop
+
+**Outage**:
+A Break nobody declared: the signal was lost while the Run carried on — a
+tunnel, a stairwell, a built-up street. The runner did cover that ground, so an
+Outage carries the straight line between the fixes either side of it, which is
+never longer than the route they really took. What it does not carry is a route,
+which is why it is still a Break.
+_Avoid_: signal loss, GPS drop
+
+**Covered**:
+How far a Run went: the ground it went over, or the Stated Distance where a
+treadmill reported it. Measured one way by every path that measures it — the
+live recorder, the rescue of an interrupted Run, and the Splits table alike — so
+a Run's Splits total the distance printed above them.
+_Avoid_: total distance, actual distance
+
 **Stated Distance**:
 How far a treadmill Run went: the number the machine's console showed, told to the app by the
 runner. Stated rather than measured, exactly as a Max HR or a resting heart rate is — the app never

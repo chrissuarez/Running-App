@@ -1,7 +1,6 @@
 package com.example.runningapp.data
 
 import com.example.runningapp.HrProfile
-import com.example.runningapp.recording.geodesicDistanceMeters
 import com.example.runningapp.tallyZoneSeconds
 import com.example.runningapp.training.effortScoreOf
 
@@ -22,8 +21,9 @@ import com.example.runningapp.training.effortScoreOf
  *
  *  - **Distance** is measured from the stored track rather than replayed through the recorder's live
  *    accumulator, so it is the distance the map and the GPX export already draw for this Run rather
- *    than to-the-metre what a completed Run would have stored. Legs across a break do not count, for
- *    the reason [measureMovingTimeSeconds] gives: a pause is not ground the runner covered.
+ *    than to-the-metre what a completed Run would have stored. It is measured by the one rule every
+ *    path measures a track by ([measureTrackDistanceKm]), so a rescued Run does not shrink relative
+ *    to the same Run finished live (#204).
  *  - **Walk breaks** are the Workout's, not the recording's. What is banked is the Interval that
  *    ended, and the walk that follows it is the Workout's answer to that — counted as the Run takes
  *    it and gone with the Run. The row keeps its own value rather than being handed a count derived
@@ -151,9 +151,8 @@ fun RunnerSession.finishedFromRecord(
  * Everything after the head is measured leg by leg, skipping only the legs that cross a *recorded*
  * pause: the Run's clock stops for a pause, so those seconds were never its to count.
  *
- * A pause and only a pause, which is where this parts company with [measureTrackDistanceKm] and
- * [measureMovingTimeSeconds] — they treat a long gap between fixes as a break too, and here that
- * would be wrong twice over. A gap is not evidence of a stop: GPS loses the sky in a tunnel or a
+ * A pause and only a pause, which is where this parts company with [measureMovingTimeSeconds] — it
+ * treats a long gap between fixes as a break too, and here that would be wrong twice over. A gap is not evidence of a stop: GPS loses the sky in a tunnel or a
  * stairwell, and [SessionRepository.getTrackPointsForMap] drops every fix too vague to trust, so a
  * patch of poor reception arrives here as a hole. Meanwhile a real pause needs no guessing at —
  * every one of them, held down or automatic, is written onto the fix that resumed the Run
@@ -179,29 +178,13 @@ fun measureTrackRecordedSeconds(startTime: Long, points: List<TrackPoint>): Long
 }
 
 /**
- * The ground a stored track covers, in kilometres — the sum of its legs, minus the ones that span a
- * break in the recording.
+ * The ground a stored track covers, in kilometres — the sum of what its legs carry.
  *
- * The same points and the same break rule as [measureMovingTimeSeconds], so the two numbers describe
- * one route rather than two. A leg across a pause is not distance for the same reason it is not
- * moving time: the runner may have walked to a shop door and back, and the straight line between the
- * fix before and the fix after is ground nothing witnessed them cover.
+ * One walk of the track and one rule about what a leg is worth ([measureTrack]), rather than a second
+ * opinion written here: a Run rescued from its record must report the distance the same Run finished
+ * live would have banked, and the only way two paths are certain to agree is to be one path (#204).
+ * So an Outage carries its straight line, a Pause carries nothing, and the Splits cut from these same
+ * legs add up to the figure this returns.
  */
-fun measureTrackDistanceKm(points: List<TrackPoint>): Double {
-    if (points.size < 2) return 0.0
-    val ordered = points.sortedBy { it.timestampMillis }
-    var meters = 0.0
-    for (i in 1 until ordered.size) {
-        val previous = ordered[i - 1]
-        val current = ordered[i]
-        if (current.startsAfterPause) continue
-        if (current.timestampMillis - previous.timestampMillis > TRACK_BREAK_MS) continue
-        meters += geodesicDistanceMeters(
-            previous.latitude,
-            previous.longitude,
-            current.latitude,
-            current.longitude,
-        )
-    }
-    return meters / 1000.0
-}
+fun measureTrackDistanceKm(points: List<TrackPoint>): Double =
+    measureTrack(points).legs.sumOf { it.meters } / 1000.0

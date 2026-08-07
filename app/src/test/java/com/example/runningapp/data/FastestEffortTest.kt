@@ -110,10 +110,11 @@ class FastestEffortTest {
     }
 
     @Test
-    fun `a gap in the recording ends the effort rather than being run for free`() {
+    fun `a gap in the recording is run through, and every second of it is charged`() {
         // Half the 5K, then five minutes with no fixes and nothing saying the run was paused, then
-        // the rest. Passing that gap through free would report a 5K nobody ran; the honest answer
-        // is that no continuous 5K was recorded.
+        // the rest. Nothing says the runner stopped, so those 300s were run seconds and all of them
+        // count against the effort — the 25-minute 5K reads as 30 minutes (#204). The runner did not
+        // move over the gap here, so it hands the effort no ground either.
         val firstHalf = track(5000.0 / 1500 to 750)
         var latitude = firstHalf.last().latitude
         var timestamp = firstHalf.last().timestampMillis + 300_000
@@ -124,7 +125,25 @@ class FastestEffortTest {
             secondHalf += fixAt(latitude, timestamp)
         }
 
-        assertNull(measureFastestEffortSeconds(firstHalf + secondHalf, FIVE_K_METERS))
+        assertSeconds(1800, measureFastestEffortSeconds(firstHalf + secondHalf, FIVE_K_METERS))
+    }
+
+    @Test
+    fun `ground covered while the signal was down counts towards the effort`() {
+        // The same five-minute gap, but the runner kept going through it and came out 1000 m along.
+        // The straight line is credited and all 300 seconds are charged, so a Run that covered 5 km
+        // in 1500s reports its 5K at 25:00 — the tunnel neither costs it the effort nor flatters it.
+        val firstHalf = track(5000.0 / 1500 to 750) // 2500 m in 750s
+        var latitude = firstHalf.last().latitude + 1_000.0 / metresPerDegreeLatitude
+        var timestamp = firstHalf.last().timestampMillis + 300_000
+        val secondHalf = mutableListOf(fixAt(latitude, timestamp))
+        repeat(450) { // 1500 m more, at the same speed
+            latitude += (5000.0 / 1500) / metresPerDegreeLatitude
+            timestamp += 1_000
+            secondHalf += fixAt(latitude, timestamp)
+        }
+
+        assertSeconds(1500, measureFastestEffortSeconds(firstHalf + secondHalf, FIVE_K_METERS))
     }
 
     @Test

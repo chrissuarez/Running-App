@@ -117,9 +117,13 @@ class RecordsTest {
     }
 
     @Test
-    fun `a stretch cannot be joined across a gap in the recording`() {
+    fun `a stretch may be joined across a gap in the recording`() {
         // Half a kilometre, the signal lost over the next half, then half a kilometre more. Neither
-        // side is a kilometre on its own, and the middle was never witnessed.
+        // side is a kilometre on its own, but the runner covered one: the straight line across the
+        // gap and every second it took, both leaning the effort slower rather than faster (#204).
+        //
+        // 4 m/s either side and 4 m/s across the gap, so the fastest kilometre is the 250s one that
+        // fits inside any of the three — the ground it crosses is measured, not assumed.
         val track = script {
             running(speedMps = 4.0, seconds = 125)
             gap(meters = 500.0, seconds = 125)
@@ -128,7 +132,24 @@ class RecordsTest {
 
         val efforts = bestEffortsOf(anOutdoorRun(distanceKm = 1.5), track)
 
-        assertNull(efforts.valueOf(RecordType.FASTEST_1K))
+        assertEquals(250.0, efforts.valueOf(RecordType.FASTEST_1K)!!, 5.0)
+    }
+
+    @Test
+    fun `a gap the runner walked is not read as a sprint`() {
+        // The same shape, but the signal was lost for five minutes over only fifty metres — the
+        // runner was barely moving. The kilometre that spans it is charged all three hundred of
+        // those seconds, so it reads as the slog it was rather than as a fast kilometre: 1050 m in
+        // 550s, of which the fastest kilometre is all but the opening fifty metres.
+        val track = script {
+            running(speedMps = 4.0, seconds = 125)
+            gap(meters = 50.0, seconds = 300)
+            running(speedMps = 4.0, seconds = 125)
+        }
+
+        val efforts = bestEffortsOf(anOutdoorRun(distanceKm = 1.05), track)
+
+        assertEquals(537.5, efforts.valueOf(RecordType.FASTEST_1K)!!, 10.0)
     }
 
     @Test
