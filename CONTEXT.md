@@ -74,7 +74,8 @@ Any stretch of a Run the recording does not cover — a Pause or an Outage.
 Nothing that reads the *shape* of a Run may join across one: no line is drawn
 over it, no climb is banked across it, no window of pace or height reaches
 through it. That is the whole of what a Break withholds; whether it carries
-ground is a question about which kind of Break it is.
+ground is a question about which kind of Break it is
+([ADR 0010](docs/adr/0010-the-track-is-the-record-of-a-break.md)).
 _Avoid_: dropout (a Strap drops out; a recording breaks), blackout
 
 **Pause**:
@@ -95,7 +96,8 @@ _Avoid_: signal loss, GPS drop
 How far a Run went: the ground it went over, or the Stated Distance where a
 treadmill reported it. Measured one way by every path that measures it — the
 live recorder, the rescue of an interrupted Run, and the Splits table alike — so
-a Run's Splits total the distance printed above them.
+a Run's Splits total the distance printed above them
+([ADR 0010](docs/adr/0010-the-track-is-the-record-of-a-break.md)).
 _Avoid_: total distance, actual distance
 
 **Stated Distance**:
