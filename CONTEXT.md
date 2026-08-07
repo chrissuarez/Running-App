@@ -180,7 +180,10 @@ _Avoid_: AI adjustments, AI intervals
 
 **Strap**:
 The Bluetooth heart-rate sensor worn on the chest. A sensor the Run reads, not a
-gate the Run waits on.
+gate the Run waits on. What it says is averaged over five seconds before the
+coach reasons about it, and that average is a fact about the Strap rather than
+about who is listening — it keeps moving through a cool-down and with coaching
+off ([ADR 0011](docs/adr/0011-the-smoothed-reading-belongs-to-the-strap.md)).
 _Avoid_: device, monitor, HRM
 
 **Acquisition**:

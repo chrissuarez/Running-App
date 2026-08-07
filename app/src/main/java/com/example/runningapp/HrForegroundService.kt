@@ -528,10 +528,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * The live screen's fallback coach line: what the coach is waiting on when it has nothing to
      * say. Read off the Run's own coaching state rather than recomputed, so the line cannot
      * describe a coach the Run is not running.
+     *
+     * Coaching being off is asked first, because it is the settled answer: the window empties
+     * whenever the Strap goes away (ADR 0011), and a dropout is no reason to stop saying "Off".
      */
     private fun RunState.coachWaitingLine(nowMillis: Long): String = when {
-        heartRate.recent.isEmpty() -> "Ready"
         !controls.coachingEnabled -> "Off"
+        heartRate.recent.isEmpty() -> "Ready"
         coaching.band == ZoneBand.IN || coaching.band == ZoneBand.UNKNOWN -> "Ready"
         else -> "Next: ${coaching.ladder.secondsUntilNextCue(nowMillis)}s"
     }

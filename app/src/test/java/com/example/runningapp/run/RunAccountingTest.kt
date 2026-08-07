@@ -130,6 +130,69 @@ class RunAccountingTest {
     }
 
     @Test
+    fun `the smoothed reading averages the strap while coaching is off`() {
+        val driver = Driver()
+        driver.start(controls = RunControls(coachingEnabled = false))
+
+        val effects = driver.advanceWith(listOf(100, 120))
+
+        val samples = effects.filterIsInstance<RunEffect.SaveHrSample>().map { it.sample }
+        assertEquals(listOf(100, 110), samples.map { it.smoothedBpm })
+    }
+
+    @Test
+    fun `the smoothed reading averages the strap through the cool-down`() {
+        val driver = Driver()
+        driver.start()
+        driver.skipPhase()
+        driver.skipPhase()
+
+        val effects = driver.advanceWith(listOf(100, 120))
+
+        assertEquals(RunPhase.COOL_DOWN, driver.state.phase)
+        val samples = effects.filterIsInstance<RunEffect.SaveHrSample>().map { it.sample }
+        assertEquals(listOf(100, 110), samples.map { it.smoothedBpm })
+    }
+
+    @Test
+    fun `coaching switched back on finds a full window, not a single reading`() {
+        val driver = Driver()
+        driver.start(controls = RunControls(coachingEnabled = false))
+        driver.advanceWith(seconds = 30, bpm = 100)
+
+        driver.controls(RunControls(coachingEnabled = true))
+        driver.advanceWith(seconds = 1, bpm = 160)
+
+        // Five seconds of 100 and one beat of 160: the coach's first decision is smoothed, where a
+        // window that had not been filling would have handed it the bare 160.
+        assertEquals(110, driver.state.heartRate.smoothedBpm)
+    }
+
+    @Test
+    fun `the strap going away empties the window, so nothing averages across a dropout`() {
+        val driver = Driver()
+        driver.start()
+        driver.advanceWith(seconds = 3, bpm = 100)
+
+        driver.heartRateLost()
+        driver.advanceWith(seconds = 1, bpm = 160)
+
+        assertEquals(160, driver.state.heartRate.smoothedBpm)
+    }
+
+    @Test
+    fun `readings age out of the window while the coach is not listening`() {
+        val driver = Driver()
+        driver.start(controls = RunControls(coachingEnabled = false))
+
+        driver.advanceWith(seconds = 3, bpm = 100)
+        driver.advance(10)
+        driver.heartRate(160)
+
+        assertEquals(160, driver.state.heartRate.smoothedBpm)
+    }
+
+    @Test
     fun `a sample records the strap's state at the second it was taken`() {
         val driver = Driver()
         driver.start()

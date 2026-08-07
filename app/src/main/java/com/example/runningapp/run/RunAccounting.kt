@@ -100,9 +100,12 @@ const val HR_WINDOW_MILLIS = 5_000L
  * as, and what a saved sample records; [smoothedBpm] is what the coach and the sample's smoothed
  * column carry.
  *
- * The window is fed only by samples that reach the coach. That is the service's shape reproduced
- * rather than designed: while coaching is off, or during the cool-down, packets keep arriving and
- * the window stands still.
+ * Every reading joins the window, whoever is listening: the average is a fact about the Strap, not
+ * about the coach's attention
+ * ([ADR 0011](docs/adr/0011-the-smoothed-reading-belongs-to-the-strap.md)). Feeding it only from
+ * the samples that reached the coach was what froze it: with coaching off or in the cool-down,
+ * packets kept arriving and the window stood still, so the "five-second average" was an average of
+ * readings minutes old that could no longer age out (#161).
  */
 data class RunHeartRate(
     val bpm: Int = 0,
@@ -110,39 +113,31 @@ data class RunHeartRate(
     val connectionStatus: String = "",
     val recent: List<HrReading> = emptyList(),
 ) {
-    /** No reading to be had: the Strap went away, so the last one must not be held as if fresh. */
+    /**
+     * No reading to be had: the Strap went away, so the last one must not be held as if fresh.
+     *
+     * The window goes with it. Averaging across a dropout would be holding those readings as fresh
+     * by the back door — the first reading after the Strap comes back would be smoothed against
+     * beats from before it left.
+     */
     fun lost(connectionStatus: String): RunHeartRate =
-        copy(bpm = 0, smoothedBpm = 0, connectionStatus = connectionStatus)
+        copy(bpm = 0, smoothedBpm = 0, connectionStatus = connectionStatus, recent = emptyList())
 
-    /** A reading arrived, but not one the coach is listening for. */
-    fun read(bpm: Int, connectionStatus: String, coachingEnabled: Boolean): RunHeartRate = copy(
-        bpm = bpm,
-        smoothedBpm = smoothedOf(recent, coachingEnabled),
-        connectionStatus = connectionStatus,
-    )
-
-    /** A reading the coach is listening for: it joins the window, and the window is aged out. */
-    fun heard(bpm: Int, connectionStatus: String, nowMillis: Long): RunHeartRate {
+    /** A reading arrived: it joins the window, and the window is aged out. */
+    fun sampled(bpm: Int, connectionStatus: String, nowMillis: Long): RunHeartRate {
         val window = (recent + HrReading(nowMillis, bpm))
             .filter { nowMillis - it.atMillis <= HR_WINDOW_MILLIS }
         return copy(
             bpm = bpm,
-            smoothedBpm = smoothedOf(window, coachingEnabled = true),
+            smoothedBpm = smoothedOf(window),
             connectionStatus = connectionStatus,
             recent = window,
         )
     }
 
     private companion object {
-        /**
-         * The smoothed number as the service publishes it — the window's average, except that with
-         * coaching off it is the last raw reading. That second rule is reproduced, not chosen: it
-         * falls out of the debug read-out being the one place the number was computed.
-         */
-        fun smoothedOf(window: List<HrReading>, coachingEnabled: Boolean): Int = when {
-            window.isEmpty() -> 0
-            !coachingEnabled -> window.last().bpm
-            else -> window.map { it.bpm }.average().roundToInt()
-        }
+        /** The window's average, and 0 for a window with nothing in it. */
+        fun smoothedOf(window: List<HrReading>): Int =
+            if (window.isEmpty()) 0 else window.map { it.bpm }.average().roundToInt()
     }
 }

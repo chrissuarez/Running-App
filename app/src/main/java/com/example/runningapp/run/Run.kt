@@ -348,50 +348,41 @@ object Run {
     /**
      * A reading arrived from the Strap, and with it the coach's one chance to speak.
      *
-     * The reading is always kept — it is what the next second banks as. Whether the coach so much
-     * as looks at it is three separate questions, in this order: is the Run actually running, is it
-     * somewhere cues are allowed at all (never the cool-down), and has the runner left coaching on.
-     * A "no" to any of them leaves the rolling average standing still as well as the coach silent.
+     * The reading is always kept — it is what the next second banks as — and it always joins the
+     * rolling average, which belongs to the Strap rather than to the coach (ADR 0011, #161).
+     * Whether the coach so much as looks at it is three separate questions, in this order: is the
+     * Run actually running, is it somewhere cues are allowed at all (never the cool-down), and has
+     * the runner left coaching on. A "no" to any of them leaves the coach silent, and nothing else.
      */
     private fun heartRateSampled(state: RunState, event: RunEvent.HeartRateSampled): RunOutcome {
         val config = state.config
+        val reading = state.heartRate.sampled(event.bpm, event.connectionStatus, event.nowMillis)
         val listening = state.lifecycle == RunLifecycle.RUNNING &&
             state.phase != RunPhase.COOL_DOWN &&
             state.controls.coachingEnabled
-        if (config == null || !listening) {
-            return RunOutcome(
-                state.copy(
-                    heartRate = state.heartRate.read(
-                        bpm = event.bpm,
-                        connectionStatus = event.connectionStatus,
-                        coachingEnabled = state.controls.coachingEnabled,
-                    ),
-                ),
-            )
-        }
+        if (config == null || !listening) return RunOutcome(state.copy(heartRate = reading))
 
         // One band, one clock. Hysteresis judges re-entry at the target zone's midpoint, so a heart
         // rate parked on an edge cannot farm return cues; the ladder decides when to speak; the
         // band decides what is said. Hysteresis carries only across consecutive awake samples —
         // asleep, the band is UNKNOWN, so a run Interval can never inherit a stale ABOVE and speak
         // over a heart rate that has since settled into target.
-        val heard = state.heartRate.heard(event.bpm, event.connectionStatus, event.nowMillis)
         val awake = state.coachingAwake
         val band =
             if (awake) {
-                bandWithHysteresis(state.coaching.band, heard.smoothedBpm, config.hrProfile, config.targetZone)
+                bandWithHysteresis(state.coaching.band, reading.smoothedBpm, config.hrProfile, config.targetZone)
             } else {
                 ZoneBand.UNKNOWN
             }
         val step = state.coaching.ladder.onSample(event.nowMillis, band, awake)
         val current = state.copy(
-            heartRate = heard,
+            heartRate = reading,
             coaching = state.coaching.copy(band = band, ladder = step.ladder),
         )
 
         return when (step.action) {
             CueAction.SPEAK -> when (band) {
-                ZoneBand.ABOVE -> highCue(current, heard.smoothedBpm)
+                ZoneBand.ABOVE -> highCue(current, reading.smoothedBpm)
                 ZoneBand.BELOW -> RunOutcome(current, spoken(CueCondition.BELOW))
                 else -> RunOutcome(current)
             }
