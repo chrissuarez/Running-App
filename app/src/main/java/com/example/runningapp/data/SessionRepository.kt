@@ -750,7 +750,32 @@ class SessionRepository(
      * Scoring history recorded before this shipped is a job of its own (#50): it means measuring
      * every stored track, and it has to happen once rather than every time a run finishes.
      */
-    suspend fun scoreRecords(sessionId: Long): List<Achievement> {
+    suspend fun scoreRecords(sessionId: Long): List<Achievement> =
+        scoreRecordsUnlessOvertaken(sessionId).orEmpty()
+
+    /**
+     * [scoreRecords], with the one answer it cannot give: `null` for a Run that changed underneath
+     * the measuring, and was therefore not written to the book at all (#210).
+     *
+     * Measuring a Run is minutes of arithmetic on a long history, and the Run is read at the start
+     * of it. A stated distance corrected in that window — or the Run deleted — is a change that
+     * scores itself and mends the book behind it, so a rewrite landing afterwards out of the effort
+     * measured *before* it would put the old number back, over a mend that had already been made.
+     * Nothing later would find it: only the top three are stored, so the effort the correction
+     * promoted exists nowhere else, and a Run marked scored is never revisited. That window was
+     * always here in principle, and the launch pass is what makes it wide — every historical Run
+     * queued behind one another after the v22 migration.
+     *
+     * So the Run is read again inside the transaction that writes the book, and the write is
+     * abandoned if the effort it measured is no longer the Run's own. Inside, because the database
+     * takes one writer at a time: either the correction has committed by then and this reads it, or
+     * it commits afterwards and its own mend has the last word.
+     *
+     * Cheaper than a lock, and the right shape: nothing is made to wait behind minutes of
+     * arithmetic. The cost of abandoning is that the Run keeps owing a scoring, which the next
+     * launch pays against a book nobody is moving.
+     */
+    private suspend fun scoreRecordsUnlessOvertaken(sessionId: Long): List<Achievement>? {
         val dao = achievementDao ?: return emptyList()
         val session = sessionDao.getSessionById(sessionId) ?: return emptyList()
         // The same accuracy-gated points the map, the splits and the GPX export are built from, so a
@@ -758,8 +783,13 @@ class SessionRepository(
         val efforts = bestEffortsOf(session, getTrackPointsForMap(sessionId))
         if (efforts.isEmpty()) return emptyList()
 
-        var earned = emptyList<Achievement>()
+        var earned: List<Achievement>? = null
         inTransaction {
+            val now = sessionDao.getSessionById(sessionId)
+            if (now == null || !now.contestsAs(session)) {
+                Log.d("Records", "Run $sessionId changed while it was being measured; leaving it unscored")
+                return@inTransaction
+            }
             val rewritten = standingsAfter(dao.getAllAchievements(), sessionId, efforts)
             dao.deleteAchievementsOfTypes(efforts.map { it.type })
             dao.insertAchievements(rewritten)
@@ -767,6 +797,20 @@ class SessionRepository(
         }
         return earned
     }
+
+    /**
+     * Whether two readings of the same Run would put the same efforts to the book: everything
+     * [bestEffortsOf] measures a Run by, and nothing else (#210).
+     *
+     * Deliberately not the whole row. A Run's feel, its note and its Effort Score can all be written
+     * while history is being measured — the Effort backfill runs at the same launch — and none of
+     * them can change a distance or a duration, so none of them is a reason to abandon a scoring.
+     */
+    private fun RunnerSession.contestsAs(other: RunnerSession): Boolean =
+        endTime == other.endTime &&
+            runMode == other.runMode &&
+            durationSeconds == other.durationSeconds &&
+            distanceKm == other.distanceKm
 
     /**
      * Scores a Run and, only once that has landed, writes down that it has been scored (#210).
@@ -782,11 +826,15 @@ class SessionRepository(
      * Returns what the Run holds afterwards, exactly as [scoreRecords] does, and throws where it
      * throws — an unmarked Run being precisely what the caller wants left behind.
      *
+     * A Run that changed while it was being measured is one of those ways of ending short: nothing
+     * was written to the book (see [scoreRecordsUnlessOvertaken]), so nothing is marked either, and
+     * the debt stands for the next launch to pay.
+     *
      * Not what everything that scores calls: a Stated Distance re-scores a Run that was already
      * measured, and has no debt of its own to settle.
      */
     suspend fun scoreAndMarkRecords(sessionId: Long): List<Achievement> {
-        val earned = scoreRecords(sessionId)
+        val earned = scoreRecordsUnlessOvertaken(sessionId) ?: return emptyList()
         sessionDao.setRecordsScored(sessionId)
         return earned
     }
