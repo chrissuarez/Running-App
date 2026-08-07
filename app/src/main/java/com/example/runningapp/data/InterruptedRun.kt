@@ -152,13 +152,13 @@ fun RunnerSession.finishedFromRecord(
  * pause: the Run's clock stops for a pause, so those seconds were never its to count.
  *
  * A pause and only a pause, which is where this parts company with [measureMovingTimeSeconds] — it
- * treats a long gap between fixes as a break too, and here that would be wrong twice over. A gap is not evidence of a stop: GPS loses the sky in a tunnel or a
- * stairwell, and [SessionRepository.getTrackPointsForMap] drops every fix too vague to trust, so a
- * patch of poor reception arrives here as a hole. Meanwhile a real pause needs no guessing at —
- * every one of them, held down or automatic, is written onto the fix that resumed the Run
+ * treats an Outage as a break too, and here that would be wrong twice over. A gap in the fixes is
+ * not evidence of a stop: GPS loses the sky in a tunnel or a stairwell, and
+ * [SessionRepository.getTrackPointsForMap] drops every fix too vague to trust, so a patch of poor
+ * reception arrives here as a hole. Meanwhile a real pause needs no guessing at — every one of them,
+ * held down or automatic, is written onto the fix that resumed the Run
  * ([TrackPoint.startsAfterPause]). Those two together are the difference between the questions:
- * distance across a gap is ground nothing witnessed the runner cover, but time across a gap is time
- * that passed with the Run still counting it.
+ * time across an Outage is time that passed with the Run still counting it.
  *
  * This is a floor rather than the Run's clock exactly — the seconds after the last fix are gone with
  * the process that would have written them. It exists so a Run whose samples stop early, or never

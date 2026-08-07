@@ -76,10 +76,10 @@ internal const val MINIMUM_ELEVATION_BAND_METERS = 20.0
  * the hill that caused it. A treadmill Run has no ground to draw against and keeps [RunChart].
  *
  * The three series share one x axis and one set of breaks, because they come from one walk of the
- * track. The axis is the Run's own distance, so a lost signal opens a gap in it as wide as the ground
- * the runner covered while it was down (#204), and a pause — no ground covered, the recording torn
- * down — leaves the stretches either side of it meeting at the same metre. Either way they are
- * separate traces: the height on the far side of a break is not a slope the runner ran up, and
+ * track. The axis is the Run's own distance, so an Outage opens a gap in it as wide as the ground
+ * the runner covered while the signal was down (#204), and a Pause — no ground covered, the recording
+ * torn down — leaves the stretches either side of it meeting at the same metre. Either way they are
+ * separate traces: the height on the far side of a Break is not a slope the runner ran up, and
  * drawing one line across would say they did.
  */
 data class DistanceChart(
@@ -107,21 +107,29 @@ data class DistanceChart(
     val hasElevation: Boolean get() = elevationBand != null
 
     /**
+     * Every point of the Run in one list, in order — worked out once because [readingAt] is asked on
+     * every frame of a drag and #48 is a measured jank fix, not a hypothetical one.
+     */
+    private val allPoints: List<DistancePoint> by lazy(LazyThreadSafetyMode.NONE) {
+        traces.flatMap { it.points }
+    }
+
+    /**
      * What the runner's finger is over: the point of the Run nearest that distance, or null past
      * either end of it.
      *
-     * The nearest across the whole Run rather than within one trace, because the ground a lost signal
+     * The nearest across the whole Run rather than within one trace, because the ground an Outage
      * spans takes up room on this axis (#204) and no trace covers it. A finger in there reads out the
      * fix either side of it that it is nearer to — the same rule, and the same answer, as the dot the
      * map puts on the route ([TrackMap.fixAt]), so the two never name different seconds of the Run.
-     * The line still stops at the break; it is the readout that goes on.
+     * The line still stops at the Break; it is the readout that goes on.
      */
     fun readingAt(distanceMeters: Double): DistancePoint? {
-        val first = traces.firstOrNull()?.points?.firstOrNull() ?: return null
-        val last = traces.last().points.last()
+        val first = allPoints.firstOrNull() ?: return null
+        val last = allPoints.last()
         if (distanceMeters < first.distanceMeters || distanceMeters > last.distanceMeters) return null
         // The first of the nearest, which is how the map breaks the same tie.
-        return traces.flatMap { it.points }.minByOrNull { abs(it.distanceMeters - distanceMeters) }
+        return allPoints.minByOrNull { abs(it.distanceMeters - distanceMeters) }
     }
 }
 
@@ -266,7 +274,7 @@ private fun MeasuredTrack.smoothedPaceAtEachFix(
         var meters = 0.0
         var movingMillis = 0.0
         for (j in from..to) {
-            // A break carries ground but no seconds the recording can vouch for (#204). Divided one
+            // An Outage carries ground but no seconds the recording can vouch for (#204). Divided one
             // by the other it is a sprint the runner never ran, so the line the runner reads the
             // shape of the Run off leaves it out entirely rather than folding half a tunnel into the
             // pace either side of it. The splits table is where that ground is accounted for.

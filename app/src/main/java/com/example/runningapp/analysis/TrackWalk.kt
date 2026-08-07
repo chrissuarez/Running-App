@@ -32,7 +32,7 @@ internal fun stretchOfEachFix(legs: List<TrackLeg>): IntArray {
  *
  * Every leg counts for what it carries ([com.example.runningapp.data.TrackLeg]), so the axis runs to
  * the Run's own distance and the fix the runner resumed on sits as far along as the ground says: it
- * stands still across a pause and steps forward by the straight line across a lost signal (#204).
+ * stands still across a Pause and steps forward by the straight line across an Outage (#204).
  * That is what lets the chart's x axis and the map's route be read against each other (#48) — both
  * are counting the same metres — and it is why the splits cut from these legs add up to the distance
  * printed above them.
