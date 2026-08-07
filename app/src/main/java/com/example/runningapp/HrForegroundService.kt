@@ -711,7 +711,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // because the Run is already saved and a book that cannot be written must not cost
                 // the runner the backup, the weather or the coach's evaluation below.
                 try {
-                    val earned = sessionRepository.scoreRecords(runRowId)
+                    // Marked as scored only once the book has been written, never beside the row
+                    // being stamped finished above: an ending in between leaves the Run owing a
+                    // scoring, which the launch pass pays, where a mark written early would lose the
+                    // Run its medals for good (#210).
+                    val earned = sessionRepository.scoreAndMarkRecords(runRowId)
                     if (earned.isNotEmpty()) {
                         Log.d(TAG, "Run $runRowId earned ${earned.size} achievement(s): " +
                             earned.joinToString { "${it.medal} ${it.type}" })

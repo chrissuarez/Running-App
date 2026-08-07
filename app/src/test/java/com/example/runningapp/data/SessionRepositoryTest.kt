@@ -2601,6 +2601,219 @@ class SessionRepositoryTest {
         verify(mockSettingsRepo, never()).clearHistoryRecordsSeeded()
     }
 
+    // --- Scoring the Runs whose scoring was missed (#210) ---------------------------------------
+
+    @Test
+    fun `the launch pass scores a finished Run the book never measured, and marks it`() = runTest {
+        val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory(seeded = true)
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(7L))
+        whenever(mockDao.getSessionById(7L)).thenReturn(aTreadmillRun(id = 7, seconds = 1_800))
+
+        repositoryWithRecords.scoreMissedRecords()
+
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(listOf(7L to Medal.GOLD), book.firstValue.map { it.sessionId to it.medal })
+        verify(mockDao).setRecordsScored(7L)
+    }
+
+    @Test
+    fun `a Run whose scoring cannot be written stays owed rather than being marked`() = runTest {
+        val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory(seeded = true)
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(7L))
+        whenever(mockDao.getSessionById(7L)).thenReturn(aTreadmillRun(id = 7, seconds = 1_800))
+        whenever(mockAchievementDao.insertAchievements(any())).thenThrow(RuntimeException("disk full"))
+
+        // Does not throw: the launch scope has no handler behind it.
+        repositoryWithRecords.scoreMissedRecords()
+
+        verify(mockDao, never()).setRecordsScored(any())
+    }
+
+    @Test
+    fun `one Run the pass cannot score costs the next one nothing`() = runTest {
+        val (repositoryWithRecords, _) = repositoryWithUnseededHistory(seeded = true)
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(7L, 8L))
+        whenever(mockDao.getSessionById(7L)).thenThrow(RuntimeException("unreadable row"))
+        whenever(mockDao.getSessionById(8L)).thenReturn(aTreadmillRun(id = 8, seconds = 600))
+
+        repositoryWithRecords.scoreMissedRecords()
+
+        verify(mockDao, never()).setRecordsScored(7L)
+        verify(mockDao).setRecordsScored(8L)
+    }
+
+    @Test
+    fun `nothing is scored one at a time while history is still owed a seeding`() = runTest {
+        val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory(seeded = false)
+
+        repositoryWithRecords.scoreMissedRecords()
+
+        // The seeding pass is about to measure all of it anyway, and its book is the better one:
+        // it can fill a hole below the stored top three, which scoring a Run at a time cannot.
+        verify(mockDao, never()).getSessionIdsMissingRecordScoring()
+        verify(mockAchievementDao, never()).insertAchievements(any())
+    }
+
+    @Test
+    fun `seeding settles the debt of every Run that was owing when it started`() = runTest {
+        whenever(mockDao.getAllSessions()).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 600),
+                aTreadmillRun(id = 2, seconds = 1_800),
+                session(id = 9, endTime = 0L),
+            )
+        )
+        // Run 9 is still being recorded, so it is not on the list: it will score itself when it
+        // finishes, and marking it here would let a scoring missed at that finish go unnoticed.
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(1L, 2L))
+        val (repositoryWithRecords, _) = repositoryWithUnseededHistory()
+
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        verify(mockDao).setRecordsScoredForSessions(listOf(1L, 2L))
+    }
+
+    @Test
+    fun `seeding a history longer than one query can carry marks all of it`() = runTest {
+        // Every id is a bound variable, and SQLite takes a bounded number of them.
+        val history = (1L..1_200L).map { aTreadmillRun(id = it, seconds = it) }
+        whenever(mockDao.getAllSessions()).thenReturn(history)
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(history.map { it.id })
+        val (repositoryWithRecords, _) = repositoryWithUnseededHistory()
+
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        val marked = argumentCaptor<List<Long>>()
+        verify(mockDao, times(3)).setRecordsScoredForSessions(marked.capture())
+        assertEquals((1L..1_200L).toList(), marked.allValues.flatten())
+        assertTrue(marked.allValues.all { it.size <= 999 })
+    }
+
+    @Test
+    fun `seeding reads what is owing before it measures, so a Run finishing mid-pass stays owed`() =
+        runTest {
+            val (repositoryWithRecords, _) = repositoryWithUnseededHistory()
+            // Run 8 finishes while history is being measured. It is measured by the rebuild, but it
+            // scores itself too — and if that scoring is missed, only its own debt can find it.
+            whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(1L))
+            whenever(mockDao.getAllSessions()).then {
+                runBlocking {
+                    whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(1L, 8L))
+                }
+                listOf(aTreadmillRun(id = 1, seconds = 600), aTreadmillRun(id = 8, seconds = 900))
+            }
+
+            repositoryWithRecords.seedRecordsFromHistory()
+
+            verify(mockDao).setRecordsScoredForSessions(listOf(1L))
+        }
+
+    @Test
+    fun `a seeding pass that declines the seeded mark marks no Run either`() = runTest {
+        whenever(mockDao.getAllSessions()).thenReturn(listOf(aTreadmillRun(id = 1, seconds = 600)))
+        val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory()
+        whenever(mockAchievementDao.insertAchievements(any())).thenThrow(RuntimeException("disk full"))
+
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        // The pass is owed again, and so is every Run in it: a mark here would be a debt cancelled
+        // by a book that was never written.
+        verify(mockSettingsRepo, never()).setHistoryRecordsSeeded()
+        verify(mockDao, never()).setRecordsScoredForSessions(any())
+    }
+
+    @Test
+    fun `scoring Runs one at a time reaches the same book as a rebuild over the same history`() =
+        runTest {
+            val history = listOf(
+                aTreadmillRun(id = 1, seconds = 600),
+                aTreadmillRun(id = 2, seconds = 3_600),
+                aTreadmillRun(id = 3, seconds = 1_200),
+                aTreadmillRun(id = 4, seconds = 2_400),
+                aTreadmillRun(id = 5, seconds = 900),
+            )
+            whenever(mockDao.getAllSessions()).thenReturn(history)
+            history.forEach { whenever(mockDao.getSessionById(it.id)).thenReturn(it) }
+            whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(history.map { it.id })
+
+            val oneAtATime = BookInMemory()
+            whenever(mockSettingsRepo.userSettingsFlow)
+                .thenReturn(flowOf(UserSettings(historyRecordsSeeded = true)))
+            SessionRepository(
+                sessionDao = mockDao,
+                achievementDao = oneAtATime,
+                settingsRepository = mockSettingsRepo
+            ).scoreMissedRecords()
+
+            val allAtOnce = BookInMemory()
+            whenever(mockSettingsRepo.userSettingsFlow)
+                .thenReturn(flowOf(UserSettings(historyRecordsSeeded = false)))
+            SessionRepository(
+                sessionDao = mockDao,
+                achievementDao = allAtOnce,
+                settingsRepository = mockSettingsRepo
+            ).seedRecordsFromHistory()
+
+            assertEquals(allAtOnce.standings(), oneAtATime.standings())
+            assertEquals(
+                listOf(2L to Medal.GOLD, 4L to Medal.SILVER, 3L to Medal.BRONZE),
+                oneAtATime.standings().map { it.first to it.second },
+            )
+        }
+
+    @Test
+    fun `running the launch pass twice leaves the same book, with no Run racing itself`() = runTest {
+        // The mark is written after the scoring, so a process that dies in between costs a Run one
+        // redundant re-score. This is what that re-score has to be worth: nothing at all.
+        val run = aTreadmillRun(id = 7, seconds = 1_800)
+        whenever(mockDao.getSessionById(7L)).thenReturn(run)
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(7L))
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(historyRecordsSeeded = true)))
+        val book = BookInMemory()
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = book,
+            settingsRepository = mockSettingsRepo
+        )
+
+        repositoryWithRecords.scoreMissedRecords()
+        val afterOnce = book.standings()
+        repositoryWithRecords.scoreMissedRecords()
+
+        assertEquals(listOf(Triple(7L, Medal.GOLD, RecordType.LONGEST_DURATION)), afterOnce)
+        assertEquals(afterOnce, book.standings())
+    }
+
+    /** The record book as rows in memory, for the two passes that have to arrive at the same one. */
+    private class BookInMemory : AchievementDao {
+        private val rows = mutableListOf<Achievement>()
+
+        override suspend fun insertAchievements(achievements: List<Achievement>) {
+            rows += achievements
+        }
+
+        override suspend fun getAllAchievements(): List<Achievement> = rows.toList()
+
+        override fun getAchievementsForSessionFlow(sessionId: Long) =
+            flowOf(rows.filter { it.sessionId == sessionId })
+
+        override fun getMedalCountsFlow() = flowOf(emptyList<SessionMedalCount>())
+
+        override suspend fun getAchievementsForSessions(sessionIds: List<Long>) =
+            rows.filter { it.sessionId in sessionIds }
+
+        override suspend fun deleteAchievementsOfTypes(types: List<RecordType>) {
+            rows.removeAll { it.type in types }
+        }
+
+        /** The book with its row ids dropped, ordered, so two of them can be compared. */
+        fun standings(): List<Triple<Long, Medal, RecordType>> =
+            rows.map { Triple(it.sessionId, it.medal, it.type) }
+                .sortedWith(compareBy({ it.third }, { it.second }))
+    }
+
     /** A repository whose history has never been scored, and the book it writes to. */
     private suspend fun repositoryWithUnseededHistory(
         seeded: Boolean = false,

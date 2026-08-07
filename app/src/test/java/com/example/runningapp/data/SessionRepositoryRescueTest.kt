@@ -32,6 +32,9 @@ class SessionRepositoryRescueTest {
     private val sessionDao: SessionDao = mock()
     private val sampleDao: SampleDao = mock()
     private val trackPointDao: TrackPointDao = mock()
+    // Wired, because scoring is a no-op without a book to write to — and this pass has to be shown
+    // both marking a Run it scored and leaving one it could not (#210).
+    private val achievementDao: AchievementDao = mock()
     private val settingsRepository: SettingsRepository = mock {
         on { userSettingsFlow }.thenReturn(flowOf(UserSettings(maxHr = 185)))
     }
@@ -42,6 +45,7 @@ class SessionRepositoryRescueTest {
         sessionDao = sessionDao,
         sampleDao = sampleDao,
         trackPointDao = trackPointDao,
+        achievementDao = achievementDao,
         settingsRepository = settingsRepository,
         refreshHistoryBackup = { backupsRefreshed++ },
     )
@@ -133,6 +137,36 @@ class SessionRepositoryRescueTest {
 
         verify(sessionDao).updateSession(any())
         assertEquals(1, backupsRefreshed)
+    }
+
+    @Test
+    fun `a rescued run is marked as measured against the record book`() = runTest {
+        whenever(sessionDao.getInterruptedSessionIds(processStartedAt)).thenReturn(listOf(67L))
+        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 60))
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+
+        repository.rescueInterruptedRuns(processStartedAt)
+
+        verify(sessionDao).setRecordsScored(67L)
+    }
+
+    @Test
+    fun `a rescued run whose scoring fails is left owing one for the launch pass`() = runTest {
+        // The same corrupt page that costs the Run its moving time above costs it its scoring, and
+        // the row is finished by then — so nothing would ever offer it to the book again if the
+        // rescue marked it anyway (#210).
+        whenever(sessionDao.getInterruptedSessionIds(processStartedAt)).thenReturn(listOf(67L))
+        whenever(sessionDao.getSessionById(67L))
+            .thenReturn(interruptedRun(67L))
+            .thenThrow(IllegalStateException("corrupt page"))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 60))
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+
+        repository.rescueInterruptedRuns(processStartedAt)
+
+        verify(sessionDao).updateSession(any())
+        verify(sessionDao, never()).setRecordsScored(any())
     }
 
     @Test

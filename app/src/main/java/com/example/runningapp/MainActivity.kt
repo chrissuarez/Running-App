@@ -222,6 +222,11 @@ class MainActivity : ComponentActivity() {
         // the background, and off this Activity's lifetime - see the container.
         runningAppContainer().seedRecordsFromHistoryOnce()
 
+        // A Run whose scoring against the record book was missed — the process killed on the way to
+        // the book, or the write logged and lost — holds no medals and nothing else will ever give
+        // it any. This is the launch that goes back for it (#210).
+        runningAppContainer().scoreMissedRecordsOnce()
+
         // Every Run recorded before the Effort Score shipped has the beats to work one out and no
         // Score stored, so history would read as unscored until each Run was run again (#62). This
         // is the launch that scores it, from the samples those Runs already kept.

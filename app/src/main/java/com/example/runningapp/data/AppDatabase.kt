@@ -64,7 +64,27 @@ data class RunnerSession(
      * Deliberately unrelated to [perceivedEffort]: that is how the Run *felt*, and it must never
      * feed this or anything derived from it.
      */
-    val effortScore: Int? = null
+    val effortScore: Int? = null,
+    /**
+     * Whether this Run has been measured against the record book (#210).
+     *
+     * False is a debt, not a verdict: it says nobody has scored this Run yet, never that the Run
+     * won nothing. A Run scores itself the moment it finishes, but that scoring can be missed —
+     * the process killed between the row being stamped finished and the book being written, or
+     * the write itself throwing and being logged — and nothing revisits a finished Run afterwards.
+     * The launch pass ([SessionRepository.scoreMissedRecords]) finds every finished Run still
+     * carrying a false here and scores it.
+     *
+     * Written only once scoring has *returned*, never in the same breath as the row being stamped
+     * finished. That way any ending in between leaves the Run owing a scoring, which costs one
+     * redundant re-score at the next launch — and re-scoring is safe, because a Run's own standing
+     * rows are dropped before it is ranked again.
+     *
+     * Not a replacement for the whole-history seeded mark, which answers a different question: this
+     * says "this Run was measured", that covers a hole *below* the stored top three, which only a
+     * full rebuild can fill.
+     */
+    val recordsScored: Boolean = false
 )
 
 /**
@@ -366,6 +386,31 @@ interface SessionDao {
     suspend fun setMovingTime(sessionId: Long, movingTimeSeconds: Long, avgPaceMinPerKm: Double)
 
     /**
+     * Finished Runs nobody has measured against the record book yet (#210).
+     *
+     * `endTime > 0` for the same reason every other query here reads it that way: a Run still being
+     * recorded has nothing to score, and will score itself when it finishes. Oldest first, so a
+     * history being paid off in one pass is scored in the order it was run.
+     */
+    @Query("SELECT id FROM sessions WHERE recordsScored = 0 AND endTime > 0 ORDER BY startTime ASC")
+    suspend fun getSessionIdsMissingRecordScoring(): List<Long>
+
+    /** Marks one Run as measured against the book — written only after its scoring has landed. */
+    @Query("UPDATE sessions SET recordsScored = 1 WHERE id = :sessionId")
+    suspend fun setRecordsScored(sessionId: Long)
+
+    /**
+     * Marks the Runs a whole-history rebuild measured (#210, #50).
+     *
+     * The seeding pass measures every stored Run at once, so the debt every one of them carried is
+     * paid by the same book — but only the Runs it actually read. A Run that finished after it read
+     * history is not on this list: it scores itself, and if that scoring was missed the debt is
+     * still its own to owe.
+     */
+    @Query("UPDATE sessions SET recordsScored = 1 WHERE id IN (:sessionIds)")
+    suspend fun setRecordsScoredForSessions(sessionIds: List<Long>)
+
+    /**
      * Writes a Stated Distance and the pace that follows from it (#231).
      *
      * The two together, because pace is quoted from the stored column in the archive and the export:
@@ -636,7 +681,7 @@ interface RunWalkIntervalStatDao {
         TrackPoint::class,
         Achievement::class
     ],
-    version = 21,
+    version = 22,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -683,7 +728,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_17_18,
                     MIGRATION_18_19,
                     MIGRATION_19_20,
-                    MIGRATION_20_21
+                    MIGRATION_20_21,
+                    MIGRATION_21_22
                 )
                 .build()
                 INSTANCE = instance
@@ -1296,6 +1342,28 @@ val MIGRATION_20_21 = object : Migration(20, 21) {
     override fun migrate(database: SupportSQLiteDatabase) {
         if (!database.hasColumn("sessions", "effortScore")) {
             database.execSQL("ALTER TABLE sessions ADD COLUMN effortScore INTEGER")
+        }
+    }
+}
+
+/**
+ * The per-Run record of having been measured against the record book (#210).
+ *
+ * Every existing Run arrives unscored, and that is the repair rather than a side effect: a Run
+ * whose scoring was missed before this shipped — the process killed on the way to the book, or the
+ * write logged and lost — is invisible to everything that came before, because the rescue pass only
+ * looks at Runs with no end time and the seeding pass declines once history is marked seeded. Left
+ * unscored here, the first launch after the upgrade measures every Run once and the missing medals
+ * appear. On a long history that is minutes of background arithmetic, once.
+ *
+ * Scoring them here is not an option: measuring a Run's best efforts means walking its stored track
+ * point by point, which is Kotlin's arithmetic and not SQL's — the same division of labour
+ * [MIGRATION_18_19] and [MIGRATION_20_21] make.
+ */
+val MIGRATION_21_22 = object : Migration(21, 22) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        if (!database.hasColumn("sessions", "recordsScored")) {
+            database.execSQL("ALTER TABLE sessions ADD COLUMN recordsScored INTEGER NOT NULL DEFAULT 0")
         }
     }
 }

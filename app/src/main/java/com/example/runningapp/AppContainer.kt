@@ -214,6 +214,25 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Scores any Run the record book never measured, once per process (#210).
+     *
+     * Started after the rescue pass and the seeding pass, though nothing makes them run in that
+     * order: all three are launched on the same scope and none waits for the others. Nothing needs
+     * the order. A Run this pass ran past while it was still interrupted is finished by the rescue
+     * and is on the next launch's list; and while history is still owed its seeding this pass
+     * declines outright, because that pass measures every Run at once and marks them itself.
+     *
+     * On the container's own scope, for the same reason the moving-time backfill is — see above. It
+     * matters here as it does for the Effort backfill: a Run scored is a Run marked, so a pass
+     * cancelled because the runner backed out of an Activity keeps everything it paid for, but
+     * would not be resumed for the life of the process.
+     */
+    fun scoreMissedRecordsOnce() {
+        if (!missedRecordsScored.compareAndSet(false, true)) return
+        applicationScope.launch { sessionRepository.scoreMissedRecords() }
+    }
+
+    /**
      * Scores the history recorded before the Effort Score shipped, once per process (#62).
      *
      * Started after the rescue pass, though nothing makes them run in that order: both are launched
@@ -250,6 +269,7 @@ class AppContainer(context: Context) {
     private val interruptedRunsRescued = AtomicBoolean(false)
     private val recordsSeeded = AtomicBoolean(false)
     private val effortScored = AtomicBoolean(false)
+    private val missedRecordsScored = AtomicBoolean(false)
 
     /**
      * When this process began, as far as anything here is concerned — the container is built once,
