@@ -57,6 +57,18 @@ import kotlin.math.roundToInt
 
 // Labels describing a run to the AI coach (#107). Structure comes only from a plan, so the one
 // distinction the coach needs is whether the run followed a run/walk workout; these are derived
+/**
+ * How many Run ids one `IN (:sessionIds)` query is given at a time (#210).
+ *
+ * Each id is a bound variable, and SQLite takes a bounded number of them — 999 on the versions this
+ * app can be installed on. Comfortably under it rather than at it, because the limit is the
+ * statement's, not the list's, and nothing here is worth a full history's worth of arithmetic to
+ * cut fine.
+ */
+private const val MAX_SESSION_IDS_PER_QUERY = 500
+
+// Labels describing a run to the AI coach (#107). Structure comes only from a plan, so the one
+// distinction the coach needs is whether the run followed a run/walk workout; these are derived
 // from RunnerSession.isRunWalkMode, not from any user-selected mode.
 private const val AI_LABEL_RUN_WALK = "Run/Walk"
 private const val AI_LABEL_OPEN_RUN = "Open Run"
@@ -657,7 +669,9 @@ class SessionRepository(
                 // A rescued Run has just finished, however long ago it was run, so it is scored like
                 // any other (#49). Its own attempt for the same reason as the moving time above: the
                 // row is already in history, and a book that cannot be written must not undo that.
-                scoreRecords(sessionId)
+                // Marked as scored by the same call, and only once the scoring has returned, so a
+                // failure here leaves the Run owing one for the launch pass to pay (#210).
+                scoreAndMarkRecords(sessionId)
             } catch (e: Exception) {
                 Log.w("InterruptedRun", "Rescued run $sessionId but could not score its records", e)
             }
@@ -755,6 +769,67 @@ class SessionRepository(
     }
 
     /**
+     * Scores a Run and, only once that has landed, writes down that it has been scored (#210).
+     *
+     * The order is the whole of it, which is why the two are one function rather than a rule three
+     * callers are asked to remember. [scoreRecords] is the work; the mark is the receipt, and it is
+     * written after — never inside the scoring, and never in the same breath as the row being
+     * stamped finished. Every way the work can end short of finishing therefore leaves the Run
+     * owing a scoring: the process reclaimed, the write thrown. That debt costs one redundant
+     * re-score at the next launch, which is safe, where a receipt written early would cost the Run
+     * its medals for good.
+     *
+     * Returns what the Run holds afterwards, exactly as [scoreRecords] does, and throws where it
+     * throws — an unmarked Run being precisely what the caller wants left behind.
+     *
+     * Not what everything that scores calls: a Stated Distance re-scores a Run that was already
+     * measured, and has no debt of its own to settle.
+     */
+    suspend fun scoreAndMarkRecords(sessionId: Long): List<Achievement> {
+        val earned = scoreRecords(sessionId)
+        sessionDao.setRecordsScored(sessionId)
+        return earned
+    }
+
+    /**
+     * Scores every finished Run the book never measured, at launch (#210).
+     *
+     * A Run is scored the moment it finishes, and that is the only moment anything offers it to the
+     * book — so a scoring that is missed is missed for good. The process can be killed between the
+     * row being stamped finished and the book being written; the write itself can throw and be
+     * logged. Nothing revisits it afterwards: the interrupted-run rescue only looks at Runs with no
+     * end time, a later Run's scoring ranks only itself, and the seeding pass declines once history
+     * carries its mark. This is the pass that goes back for them.
+     *
+     * **Silent while history is still owed its seeding.** That pass is about to measure all of
+     * history at once and its book is the better one — only a rebuild can fill a hole *below* the
+     * stored top three — so scoring Runs one at a time in front of it would be work done twice for
+     * a worse answer. It marks the Runs it measured itself, which leaves this with nothing to do.
+     *
+     * One Run at a time, each marked as its scoring lands, so a pass cut short keeps what it paid
+     * for and the next launch picks up the rest. A Run that cannot be scored costs the others
+     * nothing and stays owed. Failures are logged and never thrown: a book that cannot be written
+     * is not a reason to take the app down on the way to the first screen.
+     */
+    suspend fun scoreMissedRecords() {
+        if (achievementDao == null) return
+        val settings = settingsRepository ?: return
+        if (!settings.userSettingsFlow.first().historyRecordsSeeded) return
+        val sessionIds = sessionDao.getSessionIdsMissingRecordScoring()
+        if (sessionIds.isEmpty()) return
+        var scored = 0
+        sessionIds.forEach { sessionId ->
+            try {
+                scoreAndMarkRecords(sessionId)
+                scored++
+            } catch (e: Exception) {
+                Log.w("Records", "Could not score run $sessionId; leaving it for next launch", e)
+            }
+        }
+        Log.d("Records", "Scored $scored of ${sessionIds.size} run(s) the book had missed")
+    }
+
+    /**
      * Puts every Run already in history to the record book, once (#50).
      *
      * #49 scores a Run as it finishes, which leaves the history recorded before it shipped — years
@@ -789,6 +864,11 @@ class SessionRepository(
             deletesBefore = deletesStarted.get()
             deleteRunningBefore = deletesActive.get() != 0
         }
+        // Which Runs this pass is about to settle the debt of (#210), read before it measures
+        // anything: everything on this list is finished now, so the rebuild below is certain to
+        // measure it. A Run that finishes while the measuring is going on is deliberately not here
+        // — it scores itself, and if that scoring is missed the debt is still its own to owe.
+        val runsOwedScoring = sessionDao.getSessionIdsMissingRecordScoring()
         try {
             val book = rebuildRecords(RecordType.entries)
             // Only now: until this lands, the pass is still owed. And not at all if a delete ran at
@@ -809,6 +889,15 @@ class SessionRepository(
                     return
                 }
                 settings.setHistoryRecordsSeeded()
+                // In the same breath as the whole-history mark, and on the same terms: this book
+                // measured every one of them, so none of them is owed a scoring of its own (#210).
+                // Nothing is marked on the path above, where the pass declines the mark — that book
+                // may have a hole in it, and a Run marked scored against it would never be revisited.
+                // In batches, because every id is a bound variable and SQLite takes a bounded
+                // number of them: a history long enough to be worth seeding is a history long
+                // enough to exceed it.
+                runsOwedScoring.chunked(MAX_SESSION_IDS_PER_QUERY)
+                    .forEach { sessionDao.setRecordsScoredForSessions(it) }
             }
             Log.d("Records", "Seeded the record book from history: ${book.size} medal(s) awarded")
         } catch (e: Exception) {
