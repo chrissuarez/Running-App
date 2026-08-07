@@ -76,16 +76,16 @@ internal const val MINIMUM_ELEVATION_BAND_METERS = 20.0
  * the hill that caused it. A treadmill Run has no ground to draw against and keeps [RunChart].
  *
  * The three series share one x axis and one set of breaks, because they come from one walk of the
- * track. A break carries no distance — neither a pause nor a lost signal witnessed the ground the
- * runner covered, so nothing measured off the track can claim it — which means the stretches either
- * side of a break *meet* on this axis rather than leaving a gap in it. They are still separate
- * traces: the height on the far side of a break is not a slope the runner ran up, and drawing one
- * line across would say they did.
+ * track. The axis is the Run's own distance, so a lost signal opens a gap in it as wide as the ground
+ * the runner covered while it was down (#204), and a pause — no ground covered, the recording torn
+ * down — leaves the stretches either side of it meeting at the same metre. Either way they are
+ * separate traces: the height on the far side of a break is not a slope the runner ran up, and
+ * drawing one line across would say they did.
  */
 data class DistanceChart(
     /** The stretches of the Run that were recorded without a break, each drawable as one line. */
     val traces: List<DistanceTrace>,
-    /** The ground the recording witnessed, which is the distance the rest of the page quotes. */
+    /** The ground the Run covered, which is the distance the rest of the page quotes. */
     val distanceMetersSpan: Double,
     val bpmFloor: Int,
     val bpmCeiling: Int,
@@ -95,13 +95,6 @@ data class DistanceChart(
     /** The band the silhouette is drawn in, or null when the Run recorded no height to draw. */
     val elevationBand: ElevationBand?,
 ) {
-    /**
-     * What the runner's finger is over: the point of the Run nearest that distance, or null past
-     * either end of it.
-     *
-     * Unlike the heart-rate chart there is no hole to fall into. A break occupies no distance, so
-     * every point of the axis between zero and the Run's own total belongs to some stretch of it.
-     */
     /**
      * Which of the three lines this Run actually recorded — what the page is allowed to name.
      *
@@ -113,15 +106,22 @@ data class DistanceChart(
     val hasHeartRate: Boolean get() = traces.any { trace -> trace.points.any { it.bpm != null } }
     val hasElevation: Boolean get() = elevationBand != null
 
+    /**
+     * What the runner's finger is over: the point of the Run nearest that distance, or null past
+     * either end of it.
+     *
+     * The nearest across the whole Run rather than within one trace, because the ground a lost signal
+     * spans takes up room on this axis (#204) and no trace covers it. A finger in there reads out the
+     * fix either side of it that it is nearer to — the same rule, and the same answer, as the dot the
+     * map puts on the route ([TrackMap.fixAt]), so the two never name different seconds of the Run.
+     * The line still stops at the break; it is the readout that goes on.
+     */
     fun readingAt(distanceMeters: Double): DistancePoint? {
         val first = traces.firstOrNull()?.points?.firstOrNull() ?: return null
         val last = traces.last().points.last()
         if (distanceMeters < first.distanceMeters || distanceMeters > last.distanceMeters) return null
-        val inside = traces.firstOrNull {
-            distanceMeters >= it.points.first().distanceMeters &&
-                distanceMeters <= it.points.last().distanceMeters
-        } ?: return null
-        return inside.points.minByOrNull { abs(it.distanceMeters - distanceMeters) }
+        // The first of the nearest, which is how the map breaks the same tie.
+        return traces.flatMap { it.points }.minByOrNull { abs(it.distanceMeters - distanceMeters) }
     }
 }
 
@@ -242,9 +242,9 @@ private fun MeasuredTrack.smoothedPaceAtEachFix(
 ): List<Double?> {
     val half = PACE_SMOOTHING_METERS / 2
     // A leg belongs to the stretch its first fix is in. That is exact for a recorded leg, whose two
-    // fixes share a stretch, and harmless for a break: a break leg carries neither ground nor
-    // seconds, so a window that reaches it folds in nothing, and the legs past it are in a stretch
-    // of their own and stop the window there.
+    // fixes share a stretch, and it puts a break leg at the end of the stretch running into it —
+    // where it is skipped outright below, and where the legs past it are in a stretch of their own
+    // and stop the window anyway.
     var from = 0
     var to = -1
     return points.indices.map { i ->
@@ -266,6 +266,11 @@ private fun MeasuredTrack.smoothedPaceAtEachFix(
         var meters = 0.0
         var movingMillis = 0.0
         for (j in from..to) {
+            // A break carries ground but no seconds the recording can vouch for (#204). Divided one
+            // by the other it is a sprint the runner never ran, so the line the runner reads the
+            // shape of the Run off leaves it out entirely rather than folding half a tunnel into the
+            // pace either side of it. The splits table is where that ground is accounted for.
+            if (!legs[j].recorded) continue
             val share = legs[j].shareInside(distanceAtFix[j], distanceAtFix[j + 1], lowest, highest)
             meters += legs[j].meters * share
             movingMillis += legs[j].movingMillis * share

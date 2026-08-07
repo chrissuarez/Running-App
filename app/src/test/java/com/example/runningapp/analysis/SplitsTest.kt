@@ -3,6 +3,7 @@ package com.example.runningapp.analysis
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
+import com.example.runningapp.data.measureTrackDistanceKm
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -135,9 +136,10 @@ class SplitsTest {
     }
 
     @Test
-    fun `a gap in the recording is not read as a sprint`() {
-        // Two minutes of lost signal covering 600 m. Counting that ground against the seconds moving
-        // time already refuses would put an impossible split on the page.
+    fun `a gap in the recording carries its ground into the splits`() {
+        // Two minutes of lost signal covering 600 m, between two 500 m stretches of running. The
+        // runner covered all 1600 m and the Run's own distance says so, so the table has to as well
+        // — a table that stopped at 1000 m would not add up to the number printed above it (#204).
         val splits = splitsOfRun(
             aRun(),
             noSamples,
@@ -148,8 +150,30 @@ class SplitsTest {
             }
         )
 
-        assertEquals(1, splits.size)
-        assertEquals(1000.0 / 2.0 / 60.0, splits.single().paceMinPerKm, 0.05)
+        assertEquals(2, splits.size)
+        assertEquals(1600.0, splits.sumOf { it.distanceMeters }, 2.0)
+        assertEquals(600.0, splits.last().distanceMeters, 2.0)
+        assertTrue(splits.last().isPartial)
+    }
+
+    @Test
+    fun `the splits add up to the distance the Run is measured at`() {
+        // The ticket in one assertion (#204): whatever the table shows, it totals the same ground
+        // the Run's own distance is measured over — on a Run holding both kinds of break.
+        val track = script {
+            running(2.0, seconds = 250)
+            gap(meters = 600.0, seconds = 120)
+            running(2.0, seconds = 250)
+            pauseAndMoveOn(meters = 400.0, seconds = 300)
+            running(2.0, seconds = 250)
+        }
+        val splits = splitsOfRun(aRun(), noSamples, track)
+
+        assertEquals(
+            measureTrackDistanceKm(track) * 1_000,
+            splits.sumOf { it.distanceMeters },
+            1.0,
+        )
     }
 
     @Test

@@ -17,9 +17,9 @@ const val FIVE_K_METERS = 5_000.0
  * not available anyway.
  *
  * Returns null when the track never covers [targetMeters] in one continuous stretch of recording —
- * a treadmill Run with no track at all, a Run that stopped short, or a Run whose recording broke.
- * Null means "not established here", never "failed": the coach is told the difference, because
- * a Stage must not be graduated on an absence.
+ * a treadmill Run with no track at all, or a Run that stopped short. Null means "not established
+ * here", never "failed": the coach is told the difference, because a Stage must not be graduated on
+ * an absence.
  *
  * Rules of the window, both deliberately conservative — an effort this cannot see reads as no
  * effort, which loses the runner a graduation, while an effort it flatters would hand them one they
@@ -29,9 +29,12 @@ const val FIVE_K_METERS = 5_000.0
  *   clock stops at a pause, so charging its seconds here would measure something the app does not
  *   measure anywhere else; and GPS is torn down across it, so the ground covered is unrecorded and
  *   cannot be credited either. A runner who paused at a crossing keeps their 5K.
- * - **A gap in the recording with no pause behind it ends the effort.** Nothing says the runner
- *   stopped, so those seconds were run seconds; passing them through free would read a GPS dropout
- *   as a sprint, and that is the direction that graduates a Stage nobody earned.
+ * - **A gap in the recording with no pause behind it is run through, at the straight line between
+ *   the fixes either side of it and every second it took** (#204). Nothing says the runner stopped,
+ *   so those seconds were run seconds and are all charged; and the straight line is never longer
+ *   than the route they took, so the ground is never over-stated. Both halves of that lean the same
+ *   way — a window spanning a tunnel reads slower than the runner really was, never faster — which
+ *   is what lets an effort span one at all rather than being thrown away with it.
  *
  * Pass the same accuracy-filtered points the map, the distance total and moving time are built from
  * ([SessionRepository.getTrackPointsForMap]). A rejected wild fix left in would read as a sprint.
@@ -41,12 +44,10 @@ fun measureFastestEffortSeconds(points: List<TrackPoint>, targetMeters: Double):
 
     val ordered = points.sortedBy { it.timestampMillis }
 
-    // Distance and time along the track, both frozen across a pause and both reset by a break, so
-    // that a window is only ever measured over ground and seconds that were actually recorded.
+    // Distance and time along the track, both frozen across a pause — the one stretch of a Run the
+    // clock and the ground both stand still for.
     val cumulativeMeters = DoubleArray(ordered.size)
     val cumulativeMillis = LongArray(ordered.size)
-    // Where the current unbroken stretch of recording starts. A window may not reach back past it.
-    var stretchStart = 0
     var bestSeconds = Long.MAX_VALUE
     // The oldest point the window still reaches back to.
     var windowStart = 0
@@ -64,16 +65,7 @@ fun measureFastestEffortSeconds(points: List<TrackPoint>, targetMeters: Double):
         // Two fixes stamped the same second carry the leg no time to be run in, so it carries no
         // ground either — counted, it would be distance for free.
         val pausedHere = current.startsAfterPause || legMillis <= 0
-        val brokeHere = !pausedHere && legMillis > TRACK_BREAK_MS
 
-        if (brokeHere) {
-            // Start again on the far side: nothing before the break can join anything after it.
-            stretchStart = i
-            windowStart = i
-            cumulativeMeters[i] = 0.0
-            cumulativeMillis[i] = 0L
-            continue
-        }
         if (pausedHere) {
             cumulativeMeters[i] = cumulativeMeters[i - 1]
             cumulativeMillis[i] = cumulativeMillis[i - 1]
@@ -84,7 +76,6 @@ fun measureFastestEffortSeconds(points: List<TrackPoint>, targetMeters: Double):
 
         // Pull the window's start forward while the distance behind it is still enough, so what is
         // measured is the tightest window ending here rather than the whole stretch.
-        if (windowStart < stretchStart) windowStart = stretchStart
         while (
             windowStart + 1 <= i &&
             cumulativeMeters[i] - cumulativeMeters[windowStart + 1] >= targetMeters

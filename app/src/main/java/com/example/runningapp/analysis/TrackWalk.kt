@@ -16,9 +16,10 @@ import kotlin.math.roundToInt
 /**
  * Which unbroken stretch of the recording each fix belongs to — the number goes up at every break.
  *
- * A leg that recorded nothing carries no ground and no seconds
- * ([com.example.runningapp.data.TrackLeg]), so a fix that resumes the recording has nothing before
- * it to have been measured over. Everything reading the shape of a Run cuts here.
+ * A leg the recording does not cover says nothing about where the runner went or how long they took
+ * ([com.example.runningapp.data.TrackLeg]), whatever ground it may carry, so a fix that resumes the
+ * recording has nothing before it that may be drawn or joined to. Everything reading the shape of a
+ * Run cuts here.
  */
 internal fun stretchOfEachFix(legs: List<TrackLeg>): IntArray {
     val stretchOfFix = IntArray(legs.size + 1)
@@ -27,12 +28,14 @@ internal fun stretchOfEachFix(legs: List<TrackLeg>): IntArray {
 }
 
 /**
- * How far along the Run each fix sits, in metres of recorded ground.
+ * How far along the Run each fix sits, in metres of the ground it covered.
  *
- * A leg that recorded nothing carries no ground ([com.example.runningapp.data.TrackLeg]), so the
- * axis does not advance across a break: the fix the runner paused on and the fix they resumed on
- * are at the same distance. That is what lets the chart's x axis and the map's route be read against
- * each other (#48) — both are counting the same metres.
+ * Every leg counts for what it carries ([com.example.runningapp.data.TrackLeg]), so the axis runs to
+ * the Run's own distance and the fix the runner resumed on sits as far along as the ground says: it
+ * stands still across a pause and steps forward by the straight line across a lost signal (#204).
+ * That is what lets the chart's x axis and the map's route be read against each other (#48) — both
+ * are counting the same metres — and it is why the splits cut from these legs add up to the distance
+ * printed above them.
  */
 internal fun distanceAtEachFix(legs: List<TrackLeg>): DoubleArray {
     val distanceAtFix = DoubleArray(legs.size + 1)

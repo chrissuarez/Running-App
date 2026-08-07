@@ -69,10 +69,14 @@ data class Split(
  * - **Pace is over moving time**, the same clock the run's own average pace is quoted against
  *   (#163). Quoting splits against the wall clock instead would have every row disagree with the
  *   summary at the top of the same page.
- * - **A split's ground is only ground the recording witnessed.** A leg spanning a pause or a gap in
- *   the recording carries neither distance nor time here ([com.example.runningapp.data.TrackLeg]).
- *   Counting its distance and not its seconds — the seconds are already rest — would read a
- *   two-minute loss of signal as an 800-metre sprint, and put a fictitious best split on the page.
+ * - **A split's ground is all the ground the run covered**, which is the whole point of the table
+ *   adding up to the distance printed above it (#204). A leg spanning a lost signal carries the
+ *   straight line the runner covered across it and none of its seconds
+ *   ([com.example.runningapp.data.TrackLeg]) — those are already rest — so the split that holds one
+ *   reads faster than the runner ran. That is the honest shape of the disagreement rather than a
+ *   flattering one: it is the run's own moving time that has yet to account for a break (#165), and
+ *   hiding the ground to hide it would leave the table not totalling the run.
+ *   A pause carries nothing either way, so a split holding one is unaffected.
  * - **A kilometre boundary is allowed to fall inside a leg**, and the leg is divided at it in
  *   proportion. Fixes arrive a second or so apart, so this rarely moves a pace by more than a
  *   moment — but a run backfilled from sparse breadcrumbs can have legs hundreds of metres long, and
