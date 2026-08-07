@@ -4,7 +4,6 @@ import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
-import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
@@ -31,11 +30,10 @@ import java.io.File
  *   wrote, never overwrites a database that already exists, so it can only add history back.
  *
  * Everything here is best-effort: any failure is logged and swallowed, because losing a backup must
- * never crash a run or block launch.
- *
- * The Downloads collection is writable without a runtime permission only from API 29 (scoped
- * storage). Below that the feature is a no-op — the app's minSdk-26 devices simply go unprotected
- * rather than dragging in a `WRITE_EXTERNAL_STORAGE` permission prompt.
+ * never crash a run or block launch. Best-effort is not the same as approximate, though — see
+ * [DatabaseSnapshot]. **A snapshot that lands here is complete as of the moment it was taken, and an
+ * attempt that cannot produce one publishes nothing at all**, leaving the previous snapshot standing
+ * as the newest restorable copy. There is no third outcome; a restore (#86) can rely on that.
  */
 object DatabaseBackupManager {
     private const val TAG = "DbBackup"
@@ -55,13 +53,14 @@ object DatabaseBackupManager {
     private const val BACKUP_MIME = "application/octet-stream"
     private val RELATIVE_PATH = "${Environment.DIRECTORY_DOWNLOADS}/$BACKUP_SUBDIR"
 
-    // A blocked TRUNCATE checkpoint (busy=1) is transient — a UI query holding a read snapshot —
-    // so retry a few times to ride it out before giving up and copying the file anyway.
-    private const val CHECKPOINT_ATTEMPTS = 4
-    private const val CHECKPOINT_RETRY_DELAY_MS = 50L
-
-    private val isSupported: Boolean
-        get() = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+    /**
+     * Where a snapshot is built before it is handed to MediaStore. One fixed name in the cache,
+     * reused every backup: SQLite writes a snapshot to a path, not to a `content://` stream, so
+     * there has to be a file in between. A backup killed mid-snapshot leaves it behind and the next
+     * one clears it out of the way ([DatabaseSnapshot]) — a stale copy of the database in the app's
+     * own cache is nobody's backup, and Android is free to reclaim it.
+     */
+    private const val PENDING_SNAPSHOT_FILE_NAME = "downloads-database-snapshot.db"
 
     // Serializes concurrent backups. Two can overlap — e.g. the post-run snapshot from the Run's
     // finalization and the one from SessionRepository.saveFeelFeedback() — and each ends by
@@ -74,27 +73,27 @@ object DatabaseBackupManager {
      * Snapshots the live database to Downloads. Safe to call from any background thread; concurrent
      * calls are serialized on [backupLock].
      *
-     * Takes the open [database] so the WAL checkpoint runs on Room's own connection — the one
-     * holding the log. Folding it there guarantees the copied `.db` includes the run that just
-     * finished; a checkpoint issued from a second connection can silently no-op under Room's lock.
+     * Takes the open [database] so the snapshot is taken on Room's own connection — the one holding
+     * the write-ahead log, and therefore the one that can see every committed write.
+     *
+     * The snapshot is taken **before anything in the backup folder is touched**, and that order is
+     * the ticket (#191): an attempt that cannot produce a snapshot has inserted nothing and retired
+     * nothing, so the previous backup is still there and still the newest restorable copy. The only
+     * thing a failure costs is a fresher backup than the one already standing.
      */
     fun backup(context: Context, database: AppDatabase) {
-        if (!isSupported) return
         synchronized(backupLock) {
+            val pending = File(context.cacheDir, PENDING_SNAPSHOT_FILE_NAME)
             try {
-                val dbFile = databaseFile(context)
-                if (!dbFile.exists()) return
-                if (!checkpoint(database)) {
-                    // Couldn't fully fold the WAL — a reader held a snapshot through every retry.
-                    // Copy anyway (better a slightly-stale backup than none), but say so rather than
-                    // logging an unqualified success.
-                    Log.w(TAG, "WAL checkpoint stayed blocked; backup may lag the most recent write")
-                }
-                val bytes = dbFile.readBytes()
+                if (!databaseFile(context).exists()) return
+                snapshotTo(database, pending)
+                val bytes = pending.readBytes()
                 writeBackupBytes(context, bytes)
                 Log.d(TAG, "Backed up ${bytes.size} bytes of run history to Downloads/$BACKUP_SUBDIR")
             } catch (e: Exception) {
-                Log.w(TAG, "History backup failed (non-fatal)", e)
+                Log.w(TAG, "History backup failed (non-fatal); the previous backup still stands", e)
+            } finally {
+                pending.delete()
             }
         }
     }
@@ -103,45 +102,24 @@ object DatabaseBackupManager {
     fun databaseFile(context: Context): File = context.getDatabasePath(DATABASE_NAME)
 
     /**
-     * Folds the WAL and copies the live database to [destination]. Returns whether the fold
-     * completed; the copy is made either way.
+     * Writes a complete snapshot of the live database to [destination], or throws.
      *
-     * Under [backupLock] with everything else that checkpoints, and that is the whole point of it
-     * existing rather than the archive (#85) doing these two steps for itself. A TRUNCATE checkpoint
-     * rewrites pages *inside* the main database file — it is the one routine moment when that file
-     * changes underneath a reader — so a plain file copy running beside the post-run snapshot could
-     * take some pages from before the fold and some from after, and produce an archive holding a
-     * SQLite image that never existed. Stale would be survivable; torn is not.
+     * Public because the full archive (#85) snapshots the same database, and one implementation is
+     * what stops the two copies coming to mean different things. There is no success flag to
+     * ignore: a caller that returns from here has a snapshot it can publish, and a caller that does
+     * not has an exception it has to answer for. That is the whole of #191.
+     *
+     * Held under [backupLock] with every other snapshot in the app. The old reason — that folding
+     * the log rewrote pages inside the live file underneath a plain copy — is gone with the copy,
+     * but the lock is not: the Downloads backup ends by retiring every snapshot but its own, so two
+     * backups overlapping would still have the second sweep away the first mid-write.
      */
-    fun snapshotTo(context: Context, database: AppDatabase, destination: File): Boolean =
+    fun snapshotTo(database: AppDatabase, destination: File) {
         synchronized(backupLock) {
-            val folded = checkpoint(database)
-            databaseFile(context).copyTo(destination, overwrite = true)
-            folded
-        }
-
-    /**
-     * Folds the WAL into the main `.db` so the copied file includes the latest write. A TRUNCATE
-     * checkpoint reports a blocked run in its result row (busy=1) instead of throwing — e.g. when a
-     * UI query is holding a read snapshot — leaving recent frames only in `-wal`. Retry a few times
-     * to ride out that transient reader. Returns true once a checkpoint completes cleanly.
-     *
-     * Public because the full archive (#85) snapshots the same file and needs the same fold first;
-     * one implementation, so the two copies can't come to mean different things.
-     */
-    fun checkpoint(database: AppDatabase): Boolean {
-        val db = database.openHelper.writableDatabase
-        repeat(CHECKPOINT_ATTEMPTS) { attempt ->
-            val complete = db.query("PRAGMA wal_checkpoint(TRUNCATE)").use { cursor ->
-                // Row is (busy, logFrames, checkpointedFrames). busy=0 means the checkpoint got the
-                // lock and folded everything it could; an empty row means the db is not in WAL mode.
-                if (!cursor.moveToFirst()) return true
-                cursor.getInt(0) == 0
+            DatabaseSnapshot.writeTo(destination) { sql ->
+                database.openHelper.writableDatabase.execSQL(sql)
             }
-            if (complete) return true
-            if (attempt < CHECKPOINT_ATTEMPTS - 1) Thread.sleep(CHECKPOINT_RETRY_DELAY_MS)
         }
-        return false
     }
 
     /**
@@ -155,7 +133,6 @@ object DatabaseBackupManager {
      * job, not this one's.
      */
     fun restoreIfDatabaseMissing(context: Context): Boolean {
-        if (!isSupported) return false
         return try {
             val dbFile = context.getDatabasePath(DATABASE_NAME)
             if (dbFile.exists()) return false // never overwrite a live database

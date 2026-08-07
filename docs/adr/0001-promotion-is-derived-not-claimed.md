@@ -96,7 +96,9 @@ so the state needed to decide was already there.
   `ForegroundServiceDidNotStartInTimeException`, no ANR. Even *never promoting*
   does not crash a foreground-initiated start.
 
-  **This licenses nothing, and it settles only API 37.** `minSdk` is 26. The
+  **This licenses nothing, and it settles only API 37.** `minSdk` is 30 (raised
+  from 26 by [ADR 0009](./0009-a-backup-is-complete-or-it-is-not-a-backup.md); the
+  reasoning below is unchanged by that, only its range is narrower). The
   `createdFromFg` gating that spares a foreground-initiated start is not known to
   hold on the older releases this app still runs on, where the documented contract
   asks for a prompt promotion after every `startForegroundService()` and draws the
@@ -106,7 +108,8 @@ so the state needed to decide was already there.
 
   What that leaves open, by the range where a refusal is even reachable:
 
-  - **API 26–30.** `promote()` has no refusal path we know of — `startForeground()`
+  - **API 30** (was 26–30 before ADR 0009 raised the floor). `promote()` has no
+    refusal path we know of — `startForeground()`
     is not restricted by type or by caller state on these releases, and the
     exception the code catches by name is Android 12's
     `ForegroundServiceStartNotAllowedException`. Whether the watchdog is armed

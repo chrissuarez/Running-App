@@ -161,6 +161,30 @@ class ArchiverTest {
     }
 
     @Test
+    fun `a database snapshot that cannot be taken fails the whole archive`() = runTest {
+        // #191: the database entry either holds a complete snapshot or there is no archive. An
+        // archive whose database half lagged its own archive.json is the thing being prevented, so
+        // a snapshot that throws has to carry the backup down with it rather than be logged past.
+        val folder = FakeFolder(listOf("running-app-archive-2026-06-01-080000.zip"))
+        var recordedAt: Long? = null
+        val contents: suspend (Long) -> List<ArchiveEntry> = {
+            listOf(
+                ArchiveEntry.ofText(ArchiveJson.FILE_NAME, "{}"),
+                ArchiveEntry("${ArchiveZip.DATABASE_DIRECTORY}/running_app_db") {
+                    throw IllegalStateException("database is locked")
+                }
+            )
+        }
+
+        val outcome = archiver(folder, contents = contents, onArchived = { recordedAt = it })
+            .archiveNow()
+
+        assertTrue(outcome is ArchiveOutcome.Failed)
+        assertEquals(listOf("running-app-archive-2026-06-01-080000.zip"), folder.files.keys.toList())
+        assertNull(recordedAt)
+    }
+
+    @Test
     fun `an archive that could not be promoted is kept, but is not counted as a backup`() = runTest {
         val folder = FakeFolder()
         folder.failRename = true

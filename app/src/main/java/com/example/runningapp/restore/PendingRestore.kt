@@ -127,9 +127,12 @@ object PendingRestore {
      *
      * The previous database's log is dealt with first, and by folding it into the database it
      * belongs to rather than by moving it out of the way. That ordering is not optional: the
-     * snapshot arrives already checkpointed, so a log left beside it describes writes to a file
-     * that no longer exists, and Room would either replay it into the restored history or call the
-     * result corrupt.
+     * snapshot arrives whole and with no log of its own — a published snapshot is complete as of
+     * the moment it was taken, which is what
+     * [ADR 0009](docs/adr/0009-a-backup-is-complete-or-it-is-not-a-backup.md) promises and
+     * [com.example.runningapp.data.DatabaseSnapshot] provides — so a log left beside
+     * it describes writes to a file that no longer exists, and Room would either replay it into the
+     * restored history or call the result corrupt.
      *
      * Folded rather than deleted, because a restore that fails promises the runner their phone is
      * exactly as it was. The app is killed without closing Room, so recent runs can live only in
