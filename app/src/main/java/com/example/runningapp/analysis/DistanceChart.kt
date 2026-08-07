@@ -2,7 +2,6 @@ package com.example.runningapp.analysis
 
 import com.example.runningapp.data.MeasuredTrack
 import com.example.runningapp.data.TrackLeg
-import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -123,13 +122,35 @@ data class DistanceChart(
      * fix either side of it that it is nearer to — the same rule, and the same answer, as the dot the
      * map puts on the route ([TrackMap.fixAt]), so the two never name different seconds of the Run.
      * The line still stops at the Break; it is the readout that goes on.
+     *
+     * Read by halving and comparing the two neighbours, which is [TrackMap.fixAt]'s own working —
+     * not a scan for the smallest gap. A Pause leaves two points on the same metre, and a scan
+     * cannot tell them apart: it would hold the readout on the fix the runner stopped at while the
+     * dot had already moved to the one they resumed at, so the page would name two different halves
+     * of the Run at once.
      */
     fun readingAt(distanceMeters: Double): DistancePoint? {
         val first = allPoints.firstOrNull() ?: return null
         val last = allPoints.last()
         if (distanceMeters < first.distanceMeters || distanceMeters > last.distanceMeters) return null
-        // The first of the nearest, which is how the map breaks the same tie.
-        return allPoints.minByOrNull { abs(it.distanceMeters - distanceMeters) }
+
+        val next = firstPointAtOrPast(distanceMeters)
+        val ahead = allPoints[next]
+        val behind = allPoints.getOrNull(next - 1) ?: return ahead
+        // Half way between two points reads as the earlier one, the tie the map breaks the same way.
+        val nearerBehind = distanceMeters - behind.distanceMeters <= ahead.distanceMeters - distanceMeters
+        return if (nearerBehind) behind else ahead
+    }
+
+    /** The first point at or past [distanceMeters] — [TrackMap.fixAt]'s search, over the same fixes. */
+    private fun firstPointAtOrPast(distanceMeters: Double): Int {
+        var low = 0
+        var high = allPoints.lastIndex
+        while (low < high) {
+            val middle = (low + high) / 2
+            if (allPoints[middle].distanceMeters < distanceMeters) low = middle + 1 else high = middle
+        }
+        return low
     }
 }
 

@@ -8,6 +8,7 @@ import com.example.runningapp.data.TrackPoint
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -361,6 +362,25 @@ class TrackMapTest {
         // hundred metres they covered unrecorded is crossed in one step rather than run along.
         assertEquals(map.route[5].fix, map.fixAt(pausedAt))
         assertEquals(map.route[6].fix, map.fixAt(pausedAt + 0.01))
+    }
+
+    @Test
+    fun `the readout crosses a pause on the same step the dot does`() {
+        val run = aRun()
+        val track = script {
+            running(speedMps = 3.0, seconds = 5)
+            pauseAndMoveOn(meters = 100.0, seconds = 60)
+            running(speedMps = 3.0, seconds = 5)
+        }
+        val analysis = analyse(run, track, beats(run, 0..80, 140))
+        val chart = requireNotNull(analysis.distanceChart)
+        val pausedAt = requireNotNull(analysis.trackMap).route[5].distanceMeters
+
+        // A pause leaves two points on the same metre, so "nearest" alone cannot separate them and
+        // would hold the readout on the fix the runner stopped at while the dot had already moved to
+        // the one they resumed at — three numbers from one half of the run under a dot on the other.
+        assertSame(chart.traces[0].points.last(), chart.readingAt(pausedAt))
+        assertSame(chart.traces[1].points.first(), chart.readingAt(pausedAt + 0.01))
     }
 
     private fun analyse(run: RunnerSession, track: List<TrackPoint>, samples: List<HrSample>) =
