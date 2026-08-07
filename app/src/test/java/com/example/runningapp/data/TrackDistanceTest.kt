@@ -19,7 +19,13 @@ import org.junit.Test
  */
 class TrackDistanceTest {
 
-    /** The recorder fed the same fixes the readers are given, and asked what it banked. */
+    /**
+     * The recorder fed the same fixes the readers are given, and asked what it banked.
+     *
+     * Auto-pause is left off, as it is by default. It freezes the recorder's distance without
+     * writing anything onto the track, so a Run recorded with it on is a disagreement of its own —
+     * one about what counts as moving, which is #165's.
+     */
     private fun recordedKm(points: List<TrackPoint>): Double {
         val clock = FakeClock()
         val recorder = SessionRecorder(

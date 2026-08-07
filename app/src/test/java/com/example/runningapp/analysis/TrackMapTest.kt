@@ -118,6 +118,28 @@ class TrackMapTest {
     }
 
     @Test
+    fun `an Outage hands over its ground and nothing else`() {
+        // The invariant #204 turns on: the leg carries the straight line the runner covered, and
+        // still nothing may be drawn, climbed or joined across it. One Run, every reader of the
+        // flag whose meaning changed, in one place — because "unrecorded" no longer means "no
+        // ground", and the day it starts meaning "no line" too is the day the map lies.
+        val run = aRun()
+        val track = script {
+            running(speedMps = 3.0, seconds = 300, barometer = true)
+            gap(meters = 600.0, seconds = 120, climbMeters = 200.0, barometer = true)
+            running(speedMps = 3.0, seconds = 300, barometer = true)
+        }
+        val analysis = analyse(run, track, beats(run, 0..720, 140))
+
+        // The ground changes hands: 900 m either side plus the 600 m of tunnel.
+        assertEquals(2_400.0, analysis.splits.sumOf { it.distanceMeters }, 5.0)
+        // And nothing else does.
+        assertEquals(2, requireNotNull(analysis.trackMap).stretches.size)
+        assertEquals(2, requireNotNull(analysis.distanceChart).traces.size)
+        assertEquals(0.0, requireNotNull(analysis.elevationGainMeters), 1.0)
+    }
+
+    @Test
     fun `the start and the finish are the run's own first and last fixes`() {
         val run = aRun()
         val track = script {
