@@ -23,7 +23,13 @@ android {
 
     defaultConfig {
         applicationId = "com.example.runningapp"
-        minSdk = 26
+        // 30 rather than 26 so a backup has exactly one way to snapshot the database (#191).
+        // `VACUUM INTO` — the only way to take a copy that cannot silently lag the history it
+        // claims to be — arrived in SQLite 3.27, which is API 30. An API-gated fallback would mean
+        // a second snapshot path in the one routine that decides whether history survives, only
+        // ever exercised on hardware nobody testing this app owns. One path that is unconditionally
+        // correct is worth more here than reach into API 26–29.
+        minSdk = 30
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
@@ -117,6 +123,11 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.2.1")
+    // A real SQLite engine on the laptop, so the one statement a backup is made of (#191) can be
+    // checked against a real write-ahead log with a real reader holding it open. 3.41 is well past
+    // the 3.27 that introduced VACUUM INTO, and past the 3.32 that ships on the app's minSdk-30
+    // devices, so what passes here is what the phone runs.
+    testImplementation("org.xerial:sqlite-jdbc:3.41.2.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
     androidTestImplementation(platform("androidx.compose:compose-bom:2023.10.01"))

@@ -1,7 +1,6 @@
 package com.example.runningapp.archive
 
 import android.content.Context
-import android.util.Log
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.DatabaseBackupManager
@@ -77,28 +76,26 @@ class RunArchiveContents(
     }
 
     /**
-     * The database itself, folded and copied.
+     * The database itself, as SQLite writes it out.
      *
-     * Two steps rather than one, and the order matters. The write-ahead log is checkpointed first,
-     * or the snapshot would be the database as of some earlier moment with the recent writes left
-     * behind in a file that is not being copied — and the fold and the copy are taken together under
-     * the manager's lock, so no other checkpoint in the app can rewrite the file between them. Then
-     * it is copied to a local file *before* being
-     * streamed into the archive: writing into the runner's folder means compressing and crossing a
-     * content provider, which is slow, and a run finishing halfway through would leave the copy torn
-     * across two versions of the database. The local copy is a bulk file copy — narrow enough that a
-     * run would have to finish inside it, rather than inside the whole backup.
+     * Taken to a local file first and streamed into the archive from there, rather than written
+     * straight into the runner's folder: that means compressing and crossing a content provider,
+     * which is slow, and a run finishing halfway through would leave the entry torn across two
+     * versions of the database. Taking it locally is one bulk step — narrow enough that a run would
+     * have to finish inside it, rather than inside the whole backup.
+     *
+     * A snapshot that cannot be taken **fails the archive** (#191) rather than shipping a database
+     * entry the archive cannot vouch for. The exception carries out through [ArchiveZip.write] to
+     * the [Archiver], which deletes the part-written file and reports the backup as failed — so an
+     * archive never exists whose `database/` half lags its own `archive.json`.
      */
     private fun databaseEntry(): ArchiveEntry =
         ArchiveEntry("${ArchiveZip.DATABASE_DIRECTORY}/${DatabaseBackupManager.DATABASE_NAME}") { out ->
             val snapshot = File(appContext.cacheDir, SNAPSHOT_FILE_NAME)
             try {
-                // Folded and copied as one step by the manager, which holds these two together
-                // against every other checkpoint in the app — the post-run snapshot's fold running
-                // inside this copy would rewrite pages under it and archive a torn database.
-                if (!DatabaseBackupManager.snapshotTo(appContext, database, snapshot)) {
-                    Log.w(TAG, "WAL checkpoint stayed blocked; the snapshot may lag the most recent write")
-                }
+                // Through the manager, which serialises this against every other snapshot in the
+                // app — the post-run backup and this one must not interleave.
+                DatabaseBackupManager.snapshotTo(database, snapshot)
                 snapshot.inputStream().use { it.copyTo(out) }
             } finally {
                 snapshot.delete()
@@ -106,12 +103,12 @@ class RunArchiveContents(
         }
 
     private companion object {
-        const val TAG = "Archive"
 
         /**
          * One fixed name in the cache, reused every backup. A backup killed mid-copy leaves this
-         * behind, and the next one overwrites it — a stale copy of the database in the app's own
-         * cache is nobody's backup and Android is free to reclaim it.
+         * behind, and the next one clears it out of the way before taking its own snapshot — a
+         * stale copy of the database in the app's own cache is nobody's backup and Android is free
+         * to reclaim it.
          */
         const val SNAPSHOT_FILE_NAME = "archive-database-snapshot.db"
     }
