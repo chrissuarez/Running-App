@@ -2786,6 +2786,54 @@ class SessionRepositoryTest {
         assertEquals(afterOnce, book.standings())
     }
 
+    @Test
+    fun `a Run whose distance is corrected while it is being measured is not written to the book`() =
+        runTest {
+            val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory(seeded = true)
+            whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(7L))
+            val measured = aTreadmillRun(id = 7, seconds = 1_800).copy(distanceKm = 9.0)
+            // The runner corrects the number on the console while the pass is working its way
+            // through history: the correction scores itself and mends the book behind it, so the
+            // effort measured before it is no longer this Run's own.
+            whenever(mockDao.getSessionById(7L))
+                .thenReturn(measured, measured.copy(distanceKm = 4.0))
+
+            repositoryWithRecords.scoreMissedRecords()
+
+            verify(mockAchievementDao, never()).insertAchievements(any())
+            // And still owing, so the next launch measures it against the corrected number.
+            verify(mockDao, never()).setRecordsScored(any())
+        }
+
+    @Test
+    fun `a Run deleted while it is being measured is not written to the book`() = runTest {
+        val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory(seeded = true)
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(7L))
+        whenever(mockDao.getSessionById(7L))
+            .thenReturn(aTreadmillRun(id = 7, seconds = 1_800), null)
+
+        repositoryWithRecords.scoreMissedRecords()
+
+        // A medal for a Run that no longer exists, standing over the record it took.
+        verify(mockAchievementDao, never()).insertAchievements(any())
+        verify(mockDao, never()).setRecordsScored(any())
+    }
+
+    @Test
+    fun `a Run whose Effort Score lands mid-measure is scored anyway`() = runTest {
+        // The Effort backfill runs at the same launch and writes to every Run in history. It cannot
+        // move a distance or a duration, so it is not a reason to abandon a scoring.
+        val (repositoryWithRecords, _) = repositoryWithUnseededHistory(seeded = true)
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(7L))
+        val measured = aTreadmillRun(id = 7, seconds = 1_800)
+        whenever(mockDao.getSessionById(7L))
+            .thenReturn(measured, measured.copy(effortScore = 42, sessionNote = "hard"))
+
+        repositoryWithRecords.scoreMissedRecords()
+
+        verify(mockDao).setRecordsScored(7L)
+    }
+
     /** The record book as rows in memory, for the two passes that have to arrive at the same one. */
     private class BookInMemory : AchievementDao {
         private val rows = mutableListOf<Achievement>()
