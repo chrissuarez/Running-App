@@ -117,7 +117,10 @@ as running instead of having the walk breaks averaged into it. Banked when the R
 absent rather than zero on a Run that recorded no heart rate at all. A Run finished before the Score
 existed is scored afterwards from the beats it kept, so history carries the same number as today's
 Runs; that pass re-derives its own work list from the Runs still missing a Score, which is what makes
-it safe to stop half way through and to run again.
+it safe to stop half way through and to run again. A week's total is the sum of the Scores in it, so
+a week holding a Run that wore no Strap is **measured in part**: the total is a floor under what was
+run and never a ceiling, and it is named as such wherever it is shown or sent, because unmarked it
+reads as a lighter week than the runner had (#247).
 _Avoid_: suffer score, relative effort, training load; and on screen, the bare word "Effort", which
 is already what the runner rates a Run out of ten. A Best Effort is a different thing again — a
 stretch of a Run rather than a number about the whole of it.

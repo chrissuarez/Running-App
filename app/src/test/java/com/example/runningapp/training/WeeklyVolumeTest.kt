@@ -4,7 +4,9 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.LocalTime
 import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -255,6 +257,93 @@ class WeeklyVolumeTest {
         assertTrue(year.size > threeMonths.size)
         assertEquals(threeMonths, year.takeLast(threeMonths.size))
     }
+
+    @Test
+    fun `a week holding both kinds of Run says it was only partly measured`() {
+        // The whole of #247: the total is the scored Run's alone, and nothing about the number says
+        // the strapless hour beside it is missing from it.
+        val weeks = weeklyVolumeOf(
+            listOf(
+                runAt(monday, km = 5.0, seconds = 1_800, score = 40),
+                runAt(monday.plusDays(1), km = 12.0, seconds = 4_200, score = null),
+            ),
+            through = monday.plusDays(6),
+            zone = zone,
+        )
+
+        val week = weeks.single()
+        assertEquals(40, week.effortScore)
+        assertEquals(1, week.runsWithoutScore)
+        assertTrue(week.partlyMeasured)
+    }
+
+    @Test
+    fun `a week every Run of which was measured is not partly measured`() {
+        val weeks = weeklyVolumeOf(
+            listOf(runAt(monday, score = 40), runAt(monday.plusDays(2), score = 0)),
+            through = monday.plusDays(6),
+            zone = zone,
+        )
+
+        assertEquals(0, weeks.single().runsWithoutScore)
+        assertFalse(weeks.single().partlyMeasured)
+    }
+
+    @Test
+    fun `a week nothing measured is not a partly measured week`() {
+        // Nothing was measured, so there is no total for the unmeasured Runs to be short of. It has
+        // its own way of saying so: no Effort Score at all.
+        val weeks = weeklyVolumeOf(
+            listOf(runAt(monday, score = null), runAt(monday.plusDays(2), score = null)),
+            through = monday.plusDays(6),
+            zone = zone,
+        )
+
+        assertNull(weeks.single().effortScore)
+        assertEquals(2, weeks.single().runsWithoutScore)
+        assertFalse(weeks.single().partlyMeasured)
+    }
+
+    @Test
+    fun `a week nobody ran in holds no unmeasured Runs`() {
+        // How a week of rest is told from a week of strapless Runs: both have no Effort Score, and
+        // only one of them has Runs in it.
+        val weeks = weeklyVolumeOf(
+            listOf(runAt(monday, score = 40), runAt(monday.plusWeeks(2), score = 40)),
+            through = monday.plusWeeks(2).plusDays(6),
+            zone = zone,
+        )
+
+        assertEquals(0, weeks[1].runsWithoutScore)
+        assertNull(weeks[1].effortScore)
+    }
+
+    @Test
+    fun `only the partly measured weeks are named, and only under the Effort Score`() {
+        val measured = TrainingWeek(monday, distanceKm = 10.0, timeSeconds = 3_600, effortScore = 100)
+        val partly = measured.copy(startingOn = monday.plusWeeks(1), runsWithoutScore = 1)
+
+        assertNull(partlyMeasuredNote(listOf(measured, measured), ::dateText))
+        assertEquals(
+            "The week of 9 Mar also held a run with no heart rate recorded, so its bar counts " +
+                "only the runs that were measured.",
+            partlyMeasuredNote(listOf(measured, partly), ::dateText),
+        )
+    }
+
+    @Test
+    fun `several partly measured weeks are counted rather than listed one by one`() {
+        val partly = TrainingWeek(monday, distanceKm = 10.0, timeSeconds = 3_600, effortScore = 100, runsWithoutScore = 2)
+        val weeks = (0L..3L).map { partly.copy(startingOn = monday.plusWeeks(it)) }
+
+        assertEquals(
+            "4 of these weeks also held runs with no heart rate recorded, so their bars count " +
+                "only the runs that were measured.",
+            partlyMeasuredNote(weeks, ::dateText),
+        )
+    }
+
+    private fun dateText(date: LocalDate): String = date.format(DateTimeFormatter.ofPattern("d MMM"))
 
     @Test
     fun `each measure reads a week in its own unit`() {

@@ -122,18 +122,31 @@ data class AiRecentRun(
  * anything, and the coach reading a different number from the runner would be two answers to one
  * question.
  *
- * [weeklyEffortScores] runs oldest week first and ends with the week in progress, which is short by
- * definition — most of it has not been run yet. Null is a week nothing measured, which is not a week
- * of rest: no Run in it wore a Strap, so there was no heart rate to score. The same distinction
- * [TrainingWeek.effortScore] makes.
+ * [weeklyEfforts] runs oldest week first and ends with the week in progress, which is short by
+ * definition — most of it has not been run yet.
  */
+/**
+ * One week of Effort Score as the coach is told it (#66, #247).
+ *
+ * [score] is the week's total, 0 for a week of rest — no Run in it at all, or none hard enough to
+ * score — and null for a week nothing measured, where Runs were made and no heart rate was recorded
+ * to score them. Opposite news for a coach reading fatigue: a week off is the rest that earns a
+ * harder next Run, while training the app could not see is not rest at all.
+ *
+ * [partlyMeasured] is the third case the total alone cannot say: some Runs in the week were scored
+ * and some were not, so the number is a floor under the week and never a ceiling. Sent rather than
+ * left to the prompt's general warning, because "one of these four weeks is short" is a different
+ * instruction from "any of them might be".
+ */
+data class AiWeeklyEffort(val score: Int?, val partlyMeasured: Boolean)
+
 data class AiFitnessAndForm(
     val fitness: Int,
     val fatigue: Int,
     val form: Int,
     /** What the Form number means in a word — its own type, so it can only be one of the three. */
     val verdict: FormVerdict,
-    val weeklyEffortScores: List<Int?>,
+    val weeklyEfforts: List<AiWeeklyEffort>,
     /**
      * Whether the Run that prompted this is inside [fitness] and [fatigue].
      *
@@ -199,18 +212,18 @@ internal fun coachTargetZone(
 private const val AI_WEEKS_OF_EFFORT = 4
 
 /**
- * A week's Effort Score as the coach is told it: the total, or null for a week nothing measured.
+ * A week as the coach is told it: its total, and whether that total is the whole week.
  *
- * A week with no Run in it at all is 0 and not null, which the week itself cannot say — [weeklyVolumeOf]
- * fills a week nobody ran in with the same null a week of strapless Runs comes to. The two are
- * opposite news for a coach reading fatigue: a week off is the rest that earns a harder next Run,
- * and told as "nothing measured" it would read as training the app failed to see.
- *
- * A week with no Run is a week with no time and no ground covered, which is how it is told apart
- * here — the same rows, read for a different question.
+ * A week with no Run in it at all is 0 and not null, which [TrainingWeek.effortScore] cannot say on
+ * its own — [weeklyVolumeOf] fills a week nobody ran in with the same null a week of strapless Runs
+ * comes to. [TrainingWeek.runsWithoutScore] is what tells them apart: a week of rest has no Runs to
+ * have gone unmeasured.
  */
-private fun TrainingWeek.effortScoreForCoach(): Int? =
-    effortScore ?: 0.takeIf { timeSeconds == 0L && distanceKm == 0.0 }
+private fun TrainingWeek.forCoach(): AiWeeklyEffort =
+    AiWeeklyEffort(
+        score = effortScore ?: 0.takeIf { runsWithoutScore == 0 },
+        partlyMeasured = partlyMeasured,
+    )
 
 class SessionRepository(
     private val sessionDao: SessionDao,
@@ -1602,7 +1615,7 @@ class SessionRepository(
             fatigue = curveToday.fatigue.roundToInt(),
             form = curveToday.form.roundToInt(),
             verdict = formVerdictOf(curveToday.form),
-            weeklyEffortScores = weeks.takeLast(AI_WEEKS_OF_EFFORT).map { it.effortScoreForCoach() },
+            weeklyEfforts = weeks.takeLast(AI_WEEKS_OF_EFFORT).map { it.forCoach() },
             todaysRunIsInTheNumbers = todaysRunIsInTheNumbers
         )
     }

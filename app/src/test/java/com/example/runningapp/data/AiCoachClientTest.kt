@@ -9,6 +9,9 @@ import org.junit.Test
 
 class AiCoachClientTest {
 
+    /** Weeks every Run of which was measured — the plain case, so a test can say scores alone. */
+    private fun efforts(vararg scores: Int?) = scores.map { AiWeeklyEffort(it, partlyMeasured = false) }
+
     private val oneRunWalkSession = AiTrainingContext(
         currentStageTitle = "Base Builder",
         graduationRequirement = "Complete run-walk sessions consistently",
@@ -214,7 +217,7 @@ class AiCoachClientTest {
                     fatigue = 61,
                     form = -19,
                     verdict = FormVerdict.FATIGUED,
-                    weeklyEffortScores = listOf(210, null, 340, 120),
+                    weeklyEfforts = efforts(210, null, 340, 120),
                     todaysRunIsInTheNumbers = true
                 )
             )
@@ -260,7 +263,7 @@ class AiCoachClientTest {
                     fatigue = 27,
                     form = -18,
                     verdict = FormVerdict.FATIGUED,
-                    weeklyEffortScores = listOf(47, 224, 199, 66),
+                    weeklyEfforts = efforts(47, 224, 199, 66),
                     todaysRunIsInTheNumbers = true
                 )
             )
@@ -292,7 +295,7 @@ class AiCoachClientTest {
                     fatigue = 12,
                     form = 18,
                     verdict = FormVerdict.FRESH,
-                    weeklyEffortScores = listOf(210, 120),
+                    weeklyEfforts = efforts(210, 120),
                     todaysRunIsInTheNumbers = false
                 )
             )
@@ -318,7 +321,7 @@ class AiCoachClientTest {
                     fatigue = 12,
                     form = 18,
                     verdict = FormVerdict.FRESH,
-                    weeklyEffortScores = listOf(210, 120),
+                    weeklyEfforts = efforts(210, 120),
                     todaysRunIsInTheNumbers = true
                 )
             )
@@ -336,7 +339,7 @@ class AiCoachClientTest {
                     fatigue = 12,
                     form = 18,
                     verdict = FormVerdict.FRESH,
-                    weeklyEffortScores = listOf(210, 120),
+                    weeklyEfforts = efforts(210, 120),
                     todaysRunIsInTheNumbers = true
                 )
             )
@@ -366,7 +369,7 @@ class AiCoachClientTest {
                     fatigue = 12,
                     form = 18,
                     verdict = FormVerdict.FRESH,
-                    weeklyEffortScores = listOf(null, null),
+                    weeklyEfforts = efforts(null, null),
                     todaysRunIsInTheNumbers = true
                 )
             )
@@ -377,6 +380,34 @@ class AiCoachClientTest {
         // news for a coach reading fatigue.
         assertTrue(prompt.contains("0 is a week of rest"))
         assertTrue(prompt.contains("training you cannot see"))
+    }
+
+    @Test
+    fun `a week measured in part is marked on the number it belongs to`() {
+        // The number is the scored runs' alone, and beside three whole weeks it reads as the light
+        // week the runner never had (#247).
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                fitnessAndForm = AiFitnessAndForm(
+                    fitness = 30,
+                    fatigue = 12,
+                    form = 18,
+                    verdict = FormVerdict.FRESH,
+                    weeklyEfforts = listOf(
+                        AiWeeklyEffort(210, partlyMeasured = false),
+                        AiWeeklyEffort(140, partlyMeasured = true),
+                        AiWeeklyEffort(null, partlyMeasured = false),
+                        AiWeeklyEffort(0, partlyMeasured = false),
+                    ),
+                    todaysRunIsInTheNumbers = true
+                )
+            )
+        )
+
+        assertTrue(prompt.contains("210, 140 (part not measured), not measured, 0."))
+        // Marked, and said what the mark means — a week harder than its number, never a light one.
+        assertTrue(prompt.contains("those weeks are the ones marked \"part not measured\""))
+        assertTrue(prompt.contains("harder than their number"))
     }
 
     @Test
