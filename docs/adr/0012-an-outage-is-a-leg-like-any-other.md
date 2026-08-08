@@ -67,6 +67,17 @@ before #84.
   every gap in the Run. A Run whose whole rest was unrecorded pausing therefore reads exactly as it
   did before this change, rather than degrading at all.
 
+  The clock settles it only as far as the arithmetic can prove. What is taken back is the moving time
+  that will not fit inside the Run's own clock, which is the *least* that can be shown to be wrong —
+  so a legacy unmarked Pause on a Run that also rested for longer than the Pause lasted still slips
+  through, because the clock's missing seconds could honestly be either. Attributing them properly
+  means knowing where the recorder's clock stopped, which the track does not say and this ADR does
+  not decide (#258). Erring this way leaves the pace *slower* than the truth rather than faster,
+  which is the direction ADR 0010 chose everywhere else; the alternative — reading the Run's whole
+  elapsed track against its clock — errs the other way, and would take real seconds off a real
+  Outage on any Run that auto-paused, which is three of the twelve Runs on the phone this was
+  measured against.
+
   This is the same arithmetic `SessionRepository.computeMovingTime` already used to hold moving time
   at the Run's own clock, moved into the measurement where the Splits table can see it. Left in the
   summary alone it would have made the Splits total more seconds than the page above them quotes —

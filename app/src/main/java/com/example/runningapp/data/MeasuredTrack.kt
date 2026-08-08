@@ -106,6 +106,15 @@ data class MeasuredTrack(val points: List<TrackPoint>, val legs: List<TrackLeg>)
  * run. Legs the recording covers are never touched — their seconds are witnessed, and a run whose
  * witnessed legs outrun its own clock is a recorder fault rather than something to measure around.
  *
+ * What is taken back is the moving time that will not fit inside the clock, which is the least that
+ * can be *shown* to be wrong rather than everything that might be. A run that also rested for longer
+ * than its unmarked pause lasted keeps those seconds, because the clock's missing time could as
+ * honestly have gone on the rest; saying which needs to know where the recorder's clock stopped,
+ * which the track does not record (#258). Measuring the run's whole elapsed track against its clock
+ * instead would decide it the other way and be wrong the other way — auto-pausing leaves the same
+ * missing seconds with no gap anywhere near them, so a real Outage on a run that auto-paused would
+ * have real seconds taken off it, and its pace would read faster than the runner ran.
+ *
  * This belongs to the measurement rather than to any one reader of it, because the summary at the
  * top of a run's page ([SessionRepository.computeMovingTime]) and the splits table underneath it
  * ([com.example.runningapp.analysis.splitsOf]) both fold these legs, and a rule applied to one of
