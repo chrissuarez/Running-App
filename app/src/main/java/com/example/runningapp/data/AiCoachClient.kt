@@ -182,6 +182,19 @@ private fun StringBuilder.appendStageWorkout(workout: WorkoutTemplate) {
  * a fatigue reading will hold a runner back from a Stage they have already earned, which is the one
  * decision here that writes itself into the stored plan.
  */
+/**
+ * One week of Effort Score as it is written into the prompt (#247).
+ *
+ * A partly measured week is sent as its total with the shortfall named beside it, rather than as a
+ * total with a footnote somewhere else: the coach reads a list of four numbers and compares them to
+ * each other, so the mark has to be on the number it belongs to.
+ */
+private fun AiWeeklyEffort.forPrompt(): String = when {
+    score == null -> "not measured"
+    partlyMeasured -> "$score (part not measured)"
+    else -> score.toString()
+}
+
 private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
     appendLine(
         "The runner's current training state, from the Effort Scores of their past runs: " +
@@ -217,17 +230,22 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
     // Skipped rather than written empty on the case that should not arise — a scored run is a
     // finished run, so a curve exists only where a week does. An empty list here would otherwise
     // print a sentence promising totals and then listing none.
-    if (state.weeklyEffortScores.isNotEmpty()) {
+    if (state.weeklyEfforts.isNotEmpty()) {
         appendLine(
             "Weekly Effort Score totals, oldest week first, the last one being the week in progress: " +
-                state.weeklyEffortScores.joinToString { it?.toString() ?: "not measured" } + "."
+                state.weeklyEfforts.joinToString { it.forPrompt() } + "."
         )
         appendLine(
             "0 is a week of rest — no running, or none hard enough to score. \"not measured\" is a " +
                 "week that was run with no heart rate recorded, so it is training you cannot see " +
                 "rather than rest. A week's number counts only the runs that recorded heart rate, " +
                 "so a week holding both kinds is a floor under what was actually run, never a " +
-                "ceiling."
+                // Which weeks those are, rather than leaving every week under suspicion: a total
+                // marked "part not measured" is short by a run whose cost nobody knows, and the
+                // week it sits in was harder than the number says (#247).
+                "ceiling — those weeks are the ones marked \"part not measured\", and they were " +
+                "harder than their number. Never read one as a light week, and never prescribe a " +
+                "harder run on the strength of one."
         )
     }
     // The case where the numbers understate the day rather than lag it: the Run is outside them

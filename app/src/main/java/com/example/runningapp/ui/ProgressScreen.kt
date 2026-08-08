@@ -39,6 +39,7 @@ import com.example.runningapp.training.ProgressRange
 import com.example.runningapp.training.TrainingWeek
 import com.example.runningapp.training.WeeklyMeasure
 import com.example.runningapp.training.formVerdictOf
+import com.example.runningapp.training.partlyMeasuredNote
 import com.example.runningapp.ui.theme.RunningAppTheme
 import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
 import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
@@ -374,6 +375,14 @@ private fun WeeklyVolume(
         )
     } else {
         WeeklyVolumeChart(weeks = weeks, measure = measure)
+    }
+    // What the bars cannot draw: a week measured in part is short by whatever the strapless runs in
+    // it cost, and drawn beside whole weeks it reads as a lighter week instead (#247). Only under
+    // the Effort Score — distance and time count every Run whether it wore a Strap or not.
+    if (measure == WeeklyMeasure.EFFORT_SCORE) {
+        partlyMeasuredNote(weeks) { it.format(AxisDateFormat) }?.let { note ->
+            Text(text = note, style = MaterialTheme.typography.bodyMedium)
+        }
     }
 }
 

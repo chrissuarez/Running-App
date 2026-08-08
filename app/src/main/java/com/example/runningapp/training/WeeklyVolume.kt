@@ -35,13 +35,31 @@ data class VolumeRun(
  * [effortScore] keeps the distinction [VolumeRun] makes: null is a week nothing measured — no Run in
  * it wore a Strap — while 0 is a week that was measured and scored nothing, which is what a week of
  * walking recorded on a Strap comes to.
+ *
+ * [runsWithoutScore] is the third state, and the one a total alone cannot hold (#247): a week can be
+ * measured *in part*. Its Effort Score then counts the Runs that wore a Strap and leaves out the
+ * ones that did not, which reads low and always in the same direction — a runner who forgot the
+ * Strap on their long day looks like they trained less than they did. Kept as a count of the Runs
+ * left out rather than as a flag, because it is also what tells a week of rest (no Runs at all) from
+ * a week of strapless Runs (Runs, and nothing measuring them) — two weeks that otherwise both come
+ * to a null Score and are opposite news to anyone reading fatigue.
  */
 data class TrainingWeek(
     val startingOn: LocalDate,
     val distanceKm: Double,
     val timeSeconds: Long,
     val effortScore: Int?,
-)
+    val runsWithoutScore: Int = 0,
+) {
+    /**
+     * Whether this week's Effort Score is short of what was actually run — a floor under the week
+     * and never a ceiling.
+     *
+     * A week nothing measured is not this: it has no total to be short of, and says so already by
+     * having no Effort Score at all.
+     */
+    val partlyMeasured: Boolean get() = effortScore != null && runsWithoutScore > 0
+}
 
 /**
  * What the weekly bars are counting. One chart with a toggle rather than three charts, so the weeks
@@ -107,6 +125,10 @@ fun weeklyVolumeOf(
                 run.effortScore == null -> soFar.effortScore
                 else -> (soFar.effortScore ?: 0) + run.effortScore
             },
+            // Counted rather than inferred from the totals: a Run that recorded no heart rate still
+            // adds its ground and its hour above, so nothing left in the week says how much of it
+            // went unmeasured (#247).
+            runsWithoutScore = soFar.runsWithoutScore + if (run.effortScore == null) 1 else 0,
         )
     }
 
@@ -121,6 +143,40 @@ fun weeklyVolumeOf(
 
 private fun emptyWeek(startingOn: LocalDate) =
     TrainingWeek(startingOn = startingOn, distanceKm = 0.0, timeSeconds = 0, effortScore = null)
+
+/** How many partly measured weeks are named one by one before the note counts them instead. */
+private const val WEEKS_NAMED_BEFORE_COUNTING = 3
+
+/**
+ * What the Effort Score bars are not showing, in a sentence — or null when they are showing all of
+ * it (#247).
+ *
+ * A bar has no way to draw "and some more that nobody measured", and drawn beside full weeks a
+ * partly measured one simply reads as a lighter week. So it is said in words underneath, the same
+ * answer the screen already gives to a chart that is flat for two different reasons.
+ *
+ * The weeks are named while there are few enough to find on the chart, and counted once there are
+ * not: a sentence listing eight dates is one a runner reads past.
+ *
+ * [dateText] writes a week's Monday the way the chart's own axis writes it, so the dates in the
+ * sentence are the labels under the bars and not a second date format.
+ */
+fun partlyMeasuredNote(weeks: List<TrainingWeek>, dateText: (LocalDate) -> String): String? {
+    val partly = weeks.filter { it.partlyMeasured }
+    if (partly.isEmpty()) return null
+    val many = "so their bars count only the runs that were measured."
+    if (partly.size > WEEKS_NAMED_BEFORE_COUNTING) {
+        return "${partly.size} of these weeks also held runs with no heart rate recorded, $many"
+    }
+    val dates = partly.map { dateText(it.startingOn) }
+    val runs = if (partly.sumOf { it.runsWithoutScore } == 1) "a run" else "runs"
+    if (dates.size == 1) {
+        return "The week of ${dates.single()} also held $runs with no heart rate recorded, " +
+            "so its bar counts only the runs that were measured."
+    }
+    return "The weeks of ${dates.dropLast(1).joinToString(", ")} and ${dates.last()} also held " +
+        "$runs with no heart rate recorded, $many"
+}
 
 /**
  * The stretch of weeks a [ProgressRange] shows, sharing the picker with the curves above.

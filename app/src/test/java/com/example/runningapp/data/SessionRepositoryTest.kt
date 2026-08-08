@@ -286,7 +286,7 @@ class SessionRepositoryTest {
         fatigue = 23,
         form = -14,
         verdict = FormVerdict.FATIGUED,
-        weeklyEffortScores = listOf(700, 200),
+        weeklyEfforts = listOf(AiWeeklyEffort(700, false), AiWeeklyEffort(200, false)),
         todaysRunIsInTheNumbers = true
     )
 
@@ -2004,7 +2004,7 @@ class SessionRepositoryTest {
         assertEquals(FormVerdict.FATIGUED, state.verdict)
         // Two weeks of history, oldest first — and the strapless week is null rather than a zero,
         // which is the difference between a week nobody measured and a week nobody ran.
-        assertEquals(listOf(700, null), state.weeklyEffortScores)
+        assertEquals(listOf(700, null), state.weeklyEfforts.map { it.score })
     }
 
     @Test
@@ -2087,7 +2087,34 @@ class SessionRepositoryTest {
         ).fitnessAndForm!!
 
         // One week of training, then a week in which nothing at all was run.
-        assertEquals(listOf(100, 0), state.weeklyEffortScores)
+        assertEquals(listOf(100, 0), state.weeklyEfforts.map { it.score })
+    }
+
+    @Test
+    fun `a week holding both kinds of Run reaches the coach marked as measured in part`() = runTest {
+        // The #247 week: one Run wore a Strap and one did not, so the total is a floor under the
+        // week. Sent unmarked it reads as the whole of it, and reads low every time.
+        val scored = ScoredRunProjection(startTime = DAY_MILLIS_2026_01_05, effortScore = 100)
+        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(listOf(scored)))
+        whenever(mockDao.getRunVolumesFlow()).thenReturn(
+            flowOf(
+                listOf(
+                    volumeRow(startTime = DAY_MILLIS_2026_01_05, effortScore = 100),
+                    volumeRow(startTime = DAY_MILLIS_2026_01_05 + ONE_DAY_MILLIS, effortScore = null),
+                )
+            )
+        )
+
+        val weeks = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            zone = ZoneOffset.UTC,
+            today = LocalDate.of(2026, 1, 18)
+        ).fitnessAndForm!!.weeklyEfforts
+
+        assertEquals(listOf(100, 0), weeks.map { it.score })
+        // And only that week: the week nobody ran in was not measured in part, it was not run.
+        assertEquals(listOf(true, false), weeks.map { it.partlyMeasured })
     }
 
     @Test
@@ -2112,7 +2139,7 @@ class SessionRepositoryTest {
             today = LocalDate.of(2026, 2, 15)
         ).fitnessAndForm!!
 
-        assertEquals(listOf(30, 40, 50, 60), state.weeklyEffortScores)
+        assertEquals(listOf(30, 40, 50, 60), state.weeklyEfforts.map { it.score })
     }
 
     @Test
