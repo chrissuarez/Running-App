@@ -28,7 +28,7 @@ import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.isFinished
-import com.example.runningapp.data.recordedHrProfile
+import com.example.runningapp.data.bandedOnHrProfile
 import com.example.runningapp.data.isTreadmill
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.computeRunWalkIntervalAnalytics
@@ -53,11 +53,11 @@ fun SessionDetailScreen(
     // What this run took a medal for (#49). Empty for the runs that won nothing, which is most of
     // them, and for every run finished before the record book existed — #50 scores those.
     achievements: List<Achievement> = emptyList(),
-    // What to colour the route's zones by (#47) for a run that did not write down the Reserve it
-    // was recorded under — the heart rates history is banded against. A run that did is coloured by
-    // its own (#228), so the route and the zone bars further down the same page agree. Null where
-    // neither is known, and the route is then drawn in one colour.
-    hrProfile: HrProfile? = null,
+    // What to colour the route's zones by (#47) for a run carrying no Reserve of its own — the
+    // heart rates history is banded against. A run that carries one is coloured by that (#228), so
+    // the route and the zone bars further down the same page can never disagree. Null where neither
+    // is known, and the route is then drawn in one colour.
+    fallbackHrProfile: HrProfile? = null,
     onDeleteSession: (Long) -> Unit,
     onBack: () -> Unit,
     // How far a treadmill Run went, told to the app (#231). Null means the number would be refused
@@ -89,8 +89,8 @@ fun SessionDetailScreen(
     // Worked out once per set of recordings rather than on every recomposition: a long run is
     // thousands of samples and thousands of fixes, and the runner's finger on the scrubber
     // recomposes this screen many times a second.
-    val analysis = remember(session, samples, trackPoints, hrProfile) {
-        session?.let { RunAnalysis.of(it, samples, trackPoints, it.recordedHrProfile() ?: hrProfile) }
+    val analysis = remember(session, samples, trackPoints, fallbackHrProfile) {
+        session?.let { RunAnalysis.of(it, samples, trackPoints, it.bandedOnHrProfile() ?: fallbackHrProfile) }
     }
 
     // What the map and the chart both read: where the runner's finger is on the chart, in metres

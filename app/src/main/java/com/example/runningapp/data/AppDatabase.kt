@@ -87,37 +87,41 @@ data class RunnerSession(
      */
     val recordsScored: Boolean = false,
     /**
-     * The heart rates this Run's zone times are banded against — its Max HR and, beside it,
-     * [restingHrAtRun] (#228). Pinned at START from [com.example.runningapp.run.RunConfig.hrProfile]
-     * and written with the row, so a Run carries the Reserve it was recorded under rather than
-     * leaving anything that re-reads its beats to guess at one from the settings.
+     * The Max HR this Run's zone seconds are banded against, and beside it [bandedOnRestingHr] —
+     * the Reserve the numbers on this row mean something against (#228). Written with the row at
+     * START from [com.example.runningapp.run.RunConfig.hrProfile], the Reserve the Run is recorded
+     * under, so anything re-reading its beats afterwards asks the Run rather than guessing at one
+     * from settings that have since moved on.
      *
-     * The two numbers are one fact and must be read as a pair — see [recordedHrProfile], which is
+     * Named for what it is rather than for where it came from, because one thing does move it: a
+     * re-tally re-bands every finished Run onto another Reserve and stamps this as it goes
+     * ([SessionRepository.recomputeZoneSecondsAndEffortForAllRuns]). A row left naming the Reserve
+     * it was *recorded* under would then be describing seconds it no longer holds.
+     *
+     * The two numbers are one fact and must be read as a pair — see [bandedOnHrProfile], which is
      * the only way anything should ask.
      *
      * Null means "whatever history is banded against" ([com.example.runningapp.historyHrProfile]):
-     * a Run recorded before v24, and nothing else. There is no backfill, because the pair those
-     * rows would be filled with is exactly what the fallback reads — and a re-tally, which is the
-     * one thing that can move a finished Run onto another Reserve, stamps every row it re-bands
-     * ([SessionRepository.recomputeZoneSecondsAndEffortForAllRuns]).
+     * a Run recorded before v24 that no re-tally has reached since. There is no backfill, because
+     * the pair those rows would be filled with is exactly what that fallback reads.
      */
-    val maxHrAtRun: Int? = null,
-    /** The resting heart rate half of the Reserve this Run was banded on — see [maxHrAtRun]. */
-    val restingHrAtRun: Int? = null
+    val bandedOnMaxHr: Int? = null,
+    /** The resting heart rate half of the Reserve this Run is banded on — see [bandedOnMaxHr]. */
+    val bandedOnRestingHr: Int? = null
 )
 
 /**
- * The Reserve this Run's zone times were banded against, or null for a Run recorded before one was
- * written down (#228) — for which the caller's fallback is what history is banded against
+ * The Reserve this Run's zone seconds are banded against, or null for a Run that has none of its
+ * own (#228) — for which the caller's fallback is what history is banded against
  * ([com.example.runningapp.historyHrProfile]).
  *
  * The one door for the question, because the two stored numbers are one fact: a row half-filled
  * would otherwise be read as a Max HR against somebody else's resting heart rate, which is a
  * Reserve no Run was ever recorded under. Only a pair that is wholly there is the Run's own.
  */
-fun RunnerSession.recordedHrProfile(): HrProfile? {
-    val maxHr = maxHrAtRun ?: return null
-    val restingHr = restingHrAtRun ?: return null
+fun RunnerSession.bandedOnHrProfile(): HrProfile? {
+    val maxHr = bandedOnMaxHr ?: return null
+    val restingHr = bandedOnRestingHr ?: return null
     return HrProfile(maxHr, restingHr)
 }
 
@@ -537,10 +541,13 @@ interface SessionDao {
      * already reached from what it had not.
      *
      * The Reserve travels in the same statement for the same reason the Score does (#228): after
-     * this the Run really is banded on [maxHrAtRun]/[restingHrAtRun], and a row whose stored pair
-     * still named the Reserve it *used* to be on would send its route map and its zone bars to two
-     * different answers. This is the one writer that moves a finished Run from one Reserve to
-     * another, so it is the one place the stamp has to follow.
+     * this the Run really is banded on it, and a row whose stored pair still named the Reserve it
+     * *used* to be on would send its route map and its zone bars to two different answers. This is
+     * the one writer that moves a finished Run from one Reserve to another, so it is the one place
+     * the stamp has to follow.
+     *
+     * Stamped unconditionally, unlike the Score: a Run with no beats to re-band still has five zone
+     * seconds — all of them zero — and they are as true of the new Reserve as of the old.
      */
     @Query(
         """
@@ -551,8 +558,8 @@ interface SessionDao {
             zone4Seconds = :zone4,
             zone5Seconds = :zone5,
             effortScore = CASE WHEN effortScore IS NULL THEN NULL ELSE :effortScore END,
-            maxHrAtRun = :maxHrAtRun,
-            restingHrAtRun = :restingHrAtRun
+            bandedOnMaxHr = :bandedOnMaxHr,
+            bandedOnRestingHr = :bandedOnRestingHr
         WHERE id = :sessionId
         """
     )
@@ -564,8 +571,8 @@ interface SessionDao {
         zone4: Long,
         zone5: Long,
         effortScore: Int?,
-        maxHrAtRun: Int,
-        restingHrAtRun: Int
+        bandedOnMaxHr: Int,
+        bandedOnRestingHr: Int
     )
 
     /**
@@ -1455,23 +1462,23 @@ val MIGRATION_22_23 = object : Migration(22, 23) {
 }
 
 /**
- * Room for the Reserve each Run was recorded under (#228): [RunnerSession.maxHrAtRun] and
- * [RunnerSession.restingHrAtRun].
+ * Room for the Reserve each Run is banded on (#228): [RunnerSession.bandedOnMaxHr] and
+ * [RunnerSession.bandedOnRestingHr].
  *
  * Both nullable and both left null, which is the whole of the migration. The numbers these rows
  * would be filled with live in DataStore rather than in the database, so SQL cannot reach them —
  * but it does not need to, because null already reads as "banded against whatever history is
- * banded against" ([RunnerSession.recordedHrProfile]), and that is exactly the pair a backfill
- * would have written. A null here stays true for the life of the row: the one thing that moves a
- * finished Run onto another Reserve is the re-tally, and it stamps every row it re-bands.
+ * banded against" ([RunnerSession.bandedOnHrProfile]), and that is exactly the pair a backfill
+ * would have written. A null here stays true until something moves the row: the one thing that
+ * moves a finished Run onto another Reserve is the re-tally, and it stamps every row it re-bands.
  */
 val MIGRATION_23_24 = object : Migration(23, 24) {
     override fun migrate(database: SupportSQLiteDatabase) {
-        if (!database.hasColumn("sessions", "maxHrAtRun")) {
-            database.execSQL("ALTER TABLE sessions ADD COLUMN maxHrAtRun INTEGER")
+        if (!database.hasColumn("sessions", "bandedOnMaxHr")) {
+            database.execSQL("ALTER TABLE sessions ADD COLUMN bandedOnMaxHr INTEGER")
         }
-        if (!database.hasColumn("sessions", "restingHrAtRun")) {
-            database.execSQL("ALTER TABLE sessions ADD COLUMN restingHrAtRun INTEGER")
+        if (!database.hasColumn("sessions", "bandedOnRestingHr")) {
+            database.execSQL("ALTER TABLE sessions ADD COLUMN bandedOnRestingHr INTEGER")
         }
     }
 }

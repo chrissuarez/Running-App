@@ -511,9 +511,9 @@ class AppDatabaseMigrationTest {
         // Null rather than filled in: the numbers a backfill would write live in DataStore, and
         // null already means "banded against whatever history is banded against" (#228) — which is
         // the very pair it would have written.
-        assertNull(run.maxHrAtRun)
-        assertNull(run.restingHrAtRun)
-        assertNull(run.recordedHrProfile())
+        assertNull(run.bandedOnMaxHr)
+        assertNull(run.bandedOnRestingHr)
+        assertNull(run.bandedOnHrProfile())
         // The Run itself is untouched: the migration adds room and nothing else.
         assertEquals(2259L, run.durationSeconds)
         assertEquals(9000L, run.endTime)

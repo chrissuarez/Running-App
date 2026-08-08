@@ -436,8 +436,8 @@ class SessionRepository(
                 effortScore = effortScoreOf(bpms, profile),
                 // What the Run is banded on from here — including a Run recorded before the pair
                 // was written down, which this is the moment to stop guessing about (#228).
-                maxHrAtRun = profile.maxHr,
-                restingHrAtRun = profile.restingHr,
+                bandedOnMaxHr = profile.maxHr,
+                bandedOnRestingHr = profile.restingHr,
             )
         }
     }
@@ -477,12 +477,12 @@ class SessionRepository(
      * correction those differ, and scoring against the stored one would put these Runs on a profile
      * their own zone times are not on.
      *
-     * A global rather than each Run's own Reserve ([RunnerSession.recordedHrProfile]), unlike the
-     * rescue pass (#228), and for a reason rather than by omission: every Run this pass can reach
-     * is a Run with no Score, and a Run recorded since a Reserve was written down banks its Score
-     * as it finishes. So the Runs left here are the ones from before the columns existed — which
-     * carry no Reserve of their own — and the strapless ones, which have no beats to score at all.
-     * Reading a row per Run to learn that, at every launch, for ever, would buy nothing.
+     * A global rather than each Run's own Reserve ([RunnerSession.bandedOnHrProfile]), unlike the
+     * rescue pass (#228), and for a reason rather than by omission: every Run this pass can reach is
+     * a Run with **no** Score, and a Run recorded since the columns existed banks one as it
+     * finishes. So the Runs left here are the ones from before them, and the strapless ones — which
+     * have no beats to score against any Reserve. Reading a row per Run to learn that, at every
+     * launch, for ever, would buy nothing.
      *
      * Read **inside** the lock rather than by the caller, which is why the maximum is a nullable
      * parameter rather than a required one: a profile read outside would be the very staleness the
@@ -646,9 +646,9 @@ class SessionRepository(
         val interruptedIds = sessionDao.getInterruptedSessionIds(startedBeforeMillis)
         if (interruptedIds.isEmpty()) return@withLock
 
-        // What history is banded against, and only for a Run recorded before a Run wrote its own
-        // Reserve down (#228). A Run that has one is banded on *that*: it is the Reserve it was
-        // recorded and coached under, which is the one this Run's seconds mean anything against.
+        // What history is banded against, and only for a Run carrying no Reserve of its own (#228).
+        // A Run that carries one is rebuilt on *that*: it is the Reserve the Run was recorded and
+        // coached under, which is the one its seconds mean anything against.
         //
         // Neither global number would do. The one in force is wrong for a Run started before a
         // future-only Max HR correction, and the one history is banded against is wrong for every
@@ -667,7 +667,7 @@ class SessionRepository(
                     samples = samples.getSamplesForSessionOnce(sessionId),
                     track = track,
                     mappedTrack = track.acceptedForMap(),
-                    profile = session.recordedHrProfile() ?: historyProfile,
+                    profile = session.bandedOnHrProfile() ?: historyProfile,
                     bankedIntervals = intervalStatDao
                         ?.getIntervalStatsForSession(sessionId)
                         .orEmpty()

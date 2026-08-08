@@ -67,7 +67,7 @@ class SessionDaoFinalizedIdsTest {
                     sessionId = id,
                     zone1 = 1, zone2 = 2, zone3 = 3, zone4 = 4, zone5 = 5,
                     effortScore = 61,
-                    maxHrAtRun = 181, restingHrAtRun = 60
+                    bandedOnMaxHr = 181, bandedOnRestingHr = 60
                 )
             }
 
@@ -78,8 +78,8 @@ class SessionDaoFinalizedIdsTest {
             // Both were re-banded either way, and both now say what they were re-banded against
             // (#228) — that stamp is unconditional, unlike the Score.
             assertEquals(2L, sessionDao.getSessionById(neverScored)!!.zone2Seconds)
-            assertEquals(181, sessionDao.getSessionById(neverScored)!!.maxHrAtRun)
-            assertEquals(60, sessionDao.getSessionById(scored)!!.restingHrAtRun)
+            assertEquals(181, sessionDao.getSessionById(neverScored)!!.bandedOnMaxHr)
+            assertEquals(60, sessionDao.getSessionById(scored)!!.bandedOnRestingHr)
         }
     }
 
