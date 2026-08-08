@@ -50,6 +50,12 @@ data class UserSettings(
     val savedDevices: List<SavedDevice> = emptyList(),
     val activeDeviceAddress: String? = null,
     val activePlanId: String? = null,
+    // The Stage the runner is actually in, not the string the preference happens to hold: resolved
+    // against the attached plan on the way out of storage, so a preference naming no Stage or one
+    // the plan does not hold reads as the plan's first — the Stage the card shows and the Workouts
+    // come from. Resolved here rather than by each reader because a Stage the readers can disagree
+    // about is how a Run got stamped with one it was never shown (#234), and every disagreement
+    // after that is the same bug wearing a different reader's clothes.
     val activeStageId: String? = null,
     // The coach's debrief of the run just finished — text the app renders and nothing reads. Its
     // prescription for the *next* run is not here and is not a setting; see [CoachPrescription].
@@ -234,6 +240,11 @@ internal suspend fun DataStore<Preferences>.editCoachWrite(
  * values from inside its own `edit`, which is what makes the decision unraceable.
  *
  * An unset testing-mode key is off, not unknown: absent means never turned on.
+ *
+ * [activeStageId] arrives raw from storage while [scope] carries a resolved one
+ * ([UserSettings.activeStageId]), so it is resolved here before the two are compared. Comparing
+ * them as they stand would refuse every coach write on a plan whose stage preference names nothing
+ * — the runner has not moved at all, which is exactly the case this is meant to let through.
  */
 internal fun coachWriteAllowed(
     testingModeEnabled: Boolean?,
@@ -243,7 +254,7 @@ internal fun coachWriteAllowed(
 ): Boolean =
     testingModeEnabled != true &&
         activePlanId == scope.planId &&
-        activeStageId == scope.stageId
+        TrainingPlanProvider.resolveActiveStage(activePlanId, activeStageId)?.id == scope.stageId
 
 /**
  * Everything the coach left behind, dropped together (#113).
@@ -257,51 +268,67 @@ internal fun MutablePreferences.clearCoachWork() {
     remove(PreferencesKeys.LATEST_COACH_MESSAGE)
 }
 
+/**
+ * Everything stored, read as what it means (#234).
+ *
+ * Pure and separate from the flow that publishes it, for the reason [coachWriteAllowed] is: the
+ * rules applied on the way out — an edge target zone snapped, a maximum inferred, the Stage
+ * resolved against its plan — are the settings the app actually runs on, and they should be
+ * readable and testable without a DataStore.
+ */
+internal fun userSettingsOf(preferences: Preferences): UserSettings {
+    val savedDevicesStrings = preferences[PreferencesKeys.SAVED_DEVICES] ?: emptySet()
+    val savedDevices = savedDevicesStrings.mapNotNull {
+        val parts = it.split("|")
+        if (parts.size == 2) SavedDevice(parts[0], parts[1]) else null
+    }
+
+    return UserSettings(
+        maxHr = preferences[PreferencesKeys.MAX_HR] ?: DEFAULT_MAX_HR,
+        maxHrEverSet = maxHrEverSet(
+            flag = preferences[PreferencesKeys.MAX_HR_EVER_SET],
+            storedMaxHr = preferences[PreferencesKeys.MAX_HR]
+        ),
+        restingHr = preferences[PreferencesKeys.RESTING_HR] ?: RESTING_HR_UNSTATED,
+        // Absent for anyone whose history was last banded before this key existed. Their stored
+        // maximum is the best evidence available: if they set it once and never changed it — much
+        // the commonest case — it is exactly right, and if they changed it twice the value it was
+        // banded against is simply not recorded anywhere. Either way this is no worse than the
+        // behaviour it replaces.
+        historyMaxHr = preferences[PreferencesKeys.HISTORY_MAX_HR]
+            ?: (preferences[PreferencesKeys.MAX_HR] ?: DEFAULT_MAX_HR),
+        // Sanitized on read, not only on write: an edge-zone target stored before #117 closed the
+        // picker would otherwise keep overstating "In Target" forever.
+        targetZone = HrZone.coachingTargetOfNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE]).number,
+        coachingEnabled = preferences[PreferencesKeys.COACHING_ENABLED] ?: true,
+        aiDataSharingEnabled = preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] ?: true,
+        runMode = preferences[PreferencesKeys.RUN_MODE] ?: "treadmill",
+        splitAnnouncementsEnabled = preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] ?: true,
+        turnaroundCueEnabled = preferences[PreferencesKeys.TURNAROUND_CUE_ENABLED] ?: true,
+        autoPauseEnabled = preferences[PreferencesKeys.AUTO_PAUSE_ENABLED] ?: true,
+        savedDevices = savedDevices,
+        activeDeviceAddress = preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS],
+        activePlanId = preferences[PreferencesKeys.ACTIVE_PLAN_ID],
+        // Resolved on read, the same way the target zone is sanitized on read above: the stored
+        // string is where the Stage is kept, and the Stage the runner is in is what everything
+        // downstream asks for. See [UserSettings.activeStageId].
+        activeStageId = TrainingPlanProvider.resolveActiveStage(
+            preferences[PreferencesKeys.ACTIVE_PLAN_ID],
+            preferences[PreferencesKeys.ACTIVE_STAGE_ID]
+        )?.id,
+        latestCoachMessage = preferences[PreferencesKeys.LATEST_COACH_MESSAGE],
+        simulationEnabled = preferences[PreferencesKeys.SIMULATION_ENABLED] ?: false,
+        testingModeEnabled = preferences[PreferencesKeys.TESTING_MODE_ENABLED] ?: false,
+        backupFolderUri = preferences[PreferencesKeys.BACKUP_FOLDER_URI],
+        lastBackupAtEpochMillis = preferences[PreferencesKeys.LAST_BACKUP_AT],
+        historyRecordsSeeded = preferences[PreferencesKeys.HISTORY_RECORDS_SEEDED] ?: false
+    )
+}
+
 class SettingsRepository(private val context: Context) {
 
     val userSettingsFlow: Flow<UserSettings> = context.dataStore.data
-        .map { preferences ->
-            val savedDevicesStrings = preferences[PreferencesKeys.SAVED_DEVICES] ?: emptySet()
-            val savedDevices = savedDevicesStrings.mapNotNull {
-                val parts = it.split("|")
-                if (parts.size == 2) SavedDevice(parts[0], parts[1]) else null
-            }
-
-            UserSettings(
-                maxHr = preferences[PreferencesKeys.MAX_HR] ?: DEFAULT_MAX_HR,
-                maxHrEverSet = maxHrEverSet(
-                    flag = preferences[PreferencesKeys.MAX_HR_EVER_SET],
-                    storedMaxHr = preferences[PreferencesKeys.MAX_HR]
-                ),
-                restingHr = preferences[PreferencesKeys.RESTING_HR] ?: RESTING_HR_UNSTATED,
-                // Absent for anyone whose history was last banded before this key existed. Their
-                // stored maximum is the best evidence available: if they set it once and never
-                // changed it — much the commonest case — it is exactly right, and if they changed
-                // it twice the value it was banded against is simply not recorded anywhere. Either
-                // way this is no worse than the behaviour it replaces.
-                historyMaxHr = preferences[PreferencesKeys.HISTORY_MAX_HR]
-                    ?: (preferences[PreferencesKeys.MAX_HR] ?: DEFAULT_MAX_HR),
-                // Sanitized on read, not only on write: an edge-zone target stored before #117
-                // closed the picker would otherwise keep overstating "In Target" forever.
-                targetZone = HrZone.coachingTargetOfNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE]).number,
-                coachingEnabled = preferences[PreferencesKeys.COACHING_ENABLED] ?: true,
-                aiDataSharingEnabled = preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] ?: true,
-                runMode = preferences[PreferencesKeys.RUN_MODE] ?: "treadmill",
-                splitAnnouncementsEnabled = preferences[PreferencesKeys.SPLIT_ANNOUNCEMENTS_ENABLED] ?: true,
-                turnaroundCueEnabled = preferences[PreferencesKeys.TURNAROUND_CUE_ENABLED] ?: true,
-                autoPauseEnabled = preferences[PreferencesKeys.AUTO_PAUSE_ENABLED] ?: true,
-                savedDevices = savedDevices,
-                activeDeviceAddress = preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS],
-                activePlanId = preferences[PreferencesKeys.ACTIVE_PLAN_ID],
-                activeStageId = preferences[PreferencesKeys.ACTIVE_STAGE_ID],
-                latestCoachMessage = preferences[PreferencesKeys.LATEST_COACH_MESSAGE],
-                simulationEnabled = preferences[PreferencesKeys.SIMULATION_ENABLED] ?: false,
-                testingModeEnabled = preferences[PreferencesKeys.TESTING_MODE_ENABLED] ?: false,
-                backupFolderUri = preferences[PreferencesKeys.BACKUP_FOLDER_URI],
-                lastBackupAtEpochMillis = preferences[PreferencesKeys.LAST_BACKUP_AT],
-                historyRecordsSeeded = preferences[PreferencesKeys.HISTORY_RECORDS_SEEDED] ?: false
-            )
-        }
+        .map { preferences -> userSettingsOf(preferences) }
 
     /**
      * Records a statement of the heart rates the runner's zones are sliced from — either number,

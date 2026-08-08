@@ -810,12 +810,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             includeInAiTraining = settings.aiDataSharingEnabled && !settings.testingModeEnabled,
             // The Stage in force as START was pressed, which is the Stage this Run is evidence for
             // whatever happens to the plan while it runs (#234). Not conditioned on the Workout:
-            // a Run that skipped today's plan was still run under the Stage the runner is in.
-            //
-            // Resolved rather than read off the setting, so the Stage written down is the one the
-            // Workout came from and the card named — the plan's own answer, not the raw preference.
-            ranUnderStageId = TrainingPlanProvider
-                .resolveActiveStage(settings.activePlanId, settings.activeStageId)?.id,
+            // a Run that skipped today's plan was still run under the Stage the runner is in, and
+            // that is already what the setting reads as ([UserSettings.activeStageId]) — so the
+            // Stage written down is the one the card named and the Workout came from, and a Run
+            // with no plan attached still records none.
+            ranUnderStageId = settings.activeStageId,
         )
     }
 

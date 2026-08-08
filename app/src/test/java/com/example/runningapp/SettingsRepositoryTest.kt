@@ -103,6 +103,62 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `a plan whose Stage was never named reads as its first`() {
+        // Storage is allowed to hold no Stage; the runner is not allowed to be in none while a plan
+        // is attached. Resolving here is what stops each reader answering that differently (#234).
+        val settings = userSettingsOf(
+            mutablePreferencesOf(PreferencesKeys.ACTIVE_PLAN_ID to "5k_sub_25")
+        )
+
+        assertEquals("base_builder", settings.activeStageId)
+    }
+
+    @Test
+    fun `a Stage the plan does not hold reads as its first`() {
+        val settings = userSettingsOf(
+            mutablePreferencesOf(
+                PreferencesKeys.ACTIVE_PLAN_ID to "5k_sub_25",
+                PreferencesKeys.ACTIVE_STAGE_ID to "no_such_stage"
+            )
+        )
+
+        assertEquals("base_builder", settings.activeStageId)
+    }
+
+    @Test
+    fun `with no plan attached there is no Stage, whatever storage holds`() {
+        // A Run started here records no Stage and answers no Stage's requirement.
+        val settings = userSettingsOf(
+            mutablePreferencesOf(PreferencesKeys.ACTIVE_STAGE_ID to "base_builder")
+        )
+
+        assertNull(settings.activeStageId)
+    }
+
+    @Test
+    fun `the coach may write on a plan whose Stage was never named`() {
+        // The scope carries the Stage the evaluation was about, resolved; storage still holds
+        // nothing. Compared as they stand, the runner would look like they had left a Stage they
+        // never left, and every coach write would be refused in exactly the state it is fine in.
+        assertTrue(
+            coachWriteAllowed(
+                testingModeEnabled = false,
+                activePlanId = "5k_sub_25",
+                activeStageId = null,
+                scope = CoachWriteScope("5k_sub_25", "base_builder")
+            )
+        )
+        assertTrue(
+            coachWriteAllowed(
+                testingModeEnabled = false,
+                activePlanId = "5k_sub_25",
+                activeStageId = "no_such_stage",
+                scope = CoachWriteScope("5k_sub_25", "base_builder")
+            )
+        )
+    }
+
+    @Test
     fun `dropping the coach's work takes the debrief with the prescription`() {
         // The debrief explains the prescription. Clearing the numbers and keeping the text leaves
         // the runner reading about a workout that is not the one queued.
