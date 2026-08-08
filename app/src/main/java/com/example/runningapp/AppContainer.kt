@@ -50,45 +50,56 @@ class AppContainer(context: Context) {
     }
 
     val database: AppDatabase by lazy {
-        // A restore the runner confirmed and the app relaunched for (#86). First, because it is the
-        // one that was explicitly asked for — and once it has run the database exists, which is the
-        // condition under which the automatic restore below correctly stands down. Also clears away
-        // a pick that was never confirmed, which is otherwise a whole spare database sitting in app
-        // storage with nothing to remove it.
-        //
-        // An archive's settings are written from here rather than at the moment the runner
-        // confirmed, so that they only ever land beside the history they were saved with. Blocking
-        // is the point: Room must not open the database until the restore has finished with it, and
-        // this already runs off the main thread for the same reason as the migration read below.
+        // Whichever settings arrived with a restored archive, for the migration below to band that
+        // archive's runs against. Written by the preparation and read by the migration, and those
+        // two run one after the other on the single thread that opens the database, so there is no
+        // hand-off across threads to arrange.
         var restoredSettings: ArchivedSettings? = null
-        // The history about to be replaced is the history the seeding mark describes, so the mark
-        // goes first (#50). Not left to the settings write below: a bare `.db` backup brings no
-        // settings with it, and one written before the record book existed would otherwise restore
-        // into an empty book that the seeding pass declines to fill, at this launch and every one
-        // after. Cleared ahead of the swap so a kill cannot strand it — a restore that then fails
-        // costs one re-measure of unchanged history and arrives at the same book.
-        if (PendingRestore.isArmed(appContext)) {
-            runBlocking { settingsRepository.clearHistoryRecordsSeeded() }
-        }
-        PendingRestore.applyIfArmed(appContext) { archived ->
-            // Held before the write is attempted rather than after it, deliberately. The migration
-            // below has to band the restored runs against the profile they arrived with, and a
-            // DataStore write that fails leaves the restore armed to try again at the next launch —
-            // by which point the migration has already run and cannot be re-run. Reading the profile
-            // straight off the archive takes the migration out of that race entirely.
-            restoredSettings = archived
-            runBlocking { settingsRepository.restoreArchivedSettings(archived) }
-        }
-        // If this install has no database of its own yet — a freshly-cleared install — bring run
-        // history back from the Downloads copy before Room opens. No-ops (and never overwrites) when
-        // a live database already exists, which includes reinstalls, where Auto Backup has already
-        // restored it.
-        DatabaseBackupManager.restoreIfDatabaseMissing(appContext)
-        // The v12 -> v13 zone recompute needs the heart-rate profile, which lives in DataStore
-        // rather than the database. Room only invokes this from inside the migration, on its own
-        // background thread, so the blocking read never lands on the main thread.
-        val archived = restoredSettings
-        AppDatabase.getDatabase(appContext) {
+        AppDatabase.getDatabase(
+            appContext,
+            // Everything that has to be true of the database file before Room reads a byte of it.
+            // Not run here, on the way to a screen: run on the thread that first opens the file,
+            // which is never the main one (#121). See PreparingOpenHelper.
+            prepare = {
+                // The history about to be replaced is the history the seeding mark describes, so the
+                // mark goes first (#50). Not left to the settings write below: a bare `.db` backup
+                // brings no settings with it, and one written before the record book existed would
+                // otherwise restore into an empty book that the seeding pass declines to fill, at
+                // this launch and every one after. Cleared ahead of the swap so a kill cannot strand
+                // it — a restore that then fails costs one re-measure of unchanged history and
+                // arrives at the same book.
+                if (PendingRestore.isArmed(appContext)) {
+                    runBlocking { settingsRepository.clearHistoryRecordsSeeded() }
+                }
+                // A restore the runner confirmed and the app relaunched for (#86). First, because it
+                // is the one that was explicitly asked for — and once it has run the database
+                // exists, which is the condition under which the automatic restore below correctly
+                // stands down. Also clears away a pick that was never confirmed, which is otherwise
+                // a whole spare database sitting in app storage with nothing to remove it.
+                //
+                // An archive's settings are written from here rather than at the moment the runner
+                // confirmed, so that they only ever land beside the history they were saved with.
+                PendingRestore.applyIfArmed(appContext) { archived ->
+                    // Held before the write is attempted rather than after it, deliberately. The
+                    // migration below has to band the restored runs against the profile they arrived
+                    // with, and a DataStore write that fails leaves the restore armed to try again
+                    // at the next launch — by which point the migration has already run and cannot
+                    // be re-run. Reading the profile straight off the archive takes the migration out
+                    // of that race entirely.
+                    restoredSettings = archived
+                    runBlocking { settingsRepository.restoreArchivedSettings(archived) }
+                }
+                // If this install has no database of its own yet — a freshly-cleared install — bring
+                // run history back from the Downloads copy. No-ops (and never overwrites) when a
+                // live database already exists, which includes reinstalls, where Auto Backup has
+                // already restored it.
+                DatabaseBackupManager.restoreIfDatabaseMissing(appContext)
+            }
+        ) {
+            // The v12 -> v13 zone recompute needs the heart-rate profile, which lives in DataStore
+            // rather than the database. Room only invokes this from inside the migration, on the
+            // thread that opened the database, so the blocking read never lands on the main thread.
+            //
             // Whichever settings belong to the history being opened: the archive's if this launch
             // just restored one, the phone's own otherwise.
             //
@@ -97,7 +108,7 @@ class AppContainer(context: Context) {
             // corrected to 195 has history banded on 181 and live zones on 195, because a correction
             // must not rewrite runs already read. The archive carries both, so the restored runs can
             // be recomputed against the very maximum they were written under.
-            archived?.let { HrProfile(it.historyMaxHr, it.restingHr) }
+            restoredSettings?.let { HrProfile(it.historyMaxHr, it.restingHr) }
                 ?: runBlocking { settingsRepository.userSettingsFlow.first().hrProfile }
         }
     }

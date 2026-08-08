@@ -3,6 +3,7 @@ package com.example.runningapp.data
 import androidx.room.*
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import androidx.sqlite.db.framework.FrameworkSQLiteOpenHelperFactory
 import com.example.runningapp.HrZone
 import com.example.runningapp.HrProfile
 import com.example.runningapp.analysis.Medal
@@ -696,17 +697,30 @@ abstract class AppDatabase : RoomDatabase() {
         private var INSTANCE: AppDatabase? = null
 
         /**
+         * [prepare] is whatever has to be true of the database file before anything reads it — the
+         * restores at #86 and #119. Run once, on the thread that first opens the file, which is
+         * never the main one; see [PreparingOpenHelper] for why it hangs off the open rather than
+         * off this call (#121).
+         *
          * [hrProfileProvider] feeds the v12 → v13 zone recompute, which needs a heart-rate
          * profile that lives in DataStore rather than in the database. It is read lazily, from
          * inside the migration, so the settings read happens on Room's own thread and only on the
-         * one launch that migrates.
+         * one launch that migrates — and after [prepare], which is what lets a restored archive's
+         * own profile be the one the migration bands its runs against.
          */
-        fun getDatabase(context: android.content.Context, hrProfileProvider: () -> HrProfile): AppDatabase {
+        fun getDatabase(
+            context: android.content.Context,
+            prepare: () -> Unit = {},
+            hrProfileProvider: () -> HrProfile
+        ): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "running_app_db"
+                )
+                .openHelperFactory(
+                    PreparingOpenHelperFactory(FrameworkSQLiteOpenHelperFactory(), prepare)
                 )
                 .addMigrations(
                     MIGRATION_1_2,
