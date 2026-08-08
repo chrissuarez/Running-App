@@ -98,6 +98,8 @@ sealed interface RunEffect {
          * the Run's own numbers to rebuild it from instead of a global that has since moved on.
          */
         val hrProfile: HrProfile,
+        /** The Stage this Run is recorded under — see `RunnerSession.ranUnderStageId` (#234). */
+        val ranUnderStageId: String?,
     ) : RunEffect
 
     /** Write the finished Run's totals to its row. Emitted once per Run, and only with an id. */

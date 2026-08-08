@@ -43,12 +43,14 @@ internal fun config(
     hrProfile: HrProfile = HrProfile(190),
     targetZone: HrZone = HrZone.MODERATE,
     includeInAiTraining: Boolean = true,
+    ranUnderStageId: String? = "base_builder",
 ) = RunConfig(
     hrProfile = hrProfile,
     targetZone = targetZone,
     runMode = runMode,
     workout = workout,
     includeInAiTraining = includeInAiTraining,
+    ranUnderStageId = ranUnderStageId,
 )
 
 /**

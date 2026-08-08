@@ -77,6 +77,14 @@ internal fun buildEvaluationPrompt(
 ): String = buildString {
     appendLine("You are an expert running coach.")
     appendLine("Analyze the user's last 3 runs against their current stage requirement: ${context.graduationRequirement}.")
+    // What the runs are and are not, said before anything is asked of them (#234). The list is the
+    // Stage's own Runs — the ones before it are not merely unmentioned, they are absent — so a
+    // freshly graduated Stage arrives here with one Run or with none, and a coach told to look at
+    // "the last 3 runs" would otherwise read that thinness as a runner who has stopped training.
+    appendLine("These runs are only the runs recorded under the current stage. Runs from an earlier stage are not shown to you and are not evidence for this one, so a stage the user has just moved into may have very few runs or none at all — that is a new stage, not a lapse in training.")
+    // The empty case spelled out, because the one wrong true advances the stored Stage on the spot
+    // and a graduation cannot be taken back.
+    appendLine("CRITICAL RULE: If no recent runs are provided, there is no evidence for this stage's requirement at all: set graduatedToNextStage to false, and say in coachMessage that this stage is only just beginning.")
     appendLine("The provided recent runs include timestamps. The run with the most recent timestamp is the workout the user JUST completed today.")
     appendLine("Base your coachMessage feedback primarily on how they performed in today's run. Make it feel like a post-run debrief.")
     appendLine("Look at the older runs to establish trends (e.g., is their heart rate consistently improving?).")

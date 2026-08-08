@@ -81,6 +81,26 @@ class RunStartTest {
     }
 
     @Test
+    fun `the row request carries the Stage the run is recorded under`() {
+        // What the Run is evidence for, settled at START rather than at the finish: a Stage can be
+        // graduated while this Run is still going (#234).
+        val driver = Driver()
+
+        val effects = driver.on(RunEvent.Started(config(ranUnderStageId = "sub_30_bridge"), RunControls(), T0))
+
+        assertEquals("sub_30_bridge", effects.only<RunEffect.CreateRunRow>().ranUnderStageId)
+    }
+
+    @Test
+    fun `a run started with no plan attached is evidence for no Stage`() {
+        val driver = Driver()
+
+        val effects = driver.on(RunEvent.Started(config(ranUnderStageId = null), RunControls(), T0))
+
+        assertNull(effects.only<RunEffect.CreateRunRow>().ranUnderStageId)
+    }
+
+    @Test
     fun `a second start while the run is live asks for nothing`() {
         val driver = Driver()
         driver.start()

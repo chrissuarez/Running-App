@@ -86,6 +86,7 @@ object Run {
                     runModeSettingValue = event.config.runMode.settingValue,
                     includeInAiTraining = event.config.includeInAiTraining,
                     hrProfile = event.config.hrProfile,
+                    ranUnderStageId = event.config.ranUnderStageId,
                 ),
             ),
         )

@@ -158,6 +158,23 @@ class AiCoachClientTest {
     }
 
     @Test
+    fun `the coach is told the runs it has are the Stage's own, and that there may be none`() {
+        // #234: the Runs of an earlier Stage are not in the list, so a Stage just moved into shows
+        // one Run or none. Told nothing, a coach asked to read "the last 3 runs" would take that
+        // for a runner who had stopped — and, worse, could take an old Stage's work for this one's.
+        val prompt = buildEvaluationPrompt(oneRunWalkSession.copy(recentRuns = emptyList()))
+
+        assertTrue(prompt.contains("only the runs recorded under the current stage"))
+        assertTrue(
+            prompt.contains("Runs from an earlier stage are not shown to you and are not evidence for this one")
+        )
+        assertTrue(
+            prompt.contains("If no recent runs are provided, there is no evidence for this stage's requirement")
+        )
+        assertTrue(prompt.contains("set graduatedToNextStage to false, and say in coachMessage that this stage is only just beginning"))
+    }
+
+    @Test
     fun `a requirement the data cannot answer is still refused`() {
         val prompt = buildEvaluationPrompt(
             oneRunWalkSession.copy(graduationRequirement = "Run 10K at 5:00 /km.")

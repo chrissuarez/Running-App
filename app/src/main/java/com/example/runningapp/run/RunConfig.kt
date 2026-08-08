@@ -47,6 +47,15 @@ data class RunConfig(
     val workout: WorkoutTemplate?,
     /** Whether this Run may be sent to the AI coach. Pinned, like everything else here. */
     val includeInAiTraining: Boolean,
+    /**
+     * The Stage this Run is being recorded under, or null for a Run with no plan attached (#234).
+     *
+     * Pinned at START like everything else here, and for the sharpest version of the reason: a
+     * Stage can be graduated by an evaluation while this Run is still going, and the Run would then
+     * be filed under a Stage it was never run under. What a Run is evidence for is settled when it
+     * begins.
+     */
+    val ranUnderStageId: String?,
 ) {
     val warmUpSeconds: Int get() = workout?.warmUpSeconds ?: 0
 

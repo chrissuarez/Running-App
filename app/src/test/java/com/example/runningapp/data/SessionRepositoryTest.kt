@@ -1420,7 +1420,10 @@ class SessionRepositoryTest {
         whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
             RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
         )
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        // A Run recorded under the Stage being graduated, which is the only kind that can graduate
+        // one (#234).
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any()))
+            .thenReturn(listOf(aTreadmillRun(id = 1, seconds = 1_500)))
         whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
             MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
         )
@@ -1441,6 +1444,76 @@ class SessionRepositoryTest {
         verify(mockPrescriptions, never()).prescribe(any(), any(), any())
         // The debrief is about the run just finished, so it survives the graduation.
         verify(mockSettingsRepo).setLatestCoachMessage("Stage complete.", activeScope)
+    }
+
+    @Test
+    fun `a Stage with no Run of its own is not graduated, whatever the coach says`() = runTest {
+        // The coach is told in as many words that an empty list is no evidence, but a graduation
+        // cannot be taken back, so the place that acts on one refuses it rather than trusting the
+        // telling (#234). What the coach said still reaches the runner.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                nextTargetZone = null,
+                graduatedToNextStage = true,
+                coachMessage = "Stage complete."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockSettingsRepo).setLatestCoachMessage(
+            "Stage complete.",
+            CoachWriteScope("5k_sub_25", "base_builder")
+        )
+        // Refused, so this is an ordinary evaluation: the next Long Run is prescribed as one.
+        verify(mockPrescriptions).prescribe(any(), any(), any())
+    }
+
+    @Test
+    fun `a Run whose Stage the plan has left is not evaluated at all`() = runTest {
+        // The plan moved on while this Run was still going — an earlier Run's evaluation graduated
+        // it (#234). The Run is evidence about the Stage it was run under, and a verdict on that
+        // Stage could only graduate one the runner has already left or prescribe into a Stage this
+        // Run never ran, so the coach is not asked at all.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockCoach, never()).evaluateProgress(any())
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
     }
 
     @Test
@@ -1466,7 +1539,7 @@ class SessionRepositoryTest {
         whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
             RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
         )
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
         whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
             MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
         )
@@ -1575,7 +1648,7 @@ class SessionRepositoryTest {
         whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
             RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
         )
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
         whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
             MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
         )
@@ -1627,7 +1700,7 @@ class SessionRepositoryTest {
         whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
             RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
         )
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
         whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
             MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
         )
@@ -1678,7 +1751,7 @@ class SessionRepositoryTest {
         whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
             RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
         )
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
         whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
             MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
         )
@@ -1724,7 +1797,7 @@ class SessionRepositoryTest {
         whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
             RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
         )
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
         whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
             MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
         )
@@ -1904,7 +1977,7 @@ class SessionRepositoryTest {
         whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
             RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
         )
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
         whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
             MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
         )
@@ -1916,6 +1989,21 @@ class SessionRepositoryTest {
             flowOf(listOf(volumeRow(startTime = runDay, effortScore = 200)))
         )
         return repo
+    }
+
+    @Test
+    fun `the coach is shown the Stage's own Runs and no others`() = runTest {
+        // #234: a Stage is graduated on evidence, and evidence belongs to the Stage it was recorded
+        // under. Asked for the last three Runs full stop, the first evaluation after a graduation
+        // read the work of the Stage just left — enough, on a Stage asking for a time, to graduate
+        // the runner twice on one Stage's running.
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(eq("sub_30_bridge")))
+            .thenReturn(listOf(aTreadmillRun(id = 9, seconds = 1_500)))
+
+        val context = repository.getAiTrainingContext("sub_30_bridge")
+
+        assertEquals(1, context.recentRuns.size)
+        verify(mockDao).getLast3AiEligibleRunsOfStage("sub_30_bridge")
     }
 
     @Test
@@ -1936,7 +2024,7 @@ class SessionRepositoryTest {
         val outdoorRun = session(id = 7L, endTime = 1_000L)
             .copy(runMode = "outdoor", distanceKm = 6.4, durationSeconds = 2100)
         val mockTrackPointDao: TrackPointDao = mock()
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(listOf(outdoorRun))
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(outdoorRun))
         whenever(mockTrackPointDao.getTrackPointsForSessionOnce(7L)).thenReturn(points)
         val repositoryWithTrackPoints = SessionRepository(sessionDao = mockDao, trackPointDao = mockTrackPointDao)
 
@@ -1955,7 +2043,7 @@ class SessionRepositoryTest {
         // what it is, and the coach can say a 5K Stage cannot be settled from it at all.
         val treadmillRun = session(id = 8L, endTime = 1_000L).copy(runMode = "treadmill")
         val mockTrackPointDao: TrackPointDao = mock()
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(listOf(treadmillRun))
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(treadmillRun))
         whenever(mockTrackPointDao.getTrackPointsForSessionOnce(8L)).thenReturn(emptyList())
         val repositoryWithTrackPoints = SessionRepository(sessionDao = mockDao, trackPointDao = mockTrackPointDao)
 
@@ -1972,7 +2060,7 @@ class SessionRepositoryTest {
         // volume the next Long Run is judged against, instead of looking like a Run that never
         // happened.
         val treadmillRun = aTreadmillRun(id = 8, seconds = 1_500).copy(distanceKm = 5.0)
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(listOf(treadmillRun))
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(treadmillRun))
 
         val recentRun = repository.getAiTrainingContext("sub_30_bridge").recentRuns.single()
 
@@ -1989,7 +2077,7 @@ class SessionRepositoryTest {
         // un-graduate (#231, ADR 0008) — so the Run is judged as it stood when it was finalized.
         val asFinalized = aTreadmillRun(id = 8, seconds = 1_500)
         val olderRun = aTreadmillRun(id = 7, seconds = 1_800).copy(distanceKm = 6.0)
-        whenever(mockDao.getLast3AiEligibleCompletedSessions())
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any()))
             .thenReturn(listOf(asFinalized.copy(distanceKm = 5.0), olderRun))
 
         val recentRuns = repository
@@ -2009,7 +2097,7 @@ class SessionRepositoryTest {
         val hardWeek = (0..6).map { day ->
             ScoredRunProjection(startTime = DAY_MILLIS_2026_01_05 + day * ONE_DAY_MILLIS, effortScore = 100)
         }
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
         whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(hardWeek))
         whenever(mockDao.getRunVolumesFlow()).thenReturn(flowOf(
             hardWeek.map { volumeRow(startTime = it.startTime, effortScore = it.effortScore) } +
@@ -2038,7 +2126,7 @@ class SessionRepositoryTest {
         // No heart rate is no Effort Score, so the curves cannot see the Run that just finished —
         // and told nothing, a coach reads a hard strapless hour as an hour of rest (#66).
         val strapless = aTreadmillRun(id = 9, seconds = 3_600).copy(effortScore = null)
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(listOf(strapless))
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(strapless))
         whenever(mockDao.getScoredRunsFlow()).thenReturn(
             flowOf(listOf(ScoredRunProjection(startTime = DAY_MILLIS_2026_01_05, effortScore = 100)))
         )
@@ -2056,7 +2144,7 @@ class SessionRepositoryTest {
         assertFalse(state.todaysRunIsInTheNumbers)
         // The same Run with a Score is inside them, which is the case the flag has to tell apart.
         val scored = strapless.copy(effortScore = 140)
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(listOf(scored))
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(scored))
         assertTrue(
             repository.getAiTrainingContext(
                 "sub_30_bridge",
@@ -2076,7 +2164,7 @@ class SessionRepositoryTest {
             effortScore = 140,
             startTime = DAY_MILLIS_2026_01_05 + 30 * ONE_DAY_MILLIS
         )
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(listOf(scoredButAhead))
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(scoredButAhead))
         whenever(mockDao.getScoredRunsFlow()).thenReturn(
             flowOf(listOf(ScoredRunProjection(startTime = DAY_MILLIS_2026_01_05, effortScore = 100)))
         )
@@ -2100,7 +2188,7 @@ class SessionRepositoryTest {
         // Run, while "nothing measured" is training the app could not see. The weeks themselves
         // cannot tell the two apart — both come back with no Effort Score (#66).
         val oneScoredRun = ScoredRunProjection(startTime = DAY_MILLIS_2026_01_05, effortScore = 100)
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
         whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(listOf(oneScoredRun)))
         whenever(mockDao.getRunVolumesFlow()).thenReturn(
             flowOf(listOf(volumeRow(startTime = DAY_MILLIS_2026_01_05, effortScore = 100)))
@@ -2121,7 +2209,7 @@ class SessionRepositoryTest {
         // The #247 week: one Run wore a Strap and one did not, so the total is a floor under the
         // week. Sent unmarked it reads as the whole of it, and reads low every time.
         val scored = ScoredRunProjection(startTime = DAY_MILLIS_2026_01_05, effortScore = 100)
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
         whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(listOf(scored)))
         whenever(mockDao.getRunVolumesFlow()).thenReturn(
             flowOf(
@@ -2153,7 +2241,7 @@ class SessionRepositoryTest {
                 effortScore = 10 * (week + 1)
             )
         }
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
         whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(weekly))
         whenever(mockDao.getRunVolumesFlow()).thenReturn(
             flowOf(weekly.map { volumeRow(startTime = it.startTime, effortScore = it.effortScore) })
@@ -2172,7 +2260,7 @@ class SessionRepositoryTest {
     fun `with no scored Run in history the coach is told nothing about fatigue`() = runTest {
         // A new phone, or a runner who has never run with a Strap: there is no curve to read, and
         // zeroes would read as six weeks of doing nothing.
-        whenever(mockDao.getLast3AiEligibleCompletedSessions()).thenReturn(emptyList())
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
         whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(emptyList()))
         whenever(mockDao.getRunVolumesFlow()).thenReturn(
             flowOf(listOf(volumeRow(startTime = DAY_MILLIS_2026_01_05, effortScore = null)))

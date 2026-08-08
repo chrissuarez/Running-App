@@ -1565,7 +1565,9 @@ class SessionRepository(
             .firstOrNull { it.id == stageId }
             ?: throw IllegalArgumentException("Stage not found for id: $stageId")
 
-        val recentRuns = sessionDao.getLast3AiEligibleCompletedSessions().map { stored ->
+        // The Stage's own Runs and no others, which is what a Stage is graduated on (#234) — see
+        // [RunnerSession.ranUnderStageId].
+        val recentRuns = sessionDao.getLast3AiEligibleRunsOfStage(stageId).map { stored ->
             val session = if (stored.id == asFinalized?.id) asFinalized else stored
             // The label the coach sees for a past run: whether it followed a Workout at all.
             // Whether a run is *evaluated* is no longer this — that is its Run Type (#176) — but a
@@ -1663,7 +1665,9 @@ class SessionRepository(
      * as though it had been there all along. That is the one case where a typo could graduate a
      * Stage, and a graduation cannot be taken back. A Run's own Stage evaluation is not replayed
      * when a distance arrives later, for the same reason: it is a judgement made once, about one
-     * Run, under the Stage in force at that moment, and nothing records what that was. What a stated
+     * Run, under the Stage in force at that moment — which the Run now writes down for itself
+     * ([RunnerSession.ranUnderStageId], #234), so that it can be shown to that Stage and to no
+     * other, though replaying the judgement is still not something that happens. What a stated
      * distance buys the coach is every evaluation *after* it — which is where an indoor winter was
      * going missing.
      */
@@ -1688,6 +1692,19 @@ class SessionRepository(
                 Log.d("AiCoach", "Skipping AI evaluation: testing mode enabled")
                 return
             }
+            // The Run was recorded under a Stage the runner has since left (#234) — which happens
+            // when an earlier Run's evaluation graduated the plan while this one was still going.
+            // Nothing here can be done with it: its evidence belongs to the old Stage, so it cannot
+            // answer the new one's requirement, and a verdict on the old one could only graduate a
+            // Stage the runner is no longer in or prescribe into a Stage this Run never ran.
+            if (stageId != settings.activeStageId) {
+                Log.d(
+                    "AiCoach",
+                    "Skipping AI evaluation: the run was recorded under stage=$stageId and the " +
+                        "plan has since moved to stage=${settings.activeStageId}"
+                )
+                return
+            }
             val latestFinalizedSession = sessionDao.getMostRecentFinalizedSession()
             if (latestFinalizedSession?.includeInAiTraining == false) {
                 Log.d(
@@ -1703,11 +1720,11 @@ class SessionRepository(
             //
             // Resolved before the coach is asked anything, because its absence is the same "not a
             // Run I understand" answer as the Run Type gate above. The Run followed a Workout of
-            // this kind, so a missing one means the plan moved on: detached, or advanced to a stage
-            // that offers no Workout of this Run Type, as stage 3 offers no Long run. That happens
-            // when an earlier evaluation graduates the plan while this Run is still going. Asking
-            // anyway would evaluate the finished Run against a stage it was never run under, and
-            // then write that verdict over the graduation's own debrief.
+            // this kind, so a missing one means the plan moved on: detached, or moved to a stage
+            // that offers no Workout of this Run Type, as stage 3 offers no Long run. A graduation
+            // landing mid-Run is caught above, by the Stage the Run was recorded under (#234); what
+            // is left for this to catch is the runner changing plan or stage themselves. Asking
+            // anyway would prescribe into a stage this Run was never run under.
             val stageWorkoutOfKind = TrainingPlanProvider.resolveWorkoutOfType(
                 settings.activePlanId,
                 settings.activeStageId,
@@ -1778,7 +1795,16 @@ class SessionRepository(
 
             settingsRepo.setLatestCoachMessage(clampedResponse.coachMessage, scope)
 
-            if (clampedResponse.graduatedToNextStage) {
+            // A Stage is graduated on its own Runs, and with none of them there is nothing to
+            // graduate it on (#234). The coach is told this in as many words, but a graduation
+            // cannot be taken back, so the one place it is acted on refuses it outright rather than
+            // trusting the telling — and the coach's message still reaches the runner either way.
+            val graduated = clampedResponse.graduatedToNextStage && context.recentRuns.isNotEmpty()
+            if (clampedResponse.graduatedToNextStage && !graduated) {
+                Log.d("AiCoach", "Refusing a graduation: no run recorded under stage=$stageId to graduate it")
+            }
+
+            if (graduated) {
                 val plan = TrainingPlanProvider
                     .getAllPlans()
                     .firstOrNull { currentPlan -> currentPlan.stages.any { it.id == stageId } }
