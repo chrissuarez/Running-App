@@ -210,6 +210,33 @@ class TrainingPlanModelsTest {
     }
 
     @Test
+    fun `the Stage the runner is in is the one the setting names`() {
+        assertEquals(
+            "sub_30_bridge",
+            TrainingPlanProvider.resolveActiveStage("5k_sub_25", "sub_30_bridge")?.id
+        )
+    }
+
+    @Test
+    fun `a plan naming no Stage, or one it does not hold, is in its first`() {
+        // What the Run is stamped with (#234) has to be the Stage its Workout came from, so both
+        // fall back where the Workout does rather than being written down as they are found.
+        assertEquals("base_builder", TrainingPlanProvider.resolveActiveStage("5k_sub_25", null)?.id)
+        assertEquals(
+            "base_builder",
+            TrainingPlanProvider.resolveActiveStage("5k_sub_25", "no_such_stage")?.id
+        )
+    }
+
+    @Test
+    fun `no plan attached is no Stage at all, whatever the setting says`() {
+        // A Run with no plan records no Stage, and answers no Stage's requirement.
+        assertNull(TrainingPlanProvider.resolveActiveStage(null, null))
+        assertNull(TrainingPlanProvider.resolveActiveStage(null, "base_builder"))
+        assertNull(TrainingPlanProvider.resolveActiveStage("no_such_plan", "base_builder"))
+    }
+
+    @Test
     fun `the picked workout is the one today's run uses`() {
         assertEquals(
             "w1_quality",

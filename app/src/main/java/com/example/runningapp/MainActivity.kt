@@ -888,8 +888,10 @@ fun MainScreen(
     var pickedWorkoutId by rememberSaveable { mutableStateOf<String?>(null) }
 
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
-    val activePlan = userSettings.activePlanId?.let { TrainingPlanProvider.getPlanById(it) }
-    val activeStage = activePlan?.stages?.firstOrNull { it.id == userSettings.activeStageId } ?: activePlan?.stages?.firstOrNull()
+    val activeStage = TrainingPlanProvider.resolveActiveStage(
+        userSettings.activePlanId,
+        userSettings.activeStageId
+    )
     val stageWorkouts = activeStage?.workouts.orEmpty()
     // No testing-mode check: turning testing mode on erases the debrief, and the coach is refused
     // the write while it stays on, so there is nothing left to filter out on read (#113).
