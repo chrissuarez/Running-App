@@ -280,8 +280,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // Mission 4: Location
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var locationTracker: LocationTracker? = null
-    // The run the last stored track point belonged to — how a resume is told from a run's first fix.
-    private var lastTrackedSessionId: Long? = null
     private var lastNotificationZone: HrZone? = null
     private var lastNotificationPhase = SessionPhase.WARM_UP
     private var lastNotificationStatus = SessionStatus.IDLE
@@ -934,11 +932,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // reading the Run, and the Run has no business knowing what a fix is.
                 val sessionId = _hrState.value.activeDbSessionId
                 if (sessionId != null) {
-                    // The tracker is reused between runs and ends every one of them with a stop, so
-                    // it offers the first fix of a new run as though a pause preceded it. A run's
-                    // opening fix breaks nothing — there is no earlier point to be joined to.
-                    val resumedHere = startsAfterPause && sessionId == lastTrackedSessionId
-                    lastTrackedSessionId = sessionId
+                    // Written down as offered. The tracker is reused between runs, but it is told
+                    // where a run begins and clears the mark there, so a run's opening fix carries
+                    // one only when a pause really did come before it (#195).
                     val trackPoint = TrackPoint(
                         sessionId = sessionId,
                         latitude = location.latitude,
@@ -950,7 +946,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         barometerPressureHpa = barometerPressureHpa,
                         timestampMillis = location.time,
                         source = TrackPointSource.GPS,
-                        startsAfterPause = resumedHere
+                        startsAfterPause = startsAfterPause
                     )
                     recorderWriteScope.launch {
                         database.trackPointDao().insertTrackPoint(trackPoint)

@@ -746,6 +746,26 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `getTrackPointsForMap carries an opening pause boundary onto the point that replaces it`() = runTest {
+        // A Run paused before its first fix landed marks that opening fix (#195). Thrown out by the
+        // accuracy gate, it hands the mark on like any other — and the point that takes it is the
+        // opening fix in its turn, where every reader that measures between fixes leaves it alone.
+        val sessionId = 7L
+        val openedButNoisy = trackPoint(sessionId, lon = 1.0, accuracy = 45f, source = TrackPointSource.GPS)
+            .copy(startsAfterPause = true)
+        val nextFix = trackPoint(sessionId, lon = 2.0, accuracy = 15f, source = TrackPointSource.GPS)
+        val mockTrackPointDao: TrackPointDao = mock()
+        whenever(mockTrackPointDao.getTrackPointsForSessionOnce(sessionId)).thenReturn(
+            listOf(openedButNoisy, nextFix)
+        )
+        val repositoryWithTrackPoints = SessionRepository(sessionDao = mockDao, trackPointDao = mockTrackPointDao)
+
+        val result = repositoryWithTrackPoints.getTrackPointsForMap(sessionId)
+
+        assertEquals(listOf(nextFix.copy(startsAfterPause = true)), result)
+    }
+
+    @Test
     fun `getTrackPointsForMap returns an empty list when no track point dao is configured`() = runTest {
         assertEquals(emptyList<TrackPoint>(), repository.getTrackPointsForMap(sessionId = 7L))
     }
