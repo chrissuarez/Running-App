@@ -85,6 +85,7 @@ object Run {
                     targetZoneNumber = event.config.targetZone.number,
                     runModeSettingValue = event.config.runMode.settingValue,
                     includeInAiTraining = event.config.includeInAiTraining,
+                    hrProfile = event.config.hrProfile,
                 ),
             ),
         )

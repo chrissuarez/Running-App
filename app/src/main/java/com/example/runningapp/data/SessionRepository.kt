@@ -414,6 +414,10 @@ class SessionRepository(
      * that once the transaction has committed, because a snapshot taken mid-transaction would copy
      * a history half-moved, and file IO inside a database transaction holds the write lock open for
      * the length of a file copy.
+     *
+     * Every row it re-bands is stamped with the Reserve it re-banded it against (#228). That is
+     * what keeps a Run's stored pair the truth about that Run rather than a note of where it
+     * started life: this is the only writer that moves a *finished* Run onto another Reserve.
      */
     private suspend fun recomputeZoneSecondsAndEffortForAllRuns(samples: SampleDao, profile: HrProfile) {
         sessionDao.getFinalizedSessionIds().forEach { sessionId ->
@@ -429,7 +433,11 @@ class SessionRepository(
                 // From the same beats and the same edges as the tally above, so a Run's Effort Score
                 // and its zone chart never part company (#61). Only a Run that already has a Score
                 // is rewritten — see [SessionDao.updateZoneSecondsAndEffort].
-                effortScore = effortScoreOf(bpms, profile)
+                effortScore = effortScoreOf(bpms, profile),
+                // What the Run is banded on from here — including a Run recorded before the pair
+                // was written down, which this is the moment to stop guessing about (#228).
+                maxHrAtRun = profile.maxHr,
+                restingHrAtRun = profile.restingHr,
             )
         }
     }
@@ -465,9 +473,16 @@ class SessionRepository(
      *
      * [profile] is the heart-rate profile to score against, and null — what the launch pass passes —
      * means the one history is already banded on ([UserSettings.historyMaxHr]), which is the same
-     * number the re-tally and the rescue pass use. Not the stored maximum: after a future-only Max HR
+     * number the re-tally uses. Not the stored maximum: after a future-only Max HR
      * correction those differ, and scoring against the stored one would put these Runs on a profile
      * their own zone times are not on.
+     *
+     * A global rather than each Run's own Reserve ([RunnerSession.recordedHrProfile]), unlike the
+     * rescue pass (#228), and for a reason rather than by omission: every Run this pass can reach
+     * is a Run with no Score, and a Run recorded since a Reserve was written down banks its Score
+     * as it finishes. So the Runs left here are the ones from before the columns existed — which
+     * carry no Reserve of their own — and the strapless ones, which have no beats to score at all.
+     * Reading a row per Run to learn that, at every launch, for ever, would buy nothing.
      *
      * Read **inside** the lock rather than by the caller, which is why the maximum is a nullable
      * parameter rather than a required one: a profile read outside would be the very staleness the
@@ -631,12 +646,15 @@ class SessionRepository(
         val interruptedIds = sessionDao.getInterruptedSessionIds(startedBeforeMillis)
         if (interruptedIds.isEmpty()) return@withLock
 
-        // The maximum history is banded against rather than the one in force, which is the same
-        // number the re-tally uses and differs from the stored one after a future-only Max HR
-        // correction. Banding this Run on the current maximum would land it beside runs on the
-        // earlier one — the very drag the one-shot exists to prevent, arriving one Run at a time.
+        // What history is banded against, and only for a Run recorded before a Run wrote its own
+        // Reserve down (#228). A Run that has one is banded on *that*: it is the Reserve it was
+        // recorded and coached under, which is the one this Run's seconds mean anything against.
+        //
+        // Neither global number would do. The one in force is wrong for a Run started before a
+        // future-only Max HR correction, and the one history is banded against is wrong for every
+        // Run started after it — and a rescue is by definition a Run that ran some time ago.
         val current = settings.userSettingsFlow.first()
-        val profile = current.historyHrProfile
+        val historyProfile = current.historyHrProfile
         var rescued = 0
         interruptedIds.forEach { sessionId ->
             try {
@@ -649,7 +667,7 @@ class SessionRepository(
                     samples = samples.getSamplesForSessionOnce(sessionId),
                     track = track,
                     mappedTrack = track.acceptedForMap(),
-                    profile = profile,
+                    profile = session.recordedHrProfile() ?: historyProfile,
                     bankedIntervals = intervalStatDao
                         ?.getIntervalStatsForSession(sessionId)
                         .orEmpty()

@@ -587,6 +587,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     targetZone = effect.targetZoneNumber,
                     runMode = effect.runModeSettingValue,
                     includeInAiTraining = effect.includeInAiTraining,
+                    // The Reserve this Run is being recorded under, written down with the Run
+                    // rather than left to be guessed at afterwards (#228).
+                    maxHrAtRun = effect.hrProfile.maxHr,
+                    restingHrAtRun = effect.hrProfile.restingHr,
                 )
             )
             Log.d(TAG, "Started DB Session: $runRowId (Mode: ${effect.runModeSettingValue})")

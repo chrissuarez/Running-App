@@ -191,6 +191,32 @@ class SessionRepositoryRescueTest {
     }
 
     @Test
+    fun `a rescued run that wrote its own heart rates is banded on those`() = runTest {
+        // The Run was recorded under 195 after the correction, and history is still on 181. Neither
+        // global is the answer for it (#228): its own pair is, and it wrote one down at START.
+        //
+        // 130 is the beat that tells them apart. Against 195 it is Zone 2 (that zone runs 117-136);
+        // against 181 it is Zone 3, which starts at 127.
+        whenever(settingsRepository.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 195, historyMaxHr = 181)))
+        whenever(sessionDao.getInterruptedSessionIds(processStartedAt)).thenReturn(listOf(67L))
+        whenever(sessionDao.getSessionById(67L))
+            .thenReturn(interruptedRun(67L).copy(maxHrAtRun = 195, restingHrAtRun = 0))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 60))
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+
+        repository.rescueInterruptedRuns(processStartedAt)
+
+        val saved = argumentCaptor<RunnerSession>()
+        verify(sessionDao).updateSession(saved.capture())
+        val onItsOwnProfile = tallyZoneSeconds(List(60) { 130 }, HrProfile(maxHr = 195))
+        assertEquals(onItsOwnProfile.zone2, saved.firstValue.zone2Seconds)
+        assertEquals(onItsOwnProfile.zone3, saved.firstValue.zone3Seconds)
+        // And the run keeps saying what it was banded on, rather than being rewritten to the global.
+        assertEquals(195, saved.firstValue.maxHrAtRun)
+    }
+
+    @Test
     fun `a rescued run that banked an interval comes back as a run walk run`() = runTest {
         val intervalStatDao: RunWalkIntervalStatDao = mock {
             onBlocking { getIntervalStatsForSession(67L) }.thenReturn(

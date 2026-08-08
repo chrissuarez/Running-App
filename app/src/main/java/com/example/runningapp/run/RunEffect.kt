@@ -1,6 +1,7 @@
 package com.example.runningapp.run
 
 import com.example.runningapp.CuePriority
+import com.example.runningapp.HrProfile
 import com.example.runningapp.RunType
 import com.example.runningapp.ZoneSeconds
 
@@ -88,6 +89,15 @@ sealed interface RunEffect {
         val targetZoneNumber: Int,
         val runModeSettingValue: String,
         val includeInAiTraining: Boolean,
+        /**
+         * The Reserve this Run's zone seconds will be banded against, written with the row so the
+         * Run remembers it (#228).
+         *
+         * It goes down at START rather than at the finish because that is when it is pinned, and
+         * because a Run whose process is killed never reaches a finish: the rescue pass then has
+         * the Run's own numbers to rebuild it from instead of a global that has since moved on.
+         */
+        val hrProfile: HrProfile,
     ) : RunEffect
 
     /** Write the finished Run's totals to its row. Emitted once per Run, and only with an id. */
