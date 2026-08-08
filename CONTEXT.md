@@ -19,7 +19,11 @@ _Avoid_: program, schedule
 
 **Stage**:
 One block of a Plan, holding the Workouts available in it and the requirement
-for leaving it. A runner is in exactly one Stage at a time.
+for leaving it. A runner is in exactly one Stage at a time. Every Run writes
+down the Stage it was run under, fixed when START is pressed, and a Stage's
+requirement is answered only by the Runs recorded under that Stage — so one
+Stage's work can never graduate the next, and a Run carrying no Stage answers
+nothing (#234).
 _Avoid_: phase (a Phase is a stretch of a single Run), level, block
 
 **Workout**:

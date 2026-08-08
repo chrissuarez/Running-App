@@ -591,6 +591,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     // rather than left to be guessed at afterwards (#228).
                     bandedOnMaxHr = effect.hrProfile.maxHr,
                     bandedOnRestingHr = effect.hrProfile.restingHr,
+                    // The Stage this Run counts towards, written down at the start of it rather
+                    // than worked out at the finish, by which time it can have moved (#234).
+                    ranUnderStageId = effect.ranUnderStageId,
                 )
             )
             Log.d(TAG, "Started DB Session: $runRowId (Mode: ${effect.runModeSettingValue})")
@@ -756,7 +759,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
 
-                val stageId = currentSettings.activeStageId
+                // The Stage this Run was recorded under rather than the one in force now (#234).
+                // They are the same Stage on every ordinary finish, and where they are not it is
+                // because an earlier Run's evaluation graduated the plan while this one was still
+                // going — in which case this Run is evidence about the Stage it was run under, and
+                // evaluateAndAdjustPlan is what declines to judge a Stage the runner has left.
+                val stageId = updatedSession.ranUnderStageId
                 if (stageId != null) {
                     if (updatedSession.includeInAiTraining && !currentSettings.testingModeEnabled) {
                         // Whether this Run is one the coach adjusts is its Run Type's answer, given
@@ -800,6 +808,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             runMode = runMode,
             workout = workout,
             includeInAiTraining = settings.aiDataSharingEnabled && !settings.testingModeEnabled,
+            // The Stage in force as START was pressed, which is the Stage this Run is evidence for
+            // whatever happens to the plan while it runs (#234). Not conditioned on the Workout:
+            // a Run that skipped today's plan was still run under the Stage the runner is in.
+            ranUnderStageId = settings.activeStageId,
         )
     }
 

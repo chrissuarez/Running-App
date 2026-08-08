@@ -107,7 +107,29 @@ data class RunnerSession(
      */
     val bandedOnMaxHr: Int? = null,
     /** The resting heart rate half of the Reserve this Run is banded on — see [bandedOnMaxHr]. */
-    val bandedOnRestingHr: Int? = null
+    val bandedOnRestingHr: Int? = null,
+    /**
+     * The Stage this Run was recorded under (#234), written with the row at START from
+     * [com.example.runningapp.run.RunConfig.ranUnderStageId] — the Stage in force when the runner
+     * pressed it.
+     *
+     * It is here because a Stage is graduated on evidence, and evidence has to belong to the Stage
+     * it is offered to. Without it the coach was shown the last three Runs full stop, so the moment
+     * a Stage was graduated the next evaluation still read the Runs before it — most of them the
+     * work of the Stage just left. Harmless for a Stage asking for consistency; not harmless for
+     * one asking for a time, where one Stage's Run could graduate the next one too, and a
+     * graduation cannot be taken back.
+     *
+     * Unlike [bandedOnMaxHr] nothing ever moves this: it is where a Run happened, and no later
+     * re-reading of the Run changes that.
+     *
+     * Null is "no Stage recorded", not "no Stage": a Run recorded before v25, or one run with no
+     * plan attached. Such a Run can never answer a Stage's requirement — see
+     * [SessionDao.getLast3AiEligibleRunsOfStage] — which errs towards graduating late rather than
+     * twice. There is no backfill, because the only Stage a backfill could write is whichever one
+     * the runner is on now, which is exactly the guess this exists to stop.
+     */
+    val ranUnderStageId: String? = null
 )
 
 /**
@@ -497,11 +519,27 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE id = :sessionId")
     fun getSessionByIdFlow(sessionId: Long): Flow<RunnerSession?>
 
-    @Query("SELECT * FROM sessions WHERE endTime > 0 AND durationSeconds > 120 ORDER BY startTime DESC LIMIT 3")
-    suspend fun getLast3CompletedSessions(): List<RunnerSession>
-
-    @Query("SELECT * FROM sessions WHERE endTime > 0 AND durationSeconds > 120 AND includeInAiTraining = 1 ORDER BY startTime DESC LIMIT 3")
-    suspend fun getLast3AiEligibleCompletedSessions(): List<RunnerSession>
+    /**
+     * The last three Runs the coach may judge a Stage on: finished, long enough to mean something,
+     * shareable — and recorded under that Stage (#234).
+     *
+     * A Run carrying no Stage is not a match, so history recorded before v25 answers no
+     * requirement at all — see [RunnerSession.ranUnderStageId] for why that is the safe side to be
+     * wrong on. There is deliberately no unfiltered twin of this query: the last three Runs full
+     * stop is the read the ticket was about.
+     */
+    @Query(
+        """
+        SELECT * FROM sessions
+        WHERE endTime > 0
+          AND durationSeconds > 120
+          AND includeInAiTraining = 1
+          AND ranUnderStageId = :stageId
+        ORDER BY startTime DESC
+        LIMIT 3
+        """
+    )
+    suspend fun getLast3AiEligibleRunsOfStage(stageId: String): List<RunnerSession>
 
     @Query("SELECT * FROM sessions WHERE endTime > 0 ORDER BY endTime DESC LIMIT 1")
     suspend fun getMostRecentFinalizedSession(): RunnerSession?
@@ -732,7 +770,7 @@ interface RunWalkIntervalStatDao {
         TrackPoint::class,
         Achievement::class
     ],
-    version = 24,
+    version = 25,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -795,7 +833,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_20_21,
                     MIGRATION_21_22,
                     MIGRATION_22_23,
-                    MIGRATION_23_24
+                    MIGRATION_23_24,
+                    MIGRATION_24_25
                 )
                 .build()
                 INSTANCE = instance
@@ -1479,6 +1518,24 @@ val MIGRATION_23_24 = object : Migration(23, 24) {
         }
         if (!database.hasColumn("sessions", "bandedOnRestingHr")) {
             database.execSQL("ALTER TABLE sessions ADD COLUMN bandedOnRestingHr INTEGER")
+        }
+    }
+}
+
+/**
+ * Room for the Stage each Run was recorded under (#234): [RunnerSession.ranUnderStageId].
+ *
+ * Nullable and left null, which is the whole of the migration. The Stage a past Run was run under
+ * was never written down anywhere, so there is nothing for SQL to recover it from — and the one
+ * value a backfill could reach, the Stage the runner is on today, is precisely the assumption that
+ * lets one Stage's work graduate the next. Null therefore means what it says: this Run answers no
+ * Stage's requirement. History stops counting towards a graduation, and the Runs recorded from here
+ * carry their own Stage and count towards theirs.
+ */
+val MIGRATION_24_25 = object : Migration(24, 25) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        if (!database.hasColumn("sessions", "ranUnderStageId")) {
+            database.execSQL("ALTER TABLE sessions ADD COLUMN ranUnderStageId TEXT")
         }
     }
 }
