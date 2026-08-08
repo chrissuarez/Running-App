@@ -73,27 +73,100 @@ class StatedHeartRateQueueTest {
 
     @Test
     fun `a failed recovery costs the recovery, not the queue`() = runTest {
-        // Left for the next launch rather than retried mid-queue, which would land last session's
-        // number after something the runner had just stated. Safe because only a statement that
-        // re-bands history clears the note, so nothing wipes it on the way past.
+        // A recovery that cannot even be read never stops a statement landing. It is read again on
+        // the way into the next statement rather than replayed on its own, so nothing it carries
+        // can overtake a number the runner has just stated.
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
         val applied = mutableListOf<Pair<Int?, Int?>>()
-        var attempts = 0
         val queue = StatedHeartRateQueue(
             scope = scope,
-            recover = {
-                attempts++
-                throw IllegalStateException("storage is having a day")
-            }
+            recover = { throw IllegalStateException("storage is having a day") }
         ) { maxHr, restingHr -> applied += maxHr to restingHr }
 
         queue.state(null, 55)
         queue.state(null, 50)
         advanceUntilIdle()
 
-        // Tried once, not once per statement — a later success would overtake what was stated.
-        assertEquals(1, attempts)
         assertEquals(listOf<Pair<Int?, Int?>>(null to 55, null to 50), applied)
+        scope.cancel()
+    }
+
+    @Test
+    fun `a recovery that could not be applied is carried by the next statement`() = runTest {
+        // #179. The runner corrects Max HR to 200 after a failed recovery of (195, 60). Left for
+        // the next launch, the stale 195 would replay and silently undo the 200 — a future-only
+        // Max HR change moves no history, so it never clears the note on its way past. Carried
+        // under the statement instead, the runner's 200 wins and the interrupted 60 still lands.
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val applied = mutableListOf<Pair<Int?, Int?>>()
+        var note: StatedHeartRates? = StatedHeartRates(195, 60)
+        var failRecovery = true
+        val queue = StatedHeartRateQueue(scope, recover = { note }) { maxHr, restingHr ->
+            if (failRecovery) {
+                failRecovery = false
+                throw IllegalStateException("storage is having a day")
+            }
+            applied += maxHr to restingHr
+            // Only a statement that re-bands history finishes the note — see
+            // `SettingsRepository.setStatedHeartRates`.
+            if (restingHr != null) note = null
+        }
+
+        queue.state(200, null)
+        advanceUntilIdle()
+
+        assertEquals(listOf<Pair<Int?, Int?>>(200 to 60), applied)
+        scope.cancel()
+    }
+
+    @Test
+    fun `a recovery too broken to read is carried by a later statement once it can be`() = runTest {
+        // The failure can be reading the note as easily as applying it, and then there is nothing
+        // to carry until it can be read. So it is read again on the way into each statement until
+        // one takes it — never applied on its own, so it can overwrite nothing.
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val applied = mutableListOf<Pair<Int?, Int?>>()
+        var readable = false
+        val queue = StatedHeartRateQueue(
+            scope = scope,
+            recover = {
+                if (!readable) throw IllegalStateException("storage is having a day")
+                StatedHeartRates(195, 60)
+            }
+        ) { maxHr, restingHr -> applied += maxHr to restingHr }
+
+        queue.state(null, 55)
+        advanceUntilIdle()
+        readable = true
+        queue.state(200, null)
+        advanceUntilIdle()
+
+        assertEquals(listOf<Pair<Int?, Int?>>(null to 55, 200 to 60), applied)
+        scope.cancel()
+    }
+
+    @Test
+    fun `a recovery is carried once, not by every statement after it`() = runTest {
+        // Carrying it again would re-state a number the runner has moved on from: the statement
+        // that took it landed it, and the note it came from is finished.
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val applied = mutableListOf<Pair<Int?, Int?>>()
+        var note: StatedHeartRates? = StatedHeartRates(195, 60)
+        var failRecovery = true
+        val queue = StatedHeartRateQueue(scope, recover = { note }) { maxHr, restingHr ->
+            if (failRecovery) {
+                failRecovery = false
+                throw IllegalStateException("storage is having a day")
+            }
+            applied += maxHr to restingHr
+            if (restingHr != null) note = null
+        }
+
+        queue.state(200, null)
+        queue.state(205, null)
+        advanceUntilIdle()
+
+        assertEquals(listOf<Pair<Int?, Int?>>(200 to 60, 205 to null), applied)
         scope.cancel()
     }
 
