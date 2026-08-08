@@ -71,13 +71,10 @@ data class Split(
  *   summary at the top of the same page.
  * - **A split's ground is all the ground the run covered**, which is the whole point of the table
  *   adding up to the distance printed above it (#204). A leg spanning an Outage carries the straight
- *   line the runner covered across it and none of its seconds
- *   ([com.example.runningapp.data.TrackLeg]) — those are already rest — so a split holding one reads
- *   faster than the runner ran, and a split built entirely of that ground shows no pace at all. That
- *   is the honest shape of the disagreement rather than a flattering one: it is the run's own moving
- *   time that has yet to account for a Break (#165), and hiding the ground to hide it would leave the
- *   table not totalling the run. A Pause carries nothing either way, so a split holding one is
- *   unaffected.
+ *   line the runner covered across it, and the seconds that line was covered in when it was covered
+ *   fast enough to be running ([com.example.runningapp.data.TrackLeg], #165) — so a split holding one
+ *   reads the pace the runner ran rather than a sprint made of ground with no time against it. A
+ *   Pause carries nothing either way, so a split holding one is unaffected.
  * - **A kilometre boundary is allowed to fall inside a leg**, and the leg is divided at it in
  *   proportion. Fixes arrive a second or so apart, so this rarely moves a pace by more than a
  *   moment — but a run backfilled from sparse breadcrumbs can have legs hundreds of metres long, and

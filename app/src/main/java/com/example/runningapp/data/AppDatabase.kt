@@ -1383,6 +1383,10 @@ val MIGRATION_21_22 = object : Migration(21, 22) {
  * Outdoor and finished, matching the backfill's own query exactly: a treadmill Run has no track to
  * measure and a Run still being written measures itself when it ends. Costs one re-measure of the
  * whole history at the next launch, in the background, once.
+ *
+ * Until that pass reaches a Run, its pace is quoted against its own duration
+ * ([RunnerSession.paceClockSeconds]) — the same "not measured yet" state history sat in before
+ * the #163 backfill, and honest in a way that leaving the old answer in place would not be.
  */
 val MIGRATION_22_23 = object : Migration(22, 23) {
     override fun migrate(database: SupportSQLiteDatabase) {

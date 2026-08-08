@@ -5,13 +5,15 @@ import org.junit.Test
 
 class MovingTimeTest {
 
+    /** Close enough at this latitude for a test laying its track out due north. */
+    private val metresPerDegreeLatitude = 111_132.0
+
     /**
      * A track laid out due north from a fixed start, one fix per second, each leg walked at the
      * given speed. Each leg is `(speedMps, seconds)` and contributes one fix per second, so the
      * track spans the summed seconds and starts with one extra fix at the origin.
      */
     private fun track(vararg legs: Pair<Double, Int>): List<TrackPoint> {
-        val metresPerDegreeLatitude = 111_132.0
         var latitude = 50.7900
         var timestamp = 1_700_000_000_000L
         val points = mutableListOf(fixAt(latitude, timestamp))
@@ -88,7 +90,6 @@ class MovingTimeTest {
         // The #165 case: a minute under dense tree cover, every fix refused by the accuracy gate,
         // 250m of ground on the far side of it. The distance total counts that leg in full, so
         // dropping its seconds is what flatters the pace.
-        val metresPerDegreeLatitude = 111_132.0
         val before = track(3.0 to 300)
         val resumeLatitude = before.last().latitude + 250.0 / metresPerDegreeLatitude
         val resumeTimestamp = before.last().timestampMillis + 60_000
@@ -103,7 +104,6 @@ class MovingTimeTest {
         // 400m over 5 minutes is 1.33 m_s and counts; 100m over the same 5 minutes is 0.33 m_s and
         // does not. An outage is judged on the ground it carries, by the same threshold as a leg
         // the recording covered.
-        val metresPerDegreeLatitude = 111_132.0
         val before = track(3.0 to 300)
         val timestamp = before.last().timestampMillis + 300_000
         val walked = fixAt(before.last().latitude + 400.0 / metresPerDegreeLatitude, timestamp)
@@ -114,11 +114,25 @@ class MovingTimeTest {
     }
 
     @Test
+    fun `a hesitation running into an outage is kept, and one running into a pause is not`() {
+        // Two seconds of crawling - inside the rest window - and then the signal goes for a minute
+        // the runner covers 250m in. They were not slowing to a stop, so the hesitation is redeemed
+        // like any other one a moving leg follows. The same two seconds before a recorded pause are
+        // rest, because there the runner was stopping.
+        val before = track(3.0 to 300, 0.02 to 2)
+        val resumeLatitude = before.last().latitude + 250.0 / metresPerDegreeLatitude
+        val resumeTimestamp = before.last().timestampMillis + 60_000
+        val ranOn = fixAt(resumeLatitude, resumeTimestamp)
+
+        assertEquals(300 + 2 + 60, measureMovingTimeSeconds(before + ranOn))
+        assertEquals(300, measureMovingTimeSeconds(before + ranOn.copy(startsAfterPause = true)))
+    }
+
+    @Test
     fun `a recorded pause is not moving time even when it looks fast`() {
         // The runner holds pause, walks 400m to a shop over 5 minutes and resumes: one leg, 1.33
         // m/s implied - comfortably "moving" by speed alone. The run wrote the pause down, and a
         // pause carries neither ground nor seconds however fast the two fixes either side look.
-        val metresPerDegreeLatitude = 111_132.0
         val points = listOf(
             fixAt(50.7900, 1_700_000_000_000L),
             fixAt(50.7900 + 400.0 / metresPerDegreeLatitude, 1_700_000_300_000L)
@@ -154,7 +168,6 @@ class MovingTimeTest {
         // Pause at a shop door for 12s and walk on 20m while stopped - too short for the gap rule
         // to notice, and fast enough over the leg (1.7 m_s) to read as moving without the record.
         // The fix that resumed the run says otherwise, and that is the whole of the evidence.
-        val metresPerDegreeLatitude = 111_132.0
         val before = track(3.0 to 300)
         var latitude = before.last().latitude + 20.0 / metresPerDegreeLatitude
         var timestamp = before.last().timestampMillis + 12_000
@@ -174,7 +187,6 @@ class MovingTimeTest {
     fun `a recorded pause shorter than the rest window is not handed back as moving`() {
         // The pause is 2s - inside REST_SUSTAINED_MS. Banked as a provisional slow spell it would
         // be restored whole by the next moving leg, so an explicit break has to be settled rest.
-        val metresPerDegreeLatitude = 111_132.0
         val before = track(3.0 to 300)
         var latitude = before.last().latitude + 4.0 / metresPerDegreeLatitude
         var timestamp = before.last().timestampMillis + 2_000

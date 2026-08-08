@@ -72,6 +72,15 @@ before #84.
   which is the defect ADR 0010 exists to close. The migration nulls the column on every finished
   outdoor Run and the #163 backfill pass re-measures the history once, in the background, at the
   next launch.
+- **A hesitation running into an Outage is kept rather than discarded.** A slow spell inside the
+  rest window used to be thrown away along with any Break that followed it, on the reasoning that the
+  runner was slowing to the stop. Where the Outage is moving there was no stop to slow to, so the
+  spell is redeemed by it exactly as it would be by any other moving leg. Before a Pause — a stop the
+  Run wrote down — it still goes.
+- **The pace line on the combined chart still steps over an Outage**, and for a reason this ADR does
+  not touch: no window of pace may reach through a Break, because that line is the shape of the Run
+  and a tunnel has no shape. What changed is only the reason ADR 0010 gave for it — the seconds are
+  no longer missing, they simply belong to the Splits table rather than to a curve.
 - **A Run's records are not re-scored by this.** Best Efforts have always spanned a Break over its
   straight line and its full seconds (ADR 0010), so nothing in the record book was measured under
   the rule that changed.
