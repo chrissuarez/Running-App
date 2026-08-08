@@ -21,6 +21,11 @@ package com.example.runningapp.recording
  * The rescue of an interrupted Run
  * ([com.example.runningapp.data.measureTrackRecordedSeconds]) is the one place it is deliberately
  * read, and refusing to credit the wait from START as running is the whole observable effect of it.
+ *
+ * Holds its own lock rather than borrowing its caller's. A Run's beginning is announced on the
+ * thread performing the Run's effects and the mark is read on the location thread, so the two need a
+ * barrier between them whoever is calling; a mark that is safe on its own is one nobody has to hold
+ * the right lock to use.
  */
 class PauseMark {
 
