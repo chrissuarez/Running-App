@@ -36,6 +36,17 @@ class StatedHeartRateQueue(
      * number, or would clear the note with a statement that moves no history and strand the
      * already-re-banded runs for good. Anything stated meanwhile waits in the queue, which is
      * exactly right — recovery is what the profile *was*, so it has to land first.
+     *
+     * When it cannot land — reading or applying it throws — it is **carried** by the next statement
+     * instead of being left for the next launch (#179). Carried, not queued: the statement's own
+     * numbers win, and only what it did not state is taken from the note. So the interrupted
+     * resting heart rate still reaches history, the maximum the runner has just corrected is not
+     * quietly replaced by the one they corrected it from, and nothing lands after the statement to
+     * overwrite it — the whole of why recovery goes first, kept.
+     *
+     * Left for the next launch, that correction *was* silently undone: a future-only Max HR change
+     * moves no history, so it does not clear the note, and the next launch replayed the older
+     * maximum over it.
      */
     recover: suspend () -> StatedHeartRates?,
     apply: suspend (maxHr: Int?, restingHr: Int?) -> Unit
@@ -44,17 +55,30 @@ class StatedHeartRateQueue(
 
     init {
         scope.launch {
-            // Once, ahead of the loop, and not retried inside it. A second attempt part-way through
-            // would land last session's leftover number *after* something the runner had just
-            // stated and overwrite it — the very race applying it here first exists to remove.
-            //
-            // Failing is therefore allowed to mean "not this launch". It is safe because the note
-            // outlives the failure: only a statement that re-bands history clears it, so a
-            // future-only Max HR change cannot wipe it on the way past, and the next launch finds
-            // it. A statement that does re-band history supersedes it anyway.
-            applying { recover()?.let { apply(it.maxHr, it.restingHr) } }
+            // What the interrupted statement still owes, once recovery has failed to land it. Held
+            // only until a statement carries it — see [carrying].
+            var owed: StatedHeartRates? = null
+            // Whether the note has been read at all. A recovery can fail at reading it as easily as
+            // at applying it, and until it has been read there is nothing to carry.
+            var read = false
+
+            applying {
+                owed = recover()
+                read = true
+                owed?.let { apply(it.maxHr, it.restingHr) }
+                owed = null
+            }
             for (statement in statements) {
-                applying { apply(statement.maxHr, statement.restingHr) }
+                // Read again, on the way in, when the first attempt could not read it — never on
+                // its own and never between statements, so nothing it holds can land after a
+                // number the runner has stated. Its own `applying` because a note too broken to
+                // read must still cost the note and not the statement below.
+                if (!read) applying { owed = recover(); read = true }
+                applying {
+                    val carried = owed
+                    apply(statement.maxHr ?: carried?.maxHr, statement.restingHr ?: carried?.restingHr)
+                    owed = null
+                }
             }
         }
     }
@@ -67,8 +91,8 @@ class StatedHeartRateQueue(
      * while [state] went on cheerfully accepting numbers into a channel nothing reads. The runner
      * would watch the app take a heart rate that never lands, with nothing anywhere to say so.
      *
-     * A failed recovery is left for the next launch rather than retried here — see the call site
-     * for why trying again mid-queue would be worse than waiting.
+     * A failed recovery costs the recovery the same way: what it owes is carried by the next
+     * statement instead — see [recover].
      */
     private inline fun applying(block: () -> Unit) {
         try {
