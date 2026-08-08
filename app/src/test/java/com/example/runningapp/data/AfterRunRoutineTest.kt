@@ -11,18 +11,35 @@ class AfterRunRoutineTest {
 
     private val done = mutableListOf<String>()
 
+    /**
+     * The row as the routine will find it, which is not a fixed thing: a weather look-up that
+     * lands changes the answer the second read gets, and that change is what the routine reads.
+     */
+    private var row: RunnerSession? = null
+
     private fun routineFor(
         run: RunnerSession?,
         weatherFails: Boolean = false,
+        weatherLands: Boolean = true,
         snapshotPublished: Boolean = true,
-    ) = AfterRunRoutine(
-        readRun = { done += "read"; run },
-        fetchWeather = { id, lat, lon, at ->
-            done += "weather($id,$lat,$lon,$at)"
-            if (weatherFails) throw IllegalStateException("no weather service")
-        },
-        snapshotHistory = { done += "snapshot"; snapshotPublished },
-    )
+        secondSnapshotPublished: Boolean = snapshotPublished,
+    ): AfterRunRoutine {
+        row = run
+        var snapshots = 0
+        return AfterRunRoutine(
+            readRun = { done += "read"; row },
+            fetchWeather = { id, lat, lon, at ->
+                done += "weather($id,$lat,$lon,$at)"
+                if (weatherFails) throw IllegalStateException("no weather service")
+                if (weatherLands) row = row?.copy(weatherTempC = 14.0)
+            },
+            snapshotHistory = {
+                done += "snapshot"
+                snapshots++
+                if (snapshots == 1) snapshotPublished else secondSnapshotPublished
+            },
+        )
+    }
 
     private fun outdoorRun(
         latitude: Double? = 51.5,
@@ -37,18 +54,46 @@ class AfterRunRoutineTest {
     )
 
     @Test
-    fun `an outdoor Run's weather is fetched before history is snapshotted`() = runTest {
+    fun `history is snapshotted before an outdoor Run's weather is even asked for`() = runTest {
         val published = routineFor(outdoorRun()).perform(runRowId = 7L)
 
-        assertEquals(listOf("read", "weather(7,51.5,-0.1,1000)", "snapshot"), done)
+        assertEquals(
+            listOf("read", "snapshot", "weather(7,51.5,-0.1,1000)", "read", "snapshot"),
+            done,
+        )
         assertTrue(published)
     }
 
     @Test
-    fun `a weather look-up that fails still costs history nothing`() = runTest {
+    fun `a weather look-up that fails costs the snapshot already taken nothing`() = runTest {
         val published = routineFor(outdoorRun(), weatherFails = true).perform(runRowId = 7L)
 
-        assertEquals(listOf("read", "weather(7,51.5,-0.1,1000)", "snapshot"), done)
+        assertEquals(listOf("read", "snapshot", "weather(7,51.5,-0.1,1000)", "read"), done)
+        assertTrue(published)
+    }
+
+    @Test
+    fun `weather that lands is published in a second snapshot`() = runTest {
+        routineFor(outdoorRun()).perform(runRowId = 7L)
+
+        assertEquals(2, done.count { it == "snapshot" })
+    }
+
+    @Test
+    fun `a look-up that saved nothing is not worth a second copy`() = runTest {
+        val published = routineFor(outdoorRun(), weatherLands = false).perform(runRowId = 7L)
+
+        assertEquals(listOf("read", "snapshot", "weather(7,51.5,-0.1,1000)", "read"), done)
+        assertTrue(published)
+    }
+
+    @Test
+    fun `a Run that already has its weather is never asked about again`() = runTest {
+        val already = outdoorRun().copy(weatherTempC = 9.5)
+
+        val published = routineFor(already).perform(runRowId = 7L)
+
+        assertEquals(listOf("read", "snapshot"), done)
         assertTrue(published)
     }
 
@@ -84,5 +129,17 @@ class AfterRunRoutineTest {
         val published = routineFor(outdoorRun(), snapshotPublished = false).perform(runRowId = 7L)
 
         assertFalse(published)
+        // Abandoned there: the copy the weather would have joined was never taken, and the whole
+        // routine is about to be run again.
+        assertEquals(listOf("read", "snapshot"), done)
+    }
+
+    @Test
+    fun `weather stranded by a failed second snapshot asks for another go`() = runTest {
+        val published = routineFor(outdoorRun(), secondSnapshotPublished = false)
+            .perform(runRowId = 7L)
+
+        assertFalse(published)
+        assertEquals(2, done.count { it == "snapshot" })
     }
 }
