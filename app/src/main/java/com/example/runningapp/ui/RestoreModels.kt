@@ -104,9 +104,13 @@ fun restoreRefusalMessage(reason: RestoreRefusal): String = when (reason) {
     RestoreRefusal.A_RESTORE_IS_UNFINISHED ->
         "Your history is back, but the last restore still has your settings and training plan to " +
             "put back. Close the app and open it again to finish, then you can restore another file."
+    // Says only what is always true of this refusal. The usual cause is a backup Room will not
+    // accept, but the trial can also stop for a reason that is nothing to do with the file's
+    // contents, and a sentence naming what is "wrong inside it" would then be telling the runner
+    // something false about a perfectly good backup.
     RestoreRefusal.CANNOT_BE_MIGRATED ->
-        "That backup is a Running App backup, but this app can't bring it forward — something " +
-            "inside it is missing or unexpected. Try another backup. Your history is untouched."
+        "That backup couldn't be brought forward to this version of the app. Try another backup — " +
+            "your history on this phone is untouched."
     RestoreRefusal.UNREADABLE ->
         "That backup couldn't be read — it may be damaged or only partly copied. Nothing on your " +
             "phone has changed."

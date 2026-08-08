@@ -6,6 +6,7 @@ import android.util.Log
 import androidx.room.withTransaction
 import com.example.runningapp.archive.ArchivedSettings
 import com.example.runningapp.archive.Archiver
+import com.example.runningapp.archive.historyHrProfile
 import com.example.runningapp.archive.RunArchiveContents
 import com.example.runningapp.archive.SafArchiveFolder
 import com.example.runningapp.data.AiCoachClient
@@ -108,7 +109,7 @@ class AppContainer(context: Context) {
             // corrected to 195 has history banded on 181 and live zones on 195, because a correction
             // must not rewrite runs already read. The archive carries both, so the restored runs can
             // be recomputed against the very maximum they were written under.
-            restoredSettings?.let { HrProfile(it.historyMaxHr, it.restingHr) }
+            restoredSettings?.historyHrProfile
                 ?: runBlocking { settingsRepository.userSettingsFlow.first().hrProfile }
         }
     }
