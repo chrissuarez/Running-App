@@ -295,10 +295,10 @@ private fun MeasuredTrack.smoothedPaceAtEachFix(
         var meters = 0.0
         var movingMillis = 0.0
         for (j in from..to) {
-            // An Outage carries ground but no seconds the recording can vouch for (#204). Divided one
-            // by the other it is a sprint the runner never ran, so the line the runner reads the
-            // shape of the Run off leaves it out entirely rather than folding half a tunnel into the
-            // pace either side of it. The splits table is where that ground is accounted for.
+            // No window of pace reaches through a Break, whatever that Break is worth in metres or
+            // seconds (#204, #165): this line is the shape of the Run, and a tunnel has no shape.
+            // Folding half of one into the pace either side would draw a bend nobody ran. The
+            // splits table is where an Outage's ground and seconds are both accounted for.
             if (!legs[j].recorded) continue
             val share = legs[j].shareInside(distanceAtFix[j], distanceAtFix[j + 1], lowest, highest)
             meters += legs[j].meters * share
