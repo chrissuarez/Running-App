@@ -49,7 +49,7 @@ data class TrainingWeek(
     val distanceKm: Double,
     val timeSeconds: Long,
     val effortScore: Int?,
-    val runsWithoutScore: Int = 0,
+    val runsWithoutScore: Int,
 ) {
     /**
      * Whether this week's Effort Score is short of what was actually run — a floor under the week
@@ -142,18 +142,30 @@ fun weeklyVolumeOf(
 }
 
 private fun emptyWeek(startingOn: LocalDate) =
-    TrainingWeek(startingOn = startingOn, distanceKm = 0.0, timeSeconds = 0, effortScore = null)
+    TrainingWeek(
+        startingOn = startingOn,
+        distanceKm = 0.0,
+        timeSeconds = 0,
+        effortScore = null,
+        // No Runs at all, which is what tells a week of rest from a week of strapless Runs — both
+        // come to no Effort Score, and they are opposite news (#247).
+        runsWithoutScore = 0,
+    )
 
-/** How many partly measured weeks are named one by one before the note counts them instead. */
+/** How many short weeks are named one by one before the note counts them instead. */
 private const val WEEKS_NAMED_BEFORE_COUNTING = 3
 
 /**
  * What the Effort Score bars are not showing, in a sentence — or null when they are showing all of
  * it (#247).
  *
- * A bar has no way to draw "and some more that nobody measured", and drawn beside full weeks a
- * partly measured one simply reads as a lighter week. So it is said in words underneath, the same
- * answer the screen already gives to a chart that is flat for two different reasons.
+ * A bar has no way to draw "and some more that nobody measured", so a week holding a strapless Run
+ * is drawn short and reads beside its neighbours as the lighter week the runner never had. Said in
+ * words underneath instead, the same answer the screen already gives to a chart that is flat for
+ * two different reasons.
+ *
+ * Every week with a Run nothing measured in it, not only the partly measured ones: a week whose
+ * Runs were all strapless draws at nothing at all, which understates it further still.
  *
  * The weeks are named while there are few enough to find on the chart, and counted once there are
  * not: a sentence listing eight dates is one a runner reads past.
@@ -161,21 +173,20 @@ private const val WEEKS_NAMED_BEFORE_COUNTING = 3
  * [dateText] writes a week's Monday the way the chart's own axis writes it, so the dates in the
  * sentence are the labels under the bars and not a second date format.
  */
-fun partlyMeasuredNote(weeks: List<TrainingWeek>, dateText: (LocalDate) -> String): String? {
-    val partly = weeks.filter { it.partlyMeasured }
-    if (partly.isEmpty()) return null
-    val many = "so their bars count only the runs that were measured."
-    if (partly.size > WEEKS_NAMED_BEFORE_COUNTING) {
-        return "${partly.size} of these weeks also held runs with no heart rate recorded, $many"
+fun unmeasuredRunsNote(weeks: List<TrainingWeek>, dateText: (LocalDate) -> String): String? {
+    val short = weeks.filter { it.runsWithoutScore > 0 }
+    if (short.isEmpty()) return null
+    val tail = "with no heart rate recorded, so their bars are short of what was run."
+    if (short.size > WEEKS_NAMED_BEFORE_COUNTING) {
+        return "${short.size} of these weeks held runs $tail"
     }
-    val dates = partly.map { dateText(it.startingOn) }
-    val runs = if (partly.sumOf { it.runsWithoutScore } == 1) "a run" else "runs"
+    val dates = short.map { dateText(it.startingOn) }
     if (dates.size == 1) {
-        return "The week of ${dates.single()} also held $runs with no heart rate recorded, " +
-            "so its bar counts only the runs that were measured."
+        val runs = if (short.single().runsWithoutScore == 1) "a run" else "runs"
+        return "The week of ${dates.single()} held $runs with no heart rate recorded, so its bar " +
+            "is short of what was run."
     }
-    return "The weeks of ${dates.dropLast(1).joinToString(", ")} and ${dates.last()} also held " +
-        "$runs with no heart rate recorded, $many"
+    return "The weeks of ${dates.dropLast(1).joinToString(", ")} and ${dates.last()} held runs $tail"
 }
 
 /**

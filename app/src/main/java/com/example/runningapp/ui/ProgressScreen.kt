@@ -39,7 +39,7 @@ import com.example.runningapp.training.ProgressRange
 import com.example.runningapp.training.TrainingWeek
 import com.example.runningapp.training.WeeklyMeasure
 import com.example.runningapp.training.formVerdictOf
-import com.example.runningapp.training.partlyMeasuredNote
+import com.example.runningapp.training.unmeasuredRunsNote
 import com.example.runningapp.ui.theme.RunningAppTheme
 import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
 import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
@@ -375,13 +375,14 @@ private fun WeeklyVolume(
         )
     } else {
         WeeklyVolumeChart(weeks = weeks, measure = measure)
-    }
-    // What the bars cannot draw: a week measured in part is short by whatever the strapless runs in
-    // it cost, and drawn beside whole weeks it reads as a lighter week instead (#247). Only under
-    // the Effort Score — distance and time count every Run whether it wore a Strap or not.
-    if (measure == WeeklyMeasure.EFFORT_SCORE) {
-        partlyMeasuredNote(weeks) { it.format(AxisDateFormat) }?.let { note ->
-            Text(text = note, style = MaterialTheme.typography.bodyMedium)
+        // What the bars cannot draw: a week holding a strapless run is short by whatever that run
+        // cost, and drawn beside whole weeks it reads as a lighter week instead (#247). Only under
+        // the Effort Score — distance and time count every Run whether it wore a Strap or not — and
+        // only where bars were drawn, because the flat-chart line above answers this already.
+        if (measure == WeeklyMeasure.EFFORT_SCORE) {
+            unmeasuredRunsNote(weeks) { it.format(AxisDateFormat) }?.let { note ->
+                Text(text = note, style = MaterialTheme.typography.bodyMedium)
+            }
         }
     }
 }
@@ -392,7 +393,14 @@ private fun nothingRecorded(measure: WeeklyMeasure, weeks: List<TrainingWeek>): 
     // would be wrong: a Score of 0 is a measurement, earned by a week spent below Zone 1.
     WeeklyMeasure.EFFORT_SCORE ->
         if (weeks.any { it.effortScore != null }) {
-            "Every run in these weeks scored 0. Effort Score counts time at Zone 1 and above."
+            // "Every run" only where every run was measured: with a strapless Run in the range the
+            // sentence would be claiming a Score of 0 for a Run nothing scored at all (#247).
+            if (weeks.any { it.runsWithoutScore > 0 }) {
+                "The runs in these weeks that recorded heart rate scored 0, and the rest recorded " +
+                    "none at all. Effort Score counts time at Zone 1 and above."
+            } else {
+                "Every run in these weeks scored 0. Effort Score counts time at Zone 1 and above."
+            }
         } else {
             // The one a runner meets by accident: every Run so far was recorded without a Strap, so
             // there is training to show and nothing scoring it. Says what would change that.
@@ -423,6 +431,9 @@ private fun WeeklyVolumeChart(weeks: List<TrainingWeek>, measure: WeeklyMeasure)
     }
 
     val total = weeks.sumOf { measure.amountOf(it) }
+    // Spoken as a floor where it is one: an Effort Score total counts only the runs that recorded
+    // heart rate, and a listener is told the whole chart in this one sentence (#247).
+    val totalIsShort = measure == WeeklyMeasure.EFFORT_SCORE && weeks.any { it.runsWithoutScore > 0 }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -431,7 +442,8 @@ private fun WeeklyVolumeChart(weeks: List<TrainingWeek>, measure: WeeklyMeasure)
                 contentDescription = "Weekly ${measure.label} from " +
                     "${firstWeek.format(AxisDateFormat)} to " +
                     "${weeks.last().startingOn.format(AxisDateFormat)}, " +
-                    "${totalText(measure, total)} in total"
+                    "${totalText(measure, total)} in total" +
+                    if (totalIsShort) ", counting only the runs that recorded heart rate" else ""
             }
     ) {
         ProvideChartStyle(m3ChartStyle()) {
@@ -522,6 +534,9 @@ private fun ProgressScreenPreview() {
             distanceKm = 20.0 + (index % 4) * 8.0,
             timeSeconds = 7_200L + (index % 4) * 1_800L,
             effortScore = 200 + (index % 4) * 60,
+            // Every fourth week holding a strapless run, so the preview draws the note as well as
+            // the bars (#247).
+            runsWithoutScore = if (index % 4 == 3) 1 else 0,
         )
     }
     RunningAppTheme {
