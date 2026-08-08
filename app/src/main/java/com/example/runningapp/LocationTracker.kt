@@ -71,13 +71,13 @@ class LocationTracker(
      * A Run is beginning — zero everything this tracker holds that belongs to one Run.
      *
      * Including the pause mark, which is the one that is not obvious: the Run before this one ended
-     * with a [stop], and a stop is how a held-down pause looks from here. Left standing it would
-     * have this Run's opening fix claim a pause preceded it. Clearing it here, at the Run's
-     * beginning, is also what lets a pause taken *before* the first fix keep the mark it earns —
+     * with a [stop], and a stop is how a held-down Pause looks from here. Left standing it would
+     * have this Run's opening fix claim a Pause preceded it. Clearing it here, at the Run's
+     * beginning, is also what lets a Pause taken *before* the first fix keep the mark it earns —
      * anything set after this point was set by this Run (#195).
      */
     @Synchronized
-    fun resetSessionState() {
+    fun beginRun() {
         lastLocation = null
         firstLocation = null
         pauseMark.runBegan()
@@ -156,9 +156,9 @@ class LocationTracker(
         }
         barometerReader.stop()
         lastLocation = null
-        // A manual pause comes through here: updates are torn down, so the run resumes on a fix
+        // A held-down Pause comes through here: updates are torn down, so the Run resumes on a fix
         // taken somewhere the track never followed the runner to. So does the end of every Run,
-        // which is why a Run beginning clears this again — see [resetSessionState].
+        // which is why a Run beginning clears this again — see [beginRun].
         pauseMark.recordingBroke()
         sessionRecorder.discardLastFix()
         Log.d(logTag, "Location updates stopped")

@@ -572,7 +572,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // Emitted once per Run and by nothing else, which makes it the one place the things a Run
         // needs zeroed but does not own can be zeroed: GPS's distance and pace, and the Strap's
         // last reading and the clock that ages it.
-        locationTracker?.resetSessionState()
+        locationTracker?.beginRun()
         // Clear the HR-freshness clock so age is measured within this Run. A strapless Run started
         // after one that had HR would otherwise inherit a stale timestamp, read as a huge
         // lastHrAgeSeconds, and trip the screen's sensor-lost warning on a Run deliberately started
