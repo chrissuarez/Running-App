@@ -698,9 +698,9 @@ abstract class AppDatabase : RoomDatabase() {
 
         /**
          * [prepare] is whatever has to be true of the database file before anything reads it — the
-         * restores at #86 and #119. Run once, on the thread that first opens the file, which is
-         * never the main one; see [PreparingOpenHelper] for why it hangs off the open rather than
-         * off this call (#121).
+         * restores at #86 and #119. It hangs off the *opening* of the file rather than off this
+         * call, which is what keeps it off the main thread; [PreparingOpenHelper] is where that is
+         * argued (#121).
          *
          * [hrProfileProvider] feeds the v12 → v13 zone recompute, which needs a heart-rate
          * profile that lives in DataStore rather than in the database. It is read lazily, from
@@ -710,7 +710,7 @@ abstract class AppDatabase : RoomDatabase() {
          */
         fun getDatabase(
             context: android.content.Context,
-            prepare: () -> Unit = {},
+            prepare: () -> Unit,
             hrProfileProvider: () -> HrProfile
         ): AppDatabase {
             return INSTANCE ?: synchronized(this) {
