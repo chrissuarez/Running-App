@@ -73,7 +73,7 @@ import com.example.runningapp.run.RunMode
 import com.example.runningapp.run.RunPhase
 import com.example.runningapp.run.RunState
 import com.example.runningapp.data.AppDatabase
-import com.example.runningapp.data.DatabaseBackupManager
+import com.example.runningapp.data.AfterRunWorker
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
@@ -182,14 +182,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
-    // Detached from serviceScope on purpose: the save-time weather fetch must survive
-    // onDestroy() cancelling serviceScope when a run is stopped from the background.
-    private val weatherFetchScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // Detached from serviceScope on purpose: finalizing a Run must survive onDestroy() cancelling
+    // serviceScope when a run is stopped from the background. It carries the Run's own last writes
+    // — the totals, the moving time, the record book, the coach's evaluation — and nothing that
+    // outlives the process, which is WorkManager's (see AfterRunWorker).
+    private val finalizationScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     // The run's per-sample writes (HR samples, GPS track points) live on their own scope so
     // stopRun() can wait for exactly these inserts to land before snapshotting the DB to
     // Downloads — otherwise the backup can race the tail writes and capture a run missing its
-    // final seconds. Like weatherFetchScope, it survives onDestroy() so a background stop still
+    // final seconds. Like finalizationScope, it survives onDestroy() so a background stop still
     // flushes the tail before the snapshot.
     private val recorderWriteScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
@@ -659,11 +661,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val avgPace = averagePaceMinPerKm(totals.durationSeconds, distanceKm)
         val startLocation = locationTracker?.getFirstLocation()
 
-        // weatherFetchScope, not serviceScope: a background STOP (a notification action with the
+        // finalizationScope, not serviceScope: a background STOP (a notification action with the
         // activity unbound) reaches stopSelf() -> onDestroy -> serviceScope.cancel() on the next
         // main-loop message, and a launch not yet dequeued dies before its body — NonCancellable
         // cannot protect a coroutine that never starts.
-        weatherFetchScope.launch {
+        finalizationScope.launch {
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                 val session = database.sessionDao().getSessionById(runRowId)
                 if (session == null) {
@@ -698,11 +700,31 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
                 database.sessionDao().updateSession(updatedSession)
 
+                // The Run's weather and the Downloads snapshot of the history it now belongs to,
+                // handed to WorkManager rather than launched here (#122). A STOP from the
+                // notification ends with this service taking itself down, and Android is free to
+                // reclaim the process straight after — before a coroutine launched here had a turn.
+                // Room never lost by that, but the Downloads copy could stay a Run behind until the
+                // next run finished, and a runner who cleared their storage in between would get
+                // yesterday's history back.
+                //
+                // Booked the instant the Run is written down, ahead of the measuring and scoring
+                // below rather than after them, because until WorkManager has the request the
+                // window this closes is still open — and those take seconds of GPS arithmetic and
+                // a network call. What the snapshot may then miss is a moving time or a medal,
+                // both of which are re-derived from the Run itself by the passes at launch; what
+                // it can no longer miss is the Run.
+                try {
+                    AfterRunWorker.enqueue(applicationContext, runRowId)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not book the after-run work for $runRowId", e)
+                }
+
                 // Measured only now the track-point inserts above have landed, so it sees the whole
                 // run. This also rewrites avgPaceMinPerKm over the duration-based value set above:
                 // pace is quoted against other apps, so it is measured over moving time (#163).
                 //
-                // The run is already saved by this point, and weatherFetchScope carries no
+                // The run is already saved by this point, and finalizationScope carries no
                 // exception handler, so a failure here must not be allowed to take the process
                 // down and strand the backup, weather fetch and plan evaluation below it. A run
                 // that fails to measure keeps a null moving time and is picked up by the backfill.
@@ -735,29 +757,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     TAG,
                     "Finalized DB Session: $runRowId. Evidence: duration=${updatedSession.durationSeconds} moving=$movingTime"
                 )
-
-                // Snapshot run history to Downloads so it survives "Clear storage" (reinstall is
-                // covered separately by Auto Backup).
-                weatherFetchScope.launch {
-                    DatabaseBackupManager.backup(applicationContext, database)
-                }
-
-                // Not awaited, so a slow or unreachable weather service cannot hold anything up;
-                // missed fetches are retried at next launch.
-                val startLatitude = updatedSession.startLatitude
-                val startLongitude = updatedSession.startLongitude
-                if (updatedSession.runMode == RunMode.OUTDOOR.settingValue &&
-                    startLatitude != null && startLongitude != null
-                ) {
-                    weatherFetchScope.launch {
-                        sessionRepository.fetchAndSaveWeather(
-                            sessionId = runRowId,
-                            latitude = startLatitude,
-                            longitude = startLongitude,
-                            atEpochMillis = updatedSession.startTime,
-                        )
-                    }
-                }
 
                 // The Stage this Run was recorded under rather than the one in force now (#234).
                 // They are the same Stage on every ordinary finish, and where they are not it is

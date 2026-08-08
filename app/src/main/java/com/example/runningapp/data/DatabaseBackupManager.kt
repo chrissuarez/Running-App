@@ -81,18 +81,26 @@ object DatabaseBackupManager {
      * the ticket (#191): an attempt that cannot produce a snapshot has inserted nothing and retired
      * nothing, so the previous backup is still there and still the newest restorable copy. The only
      * thing a failure costs is a fresher backup than the one already standing.
+     *
+     * Returns whether a new snapshot was published. Failure is still logged and swallowed here —
+     * nothing on a caller's path may be brought down by a backup — but a caller in a position to
+     * try again ([AfterRunWorker]) has to be able to tell that there is something to try again.
+     * False is "the folder holds what it held before", which is also the answer when this install
+     * has no database to copy yet.
      */
-    fun backup(context: Context, database: AppDatabase) {
+    fun backup(context: Context, database: AppDatabase): Boolean {
         synchronized(backupLock) {
             val pending = File(context.cacheDir, PENDING_SNAPSHOT_FILE_NAME)
             try {
-                if (!databaseFile(context).exists()) return
+                if (!databaseFile(context).exists()) return false
                 snapshotTo(database, pending)
                 val bytes = pending.readBytes()
                 writeBackupBytes(context, bytes)
                 Log.d(TAG, "Backed up ${bytes.size} bytes of run history to Downloads/$BACKUP_SUBDIR")
+                return true
             } catch (e: Exception) {
                 Log.w(TAG, "History backup failed (non-fatal); the previous backup still stands", e)
+                return false
             } finally {
                 pending.delete()
             }
