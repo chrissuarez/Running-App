@@ -91,6 +91,38 @@ class StatedHeartRateQueueTest {
         scope.cancel()
     }
 
+    /**
+     * The queue's two collaborators, behaving as the app wires them: a note left by an interrupted
+     * statement, which only a statement that re-bands history finishes (see
+     * `SettingsRepository.setStatedHeartRates`), and either of them able to have a bad day.
+     */
+    private class Storage(var note: StatedHeartRates?) {
+        val applied = mutableListOf<Pair<Int?, Int?>>()
+
+        /** Whether the note can be read at all — reading it can fail as easily as applying it. */
+        var readable = true
+
+        /** Fails the next apply only, which is how a recovery is failed without failing the rest. */
+        var failNextApply = false
+
+        fun recover(): StatedHeartRates? {
+            if (!readable) throw IllegalStateException("storage is having a day")
+            return note
+        }
+
+        fun apply(maxHr: Int?, restingHr: Int?) {
+            if (failNextApply) {
+                failNextApply = false
+                throw IllegalStateException("storage is having a day")
+            }
+            applied += maxHr to restingHr
+            if (restingHr != null) note = null
+        }
+    }
+
+    private fun queueOn(scope: CoroutineScope, storage: Storage) =
+        StatedHeartRateQueue(scope, recover = { storage.recover() }, apply = storage::apply)
+
     @Test
     fun `a recovery that could not be applied is carried by the next statement`() = runTest {
         // #179. The runner corrects Max HR to 200 after a failed recovery of (195, 60). Left for
@@ -98,50 +130,55 @@ class StatedHeartRateQueueTest {
         // Max HR change moves no history, so it never clears the note on its way past. Carried
         // under the statement instead, the runner's 200 wins and the interrupted 60 still lands.
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
-        val applied = mutableListOf<Pair<Int?, Int?>>()
-        var note: StatedHeartRates? = StatedHeartRates(195, 60)
-        var failRecovery = true
-        val queue = StatedHeartRateQueue(scope, recover = { note }) { maxHr, restingHr ->
-            if (failRecovery) {
-                failRecovery = false
-                throw IllegalStateException("storage is having a day")
-            }
-            applied += maxHr to restingHr
-            // Only a statement that re-bands history finishes the note — see
-            // `SettingsRepository.setStatedHeartRates`.
-            if (restingHr != null) note = null
-        }
+        val storage = Storage(StatedHeartRates(195, 60)).apply { failNextApply = true }
+        val queue = queueOn(scope, storage)
 
         queue.state(200, null)
         advanceUntilIdle()
 
-        assertEquals(listOf<Pair<Int?, Int?>>(200 to 60), applied)
+        assertEquals(listOf<Pair<Int?, Int?>>(200 to 60), storage.applied)
+        // Carried by a statement that re-bands history, so the note is finished rather than left
+        // for a launch that would replay 195 over the 200.
+        assertEquals(null, storage.note)
         scope.cancel()
     }
 
     @Test
-    fun `a recovery too broken to read is carried by a later statement once it can be`() = runTest {
+    fun `a recovery too broken to read is carried once it can be read`() = runTest {
         // The failure can be reading the note as easily as applying it, and then there is nothing
         // to carry until it can be read. So it is read again on the way into each statement until
         // one takes it — never applied on its own, so it can overwrite nothing.
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
-        val applied = mutableListOf<Pair<Int?, Int?>>()
-        var readable = false
-        val queue = StatedHeartRateQueue(
-            scope = scope,
-            recover = {
-                if (!readable) throw IllegalStateException("storage is having a day")
-                StatedHeartRates(195, 60)
-            }
-        ) { maxHr, restingHr -> applied += maxHr to restingHr }
+        val storage = Storage(StatedHeartRates(195, 60)).apply { readable = false }
+        val queue = queueOn(scope, storage)
 
-        queue.state(null, 55)
         advanceUntilIdle()
-        readable = true
+        storage.readable = true
         queue.state(200, null)
         advanceUntilIdle()
 
-        assertEquals(listOf<Pair<Int?, Int?>>(null to 55, 200 to 60), applied)
+        assertEquals(listOf<Pair<Int?, Int?>>(200 to 60), storage.applied)
+        scope.cancel()
+    }
+
+    @Test
+    fun `a note read late cannot bring back a number the runner has since replaced`() = runTest {
+        // The other half of #179: a note that could not be *read* is read on the way into a later
+        // statement, and by then the runner's 200 has already landed. Carrying the note's 195
+        // under a statement that says nothing about the maximum would put it straight back — the
+        // same silent reversion, moved from the next launch to the next statement.
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val storage = Storage(StatedHeartRates(195, 60)).apply { readable = false }
+        val queue = queueOn(scope, storage)
+
+        // Future-only, so it moves no history and leaves the note where it is.
+        queue.state(200, null)
+        advanceUntilIdle()
+        storage.readable = true
+        queue.state(null, 50)
+        advanceUntilIdle()
+
+        assertEquals(listOf<Pair<Int?, Int?>>(200 to null, null to 50), storage.applied)
         scope.cancel()
     }
 
@@ -150,23 +187,14 @@ class StatedHeartRateQueueTest {
         // Carrying it again would re-state a number the runner has moved on from: the statement
         // that took it landed it, and the note it came from is finished.
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
-        val applied = mutableListOf<Pair<Int?, Int?>>()
-        var note: StatedHeartRates? = StatedHeartRates(195, 60)
-        var failRecovery = true
-        val queue = StatedHeartRateQueue(scope, recover = { note }) { maxHr, restingHr ->
-            if (failRecovery) {
-                failRecovery = false
-                throw IllegalStateException("storage is having a day")
-            }
-            applied += maxHr to restingHr
-            if (restingHr != null) note = null
-        }
+        val storage = Storage(StatedHeartRates(195, 60)).apply { failNextApply = true }
+        val queue = queueOn(scope, storage)
 
         queue.state(200, null)
         queue.state(205, null)
         advanceUntilIdle()
 
-        assertEquals(listOf<Pair<Int?, Int?>>(200 to 60, 205 to null), applied)
+        assertEquals(listOf<Pair<Int?, Int?>>(200 to 60, 205 to null), storage.applied)
         scope.cancel()
     }
 

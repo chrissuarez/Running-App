@@ -47,6 +47,13 @@ class StatedHeartRateQueue(
      * Left for the next launch, that correction *was* silently undone: a future-only Max HR change
      * moves no history, so it does not clear the note, and the next launch replayed the older
      * maximum over it.
+     *
+     * What carrying cannot reach is a note nothing in this launch could ever read, left on disk by
+     * a statement that moved no history, and then found by the next launch. That needs reading the
+     * note to fail while writing the profile succeeds — the same DataStore, one failing and one
+     * not — and one statement, no second one, before the process dies. Everything short of that is
+     * covered: any statement that does carry the note re-bands history and so finishes it, and a
+     * note read late can no longer hold a number a statement has already replaced.
      */
     recover: suspend () -> StatedHeartRates?,
     apply: suspend (maxHr: Int?, restingHr: Int?) -> Unit
@@ -55,31 +62,86 @@ class StatedHeartRateQueue(
 
     init {
         scope.launch {
-            // What the interrupted statement still owes, once recovery has failed to land it. Held
-            // only until a statement carries it — see [carrying].
-            var owed: StatedHeartRates? = null
-            // Whether the note has been read at all. A recovery can fail at reading it as easily as
-            // at applying it, and until it has been read there is nothing to carry.
-            var read = false
+            val outstanding = OutstandingStatement()
 
             applying {
-                owed = recover()
-                read = true
-                owed?.let { apply(it.maxHr, it.restingHr) }
-                owed = null
+                val recovered = recover()
+                outstanding.found(recovered)
+                recovered?.let { apply(it.maxHr, it.restingHr) }
+                outstanding.settled()
             }
             for (statement in statements) {
                 // Read again, on the way in, when the first attempt could not read it — never on
                 // its own and never between statements, so nothing it holds can land after a
                 // number the runner has stated. Its own `applying` because a note too broken to
                 // read must still cost the note and not the statement below.
-                if (!read) applying { owed = recover(); read = true }
+                if (outstanding.unread) applying { outstanding.found(recover()) }
                 applying {
-                    val carried = owed
-                    apply(statement.maxHr ?: carried?.maxHr, statement.restingHr ?: carried?.restingHr)
-                    owed = null
+                    val carried = outstanding.under(statement)
+                    apply(carried.maxHr, carried.restingHr)
+                    outstanding.landed(statement)
                 }
             }
+        }
+    }
+
+    /**
+     * What a launch still owes the runner: an interrupted statement recovery could not land, held
+     * until a statement carries it (#179).
+     *
+     * Three states rather than two — never read, owed, settled — because a recovery can fail at
+     * reading the note as easily as at applying it, and there is nothing to carry until it has been
+     * read. They live together here because the rules between them are the whole behaviour.
+     */
+    private class OutstandingStatement {
+        private var read = false
+        private var owed: StatedHeartRates? = null
+        private var maxHrStatedSince = false
+        private var restingHrStatedSince = false
+
+        /** Whether the note has never been read, and so is still worth trying to read. */
+        val unread: Boolean get() = !read
+
+        /**
+         * Takes what recovery found — minus any number the runner has stated since.
+         *
+         * That subtraction is the point when reading is what failed. The statements made while the
+         * note was unreadable have landed already, and a note read after them carrying the number
+         * one of them replaced would put it straight back: the same silent reversion, moved from
+         * the next launch to the next statement.
+         */
+        fun found(recovered: StatedHeartRates?) {
+            read = true
+            owed = recovered?.let {
+                StatedHeartRates(
+                    maxHr = if (maxHrStatedSince) null else it.maxHr,
+                    restingHr = if (restingHrStatedSince) null else it.restingHr
+                )
+            }
+        }
+
+        /**
+         * [statement] with what is owed carried underneath it: the runner's numbers win, and only
+         * what this statement did not state is taken from the note.
+         */
+        fun under(statement: StatedHeartRates) = StatedHeartRates(
+            maxHr = statement.maxHr ?: owed?.maxHr,
+            restingHr = statement.restingHr ?: owed?.restingHr
+        )
+
+        /** Nothing is owed any longer — what was owed has just been applied. */
+        fun settled() {
+            owed = null
+        }
+
+        /**
+         * [statement] has landed, carrying whatever was owed. Nothing is owed any longer, and no
+         * note read later can undo what it stated.
+         */
+        fun landed(statement: StatedHeartRates) {
+            settled()
+            if (statement.maxHr != null) maxHrStatedSince = true
+            if (statement.restingHr != null) restingHrStatedSince = true
         }
     }
 
