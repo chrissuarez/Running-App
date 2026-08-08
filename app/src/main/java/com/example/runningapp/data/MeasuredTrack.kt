@@ -84,6 +84,51 @@ data class MeasuredTrack(val points: List<TrackPoint>, val legs: List<TrackLeg>)
             start?.let { stretches += it..legs.lastIndex }
             return stretches
         }
+
+    /** The moving time of every leg together, in seconds — a run's own [measureMovingTimeSeconds]. */
+    val movingSeconds: Long
+        get() = legs.sumOf { it.movingMillis } / 1000
+}
+
+/**
+ * The same legs, holding no more moving time than the run's own clock ever banked (#165).
+ *
+ * An Outage is *a Break the run carried on through* — that is what tells it from a Pause, and the
+ * run's clock is the only witness to it. A gap the clock ran across is lost signal and its ground is
+ * the evidence the runner was running ([measureTrack]). A gap the clock *did not* run across was a
+ * stop, whatever the two fixes either side of it imply about speed: the run was not counting those
+ * seconds, so nothing may count them afterwards. Before #84 a manual pause left exactly that — a gap
+ * with no [TrackPoint.startsAfterPause] on the far side of it — and the clock is what was written
+ * down about it instead.
+ *
+ * So the seconds the clock never banked are taken back off the Outages, longest first: unrecorded
+ * pausing is a stop the runner made in one place, not a film spread thinly over every gap in the
+ * run. Legs the recording covers are never touched — their seconds are witnessed, and a run whose
+ * witnessed legs outrun its own clock is a recorder fault rather than something to measure around.
+ *
+ * This belongs to the measurement rather than to any one reader of it, because the summary at the
+ * top of a run's page ([SessionRepository.computeMovingTime]) and the splits table underneath it
+ * ([com.example.runningapp.analysis.splitsOf]) both fold these legs, and a rule applied to one of
+ * them is a page that gives two answers to one question — the defect ADR 0012 exists to close.
+ */
+fun MeasuredTrack.withinTheRunsClock(clockSeconds: Long): MeasuredTrack {
+    // In milliseconds throughout: rounding the total down to whole seconds first would leave up to a
+    // second of unbanked time behind, which is the whole of a short Outage.
+    var unbanked = legs.sumOf { it.movingMillis } - clockSeconds.coerceAtLeast(0) * 1000
+    if (unbanked <= 0) return this
+
+    val trimmed = legs.toMutableList()
+    val outages = legs.indices
+        .filter { legs[it].movingMillis > 0 && !legs[it].recorded }
+        .sortedByDescending { legs[it].movingMillis }
+    for (i in outages) {
+        if (unbanked <= 0) break
+        val leg = trimmed[i]
+        val taken = minOf(unbanked, leg.movingMillis)
+        trimmed[i] = leg.copy(movingMillis = leg.movingMillis - taken)
+        unbanked -= taken
+    }
+    return copy(legs = trimmed)
 }
 
 /**

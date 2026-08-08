@@ -51,17 +51,27 @@ before #84.
   Pause has been written down since then, so any *other* gap on such a Run is certainly lost signal.
   But there is no way to tell a post-#84 Run that never paused from a Run recorded before the column
   existed — they are the same rows — and the speed test reaches the same verdict on the case that
-  motivated it without needing to know which kind of Run it is looking at.
+  motivated it without needing to know which kind of Run it is looking at. What tells the two apart
+  is not when the Run was recorded but whether its clock ran across the gap, which every Run has
+  always written down (see the first consequence below).
 
 ## Consequences
 
-- **A legacy unmarked Pause the runner covered ground across is now counted as moving.** Before #84 a
-  manual pause left nothing but a gap, so a runner who paused, walked to a shop and resumed reads as
-  a slow leg that clears the threshold. The error is real and it is bounded twice over: it can only
-  ever make a Run's pace *slower* than it was — never flattering, which is the direction ADR 0010
-  chose everywhere else — and `SessionRepository.computeMovingTime` still caps moving time at the
-  Run's own clock, which never banked those seconds. A Run whose whole rest was unrecorded pausing
-  therefore degrades to the pace it showed before moving time existed, rather than to nonsense.
+- **A legacy unmarked Pause is told from an Outage by the Run's own clock.** Before #84 a manual
+  pause left nothing but a gap, so a runner who paused, walked to a shop and resumed reads as a slow
+  leg that clears the threshold. But the definition of an Outage carries its own test: it is a Break
+  *the Run carried on through*, and the Run's clock is the witness to that. A Pause stops the clock;
+  lost signal does not. So a gap the clock never banked seconds for was a stop however fast its two
+  fixes look, and those seconds are taken back off it (`MeasuredTrack.withinTheRunsClock`) — longest
+  Outage first, because unrecorded pausing is one stop in one place rather than a film spread over
+  every gap in the Run. A Run whose whole rest was unrecorded pausing therefore reads exactly as it
+  did before this change, rather than degrading at all.
+
+  This is the same arithmetic `SessionRepository.computeMovingTime` already used to hold moving time
+  at the Run's own clock, moved into the measurement where the Splits table can see it. Left in the
+  summary alone it would have made the Splits total more seconds than the page above them quotes —
+  a Run giving two answers to one question, which is the defect this ADR exists to close. Legs the
+  recording covers are never taken back, because their seconds were witnessed.
 - **A Split holding an Outage now reads the pace the runner ran.** ADR 0010 shipped that Split
   reading too fast, deliberately and temporarily; the ground was already in it and the seconds were
   not. Both are now.

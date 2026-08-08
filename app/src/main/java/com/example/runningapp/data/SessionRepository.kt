@@ -737,11 +737,16 @@ class SessionRepository(
         val points = getTrackPointsForMap(sessionId)
         if (points.size < 2) return null
 
-        // Capped at the run's own clock, and never below zero. Moving time is measured on
+        // Measured against the run's own clock, and never below zero. Moving time is measured on
         // wall-clock track timestamps while durationSeconds excludes paused time, so a pause the
         // track cannot see would otherwise let moving time exceed the run it belongs to - and the
-        // summary card would show a negative resting time.
-        val movingTime = measureMovingTimeSeconds(points)
+        // summary card would show a negative resting time. The clock is handed to the measurement
+        // itself rather than trimmed off the total here, because the splits table folds the same
+        // legs and has to reach the same answer (measureMovingTimeSeconds, #165).
+        //
+        // The last coercion still stands for the run whose *recorded* legs outrun its own clock,
+        // which no Outage rule can measure around.
+        val movingTime = measureMovingTimeSeconds(points, session.durationSeconds)
             .coerceAtMost(session.durationSeconds)
             .coerceAtLeast(0)
 

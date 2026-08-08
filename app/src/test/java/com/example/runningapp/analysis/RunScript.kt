@@ -23,11 +23,16 @@ import kotlin.random.Random
 /** A run with no heart rate recorded — the only thing many of these tests have to say about it. */
 internal val noSamples = emptyList<HrSample>()
 
-internal fun aRun(runMode: String = "outdoor") = RunnerSession(
+/**
+ * [durationSeconds] is the run's own clock, and it is the last word on how long the run ran: a run
+ * scripted with an Outage has to be given a clock that covers it, or the Outage is an unmarked Pause
+ * and is measured as one ([com.example.runningapp.data.withinTheRunsClock], #165).
+ */
+internal fun aRun(runMode: String = "outdoor", durationSeconds: Long = 600) = RunnerSession(
     id = 1,
     startTime = 1_700_000_000_000L,
-    endTime = 1_700_000_600_000L,
-    durationSeconds = 600,
+    endTime = 1_700_000_000_000L + durationSeconds * 1_000L,
+    durationSeconds = durationSeconds,
     runMode = runMode,
 )
 

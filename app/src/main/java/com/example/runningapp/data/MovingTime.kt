@@ -52,15 +52,21 @@ const val REST_SUSTAINED_MS = 3_000L
  * across it. It does not decide whether the runner was moving, which is measured off the ground the
  * gap carries like any other leg's (#165,
  * [ADR 0012](docs/adr/0012-an-outage-is-a-leg-like-any-other.md)).
- * A Pause is the leg that decides otherwise, and it decides it by being written down
- * ([TrackPoint.startsAfterPause]) rather than by being long: a pause shorter than this leaves no gap
- * worth noticing, and one longer would be indistinguishable from lost signal.
+ * A Pause is the leg that decides otherwise, and it decides it by being written down rather than by
+ * being long: a pause shorter than this leaves no gap worth noticing, and one longer would be
+ * indistinguishable from lost signal. It is written down twice over — on the fix that resumed the
+ * run ([TrackPoint.startsAfterPause]) and, for the runs recorded before that column existed, in the
+ * run's own clock, which stops for a Pause and runs on through an Outage ([withinTheRunsClock]).
  */
 const val TRACK_BREAK_MS = 20_000L
 
 /**
  * A finished run's moving time, in seconds — the run's own clock minus the spells the runner spent
  * going nowhere (#163). See [measureTrack] for how each leg is judged.
+ *
+ * [clockSeconds] is the run's own clock ([RunnerSession.durationSeconds]), which is the last word on
+ * how long the run ran: no measurement of it may come out longer, and an Outage the clock never
+ * banked was a stop rather than lost signal ([withinTheRunsClock], #165).
  */
-fun measureMovingTimeSeconds(points: List<TrackPoint>): Long =
-    measureTrack(points).legs.sumOf { it.movingMillis } / 1000
+fun measureMovingTimeSeconds(points: List<TrackPoint>, clockSeconds: Long): Long =
+    measureTrack(points).withinTheRunsClock(clockSeconds).movingSeconds
