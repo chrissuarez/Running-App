@@ -700,8 +700,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
                 database.sessionDao().updateSession(updatedSession)
 
-                // The Run's weather and the Downloads snapshot of the history it now belongs to,
-                // handed to WorkManager rather than launched here (#122). A STOP from the
+                // The Downloads snapshot of the history the Run now belongs to, and the Run's
+                // weather, handed to WorkManager rather than launched here (#122). A STOP from the
                 // notification ends with this service taking itself down, and Android is free to
                 // reclaim the process straight after — before a coroutine launched here had a turn.
                 // Room never lost by that, but the Downloads copy could stay a Run behind until the
