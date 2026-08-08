@@ -274,18 +274,28 @@ object TrainingPlanProvider {
     fun getPlanById(id: String) = plans.find { it.id == id }
 
     /**
+     * The Stage the runner is in: the one [stageId] names, or the plan's first when it names none
+     * or names one this plan does not hold. Null when no plan is attached.
+     *
+     * The one place that walk is made, because the answer is not private to whoever asked. The card
+     * shows this Stage's title, the Run follows its Workouts, and the Run is stamped with it at
+     * START (#234) — a Run stamped with a Stage other than the one it was shown and run under is
+     * evidence filed against work nobody did.
+     */
+    fun resolveActiveStage(planId: String?, stageId: String?): PlanStage? {
+        val plan = planId?.let { getPlanById(it) } ?: return null
+        return plan.stages.firstOrNull { it.id == stageId } ?: plan.stages.firstOrNull()
+    }
+
+    /**
      * Everything a stage offers: all of its workouts, one per Run Type, in the order the plan
-     * declares them (#173). Falls back to the plan's first stage, and is empty when no plan is
-     * attached. One home for the plan → stage walk that the service, the card and analytics need.
+     * declares them (#173). Empty when no plan is attached.
      *
      * All of them rather than the first, because the other two were never dead data — only
      * unreachable. Which of them today's run uses is the runner's choice, not this function's.
      */
-    fun resolveStageWorkouts(planId: String?, stageId: String?): List<WorkoutTemplate> {
-        val plan = planId?.let { getPlanById(it) } ?: return emptyList()
-        val stage = plan.stages.firstOrNull { it.id == stageId } ?: plan.stages.firstOrNull()
-        return stage?.workouts.orEmpty()
-    }
+    fun resolveStageWorkouts(planId: String?, stageId: String?): List<WorkoutTemplate> =
+        resolveActiveStage(planId, stageId)?.workouts.orEmpty()
 
     /**
      * The Workout the runner picked as today's Run (#174), or the stage's first when they have not
