@@ -1697,6 +1697,10 @@ class SessionRepository(
             // Nothing here can be done with it: its evidence belongs to the old Stage, so it cannot
             // answer the new one's requirement, and a verdict on the old one could only graduate a
             // Stage the runner is no longer in or prescribe into a Stage this Run never ran.
+            //
+            // Both sides are the Stage the runner was in, resolved against the plan — the Run's
+            // was stamped from this same setting at START — so this catches a plan that moved and
+            // never a plan that merely never named its Stage.
             if (stageId != settings.activeStageId) {
                 Log.d(
                     "AiCoach",

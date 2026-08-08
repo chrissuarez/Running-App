@@ -1,10 +1,13 @@
 package com.example.runningapp.data
 
+import androidx.datastore.preferences.core.mutablePreferencesOf
 import com.example.runningapp.COACH_PRESCRIPTION_MAX_AGE_DAYS
 import com.example.runningapp.CoachPrescription
 import com.example.runningapp.CoachPrescriptions
 import com.example.runningapp.CoachPrescriptionRepository
 import com.example.runningapp.CoachWriteScope
+import com.example.runningapp.PreferencesKeys
+import com.example.runningapp.coachWriteAllowed
 import com.example.runningapp.HrProfile
 import com.example.runningapp.MAX_MAX_HR
 import com.example.runningapp.RunType
@@ -12,6 +15,7 @@ import com.example.runningapp.SettingsRepository
 import com.example.runningapp.StatedHeartRates
 import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.UserSettings
+import com.example.runningapp.userSettingsOf
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
@@ -1514,6 +1518,60 @@ class SessionRepositoryTest {
         verify(mockCoach, never()).evaluateProgress(any())
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
         verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+    }
+
+    @Test
+    fun `a Run under a plan that never named its Stage is still evaluated`() = runTest {
+        // Storage may hold no Stage at all — activating a plan is the only thing that writes one,
+        // and an archive restored without one leaves it empty. The runner is in the plan's first
+        // Stage all the same, which is what the Run was stamped with at START (#234). Read as
+        // stored on one side and resolved on the other, every Run such a runner records would be
+        // thrown away as evidence for a Stage they had left.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        val storedPreferences = mutablePreferencesOf(PreferencesKeys.ACTIVE_PLAN_ID to "5k_sub_25")
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(userSettingsOf(storedPreferences)))
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any()))
+            .thenReturn(listOf(aTreadmillRun(id = 1, seconds = 1_500)))
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                nextTargetZone = 3,
+                graduatedToNextStage = false,
+                coachMessage = "Good session."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        val activeScope = CoachWriteScope("5k_sub_25", "base_builder")
+        verify(mockCoach).evaluateProgress(any())
+        verify(mockPrescriptions).prescribe(eq(RunType.LONG), any(), eq(activeScope))
+        // And the write is not refused at the door either: the guard re-reads the preference as it
+        // stands, which is still the empty one this runner started with.
+        assertTrue(
+            coachWriteAllowed(
+                testingModeEnabled = false,
+                activePlanId = storedPreferences[PreferencesKeys.ACTIVE_PLAN_ID],
+                activeStageId = storedPreferences[PreferencesKeys.ACTIVE_STAGE_ID],
+                scope = activeScope
+            )
+        )
     }
 
     @Test
