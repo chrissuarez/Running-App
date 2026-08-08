@@ -9,6 +9,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.verifyNoInteractions
 import org.mockito.kotlin.whenever
@@ -109,17 +110,20 @@ class PreparingOpenHelperTest {
     }
 
     @Test
-    fun `a preparation that fails is not tried again`() {
+    fun `a preparation that fails is tried again at the next open`() {
         val delegate = mock<SupportSQLiteOpenHelper>()
         whenever(delegate.writableDatabase).thenReturn(mock())
         val preparations = AtomicInteger(0)
         val helper = PreparingOpenHelper(delegate) {
-            preparations.incrementAndGet()
-            throw IllegalStateException("the restore could not be applied")
+            // Fails once, then comes good — the phone that died half way through a restore.
+            if (preparations.incrementAndGet() == 1) {
+                throw IllegalStateException("the restore could not be applied")
+            }
         }
 
         // It throws where the caller can see it — the restore is best-effort in its own right, and
-        // deciding to swallow a failure is that code's business, not this wrapper's.
+        // deciding to swallow a failure is that code's business, not this wrapper's. Nothing was
+        // opened, either: a database nobody could prepare is not one to hand out.
         var threw = false
         try {
             helper.writableDatabase
@@ -127,11 +131,12 @@ class PreparingOpenHelperTest {
             threw = true
         }
         assertTrue(threw)
+        verify(delegate, never()).writableDatabase
 
-        // The next open goes straight through. Retrying would re-run a restore against a database
-        // that may already have been half replaced, which is worse than the failure itself.
+        // And the failure is not written off. Both restores are built to be picked up again at the
+        // next launch, so the next open is the next chance to finish what this one could not.
         helper.writableDatabase
-        assertEquals(1, preparations.get())
+        assertEquals(2, preparations.get())
     }
 
     @Test

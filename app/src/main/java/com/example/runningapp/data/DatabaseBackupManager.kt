@@ -25,9 +25,9 @@ import java.io.File
  * - [backup] runs after each finished run and after a run is deleted: it snapshots the live
  *   database into `Downloads/RunningApp/`, then retires the copies it supersedes. Refreshing on
  *   delete matters as much as on finish — otherwise a stale snapshot would restore deleted runs.
- * - [restoreIfDatabaseMissing] runs once per launch, as part of *opening* the database and before
- *   Room reads a byte of it ([PreparingOpenHelper]), and only when the app has no database of its
- *   own yet — a freshly-cleared install. It reads back the copy this same install wrote, never
+ * - [restoreIfDatabaseMissing] runs as part of *opening* the database and before Room reads a byte
+ *   of it ([PreparingOpenHelper]) — once per process, on the launch's first read of history rather
+ *   than at the launch itself — and only when the app has no database of its own yet — a freshly-cleared install. It reads back the copy this same install wrote, never
  *   overwrites a database that already exists, so it can only add history back.
  *
  * Everything here is best-effort: any failure is logged and swallowed, because losing a backup must

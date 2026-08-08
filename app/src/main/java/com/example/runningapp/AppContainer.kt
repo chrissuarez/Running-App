@@ -58,8 +58,8 @@ class AppContainer(context: Context) {
         AppDatabase.getDatabase(
             appContext,
             // Everything that has to be true of the database file before Room reads a byte of it.
-            // Not run here, on the way to a screen: run on the thread that first opens the file,
-            // which is never the main one (#121). See PreparingOpenHelper.
+            // Not run here, on the way to a screen, but on the thread that opens the file — see
+            // PreparingOpenHelper for why (#121).
             prepare = {
                 // The history about to be replaced is the history the seeding mark describes, so the
                 // mark goes first (#50). Not left to the settings write below: a bare `.db` backup

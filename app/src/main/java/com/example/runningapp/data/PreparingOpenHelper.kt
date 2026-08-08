@@ -18,13 +18,17 @@ import androidx.sqlite.db.SupportSQLiteOpenHelper
  *
  * - It is still before Room reads anything, and now by construction rather than by convention —
  *   there is no order left for a later edit to get wrong.
- * - It is off the main thread for free. Room refuses main-thread queries (nothing here calls
- *   `allowMainThreadQueries`), so the first query — and therefore the first open, and therefore this
- *   — can only ever happen on a background thread.
+ * - It moves with whoever opens the database, and everyone who does is already off the main thread.
+ *   Room's own paths are guaranteed to be: nothing here calls `allowMainThreadQueries`, so a query
+ *   on the main thread throws, and the first query is what opens the file. The three places that
+ *   reach past Room to `openHelper` directly — `RestoreViewModel`, `RunArchiveContents` and
+ *   [DatabaseBackupManager.snapshotTo] — are on `Dispatchers.IO` by their own arrangement, and that
+ *   part is convention. Anything new reaching for `openHelper` inherits the same obligation.
  *
- * [prepare] is best-effort work that answers for its own failures; this wrapper does not swallow
- * them. It does refuse to repeat one: a preparation that threw may have half-replaced the database
- * already, and running it a second time against that is worse than the failure was.
+ * [prepare] is best-effort work that answers for its own failures; this wrapper neither swallows one
+ * nor writes it off. A preparation that throws leaves the database unprepared, and the next open
+ * tries again — which is what the restores want, both being built to be resumed at the next launch
+ * after a phone that died half way through one.
  */
 class PreparingOpenHelper(
     private val delegate: SupportSQLiteOpenHelper,
@@ -50,16 +54,16 @@ class PreparingOpenHelper(
     /**
      * Held under a lock rather than merely flagged: a second opener arriving mid-restore must wait
      * for it, not walk past it into a database that is halfway through being replaced.
+     *
+     * Marked done only on the way out of a preparation that returned. A throw leaves it undone, and
+     * that is deliberate — see the class note.
      */
     private fun prepareOnce() {
         if (prepared) return
         synchronized(lock) {
             if (prepared) return
-            try {
-                prepare()
-            } finally {
-                prepared = true
-            }
+            prepare()
+            prepared = true
         }
     }
 }
