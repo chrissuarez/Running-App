@@ -142,11 +142,11 @@ fun RunnerSession.finishedFromRecord(
  * guessed at — the samples still speak for it, and a head counted through a pause could not be
  * argued down by them, because the clock is whichever record reaches further.
  *
- * That last rule is right and, for now, unreachable: the recorder does not write the marker onto a
- * Run's opening fix, so a pause before the first fix leaves nothing behind to find it by and the
- * whole pause is credited as the wait (#195). It is the recorder's to fix — the marker is the only
- * record a pause happened, and moving time and the GPX export are missing it too — so this stays as
- * the rule it should be rather than becoming a guess at a threshold.
+ * That last rule was right and, until #195, unreachable: the recorder never wrote the marker onto a
+ * Run's opening fix, so a pause before the first fix left nothing behind to find it by and the whole
+ * pause was credited as the wait. The recorder now tells a Run's beginning from a Run's resume
+ * ([com.example.runningapp.recording.PauseMark]), which is what makes this the rule it always should
+ * have been rather than a guess at a threshold.
  *
  * Everything after the head is measured leg by leg, skipping only the legs that cross a *recorded*
  * pause: the Run's clock stops for a pause, so those seconds were never its to count.

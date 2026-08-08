@@ -10,6 +10,7 @@ import android.util.Log
 import androidx.core.app.ActivityCompat
 import com.example.runningapp.recording.Clock
 import com.example.runningapp.recording.LocationFix
+import com.example.runningapp.recording.PauseMark
 import com.example.runningapp.recording.SessionRecorder
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationCallback
@@ -39,7 +40,8 @@ class LocationTracker(
     // Set the moment the recorded track stops keeping up with the runner — either kind of pause —
     // and carried to the next fix that is written, which is the far side of the break. Nothing else
     // survives to say a pause happened: the fixes in between either never arrive or are not stored.
-    private var trackBrokenByPause = false
+    // Cleared when a Run begins, because this tracker outlives any one of them (#195).
+    private val pauseMark = PauseMark()
     private val barometerReader = BarometerReader(context)
 
     private val sessionRecorder = SessionRecorder(
@@ -65,10 +67,20 @@ class LocationTracker(
         }
     }
 
+    /**
+     * A Run is beginning — zero everything this tracker holds that belongs to one Run.
+     *
+     * Including the pause mark, which is the one that is not obvious: the Run before this one ended
+     * with a [stop], and a stop is how a held-down pause looks from here. Left standing it would
+     * have this Run's opening fix claim a pause preceded it. Clearing it here, at the Run's
+     * beginning, is also what lets a pause taken *before* the first fix keep the mark it earns —
+     * anything set after this point was set by this Run (#195).
+     */
     @Synchronized
     fun resetSessionState() {
         lastLocation = null
         firstLocation = null
+        pauseMark.runBegan()
         sessionRecorder.reset()
     }
 
@@ -145,8 +157,9 @@ class LocationTracker(
         barometerReader.stop()
         lastLocation = null
         // A manual pause comes through here: updates are torn down, so the run resumes on a fix
-        // taken somewhere the track never followed the runner to.
-        trackBrokenByPause = true
+        // taken somewhere the track never followed the runner to. So does the end of every Run,
+        // which is why a Run beginning clears this again — see [resetSessionState].
+        pauseMark.recordingBroke()
         sessionRecorder.discardLastFix()
         Log.d(logTag, "Location updates stopped")
     }
@@ -176,10 +189,9 @@ class LocationTracker(
         // neither should disagree with it. The fix still reaches the recorder below, which is what
         // notices the runner moving again.
         if (autoPaused) {
-            trackBrokenByPause = true
+            pauseMark.recordingBroke()
         } else {
-            onRawFix(location, barometerReader.getLastPressureHpa(), trackBrokenByPause)
-            trackBrokenByPause = false
+            onRawFix(location, barometerReader.getLastPressureHpa(), pauseMark.takeForFix())
         }
         sessionRecorder.onLocationFix(
             LocationFix(
