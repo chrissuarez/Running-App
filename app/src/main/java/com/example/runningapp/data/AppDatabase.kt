@@ -85,8 +85,41 @@ data class RunnerSession(
      * says "this Run was measured", that covers a hole *below* the stored top three, which only a
      * full rebuild can fill.
      */
-    val recordsScored: Boolean = false
+    val recordsScored: Boolean = false,
+    /**
+     * The heart rates this Run's zone times are banded against — its Max HR and, beside it,
+     * [restingHrAtRun] (#228). Pinned at START from [com.example.runningapp.run.RunConfig.hrProfile]
+     * and written with the row, so a Run carries the Reserve it was recorded under rather than
+     * leaving anything that re-reads its beats to guess at one from the settings.
+     *
+     * The two numbers are one fact and must be read as a pair — see [recordedHrProfile], which is
+     * the only way anything should ask.
+     *
+     * Null means "whatever history is banded against" ([com.example.runningapp.historyHrProfile]):
+     * a Run recorded before v24, and nothing else. There is no backfill, because the pair those
+     * rows would be filled with is exactly what the fallback reads — and a re-tally, which is the
+     * one thing that can move a finished Run onto another Reserve, stamps every row it re-bands
+     * ([SessionRepository.recomputeZoneSecondsAndEffortForAllRuns]).
+     */
+    val maxHrAtRun: Int? = null,
+    /** The resting heart rate half of the Reserve this Run was banded on — see [maxHrAtRun]. */
+    val restingHrAtRun: Int? = null
 )
+
+/**
+ * The Reserve this Run's zone times were banded against, or null for a Run recorded before one was
+ * written down (#228) — for which the caller's fallback is what history is banded against
+ * ([com.example.runningapp.historyHrProfile]).
+ *
+ * The one door for the question, because the two stored numbers are one fact: a row half-filled
+ * would otherwise be read as a Max HR against somebody else's resting heart rate, which is a
+ * Reserve no Run was ever recorded under. Only a pair that is wholly there is the Run's own.
+ */
+fun RunnerSession.recordedHrProfile(): HrProfile? {
+    val maxHr = maxHrAtRun ?: return null
+    val restingHr = restingHrAtRun ?: return null
+    return HrProfile(maxHr, restingHr)
+}
 
 /**
  * Whether the run has been saved with its totals. A row is inserted when the run starts and
@@ -502,6 +535,12 @@ interface SessionDao {
      * A Run that has no Score keeps none. Scoring history is the backfill's job (#62), and a
      * re-tally that quietly scored some of it would leave that pass unable to tell what it had
      * already reached from what it had not.
+     *
+     * The Reserve travels in the same statement for the same reason the Score does (#228): after
+     * this the Run really is banded on [maxHrAtRun]/[restingHrAtRun], and a row whose stored pair
+     * still named the Reserve it *used* to be on would send its route map and its zone bars to two
+     * different answers. This is the one writer that moves a finished Run from one Reserve to
+     * another, so it is the one place the stamp has to follow.
      */
     @Query(
         """
@@ -511,7 +550,9 @@ interface SessionDao {
             zone3Seconds = :zone3,
             zone4Seconds = :zone4,
             zone5Seconds = :zone5,
-            effortScore = CASE WHEN effortScore IS NULL THEN NULL ELSE :effortScore END
+            effortScore = CASE WHEN effortScore IS NULL THEN NULL ELSE :effortScore END,
+            maxHrAtRun = :maxHrAtRun,
+            restingHrAtRun = :restingHrAtRun
         WHERE id = :sessionId
         """
     )
@@ -522,7 +563,9 @@ interface SessionDao {
         zone3: Long,
         zone4: Long,
         zone5: Long,
-        effortScore: Int?
+        effortScore: Int?,
+        maxHrAtRun: Int,
+        restingHrAtRun: Int
     )
 
     /**
@@ -682,7 +725,7 @@ interface RunWalkIntervalStatDao {
         TrackPoint::class,
         Achievement::class
     ],
-    version = 23,
+    version = 24,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -744,7 +787,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_19_20,
                     MIGRATION_20_21,
                     MIGRATION_21_22,
-                    MIGRATION_22_23
+                    MIGRATION_22_23,
+                    MIGRATION_23_24
                 )
                 .build()
                 INSTANCE = instance
@@ -1407,5 +1451,27 @@ val MIGRATION_22_23 = object : Migration(22, 23) {
         database.execSQL(
             "UPDATE sessions SET movingTimeSeconds = NULL WHERE endTime > 0 AND runMode = 'outdoor'"
         )
+    }
+}
+
+/**
+ * Room for the Reserve each Run was recorded under (#228): [RunnerSession.maxHrAtRun] and
+ * [RunnerSession.restingHrAtRun].
+ *
+ * Both nullable and both left null, which is the whole of the migration. The numbers these rows
+ * would be filled with live in DataStore rather than in the database, so SQL cannot reach them —
+ * but it does not need to, because null already reads as "banded against whatever history is
+ * banded against" ([RunnerSession.recordedHrProfile]), and that is exactly the pair a backfill
+ * would have written. A null here stays true for the life of the row: the one thing that moves a
+ * finished Run onto another Reserve is the re-tally, and it stamps every row it re-bands.
+ */
+val MIGRATION_23_24 = object : Migration(23, 24) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        if (!database.hasColumn("sessions", "maxHrAtRun")) {
+            database.execSQL("ALTER TABLE sessions ADD COLUMN maxHrAtRun INTEGER")
+        }
+        if (!database.hasColumn("sessions", "restingHrAtRun")) {
+            database.execSQL("ALTER TABLE sessions ADD COLUMN restingHrAtRun INTEGER")
+        }
     }
 }

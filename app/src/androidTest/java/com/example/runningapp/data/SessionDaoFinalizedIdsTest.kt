@@ -66,7 +66,8 @@ class SessionDaoFinalizedIdsTest {
                 sessionDao.updateZoneSecondsAndEffort(
                     sessionId = id,
                     zone1 = 1, zone2 = 2, zone3 = 3, zone4 = 4, zone5 = 5,
-                    effortScore = 61
+                    effortScore = 61,
+                    maxHrAtRun = 181, restingHrAtRun = 60
                 )
             }
 
@@ -74,8 +75,11 @@ class SessionDaoFinalizedIdsTest {
             // scoring history is the backfill's job (#62) and a re-tally must not do half of it.
             assertEquals(61, sessionDao.getSessionById(scored)!!.effortScore)
             assertEquals(null, sessionDao.getSessionById(neverScored)!!.effortScore)
-            // Both were re-banded either way.
+            // Both were re-banded either way, and both now say what they were re-banded against
+            // (#228) — that stamp is unconditional, unlike the Score.
             assertEquals(2L, sessionDao.getSessionById(neverScored)!!.zone2Seconds)
+            assertEquals(181, sessionDao.getSessionById(neverScored)!!.maxHrAtRun)
+            assertEquals(60, sessionDao.getSessionById(scored)!!.restingHrAtRun)
         }
     }
 

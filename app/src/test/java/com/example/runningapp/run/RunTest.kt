@@ -70,6 +70,17 @@ class RunStartTest {
     }
 
     @Test
+    fun `the row request carries the heart rates the run is recorded under`() {
+        val driver = Driver()
+        val effects = driver.on(
+            RunEvent.Started(config(hrProfile = HrProfile(maxHr = 181, restingHr = 48)), RunControls(), T0),
+        )
+
+        val create = effects.only<RunEffect.CreateRunRow>()
+        assertEquals(HrProfile(maxHr = 181, restingHr = 48), create.hrProfile)
+    }
+
+    @Test
     fun `a second start while the run is live asks for nothing`() {
         val driver = Driver()
         driver.start()

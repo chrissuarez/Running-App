@@ -855,10 +855,10 @@ class SessionRepositoryTest {
         repositoryWithSamples.setStatedProfile(maxHr = 181, restingHr = null)
 
         verify(mockDao).updateZoneSecondsAndEffort(
-            sessionId = 7L, zone1 = 0, zone2 = 2, zone3 = 1, zone4 = 0, zone5 = 0, effortScore = 0
+            sessionId = 7L, zone1 = 0, zone2 = 2, zone3 = 1, zone4 = 0, zone5 = 0, effortScore = 0, maxHrAtRun = 181, restingHrAtRun = 0
         )
         verify(mockDao).updateZoneSecondsAndEffort(
-            sessionId = 8L, zone1 = 0, zone2 = 0, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = null
+            sessionId = 8L, zone1 = 0, zone2 = 0, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = null, maxHrAtRun = 181, restingHrAtRun = 0
         )
         verify(mockSettingsRepo).setStatedHeartRates(eq(181), anyOrNull(), anyOrNull())
     }
@@ -896,7 +896,7 @@ class SessionRepositoryTest {
 
         inOrder(mockDao, mockSettingsRepo) {
             verify(mockDao).updateZoneSecondsAndEffort(
-                sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0
+                sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0, maxHrAtRun = 181, restingHrAtRun = 0
             )
             verify(mockSettingsRepo).setStatedHeartRates(eq(181), anyOrNull(), anyOrNull())
         }
@@ -918,7 +918,7 @@ class SessionRepositoryTest {
         // maximum for history nor clear a note left by an interrupted re-tally.
         verify(mockSettingsRepo).setStatedHeartRates(195, null, null)
         verify(mockDao, never()).getFinalizedSessionIds()
-        verify(mockDao, never()).updateZoneSecondsAndEffort(any(), any(), any(), any(), any(), any(), anyOrNull())
+        verify(mockDao, never()).updateZoneSecondsAndEffort(any(), any(), any(), any(), any(), any(), anyOrNull(), any(), any())
     }
 
     @Test
@@ -955,7 +955,7 @@ class SessionRepositoryTest {
         repositoryWithSamples.setStatedProfile(maxHr = 181, restingHr = null)
 
         verify(mockDao).updateZoneSecondsAndEffort(
-            sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0
+            sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0, maxHrAtRun = 181, restingHrAtRun = 60
         )
     }
 
@@ -980,10 +980,10 @@ class SessionRepositoryTest {
         repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = 60)
 
         verify(mockDao).updateZoneSecondsAndEffort(
-            sessionId = 7L, zone1 = 1, zone2 = 1, zone3 = 1, zone4 = 0, zone5 = 0, effortScore = 0
+            sessionId = 7L, zone1 = 1, zone2 = 1, zone3 = 1, zone4 = 0, zone5 = 0, effortScore = 0, maxHrAtRun = 181, restingHrAtRun = 60
         )
         verify(mockDao).updateZoneSecondsAndEffort(
-            sessionId = 8L, zone1 = 0, zone2 = 0, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = null
+            sessionId = 8L, zone1 = 0, zone2 = 0, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = null, maxHrAtRun = 181, restingHrAtRun = 60
         )
         verify(mockSettingsRepo).setStatedHeartRates(anyOrNull(), eq(60), anyOrNull())
     }
@@ -1007,7 +1007,7 @@ class SessionRepositoryTest {
         repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = 52)
 
         verify(mockDao).updateZoneSecondsAndEffort(
-            sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0
+            sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0, maxHrAtRun = 181, restingHrAtRun = 52
         )
         verify(mockSettingsRepo).setStatedHeartRates(anyOrNull(), eq(52), anyOrNull())
     }
@@ -1032,7 +1032,7 @@ class SessionRepositoryTest {
 
         inOrder(mockDao, mockSettingsRepo) {
             verify(mockDao).updateZoneSecondsAndEffort(
-                sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0
+                sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0, maxHrAtRun = 181, restingHrAtRun = 60
             )
             verify(mockSettingsRepo).setStatedHeartRates(anyOrNull(), eq(60), anyOrNull())
         }
@@ -1079,7 +1079,7 @@ class SessionRepositoryTest {
         repositoryWithSamples.setStatedProfile(maxHr = 181, restingHr = 60)
 
         verify(mockDao, times(1)).updateZoneSecondsAndEffort(
-            sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0
+            sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0, maxHrAtRun = 181, restingHrAtRun = 60
         )
         // One write, not two: a collector must never see the new maximum beside the old resting
         // heart rate, or a Run started in that gap pins a profile that was never anyone's.
@@ -1107,7 +1107,7 @@ class SessionRepositoryTest {
 
         // Banded against (181, 60) — the stored maximum — not the 200 on its way to disk.
         verify(mockDao).updateZoneSecondsAndEffort(
-            sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0
+            sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0, maxHrAtRun = 181, restingHrAtRun = 60
         )
         verify(mockSettingsRepo).setStatedHeartRates(200, 60, 181)
     }
@@ -1154,7 +1154,7 @@ class SessionRepositoryTest {
         // runs 145-156 and it lands there. Against (195, 60) the reserve is 135, Zone 3 starts at
         // 155, and it would drop to Zone 2 — a run the runner has already read, silently re-filed.
         verify(mockDao).updateZoneSecondsAndEffort(
-            sessionId = 7L, zone1 = 0, zone2 = 0, zone3 = 1, zone4 = 0, zone5 = 0, effortScore = 0
+            sessionId = 7L, zone1 = 0, zone2 = 0, zone3 = 1, zone4 = 0, zone5 = 0, effortScore = 0, maxHrAtRun = 181, restingHrAtRun = 60
         )
         verify(mockSettingsRepo).setStatedHeartRates(null, 60, 181)
     }
@@ -1180,7 +1180,33 @@ class SessionRepositoryTest {
         repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = 60)
 
         verify(mockDao).updateZoneSecondsAndEffort(
-            sessionId = 7L, zone1 = 0, zone2 = 600, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 20
+            sessionId = 7L, zone1 = 0, zone2 = 600, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 20, maxHrAtRun = 181, restingHrAtRun = 60
+        )
+    }
+
+    @Test
+    fun `a re-tally stamps every run it re-bands with the heart rates it re-banded it against`() = runTest {
+        // A run recorded under one Reserve and re-banded onto another really is on the new one
+        // afterwards (#228). Left holding the Reserve it started life on, its route map would
+        // colour by numbers its own zone bars had moved off.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 195, maxHrEverSet = true, historyMaxHr = 181)))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(150))
+
+        repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = 60)
+
+        // The pair history is re-banded against, which is the stored 195's history maximum of 181
+        // beside the resting heart rate just stated — never the 195 in force.
+        verify(mockDao).updateZoneSecondsAndEffort(
+            sessionId = 7L, zone1 = 0, zone2 = 0, zone3 = 1, zone4 = 0, zone5 = 0, effortScore = 0,
+            maxHrAtRun = 181, restingHrAtRun = 60
         )
     }
 
@@ -1193,7 +1219,7 @@ class SessionRepositoryTest {
         val order = mutableListOf<String>()
         val mockSampleDao: SampleDao = mock()
         mockDao.stub {
-            onBlocking { updateZoneSecondsAndEffort(any(), any(), any(), any(), any(), any(), anyOrNull()) }
+            onBlocking { updateZoneSecondsAndEffort(any(), any(), any(), any(), any(), any(), anyOrNull(), any(), any()) }
                 .doSuspendableAnswer { order += "row" }
         }
         val repositoryWithSamples = SessionRepository(
@@ -1238,7 +1264,7 @@ class SessionRepositoryTest {
         inOrder(mockDao, mockSettingsRepo) {
             verify(mockSettingsRepo).beginStatement(null, 60)
             verify(mockDao).updateZoneSecondsAndEffort(
-                sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0
+                sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0, maxHrAtRun = 181, restingHrAtRun = 60
             )
             verify(mockSettingsRepo).setStatedHeartRates(null, 60, 181)
         }
@@ -1273,7 +1299,7 @@ class SessionRepositoryTest {
         assertEquals(StatedHeartRates(null, 60), repository.interruptedStatement())
 
         verify(mockSettingsRepo, never()).setStatedHeartRates(anyOrNull(), anyOrNull(), anyOrNull())
-        verify(mockDao, never()).updateZoneSecondsAndEffort(any(), any(), any(), any(), any(), any(), anyOrNull())
+        verify(mockDao, never()).updateZoneSecondsAndEffort(any(), any(), any(), any(), any(), any(), anyOrNull(), any(), any())
     }
 
     @Test
@@ -1308,7 +1334,7 @@ class SessionRepositoryTest {
 
         verify(mockSettingsRepo, never()).setStatedHeartRates(any(), anyOrNull(), anyOrNull())
         verify(mockSettingsRepo, never()).setStatedHeartRates(anyOrNull(), any(), anyOrNull())
-        verify(mockDao, never()).updateZoneSecondsAndEffort(any(), any(), any(), any(), any(), any(), anyOrNull())
+        verify(mockDao, never()).updateZoneSecondsAndEffort(any(), any(), any(), any(), any(), any(), anyOrNull(), any(), any())
     }
 
     @Test
