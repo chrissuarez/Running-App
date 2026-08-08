@@ -73,9 +73,9 @@ class MovingTimeTest {
     }
 
     @Test
-    fun `a gap in the recording is not moving time`() {
-        // Auto-pause tears the GPS stream down, leaving two fixes minutes apart in the same spot.
-        // Whatever happened in between, it was not 5 minutes of running.
+    fun `an outage the runner stood still through is not moving time`() {
+        // Two fixes five minutes apart in the same spot. Whatever cost the recording those
+        // minutes, the runner covered no ground over them, so none of it was running.
         val points = listOf(
             fixAt(50.7900, 1_700_000_000_000L),
             fixAt(50.7900, 1_700_000_300_000L),
@@ -84,15 +84,45 @@ class MovingTimeTest {
     }
 
     @Test
-    fun `a break in the recording is not moving time even when it looks fast`() {
-        // A manual pause tears the GPS stream down. The runner pauses, walks 400m to a shop over 5
-        // minutes and resumes: one leg, 1.33 m/s implied - comfortably "moving" by speed alone.
-        // Counting it would put moving time above the run's own clock, which never banked those
-        // 5 minutes at all.
+    fun `an outage the runner ran across is moving time`() {
+        // The #165 case: a minute under dense tree cover, every fix refused by the accuracy gate,
+        // 250m of ground on the far side of it. The distance total counts that leg in full, so
+        // dropping its seconds is what flatters the pace.
+        val metresPerDegreeLatitude = 111_132.0
+        val before = track(3.0 to 300)
+        val resumeLatitude = before.last().latitude + 250.0 / metresPerDegreeLatitude
+        val resumeTimestamp = before.last().timestampMillis + 60_000
+        assertEquals(
+            300 + 60,
+            measureMovingTimeSeconds(before + fixAt(resumeLatitude, resumeTimestamp)),
+        )
+    }
+
+    @Test
+    fun `an outage slower than a thirty minute mile is rest, like any other leg`() {
+        // 400m over 5 minutes is 1.33 m_s and counts; 100m over the same 5 minutes is 0.33 m_s and
+        // does not. An outage is judged on the ground it carries, by the same threshold as a leg
+        // the recording covered.
+        val metresPerDegreeLatitude = 111_132.0
+        val before = track(3.0 to 300)
+        val timestamp = before.last().timestampMillis + 300_000
+        val walked = fixAt(before.last().latitude + 400.0 / metresPerDegreeLatitude, timestamp)
+        val wandered = fixAt(before.last().latitude + 100.0 / metresPerDegreeLatitude, timestamp)
+
+        assertEquals(300 + 300, measureMovingTimeSeconds(before + walked))
+        assertEquals(300, measureMovingTimeSeconds(before + wandered))
+    }
+
+    @Test
+    fun `a recorded pause is not moving time even when it looks fast`() {
+        // The runner holds pause, walks 400m to a shop over 5 minutes and resumes: one leg, 1.33
+        // m/s implied - comfortably "moving" by speed alone. The run wrote the pause down, and a
+        // pause carries neither ground nor seconds however fast the two fixes either side look.
         val metresPerDegreeLatitude = 111_132.0
         val points = listOf(
             fixAt(50.7900, 1_700_000_000_000L),
-            fixAt(50.7900 + 400.0 / metresPerDegreeLatitude, 1_700_000_300_000L),
+            fixAt(50.7900 + 400.0 / metresPerDegreeLatitude, 1_700_000_300_000L)
+                .copy(startsAfterPause = true),
         )
         assertEquals(0, measureMovingTimeSeconds(points))
     }

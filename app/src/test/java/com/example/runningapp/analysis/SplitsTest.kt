@@ -157,6 +157,25 @@ class SplitsTest {
     }
 
     @Test
+    fun `a split holding an outage reads the pace the runner actually ran`() {
+        // The same 600 m of lost signal, covered at the same 2 m/s the rest of the run was. Its
+        // seconds count towards moving time because its ground says the runner was running across
+        // it (#165), so the split reads 8:20 /km like every other — where dropping the time and
+        // keeping the distance made it read as a sprint nobody ran.
+        val splits = splitsOfRun(
+            aRun(),
+            noSamples,
+            script {
+                running(2.0, seconds = 250)
+                gap(meters = 600.0, seconds = 300)
+                running(2.0, seconds = 250)
+            }
+        )
+
+        assertEquals(1000.0 / 2.0 / 60.0, splits.first().paceMinPerKm, 0.05)
+    }
+
+    @Test
     fun `the splits add up to the distance the Run is measured at`() {
         // The ticket in one assertion (#204): whatever the table shows, it totals the same ground
         // the Run's own distance is measured over — on a Run holding both kinds of break.

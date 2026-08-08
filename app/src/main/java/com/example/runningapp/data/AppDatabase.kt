@@ -681,7 +681,7 @@ interface RunWalkIntervalStatDao {
         TrackPoint::class,
         Achievement::class
     ],
-    version = 22,
+    version = 23,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -729,7 +729,8 @@ abstract class AppDatabase : RoomDatabase() {
                     MIGRATION_18_19,
                     MIGRATION_19_20,
                     MIGRATION_20_21,
-                    MIGRATION_21_22
+                    MIGRATION_21_22,
+                    MIGRATION_22_23
                 )
                 .build()
                 INSTANCE = instance
@@ -1365,5 +1366,28 @@ val MIGRATION_21_22 = object : Migration(21, 22) {
         if (!database.hasColumn("sessions", "recordsScored")) {
             database.execSQL("ALTER TABLE sessions ADD COLUMN recordsScored INTEGER NOT NULL DEFAULT 0")
         }
+    }
+}
+
+/**
+ * Every measured Run put back into the queue to be measured again, because the rule changed under
+ * them (#165, [ADR 0012](docs/adr/0012-an-outage-is-a-leg-like-any-other.md)):
+ * an Outage now carries its seconds the way it already carried its ground.
+ *
+ * No column is added or dropped. Nulling `movingTimeSeconds` is the whole of it, because null is
+ * what [SessionRepository.backfillMovingTime] looks for, and re-measuring is the one thing that
+ * makes a stored Run agree with its own Splits table — which is measured on read and so already
+ * follows the new rule. Left alone, a Run holding an Outage would print one pace at the top of its
+ * page and a faster set of them underneath.
+ *
+ * Outdoor and finished, matching the backfill's own query exactly: a treadmill Run has no track to
+ * measure and a Run still being written measures itself when it ends. Costs one re-measure of the
+ * whole history at the next launch, in the background, once.
+ */
+val MIGRATION_22_23 = object : Migration(22, 23) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            "UPDATE sessions SET movingTimeSeconds = NULL WHERE endTime > 0 AND runMode = 'outdoor'"
+        )
     }
 }

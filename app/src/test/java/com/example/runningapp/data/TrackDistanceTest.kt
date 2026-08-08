@@ -99,8 +99,9 @@ class TrackDistanceTest {
 
         assertEquals(600.0, outage.meters, 1.0)
         assertFalse(outage.recorded)
-        // Moving time is left exactly as it was: a Break is rest until #165 says otherwise.
-        assertEquals(0L, outage.movingMillis)
+        // And its seconds count, because 600 m in two minutes is a runner running (#165). The two
+        // answers are the same one: the ground the leg carries is what it is judged on.
+        assertEquals(120_000L, outage.movingMillis)
     }
 
     @Test
