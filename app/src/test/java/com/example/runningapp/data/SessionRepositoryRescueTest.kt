@@ -201,7 +201,7 @@ class SessionRepositoryRescueTest {
             .thenReturn(flowOf(UserSettings(maxHr = 195, historyMaxHr = 181)))
         whenever(sessionDao.getInterruptedSessionIds(processStartedAt)).thenReturn(listOf(67L))
         whenever(sessionDao.getSessionById(67L))
-            .thenReturn(interruptedRun(67L).copy(maxHrAtRun = 195, restingHrAtRun = 0))
+            .thenReturn(interruptedRun(67L).copy(bandedOnMaxHr = 195, bandedOnRestingHr = 0))
         whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 60))
         whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
 
@@ -213,7 +213,7 @@ class SessionRepositoryRescueTest {
         assertEquals(onItsOwnProfile.zone2, saved.firstValue.zone2Seconds)
         assertEquals(onItsOwnProfile.zone3, saved.firstValue.zone3Seconds)
         // And the run keeps saying what it was banded on, rather than being rewritten to the global.
-        assertEquals(195, saved.firstValue.maxHrAtRun)
+        assertEquals(195, saved.firstValue.bandedOnMaxHr)
     }
 
     @Test
