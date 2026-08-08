@@ -1,5 +1,6 @@
 package com.example.runningapp.archive
 
+import com.example.runningapp.HrProfile
 import com.example.runningapp.UserSettings
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.RunWalkIntervalStat
@@ -72,6 +73,20 @@ data class ArchivedSettings(
     val activePlanId: String?,
     val activeStageId: String?
 )
+
+/**
+ * The Reserve the runs in this archive are banded against.
+ *
+ * `historyMaxHr`, never `maxHr`: an archive carries both because they part company the moment a
+ * runner corrects their maximum, and every run inside it was read under the history one (#112,
+ * #172). Anything re-banding those runs — the v12 → v13 recompute, at the launch that restores them
+ * or at the trial open that proves they can be (#201) — has to ask for this pair, or it lands a
+ * restored history on a number no phone ever produced.
+ *
+ * One name rather than the pair spelled out at each site, because the two callers are a launch
+ * and a restore and they must not drift: what the trial migrates on is what the runner keeps.
+ */
+val ArchivedSettings.historyHrProfile: HrProfile get() = HrProfile(historyMaxHr, restingHr)
 
 fun UserSettings.toArchived(): ArchivedSettings = ArchivedSettings(
     maxHr = maxHr,

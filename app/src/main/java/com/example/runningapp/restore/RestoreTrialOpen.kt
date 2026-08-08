@@ -39,11 +39,13 @@ object RestoreTrialOpen {
      * Call from a background thread: this runs every migration between the file's version and this
      * app's, on however much history the file holds.
      *
-     * [hrProfileProvider] feeds the v12 → v13 zone recompute. It has to be the same profile the
-     * live app would use for this very file — the archive's own if it carried one — because the
-     * migration bands every run in the file against it, and a trial that migrated against a
-     * different profile would silently rewrite the restored zone totals to numbers no phone ever
-     * produced.
+     * Named for what it does rather than for the question it answers: this is not an inspection.
+     * It migrates [database] where it lies, and the boolean is whether that worked.
+     *
+     * [hrProfile] feeds the v12 → v13 zone recompute. It has to be the same profile the live app
+     * would use for this very file — the archive's own if it carried one — because the migration
+     * bands every run in the file against it, and a trial that migrated against a different profile
+     * would silently rewrite the restored zone totals to numbers no phone ever produced.
      *
      * Nothing here goes near [AppDatabase.getDatabase]. That accessor memoises one instance, and
      * asking it to open the staged copy would leave the app holding the staging file as its live
@@ -51,10 +53,10 @@ object RestoreTrialOpen {
      * own, against the staged path, and closes it before returning, so by the time the file is
      * promoted nothing has it open.
      */
-    fun migrates(
+    fun migrateInStaging(
         context: Context,
         database: File,
-        hrProfileProvider: () -> HrProfile,
+        hrProfile: HrProfile,
     ): Boolean {
         var room: AppDatabase? = null
         try {
@@ -70,7 +72,9 @@ object RestoreTrialOpen {
                 // Note what is *not* here: no destructive fallback. A backup Room would rather
                 // rebuild from scratch than migrate is a backup with no history left in it, and
                 // this has to fail on it rather than quietly hand back an empty database.
-                .addMigrations(*appDatabaseMigrations(hrProfileProvider))
+                // Handed as a value and wrapped here: the lazy read the live app needs is about
+                // keeping a DataStore call off the main thread, and this one has already been made.
+                .addMigrations(*appDatabaseMigrations { hrProfile })
                 .build()
             // Room opens lazily, so nothing above has touched the file yet. This is the line that
             // runs the migrations and the schema validation, and the line that can throw.
@@ -98,12 +102,13 @@ object RestoreTrialOpen {
             runCatching { room?.close() }
         }
         // A clean close leaves no journal, and a truncated log holds nothing anyway — but a file
-        // that did survive would be promoted's neighbour, describing a database that no longer
+        // that did survive would sit beside the promoted database describing one that no longer
         // exists. Refuse rather than promote into that.
-        return journalsRemoved(database)
+        return removeJournalsOf(database)
     }
 
-    private fun journalsRemoved(database: File): Boolean =
+    /** Deletes anything SQLite left beside [database]. False if any of it is still there. */
+    private fun removeJournalsOf(database: File): Boolean =
         listOf("-wal", "-shm", "-journal").all { suffix ->
             val journal = File("${database.path}$suffix")
             if (!journal.exists() || journal.delete()) {
