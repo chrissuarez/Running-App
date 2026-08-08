@@ -319,27 +319,50 @@ class WeeklyVolumeTest {
     }
 
     @Test
-    fun `only the partly measured weeks are named, and only under the Effort Score`() {
-        val measured = TrainingWeek(monday, distanceKm = 10.0, timeSeconds = 3_600, effortScore = 100)
+    fun `a week whose bar is short of what was run is named under the chart`() {
+        val measured = TrainingWeek(monday, distanceKm = 10.0, timeSeconds = 3_600, effortScore = 100, runsWithoutScore = 0)
         val partly = measured.copy(startingOn = monday.plusWeeks(1), runsWithoutScore = 1)
 
-        assertNull(partlyMeasuredNote(listOf(measured, measured), ::dateText))
+        assertNull(unmeasuredRunsNote(listOf(measured, measured), ::dateText))
         assertEquals(
-            "The week of 9 Mar also held a run with no heart rate recorded, so its bar counts " +
-                "only the runs that were measured.",
-            partlyMeasuredNote(listOf(measured, partly), ::dateText),
+            "The week of 9 Mar held a run with no heart rate recorded, so its bar is short of " +
+                "what was run.",
+            unmeasuredRunsNote(listOf(measured, partly), ::dateText),
         )
     }
 
     @Test
-    fun `several partly measured weeks are counted rather than listed one by one`() {
+    fun `a week nothing measured is named too, its bar being the shortest of all`() {
+        // Not a partly measured week — it has no Effort Score at all — and drawn at nothing beside
+        // weeks that scored, it understates the runner further still.
+        val measured = TrainingWeek(monday, distanceKm = 10.0, timeSeconds = 3_600, effortScore = 100, runsWithoutScore = 0)
+        val strapless = measured.copy(
+            startingOn = monday.plusWeeks(1),
+            effortScore = null,
+            runsWithoutScore = 2,
+        )
+
+        assertEquals(
+            "The week of 9 Mar held runs with no heart rate recorded, so its bar is short of what " +
+                "was run.",
+            unmeasuredRunsNote(listOf(measured, strapless), ::dateText),
+        )
+    }
+
+    @Test
+    fun `two or three short weeks are named, and more than that are counted`() {
         val partly = TrainingWeek(monday, distanceKm = 10.0, timeSeconds = 3_600, effortScore = 100, runsWithoutScore = 2)
         val weeks = (0L..3L).map { partly.copy(startingOn = monday.plusWeeks(it)) }
 
         assertEquals(
-            "4 of these weeks also held runs with no heart rate recorded, so their bars count " +
-                "only the runs that were measured.",
-            partlyMeasuredNote(weeks, ::dateText),
+            "The weeks of 2 Mar, 9 Mar and 16 Mar held runs with no heart rate recorded, so their " +
+                "bars are short of what was run.",
+            unmeasuredRunsNote(weeks.dropLast(1), ::dateText),
+        )
+        assertEquals(
+            "4 of these weeks held runs with no heart rate recorded, so their bars are short of " +
+                "what was run.",
+            unmeasuredRunsNote(weeks, ::dateText),
         )
     }
 
@@ -352,6 +375,7 @@ class WeeklyVolumeTest {
             distanceKm = 42.2,
             timeSeconds = 5_400,
             effortScore = 300,
+            runsWithoutScore = 0,
         )
 
         assertEquals(42.2, WeeklyMeasure.DISTANCE.amountOf(week), 0.001)

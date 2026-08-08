@@ -171,18 +171,6 @@ private fun StringBuilder.appendStageWorkout(workout: WorkoutTemplate) {
 }
 
 /**
- * What the runner is carrying, told to the coach so the next prescription can answer it (#66).
- *
- * The numbers are explained, not just stated: a bare "Form -14" is a figure from someone else's
- * model, while the sentence below says what it was measured over and where its lines are, so the
- * coach reads the same meaning the runner does on the Progress screen.
- *
- * Intervals only, and said so twice over. Graduation is a judgement about evidence — did this Run
- * meet the requirement — and a tired week is not evidence about a Run. Left unfenced, a model given
- * a fatigue reading will hold a runner back from a Stage they have already earned, which is the one
- * decision here that writes itself into the stored plan.
- */
-/**
  * One week of Effort Score as it is written into the prompt (#247).
  *
  * A partly measured week is sent as its total with the shortfall named beside it, rather than as a
@@ -195,6 +183,18 @@ private fun AiWeeklyEffort.forPrompt(): String = when {
     else -> score.toString()
 }
 
+/**
+ * What the runner is carrying, told to the coach so the next prescription can answer it (#66).
+ *
+ * The numbers are explained, not just stated: a bare "Form -14" is a figure from someone else's
+ * model, while the sentence below says what it was measured over and where its lines are, so the
+ * coach reads the same meaning the runner does on the Progress screen.
+ *
+ * Intervals only, and said so twice over. Graduation is a judgement about evidence — did this Run
+ * meet the requirement — and a tired week is not evidence about a Run. Left unfenced, a model given
+ * a fatigue reading will hold a runner back from a Stage they have already earned, which is the one
+ * decision here that writes itself into the stored plan.
+ */
 private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
     appendLine(
         "The runner's current training state, from the Effort Scores of their past runs: " +

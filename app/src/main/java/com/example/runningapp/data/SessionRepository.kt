@@ -115,17 +115,6 @@ data class AiRecentRun(
 )
 
 /**
- * How much training the runner is carrying, as the coach is told it (#66) — the same three numbers
- * the Progress screen shows, plus the weeks they were built out of.
- *
- * Whole numbers, exactly as the screen rounds them: a Fitness of 31.4 is not measured to a tenth of
- * anything, and the coach reading a different number from the runner would be two answers to one
- * question.
- *
- * [weeklyEfforts] runs oldest week first and ends with the week in progress, which is short by
- * definition — most of it has not been run yet.
- */
-/**
  * One week of Effort Score as the coach is told it (#66, #247).
  *
  * [score] is the week's total, 0 for a week of rest — no Run in it at all, or none hard enough to
@@ -140,6 +129,17 @@ data class AiRecentRun(
  */
 data class AiWeeklyEffort(val score: Int?, val partlyMeasured: Boolean)
 
+/**
+ * How much training the runner is carrying, as the coach is told it (#66) — the same three numbers
+ * the Progress screen shows, plus the weeks they were built out of.
+ *
+ * Whole numbers, exactly as the screen rounds them: a Fitness of 31.4 is not measured to a tenth of
+ * anything, and the coach reading a different number from the runner would be two answers to one
+ * question.
+ *
+ * [weeklyEfforts] runs oldest week first and ends with the week in progress, which is short by
+ * definition — most of it has not been run yet.
+ */
 data class AiFitnessAndForm(
     val fitness: Int,
     val fatigue: Int,
