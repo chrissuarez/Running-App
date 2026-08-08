@@ -18,7 +18,11 @@ import com.example.runningapp.recording.geodesicDistanceMeters
  * leg between two fixes stamped the same moment carries none either — it has no time to have been
  * run in, so counted it would be distance for free.
  *
- * [movingMillis] is the part of the leg that counts towards moving time: all of it, or none.
+ * [movingMillis] is the part of the leg that counts towards moving time: all of it, or none, decided
+ * by whether [meters] over [millis] clears [MOVING_SPEED_THRESHOLD_MPS]. A leg across an Outage is
+ * judged by that same rule — the ground it carries is the evidence that the runner was running
+ * across it (#165, [ADR 0012](docs/adr/0012-an-outage-is-a-leg-like-any-other.md)) — and a leg
+ * across a Pause is never moving, because it carries no ground to be judged on.
  */
 data class TrackLeg(
     val meters: Double,
@@ -124,21 +128,37 @@ fun measureTrack(points: List<TrackPoint>): MeasuredTrack {
             current.latitude,
             current.longitude,
         )
-        // A leg spanning a break in the recording is rest no matter how fast it looks: the run said
-        // so on the fix that resumed it, or, for a run recorded before it said so, the gap itself is
-        // the only evidence there is.
+        // A Pause is the one leg no measurement reaches into: the run wrote it down, its own clock
+        // stopped for it, and the runner was not running across it however fast the two fixes
+        // either side of it look. An Outage - a gap nobody declared - is a leg like any other, and
+        // is judged on the ground it carries by the same threshold (#165).
         val spansPause = current.startsAfterPause
-        val spansBreak = spansPause || legMs > TRACK_BREAK_MS
+        val spansOutage = !spansPause && legMs > TRACK_BREAK_MS
+        // "Faster than a 30-minute mile", as Strava puts it - so exactly the threshold is not
+        // moving.
+        val moving = !spansPause && legMeters / (legMs / 1000.0) > MOVING_SPEED_THRESHOLD_MPS
         when {
-            // A break is settled rest, not a slow spell waiting to be judged. Banking it as one
-            // would hand it back: a two-second recorded pause is shorter than the rest window, so
-            // the next moving leg would restore every paused second as moving time. The slow spell
-            // running into it goes too - the runner was slowing to the stop, and it is rest for
-            // the same reason the stop is.
+            moving -> {
+                legs[i - 1] = TrackLeg(
+                    meters = legMeters,
+                    millis = legMs,
+                    movingMillis = legMs,
+                    recorded = !spansOutage,
+                )
+                legs.redeem(slowSpell, slowSpellMs)
+                slowSpell.clear()
+                slowSpellMs = 0L
+                everMoved = true
+            }
+            // A Break the runner got nowhere across is settled rest, not a slow spell waiting to be
+            // judged. Banking it as one would hand it back: a two-second recorded pause is shorter
+            // than the rest window, so the next moving leg would restore every paused second as
+            // moving time. The slow spell running into it goes too - the runner was slowing to the
+            // stop, and it is rest for the same reason the stop is.
             //
             // It still carries its ground unless it was a Pause, which is the one Break the runner
             // was not running across - see [TrackLeg.meters].
-            spansBreak -> {
+            spansPause || spansOutage -> {
                 legs[i - 1] = TrackLeg(
                     meters = if (spansPause) 0.0 else legMeters,
                     millis = legMs,
@@ -147,15 +167,6 @@ fun measureTrack(points: List<TrackPoint>): MeasuredTrack {
                 )
                 slowSpell.clear()
                 slowSpellMs = 0L
-            }
-            // "Faster than a 30-minute mile", as Strava puts it - so exactly the threshold is not
-            // moving.
-            legMeters / (legMs / 1000.0) > MOVING_SPEED_THRESHOLD_MPS -> {
-                legs[i - 1] = TrackLeg(legMeters, legMs, movingMillis = legMs, recorded = true)
-                legs.redeem(slowSpell, slowSpellMs)
-                slowSpell.clear()
-                slowSpellMs = 0L
-                everMoved = true
             }
             else -> {
                 legs[i - 1] = TrackLeg(legMeters, legMs, movingMillis = 0L, recorded = true)

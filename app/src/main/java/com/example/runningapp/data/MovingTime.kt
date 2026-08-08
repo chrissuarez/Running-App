@@ -43,20 +43,18 @@ const val MOVING_SPEED_THRESHOLD_MPS = 1609.344 / 1800.0
 const val REST_SUSTAINED_MS = 3_000L
 
 /**
- * How long the track may go unrecorded before the gap counts as a break rather than a leg — the
- * fallback for a break nothing recorded, and the same number the GPX export draws its route break
- * at (`RunGpxTrack.ROUTE_BREAK_SECONDS`). Fixes arrive about a second apart, so twenty seconds sits
+ * How long the track may go unrecorded before the gap counts as an Outage — a stretch of the run
+ * nothing witnessed — and the same number the GPX export draws its route break at
+ * (`RunGpxTrack.ROUTE_BREAK_SECONDS`). Fixes arrive about a second apart, so twenty seconds sits
  * well above the gaps of a run in progress.
  *
- * A break is never moving time, whatever the two fixes either side of it imply about speed. A
- * manual pause tears the GPS stream down, so a runner who pauses, walks 400 m to a shop and resumes
- * leaves one long leg — and counting it would put moving time *above* the run's own clock.
- *
- * It is the fallback and not the rule, because a gap is weaker evidence than a record: a pause
- * shorter than this leaves no gap worth noticing, and the runner who paused at a shop door and
- * walked on afterwards would have every second of it counted as moving. Runs recorded since #84
- * write the pause down on the fix that resumed them ([TrackPoint.startsAfterPause]), which is read
- * first; the gap rule is what remains for older runs, where nothing was written down.
+ * What a gap this long buys is silence about the *route*, and only that: nothing is drawn or joined
+ * across it. It does not decide whether the runner was moving, which is measured off the ground the
+ * gap carries like any other leg's (#165,
+ * [ADR 0012](docs/adr/0012-an-outage-is-a-leg-like-any-other.md)).
+ * A Pause is the leg that decides otherwise, and it decides it by being written down
+ * ([TrackPoint.startsAfterPause]) rather than by being long: a pause shorter than this leaves no gap
+ * worth noticing, and one longer would be indistinguishable from lost signal.
  */
 const val TRACK_BREAK_MS = 20_000L
 

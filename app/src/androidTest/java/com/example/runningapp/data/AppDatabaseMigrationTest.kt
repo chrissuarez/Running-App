@@ -77,7 +77,7 @@ class AppDatabaseMigrationTest {
         // migration between the file's version and today's. It does not disturb what this test
         // asserts — it touches sessions, never track_points.
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
             .build()
 
         val sessionATrackPoints = runBlockingGet { migratedDb.trackPointDao().getTrackPointsForSessionOnce(1) }
@@ -130,7 +130,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
             .build()
         val session1 = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val session2 = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
@@ -194,7 +194,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
             .build()
         val session1 = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val session2 = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
@@ -239,7 +239,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
             .build()
         // Opening through Room is itself the assertion that the dead columns are gone: Room refuses
         // a database whose column set does not match the entity, and RunnerSession no longer
@@ -287,7 +287,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
             .build()
         val trackPoints = runBlockingGet { migratedDb.trackPointDao().getTrackPointsForSessionOnce(1) }
         migratedDb.close()
@@ -303,7 +303,7 @@ class AppDatabaseMigrationTest {
         // and the version number says 17 for both. Room refuses a database carrying a column its
         // entities do not declare, so without this the phone cannot open this build at all.
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
             .build()
         runBlockingGet { migratedDb.sessionDao().insertSession(RunnerSession(startTime = 1_000L, endTime = 2_000L)) }
         migratedDb.close()
@@ -318,7 +318,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val reopened = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+            .addMigrations(MIGRATION_11_12, migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
             .build()
         // Opening at all is the assertion on shape: Room validates every table against today's
         // entities, so it passes only if the boundary column is back. The run itself must still be
@@ -343,7 +343,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
             .build()
         val session = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val needingBackfill = runBlockingGet { migratedDb.sessionDao().getSessionIdsMissingMovingTime() }
@@ -366,7 +366,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
             .build()
 
         // Opening at all is the assertion on shape: Room validates the new table, its columns and
@@ -411,7 +411,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
             .build()
         val session = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         migratedDb.close()
@@ -435,7 +435,7 @@ class AppDatabaseMigrationTest {
         rawDb.close()
 
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
-            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22)
+            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
             .build()
         val session = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val owing = runBlockingGet { migratedDb.sessionDao().getSessionIdsMissingRecordScoring() }
@@ -447,6 +447,50 @@ class AppDatabaseMigrationTest {
         assertEquals(false, session.recordsScored)
         assertEquals(listOf(1L), owing)
         assertEquals(2259L, session.durationSeconds)
+    }
+
+    @Test
+    fun migrate22To23_queuesEveryMeasuredRunToBeMeasuredAgain_leavingTreadmillsAlone() {
+        val rawDb = openLegacyDatabase()
+        createTrackPointsTable(rawDb)
+        insertLegacySession(rawDb, id = 1)
+        insertLegacySession(rawDb, id = 2)
+        insertLegacySession(rawDb, id = 3)
+        rawDb.execSQL("UPDATE sessions SET endTime = 9000, durationSeconds = 2259 WHERE id = 1")
+        rawDb.execSQL("UPDATE sessions SET endTime = 9000, durationSeconds = 1800, runMode = 'treadmill' WHERE id = 2")
+        rawDb.execSQL("UPDATE sessions SET endTime = 0 WHERE id = 3")
+        rawDb.version = 12
+        rawDb.close()
+
+        // Up to today first, so the column exists to be filled - then measured moving times are
+        // written into all three and the file is wound back to v22, which is v23's schema exactly.
+        // Reopening therefore runs this migration and only this one, against a history that has
+        // already been measured under the old rule.
+        Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(migration12To13 { HrProfile(190) }, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19, MIGRATION_19_20, MIGRATION_20_21, MIGRATION_21_22, MIGRATION_22_23)
+            .build()
+            .close()
+        val measuredDb = SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(dbName), null)
+        measuredDb.execSQL("UPDATE sessions SET movingTimeSeconds = 2100, avgPaceMinPerKm = 6.0")
+        measuredDb.version = 22
+        measuredDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(MIGRATION_22_23)
+            .build()
+        val queued = runBlockingGet { migratedDb.sessionDao().getSessionIdsMissingMovingTime() }
+        val outdoorRun = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
+        val treadmillRun = runBlockingGet { migratedDb.sessionDao().getSessionById(2) }!!
+        migratedDb.close()
+
+        // The finished outdoor Run is the one the rule changed under (#165), and it goes back into
+        // the queue holding nothing. The treadmill Run has no track to measure and the Run still
+        // being written measures itself when it ends, so neither is touched.
+        assertEquals(listOf(1L), queued)
+        assertNull(outdoorRun.movingTimeSeconds)
+        assertEquals(2100L, treadmillRun.movingTimeSeconds)
+        // Everything the Run already had is where it was: only the derived number was withdrawn.
+        assertEquals(2259L, outdoorRun.durationSeconds)
     }
 
     /**

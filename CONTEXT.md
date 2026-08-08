@@ -88,8 +88,10 @@ _Avoid_: stoppage, rest stop
 A Break nobody declared: the signal was lost while the Run carried on — a
 tunnel, a stairwell, a built-up street. The runner did cover that ground, so an
 Outage carries the straight line between the fixes either side of it, which is
-never longer than the route they really took. What it does not carry is a route,
-which is why it is still a Break.
+never longer than the route they really took, and the seconds that line was
+covered in when it was covered fast enough to be running
+([ADR 0012](docs/adr/0012-an-outage-is-a-leg-like-any-other.md)). What it does
+not carry is a route, which is why it is still a Break.
 _Avoid_: signal loss, GPS drop
 
 **Covered**:

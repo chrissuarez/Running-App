@@ -94,7 +94,9 @@ One record, read consistently, is worth more than a better-shaped record read tw
   shows no pace at all.** Distance moved and moving time did not, because judging whether the runner
   was moving across a Break is a separate decision (#165). This is the honest shape of that gap
   rather than a flattering one — hiding the ground to hide it would leave the table not totalling the
-  Run, which is the whole defect this ADR exists to close.
+  Run, which is the whole defect this ADR exists to close. *Closed by
+  [ADR 0012](0012-an-outage-is-a-leg-like-any-other.md): an Outage now carries its seconds too, on
+  the same evidence it carries its metres.*
 - **The pace *line* on the combined chart skips an unrecorded leg entirely.** Ground with no
   witnessed seconds, divided one by the other, is a sprint nobody ran; the line is for the shape of
   the Run and the Splits table is where that ground is accounted for.

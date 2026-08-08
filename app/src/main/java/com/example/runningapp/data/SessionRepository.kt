@@ -703,6 +703,10 @@ class SessionRepository(
      * geodesic distances between every pair of a run's track points, which belongs in Kotlin rather
      * than in SQL. Safe to call more than once — a run is only looked at while its column is null.
      *
+     * Null is also how a rule change is served: the v23 migration withdraws every measured run's
+     * answer so this pass measures the history again, the once, under the rule an Outage is judged
+     * by now ([ADR 0012](docs/adr/0012-an-outage-is-a-leg-like-any-other.md)).
+     *
      * A run with no usable track keeps a null rather than a stored zero. Null means "measured
      * against the run's duration instead" ([paceClockSeconds]); a zero would mean "this run never
      * moved", and would put every treadmill run's pace at --:--.
