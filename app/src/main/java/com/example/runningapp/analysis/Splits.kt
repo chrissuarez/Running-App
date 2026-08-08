@@ -6,6 +6,7 @@ import com.example.runningapp.data.MeasuredTrack
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.measureTrack
+import com.example.runningapp.data.withinTheRunsClock
 import com.example.runningapp.run.RunMode
 import kotlin.math.roundToInt
 
@@ -93,7 +94,7 @@ internal fun groundOf(
         trackMap = null,
     )
     if (RunMode.ofSettingValue(run.runMode) == RunMode.TREADMILL) return nothing
-    val measured = measureTrack(track)
+    val measured = measureTrack(track).withinTheRunsClock(run.durationSeconds)
     if (measured.legs.isEmpty()) return nothing
     val elevation = elevationOf(measured)
     val bpmByWallSecond = samples.byWallSecond(run)

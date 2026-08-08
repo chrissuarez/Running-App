@@ -36,6 +36,13 @@ class MovingTimeTest {
         source = TrackPointSource.GPS,
     )
 
+    /**
+     * Moving time measured with a clock too long ever to bind, so these cases are about the leg
+     * rules alone. What the run's own clock has to say is its own group of tests, at the bottom.
+     */
+    private fun measureMovingTimeSeconds(points: List<TrackPoint>) =
+        measureMovingTimeSeconds(points, clockSeconds = Long.MAX_VALUE / 1_000)
+
     @Test
     fun `a run that never stops is moving for all of it`() {
         // 3 m/s for 600s - a shade over 5:30 /km, comfortably above the threshold throughout.
@@ -205,5 +212,58 @@ class MovingTimeTest {
         // Started and stopped by mistake at a standstill: three fixes, two seconds, going nowhere.
         // Short enough that the sustained-rest window would otherwise keep every second of it.
         assertEquals(0, measureMovingTimeSeconds(track(0.0 to 2)))
+    }
+
+    /**
+     * A run of [running] seconds either side of a gap of [gapSeconds], with the runner [gapMeters]
+     * further on when the fixes come back — the shape of an Outage, and of the unmarked Pause that
+     * is indistinguishable from one on the track alone.
+     */
+    private fun acrossAGap(running: Int, gapSeconds: Int, gapMeters: Double): List<TrackPoint> {
+        val before = track(3.0 to running)
+        var latitude = before.last().latitude + gapMeters / metresPerDegreeLatitude
+        var timestamp = before.last().timestampMillis + gapSeconds * 1_000L
+        val after = mutableListOf(fixAt(latitude, timestamp))
+        repeat(running) {
+            latitude += 3.0 / metresPerDegreeLatitude
+            timestamp += 1_000
+            after += fixAt(latitude, timestamp)
+        }
+        return before + after
+    }
+
+    @Test
+    fun `an outage the run's clock ran across keeps every second of it`() {
+        // 128s of lost signal covering 138m - 1.08 m/s, above the threshold - on a run whose clock
+        // banked the whole 728s. Nothing was paused, so nothing is taken back: this is #165's case.
+        val points = acrossAGap(running = 300, gapSeconds = 128, gapMeters = 138.0)
+
+        assertEquals(728, measureMovingTimeSeconds(points, clockSeconds = 728))
+    }
+
+    @Test
+    fun `an outage the run's clock never banked was a pause, and counts for nothing`() {
+        // The same track, on a run whose clock stopped for the gap and reads 600s. Before #84 a
+        // manual pause left exactly this and wrote nothing down; the clock is the record instead.
+        val points = acrossAGap(running = 300, gapSeconds = 128, gapMeters = 138.0)
+
+        assertEquals(600, measureMovingTimeSeconds(points, clockSeconds = 600))
+    }
+
+    @Test
+    fun `a clock that banked part of an outage keeps that part of it`() {
+        // Paused for 100s of a 128s gap and ran the other 28: the clock banked 628s, so 28s of the
+        // Outage is moving and the rest is the stop. Taken back, never rounded away wholesale.
+        val points = acrossAGap(running = 300, gapSeconds = 128, gapMeters = 138.0)
+
+        assertEquals(628, measureMovingTimeSeconds(points, clockSeconds = 628))
+    }
+
+    @Test
+    fun `a run's own recorded legs are never taken back to fit its clock`() {
+        // A clock far shorter than the running the track witnessed. There is no Outage to take it
+        // out of, and witnessed seconds are not the place to find it - that is a recorder fault,
+        // and SessionRepository.computeMovingTime is where the summary refuses to exceed itself.
+        assertEquals(600, measureMovingTimeSeconds(track(3.0 to 600), clockSeconds = 60))
     }
 }
