@@ -111,6 +111,16 @@ enum class RestoreRefusal {
     UNREADABLE,
 
     /**
+     * This app's backup, whole and readable, but Room will not open it — see [RestoreTrialOpen].
+     *
+     * Its own reason rather than [UNREADABLE], because it is a different thing to have happened and
+     * a different thing to do about it: the file is not damaged and was not copied wrong, it simply
+     * cannot be carried forward to this app's schema. Another copy of the same backup will fail the
+     * same way, so telling the runner to try re-downloading it would send them round a loop.
+     */
+    CANNOT_BE_MIGRATED,
+
+    /**
      * A restore already applied its history and is waiting for the next launch to finish putting
      * its settings back. Picking a second file would throw away the only copy of those settings,
      * so the app asks for the relaunch first.
