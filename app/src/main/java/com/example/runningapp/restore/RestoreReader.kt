@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.util.Log
+import com.example.runningapp.HrProfile
 import com.example.runningapp.archive.ArchiveJson
 import com.example.runningapp.archive.ArchiveZip
 import com.example.runningapp.archive.ArchivedSettings
@@ -18,8 +19,13 @@ import java.util.zip.ZipInputStream
  * — how many runs, how recent, what version wrote it — the database inside it has to be opened, and
  * to open it, it has to be a file on this app's own storage rather than a stream from another app's
  * document provider. So the copy that answers the question *is* the copy that gets moved into place
- * later. Nothing is read twice, and nothing can change between the screen the runner agreed to and
- * the database they end up with.
+ * later. Nothing is read twice, and no other file can be substituted between the screen the runner
+ * agreed to and the database they end up with.
+ *
+ * That copy is also *migrated* before the confirmation, by [RestoreTrialOpen] (#201) — so the only
+ * thing that changes about it between the reading and the restore is the schema version, and it
+ * changes because Room has proved it can. The summary keeps quoting the file as picked, because
+ * that is what the runner is being asked about.
  *
  * Nothing here touches the live database. [stage] only ever writes inside [stagingDirectory], and
  * the live file is not so much as opened until [PendingRestore] applies the staged copy at the next
@@ -48,14 +54,26 @@ object RestoreReader {
     /**
      * Copies [uri] into staging, works out what it is, and reports what it holds.
      *
-     * Call from a background thread: this copies a whole database across a content provider.
+     * Call from a background thread: this copies a whole database across a content provider and
+     * then migrates it.
+     *
+     * A file only ever comes back [Outcome.Staged] once Room has opened it here, in staging (#201).
+     * What that leaves behind is a copy already at today's schema — the numbers in the returned
+     * summary are still the ones read off the file as picked, because they are what the runner is
+     * being asked about, but the file itself has moved on and the swap installs a database that
+     * needs nothing further.
      *
      * Any previous staging is cleared first. Two picks in a row must not leave the first one's
      * database sitting where the second one's settings will be read beside it — a mismatched pair
      * would restore one file's runs under another file's max heart rate, which is a quiet way to
      * strand every restored run on a profile nobody chose.
      */
-    fun stage(context: Context, uri: Uri, currentDatabaseVersion: Int): Outcome {
+    fun stage(
+        context: Context,
+        uri: Uri,
+        currentDatabaseVersion: Int,
+        phoneHrProfile: HrProfile,
+    ): Outcome {
         // A restore still armed while the app is running is the one that got its history in place
         // and not its settings, and is waiting for the next launch to finish. Its settings are the
         // only copy left, and the clear below would delete them — so a second pick, even one that
@@ -84,14 +102,32 @@ object RestoreReader {
             // promise: an archive whose `archive.json` this app cannot parse is still restorable
             // for its history, and it must not say otherwise. Parsed twice — once here to tell the
             // truth, once at the restore to apply it — which is a few hundred bytes either way.
-            val carriesSettings = fileKind == RestoreFileKind.ARCHIVE &&
-                stagedSettings(context) != null
-            val summary = summarise(staged, fileKind, carriesSettings)
+            val archivedSettings =
+                if (fileKind == RestoreFileKind.ARCHIVE) stagedSettings(context) else null
+            val summary = summarise(staged, fileKind, carriesSettings = archivedSettings != null)
                 ?: return refuse(context, RestoreRefusal.UNREADABLE)
             when (val eligibility = RestoreEligibility.of(summary, currentDatabaseVersion)) {
-                is RestoreEligibility.Refused -> refuse(context, eligibility.reason)
-                is RestoreEligibility.Allowed -> Outcome.Staged(eligibility.summary)
+                is RestoreEligibility.Refused -> return refuse(context, eligibility.reason)
+                is RestoreEligibility.Allowed -> Unit
             }
+            // Last, because it is much the most expensive question and the cheap refusals above
+            // have already turned away everything they can — including a backup from a newer app,
+            // which Room could only answer by refusing to open it, and which deserves its own
+            // sentence. Everything still here is a backup this app should be able to carry
+            // forward, and this is where that stops being an assumption.
+            //
+            // The profile the migration bands on is whichever one belongs to *this* history: the
+            // archive's own if it brought one, since that is what the relaunch will restore and
+            // then migrate against, and the phone's otherwise. Mirrors AppContainer exactly — the
+            // trial has to migrate the file the way the launch would, or it is proving something
+            // about a database the runner will never have.
+            val migrationHrProfile = archivedSettings
+                ?.let { HrProfile(it.historyMaxHr, it.restingHr) }
+                ?: phoneHrProfile
+            if (!RestoreTrialOpen.migrates(context, staged, { migrationHrProfile })) {
+                return refuse(context, RestoreRefusal.CANNOT_BE_MIGRATED)
+            }
+            Outcome.Staged(summary)
         } catch (e: Exception) {
             Log.w(TAG, "Could not read the picked backup", e)
             refuse(context, RestoreRefusal.UNREADABLE)
@@ -189,9 +225,12 @@ object RestoreReader {
      * app's backup from somebody else's database that happens to have a `sessions` table. Only then
      * does the count mean anything.
      *
-     * What is deliberately *not* checked is the full schema. A backup from an older app is the
+     * What is deliberately *not* checked here is the full schema. A backup from an older app is the
      * ordinary case and legitimately lacks tables and columns added since; Room's migrations exist
      * to build them. Demanding today's schema would refuse exactly the backups this feature is for.
+     * Whether Room will accept the file is a separate and much more expensive question, and it is
+     * asked afterwards by [RestoreTrialOpen] — these three are the cheap refusals, and they stay
+     * cheap so that a damaged download never pays for a migration.
      */
     private fun summarise(
         database: File,

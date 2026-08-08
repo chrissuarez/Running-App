@@ -127,6 +127,19 @@ class RestoreModelsTest {
     }
 
     @Test
+    fun `a backup that cannot be migrated is not told it is damaged`() {
+        // Two different things have happened and there are two different things to do about them.
+        // A damaged file is worth copying again; one Room will not open will fail the same way
+        // however many times it is fetched, so sending the runner back for another copy of it
+        // would send them round a loop.
+        val cannotMigrate = restoreRefusalMessage(RestoreRefusal.CANNOT_BE_MIGRATED)
+        assertFalse(cannotMigrate, cannotMigrate == restoreRefusalMessage(RestoreRefusal.UNREADABLE))
+        assertFalse(cannotMigrate, cannotMigrate.contains("damaged"))
+        // And it says the thing a runner mid-recovery most needs to hear.
+        assertTrue(cannotMigrate, cannotMigrate.contains("untouched"))
+    }
+
+    @Test
     fun `a run in progress explains itself rather than just being off`() {
         assertTrue(restoreRowSubtitle(runInProgress = true).contains("Finish your run"))
         assertTrue(restoreRowSubtitle(runInProgress = false).contains("backup"))

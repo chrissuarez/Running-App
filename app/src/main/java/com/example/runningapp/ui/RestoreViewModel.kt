@@ -5,7 +5,9 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.runningapp.SettingsRepository
 import com.example.runningapp.data.AppDatabase
+import com.example.runningapp.hrProfile
 import com.example.runningapp.restore.CurrentHistory
 import com.example.runningapp.restore.PendingRestore
 import com.example.runningapp.restore.RestorePlan
@@ -14,6 +16,7 @@ import com.example.runningapp.restore.RestoreRefusal
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -55,6 +58,7 @@ sealed interface RestoreUiState {
 class RestoreViewModel(
     private val appContext: Context,
     private val database: AppDatabase,
+    private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<RestoreUiState>(RestoreUiState.Idle)
@@ -69,6 +73,11 @@ class RestoreViewModel(
         if (_state.value is RestoreUiState.Reading) return
         _state.value = RestoreUiState.Reading
         viewModelScope.launch {
+            // What this phone's own history is banded on, for the trial open's v12 → v13 recompute
+            // to fall back to when the picked file brings no settings of its own. Read here rather
+            // than inside the staging so the settings read is a suspending one; it is a single
+            // preference either way.
+            val phoneHrProfile = settingsRepository.userSettingsFlow.first().hrProfile
             val outcome = withContext(Dispatchers.IO) {
                 RestoreReader.stage(
                     context = appContext,
@@ -76,6 +85,7 @@ class RestoreViewModel(
                     // Asked of the open database rather than held as a constant beside Room's, so
                     // the two cannot drift and start disagreeing about which backups are too new.
                     currentDatabaseVersion = database.openHelper.readableDatabase.version,
+                    phoneHrProfile = phoneHrProfile,
                 )
             }
             _state.value = when (outcome) {
@@ -146,11 +156,12 @@ class RestoreViewModel(
 class RestoreViewModelFactory(
     private val appContext: Context,
     private val database: AppDatabase,
+    private val settingsRepository: SettingsRepository,
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(RestoreViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return RestoreViewModel(appContext, database) as T
+            return RestoreViewModel(appContext, database, settingsRepository) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

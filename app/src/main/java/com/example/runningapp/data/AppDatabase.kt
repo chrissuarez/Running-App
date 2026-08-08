@@ -810,32 +810,7 @@ abstract class AppDatabase : RoomDatabase() {
                 .openHelperFactory(
                     PreparingOpenHelperFactory(FrameworkSQLiteOpenHelperFactory(), prepare)
                 )
-                .addMigrations(
-                    MIGRATION_1_2,
-                    MIGRATION_2_3,
-                    MIGRATION_3_4,
-                    MIGRATION_4_5,
-                    MIGRATION_5_6,
-                    MIGRATION_6_7,
-                    MIGRATION_7_8,
-                    MIGRATION_8_9,
-                    MIGRATION_9_10,
-                    MIGRATION_10_11,
-                    MIGRATION_11_12,
-                    migration12To13(hrProfileProvider),
-                    MIGRATION_13_14,
-                    MIGRATION_14_15,
-                    MIGRATION_15_16,
-                    MIGRATION_16_17,
-                    MIGRATION_17_18,
-                    MIGRATION_18_19,
-                    MIGRATION_19_20,
-                    MIGRATION_20_21,
-                    MIGRATION_21_22,
-                    MIGRATION_22_23,
-                    MIGRATION_23_24,
-                    MIGRATION_24_25
-                )
+                .addMigrations(*appDatabaseMigrations(hrProfileProvider))
                 .build()
                 INSTANCE = instance
                 instance
@@ -843,6 +818,47 @@ abstract class AppDatabase : RoomDatabase() {
         }
     }
 }
+
+/**
+ * Every migration this app knows, in one place because two callers have to agree on them.
+ *
+ * The second caller is the trial open a restore does before it swaps a picked backup in (#201): it
+ * opens the staged copy with Room and lets these run against it, which is what turns "this file
+ * looks like a database" into "this file provably becomes today's schema". A trial that ran a
+ * different list from the live app would prove nothing about the launch that follows it, so there
+ * is one list and both read it.
+ *
+ * [hrProfileProvider] is the v12 → v13 zone recompute's, and is the one thing here that differs
+ * between the two callers: the live app supplies whichever profile belongs to the history being
+ * opened, and the trial supplies the same one it would, so a v12 backup is banded in the trial
+ * exactly as it will be in place.
+ */
+fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> = arrayOf(
+    MIGRATION_1_2,
+    MIGRATION_2_3,
+    MIGRATION_3_4,
+    MIGRATION_4_5,
+    MIGRATION_5_6,
+    MIGRATION_6_7,
+    MIGRATION_7_8,
+    MIGRATION_8_9,
+    MIGRATION_9_10,
+    MIGRATION_10_11,
+    MIGRATION_11_12,
+    migration12To13(hrProfileProvider),
+    MIGRATION_13_14,
+    MIGRATION_14_15,
+    MIGRATION_15_16,
+    MIGRATION_16_17,
+    MIGRATION_17_18,
+    MIGRATION_18_19,
+    MIGRATION_19_20,
+    MIGRATION_20_21,
+    MIGRATION_21_22,
+    MIGRATION_22_23,
+    MIGRATION_23_24,
+    MIGRATION_24_25
+)
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
     override fun migrate(database: SupportSQLiteDatabase) {
