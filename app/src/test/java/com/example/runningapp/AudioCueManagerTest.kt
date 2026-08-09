@@ -9,6 +9,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
@@ -141,7 +142,7 @@ class AudioCueManagerTest {
     @Test
     fun `a cue withdrawn before it is spoken is not spoken`() {
         manager.enqueue("in flight", CuePriority.INSTRUCTION)
-        val turnaround = manager.enqueue("turn around", CuePriority.INFORMATION)
+        val turnaround = manager.enqueue("turn around", CuePriority.INFORMATION)!!
         manager.enqueue("a split", CuePriority.INFORMATION)
 
         manager.withdraw(turnaround)
@@ -152,7 +153,7 @@ class AudioCueManagerTest {
 
     @Test
     fun `withdrawing a cue already spoken, or one that never existed, does nothing`() {
-        val spoken = manager.enqueue("in flight", CuePriority.INSTRUCTION)
+        val spoken = manager.enqueue("in flight", CuePriority.INSTRUCTION)!!
         manager.enqueue("a split", CuePriority.INFORMATION)
 
         manager.withdraw(spoken)
@@ -354,7 +355,8 @@ class AudioCueManagerTest {
     fun `nothing enqueued after the service is destroyed is spoken`() {
         manager.shutdown()
 
-        manager.enqueue("too late", CuePriority.INSTRUCTION)
+        // No ticket either: there is no promise to take back, because none was made.
+        assertNull(manager.enqueue("too late", CuePriority.INSTRUCTION))
 
         assertEquals(emptyList<String>(), spokenTexts())
         assertEquals(emptyList<Pair<Boolean, Long>>(), reports)
