@@ -17,7 +17,7 @@ import com.example.runningapp.data.WeatherClient
 import com.example.runningapp.export.FileProviderGpxFileStore
 import com.example.runningapp.export.GpxFileStore
 import com.example.runningapp.restore.PendingRestore
-import com.example.runningapp.restore.restoredHistoryHrProfile
+import com.example.runningapp.restore.migrationHrProfile
 import com.mapbox.common.MapboxOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -102,10 +102,10 @@ class AppContainer(context: Context) {
             // thread that opened the database, so the blocking read never lands on the main thread.
             //
             // Whichever settings belong to the history being opened, and always the pair history is
-            // banded against rather than the live one — see [restoredHistoryHrProfile] for why the
-            // two part company (#112, #172, #267).
-            restoredHistoryHrProfile(
-                archived = restoredSettings,
+            // banded against rather than the live one — see [migrationHrProfile] for why the two
+            // part company (#112, #172, #267).
+            migrationHrProfile(
+                restored = restoredSettings,
                 phone = runBlocking { settingsRepository.userSettingsFlow.first() },
             )
         }

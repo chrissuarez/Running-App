@@ -120,7 +120,7 @@ object RestoreReader {
             // same choice AppContainer makes, through the same function, because the trial has to
             // migrate the file the way the launch would or it is proving something about a database
             // the runner will never have.
-            val migrationHrProfile = restoredHistoryHrProfile(archivedSettings, phoneSettings)
+            val migrationHrProfile = migrationHrProfile(archivedSettings, phoneSettings)
             if (!RestoreTrialOpen.migrateInStaging(context, staged, migrationHrProfile)) {
                 return refuse(context, RestoreRefusal.CANNOT_BE_MIGRATED)
             }
