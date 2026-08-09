@@ -780,9 +780,10 @@ interface RunWalkIntervalStatDao {
         HrSample::class,
         RunWalkIntervalStat::class,
         TrackPoint::class,
-        Achievement::class
+        Achievement::class,
+        Route::class
     ],
-    version = 25,
+    version = 26,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -791,6 +792,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun runWalkIntervalStatDao(): RunWalkIntervalStatDao
     abstract fun trackPointDao(): TrackPointDao
     abstract fun achievementDao(): AchievementDao
+    abstract fun routeDao(): RouteDao
 
     companion object {
         @Volatile
@@ -869,7 +871,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_21_22,
     MIGRATION_22_23,
     MIGRATION_23_24,
-    MIGRATION_24_25
+    MIGRATION_24_25,
+    MIGRATION_25_26
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1565,5 +1568,32 @@ val MIGRATION_24_25 = object : Migration(24, 25) {
         if (!database.hasColumn("sessions", "ranUnderStageId")) {
             database.execSQL("ALTER TABLE sessions ADD COLUMN ranUnderStageId TEXT")
         }
+    }
+}
+
+/**
+ * Room for the Route library (#54): the `routes` table, and nothing else touched.
+ *
+ * A new table rather than a column, and one with no key into `sessions` either way — which is the
+ * whole of why importing and deleting Routes can never cost a runner a Run. Every existing row of
+ * every existing table is left exactly where it was.
+ *
+ * There is nothing to backfill. A Route is a course the runner keeps on purpose, and no earlier
+ * version of the app recorded one; a phone upgrading to v26 has an empty library, which is the
+ * truth about it. Turning past Runs into Routes is a thing the runner asks for one Run at a time
+ * (#55), not something a migration should decide for them.
+ */
+val MIGRATION_25_26 = object : Migration(25, 26) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            "CREATE TABLE IF NOT EXISTS `routes` (" +
+                "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`name` TEXT NOT NULL, " +
+                "`distanceMeters` REAL NOT NULL, " +
+                "`elevationGainMeters` REAL, " +
+                "`polyline` TEXT NOT NULL, " +
+                "`createdAtMillis` INTEGER NOT NULL, " +
+                "`source` TEXT NOT NULL)"
+        )
     }
 }

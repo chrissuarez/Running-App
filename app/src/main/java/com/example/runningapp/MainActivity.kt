@@ -2,6 +2,7 @@ package com.example.runningapp
 
 import android.Manifest
 import android.bluetooth.BluetoothDevice
+import android.net.Uri
 import com.example.runningapp.run.AcquisitionPhase
 import com.example.runningapp.run.AcquisitionState
 import com.example.runningapp.run.RunMode
@@ -67,6 +68,9 @@ import com.example.runningapp.ui.BackupViewModelFactory
 import com.example.runningapp.ui.RestoreUiState
 import com.example.runningapp.ui.RestoreViewModel
 import com.example.runningapp.ui.RestoreViewModelFactory
+import com.example.runningapp.ui.RoutesScreen
+import com.example.runningapp.ui.RoutesViewModel
+import com.example.runningapp.ui.RoutesViewModelFactory
 import com.example.runningapp.ui.HistoryScreen
 import com.example.runningapp.ui.HistoryViewModel
 import com.example.runningapp.ui.HistoryViewModelFactory
@@ -139,6 +143,33 @@ class MainActivity : ComponentActivity() {
     // a scan without the permission is a pure dead-end, so it only fires on grant.
     private var pendingScan = false
 
+    /**
+     * A `.gpx` another app asked this one to open, waiting for the screen to be built (#54).
+     *
+     * Parked in a field rather than imported here, because an import belongs to the Route library's
+     * view model and that does not exist yet when the intent arrives — this Activity may be being
+     * created by the very tap that carried the file. Compose picks it up on the way past and clears
+     * it, so a rotation cannot import the same file twice.
+     */
+    private var pendingRouteFile by mutableStateOf<Uri?>(null)
+
+    /**
+     * "Open with" on a `.gpx` while this app is already open.
+     *
+     * Reached only because the Activity is `singleTop`: without that Android would build a second
+     * MainActivity on top of the first, which would bind the service a second time and leave a Run
+     * in progress being watched by a screen the runner cannot get back to.
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        routeFileIn(intent)?.let { pendingRouteFile = it }
+    }
+
+    /** The `.gpx` an intent is asking this app to open, or null if it is asking for anything else. */
+    private fun routeFileIn(intent: Intent?): Uri? =
+        if (intent?.action == Intent.ACTION_VIEW) intent.data else null
+
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
             // Resume a START that was waiting on the location dialog. The gate
@@ -206,6 +237,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // A `.gpx` this launch was started by (#54). Read before anything else so it is already
+        // parked by the time the Route library's view model exists to be handed it.
+        pendingRouteFile = routeFileIn(intent)
 
         // Runs already in history predate moving time, so their pace would be measured against a
         // different clock from today's runs until this fills them in (#163). Off the main thread and
@@ -326,6 +361,34 @@ class MainActivity : ComponentActivity() {
                     // history it exists to rescue.
                     LaunchedEffect(restoreState) {
                         if (restoreState is RestoreUiState.Restarting) restartForRestore()
+                    }
+
+                    // Scoped to the Activity rather than to the Routes destination: an "Open with"
+                    // has a file to hand over before that screen has been navigated to, and the
+                    // import must not be cancelled by the runner walking away from the library.
+                    val routesViewModel: RoutesViewModel = viewModel(
+                        factory = RoutesViewModelFactory(
+                            appContainer.database.routeDao(),
+                            appContainer.routeImporter,
+                        )
+                    )
+                    // "*/*", like the restore picker, and for the same reason: a `.gpx` in Downloads
+                    // is announced as `application/octet-stream` as often as it is by its real type,
+                    // and a filter that greys out the runner's own file is worse than a broad one.
+                    val pickRouteFile = rememberLauncherForActivityResult(
+                        ActivityResultContracts.OpenDocument()
+                    ) { uri ->
+                        routesViewModel.fileChosen(uri)
+                    }
+                    // A file another app opened this one with lands in exactly the flow the picker
+                    // does — same importer, same refusals, same library — with the screen brought
+                    // up in front of it so the runner sees where their route went.
+                    LaunchedEffect(pendingRouteFile) {
+                        pendingRouteFile?.let { uri ->
+                            pendingRouteFile = null
+                            navigateTo(Routes.ROUTE_LIBRARY)
+                            routesViewModel.fileChosen(uri)
+                        }
                     }
 
                     val gpxShareReady by sessionDetailViewModel.gpxShareReady.collectAsState()
@@ -451,6 +514,9 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onOpenTrainingPlan = {
                                     navigateTo(Routes.TRAINING_PLAN)
+                                },
+                                onOpenRoutes = {
+                                    navigateTo(Routes.ROUTE_LIBRARY)
                                 },
                                 onOpenFullScreenMap = {
                                     navigateTo(Routes.MAP)
@@ -752,6 +818,21 @@ class MainActivity : ComponentActivity() {
                                 onBack = { navigateTo(Routes.MAIN) }
                             )
                         }
+                        composable(Routes.ROUTE_LIBRARY) {
+                            val routes by routesViewModel.routes.collectAsState()
+                            val importingRoute by routesViewModel.importing.collectAsState()
+                            val routeMessage by routesViewModel.message.collectAsState()
+                            RoutesScreen(
+                                routes = routes,
+                                isImporting = importingRoute,
+                                message = routeMessage,
+                                onImport = { pickRouteFile.launch(arrayOf("*/*")) },
+                                onRename = { route, name -> routesViewModel.rename(route, name) },
+                                onDelete = { route -> routesViewModel.delete(route) },
+                                onMessageShown = { routesViewModel.messageShown() },
+                                onBack = { navigateTo(Routes.MAIN) }
+                            )
+                        }
                         composable(Routes.MAP) {
                             FullScreenMapScreen(
                                 state = serviceState.value,
@@ -871,6 +952,7 @@ fun MainScreen(
     onOpenProgress: () -> Unit,
     onOpenManageDevices: () -> Unit,
     onOpenTrainingPlan: () -> Unit,
+    onOpenRoutes: () -> Unit,
     onOpenFullScreenMap: () -> Unit,
     onToggleSimulation: (Boolean, Boolean, String?) -> Unit,
     onRunModeChange: (String) -> Unit
@@ -1024,6 +1106,20 @@ fun MainScreen(
                             .heightIn(min = RunningUiTokens.MinTouchTarget)
                     ) {
                         Text("Open Training Plan")
+                    }
+                }
+                // Here rather than in the bottom bar, which is already five buttons wide and
+                // ellipsizing every one of its labels at the default text size (#63). A sixth would
+                // cost the whole bar its legibility to reach a screen the runner visits between
+                // runs, not during one.
+                item {
+                    OutlinedButton(
+                        onClick = onOpenRoutes,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = RunningUiTokens.MinTouchTarget)
+                    ) {
+                        Text("Open Routes")
                     }
                 }
 

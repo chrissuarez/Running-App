@@ -12,5 +12,8 @@ object Routes {
     const val PROGRESS = "progress"
     const val MAP = "map"
 
+    /** The Route library (#54) — the courses the runner keeps, not one of these screen addresses. */
+    const val ROUTE_LIBRARY = "route_library"
+
     fun sessionDetail(sessionId: Long): String = "session_detail/$sessionId"
 }
