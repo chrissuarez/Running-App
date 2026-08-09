@@ -1187,8 +1187,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * app speaks — the split announcements and the UI's target-reached cue come through here too.
      */
     fun enqueueCue(text: String, priority: CuePriority, tag: CueTag? = null) {
-        val ticket = audioCueManager?.enqueue(text, priority) ?: return
-        outstandingCues.record(ticket, tag)
+        val manager = audioCueManager ?: return
+        // Enqueued and recorded as one act, so the end of a Run cannot land between the two and
+        // leave the cue outstanding with nothing left to take it back (#220).
+        outstandingCues.record(tag) { manager.enqueue(text, priority) }
     }
 
     /** The Run's [RunEffect.Speak], under the name the Run gave the cue, if it gave one. */
