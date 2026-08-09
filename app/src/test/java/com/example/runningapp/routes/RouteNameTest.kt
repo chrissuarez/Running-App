@@ -6,7 +6,7 @@ import org.junit.Test
 class RouteNameTest {
 
     @Test
-    fun takesTheNameTheFileGaveItself() {
+    fun `takes the name the file gave itself`() {
         assertEquals(
             "Regent's Park loop",
             routeName(fileSuggested = "Regent's Park loop", fileNamed = "download-3.gpx"),
@@ -14,7 +14,7 @@ class RouteNameTest {
     }
 
     @Test
-    fun fallsBackToWhatTheFileIsCalledOnDisk() {
+    fun `falls back to what the file is called on disk`() {
         assertEquals(
             "regents-park-loop",
             routeName(fileSuggested = null, fileNamed = "regents-park-loop.gpx"),
@@ -23,26 +23,26 @@ class RouteNameTest {
 
     /** A dot in the middle of a name is part of it; only the extension comes off. */
     @Test
-    fun takesOffOnlyTheExtension() {
+    fun `takes off only the extension`() {
         assertEquals("10.5k loop", routeName(fileSuggested = null, fileNamed = "10.5k loop.gpx"))
         assertEquals("no extension", routeName(fileSuggested = null, fileNamed = "no extension"))
     }
 
     @Test
-    fun standsInWhenNothingNamesTheFile() {
+    fun `stands in when nothing names the file`() {
         assertEquals("Imported route", routeName(fileSuggested = null, fileNamed = null))
     }
 
     /** Blank is not a name: an untitled Route would leave a row with nothing to tap on. */
     @Test
-    fun fallsThroughAnythingBlank() {
+    fun `falls through anything blank`() {
         assertEquals("loop", routeName(fileSuggested = "   ", fileNamed = "loop.gpx"))
         assertEquals("Imported route", routeName(fileSuggested = "", fileNamed = "  .gpx"))
         assertEquals("Imported route", routeName(fileSuggested = null, fileNamed = ".gpx"))
     }
 
     @Test
-    fun trimsTheWhitespaceAroundARealName() {
+    fun `trims the whitespace around a real name`() {
         assertEquals("Park loop", routeName(fileSuggested = "\n  Park loop \n", fileNamed = null))
     }
 }

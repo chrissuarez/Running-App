@@ -6,6 +6,7 @@ import android.net.Uri
 import com.example.runningapp.data.RouteSource
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -64,15 +65,16 @@ class RouteImporterTest {
     """.trimIndent()
 
     @Test
-    fun keepsThePickedFileAsARoute() = runTest {
+    fun `keeps the picked file as a route`() = runTest {
         val outcome = importerFor(aRealGpx, fileNamedOnDisk = "download-3.gpx").import(uri)
 
         val route = dao.stored.single()
         assertEquals(RouteImportOutcome.Imported(route.id, "Regent's Park loop"), outcome)
         assertEquals("Regent's Park loop", route.name)
         assertEquals(222.4, route.distanceMeters, 1.0)
-        // A 30 m step over 111 m of ground, well past both the smoothing window and the threshold.
-        assertEquals(30.0, route.elevationGainMeters!!, 0.5)
+        // That the heights reached the row at all. What they add up to is the shape module's
+        // question, and RouteShapeTest is where it is asked.
+        assertNotNull(route.elevationGainMeters)
         assertEquals(
             "51.5000000,-0.1000000 51.5010000,-0.1000000 51.5020000,-0.1000000",
             route.polyline,
@@ -82,7 +84,7 @@ class RouteImporterTest {
     }
 
     @Test
-    fun namesItAfterTheFileOnDiskWhenTheGpxNamesNothing() = runTest {
+    fun `names it after the file on disk when the gpx names nothing`() = runTest {
         val nameless = """
             <gpx version="1.1"><trk><trkseg>
               <trkpt lat="51.5" lon="-0.1"/><trkpt lat="51.501" lon="-0.1"/>
@@ -95,7 +97,7 @@ class RouteImporterTest {
     }
 
     @Test
-    fun keepsARouteWhoseFileCarriedNoHeights() = runTest {
+    fun `keeps a route whose file carried no heights`() = runTest {
         val flat = """
             <gpx version="1.1"><trk><trkseg>
               <trkpt lat="51.5" lon="-0.1"/><trkpt lat="51.501" lon="-0.1"/>
@@ -109,7 +111,7 @@ class RouteImporterTest {
     }
 
     @Test
-    fun writesNothingWhenTheFileIsNotAGpx() = runTest {
+    fun `writes nothing when the file is not a gpx`() = runTest {
         val outcome = importerFor("<kml><Placemark/></kml>").import(uri)
 
         assertEquals(RouteImportOutcome.Refused(GpxRefusal.NOT_GPX), outcome)
@@ -117,7 +119,7 @@ class RouteImporterTest {
     }
 
     @Test
-    fun writesNothingWhenTheGpxHoldsNoRoute() = runTest {
+    fun `writes nothing when the gpx holds no route`() = runTest {
         val outcome = importerFor("""<gpx version="1.1"><trk><trkseg/></trk></gpx>""").import(uri)
 
         assertEquals(RouteImportOutcome.Refused(GpxRefusal.NO_POINTS), outcome)
@@ -126,7 +128,7 @@ class RouteImporterTest {
 
     /** A half-downloaded file, truncated mid-track. Nothing of it is kept. */
     @Test
-    fun writesNothingWhenTheFileIsCutShort() = runTest {
+    fun `writes nothing when the file is cut short`() = runTest {
         val outcome = importerFor(
             """<gpx version="1.1"><trk><trkseg><trkpt lat="51.5" lon="-0.1"/>"""
         ).import(uri)
@@ -136,7 +138,7 @@ class RouteImporterTest {
     }
 
     @Test
-    fun refusesAFileTheProviderWillNotOpen() = runTest {
+    fun `refuses a file the provider will not open`() = runTest {
         assertEquals(
             RouteImportOutcome.Refused(GpxRefusal.UNREADABLE),
             importerFor(contents = null).import(uri),
@@ -150,7 +152,7 @@ class RouteImporterTest {
 
     /** An "Open with" the app came back to after being killed: the read grant has lapsed. */
     @Test
-    fun refusesAFileItIsNoLongerAllowedToRead() = runTest {
+    fun `refuses a file it is no longer allowed to read`() = runTest {
         val outcome = importerFor(
             contents = null,
             openThrows = SecurityException("permission denial"),
@@ -162,7 +164,7 @@ class RouteImporterTest {
 
     /** A provider that will not say what the file is called must not cost the runner the import. */
     @Test
-    fun importsEvenWhenNothingWillNameTheFile() = runTest {
+    fun `imports even when nothing will name the file`() = runTest {
         val nameless = """
             <gpx version="1.1"><trk><trkseg>
               <trkpt lat="51.5" lon="-0.1"/><trkpt lat="51.501" lon="-0.1"/>

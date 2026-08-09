@@ -17,8 +17,8 @@ import com.example.runningapp.data.WeatherClient
 import com.example.runningapp.export.FileProviderGpxFileStore
 import com.example.runningapp.export.GpxFileStore
 import com.example.runningapp.restore.PendingRestore
-import com.example.runningapp.routes.RouteImporter
 import com.example.runningapp.restore.migrationHrProfile
+import com.example.runningapp.routes.RouteImporter
 import com.mapbox.common.MapboxOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers

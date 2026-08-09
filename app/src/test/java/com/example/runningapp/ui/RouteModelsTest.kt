@@ -21,7 +21,7 @@ class RouteModelsTest {
     )
 
     @Test
-    fun saysHowFarAndHowMuchClimbing() {
+    fun `says how far and how much climbing`() {
         assertEquals("4.20 km · 38 m up", routeRowSubtitle(route(4_200.0, 37.6)))
     }
 
@@ -30,14 +30,14 @@ class RouteModelsTest {
      * tell a runner the hill they are about to run up is not there.
      */
     @Test
-    fun saysWhenTheFileCarriedNoHeights() {
+    fun `says when the file carried no heights`() {
         assertEquals("4.20 km · No elevation in file", routeRowSubtitle(route(4_200.0, null)))
         assertEquals("4.20 km · 0 m up", routeRowSubtitle(route(4_200.0, 0.0)))
     }
 
     /** A device set to German must not write "4,20 km" into a screen the rest of which is in km. */
     @Test
-    fun writesTheDistanceOneWayWhateverTheDeviceLocale() {
+    fun `writes the distance one way whatever the device locale`() {
         val was = Locale.getDefault()
         try {
             Locale.setDefault(Locale.GERMANY)
@@ -49,7 +49,7 @@ class RouteModelsTest {
 
     /** Every refusal has to say what the runner can do next, and that nothing was kept. */
     @Test
-    fun everyRefusalHasWordsOfItsOwn() {
+    fun `every refusal has words of its own`() {
         val messages = GpxRefusal.entries.map { gpxRefusalMessage(it) }
 
         assertEquals(GpxRefusal.entries.size, messages.toSet().size)
@@ -60,7 +60,7 @@ class RouteModelsTest {
     }
 
     @Test
-    fun namesTheRouteItJustSaved() {
+    fun `names the route it just saved`() {
         assertEquals("Saved “Park loop” to your routes.", routeImportedMessage("Park loop"))
     }
 }

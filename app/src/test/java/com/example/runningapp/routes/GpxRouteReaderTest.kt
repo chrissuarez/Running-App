@@ -15,7 +15,7 @@ class GpxRouteReaderTest {
         (read(xml) as? GpxReadOutcome.Refused)?.reason ?: error("expected a refusal, got ${read(xml)}")
 
     @Test
-    fun readsTrackPointsInDocumentOrder() {
+    fun `reads track points in document order`() {
         val outcome = readOrFail(
             """
             <?xml version="1.0" encoding="UTF-8"?>
@@ -45,7 +45,7 @@ class GpxRouteReaderTest {
      * follow, so they are joined.
      */
     @Test
-    fun joinsTheSegmentsOfOneTrackIntoOneCourse() {
+    fun `joins the segments of one track into one course`() {
         val outcome = readOrFail(
             """
             <gpx version="1.1">
@@ -65,7 +65,7 @@ class GpxRouteReaderTest {
     }
 
     @Test
-    fun readsARouteWhenTheFileHasNoTrack() {
+    fun `reads a route when the file has no track`() {
         val outcome = readOrFail(
             """
             <gpx version="1.1">
@@ -85,7 +85,7 @@ class GpxRouteReaderTest {
      * with the detail, so it wins outright rather than the two being run together.
      */
     @Test
-    fun prefersTheTrackWhenTheFileCarriesBoth() {
+    fun `prefers the track when the file carries both`() {
         val outcome = readOrFail(
             """
             <gpx version="1.1">
@@ -99,7 +99,7 @@ class GpxRouteReaderTest {
     }
 
     @Test
-    fun takesTheNameFromTheFilesMetadata() {
+    fun `takes the name from the files metadata`() {
         val outcome = readOrFail(
             """
             <gpx version="1.1">
@@ -113,7 +113,7 @@ class GpxRouteReaderTest {
     }
 
     @Test
-    fun fallsBackToTheTracksOwnName() {
+    fun `falls back to the tracks own name`() {
         val outcome = readOrFail(
             """
             <gpx version="1.1">
@@ -126,7 +126,7 @@ class GpxRouteReaderTest {
     }
 
     @Test
-    fun fallsBackToTheRoutesOwnName() {
+    fun `falls back to the routes own name`() {
         val outcome = readOrFail(
             """
             <gpx version="1.1">
@@ -140,7 +140,7 @@ class GpxRouteReaderTest {
 
     /** A name is only ever the file's suggestion; the importer has the filename to fall back on. */
     @Test
-    fun hasNoNameWhenTheFileNamesNothing() {
+    fun `has no name when the file names nothing`() {
         val outcome = readOrFail(
             """
             <gpx version="1.1"><trk><trkseg><trkpt lat="1.0" lon="2.0"/></trkseg></trk></gpx>
@@ -152,7 +152,7 @@ class GpxRouteReaderTest {
 
     /** A `<name>` full of nothing is no name at all, and must not become a blank route title. */
     @Test
-    fun treatsABlankNameAsNoName() {
+    fun `treats a blank name as no name`() {
         val outcome = readOrFail(
             """
             <gpx version="1.1">
@@ -167,7 +167,7 @@ class GpxRouteReaderTest {
 
     /** Waypoints are places, not a course — a file holding only those has no route in it. */
     @Test
-    fun refusesAFileHoldingOnlyWaypoints() {
+    fun `refuses a file holding only waypoints`() {
         assertEquals(
             GpxRefusal.NO_POINTS,
             refusalOf(
@@ -179,22 +179,22 @@ class GpxRouteReaderTest {
     }
 
     @Test
-    fun refusesAGpxWithNoPointsAtAll() {
+    fun `refuses a gpx with no points at all`() {
         assertEquals(GpxRefusal.NO_POINTS, refusalOf("""<gpx version="1.1"><trk><trkseg/></trk></gpx>"""))
     }
 
     @Test
-    fun refusesAnEmptyFile() {
+    fun `refuses an empty file`() {
         assertEquals(GpxRefusal.UNREADABLE, refusalOf(""))
     }
 
     @Test
-    fun refusesXmlThatIsNotGpx() {
+    fun `refuses xml that is not gpx`() {
         assertEquals(GpxRefusal.NOT_GPX, refusalOf("""<kml><Placemark/></kml>"""))
     }
 
     @Test
-    fun refusesXmlThatDoesNotClose() {
+    fun `refuses xml that does not close`() {
         assertEquals(
             GpxRefusal.UNREADABLE,
             refusalOf("""<gpx version="1.1"><trk><trkseg><trkpt lat="1.0" lon="2.0"/>"""),
@@ -202,7 +202,7 @@ class GpxRouteReaderTest {
     }
 
     @Test
-    fun refusesAPointWithNoPosition() {
+    fun `refuses a point with no position`() {
         assertEquals(
             GpxRefusal.UNREADABLE,
             refusalOf("""<gpx version="1.1"><trk><trkseg><trkpt lon="2.0"/></trkseg></trk></gpx>"""),
@@ -210,7 +210,7 @@ class GpxRouteReaderTest {
     }
 
     @Test
-    fun refusesAPositionOffTheEarth() {
+    fun `refuses a position off the earth`() {
         assertEquals(
             GpxRefusal.UNREADABLE,
             refusalOf("""<gpx version="1.1"><trk><trkseg><trkpt lat="91.0" lon="2.0"/></trkseg></trk></gpx>"""),
@@ -218,7 +218,7 @@ class GpxRouteReaderTest {
     }
 
     @Test
-    fun refusesAPositionThatIsNotANumber()  {
+    fun `refuses a position that is not a number`()  {
         assertEquals(
             GpxRefusal.UNREADABLE,
             refusalOf("""<gpx version="1.1"><trk><trkseg><trkpt lat="north" lon="2.0"/></trkseg></trk></gpx>"""),
@@ -227,7 +227,7 @@ class GpxRouteReaderTest {
 
     /** An unreadable height is a missing height, not a broken file: the line is still followable. */
     @Test
-    fun readsAPointWhoseHeightMakesNoSense() {
+    fun `reads a point whose height makes no sense`() {
         val outcome = readOrFail(
             """
             <gpx version="1.1"><trk><trkseg>
@@ -245,7 +245,7 @@ class GpxRouteReaderTest {
      * route wants none of it, and an element named `name` in there must not become the route's.
      */
     @Test
-    fun ignoresWhatOtherAppsHangOffAPoint() {
+    fun `ignores what other apps hang off a point`() {
         val outcome = readOrFail(
             """
             <gpx version="1.1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">
@@ -266,7 +266,7 @@ class GpxRouteReaderTest {
 
     /** An entity pointed at the phone's own files must never be resolved (#54). */
     @Test
-    fun refusesAFileThatDeclaresADoctype() {
+    fun `refuses a file that declares a doctype`() {
         assertEquals(
             GpxRefusal.UNREADABLE,
             refusalOf(
