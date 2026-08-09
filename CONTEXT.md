@@ -118,9 +118,12 @@ _Avoid_: manual distance, entered distance, treadmill distance
 **Route**:
 A course the runner keeps: a line to follow, how far it goes, and how much climbing it holds. A
 plan rather than a recording — it may be run many times or never, and it carries no time, no heart
-rate and no date it happened, because none of that is true of it yet. Imported from a GPX file
-(#54), and later saved from a Run that has already been made. Deleting one costs no Run anything:
-nothing in the library points at history and nothing in history points back.
+rate and no date it happened, because none of that is true of it yet. Having no recording behind it,
+it has no Breaks either: the segments a file arrives in are joined, and its distance and climb are
+worked out once and banked rather than re-measured on read
+([ADR 0014](docs/adr/0014-a-route-is-a-plan-not-a-recording.md)). Imported from a GPX file (#54), and
+later saved from a Run that has already been made. Deleting one costs no Run anything: nothing in the
+library points at history and nothing in history points back.
 _Avoid_: path, and **track** — a Track is what a Run recorded of where it went, and the two must
 not be confused even in code (`TrackPoint` belongs to a Run). "Course" is fine, and is the word for
 the line itself as against the whole record of it. The `Routes` object under

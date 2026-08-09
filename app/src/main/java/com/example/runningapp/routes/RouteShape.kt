@@ -56,9 +56,10 @@ fun routeDistanceMeters(points: List<RoutePoint>): Double =
  * climbs nothing, while a file with no `<ele>` in it is silent about a route that may well go over a
  * hill. The screen says so in words rather than printing a nought.
  *
- * Nothing here breaks the course into stretches, unlike a Run's elevation, which refuses to bank a
+ * Nothing here breaks the route into stretches, unlike a Run's elevation, which refuses to bank a
  * climb across a Break. A Route has no Breaks — the segments a file arrives in were joined on the
- * way in ([GpxRouteReader]) — so the whole of it is one climb to walk.
+ * way in ([GpxRouteReader]) — so the whole of it is one climb to walk
+ * ([ADR 0014](../../../../../../../docs/adr/0014-a-route-is-a-plan-not-a-recording.md)).
  */
 fun routeElevationGainMeters(points: List<RoutePoint>): Double? {
     if (points.size < 2) return null

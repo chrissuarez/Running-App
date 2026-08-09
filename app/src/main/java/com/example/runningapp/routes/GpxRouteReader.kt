@@ -48,9 +48,11 @@ sealed interface GpxReadOutcome {
  *
  * A whole file is one Route. GPX can hold several tracks, each of several segments, and a track's
  * segments are the breaks in whatever recorded it — a pause on the run it was exported from. A Route
- * is the line the runner means to follow, so those breaks are joined rather than kept: nothing here
- * draws a Run's shape, where a Break is a thing no line may cross
- * ([ADR 0010](../../../../../../../docs/adr/0010-the-track-is-the-record-of-a-break.md)).
+ * is the line the runner means to follow, so those breaks are joined rather than kept: a Break is a
+ * thing no line may cross, and a Route has none, having no recording behind it
+ * ([ADR 0014](../../../../../../../docs/adr/0014-a-route-is-a-plan-not-a-recording.md), which is
+ * where that is argued against
+ * [ADR 0010](../../../../../../../docs/adr/0010-the-track-is-the-record-of-a-break.md)).
  *
  * `<trk>` beats `<rte>` outright when a file carries both: they describe the same outing, one as
  * recorded and one as planned, and the recorded one is the one with the detail. They are never run
