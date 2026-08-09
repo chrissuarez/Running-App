@@ -61,3 +61,10 @@ have the coach judging a Run it cannot classify.
   Workout when the coach cannot be reached ([ADR 0006](0006-the-coach-adjusts-the-long-run-only.md), #248)
   keeps its debrief, its date and its provenance, so it is still taken back by the
   Runs it stood on.
+- **An evaluation is refused whole once its evidence has gone.** The coach takes
+  seconds to answer, and the runner can spend them deleting one of the Runs it was
+  shown. Both endings — the reply written down, and the hold when the coach could
+  not be reached — ask again whether the evidence is still in history, and turn
+  themselves away entirely if it is not. Applying either to whatever the delete left
+  would write down a Prescription no later delete can answer for, because a Run
+  cannot be deleted twice.

@@ -23,10 +23,12 @@ import com.example.runningapp.training.FormVerdict
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -47,6 +49,7 @@ import org.mockito.kotlin.never
 import org.mockito.kotlin.stub
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
+import org.mockito.kotlin.verifyNoInteractions
 import org.mockito.kotlin.whenever
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -902,6 +905,60 @@ class SessionRepositoryTest {
             verify(mockDao).getAiEligibleIdsIn(listOf(7L))
             verify(mockDao).deleteSessionById(7L)
         }
+    }
+
+    @Test
+    fun `a delete cut short on the way out still takes the coaching back`() = runTest {
+        // The rollback is the delete's promise to the runner, and there is no second attempt at it
+        // and no startup pass behind it — so it must not be one of the things a cancelled scope
+        // walks away from (#156).
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        var tookBack = emptySet<Long>()
+        mockPrescriptions.stub {
+            onBlocking { forgetWorkFedBy(any()) }.doSuspendableAnswer { asked ->
+                // The real rollback suspends on the settings store, which is where a cancelled
+                // scope would otherwise abandon it half-done.
+                yield()
+                tookBack = asked.getArgument(0)
+            }
+        }
+        val repositoryWithCoach = SessionRepository(
+            sessionDao = mockDao,
+            coachPrescriptionRepository = mockPrescriptions
+        )
+        lateinit var deleting: Job
+        mockDao.stub {
+            // The runner leaves the history screen the instant the row goes, taking the view
+            // model's scope with them.
+            onBlocking { deleteSessionById(any()) }.doSuspendableAnswer { deleting.cancel() }
+        }
+
+        deleting = launch { repositoryWithCoach.deleteSession(7L) }
+        deleting.join()
+
+        // The row is gone for good, so the coaching that stood on it cannot be left standing.
+        assertEquals(setOf(7L), tookBack)
+    }
+
+    @Test
+    fun `the coaching is taken back before the backup, not after it`() = runTest {
+        // The Downloads snapshot is a copy of rows that have already gone; the coaching is the
+        // thing the delete promised. Behind the backup, a process reclaimed mid-copy would leave
+        // the card coaching about a Run nobody has — the whole complaint of #156.
+        val order = mutableListOf<String>()
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        mockPrescriptions.stub {
+            onBlocking { forgetWorkFedBy(any()) }.doSuspendableAnswer { order += "take back" }
+        }
+        val repositoryWithCoach = SessionRepository(
+            sessionDao = mockDao,
+            coachPrescriptionRepository = mockPrescriptions,
+            refreshHistoryBackup = { order += "backup" }
+        )
+
+        repositoryWithCoach.deleteSession(7L)
+
+        assertEquals(listOf("take back", "backup"), order)
     }
 
     @Test
@@ -1852,6 +1909,190 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a run deleted while the coach was thinking has its reply refused whole`() = runTest {
+        // The evidence is read before a network round trip that takes seconds, and the runner can
+        // spend them on the history screen (#156). The delete rolls back whatever stood at the
+        // time — the coach's *previous* answer — so a reply written afterwards would name a Run
+        // nobody has, and no later delete could ever take it back.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(aTreadmillRun(id = 1, seconds = 1_500), aTreadmillRun(id = 2, seconds = 1_500))
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        mockCoach.stub {
+            onBlocking { evaluateProgress(any()) }.doSuspendableAnswer {
+                // Run 2 leaves history while the coach is still thinking about it.
+                mockDao.stub {
+                    onBlocking { getAiEligibleIdsIn(any()) }
+                        .thenAnswer { asked -> asked.getArgument<List<Long>>(0).filter { it != 2L } }
+                }
+                AiCoachResponse(
+                    nextRunDurationSeconds = 660,
+                    nextWalkDurationSeconds = 60,
+                    nextRepeats = 4,
+                    nextTargetZone = 3,
+                    graduatedToNextStage = false,
+                    coachMessage = "Good session."
+                )
+            }
+        }
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        // A refusal, not an evaluation that never happened: the coach was asked, the reply came
+        // back, and history was asked a second time about the Runs it was reasoned from.
+        verify(mockCoach).evaluateProgress(any())
+        verify(mockDao).getAiEligibleIdsIn(listOf(1L, 2L))
+        // Refused whole rather than stored with one Run of its three struck out: the numbers were
+        // reasoned from all three, and the debrief explains numbers that are not being written. The
+        // debrief travels inside `prescribe`, so nothing reaching the store at all is the whole of
+        // it — text and intervals cannot come apart if neither was written.
+        verifyNoInteractions(mockPrescriptions)
+    }
+
+    @Test
+    fun `a reply about runs that are all still there is stored`() = runTest {
+        // The other side of the refusal above: asking history again must not turn every ordinary
+        // evaluation into a refused one.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(aTreadmillRun(id = 1, seconds = 1_500), aTreadmillRun(id = 2, seconds = 1_500))
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 660,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 4,
+                nextTargetZone = 3,
+                graduatedToNextStage = false,
+                coachMessage = "Good session."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockPrescriptions).prescribe(
+            eq(RunType.LONG),
+            any(),
+            eq("Good session."),
+            eq(setOf(1L, 2L)),
+            eq(CoachWriteScope("5k_sub_25", "base_builder"))
+        )
+    }
+
+    @Test
+    fun `a delete cannot land between the coach's last look at history and its write`() = runTest {
+        // What the lock is for, and the one thing a second read on its own cannot do (#156).
+        //
+        // The evaluation asks history again after the round trip and is told all three Runs are
+        // there — which was true when the query ran. A delete landing *after* that answer and
+        // before the write rolls back whatever stood, and then this write lands behind it naming a
+        // Run the delete has already taken out: provenance no later delete can ever answer for,
+        // because a Run cannot be deleted twice. The re-read is honest and still too early; only
+        // holding the read and the write together keeps the delete out.
+        //
+        // So the proof is the order the two writes land in, not their contents. Under the lock the
+        // Prescription is stored and *then* taken back by the delete queued behind it, and the
+        // runner ends up with the rollback the delete promised. Without it the rollback happens
+        // first and the Prescription is written over the top of it, standing on run 2 for good.
+        val testScope = this
+        val order = mutableListOf<String>()
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        mockPrescriptions.stub {
+            onBlocking { prescribe(any(), any(), any(), any(), any()) }
+                .doSuspendableAnswer { order += "prescribe" }
+            onBlocking { forgetWorkFedBy(any()) }.doSuspendableAnswer { order += "take back" }
+        }
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(aTreadmillRun(id = 1, seconds = 1_500), aTreadmillRun(id = 2, seconds = 1_500))
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 660,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 4,
+                nextTargetZone = 3,
+                graduatedToNextStage = false,
+                coachMessage = "Good session."
+            )
+        )
+        val goneFromHistory = mutableSetOf<Long>()
+        var deleting: Job? = null
+        mockDao.stub {
+            onBlocking { deleteSessionById(any()) }
+                .doSuspendableAnswer { goneFromHistory += it.getArgument<Long>(0) }
+            onBlocking { getAiEligibleIdsIn(any()) }.doSuspendableAnswer { asked ->
+                // The answer is settled here, while the rows are still there — a query cannot see
+                // a delete that has not happened yet, and pretending otherwise would be the test
+                // doing the lock's job for it.
+                val answer = asked.getArgument<List<Long>>(0).filterNot { it in goneFromHistory }
+                if (deleting == null) {
+                    // The runner deletes run 2 from the history screen in the instant between the
+                    // evaluation's last look at history and its write. Started here rather than
+                    // waited on: waiting would deadlock against the very lock under test, whereas
+                    // yielding lets the delete take every step it is allowed to take — which,
+                    // unlocked, is all of them.
+                    deleting = testScope.launch { repo.deleteSession(2L) }
+                    repeat(200) { yield() }
+                }
+                answer
+            }
+        }
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+        deleting?.join()
+
+        assertEquals(listOf("prescribe", "take back"), order)
+    }
+
+    @Test
     fun `the coach is asked about the same workout its answer is floored at`() = runTest {
         // The floor and the ceiling both measure the answer against this Workout, so the coach is
         // shown it before it answers (#246) — the same one resolved for the Run Type that finished,
@@ -2052,6 +2293,110 @@ class SessionRepositoryTest {
         // Nothing was learned about the runner, so nothing is said about them.
         verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(anyOrNull(), any())
+    }
+
+    @Test
+    fun `a run deleted while the coach was unreachable refuses the hold too`() = runTest {
+        // The hold is a smaller act than a Prescription and the same act (#248, #156): it says the
+        // standing coaching is still the runner's coaching, only quieter — keeping its debrief, its
+        // date and the Runs it stood on. Once one of those Runs has left history that is no longer
+        // something this evaluation is in a position to say, and the delete has already decided
+        // what stands: rolled the slot back to the coach's previous Prescription, or taken it away
+        // altogether. Amending anyway would put last week's numbers over whatever the delete left,
+        // under a provenance naming Runs those numbers were never reasoned from.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = fatiguedRunnerEvaluating(mockPrescriptions, mockCoach)
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(aTreadmillRun(id = 1, seconds = 1_500), aTreadmillRun(id = 2, seconds = 1_500))
+        )
+        whenever(mockPrescriptions.prescriptionsFlow).thenReturn(
+            flowOf(
+                CoachPrescriptions(
+                    mapOf(
+                        RunType.LONG to CoachPrescription(
+                            targetZone = 3,
+                            runDurationSeconds = 660,
+                            walkDurationSeconds = 60,
+                            totalRepeats = 4,
+                            prescribedAtEpochMillis = System.currentTimeMillis() - ONE_DAY_MILLIS
+                        )
+                    )
+                )
+            )
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenAnswer {
+            // Run 2 leaves history while the coach is failing to answer.
+            mockDao.stub {
+                onBlocking { getAiEligibleIdsIn(any()) }
+                    .thenAnswer { asked -> asked.getArgument<List<Long>>(0).filter { it != 2L } }
+            }
+            null
+        }
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
+        // Refused before what stands was even read, which is what makes it a refusal rather than a
+        // hold that happened to find nothing: there is no window here for a delete to land in.
+        verify(mockPrescriptions, never()).prescriptionsFlow
+    }
+
+    @Test
+    fun `a delete cannot land between the hold's look at history and its amend`() = runTest {
+        // The hold's half of the same defect. `amendStanding` goes through `editCoachWrite`, which
+        // answers for the plan and the stage and nothing else — so a delete landing between the
+        // look at history and the write would roll the slot back to the coach's previous
+        // Prescription and have the amend put last week's numbers straight over it, under a
+        // provenance naming Runs those numbers were never reasoned from. Held together, the amend
+        // lands first and the delete takes it back, which is the order the runner is owed.
+        val testScope = this
+        val order = mutableListOf<String>()
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = fatiguedRunnerEvaluating(mockPrescriptions, mockCoach)
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(aTreadmillRun(id = 1, seconds = 1_500), aTreadmillRun(id = 2, seconds = 1_500))
+        )
+        whenever(mockPrescriptions.prescriptionsFlow).thenReturn(
+            flowOf(
+                CoachPrescriptions(
+                    mapOf(
+                        RunType.LONG to CoachPrescription(
+                            targetZone = 3,
+                            runDurationSeconds = 660,
+                            walkDurationSeconds = 60,
+                            totalRepeats = 4,
+                            prescribedAtEpochMillis = System.currentTimeMillis() - ONE_DAY_MILLIS
+                        )
+                    )
+                )
+            )
+        )
+        mockPrescriptions.stub {
+            onBlocking { amendStanding(any(), any(), any()) }.doSuspendableAnswer { order += "amend" }
+            onBlocking { forgetWorkFedBy(any()) }.doSuspendableAnswer { order += "take back" }
+        }
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(null)
+        val goneFromHistory = mutableSetOf<Long>()
+        var deleting: Job? = null
+        mockDao.stub {
+            onBlocking { deleteSessionById(any()) }
+                .doSuspendableAnswer { goneFromHistory += it.getArgument<Long>(0) }
+            onBlocking { getAiEligibleIdsIn(any()) }.doSuspendableAnswer { asked ->
+                val answer = asked.getArgument<List<Long>>(0).filterNot { it in goneFromHistory }
+                if (deleting == null) {
+                    deleting = testScope.launch { repo.deleteSession(2L) }
+                    repeat(200) { yield() }
+                }
+                answer
+            }
+        }
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+        deleting?.join()
+
+        assertEquals(listOf("amend", "take back"), order)
     }
 
     @Test
