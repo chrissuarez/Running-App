@@ -2,9 +2,11 @@ package com.example.runningapp
 
 import com.example.runningapp.run.CueTag
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -17,13 +19,20 @@ class OutstandingCuesTest {
 
     private val cues = OutstandingCues()
 
+    /** Everything the end of a Run hands back, which the Run gets by being handed it. */
+    private fun takeBackAll(): List<Long> {
+        var handedBack: List<Long> = emptyList()
+        cues.takeBackAll { handedBack = it }
+        return handedBack
+    }
+
     @Test
     fun `the end of a Run hands back every cue it enqueued, in the order they were enqueued`() {
         cues.record { 1L }
         cues.record(CueTag.TURNAROUND) { 2L }
         cues.record { 3L }
 
-        assertEquals(listOf(1L, 2L, 3L), cues.takeBackAll())
+        assertEquals(listOf(1L, 2L, 3L), takeBackAll())
     }
 
     @Test
@@ -32,7 +41,7 @@ class OutstandingCuesTest {
         cues.record(CueTag.TURNAROUND) { 2L }
 
         assertEquals(2L, cues.takeBack(CueTag.TURNAROUND))
-        assertEquals(listOf(1L), cues.takeBackAll())
+        assertEquals(listOf(1L), takeBackAll())
     }
 
     @Test
@@ -49,11 +58,11 @@ class OutstandingCuesTest {
     fun `the bookkeeping is per Run - a later Run's cues are not the earlier Run's to take back`() {
         cues.record { 1L }
         cues.record(CueTag.TURNAROUND) { 2L }
-        cues.takeBackAll()
+        takeBackAll()
 
         // The next Run starts with nothing outstanding, and its own cues are all it can hand back.
         cues.record { 3L }
-        assertEquals(listOf(3L), cues.takeBackAll())
+        assertEquals(listOf(3L), takeBackAll())
     }
 
     @Test
@@ -64,7 +73,7 @@ class OutstandingCuesTest {
         // By name only the last one can be found — but the first was never spoken either, so it is
         // still the Run's to take back.
         assertEquals(2L, cues.takeBack(CueTag.TURNAROUND))
-        assertEquals(listOf(1L), cues.takeBackAll())
+        assertEquals(listOf(1L), takeBackAll())
     }
 
     @Test
@@ -72,7 +81,7 @@ class OutstandingCuesTest {
         assertNull(cues.record(CueTag.TURNAROUND) { null })
 
         assertNull(cues.takeBack(CueTag.TURNAROUND))
-        assertEquals(emptyList<Long>(), cues.takeBackAll())
+        assertEquals(emptyList<Long>(), takeBackAll())
     }
 
     /**
@@ -97,7 +106,7 @@ class OutstandingCuesTest {
         insideEnqueue.await()
 
         val handedBack = AtomicReference<List<Long>>()
-        val ending = Thread { handedBack.set(cues.takeBackAll()) }
+        val ending = Thread { handedBack.set(takeBackAll()) }
         ending.start()
         // Wait for the ending Run to be up against the lock rather than merely started, so that
         // releasing the enqueue really is the later of the two.
@@ -110,14 +119,55 @@ class OutstandingCuesTest {
         // Either order is correct; what is not is the cue slipping past the end of the Run. Here
         // the enqueue finished first, so the end of the Run takes it back.
         assertEquals(listOf(1L), handedBack.get())
-        assertEquals(emptyList<Long>(), cues.takeBackAll())
+        assertEquals(emptyList<Long>(), takeBackAll())
+    }
+
+    /**
+     * The other half of the same race: a cue enqueued while the end of the Run is taking cues back.
+     * If a cue could be enqueued between the list being taken and the cues being withdrawn, it
+     * would be in neither — not in the list handed back, and no longer outstanding.
+     */
+    @Test(timeout = 5_000)
+    fun `a cue cannot be enqueued while the end of a Run is taking its cues back`() {
+        cues.record { 1L }
+
+        val insideWithdrawal = CountDownLatch(1)
+        val releaseWithdrawal = CountDownLatch(1)
+        val handedBack = AtomicReference<List<Long>>()
+
+        val ending = Thread {
+            cues.takeBackAll {
+                handedBack.set(it)
+                insideWithdrawal.countDown()
+                releaseWithdrawal.await()
+            }
+        }
+        ending.start()
+        insideWithdrawal.await()
+
+        val enqueued = AtomicBoolean(false)
+        val enqueueing = Thread { cues.record { enqueued.set(true); 2L } }
+        enqueueing.start()
+        while (enqueueing.state != Thread.State.BLOCKED) Thread.yield()
+
+        // The queue has not been asked for a ticket at all while the withdrawal is in progress.
+        assertFalse(enqueued.get())
+
+        releaseWithdrawal.countDown()
+        ending.join()
+        enqueueing.join()
+
+        assertEquals(listOf(1L), handedBack.get())
+        // The second cue was enqueued after the Run ended, so it is not this Run's to take back —
+        // the app speaks outside a Run too. What matters is that it was not lost in the gap.
+        assertEquals(listOf(2L), takeBackAll())
     }
 
     @Test
     fun `the same cue is never handed back twice at the end of a Run`() {
         cues.record { 1L }
 
-        assertEquals(listOf(1L), cues.takeBackAll())
-        assertEquals(emptyList<Long>(), cues.takeBackAll())
+        assertEquals(listOf(1L), takeBackAll())
+        assertEquals(emptyList<Long>(), takeBackAll())
     }
 }

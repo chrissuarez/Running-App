@@ -1221,9 +1221,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * already gone out is inert.
      */
     private fun withdrawRunCues() {
-        // All of them in one act: taken back one at a time, the engine can finish its sentence
-        // between two of them and the queue hands the next one out before its withdrawal lands.
-        audioCueManager?.withdrawAll(outstandingCues.takeBackAll())
+        // All of them in one act, and the bookkeeping held across it: taken back one at a time the
+        // engine can finish its sentence between two of them and hand the next one out before its
+        // withdrawal lands, and a cue recorded between the two steps would be left behind entirely.
+        outstandingCues.takeBackAll { tickets -> audioCueManager?.withdrawAll(tickets) }
     }
 
 

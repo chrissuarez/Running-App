@@ -73,15 +73,23 @@ class OutstandingCues {
     }
 
     /**
-     * Every ticket this Run issued, in the order the cues were enqueued, and nothing is left
-     * outstanding afterwards — so the next Run starts with its own cues and only its own.
+     * Hand every ticket this Run issued to [withdraw], in the order the cues were enqueued, and
+     * leave nothing outstanding — so the next Run starts with its own cues and only its own.
+     *
+     * [withdraw] is called from under this instance's lock, for the same reason [record] enqueues
+     * from under it: a cue recorded between the snapshot and the withdrawal would not be in the
+     * list, and nothing would come back for it. Holding across both makes the end of a Run one act
+     * against everything a Run can still be enqueueing.
+     *
+     * A cue enqueued strictly after this has run is not this Run's and is not taken back — the app
+     * speaks outside a Run too, and that is what makes the desk-test cue button work.
      */
-    fun takeBackAll(): List<Long> {
+    fun takeBackAll(withdraw: (List<Long>) -> Unit) {
         synchronized(lock) {
             val all = tickets.toList()
             tickets.clear()
             byTag.clear()
-            return all
+            withdraw(all)
         }
     }
 }
