@@ -161,6 +161,26 @@ class AudioCueManager(
     }
 
     /**
+     * Take back a whole set of cues as one act, for the end of a Run taking back everything it
+     * enqueued (#220). Inert per ticket in all the ways [withdraw] is.
+     *
+     * One act because the cues are taken back against a moving queue. Withdrawing them one at a
+     * time lets the engine finish its sentence between two of them, and the callback that reports
+     * it done hands the next waiting cue to the engine from under this lock — so a cue of the Run
+     * that has just ended starts speaking before its own withdrawal reaches it, and a withdrawal
+     * for a cue already gone out is inert. Removing them all under one hold leaves the callback no
+     * gap to pump into.
+     */
+    @Synchronized
+    fun withdrawAll(tickets: Collection<Long>) {
+        if (tickets.isEmpty()) return
+        val wanted = tickets.toHashSet()
+        if (queue.removeAll { it.ticket in wanted }) {
+            Log.d(logTag, "Cues withdrawn before they were spoken: tickets=$tickets")
+        }
+    }
+
+    /**
      * The service is going away and the engine with it. Nothing waiting is spoken after this, which
      * is the process ending rather than the queue dropping a cue.
      *
