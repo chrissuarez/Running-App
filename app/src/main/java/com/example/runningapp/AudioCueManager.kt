@@ -12,6 +12,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
+import java.util.Timer
+import java.util.TimerTask
 
 /**
  * The one queue every spoken cue in the app goes through (#53).
@@ -41,6 +43,32 @@ class AudioCueManager(
     private val logTag: String,
     private val cueFocusTimeoutMs: Long = 8_000L,
     /**
+     * How long the last sentence has to finish once the service starts going away, before the
+     * engine is torn down over the top of it. See [shutdown].
+     */
+    private val shutdownGraceMs: Long = cueFocusTimeoutMs,
+    /**
+     * How that grace period is timed. Not [serviceScope]: the service cancels that before it tears
+     * the engine down, so a job launched there would be cancelled rather than run — and the whole
+     * point of the backstop is to fire when nothing else will.
+     */
+    private val scheduleShutdownBackstop: (delayMs: Long, action: () -> Unit) -> Unit =
+        { delayMs, action ->
+            val timer = Timer("cue-shutdown-backstop", true)
+            timer.schedule(
+                object : TimerTask() {
+                    override fun run() {
+                        try {
+                            action()
+                        } finally {
+                            timer.cancel()
+                        }
+                    }
+                },
+                delayMs,
+            )
+        },
+    /**
      * Told true when the queue starts speaking and false when it drains — the app being
      * mid-sentence, for anything that needs to know. Every cue passes through here, Split
      * announcements included, so it is the one place that sees all of them.
@@ -67,8 +95,27 @@ class AudioCueManager(
     private var cueFocusTimeoutJob: Job? = null
     private var activitySequence = 0L
 
+    /** The service is going away: nothing more is taken, and the engine goes with the last cue. */
+    private var isShuttingDown = false
+
+    /** Whether the engine has been torn down, so that it is torn down exactly once. */
+    private var isEngineDown = false
+
     /** One report of the app starting or stopping talking, stamped in the order it happened. */
     private data class CueActivity(val speaking: Boolean, val sequence: Long)
+
+    /**
+     * What is left to do once this class's lock has been let go of: the reports to make, and
+     * whether the engine is this caller's to tear down.
+     *
+     * Both are decided under the lock and done outside it — the reports for the reason [announce]
+     * gives, and the teardown because it blocks on the engine's own callback thread, which is a
+     * thread that takes this lock.
+     */
+    private data class Settlement(
+        val activity: List<CueActivity> = emptyList(),
+        val tearDownEngine: Boolean = false,
+    )
 
     fun initialize() {
         tts.language = Locale.US
@@ -90,6 +137,12 @@ class AudioCueManager(
      */
     fun enqueue(text: String, priority: CuePriority): Long {
         val (ticket, activity) = synchronized(this) {
+            if (isShuttingDown) {
+                // The engine is on its way out and nothing here will ever be said, so saying so is
+                // the honest answer: a ticket that is nobody's, inert to withdraw like any other.
+                Log.w(logTag, "A cue arrived as the service was going away, and is not queued")
+                return NO_TICKET
+            }
             val cue = QueuedCue(++ticketCounter, text, priority)
             // After everything at or above this level, before everything below it: priority order
             // between levels and first-in-first-out within one, from the one insertion.
@@ -114,22 +167,70 @@ class AudioCueManager(
     }
 
     /**
-     * The service is going away and the engine with it. Nothing can be spoken after this, which is
-     * the process ending rather than the queue dropping a cue.
+     * The service is going away and the engine with it. Nothing waiting is spoken after this, which
+     * is the process ending rather than the queue dropping a cue.
+     *
+     * The sentence being said when this lands is not cut off: the engine goes when that sentence
+     * ends — or after [shutdownGraceMs] if the engine never reports back, which is the same refusal
+     * to wedge that the per-cue timeout is. Tearing the engine down over the top of a cue is what
+     * used to truncate the last words of a run stopped from the notification (#220).
+     *
+     * In practice there is nothing waiting by the time this is reached, because the end of a Run
+     * takes its cues back first (`OutstandingCues`). Clearing here is the backstop for the service
+     * going away without a Run ending.
      *
      * There is no session-stop counterpart. Letting go of audio focus when a Run ends used to be a
      * step of its own, because focus was held per cue and a cue could hold it after the Run was
      * over; the queue lets go of it when it drains, which is at most a sentence away.
      */
     fun shutdown() {
-        announce(discardQueue())
-        tts.shutdown()
+        settle(beginShutdown())
     }
 
     @Synchronized
-    private fun discardQueue(): List<CueActivity> {
+    private fun beginShutdown(): Settlement {
+        if (isShuttingDown) return Settlement()
+        isShuttingDown = true
         queue.clear()
-        return fallQuiet("service_destroy")
+
+        if (currentCueUtteranceId == null) {
+            return Settlement(fallQuiet("service_destroy"), tearDownEngine = claimEngineTeardown())
+        }
+
+        Log.d(logTag, "Service destroyed mid-sentence: the engine goes when the sentence ends")
+        scheduleShutdownBackstop(shutdownGraceMs) { settle(giveUpOnLastSentence()) }
+        return Settlement()
+    }
+
+    /**
+     * The last sentence has outstayed its grace period. The engine goes anyway — it is the process
+     * ending, and holding audio focus for a cue the engine has gone quiet on is worse than the
+     * words that are lost.
+     */
+    @Synchronized
+    private fun giveUpOnLastSentence(): Settlement {
+        if (isEngineDown) return Settlement()
+        currentCueUtteranceId?.let { endUtterance("shutdown_grace_expired", it) }
+        return Settlement(fallQuiet("service_destroy"), tearDownEngine = claimEngineTeardown())
+    }
+
+    /** Whether this caller is the one to tear the engine down. Called with the lock held. */
+    private fun claimEngineTeardown(): Boolean {
+        if (isEngineDown) return false
+        isEngineDown = true
+        return true
+    }
+
+    /** Do what was decided under the lock, now that it has been let go of. */
+    private fun settle(settlement: Settlement) {
+        announce(settlement.activity)
+        if (settlement.tearDownEngine) {
+            try {
+                tts.shutdown()
+            } catch (e: Exception) {
+                Log.w(logTag, "Shutting the engine down failed", e)
+            }
+        }
     }
 
     /**
@@ -218,13 +319,22 @@ class AudioCueManager(
      * that cue was still talking. The check and the act are one here (Codex, #212).
      */
     private fun finishUtterance(reason: String, utteranceId: String?) =
-        announce(finishIfCurrent(reason, utteranceId))
+        settle(finishIfCurrent(reason, utteranceId))
 
     @Synchronized
-    private fun finishIfCurrent(reason: String, utteranceId: String?): List<CueActivity> {
-        if (utteranceId == null || utteranceId != currentCueUtteranceId) return emptyList()
+    private fun finishIfCurrent(reason: String, utteranceId: String?): Settlement {
+        if (utteranceId == null || utteranceId != currentCueUtteranceId) return Settlement()
         endUtterance(reason, utteranceId)
-        return pump()
+        return afterCue(pump())
+    }
+
+    /**
+     * What follows a cue ending. Nothing, unless the service is going away and that was the last
+     * sentence — the one the engine was being kept up for. Called with the lock held.
+     */
+    private fun afterCue(activity: List<CueActivity>): Settlement {
+        val done = isShuttingDown && currentCueUtteranceId == null
+        return Settlement(activity, tearDownEngine = done && claimEngineTeardown())
     }
 
     /** This cue is over. Focus is untouched: it belongs to the queue, not to the cue. */
@@ -295,13 +405,13 @@ class AudioCueManager(
             // What follows must not suspend: it runs inside this job, and [endUtterance] cancels the
             // job as its first act. A suspension point between there and [announce] would be the one
             // report for this cue swallowed by its own cancellation.
-            announce(stopAndMoveOn(utteranceId))
+            settle(stopAndMoveOn(utteranceId))
         }
     }
 
     @Synchronized
-    private fun stopAndMoveOn(utteranceId: String): List<CueActivity> {
-        if (utteranceId != currentCueUtteranceId) return emptyList()
+    private fun stopAndMoveOn(utteranceId: String): Settlement {
+        if (utteranceId != currentCueUtteranceId) return Settlement()
 
         // Disowned before it is stopped, so the engine's own `onStop` for it — which may land on
         // this very thread, from inside the call below — finds nothing current and reports nothing.
@@ -314,7 +424,7 @@ class AudioCueManager(
             Log.w(logTag, "Stopping the timed-out cue failed: utteranceId=$utteranceId", e)
         }
         endUtterance("timeout", utteranceId)
-        return pump()
+        return afterCue(pump())
     }
 
     /**
@@ -329,5 +439,10 @@ class AudioCueManager(
         isSpeaking = false
         Log.d(logTag, "Cue queue drained: reason=$reason")
         return listOf(CueActivity(speaking = false, sequence = ++activitySequence))
+    }
+
+    companion object {
+        /** What [enqueue] answers when there was no queue left to join. Withdrawing it is inert. */
+        const val NO_TICKET = 0L
     }
 }
