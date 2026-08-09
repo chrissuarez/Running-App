@@ -271,11 +271,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var audioCueManager: AudioCueManager? = null
 
     /**
-     * The queue tickets for cues the Run may still want back, by the name it knows them under
-     * (#53). Written from the thread performing the Run's effects and read from there and from the
-     * STOP path, which is the binder's, so it is a map that stands two of them.
+     * The queue tickets for the cues of the Run that is on, which the end of the Run hands back
+     * (#53, #220). Every cue the app speaks is enqueued here, so this is the one place that has to
+     * keep them — no producer keeps bookkeeping of its own.
      */
-    private val outstandingCues = ConcurrentHashMap<CueTag, Long>()
+    private val outstandingCues = OutstandingCues()
 
     // Mission 4: Location
     private lateinit var fusedLocationClient: FusedLocationProviderClient
@@ -1187,25 +1187,41 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * app speaks — the split announcements and the UI's target-reached cue come through here too.
      */
     fun enqueueCue(text: String, priority: CuePriority) {
-        audioCueManager?.enqueue(text, priority)
+        val ticket = audioCueManager?.enqueue(text, priority) ?: return
+        outstandingCues.record(ticket)
     }
 
-    /** The Run's [RunEffect.Speak], keeping the ticket for one it may ask to have back. */
+    /** The Run's [RunEffect.Speak], keeping the ticket under the name the Run gave the cue. */
     private fun speakCue(effect: RunEffect.Speak) {
         val ticket = audioCueManager?.enqueue(effect.text, effect.priority) ?: return
-        effect.tag?.let { outstandingCues[it] = ticket }
+        outstandingCues.record(ticket, effect.tag)
     }
 
     /**
      * Take back a cue that has not been spoken: whatever it was going to say is no longer true
-     * (#208). Asked for by the Run ([RunEffect.WithdrawCue]) and by the end of a Run.
+     * (#208). Asked for by the Run ([RunEffect.WithdrawCue]).
      *
      * Inert when there is nothing to take back, and inert in the queue when the cue has already
      * gone out — so no caller has to know which of those it is.
      */
     private fun withdrawCue(tag: CueTag) {
-        val ticket = outstandingCues.remove(tag) ?: return
+        val ticket = outstandingCues.takeBack(tag) ?: return
         audioCueManager?.withdraw(ticket)
+    }
+
+    /**
+     * Take back every cue of the Run that has just ended (#220).
+     *
+     * A cue still waiting its turn belongs to a Run that is over: "start running, interval 3 of 6"
+     * after the runner has stopped is an instruction with nothing left to instruct. The queue drops
+     * nothing (#53), so this is the producer taking its own cues back — and the service is that
+     * producer, because every cue in the app is enqueued through it.
+     *
+     * The sentence being said is untouched and finishes in full: a withdrawn ticket for a cue
+     * already gone out is inert.
+     */
+    private fun withdrawRunCues() {
+        outstandingCues.takeBackAll().forEach { audioCueManager?.withdraw(it) }
     }
 
 
@@ -1371,10 +1387,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // One event: the Acquisition stops whatever it was doing, scan included.
         disconnect()
 
-        // A cue still waiting its turn belongs to the Run that has just ended. Speaking it after
-        // the runner has stopped would be worse than losing it — and the queue itself drops
-        // nothing, so this is the producer taking it back.
-        withdrawCue(CueTag.TURNAROUND)
+        // Every cue still waiting its turn belongs to the Run that has just ended, so all of them
+        // come back — not just the halfway turnaround, which was the only one this used to take
+        // (#220). Reached before the service is destroyed on a backgrounded STOP, which is what
+        // leaves the engine with nothing to cut short as it goes.
+        //
+        // Called twice for a STOP that ends a live Run — once inline from [stopRun] and again on
+        // the Run's own [RunEffect.ReleaseStrap] — and that is load-bearing rather than wasteful:
+        // the Run's stop is performed on its own thread afterwards, so a cue emitted by the finish
+        // is taken back by the second pass.
+        withdrawRunCues()
 
         // Mission: Stop the zombie timer loop immediately
         sessionHandler?.removeCallbacks(sessionTimerRunnable)

@@ -44,6 +44,9 @@ class AudioCueManagerTest {
     private lateinit var manager: AudioCueManager
     private lateinit var listener: UtteranceProgressListener
 
+    /** The grace period the service's teardown gives the last sentence, held rather than run. */
+    private var shutdownBackstop: (() -> Unit)? = null
+
     @Before
     fun setUp() {
         whenever(audioManager.requestAudioFocus(anyOrNull(), any(), any()))
@@ -56,6 +59,7 @@ class AudioCueManagerTest {
             serviceScope = scope,
             logTag = "test",
             cueFocusTimeoutMs = TIMEOUT_MS,
+            scheduleShutdownBackstop = { _, action -> shutdownBackstop = action },
             onCueActivity = { speaking, sequence -> reports += speaking to sequence },
         )
         manager.initialize()
@@ -290,6 +294,99 @@ class AudioCueManagerTest {
 
         elapse(TIMEOUT_MS / 2)
         assertEquals(1, reports.count { !it.first })
+    }
+
+    @Test
+    fun `the engine goes at once when the service is destroyed with nothing being said`() {
+        manager.enqueue(TEXT, CuePriority.INFORMATION)
+        finishCurrent()
+        reports.clear()
+
+        manager.shutdown()
+
+        verify(tts).shutdown()
+        // Nothing to report: the queue had already drained and said so.
+        assertEquals(emptyList<Pair<Boolean, Long>>(), reports)
+    }
+
+    @Test
+    fun `a sentence being said when the service is destroyed finishes before the engine goes`() {
+        manager.enqueue("in flight", CuePriority.INSTRUCTION)
+
+        manager.shutdown()
+
+        // The engine is still up, and what it is saying was neither stopped nor cut short: that
+        // truncation mid-word is what a backgrounded STOP used to do (#220).
+        verify(tts, never()).shutdown()
+        verify(tts, never()).stop()
+
+        finishCurrent()
+        verify(tts).shutdown()
+    }
+
+    @Test
+    fun `focus goes back when the last sentence ends, not when the service is destroyed`() {
+        manager.enqueue("in flight", CuePriority.INSTRUCTION)
+        manager.shutdown()
+
+        @Suppress("DEPRECATION")
+        verify(audioManager, never()).abandonAudioFocus(anyOrNull())
+        assertEquals(listOf(true to 1L), reports)
+
+        finishCurrent()
+        @Suppress("DEPRECATION")
+        verify(audioManager, times(1)).abandonAudioFocus(anyOrNull())
+        assertEquals(listOf(true to 1L, false to 2L), reports)
+    }
+
+    @Test
+    fun `a cue still waiting when the service is destroyed is never spoken`() {
+        manager.enqueue("in flight", CuePriority.INSTRUCTION)
+        manager.enqueue("waiting", CuePriority.INSTRUCTION)
+
+        manager.shutdown()
+        finishCurrent()
+
+        assertEquals(listOf("in flight"), spokenTexts())
+    }
+
+    @Test
+    fun `nothing enqueued after the service is destroyed is spoken`() {
+        manager.shutdown()
+
+        manager.enqueue("too late", CuePriority.INSTRUCTION)
+
+        assertEquals(emptyList<String>(), spokenTexts())
+        assertEquals(emptyList<Pair<Boolean, Long>>(), reports)
+    }
+
+    @Test
+    fun `a last sentence the engine never finishes does not keep the engine alive forever`() {
+        manager.enqueue("in flight", CuePriority.INSTRUCTION)
+        manager.shutdown()
+        verify(tts, never()).shutdown()
+
+        // The service's scope is already cancelled by the time it tears the engine down, so the
+        // per-cue safety timeout cannot be what bounds this wait.
+        shutdownBackstop!!.invoke()
+
+        verify(tts).shutdown()
+        @Suppress("DEPRECATION")
+        verify(audioManager, times(1)).abandonAudioFocus(anyOrNull())
+        assertEquals(listOf(true to 1L, false to 2L), reports)
+    }
+
+    @Test
+    fun `the engine is not torn down twice when the last sentence ends after the grace period`() {
+        manager.enqueue("in flight", CuePriority.INSTRUCTION)
+        manager.shutdown()
+        shutdownBackstop!!.invoke()
+
+        // The engine catching up afterwards changes nothing: it has already gone.
+        finishCurrent()
+
+        verify(tts, times(1)).shutdown()
+        assertEquals(listOf(true to 1L, false to 2L), reports)
     }
 
     private companion object {
