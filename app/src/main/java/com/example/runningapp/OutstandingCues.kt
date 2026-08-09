@@ -35,11 +35,28 @@ class OutstandingCues {
     /** The tickets of the cues the Run may ask for back by name. */
     private val byTag = mutableMapOf<CueTag, Long>()
 
-    /** Remember a cue this Run has just enqueued, under [tag] if the Run named it. */
-    fun record(ticket: Long, tag: CueTag? = null) {
+    /**
+     * Enqueue a cue and remember it, under [tag] if the Run named it, as one act — [enqueue] is
+     * called from under this instance's lock and the ticket it hands back is outstanding before any
+     * other thread can look. Returns that ticket, or null when [enqueue] made no promise to keep.
+     *
+     * Enqueueing and recording have to be one act because they race the end of the Run. Enqueueing
+     * first and recording after leaves a window in which [takeBackAll] runs between the two, and the
+     * cue is then recorded against a Run that is already over, with no later pass to take it back —
+     * it would be spoken after the Run ended, which is the whole of what #220 is about. The ends of
+     * a Run that reach here are natural ones (the cool-down running out), which have no second
+     * inline sweep behind them.
+     *
+     * The lock order is this instance's lock, then the queue's. It is the order [takeBack] and
+     * [takeBackAll] and their callers already take, and nothing in the queue reaches back here, so
+     * holding across [enqueue] adds no way to deadlock.
+     */
+    fun record(tag: CueTag? = null, enqueue: () -> Long?): Long? {
         synchronized(lock) {
+            val ticket = enqueue() ?: return null
             tickets += ticket
             if (tag != null) byTag[tag] = ticket
+            return ticket
         }
     }
 
