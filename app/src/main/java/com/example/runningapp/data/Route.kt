@@ -22,10 +22,12 @@ object RouteSource {
  * `sessions` and none from `sessions` into here, so the library can be emptied without a single Run
  * being disturbed.
  *
- * [distanceMeters] and [elevationGainMeters] are worked out once, at import, and banked. Unlike a
- * Run's numbers — which are re-measured off the stored track every time its page is opened, so a
- * change to how the app measures reaches history — a Route's are a fact about a file that will never
- * be read again. There is nowhere for them to drift from.
+ * [distanceMeters] and [elevationGainMeters] are worked out once, at import, and banked — unlike a
+ * Run's numbers, which are re-measured off the stored track every time its page is opened, so a
+ * change to how the app measures reaches history. A Run can be re-measured because a Run keeps its
+ * evidence; an imported Route's heights are bare numbers from a file that is already gone, and no
+ * better rule could ever be applied to them
+ * ([ADR 0014](../../../../../../../docs/adr/0014-a-route-is-a-plan-not-a-recording.md)).
  */
 @Entity(tableName = "routes")
 data class Route(
