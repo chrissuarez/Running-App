@@ -541,6 +541,18 @@ interface SessionDao {
     )
     suspend fun getLast3AiEligibleRunsOfStage(stageId: String): List<RunnerSession>
 
+    /**
+     * Which of [sessionIds] the coach was allowed to be shown, asked while the rows are still there
+     * (#156).
+     *
+     * Only the sharing flag, and deliberately not the rest of [getLast3AiEligibleRunsOfStage]'s
+     * filter. It answers "could this Run have fed the coach at all", which a delete asks about a Run
+     * whose Stage may since have been graduated and whose Prescription is still standing; the
+     * Prescription's own record of what it stood on is what narrows it from there.
+     */
+    @Query("SELECT id FROM sessions WHERE id IN (:sessionIds) AND includeInAiTraining = 1")
+    suspend fun getAiEligibleIdsIn(sessionIds: List<Long>): List<Long>
+
     @Query("SELECT * FROM sessions WHERE endTime > 0 ORDER BY endTime DESC LIMIT 1")
     suspend fun getMostRecentFinalizedSession(): RunnerSession?
 

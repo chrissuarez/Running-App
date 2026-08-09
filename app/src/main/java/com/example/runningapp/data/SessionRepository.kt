@@ -163,6 +163,21 @@ data class AiTrainingContext(
     val graduationRequirement: String,
     val recentRuns: List<AiRecentRun>,
     /**
+     * Which Runs [recentRuns] are, so a Prescription can be taken back when one of them is deleted
+     * (#156).
+     *
+     * Kept beside the runs rather than inside [AiRecentRun], because that list is serialized into
+     * the prompt: an id is a fact about this app's database and nothing the coach could reason from,
+     * and sending one would invite it to talk about "run 47".
+     *
+     * The Runs the coach is shown *individually* and no others. A Run that has since left history
+     * also moved Fitness and Fatigue, and those are not in here: the curves are 42 days of arithmetic
+     * that one Run nudges, while these three are the evidence the intervals were read off. Taking
+     * coaching back over a fraction of a Fitness point would mean almost every delete cost the
+     * runner their progression.
+     */
+    val sourceRunIds: Set<Long> = emptySet(),
+    /**
      * Null when there is no scored history to read it from — a new phone, or a runner who has never
      * run with a Strap. The coach is then told nothing about fatigue rather than being told zeroes,
      * which would read as a runner who has done nothing for six weeks (#66).
@@ -264,7 +279,7 @@ class SessionRepository(
     private val inTransaction: suspend (suspend () -> Unit) -> Unit = { it() }
 ) {
     suspend fun deleteSession(sessionId: Long) =
-        changeAndRepair(listOf(sessionId)) { sessionDao.deleteSessionById(sessionId) }
+        deleteRuns(listOf(sessionId)) { sessionDao.deleteSessionById(sessionId) }
 
     /**
      * Held across the profile door, so a statement is a read, a re-tally and a store that nothing
@@ -1050,6 +1065,12 @@ class SessionRepository(
     private suspend fun changeAndRepair(
         sessionIds: List<Long>,
         mendOnly: Collection<RecordType>? = null,
+        /**
+         * What else the change owes, run once the rows are durable and before the mend, which is the
+         * slow part (#156). Nothing here is allowed to stop the mend: whatever it needs to do, a
+         * failure of it is a smaller loss than a record book left standing short.
+         */
+        onceRowsAreDurable: (suspend () -> Unit)? = null,
         change: suspend () -> Unit,
     ) {
         val settings = settingsRepository
@@ -1097,6 +1118,7 @@ class SessionRepository(
                 change()
             }
             refreshHistoryBackup?.invoke()
+            onceRowsAreDurable?.invoke()
 
             repaired = repairRecordBook(losing, remeasured = sessionIds)
             if (losing.isNotEmpty()) refreshHistoryBackup?.invoke()
@@ -1521,8 +1543,50 @@ class SessionRepository(
 
     suspend fun deleteSessions(sessionIds: List<Long>) {
         if (sessionIds.isEmpty()) return
-        changeAndRepair(sessionIds) { sessionDao.deleteSessionsByIds(sessionIds) }
+        deleteRuns(sessionIds) { sessionDao.deleteSessionsByIds(sessionIds) }
     }
+
+    /**
+     * A Run leaving history for good, and the coach's work about it going with it (#156).
+     *
+     * The two doors — one Run from its own page, a selection from the history screen — differ only in
+     * the statement that removes the rows, so everything that has to happen around a delete is here
+     * and neither can be given it and the other not.
+     *
+     * **Which Runs fed the coach is read before the rows go**, because afterwards there is nothing
+     * left to ask. Only the Runs the coach was allowed to see are offered
+     * ([SessionDao.getAiEligibleIdsIn]): a Run the runner kept out of AI training was never evidence
+     * for anything, so deleting it must disturb no coaching at all.
+     *
+     * The work is taken back the moment the rows are gone and before the record book is mended, which
+     * takes minutes on a long history — a process reclaimed inside that window would otherwise leave
+     * the coaching standing on a Run that no longer exists, which is the whole complaint. Its own
+     * attempt, like every other write around a delete: coaching that could not be taken back must not
+     * read as a delete that did not happen, and the runner can delete again.
+     */
+    private suspend fun deleteRuns(runIds: List<Long>, delete: suspend () -> Unit) {
+        val fedTheCoach = aiEligibleIdsAmong(runIds)
+        changeAndRepair(
+            runIds,
+            onceRowsAreDurable = {
+                try {
+                    coachPrescriptionRepository?.forgetWorkFedBy(fedTheCoach)
+                } catch (e: Exception) {
+                    Log.w("AiCoach", "Deleted $runIds but could not take back the coaching", e)
+                }
+            },
+            change = delete
+        )
+    }
+
+    /**
+     * Which of [runIds] the coach was allowed to be shown — asked in chunks, for the reason
+     * [MAX_SESSION_IDS_PER_QUERY] gives.
+     */
+    private suspend fun aiEligibleIdsAmong(runIds: List<Long>): Set<Long> =
+        runIds.chunked(MAX_SESSION_IDS_PER_QUERY)
+            .flatMap { sessionDao.getAiEligibleIdsIn(it) }
+            .toSet()
 
     suspend fun getMaxSessionLoadLast30Days(
         nowEpochMillis: Long = System.currentTimeMillis()
@@ -1567,7 +1631,8 @@ class SessionRepository(
 
         // The Stage's own Runs and no others, which is what a Stage is graduated on (#234) — see
         // [RunnerSession.ranUnderStageId].
-        val recentRuns = sessionDao.getLast3AiEligibleRunsOfStage(stageId).map { stored ->
+        val storedRecentRuns = sessionDao.getLast3AiEligibleRunsOfStage(stageId)
+        val recentRuns = storedRecentRuns.map { stored ->
             val session = if (stored.id == asFinalized?.id) asFinalized else stored
             // The label the coach sees for a past run: whether it followed a Workout at all.
             // Whether a run is *evaluated* is no longer this — that is its Run Type (#176) — but a
@@ -1597,6 +1662,9 @@ class SessionRepository(
             currentStageTitle = stage.title,
             graduationRequirement = stage.graduationRequirementText,
             recentRuns = recentRuns,
+            // The stored rows' ids, which [asFinalized] cannot change: it stands in for one of these
+            // Runs, it is never another one.
+            sourceRunIds = storedRecentRuns.map { it.id }.toSet(),
             fitnessAndForm = fitnessAndFormThrough(
                 today = today,
                 zone = zone,
@@ -1797,8 +1865,6 @@ class SessionRepository(
             // can refuse if the runner changed plans meanwhile — see CoachWriteScope.
             val scope = CoachWriteScope(settings.activePlanId, settings.activeStageId)
 
-            settingsRepo.setLatestCoachMessage(clampedResponse.coachMessage, scope)
-
             // A Stage is graduated on its own Runs, and with none of them there is nothing to
             // graduate it on (#234). The coach is told this in as many words, but a graduation
             // cannot be taken back, so the one place it is acted on refuses it outright rather than
@@ -1821,9 +1887,18 @@ class SessionRepository(
 
                 // No prescription on a graduation: it would be intervals for the stage just left,
                 // and writing one only to clear it in the next breath leaves a window where a run
-                // could start on the new stage carrying the old one's numbers.
+                // could start on the new stage carrying the old one's numbers. So the debrief is
+                // written on its own here, which is the one path where it stands without numbers —
+                // "you have finished this stage" is the whole of what the coach had to say.
+                settingsRepo.setLatestCoachMessage(clampedResponse.coachMessage, scope)
                 settingsRepo.advanceStageAndClearPrescriptions(nextStageId, scope)
             } else {
+                // The numbers, the debrief that explains them, and the Runs they were reasoned from,
+                // in one write (#156). Stored apart, a delete could take the numbers back and leave
+                // the text — which is the shape of the bug this closes. So the debrief goes nowhere
+                // without a store to put the numbers in either: with no prescription store wired
+                // (tests, and any container assembled without one) there is nothing for it to
+                // explain.
                 coachPrescriptionRepository?.prescribe(
                     // The kind of Run just finished, which is the kind the Workout above is of.
                     runType = runType,
@@ -1838,6 +1913,8 @@ class SessionRepository(
                         totalRepeats = clampedResponse.nextRepeats,
                         prescribedAtEpochMillis = System.currentTimeMillis()
                     ),
+                    debrief = clampedResponse.coachMessage,
+                    sourceRunIds = context.sourceRunIds,
                     scope = scope
                 )
             }
@@ -2031,7 +2108,9 @@ class SessionRepository(
                 "${held.runDurationSeconds}s Run / ${held.walkDurationSeconds}s Walk " +
                 "x${held.totalRepeats}"
         )
-        prescriptions.prescribe(runType = runType, prescription = held, scope = scope)
+        // Amended rather than prescribed: this is the standing Prescription said again more quietly,
+        // so it keeps its debrief, its date and the Runs it stood on (#156).
+        prescriptions.amendStanding(runType = runType, prescription = held, scope = scope)
     }
 
     /**

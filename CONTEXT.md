@@ -184,7 +184,10 @@ session and can never land on another. Only the Long slot is ever written: the
 coach decides whether to evaluate a Run by its Run Type, and adjusts the Long Run
 alone ([ADR 0006](docs/adr/0006-the-coach-adjusts-the-long-run-only.md)). Dated,
 replaceable, and never a setting — the coach prescribes work, it does not
-configure the app.
+configure the app. It stands on the Runs the coach was shown to arrive at it, so
+deleting one of them takes it back to the coach's previous Prescription, and to
+the Stage's own Workout only when nothing is left standing
+([ADR 0013](docs/adr/0013-a-prescription-stands-on-the-runs-it-was-shown.md)).
 _Avoid_: AI adjustments, AI intervals
 
 **Strap**:

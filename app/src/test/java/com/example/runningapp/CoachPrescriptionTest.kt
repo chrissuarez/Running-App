@@ -169,4 +169,246 @@ class CoachPrescriptionTest {
         assertEquals("coach_run_seconds_easy", CoachPrescriptionKeys.of(RunType.EASY).runSeconds.name)
         assertEquals("coach_run_seconds_quality", CoachPrescriptionKeys.of(RunType.QUALITY).runSeconds.name)
     }
+
+    // --- The coach's work stands on the Runs it was shown (#156) ---
+
+    @Test
+    fun `the standing generation keeps the key names it has always had`() {
+        // The whole reason the standing generation is prefixed "coach_": an install upgrading to this
+        // must find its prescription exactly where it left it, or the upgrade itself is a rollback.
+        assertEquals(
+            "coach_run_seconds_long",
+            CoachPrescriptionKeys.of(RunType.LONG, CoachWorkGeneration.STANDING).runSeconds.name
+        )
+        assertEquals(
+            "coach_previous_run_seconds_long",
+            CoachPrescriptionKeys.of(RunType.LONG, CoachWorkGeneration.PREVIOUS).runSeconds.name
+        )
+    }
+
+    @Test
+    fun `a new prescription from the coach keeps the one before it`() {
+        val preferences = mutablePreferencesOf()
+
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 600), "Steady.", setOf(1L, 2L))
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 660), "Longer today.", setOf(2L, 3L))
+
+        assertEquals(660, preferences.coachPrescriptions()[RunType.LONG]?.runDurationSeconds)
+        assertEquals("Longer today.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+        assertEquals(
+            600,
+            preferences.coachPrescriptions(CoachWorkGeneration.PREVIOUS)[RunType.LONG]?.runDurationSeconds
+        )
+        assertEquals("Steady.", preferences[PreferencesKeys.PREVIOUS_COACH_MESSAGE])
+    }
+
+    @Test
+    fun `deleting a run the coaching stood on stands the prescription before it up in its place`() {
+        // The bug: junk runs deleted, and the intervals the coach dialled back *because of them* —
+        // with the debrief explaining them — still on the card. What replaces them is the coaching
+        // earned by the runs still in history, not day one of the stage.
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 600), "Steady.", setOf(1L, 2L))
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 240), "Your HR read 0 BPM.", setOf(2L, 9L))
+
+        assertTrue(preferences.rollBackCoachWorkFedBy(setOf(9L)))
+
+        assertEquals(600, preferences.coachPrescriptions()[RunType.LONG]?.runDurationSeconds)
+        assertEquals("Steady.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+        // Nothing behind the promoted one: it is what stands now, and there is no third generation.
+        assertEquals(
+            CoachPrescriptions.NONE,
+            preferences.coachPrescriptions(CoachWorkGeneration.PREVIOUS)
+        )
+        assertNull(preferences[PreferencesKeys.PREVIOUS_COACH_MESSAGE])
+    }
+
+    @Test
+    fun `the promoted prescription keeps its own date, so an old one still ages out`() {
+        // Promoting is standing an earlier prescription back up, not writing a new one — re-stamping
+        // it would
+        // quietly give a fortnight-old prescription another fortnight.
+        val preferences = mutablePreferencesOf()
+        val earlier = prescription(run = 600).copy(prescribedAtEpochMillis = now - 1_000_000L)
+        preferences.writeCoachWork(RunType.LONG, earlier, "Steady.", setOf(1L))
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 240), "Dialled back.", setOf(9L))
+
+        preferences.rollBackCoachWorkFedBy(setOf(9L))
+
+        assertEquals(earlier, preferences.coachPrescriptions()[RunType.LONG])
+    }
+
+    @Test
+    fun `a delete that fed neither prescription changes nothing`() {
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 600), "Steady.", setOf(1L))
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 660), "Longer.", setOf(2L))
+
+        assertFalse(preferences.rollBackCoachWorkFedBy(setOf(77L)))
+
+        assertEquals(660, preferences.coachPrescriptions()[RunType.LONG]?.runDurationSeconds)
+        assertEquals("Longer.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+        assertEquals(
+            600,
+            preferences.coachPrescriptions(CoachWorkGeneration.PREVIOUS)[RunType.LONG]?.runDurationSeconds
+        )
+    }
+
+    @Test
+    fun `a delete that fed both prescriptions leaves the plan running as written`() {
+        // Two coaching generations reasoned from the same run: there is nothing left that the
+        // remaining history supports, and the stage's own workout is the honest floor.
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 600), "Steady.", setOf(1L, 5L))
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 660), "Longer.", setOf(5L, 6L))
+
+        assertTrue(preferences.rollBackCoachWorkFedBy(setOf(5L)))
+
+        assertEquals(CoachPrescriptions.NONE, preferences.coachPrescriptions())
+        assertEquals(
+            CoachPrescriptions.NONE,
+            preferences.coachPrescriptions(CoachWorkGeneration.PREVIOUS)
+        )
+        assertNull(preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+        assertNull(preferences[PreferencesKeys.PREVIOUS_COACH_MESSAGE])
+    }
+
+    @Test
+    fun `a delete that fed only the earlier prescription drops it and leaves the standing one`() {
+        // Otherwise a later delete could promote coaching about runs that went in this one.
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 600), "Steady.", setOf(1L))
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 660), "Longer.", setOf(2L))
+
+        assertTrue(preferences.rollBackCoachWorkFedBy(setOf(1L)))
+
+        assertEquals(660, preferences.coachPrescriptions()[RunType.LONG]?.runDurationSeconds)
+        assertEquals("Longer.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+        assertEquals(
+            CoachPrescriptions.NONE,
+            preferences.coachPrescriptions(CoachWorkGeneration.PREVIOUS)
+        )
+    }
+
+    @Test
+    fun `coaching that recorded no provenance is taken back by any delete`() {
+        // Every prescription written before #156 is one of these, which is the state the runner who
+        // reported it was in. Assuming it survived would be the app claiming something it cannot know.
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachPrescription(RunType.LONG, prescription(run = 240))
+        preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = "Your HR read 0 BPM."
+
+        assertTrue(preferences.rollBackCoachWorkFedBy(setOf(9L)))
+
+        assertEquals(CoachPrescriptions.NONE, preferences.coachPrescriptions())
+        assertNull(preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+    }
+
+    @Test
+    fun `coaching reasoned from no run at all survives every delete`() {
+        // An empty provenance is a recorded answer — the coach was shown no run, so no run leaving
+        // history can invalidate it. Told apart from the unrecorded case above by the key existing.
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 600), "Welcome to the stage.", emptySet())
+
+        assertFalse(preferences.rollBackCoachWorkFedBy(setOf(9L)))
+
+        assertEquals(600, preferences.coachPrescriptions()[RunType.LONG]?.runDurationSeconds)
+    }
+
+    @Test
+    fun `an empty store is not written to on a delete`() {
+        val preferences = mutablePreferencesOf()
+
+        assertFalse(preferences.rollBackCoachWorkFedBy(setOf(9L)))
+        assertFalse(preferences.rollBackCoachWorkFedBy(emptySet()))
+
+        assertEquals(0, preferences.asMap().size)
+    }
+
+    @Test
+    fun `the hold changes the numbers without becoming a new prescription`() {
+        // Pared back to the stage's workout when the coach could not be reached (#248): the same
+        // prescription said again, so the one behind it is still the last real evaluation and the
+        // runs it stood on still take it back.
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 600), "Steady.", setOf(1L))
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 900), "Big one today.", setOf(2L))
+
+        preferences.writeCoachPrescription(RunType.LONG, prescription(run = 660))
+
+        // Unmoved by the hold: the previous prescription is still the earlier evaluation, not the
+        // un-held one.
+        assertEquals(
+            600,
+            preferences.coachPrescriptions(CoachWorkGeneration.PREVIOUS)[RunType.LONG]?.runDurationSeconds
+        )
+        assertEquals("Big one today.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+        // And its provenance is the one it already had, so run 2 leaving still takes the held
+        // prescription back to the one before it.
+        assertTrue(preferences.rollBackCoachWorkFedBy(setOf(2L)))
+        assertEquals(600, preferences.coachPrescriptions()[RunType.LONG]?.runDurationSeconds)
+    }
+
+    @Test
+    fun `clearing takes the prescription before the standing one with it`() {
+        // Testing mode, a plan change, a restore: whatever the standing numbers were wrong for, the
+        // ones behind them are older work against the same thing and are no rollback target either.
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 600), "Steady.", setOf(1L))
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 660), "Longer.", setOf(2L))
+
+        preferences.clearCoachPrescriptions()
+
+        assertEquals(CoachPrescriptions.NONE, preferences.coachPrescriptions())
+        assertEquals(
+            CoachPrescriptions.NONE,
+            preferences.coachPrescriptions(CoachWorkGeneration.PREVIOUS)
+        )
+        assertNull(preferences[PreferencesKeys.PREVIOUS_COACH_MESSAGE])
+        // Graduating clears the prescriptions and keeps the standing debrief — "you have finished
+        // this stage" is the one thing the coach had to say.
+        assertEquals("Longer.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+    }
+
+    @Test
+    fun `clearing the coach's work leaves no provenance behind either`() {
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 660), "Longer.", setOf(2L))
+
+        preferences.clearCoachWork()
+
+        assertEquals(0, preferences.asMap().size)
+    }
+
+    @Test
+    fun `a graduation's debrief survives a later delete`() {
+        // Graduating drops the prescriptions and keeps the coach's "you have finished this stage" —
+        // the one debrief that stands without numbers under it. It is not coaching about a run, so a
+        // delete has nothing to take back from it; read as work standing it would be wiped by the
+        // next delete of any run at all, because a graduation leaves no provenance behind either.
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 660), "Longer.", setOf(2L))
+        preferences.clearCoachPrescriptions()
+        preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = "You have finished this stage."
+
+        assertFalse(preferences.rollBackCoachWorkFedBy(setOf(2L)))
+
+        assertEquals("You have finished this stage.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+    }
+
+    @Test
+    fun `a run type the coach never wrote about is untouched by a rollback`() {
+        // Only the Long slot is ever written today (ADR 0006), but a rollback restores a whole
+        // generation, so this is what stops it inventing or erasing another kind's work.
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachPrescription(RunType.EASY, prescription(run = 1_260, walk = 0, repeats = 1))
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 600), "Steady.", setOf(1L))
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 660), "Longer.", setOf(2L))
+
+        preferences.rollBackCoachWorkFedBy(setOf(2L))
+
+        assertEquals(600, preferences.coachPrescriptions()[RunType.LONG]?.runDurationSeconds)
+        assertEquals(1_260, preferences.coachPrescriptions()[RunType.EASY]?.runDurationSeconds)
+    }
 }

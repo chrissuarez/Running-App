@@ -175,6 +175,10 @@ internal object PreferencesKeys {
     val ACTIVE_PLAN_ID = stringPreferencesKey("active_plan_id")
     val ACTIVE_STAGE_ID = stringPreferencesKey("active_stage_id")
     val LATEST_COACH_MESSAGE = stringPreferencesKey("latest_coach_message")
+    // The debrief belonging to the word the coach said before the standing one, kept so that a
+    // rollback moves the text and the numbers together (#156). Never read by the card: only the
+    // standing debrief is ever shown.
+    val PREVIOUS_COACH_MESSAGE = stringPreferencesKey("previous_coach_message")
     val SIMULATION_ENABLED = booleanPreferencesKey("simulation_enabled")
     val TESTING_MODE_ENABLED = booleanPreferencesKey("testing_mode_enabled")
     // A statement of the heart rates that has started moving history but has not yet been stored.
@@ -262,6 +266,9 @@ internal fun coachWriteAllowed(
  * The debrief explains the prescription, so the two are one thing to invalidate — keeping the text
  * after the numbers are gone leaves the runner reading about a workout that is not what is queued.
  * Named once so the settings that invalidate the coach's work cannot drop half of it.
+ *
+ * Both generations go, debriefs and provenance included — [clearCoachPrescriptions] takes the
+ * previous word whole, and the standing debrief is the one line added here (#156).
  */
 internal fun MutablePreferences.clearCoachWork() {
     clearCoachPrescriptions()
