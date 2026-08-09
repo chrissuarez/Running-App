@@ -1651,6 +1651,150 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a run deleted while the coach was thinking has its graduation refused whole`() = runTest {
+        // The third ending of an evaluation, refused for the reason the other two are (#156) — and
+        // the one that matters most, because it is the one nothing can take back. A Prescription
+        // records the Runs it stood on and a later delete unwinds it; a graduation records nothing
+        // and only writes forward, so a Stage granted on evidence that has gone stays granted.
+        //
+        // One of the two Runs the coach was shown leaves history during the round trip, which on a
+        // requirement answered by a single Run or a pair of them can be the whole basis. Refused on
+        // the partial delete, which errs towards graduating late rather than twice.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(aTreadmillRun(id = 1, seconds = 1_500), aTreadmillRun(id = 2, seconds = 1_500))
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        mockCoach.stub {
+            onBlocking { evaluateProgress(any()) }.doSuspendableAnswer {
+                // Run 2 leaves history while the coach is still thinking about it.
+                mockDao.stub {
+                    onBlocking { getAiEligibleIdsIn(any()) }
+                        .thenAnswer { asked -> asked.getArgument<List<Long>>(0).filter { it != 2L } }
+                }
+                AiCoachResponse(
+                    nextRunDurationSeconds = 360,
+                    nextWalkDurationSeconds = 60,
+                    nextRepeats = 5,
+                    nextTargetZone = 3,
+                    graduatedToNextStage = true,
+                    coachMessage = "Stage complete."
+                )
+            }
+        }
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        // A refusal, not an evaluation that never happened: the coach was asked, said the Stage was
+        // finished, and history was asked a second time about the Runs that finished it.
+        verify(mockCoach).evaluateProgress(any())
+        verify(mockDao).getAiEligibleIdsIn(listOf(1L, 2L))
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(anyOrNull(), any())
+        // The message goes with it: "you have finished this stage" is not true if the Run that
+        // finished it has gone, and left behind it would stand about a Stage the runner is still in
+        // with nothing under it and nothing to take it back.
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        // Nor is the graduation quietly downgraded to a Prescription: the whole evaluation is
+        // refused, not the graduation alone.
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `a delete cannot land between the coach's last look at history and its graduation`() = runTest {
+        // What the lock is for on this ending, and the one thing a second read on its own cannot do
+        // (#156). The evaluation asks history again after the round trip and is told both Runs are
+        // there — true when the query ran. A delete landing after that answer and before the write
+        // takes back whatever stood, and the graduation lands behind it on a Run the delete has
+        // already removed: a Stage advanced on evidence nobody has, which nothing writes backwards.
+        //
+        // So the proof is the order the writes land in, not their contents. Under the lock the
+        // graduation is written and *then* the delete runs; without it the delete gets all the way
+        // through first and the graduation is written over the top of it.
+        val testScope = this
+        val order = mutableListOf<String>()
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        mockSettingsRepo.stub {
+            onBlocking { setLatestCoachMessage(any(), any()) }.doSuspendableAnswer { order += "message" }
+            onBlocking { advanceStageAndClearPrescriptions(anyOrNull(), any()) }
+                .doSuspendableAnswer { order += "advance" }
+        }
+        mockPrescriptions.stub {
+            onBlocking { forgetWorkFedBy(any()) }.doSuspendableAnswer { order += "take back" }
+        }
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(aTreadmillRun(id = 1, seconds = 1_500), aTreadmillRun(id = 2, seconds = 1_500))
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                nextTargetZone = 3,
+                graduatedToNextStage = true,
+                coachMessage = "Stage complete."
+            )
+        )
+        val goneFromHistory = mutableSetOf<Long>()
+        var deleting: Job? = null
+        mockDao.stub {
+            onBlocking { deleteSessionById(any()) }
+                .doSuspendableAnswer { goneFromHistory += it.getArgument<Long>(0) }
+            onBlocking { getAiEligibleIdsIn(any()) }.doSuspendableAnswer { asked ->
+                // The answer is settled here, while the rows are still there — a query cannot see
+                // a delete that has not happened yet, and pretending otherwise would be the test
+                // doing the lock's job for it.
+                val answer = asked.getArgument<List<Long>>(0).filterNot { it in goneFromHistory }
+                if (deleting == null) {
+                    // The runner deletes run 2 from the history screen in the instant between the
+                    // evaluation's last look at history and its write. Started here rather than
+                    // waited on: waiting would deadlock against the very lock under test, whereas
+                    // yielding lets the delete take every step it is allowed to take — which,
+                    // unlocked, is all of them.
+                    deleting = testScope.launch { repo.deleteSession(2L) }
+                    repeat(200) { yield() }
+                }
+                answer
+            }
+        }
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+        deleting?.join()
+
+        assertEquals(listOf("message", "advance", "take back"), order)
+    }
+
+    @Test
     fun `a Run whose Stage the plan has left is not evaluated at all`() = runTest {
         // The plan moved on while this Run was still going — an earlier Run's evaluation graduated
         // it (#234). The Run is evidence about the Stage it was run under, and a verdict on that

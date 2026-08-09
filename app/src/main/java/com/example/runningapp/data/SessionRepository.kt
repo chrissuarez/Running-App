@@ -1978,8 +1978,34 @@ class SessionRepository(
                 // could start on the new stage carrying the old one's numbers. So the debrief is
                 // written on its own here, which is the one path where it stands without numbers —
                 // "you have finished this stage" is the whole of what the coach had to say.
-                settingsRepo.setLatestCoachMessage(clampedResponse.coachMessage, scope)
-                settingsRepo.advanceStageAndClearPrescriptions(nextStageId, scope)
+                //
+                // The third ending of an evaluation, and the one that can least afford to be got
+                // wrong. It rests on exactly the same three Runs the reply and the hold rest on —
+                // the one read of the Stage's last three — and most of a Stage's requirement is
+                // answered by a single Run or a pair of them, so one Run leaving history can take
+                // the whole basis with it. Asked again under [coachingProvenance] for the reason
+                // the other two are: a delete landing during the round trip has already decided
+                // what stands, and a graduation written behind it stands on a Run nobody has.
+                //
+                // Worse than a Prescription written on evidence that has gone, because there is
+                // nothing to take it back with. A Prescription records the Runs it stood on and a
+                // later delete unwinds it; a graduation records nothing and only ever writes
+                // forward ([SettingsRepository.advanceStageAndClearPrescriptions]), so a graduation
+                // granted wrongly is granted for good. Refused whole on a partial delete too — one
+                // of the three gone is enough — which is the direction the app already errs in:
+                // graduating late rather than twice ([RunnerSession.ranUnderStageId]).
+                //
+                // The message goes with it, and is not written on its own: "you have finished this
+                // stage" is not true if the Run that finished it has gone. Left behind on a refused
+                // graduation it would be a debrief about a Stage the runner is still in, standing
+                // with nothing under it and nothing to take it back either.
+                coachingProvenance.withLock {
+                    if (!theEvidenceStillStands(context.sourceRunIds, refusing = "the graduation")) {
+                        return
+                    }
+                    settingsRepo.setLatestCoachMessage(clampedResponse.coachMessage, scope)
+                    settingsRepo.advanceStageAndClearPrescriptions(nextStageId, scope)
+                }
             } else {
                 // The numbers, the debrief that explains them, and the Runs they were reasoned from,
                 // in one write (#156). Stored apart, a delete could take the numbers back and leave

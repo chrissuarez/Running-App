@@ -63,8 +63,14 @@ have the coach judging a Run it cannot classify.
   Runs it stood on.
 - **An evaluation is refused whole once its evidence has gone.** The coach takes
   seconds to answer, and the runner can spend them deleting one of the Runs it was
-  shown. Both endings — the reply written down, and the hold when the coach could
-  not be reached — ask again whether the evidence is still in history, and turn
-  themselves away entirely if it is not. Applying either to whatever the delete left
-  would write down a Prescription no later delete can answer for, because a Run
-  cannot be deleted twice.
+  shown. All three endings — the reply written down, the hold when the coach could
+  not be reached, and the graduation with its message — ask again whether the
+  evidence is still in history, and turn themselves away entirely if it is not.
+  Applying any of them to whatever the delete left would write down a Prescription no
+  later delete can answer for, because a Run cannot be deleted twice. The graduation
+  is the one that can least afford it and the easiest to be sure about: it rests on
+  the same three Runs, most of a Stage's requirement is answered by one Run or two of
+  them, and there is no un-graduate — a Prescription records the Runs it stood on and
+  a later delete unwinds it, while a Stage only ever advances. So a graduation refused
+  is the conservative direction: it comes late, on the next Run, rather than being
+  granted for good on evidence the runner has already thrown away.
