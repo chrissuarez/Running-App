@@ -356,11 +356,9 @@ val UserSettings.hrProfile: HrProfile get() = HrProfile(maxHr, restingHr)
  *
  * They part the moment a Max HR correction lands: that change is future-only, so every run already
  * read keeps the maximum it was banded on (#112, #172). Anything that reads a finished run — the
- * zone re-tally, the interrupted-run rescue, the route map's colours (#47), the v12 → v13 recompute
- * a picked backup goes through ([com.example.runningapp.restore.restoredHistoryHrProfile], #267) —
- * has to ask for this
- * pair rather than [hrProfile], or it lands a run beside its neighbours on a number they were never
- * read under.
+ * zone re-tally, the interrupted-run rescue, the route map's colours (#47), the v12 → v13 zone
+ * recompute (#267) — has to ask for this pair rather than [hrProfile], or it lands a run beside its
+ * neighbours on a number they were never read under.
  */
 val UserSettings.historyHrProfile: HrProfile get() = HrProfile(historyMaxHr, restingHr)
 

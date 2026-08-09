@@ -14,7 +14,7 @@ import org.junit.Test
  * reached for the live number would move every restored run onto a Reserve it was never read
  * under — decided, absurdly, by whatever is in the Settings field on the day the file is picked.
  */
-class RestoredHistoryHrProfileTest {
+class MigrationHrProfileTest {
 
     private val archived = ArchivedSettings(
         maxHr = 200,
@@ -40,26 +40,21 @@ class RestoredHistoryHrProfileTest {
 
     @Test
     fun `an archive's runs are banded on what that archive's history was recorded under`() {
-        assertEquals(HrProfile(160, 40), restoredHistoryHrProfile(archived, phone))
+        assertEquals(HrProfile(160, 40), migrationHrProfile(archived, phone))
     }
 
     @Test
     fun `a bare database brings no settings, so this phone's history profile stands in`() {
-        assertEquals(HrProfile(181, 50), restoredHistoryHrProfile(null, phone))
+        assertEquals(HrProfile(181, 50), migrationHrProfile(null, phone))
     }
 
     @Test
-    fun `neither side reaches for the live maximum`() {
-        // The failure this exists to catch: a corrected Max HR silently re-banding a restore.
-        val corrected = phone.copy(maxHr = 200)
-
+    fun `correcting the live maximum does not move a restore`() {
+        // The failure this exists to catch (#267): the same file, picked either side of a Max HR
+        // correction, restoring two different histories.
         assertEquals(
-            restoredHistoryHrProfile(null, phone),
-            restoredHistoryHrProfile(null, corrected),
-        )
-        assertEquals(
-            restoredHistoryHrProfile(archived, phone),
-            restoredHistoryHrProfile(archived.copy(maxHr = 210), phone),
+            migrationHrProfile(null, phone),
+            migrationHrProfile(null, phone.copy(maxHr = 210)),
         )
     }
 }
