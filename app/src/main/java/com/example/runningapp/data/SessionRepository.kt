@@ -1032,7 +1032,9 @@ class SessionRepository(
      * process killed inside that window would leave the deletion committed here and undone there,
      * so the runner could restore a Run they had deleted. The snapshot therefore goes out the
      * moment the rows are gone, before anything slow, and the deletion is durable from that point
-     * whatever happens next.
+     * whatever happens next. What the change itself owes goes out ahead of even that
+     * ([onceRowsAreDurable]): the snapshot is a copy of rows that have already gone, while the
+     * coaching taken back is the thing the deletion promised the runner.
      *
      * The second refresh carries the mended book — the promotions behind the deleted Run — into the
      * snapshot, and is skipped entirely when the Run held nothing, which is the ordinary case. Its
@@ -1066,11 +1068,26 @@ class SessionRepository(
         sessionIds: List<Long>,
         mendOnly: Collection<RecordType>? = null,
         /**
-         * What else the change owes, run once the rows are durable and before the mend, which is the
-         * slow part (#156). Nothing here is allowed to stop the mend: whatever it needs to do, a
-         * failure of it is a smaller loss than a record book left standing short.
+         * What else the change owes, run the moment the rows are durable — before the backup and
+         * before the mend, which is the slow part (#156). First of everything that follows the
+         * commit, because a delete's promise to the runner is that the coaching goes with the Run,
+         * and everything after the commit can be cut short.
+         *
+         * Uncancellable, which closes one of the two ways it can be cut short and not the other. The
+         * runner leaving the history screen cancels this scope, and there is no second attempt and
+         * no pass at startup to find the work undone — so cancellation must not reach it. A process
+         * *reclaimed* still can, and what is left of that is set out on [deleteRuns].
+         *
+         * Nothing here is allowed to stop the mend either: whatever it needs to do, a failure of it
+         * is a smaller loss than a record book left standing short.
          */
         onceRowsAreDurable: (suspend () -> Unit)? = null,
+        /**
+         * Held from before the rows go until [onceRowsAreDurable] has finished, and let go before
+         * the mend — so a caller that has to make the change and what it owes look like one act to
+         * everybody else can say so (#156). Null where nothing else is watching.
+         */
+        whileTheRowsGo: Mutex? = null,
         change: suspend () -> Unit,
     ) {
         val settings = settingsRepository
@@ -1113,12 +1130,20 @@ class SessionRepository(
             // record it took vacant with no repair coming and the pass marking history complete
             // over the hole.
             var losing = emptyList<RecordType>()
-            inTransaction {
-                losing = recordsHeldBy(sessionIds).filter { mendOnly == null || it in mendOnly }
-                change()
+            whileTheRowsGo.holding {
+                inTransaction {
+                    losing = recordsHeldBy(sessionIds).filter { mendOnly == null || it in mendOnly }
+                    change()
+                }
+                // Before the backup, and uncancellable — see [onceRowsAreDurable]. Both narrow the
+                // same window, the one where the rows have gone and what stood on them has not been
+                // taken back yet: ahead of the backup it is one settings write wide instead of a
+                // whole copy of history, and uncancellable it is not walked out of by the runner
+                // leaving the screen. Narrowed, not closed — a process reclaimed inside the write
+                // itself still lands there, which [deleteRuns] says plainly.
+                withContext(NonCancellable) { onceRowsAreDurable?.invoke() }
             }
             refreshHistoryBackup?.invoke()
-            onceRowsAreDurable?.invoke()
 
             repaired = repairRecordBook(losing, remeasured = sessionIds)
             if (losing.isNotEmpty()) refreshHistoryBackup?.invoke()
@@ -1558,11 +1583,22 @@ class SessionRepository(
      * ([SessionDao.getAiEligibleIdsIn]): a Run the runner kept out of AI training was never evidence
      * for anything, so deleting it must disturb no coaching at all.
      *
-     * The work is taken back the moment the rows are gone and before the record book is mended, which
-     * takes minutes on a long history — a process reclaimed inside that window would otherwise leave
-     * the coaching standing on a Run that no longer exists, which is the whole complaint. Its own
-     * attempt, like every other write around a delete: coaching that could not be taken back must not
-     * read as a delete that did not happen, and the runner can delete again.
+     * The work is taken back the moment the rows are gone — before the backup and before the record
+     * book is mended, which takes minutes on a long history. Its own attempt, like every other write
+     * around a delete: coaching that could not be taken back must not read as a delete that did not
+     * happen, and the runner can delete again.
+     *
+     * **The window between the commit and the rollback is narrowed, not closed.** It used to be the
+     * whole backup and the whole mend, and to end wherever the runner's scope was cancelled; it is
+     * now one settings write, and cancellation does not reach it ([changeAndRepair]). What is left
+     * is a process reclaimed inside that one write, which leaves the row gone and the coaching
+     * standing on it with nothing to notice — there is no reconciling pass at startup, and building
+     * one is a separate piece of work. Until there is, the runner's remedy is the one they have
+     * always had: delete the Run again, or cycle testing mode.
+     *
+     * **The rows going and the coaching coming back are one act**, held together under
+     * [coachingProvenance] so that a coach write cannot land between them and store a Prescription
+     * naming a Run this delete has already taken out of history.
      */
     private suspend fun deleteRuns(runIds: List<Long>, delete: suspend () -> Unit) {
         val fedTheCoach = aiEligibleIdsAmong(runIds)
@@ -1575,9 +1611,31 @@ class SessionRepository(
                     Log.w("AiCoach", "Deleted $runIds but could not take back the coaching", e)
                 }
             },
+            whileTheRowsGo = coachingProvenance,
             change = delete
         )
     }
+
+    /**
+     * Held while the Runs a Prescription stands on are being settled — either written down with a
+     * new Prescription, or taken back with the Runs they named (#156).
+     *
+     * A delete reads which Runs fed the coach, removes the rows and rolls back whatever stood on
+     * them; an evaluation reads its evidence, asks the coach, and stores the answer naming that
+     * evidence. The two run on different scopes — the history screen's view model and the recording
+     * service's finalization — so nothing but this puts them in an order. Without it a delete
+     * landing after the evaluation's last look at history finds nothing standing to take back, and
+     * the reply that arrives behind it writes down a Run that has already gone: provenance no later
+     * delete can ever answer for, because the Run it names cannot be deleted twice.
+     *
+     * Held across the re-read *and* the write on the coach's side, because that is the check-and-act
+     * a delete has to be kept out of, and across the rows going *and* the rollback on the delete's
+     * side, for the same reason from the other direction. Never across the network round trip: the
+     * coach takes seconds to answer and a history screen made to wait on it is a history screen that
+     * does not respond. What the round trip costs is a reply that can be refused, which is the
+     * refusal below.
+     */
+    private val coachingProvenance = Mutex()
 
     /**
      * Which of [runIds] the coach was allowed to be shown — asked in chunks, for the reason
@@ -1587,6 +1645,35 @@ class SessionRepository(
         runIds.chunked(MAX_SESSION_IDS_PER_QUERY)
             .flatMap { sessionDao.getAiEligibleIdsIn(it) }
             .toSet()
+
+    /**
+     * Whether every Run in [shownRunIds] is still in history — asked again, under
+     * [coachingProvenance], before anything the coach's evidence is written down with (#156).
+     *
+     * **This asks the eligibility question and reads the answer as an existence one, which it is.**
+     * Whether a Run may be shown to the coach is stamped on its row when START is pressed, out of
+     * the AI-sharing setting in force at that moment (`HrForegroundService`), and nothing ever
+     * writes to that column again: the only two writers of a finished Run's row are the finalize and
+     * the rescue of an interrupted one, both of which copy the row forward, and there is no screen
+     * anywhere that offers the runner a per-Run switch. So a Run that was eligible when it was
+     * shown to the coach is eligible for as long as it exists, and the one way it can fall out of
+     * this answer is by leaving history — which is why the log below is entitled to say "deleted".
+     * The same query the delete itself asks, rather than a second existence one, so there is one
+     * spelling of "the coach was allowed to see this Run".
+     *
+     * [refusing] names what is being turned away, in the words the log should use for it.
+     */
+    private suspend fun theEvidenceStillStands(shownRunIds: Set<Long>, refusing: String): Boolean {
+        val stillInHistory = aiEligibleIdsAmong(shownRunIds.toList())
+        val gone = shownRunIds - stillInHistory
+        if (gone.isEmpty()) return true
+        Log.d(
+            "AiCoach",
+            "Refusing $refusing: it was reasoned from runs deleted while it was being decided. " +
+                "gone=$gone shown=$shownRunIds"
+        )
+        return false
+    }
 
     suspend fun getMaxSessionLoadLast30Days(
         nowEpochMillis: Long = System.currentTimeMillis()
@@ -1829,6 +1916,7 @@ class SessionRepository(
                     runType = runType,
                     workout = stageWorkoutOfKind,
                     fitnessAndForm = context.fitnessAndForm,
+                    shownRunIds = context.sourceRunIds,
                     scope = CoachWriteScope(settings.activePlanId, settings.activeStageId)
                 )
                 return
@@ -1899,24 +1987,41 @@ class SessionRepository(
                 // without a store to put the numbers in either: with no prescription store wired
                 // (tests, and any container assembled without one) there is nothing for it to
                 // explain.
-                coachPrescriptionRepository?.prescribe(
-                    // The kind of Run just finished, which is the kind the Workout above is of.
-                    runType = runType,
-                    prescription = CoachPrescription(
-                        targetZone = coachTargetZone(
-                            requested = clampedResponse.nextTargetZone,
-                            workoutTargetZone = stageWorkoutOfKind.targetZone,
-                            settingsTargetZone = settings.targetZone
+                //
+                // The evidence is asked for again first, and under [coachingProvenance], because the
+                // round trip above takes seconds and the runner can spend them on the history
+                // screen. A delete landing in there rolls back whatever stood at the time — which is
+                // the coach's *previous* answer, not this one — so a Prescription written afterwards
+                // naming the Run that went would stand on it for good: no later delete can take it
+                // back, because a Run cannot be deleted twice.
+                //
+                // Refused whole where any of the evidence has gone, numbers and debrief together,
+                // exactly as `editCoachWrite` refuses a write whose plan or stage moved. A reply
+                // reasoned from three Runs is not two thirds right with one of them thrown away, and
+                // the debrief explains numbers that are not being written.
+                coachingProvenance.withLock {
+                    if (!theEvidenceStillStands(context.sourceRunIds, refusing = "the coach's reply")) {
+                        return
+                    }
+                    coachPrescriptionRepository?.prescribe(
+                        // The kind of Run just finished, which is the kind the Workout above is of.
+                        runType = runType,
+                        prescription = CoachPrescription(
+                            targetZone = coachTargetZone(
+                                requested = clampedResponse.nextTargetZone,
+                                workoutTargetZone = stageWorkoutOfKind.targetZone,
+                                settingsTargetZone = settings.targetZone
+                            ),
+                            runDurationSeconds = clampedResponse.nextRunDurationSeconds,
+                            walkDurationSeconds = clampedResponse.nextWalkDurationSeconds,
+                            totalRepeats = clampedResponse.nextRepeats,
+                            prescribedAtEpochMillis = System.currentTimeMillis()
                         ),
-                        runDurationSeconds = clampedResponse.nextRunDurationSeconds,
-                        walkDurationSeconds = clampedResponse.nextWalkDurationSeconds,
-                        totalRepeats = clampedResponse.nextRepeats,
-                        prescribedAtEpochMillis = System.currentTimeMillis()
-                    ),
-                    debrief = clampedResponse.coachMessage,
-                    sourceRunIds = context.sourceRunIds,
-                    scope = scope
-                )
+                        debrief = clampedResponse.coachMessage,
+                        sourceRunIds = context.sourceRunIds,
+                        scope = scope
+                    )
+                }
             }
         } catch (e: Exception) {
             Log.e("AiCoach", "Failed to evaluate progress", e)
@@ -2082,35 +2187,60 @@ class SessionRepository(
      * Nothing standing means the plan runs as written, which is the Workout — already where the hold
      * would put it. A stale one is already ignored by whoever runs the workout, and rewriting it
      * would say the app had done something on a day it had not.
+     *
+     * **Under [coachingProvenance], and refused whole on evidence that has gone, exactly as a
+     * written Prescription is.** This is a read of what stands followed by a write over it, and the
+     * amend goes through `editCoachWrite`, which answers for the plan and the stage and nothing
+     * else — so a delete landing between the two would roll the slot back to the coach's previous
+     * Prescription and have this write last week's numbers straight over it, under a provenance
+     * naming Runs those numbers were never reasoned from. That is precisely the debrief and the
+     * numbers coming apart that ADR 0013 forbids, and #248's "the hold keeps its debrief, its date
+     * and its provenance" with the provenance made a lie.
+     *
+     * [shownRunIds] is the evidence this whole evaluation was reasoned from — the same three Runs a
+     * reply would have named. The hold is a smaller act than a Prescription but it is the same act:
+     * it says the standing coaching is still the runner's coaching, only quieter. Once one of the
+     * Runs behind it has left history that is no longer something this evaluation is in a position
+     * to say, and the delete has already decided what stands. Refused whole rather than applied to
+     * whatever the delete left, for the reason the reply is: the hold is not two thirds right with
+     * one of the Runs it was measured against thrown away.
      */
     private suspend fun holdStandingPrescriptionAtWorkout(
         runType: RunType,
         workout: WorkoutTemplate,
         fitnessAndForm: AiFitnessAndForm?,
+        shownRunIds: Set<Long>,
         scope: CoachWriteScope
     ) {
         val prescriptions = coachPrescriptionRepository ?: return
         if (fitnessAndForm == null) return
         if (fitnessAndForm.fatigue <= fitnessAndForm.fitness) return
 
-        val standing = prescriptions.prescriptionsFlow.first()[runType] ?: return
-        if (!standing.isFreshAt(System.currentTimeMillis())) return
-        val held = standing.copy(
-            runDurationSeconds = workout.runDurationSeconds,
-            walkDurationSeconds = workout.walkDurationSeconds,
-            totalRepeats = workout.totalRepeats
-        )
-        if (held == standing) return
+        // Held across the read of what stands and the write over it, which is the check-and-act a
+        // delete has to be kept out of. Nothing slow is inside it: the round trip that could not be
+        // reached is already over, and everything left is storage.
+        coachingProvenance.withLock {
+            if (!theEvidenceStillStands(shownRunIds, refusing = "the hold")) return
 
-        Log.d(
-            "AiCoach",
-            "Holding the standing $runType prescription at the stage workout: " +
-                "${held.runDurationSeconds}s Run / ${held.walkDurationSeconds}s Walk " +
-                "x${held.totalRepeats}"
-        )
-        // Amended rather than prescribed: this is the standing Prescription said again more quietly,
-        // so it keeps its debrief, its date and the Runs it stood on (#156).
-        prescriptions.amendStanding(runType = runType, prescription = held, scope = scope)
+            val standing = prescriptions.prescriptionsFlow.first()[runType] ?: return
+            if (!standing.isFreshAt(System.currentTimeMillis())) return
+            val held = standing.copy(
+                runDurationSeconds = workout.runDurationSeconds,
+                walkDurationSeconds = workout.walkDurationSeconds,
+                totalRepeats = workout.totalRepeats
+            )
+            if (held == standing) return
+
+            Log.d(
+                "AiCoach",
+                "Holding the standing $runType prescription at the stage workout: " +
+                    "${held.runDurationSeconds}s Run / ${held.walkDurationSeconds}s Walk " +
+                    "x${held.totalRepeats}"
+            )
+            // Amended rather than prescribed: this is the standing Prescription said again more
+            // quietly, so it keeps its debrief, its date and the Runs it stood on (#156).
+            prescriptions.amendStanding(runType = runType, prescription = held, scope = scope)
+        }
     }
 
     /**
@@ -2142,4 +2272,9 @@ class SessionRepository(
     private fun mainSetSeconds(runSeconds: Int, walkSeconds: Int, repeats: Int): Long =
         (runSeconds.toLong() + walkSeconds.toLong()) * repeats.toLong()
 
+}
+
+/** [act] under this lock where there is one to take, and plainly where there is not. */
+private suspend fun Mutex?.holding(act: suspend () -> Unit) {
+    if (this == null) act() else withLock { act() }
 }
