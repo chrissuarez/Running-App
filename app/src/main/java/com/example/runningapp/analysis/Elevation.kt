@@ -166,8 +166,15 @@ internal data class ElevationProfile(
 private fun heightFromPressure(pressureHpa: Double): Double =
     44_330.0 * (1.0 - (pressureHpa / STANDARD_PRESSURE_HPA).pow(1.0 / 5.255))
 
-/** The gaps taken from the nearest height either side, so the list stays one entry per fix. */
-private fun List<Double?>.filledFromNeighbours(): List<Double> {
+/**
+ * The gaps taken from the nearest height either side, so the list stays one entry per fix.
+ *
+ * Internal rather than private: an imported Route's heights arrive with the same gaps in them and
+ * are filled by the same rule ([com.example.runningapp.routes.routeElevationGainMeters]). Written
+ * twice, one of them would eventually be fixed and the other left, and the same file would climb
+ * two different amounts depending on which door it came in by.
+ */
+internal fun List<Double?>.filledFromNeighbours(): List<Double> {
     val filled = toMutableList()
     var lastKnown: Double? = null
     for (i in indices) {

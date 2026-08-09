@@ -41,7 +41,7 @@ fun gpxRefusalMessage(reason: GpxRefusal): String = when (reason) {
         "That file isn't a GPX route. Look for a file ending in .gpx — the kind Strava, Garmin " +
             "Connect and Komoot export."
     GpxRefusal.NO_POINTS ->
-        "That GPX has no route in it — no track and no waypoint list to follow. Try exporting it again."
+        "That GPX has no route in it — no track and no route to follow. Try exporting it again."
     GpxRefusal.TOO_LARGE ->
         "That GPX is too big to keep as a route. Try exporting a shorter one, or one recorded less often."
     GpxRefusal.UNREADABLE ->

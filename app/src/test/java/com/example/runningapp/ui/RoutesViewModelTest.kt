@@ -69,7 +69,7 @@ class RoutesViewModelTest {
     )
 
     @Test
-    fun keepsTheFileAndSaysSo() = runTest {
+    fun `keeps the file and says so`() = runTest {
         val viewModel = viewModelReading(aRealGpx)
 
         viewModel.fileChosen(uri)
@@ -81,7 +81,7 @@ class RoutesViewModelTest {
     }
 
     @Test
-    fun keepsNothingAndSaysWhy() = runTest {
+    fun `keeps nothing and says why`() = runTest {
         val viewModel = viewModelReading("<kml/>")
 
         viewModel.fileChosen(uri)
@@ -93,7 +93,7 @@ class RoutesViewModelTest {
 
     /** Backing out of the picker is not a failure and must say nothing at all. */
     @Test
-    fun saysNothingWhenTheRunnerBacksOutOfThePicker() = runTest {
+    fun `says nothing when the runner backs out of the picker`() = runTest {
         val viewModel = viewModelReading(aRealGpx)
 
         viewModel.fileChosen(null)
@@ -105,7 +105,7 @@ class RoutesViewModelTest {
 
     /** A double tap on Import must not race two copies of one file into the library. */
     @Test
-    fun readsOneFileAtATime() = runTest {
+    fun `reads one file at a time`() = runTest {
         val viewModel = viewModelReading(aRealGpx)
 
         viewModel.fileChosen(uri)
@@ -116,7 +116,7 @@ class RoutesViewModelTest {
     }
 
     @Test
-    fun renamesARoute() = runTest {
+    fun `renames a route`() = runTest {
         dao.insertRoute(aStoredRoute())
         val viewModel = viewModelReading(aRealGpx)
 
@@ -129,7 +129,7 @@ class RoutesViewModelTest {
 
     /** An emptied box is a change of mind, not a request for a Route with no name. */
     @Test
-    fun leavesARouteNamedWhatItWasWhenTheBoxIsEmptied() = runTest {
+    fun `leaves a route named what it was when the box is emptied`() = runTest {
         dao.insertRoute(aStoredRoute())
         val viewModel = viewModelReading(aRealGpx)
 
@@ -140,7 +140,7 @@ class RoutesViewModelTest {
     }
 
     @Test
-    fun forgetsARoute() = runTest {
+    fun `forgets a route`() = runTest {
         dao.insertRoute(aStoredRoute())
         val viewModel = viewModelReading(aRealGpx)
 
@@ -151,7 +151,7 @@ class RoutesViewModelTest {
     }
 
     @Test
-    fun stopsSayingItOnceItHasBeenRead() = runTest {
+    fun `stops saying it once it has been read`() = runTest {
         val viewModel = viewModelReading(aRealGpx)
         viewModel.fileChosen(uri)
         advanceUntilIdle()

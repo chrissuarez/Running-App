@@ -6,7 +6,7 @@ import org.junit.Test
 class RoutePolylineTest {
 
     @Test
-    fun aCourseSurvivesBeingStoredAndReadBack() {
+    fun `a course survives being stored and read back`() {
         val points = listOf(
             RoutePoint(51.5074000, -0.1278000, 12.0),
             RoutePoint(-33.8688000, 151.2093000, null),
@@ -21,7 +21,7 @@ class RoutePolylineTest {
 
     /** Written the way the app writes every other coordinate — seven places, and never a comma. */
     @Test
-    fun isWrittenInOneFormWhateverTheDeviceLocale() {
+    fun `is written in one form whatever the device locale`() {
         val was = java.util.Locale.getDefault()
         try {
             java.util.Locale.setDefault(java.util.Locale.GERMANY)
@@ -37,7 +37,7 @@ class RoutePolylineTest {
     }
 
     @Test
-    fun anEmptyCourseIsAnEmptyLine() {
+    fun `an empty course is an empty line`() {
         assertEquals("", RoutePolyline.encode(emptyList()))
         assertEquals(emptyList<RoutePoint>(), RoutePolyline.decode(""))
         assertEquals(emptyList<RoutePoint>(), RoutePolyline.decode("   "))
@@ -45,7 +45,7 @@ class RoutePolylineTest {
 
     /** A row damaged in the database must draw nothing rather than take the screen down with it. */
     @Test
-    fun readsNothingOutOfGibberish() {
+    fun `reads nothing out of gibberish`() {
         assertEquals(emptyList<RoutePoint>(), RoutePolyline.decode("north,west"))
         assertEquals(emptyList<RoutePoint>(), RoutePolyline.decode("51.5"))
         assertEquals(

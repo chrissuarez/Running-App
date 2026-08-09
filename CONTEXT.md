@@ -121,8 +121,9 @@ plan rather than a recording — it may be run many times or never, and it carri
 rate and no date it happened, because none of that is true of it yet. Imported from a GPX file
 (#54), and later saved from a Run that has already been made. Deleting one costs no Run anything:
 nothing in the library points at history and nothing in history points back.
-_Avoid_: course, path, and **track** — a Track is what a Run recorded of where it went, and the two
-must not be confused even in code (`TrackPoint` belongs to a Run). The `Routes` object under
+_Avoid_: path, and **track** — a Track is what a Run recorded of where it went, and the two must
+not be confused even in code (`TrackPoint` belongs to a Run). "Course" is fine, and is the word for
+the line itself as against the whole record of it. The `Routes` object under
 `navigation/` is the app's list of screen addresses and is a different word that happens to be
 spelled the same.
 
