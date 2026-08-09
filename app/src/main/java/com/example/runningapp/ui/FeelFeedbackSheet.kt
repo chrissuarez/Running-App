@@ -1,6 +1,8 @@
 package com.example.runningapp.ui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -40,6 +42,11 @@ fun FeelFeedbackSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                // The keyboard is what the sheet is for — a runner typing their note — so the sheet
+                // gives way to it rather than being buried by it, and scrolls so that a small screen
+                // or a large text size cannot bury the button row either (#238).
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 24.dp)
                 .padding(bottom = 24.dp)
         ) {
