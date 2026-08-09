@@ -163,6 +163,37 @@ class AudioCueManagerTest {
         assertEquals(listOf("in flight", "a split"), spokenTexts())
     }
 
+    /**
+     * The end of a Run takes back everything it enqueued in one act, so that the sentence in flight
+     * finishing cannot let the next one out between two withdrawals (#220).
+     */
+    @Test
+    fun `a set of cues withdrawn together is not spoken, and the sentence in flight still finishes`() {
+        manager.enqueue("in flight", CuePriority.INSTRUCTION)
+        val waiting = listOf(
+            manager.enqueue("start running", CuePriority.INSTRUCTION)!!,
+            manager.enqueue("ease off", CuePriority.COACHING)!!,
+            manager.enqueue("a split", CuePriority.INFORMATION)!!,
+        )
+
+        manager.withdrawAll(waiting)
+        finishCurrent()
+
+        assertEquals(listOf("in flight"), spokenTexts())
+    }
+
+    @Test
+    fun `withdrawing a set with nothing in it, or cues already spoken, does nothing`() {
+        val spoken = manager.enqueue("in flight", CuePriority.INSTRUCTION)!!
+        manager.enqueue("a split", CuePriority.INFORMATION)
+
+        manager.withdrawAll(emptyList())
+        manager.withdrawAll(listOf(spoken, 9999L))
+        finishCurrent()
+
+        assertEquals(listOf("in flight", "a split"), spokenTexts())
+    }
+
     @Test
     fun `focus is taken once when the queue starts speaking and released once when it drains`() {
         manager.enqueue("first", CuePriority.INSTRUCTION)
