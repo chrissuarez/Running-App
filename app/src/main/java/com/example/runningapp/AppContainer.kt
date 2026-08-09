@@ -17,6 +17,7 @@ import com.example.runningapp.data.WeatherClient
 import com.example.runningapp.export.FileProviderGpxFileStore
 import com.example.runningapp.export.GpxFileStore
 import com.example.runningapp.restore.PendingRestore
+import com.example.runningapp.routes.RouteImporter
 import com.example.runningapp.restore.migrationHrProfile
 import com.mapbox.common.MapboxOptions
 import kotlinx.coroutines.CoroutineScope
@@ -121,6 +122,14 @@ class AppContainer(context: Context) {
 
     val gpxFileStore: GpxFileStore by lazy {
         FileProviderGpxFileStore(appContext)
+    }
+
+    /**
+     * The one way a GPX file becomes a Route (#54), shared by the in-app picker and by another app's
+     * "Open with" — see [RouteImporter] for why both go through one door.
+     */
+    val routeImporter: RouteImporter by lazy {
+        RouteImporter(appContext.contentResolver, database.routeDao())
     }
 
     val sessionRepository: SessionRepository by lazy {

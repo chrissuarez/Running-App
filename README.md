@@ -87,6 +87,16 @@ A robust Android application designed to track heart rate (HR) during runs and p
       everything GPX can't carry, and a snapshot of the database — to a folder you pick once
       (choose a Drive-synced one for offsite backup). Automatic monthly, keeping the last 3, plus a
       **Back up now** button and the last-backup time.
+- **Routes**:
+    - **Route library**: Home → Open Routes lists every course you keep, with its distance and its
+      elevation gain. A file that carried no heights says so rather than showing 0 m.
+    - **Import GPX**: from the picker on the Routes screen, or by choosing this app from another
+      app's share/open sheet on a `.gpx` — a download, an email attachment, a Strava or Komoot
+      export. Both land in the same place. A route takes its name from the GPX, or from the
+      filename if the file doesn't name itself.
+    - Rename and delete. Deleting a route never touches a run: routes and history are unconnected.
+    - A file that isn't a GPX, is damaged, or holds no route is refused with a message saying why,
+      and nothing is saved.
 - **Device Management**:
     - Prioritizes manually selected BLE devices.
     - Robust background reconnection logic.

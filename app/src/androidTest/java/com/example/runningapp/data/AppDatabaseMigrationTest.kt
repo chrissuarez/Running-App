@@ -7,6 +7,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.example.runningapp.HrProfile
 import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
+import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -517,6 +518,60 @@ class AppDatabaseMigrationTest {
         // The Run itself is untouched: the migration adds room and nothing else.
         assertEquals(2259L, run.durationSeconds)
         assertEquals(9000L, run.endTime)
+    }
+
+    @Test
+    fun migrate25To26_addsAnEmptyRouteLibrary_withEveryRunLeftAsItWas() {
+        val rawDb = openLegacyDatabase()
+        createTrackPointsTable(rawDb)
+        insertLegacySession(rawDb, id = 1)
+        rawDb.execSQL("UPDATE sessions SET endTime = 9000, durationSeconds = 2259, distanceKm = 5.1 WHERE id = 1")
+        insertSample(rawDb, sessionId = 1, elapsedSeconds = 1, rawBpm = 140)
+        rawDb.version = 12
+        rawDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(*appDatabaseMigrations { HrProfile(190) })
+            .build()
+        val routes = runBlockingGet { migratedDb.routeDao().getAllRoutesFlow().first() }
+        val run = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
+        val samples = runBlockingGet { migratedDb.sampleDao().getSamplesForSessionOnce(1) }
+
+        // Empty, and nothing could have filled it: no earlier version of the app kept a Route, and
+        // turning a past Run into one is a thing the runner asks for a Run at a time (#55).
+        assertEquals(emptyList<Route>(), routes)
+
+        // And the library can be written to and emptied without a Run noticing — the point of it
+        // having no key into `sessions` in either direction (#54).
+        runBlockingGet {
+            migratedDb.routeDao().insertRoute(
+                Route(
+                    name = "Regent's Park loop",
+                    distanceMeters = 4_200.0,
+                    elevationGainMeters = null,
+                    polyline = "51.5000000,-0.1000000 51.5010000,-0.1010000",
+                    createdAtMillis = 1_700_000_000_000L,
+                    source = RouteSource.IMPORTED,
+                )
+            )
+        }
+        val stored = runBlockingGet { migratedDb.routeDao().getAllRoutesFlow().first() }.single()
+        assertEquals("Regent's Park loop", stored.name)
+        assertNull(stored.elevationGainMeters)
+        runBlockingGet { migratedDb.routeDao().deleteRoute(stored.id) }
+        assertEquals(
+            emptyList<Route>(),
+            runBlockingGet { migratedDb.routeDao().getAllRoutesFlow().first() },
+        )
+
+        migratedDb.close()
+
+        // The Run is exactly where it was, beats and all.
+        assertEquals(2259L, run.durationSeconds)
+        assertEquals(9000L, run.endTime)
+        assertEquals(5.1, run.distanceKm, 0.0001)
+        assertEquals(1, samples.size)
+        assertEquals(140, samples.single().rawBpm)
     }
 
     @Test
