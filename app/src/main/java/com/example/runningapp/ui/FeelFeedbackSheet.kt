@@ -27,7 +27,10 @@ fun FeelFeedbackSheet(
     onDismiss: () -> Unit,
     askForDistance: Boolean = false
 ) {
-    val sheetState = rememberModalBottomSheetState()
+    // Fully expanded, never resting half-height. A partially-expanded sheet hangs below the bottom
+    // of the screen, which puts the keyboard padding below it off-screen too and buries the buttons
+    // the padding exists to keep reachable (#238).
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var selectedEffort by remember { mutableStateOf<Int?>(null) }
     var note by remember { mutableStateOf("") }
     var typedDistance by remember { mutableStateOf("") }
