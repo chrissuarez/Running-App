@@ -80,8 +80,10 @@ fun EffortSlider(
                 sliderPosition = it
                 onEffortChosen(it.roundToInt())
             },
-            // Also on release, so a tap that lands on the value the slider already rests at still
-            // counts as a rating rather than as nothing having happened.
+            // Also on release, because a press-release is the honest signal for *the runner has
+            // chosen an effort*, where a change of value is only a signal for *something moved*.
+            // A tap that lands on the value the slider already rests at — the middle, for a runner
+            // who has not touched it yet — moves nothing, and used to count as nothing (#158).
             onValueChangeFinished = { onEffortChosen(sliderPosition.roundToInt()) },
             valueRange = 1f..10f,
             steps = 8
