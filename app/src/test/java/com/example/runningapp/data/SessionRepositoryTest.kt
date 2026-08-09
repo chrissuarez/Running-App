@@ -72,6 +72,12 @@ class SessionRepositoryTest {
         // care about the curves stub these over.
         whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(emptyList()))
         whenever(mockDao.getRunVolumesFlow()).thenReturn(flowOf(emptyList()))
+        // Every Run a delete is given may have fed the coach unless a test says otherwise, which is
+        // the ordinary case: sharing is on by default (#156).
+        mockDao.stub {
+            onBlocking { getAiEligibleIdsIn(any()) }
+                .thenAnswer { it.getArgument<List<Long>>(0) }
+        }
     }
 
     @Test
@@ -849,6 +855,73 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `deleting a run takes back the coaching that stood on it`() = runTest {
+        // The bug this closes: the row goes and the workout the coach prescribed *from* it stays on
+        // the card, debrief and all (#156).
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val repositoryWithCoach = SessionRepository(
+            sessionDao = mockDao,
+            coachPrescriptionRepository = mockPrescriptions
+        )
+
+        repositoryWithCoach.deleteSessions(listOf(7L, 8L))
+
+        verify(mockPrescriptions).forgetWorkFedBy(setOf(7L, 8L))
+    }
+
+    @Test
+    fun `deleting a run kept out of AI training disturbs no coaching`() = runTest {
+        // A Run the runner excluded from AI training was never evidence for anything, so nothing the
+        // coach said can be about it.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        mockDao.stub { onBlocking { getAiEligibleIdsIn(any()) }.thenReturn(emptyList()) }
+        val repositoryWithCoach = SessionRepository(
+            sessionDao = mockDao,
+            coachPrescriptionRepository = mockPrescriptions
+        )
+
+        repositoryWithCoach.deleteSession(sessionId = 7L)
+
+        verify(mockDao).deleteSessionById(7L)
+        // An empty set is a rollback of nothing, so this may be called or not — what must never
+        // happen is the deleted Run being offered as one the coach could have reasoned from.
+        verify(mockPrescriptions, never()).forgetWorkFedBy(setOf(7L))
+    }
+
+    @Test
+    fun `which runs fed the coach is asked before the rows are gone`() = runTest {
+        // Afterwards there is nothing left to ask: the sharing flag lives on the row being deleted.
+        val repositoryWithCoach = SessionRepository(
+            sessionDao = mockDao,
+            coachPrescriptionRepository = mock()
+        )
+
+        repositoryWithCoach.deleteSession(sessionId = 7L)
+
+        inOrder(mockDao) {
+            verify(mockDao).getAiEligibleIdsIn(listOf(7L))
+            verify(mockDao).deleteSessionById(7L)
+        }
+    }
+
+    @Test
+    fun `a stated distance leaves the coaching alone`() = runTest {
+        // A correction is not a Run leaving history: the evidence the coach reasoned from is all still
+        // there, and a Run's own evaluation is deliberately never replayed when a distance arrives
+        // later (#231).
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val repositoryWithCoach = SessionRepository(
+            sessionDao = mockDao,
+            coachPrescriptionRepository = mockPrescriptions
+        )
+        whenever(mockDao.getSessionById(42L)).thenReturn(aTreadmillRun(id = 42, seconds = 1_500))
+
+        repositoryWithCoach.stateDistance(42L, distanceKm = 5.0)
+
+        verify(mockPrescriptions, never()).forgetWorkFedBy(any())
+    }
+
+    @Test
     fun `deleteSessions does not touch the backup when the id list is empty`() = runTest {
         var refreshCount = 0
         val repositoryWithBackup = SessionRepository(
@@ -1465,7 +1538,8 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
         verify(mockSettingsRepo).advanceStageAndClearPrescriptions("sub_30_bridge", activeScope)
-        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
+        verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
         // The debrief is about the run just finished, so it survives the graduation.
         verify(mockSettingsRepo).setLatestCoachMessage("Stage complete.", activeScope)
     }
@@ -1507,12 +1581,16 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
-        verify(mockSettingsRepo).setLatestCoachMessage(
-            "Stage complete.",
-            CoachWriteScope("5k_sub_25", "base_builder")
+        // Refused, so this is an ordinary evaluation: the next Long Run is prescribed as one, and
+        // what the coach said reaches the runner beside those numbers (#156).
+        verify(mockPrescriptions).prescribe(
+            any(),
+            any(),
+            eq("Stage complete."),
+            any(),
+            eq(CoachWriteScope("5k_sub_25", "base_builder"))
         )
-        // Refused, so this is an ordinary evaluation: the next Long Run is prescribed as one.
-        verify(mockPrescriptions).prescribe(any(), any(), any())
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
     }
 
     @Test
@@ -1537,7 +1615,8 @@ class SessionRepositoryTest {
 
         verify(mockCoach, never()).evaluateProgress(any())
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
-        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
+        verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
     }
 
     @Test
@@ -1581,7 +1660,7 @@ class SessionRepositoryTest {
 
         val activeScope = CoachWriteScope("5k_sub_25", "base_builder")
         verify(mockCoach).evaluateProgress(any())
-        verify(mockPrescriptions).prescribe(eq(RunType.LONG), any(), eq(activeScope))
+        verify(mockPrescriptions).prescribe(eq(RunType.LONG), any(), any(), any(), eq(activeScope))
         // And the write is not refused at the door either: the guard re-reads the preference as it
         // stands, which is still the empty one this runner started with.
         assertTrue(
@@ -1635,7 +1714,8 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("sub_25_peak", RunType.LONG)
 
         verify(mockCoach, never()).evaluateProgress(any())
-        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
+        verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
         verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
     }
 
@@ -1659,7 +1739,8 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder", RunType.EASY)
 
         verify(mockCoach, never()).evaluateProgress(any())
-        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
+        verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
         verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
     }
 
@@ -1682,7 +1763,8 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder", RunType.QUALITY)
 
         verify(mockCoach, never()).evaluateProgress(any())
-        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
+        verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
         verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
     }
 
@@ -1703,7 +1785,8 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder", runType = null)
 
         verify(mockCoach, never()).evaluateProgress(any())
-        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
+        verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
         verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
     }
 
@@ -1748,12 +1831,20 @@ class SessionRepositoryTest {
         val prescribed = argumentCaptor<CoachPrescription>()
         // Stored under the Run Type of the Run just finished (#176), which is the Workout the
         // evaluation was floored against. Nothing it writes can reach the other two kinds.
-        verify(mockPrescriptions).prescribe(eq(RunType.LONG), prescribed.capture(), eq(activeScope))
+        verify(mockPrescriptions).prescribe(
+            eq(RunType.LONG),
+            prescribed.capture(),
+            eq("Good session."),
+            any(),
+            eq(activeScope)
+        )
         assertEquals(660, prescribed.firstValue.runDurationSeconds)
         assertEquals(60, prescribed.firstValue.walkDurationSeconds)
         assertEquals(4, prescribed.firstValue.totalRepeats)
         assertEquals(3, prescribed.firstValue.targetZone)
-        verify(mockSettingsRepo).setLatestCoachMessage("Good session.", activeScope)
+        // The debrief travels with the numbers it explains, in the one write (#156) — so the
+        // settings door is not the one it goes through on an ordinary evaluation.
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(anyOrNull(), any())
         verify(mockSettingsRepo, never()).setCoachingEnabled(any())
         verify(mockSettingsRepo, never()).setTargetZone(any())
@@ -1849,7 +1940,7 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
         val prescribed = argumentCaptor<CoachPrescription>()
-        verify(mockPrescriptions).prescribe(eq(RunType.LONG), prescribed.capture(), any())
+        verify(mockPrescriptions).prescribe(eq(RunType.LONG), prescribed.capture(), any(), any(), any())
         assertEquals(600, prescribed.firstValue.runDurationSeconds)
         assertEquals(120, prescribed.firstValue.walkDurationSeconds)
         assertEquals(3, prescribed.firstValue.totalRepeats)
@@ -1907,12 +1998,19 @@ class SessionRepositoryTest {
         assertTrue(shown.fatigue > shown.fitness)
 
         val prescribed = argumentCaptor<CoachPrescription>()
-        verify(mockPrescriptions).prescribe(eq(RunType.LONG), prescribed.capture(), any())
+        verify(mockPrescriptions).prescribe(eq(RunType.LONG), prescribed.capture(), any(), any(), any())
         assertEquals(600, prescribed.firstValue.runDurationSeconds)
         assertEquals(120, prescribed.firstValue.walkDurationSeconds)
         assertEquals(3, prescribed.firstValue.totalRepeats)
-        // The debrief is untouched: the hold is about the intervals, not about what was said.
-        verify(mockSettingsRepo).setLatestCoachMessage(eq("Not a week to be adding work to."), any())
+        // The debrief is untouched: the hold is about the intervals, not about what was said, so it
+        // is written exactly as the coach said it, beside the held numbers (#156).
+        verify(mockPrescriptions).prescribe(
+            any(),
+            any(),
+            eq("Not a week to be adding work to."),
+            any(),
+            any()
+        )
     }
 
     @Test
@@ -1938,7 +2036,7 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
         val held = argumentCaptor<CoachPrescription>()
-        verify(mockPrescriptions).prescribe(
+        verify(mockPrescriptions).amendStanding(
             eq(RunType.LONG),
             held.capture(),
             eq(CoachWriteScope("5k_sub_25", "base_builder"))
@@ -1982,7 +2080,8 @@ class SessionRepositoryTest {
 
         repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
-        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
+        verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
     }
 
     @Test
@@ -1999,7 +2098,8 @@ class SessionRepositoryTest {
 
             repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
-            verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+            verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
+            verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
         }
 
     @Test
@@ -2029,7 +2129,8 @@ class SessionRepositoryTest {
 
         repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
-        verify(mockPrescriptions, never()).prescribe(any(), any(), any())
+        verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
+        verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
     }
 
     /**
