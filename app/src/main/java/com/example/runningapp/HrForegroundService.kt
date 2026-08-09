@@ -1186,16 +1186,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * Say something, in its turn among everything else waiting (#53). The one way anything in this
      * app speaks — the split announcements and the UI's target-reached cue come through here too.
      */
-    fun enqueueCue(text: String, priority: CuePriority) {
+    fun enqueueCue(text: String, priority: CuePriority, tag: CueTag? = null) {
         val ticket = audioCueManager?.enqueue(text, priority) ?: return
-        outstandingCues.record(ticket)
+        outstandingCues.record(ticket, tag)
     }
 
-    /** The Run's [RunEffect.Speak], keeping the ticket under the name the Run gave the cue. */
-    private fun speakCue(effect: RunEffect.Speak) {
-        val ticket = audioCueManager?.enqueue(effect.text, effect.priority) ?: return
-        outstandingCues.record(ticket, effect.tag)
-    }
+    /** The Run's [RunEffect.Speak], under the name the Run gave the cue, if it gave one. */
+    private fun speakCue(effect: RunEffect.Speak) =
+        enqueueCue(effect.text, effect.priority, effect.tag)
 
     /**
      * Take back a cue that has not been spoken: whatever it was going to say is no longer true

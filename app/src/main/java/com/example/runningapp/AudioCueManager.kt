@@ -51,23 +51,12 @@ class AudioCueManager(
      * How that grace period is timed. Not [serviceScope]: the service cancels that before it tears
      * the engine down, so a job launched there would be cancelled rather than run — and the whole
      * point of the backstop is to fire when nothing else will.
+     *
+     * It must not run the action inline: what the action ends in is the engine's teardown, which
+     * blocks on a thread that takes this instance's lock.
      */
     private val scheduleShutdownBackstop: (delayMs: Long, action: () -> Unit) -> Unit =
-        { delayMs, action ->
-            val timer = Timer("cue-shutdown-backstop", true)
-            timer.schedule(
-                object : TimerTask() {
-                    override fun run() {
-                        try {
-                            action()
-                        } finally {
-                            timer.cancel()
-                        }
-                    }
-                },
-                delayMs,
-            )
-        },
+        DEFAULT_SHUTDOWN_BACKSTOP,
     /**
      * Told true when the queue starts speaking and false when it drains — the app being
      * mid-sentence, for anything that needs to know. Every cue passes through here, Split
@@ -115,6 +104,8 @@ class AudioCueManager(
     private data class Settlement(
         val activity: List<CueActivity> = emptyList(),
         val tearDownEngine: Boolean = false,
+        /** Start the clock on the last sentence — see [shutdownGraceMs]. */
+        val startShutdownGrace: Boolean = false,
     )
 
     fun initialize() {
@@ -134,14 +125,17 @@ class AudioCueManager(
     /**
      * Say this, in its turn. Returns the ticket the cue can later be taken back by ([withdraw]);
      * a caller with nothing to take back can ignore it.
+     *
+     * Null when there was no queue left to join, which is only ever the service going away
+     * underneath the caller ([shutdown]).
      */
-    fun enqueue(text: String, priority: CuePriority): Long {
+    fun enqueue(text: String, priority: CuePriority): Long? {
         val (ticket, activity) = synchronized(this) {
             if (isShuttingDown) {
-                // The engine is on its way out and nothing here will ever be said, so saying so is
-                // the honest answer: a ticket that is nobody's, inert to withdraw like any other.
+                // The engine is on its way out, so there is nothing to promise and no ticket to
+                // hand back for a promise that is not being made.
                 Log.w(logTag, "A cue arrived as the service was going away, and is not queued")
-                return NO_TICKET
+                return null
             }
             val cue = QueuedCue(++ticketCounter, text, priority)
             // After everything at or above this level, before everything below it: priority order
@@ -198,8 +192,7 @@ class AudioCueManager(
         }
 
         Log.d(logTag, "Service destroyed mid-sentence: the engine goes when the sentence ends")
-        scheduleShutdownBackstop(shutdownGraceMs) { settle(giveUpOnLastSentence()) }
-        return Settlement()
+        return Settlement(startShutdownGrace = true)
     }
 
     /**
@@ -224,6 +217,9 @@ class AudioCueManager(
     /** Do what was decided under the lock, now that it has been let go of. */
     private fun settle(settlement: Settlement) {
         announce(settlement.activity)
+        if (settlement.startShutdownGrace) {
+            scheduleShutdownBackstop(shutdownGraceMs) { settle(giveUpOnLastSentence()) }
+        }
         if (settlement.tearDownEngine) {
             try {
                 tts.shutdown()
@@ -441,8 +437,26 @@ class AudioCueManager(
         return listOf(CueActivity(speaking = false, sequence = ++activitySequence))
     }
 
-    companion object {
-        /** What [enqueue] answers when there was no queue left to join. Withdrawing it is inert. */
-        const val NO_TICKET = 0L
+    private companion object {
+        /**
+         * The grace period, on a thread of its own so that it fires whatever else has been torn
+         * down. Daemon, and cancelled the moment it has fired: the one thread it costs lives for at
+         * most the grace period, and only after the service has gone away.
+         */
+        val DEFAULT_SHUTDOWN_BACKSTOP: (Long, () -> Unit) -> Unit = { delayMs, action ->
+            val timer = Timer("cue-shutdown-backstop", true)
+            timer.schedule(
+                object : TimerTask() {
+                    override fun run() {
+                        try {
+                            action()
+                        } finally {
+                            timer.cancel()
+                        }
+                    }
+                },
+                delayMs,
+            )
+        }
     }
 }
