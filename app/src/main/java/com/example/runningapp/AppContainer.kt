@@ -6,7 +6,6 @@ import android.util.Log
 import androidx.room.withTransaction
 import com.example.runningapp.archive.ArchivedSettings
 import com.example.runningapp.archive.Archiver
-import com.example.runningapp.archive.historyHrProfile
 import com.example.runningapp.archive.RunArchiveContents
 import com.example.runningapp.archive.SafArchiveFolder
 import com.example.runningapp.data.AiCoachClient
@@ -18,6 +17,7 @@ import com.example.runningapp.data.WeatherClient
 import com.example.runningapp.export.FileProviderGpxFileStore
 import com.example.runningapp.export.GpxFileStore
 import com.example.runningapp.restore.PendingRestore
+import com.example.runningapp.restore.restoredHistoryHrProfile
 import com.mapbox.common.MapboxOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -101,16 +101,13 @@ class AppContainer(context: Context) {
             // rather than the database. Room only invokes this from inside the migration, on the
             // thread that opened the database, so the blocking read never lands on the main thread.
             //
-            // Whichever settings belong to the history being opened: the archive's if this launch
-            // just restored one, the phone's own otherwise.
-            //
-            // `historyMaxHr`, not `maxHr` — the migration re-bands finished runs, and those two
-            // numbers part company on purpose (#112, #172). A runner who stated 181 and later
-            // corrected to 195 has history banded on 181 and live zones on 195, because a correction
-            // must not rewrite runs already read. The archive carries both, so the restored runs can
-            // be recomputed against the very maximum they were written under.
-            restoredSettings?.historyHrProfile
-                ?: runBlocking { settingsRepository.userSettingsFlow.first().hrProfile }
+            // Whichever settings belong to the history being opened, and always the pair history is
+            // banded against rather than the live one — see [restoredHistoryHrProfile] for why the
+            // two part company (#112, #172, #267).
+            restoredHistoryHrProfile(
+                archived = restoredSettings,
+                phone = runBlocking { settingsRepository.userSettingsFlow.first() },
+            )
         }
     }
 

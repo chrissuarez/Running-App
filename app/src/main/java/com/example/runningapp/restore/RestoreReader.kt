@@ -4,11 +4,10 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.util.Log
-import com.example.runningapp.HrProfile
+import com.example.runningapp.UserSettings
 import com.example.runningapp.archive.ArchiveJson
 import com.example.runningapp.archive.ArchiveZip
 import com.example.runningapp.archive.ArchivedSettings
-import com.example.runningapp.archive.historyHrProfile
 import java.io.File
 import java.io.InputStream
 import java.util.zip.ZipInputStream
@@ -73,7 +72,7 @@ object RestoreReader {
         context: Context,
         uri: Uri,
         currentDatabaseVersion: Int,
-        phoneHrProfile: HrProfile,
+        phoneSettings: UserSettings,
     ): Outcome {
         // A restore still armed while the app is running is the one that got its history in place
         // and not its settings, and is waiting for the next launch to finish. Its settings are the
@@ -117,12 +116,11 @@ object RestoreReader {
             // sentence. Everything still here is a backup this app should be able to carry
             // forward, and this is where that stops being an assumption.
             //
-            // The profile the migration bands on is whichever one belongs to *this* history: the
-            // archive's own if it brought one, since that is what the relaunch will restore and
-            // then migrate against, and the phone's otherwise. The same choice AppContainer makes,
-            // through the same name — the trial has to migrate the file the way the launch
-            // would, or it is proving something about a database the runner will never have.
-            val migrationHrProfile = archivedSettings?.historyHrProfile ?: phoneHrProfile
+            // The profile the migration bands on is whichever one belongs to *this* history — the
+            // same choice AppContainer makes, through the same function, because the trial has to
+            // migrate the file the way the launch would or it is proving something about a database
+            // the runner will never have.
+            val migrationHrProfile = restoredHistoryHrProfile(archivedSettings, phoneSettings)
             if (!RestoreTrialOpen.migrateInStaging(context, staged, migrationHrProfile)) {
                 return refuse(context, RestoreRefusal.CANNOT_BE_MIGRATED)
             }
