@@ -308,6 +308,52 @@ class GpxRouteReaderTest {
         assertEquals(listOf(RoutePoint(1.0, 2.0, null)), outcome.points)
     }
 
+    /**
+     * The same, nested so that the element's parent is GPX-shaped too. Judging an element by its
+     * name and its parent alone is not enough — an extension can nest the shape as deep as it
+     * likes, so what is judged is the whole way down from the root.
+     */
+    @Test
+    fun `ignores a point an extension nests inside a segment of its own`() {
+        val outcome = readOrFail(
+            """
+            <gpx version="1.1" xmlns:vendor="http://example.com/vendor/v1">
+              <trk><trkseg>
+                <trkpt lat="1.0" lon="2.0"><ele>10</ele>
+                  <extensions><vendor:trkseg><vendor:trkpt lat="80.0" lon="80.0"><vendor:ele>999</vendor:ele></vendor:trkpt></vendor:trkseg></extensions>
+                </trkpt>
+                <trkpt lat="1.001" lon="2.0"><ele>12</ele></trkpt>
+              </trkseg></trk>
+            </gpx>
+            """.trimIndent()
+        )
+
+        // Not merely "no phantom point": the point that contained it keeps its own position and its
+        // own height, both of which the nested one would have taken over and then cleared.
+        assertEquals(
+            listOf(RoutePoint(1.0, 2.0, 10.0), RoutePoint(1.001, 2.0, 12.0)),
+            outcome.points,
+        )
+    }
+
+    /** A name an extension carries is not the file's name for the course either. */
+    @Test
+    fun `ignores a name an extension nests inside a track of its own`() {
+        val outcome = readOrFail(
+            """
+            <gpx version="1.1" xmlns:vendor="http://example.com/vendor/v1">
+              <trk><name>Real name</name><trkseg>
+                <trkpt lat="1.0" lon="2.0">
+                  <extensions><vendor:trk><vendor:name>Vendor name</vendor:name></vendor:trk></extensions>
+                </trkpt>
+              </trkseg></trk>
+            </gpx>
+            """.trimIndent()
+        )
+
+        assertEquals("Real name", outcome.name)
+    }
+
     /** And one with no position at all must not make an otherwise readable file unreadable. */
     @Test
     fun `reads a file whose extension carries a positionless point`() {
