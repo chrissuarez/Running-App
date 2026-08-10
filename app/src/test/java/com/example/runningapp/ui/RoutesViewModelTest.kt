@@ -80,6 +80,24 @@ class RoutesViewModelTest {
         assertEquals(false, viewModel.importing.value)
     }
 
+    /**
+     * The case Android creates on its own: an "Open with" intent left in the task is handed back
+     * when the app is reopened from the recents list, and the runner must not find a second copy.
+     */
+    @Test
+    fun `says the route is already kept rather than keeping it twice`() = runTest {
+        val viewModel = viewModelReading(aRealGpx)
+
+        viewModel.fileChosen(uri)
+        advanceUntilIdle()
+        viewModel.fileChosen(uri)
+        advanceUntilIdle()
+
+        assertEquals(1, dao.stored.size)
+        // Through the function rather than the words: RouteModelsTest owns what they say.
+        assertEquals(routeAlreadySavedMessage("Park loop"), viewModel.message.value)
+    }
+
     @Test
     fun `keeps nothing and says why`() = runTest {
         val viewModel = viewModelReading("<kml/>")

@@ -24,6 +24,23 @@ class FakeRouteDao : RouteDao {
 
     override suspend fun getRoute(routeId: Long): Route? = rows.value.firstOrNull { it.id == routeId }
 
+    override suspend fun findRouteByPolyline(polyline: String): Route? =
+        rows.value.filter { it.polyline == polyline }.minByOrNull { it.id }
+
+    override suspend fun remeasureRoute(
+        routeId: Long,
+        distanceMeters: Double,
+        elevationGainMeters: Double?,
+    ) {
+        rows.value = rows.value.map {
+            if (it.id == routeId) {
+                it.copy(distanceMeters = distanceMeters, elevationGainMeters = elevationGainMeters)
+            } else {
+                it
+            }
+        }
+    }
+
     override suspend fun renameRoute(routeId: Long, name: String) {
         rows.value = rows.value.map { if (it.id == routeId) it.copy(name = name) else it }
     }

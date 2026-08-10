@@ -108,6 +108,15 @@ metres that never happened.
   reach for; nothing in the app will re-measure a Route behind them. If that ever stops being good
   enough, storing the profile is the change that makes re-measuring possible, and this ADR is what
   should be revisited.
+- **A Route is its line, so importing the same line twice keeps one Route and re-measures it.**
+  Identity is the stored `lat,lon` line exactly as written, not a likeness: the same course exported
+  again by another app, simplified differently, is a different line and becomes a Route of its own.
+  Two consequences follow. A file handed over a second time adds nothing — which is what makes the
+  remedy above safe to reach for, and what makes Android replaying an "Open with" intent from the
+  recents list after the app is killed cost the library nothing. And when that file measures the
+  line differently, its numbers are written onto the Route already kept, under the name the runner
+  gave it; re-importing is the remedy, so it has to actually re-measure. What it will never do is
+  merge two Routes a runner has been keeping apart, because it never matches two different lines.
 - **A Route imported from a paused run carries a straight line across the pause** — through a
   building, if that is where the runner stood. Nothing in #54 navigates on the line, so it costs
   only a slightly wrong distance today. It is a question the off-course rules should be made to

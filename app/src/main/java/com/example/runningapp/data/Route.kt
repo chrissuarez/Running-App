@@ -59,6 +59,30 @@ interface RouteDao {
     @Insert
     suspend fun insertRoute(route: Route): Long
 
+    /**
+     * The Route the library already holds for this identical line, if it holds one.
+     *
+     * The line itself is the identity: a file drawing the very same points is the Route already
+     * kept, whatever it or the runner calls it. Identical, not merely alike — the same course
+     * re-exported by another app, simplified differently, is a different line and becomes its own
+     * Route. This is what stops one file becoming two rows — see
+     * [com.example.runningapp.routes.RouteImporter].
+     */
+    @Query("SELECT * FROM routes WHERE polyline = :polyline ORDER BY id LIMIT 1")
+    suspend fun findRouteByPolyline(polyline: String): Route?
+
+    /**
+     * Writes a re-read of the same line's distance and climb onto the Route already kept.
+     *
+     * The name is left alone: it is the runner's, not the file's. See ADR 0014 — a Route's numbers
+     * are banked at import and re-importing is the only thing that revisits them.
+     */
+    @Query(
+        "UPDATE routes SET distanceMeters = :distanceMeters, " +
+            "elevationGainMeters = :elevationGainMeters WHERE id = :routeId"
+    )
+    suspend fun remeasureRoute(routeId: Long, distanceMeters: Double, elevationGainMeters: Double?)
+
     @Query("SELECT * FROM routes WHERE id = :routeId")
     suspend fun getRoute(routeId: Long): Route?
 

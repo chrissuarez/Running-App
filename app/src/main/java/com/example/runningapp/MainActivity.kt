@@ -150,9 +150,9 @@ class MainActivity : ComponentActivity() {
      * view model and that does not exist yet when the intent arrives — this Activity may be being
      * created by the very tap that carried the file.
      *
-     * Clearing this field is not what stops the file being imported twice; taking it out of the
-     * intent is ([takeRouteFileIn]). This field lives and dies with the Activity, and a recreated
-     * Activity is handed the original intent again.
+     * Clearing this field is not what stops the file being imported twice; see [takeRouteFileIn].
+     * This field lives and dies with the Activity, and a recreated Activity is handed the original
+     * intent again.
      */
     private var pendingRouteFile by mutableStateOf<Uri?>(null)
 
@@ -180,6 +180,14 @@ class MainActivity : ComponentActivity() {
      *
      * So the file comes out of the intent as it is read. What is left behind is an ACTION_VIEW
      * intent with no data, which asks for nothing.
+     *
+     * This reaches only as far as this process. The system keeps its own copy of the intent that
+     * started the task, which no app can edit: killing the app and reopening it from the recents
+     * list hands this Activity the original file again, and on the phone that put a second copy of
+     * the route in the library. What makes that harmless is not here but in
+     * [com.example.runningapp.routes.RouteImporter] — importing a course already in the library
+     * adds nothing. This clearing is still worth doing for the ordinary recreations above, which
+     * are frequent and would otherwise announce an import the runner did not ask for.
      */
     private fun takeRouteFileIn(intent: Intent?): Uri? {
         if (intent?.action != Intent.ACTION_VIEW) return null

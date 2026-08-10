@@ -51,3 +51,23 @@ fun gpxRefusalMessage(reason: GpxRefusal): String = when (reason) {
 
 /** What the screen says the moment a Route lands, so an import is visibly an import. */
 fun routeImportedMessage(name: String): String = "Saved “$name” to your routes."
+
+/**
+ * What the screen says when the file was a course the library already holds.
+ *
+ * Names the kept Route rather than the file, because the two need not agree: a runner who renamed
+ * "Morning Run" to "Regent's Park loop" and then opened the file again is looking for the row they
+ * already have, and the name is how they will find it.
+ */
+fun routeAlreadySavedMessage(name: String): String =
+    "That route is already in your routes, as “$name”. Nothing was added."
+
+/**
+ * What the screen says when a course already kept has been re-measured from the file just handed
+ * over.
+ *
+ * Says which numbers moved, because the row is the only other place it shows and a runner who
+ * imported a corrected export is looking for exactly that.
+ */
+fun routeRemeasuredMessage(name: String): String =
+    "“$name” is already in your routes. Its distance and climb now come from this file."

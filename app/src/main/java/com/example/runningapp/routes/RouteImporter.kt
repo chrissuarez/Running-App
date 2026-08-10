@@ -13,6 +13,24 @@ import java.io.IOException
 sealed interface RouteImportOutcome {
     data class Imported(val routeId: Long, val name: String) : RouteImportOutcome
 
+    /**
+     * The library already held this course, measured exactly as this file measures it.
+     *
+     * [name] is what the existing Route is called, which may not be what the file is called: a
+     * runner who renamed it needs to be told which row is the one they already have.
+     */
+    data class AlreadySaved(val name: String) : RouteImportOutcome
+
+    /**
+     * The library already held this course, and this file measures it differently, so the kept
+     * Route now carries the file's numbers.
+     *
+     * This is the remedy ADR 0014 names for a Route's banked distance and climb: re-importing the
+     * file is how a runner reaches them, since nothing re-measures a Route behind their back. The
+     * common case is a first export with no `<ele>` in it and a second with heights.
+     */
+    data class Remeasured(val name: String) : RouteImportOutcome
+
     /** Nothing was written. See [com.example.runningapp.ui.gpxRefusalMessage] for the words. */
     data class Refused(val reason: GpxRefusal) : RouteImportOutcome
 }
@@ -27,6 +45,18 @@ sealed interface RouteImportOutcome {
  *
  * Measuring happens before anything is written, so a file that turns out to be unreadable leaves the
  * library exactly as it was. There is no half-saved Route to find afterwards: a Route is one row.
+ *
+ * Importing is repeatable: the same course handed over twice is one Route, not two. That is a rule
+ * about what a Route is — a course, not an act of importing — and it is also what makes the library
+ * safe from Android handing this app the same file a second time without the runner asking. An
+ * "Open with" leaves its intent sitting in the task; reopening the app from the recents list days
+ * later replays it, and nothing in this app can reach into the system and take it back. So the
+ * import is written to be harmless when repeated rather than guarded against being repeated.
+ *
+ * Repeatable is not inert. A file that draws a course already kept but measures it differently
+ * writes its numbers onto that Route, which is what makes re-importing the remedy ADR 0014 says it
+ * is for a distance or a climb banked under an older rule. The runner's name for it is never
+ * touched: they named the course, not the file.
  */
 class RouteImporter(
     private val contentResolver: ContentResolver,
@@ -55,13 +85,27 @@ class RouteImporter(
             is GpxReadOutcome.Read -> outcome
         }
 
+        // The line is the course's identity, so this is asked before a name is worked out and
+        // before anything is inserted: an already-kept course is answered with the row the runner
+        // already has, under whatever they have since called it.
+        val polyline = RoutePolyline.encode(read.points)
+        val distanceMeters = routeDistanceMeters(read.points)
+        val elevationGainMeters = routeElevationGainMeters(read.points)
+        routeDao.findRouteByPolyline(polyline)?.let { kept ->
+            val measuresTheSame = distanceMeters == kept.distanceMeters &&
+                elevationGainMeters == kept.elevationGainMeters
+            if (measuresTheSame) return RouteImportOutcome.AlreadySaved(name = kept.name)
+            routeDao.remeasureRoute(kept.id, distanceMeters, elevationGainMeters)
+            return RouteImportOutcome.Remeasured(name = kept.name)
+        }
+
         val name = routeName(fileSuggested = read.name, fileNamed = displayNameOf(uri))
         val id = routeDao.insertRoute(
             Route(
                 name = name,
-                distanceMeters = routeDistanceMeters(read.points),
-                elevationGainMeters = routeElevationGainMeters(read.points),
-                polyline = RoutePolyline.encode(read.points),
+                distanceMeters = distanceMeters,
+                elevationGainMeters = elevationGainMeters,
+                polyline = polyline,
                 createdAtMillis = now(),
                 source = RouteSource.IMPORTED,
             )

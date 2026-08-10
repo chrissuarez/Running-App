@@ -84,6 +84,74 @@ class RouteImporterTest {
     }
 
     @Test
+    fun `the same course handed over twice is one route`() = runTest {
+        val first = importerFor(aRealGpx).import(uri)
+        val again = importerFor(aRealGpx).import(uri)
+
+        val route = dao.stored.single()
+        assertEquals(RouteImportOutcome.Imported(route.id, "Regent's Park loop"), first)
+        assertEquals(RouteImportOutcome.AlreadySaved("Regent's Park loop"), again)
+    }
+
+    @Test
+    fun `a course already kept is answered under the name the runner gave it`() = runTest {
+        importerFor(aRealGpx).import(uri)
+        val kept = dao.stored.single()
+        dao.renameRoute(kept.id, "Tuesday hills")
+
+        val again = importerFor(aRealGpx).import(uri)
+
+        // The file still calls it "Regent's Park loop"; the runner does not. Naming the file back
+        // at them would point at a row that is not in their library under that name.
+        assertEquals(RouteImportOutcome.AlreadySaved("Tuesday hills"), again)
+        assertEquals(1, dao.stored.size)
+    }
+
+    /**
+     * The remedy ADR 0014 names for a banked number: a Route's distance and climb are worked out
+     * once, and re-importing the file is the only thing that revisits them.
+     */
+    @Test
+    fun `a fuller export of a course already kept re-measures it`() = runTest {
+        val withoutHeights = """
+            <gpx version="1.1"><metadata><name>Regent's Park loop</name></metadata><trk><trkseg>
+              <trkpt lat="51.5000000" lon="-0.1000000"/>
+              <trkpt lat="51.5010000" lon="-0.1000000"/>
+              <trkpt lat="51.5020000" lon="-0.1000000"/>
+            </trkseg></trk></gpx>
+        """.trimIndent()
+
+        importerFor(withoutHeights).import(uri)
+        dao.renameRoute(dao.stored.single().id, "Tuesday hills")
+        assertNull(dao.stored.single().elevationGainMeters)
+
+        // The same three points, now with heights on them: the same line, measured better.
+        val outcome = importerFor(aRealGpx).import(uri)
+
+        val route = dao.stored.single()
+        assertEquals(RouteImportOutcome.Remeasured("Tuesday hills"), outcome)
+        // Absent became stated, which is the whole difference between the two files: what the
+        // climb adds up to is RouteShapeTest's question, not this one's.
+        assertNotNull(route.elevationGainMeters)
+        // Their name for the course survives the file's own name arriving a second time.
+        assertEquals("Tuesday hills", route.name)
+    }
+
+    @Test
+    fun `a different course is kept alongside the first`() = runTest {
+        val elsewhere = """
+            <gpx version="1.1"><metadata><name>Hampstead</name></metadata><trk><trkseg>
+              <trkpt lat="51.56" lon="-0.17"/><trkpt lat="51.561" lon="-0.17"/>
+            </trkseg></trk></gpx>
+        """.trimIndent()
+
+        importerFor(aRealGpx).import(uri)
+        importerFor(elsewhere).import(uri)
+
+        assertEquals(2, dao.stored.size)
+    }
+
+    @Test
     fun `names it after the file on disk when the gpx names nothing`() = runTest {
         val nameless = """
             <gpx version="1.1"><trk><trkseg>

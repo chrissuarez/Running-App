@@ -63,4 +63,22 @@ class RouteModelsTest {
     fun `names the route it just saved`() {
         assertEquals("Saved “Park loop” to your routes.", routeImportedMessage("Park loop"))
     }
+
+    /** Says outright that nothing was added, so the runner is not left looking for a new row. */
+    @Test
+    fun `names the route it already had`() {
+        assertEquals(
+            "That route is already in your routes, as “Park loop”. Nothing was added.",
+            routeAlreadySavedMessage("Park loop"),
+        )
+    }
+
+    /** Says which numbers moved: the row is the only other place the change shows. */
+    @Test
+    fun `says a kept route now carries this file's numbers`() {
+        assertEquals(
+            "“Park loop” is already in your routes. Its distance and climb now come from this file.",
+            routeRemeasuredMessage("Park loop"),
+        )
+    }
 }
