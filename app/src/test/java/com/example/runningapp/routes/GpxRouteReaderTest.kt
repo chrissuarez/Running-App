@@ -287,6 +287,49 @@ class GpxRouteReaderTest {
         assertEquals(listOf(RoutePoint(1.0, 2.0, 10.0)), outcome.points)
     }
 
+    /**
+     * The same rule as the height above, for the elements that carry a position: a vendor's own
+     * `trkpt` inside an `<extensions>` block would otherwise add a point to a course nobody drew.
+     */
+    @Test
+    fun `ignores a point-shaped element an extension carries`() {
+        val outcome = readOrFail(
+            """
+            <gpx version="1.1" xmlns:vendor="http://example.com/vendor/v1">
+              <trk><trkseg>
+                <trkpt lat="1.0" lon="2.0">
+                  <extensions><vendor:trkpt lat="80.0" lon="80.0"/></extensions>
+                </trkpt>
+              </trkseg></trk>
+            </gpx>
+            """.trimIndent()
+        )
+
+        assertEquals(listOf(RoutePoint(1.0, 2.0, null)), outcome.points)
+    }
+
+    /** And one with no position at all must not make an otherwise readable file unreadable. */
+    @Test
+    fun `reads a file whose extension carries a positionless point`() {
+        val outcome = readOrFail(
+            """
+            <gpx version="1.1" xmlns:vendor="http://example.com/vendor/v1">
+              <trk><trkseg>
+                <trkpt lat="1.0" lon="2.0">
+                  <extensions><vendor:trkpt>something</vendor:trkpt></extensions>
+                </trkpt>
+                <trkpt lat="1.001" lon="2.0"/>
+              </trkseg></trk>
+            </gpx>
+            """.trimIndent()
+        )
+
+        assertEquals(
+            listOf(RoutePoint(1.0, 2.0, null), RoutePoint(1.001, 2.0, null)),
+            outcome.points,
+        )
+    }
+
     /** The name has to come from the part the course came from, not the part left behind. */
     @Test
     fun `takes the route's name when the named track is empty`() {

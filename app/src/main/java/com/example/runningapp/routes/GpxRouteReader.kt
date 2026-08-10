@@ -166,6 +166,26 @@ private class TooLargeException : SAXException()
 private val POINT_ELEMENTS = setOf("trkpt", "rtept")
 private val NAMED_ELEMENTS = setOf("metadata", "trk", "rte")
 
+/** Where GPX puts a point: a track's in a segment, a route's directly in the route. */
+private val POINT_PARENTS = mapOf("trkpt" to "trkseg", "rtept" to "rte")
+
+/**
+ * Whether an element of this name, sitting under this parent, is one of the file's own points.
+ *
+ * The one rule this reader applies to every element it acts on, because the alternative has been
+ * wrong twice. An `<extensions>` block may hold an element of any name whatsoever — the schema
+ * invites vendors to put anything in it — and a namespace-aware parse hands over the bare local
+ * name, so `<vendor:trkpt>` and `<vendor:ele>` arrive here indistinguishable from the real thing.
+ * Judged by name alone, a vendor's own `trkpt` would either add a point to a course nobody drew or,
+ * lacking a position, make an ordinary file unreadable.
+ *
+ * The null check is not a formality. Without it the root `<gpx>`, whose parent is nothing, matches
+ * the nothing a name that is not a point's returns from the map — and every file on earth is read
+ * as beginning with a point that has no position.
+ */
+private fun isPoint(name: String, parent: String?): Boolean =
+    parent != null && POINT_PARENTS[name] == parent
+
 private class RouteHandler : DefaultHandler2() {
 
     /**
@@ -210,7 +230,7 @@ private class RouteHandler : DefaultHandler2() {
         path.addLast(name)
 
         when {
-            name == "trkpt" || name == "rtept" -> {
+            isPoint(name, parent) -> {
                 latitude = attributes.coordinate("lat", limit = 90.0)
                 longitude = attributes.coordinate("lon", limit = 180.0)
                 elevation = null
@@ -238,8 +258,10 @@ private class RouteHandler : DefaultHandler2() {
         text = null
         path.removeLastOrNull()
 
-        when (name) {
-            "trkpt", "rtept" -> {
+        val parent = path.lastOrNull()
+
+        when {
+            isPoint(name, parent) -> {
                 // A point that does not say where it is leaves the whole file unreadable rather
                 // than being dropped: a course with a hole in it is a different course, and quietly
                 // importing one would have the runner following a line the file never drew.
@@ -264,10 +286,10 @@ private class RouteHandler : DefaultHandler2() {
             // Assigning from it unguarded would not merely ignore the extension — it would wipe the
             // height already read off the point, and a file that states every height would import
             // as one that states none.
-            "ele" -> if (path.lastOrNull() in POINT_ELEMENTS) {
+            name == "ele" && parent in POINT_ELEMENTS -> {
                 elevation = gathered?.toDoubleOrNull()?.takeIf { it.isFinite() }
             }
-            "name" -> when (path.lastOrNull()) {
+            name == "name" -> when (parent) {
                 "metadata" -> metadataName = metadataName ?: gathered
                 "trk" -> trackName = trackName ?: gathered
                 "rte" -> routeName = routeName ?: gathered
