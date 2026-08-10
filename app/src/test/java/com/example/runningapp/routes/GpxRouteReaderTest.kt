@@ -280,6 +280,39 @@ class GpxRouteReaderTest {
     }
 
     /**
+     * Text is the one part of a GPX that grows without adding a point (#54).
+     *
+     * The point cap counts points, so a file with one enormous name passes it while the reader
+     * gathers the name into memory. This is the bound that catches that, and it is reached with the
+     * point count still at zero.
+     */
+    @Test
+    fun `refuses a file whose name runs on without end`() {
+        assertEquals(
+            GpxRefusal.TOO_LARGE,
+            refusalOf(
+                """
+                <gpx version="1.1"><trk><name>${"pretending to be a name ".repeat(1_000)}</name>
+                <trkseg><trkpt lat="1.0" lon="2.0"/></trkseg></trk></gpx>
+                """.trimIndent()
+            ),
+        )
+    }
+
+    /** A name of an ordinary length is not caught by that bound (#54). */
+    @Test
+    fun `keeps a name of the length a person would write`() {
+        val outcome = readOrFail(
+            """
+            <gpx version="1.1"><trk><name>${"Eastbourne seafront loop ".repeat(20)}</name>
+            <trkseg><trkpt lat="1.0" lon="2.0"/></trkseg></trk></gpx>
+            """.trimIndent()
+        )
+
+        assertEquals("Eastbourne seafront loop ".repeat(20).trim(), outcome.name)
+    }
+
+    /**
      * An entity that names no file at all is refused just the same (#54).
      *
      * The declaration is what is refused, not the fetching: an internal entity asks for a short

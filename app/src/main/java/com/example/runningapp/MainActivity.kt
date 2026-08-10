@@ -148,8 +148,11 @@ class MainActivity : ComponentActivity() {
      *
      * Parked in a field rather than imported here, because an import belongs to the Route library's
      * view model and that does not exist yet when the intent arrives — this Activity may be being
-     * created by the very tap that carried the file. Compose picks it up on the way past and clears
-     * it, so a rotation cannot import the same file twice.
+     * created by the very tap that carried the file.
+     *
+     * Clearing this field is not what stops the file being imported twice; taking it out of the
+     * intent is ([takeRouteFileIn]). This field lives and dies with the Activity, and a recreated
+     * Activity is handed the original intent again.
      */
     private var pendingRouteFile by mutableStateOf<Uri?>(null)
 
@@ -163,12 +166,27 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        routeFileIn(intent)?.let { pendingRouteFile = it }
+        takeRouteFileIn(intent)?.let { pendingRouteFile = it }
     }
 
-    /** The `.gpx` an intent is asking this app to open, or null if it is asking for anything else. */
-    private fun routeFileIn(intent: Intent?): Uri? =
-        if (intent?.action == Intent.ACTION_VIEW) intent.data else null
+    /**
+     * The `.gpx` an intent is asking this app to open, or null if it is asking for anything else.
+     *
+     * Taken rather than merely read: an Activity keeps the intent it was launched by, and Android
+     * hands the same one back every time it is recreated. A file left sitting in it is imported
+     * again on each recreation — and a recreation is an ordinary thing, not a rare one. Changing
+     * the phone's text size while the Route library was open put two more copies of the same route
+     * in the library, and changing it back put a third, none of which the runner asked for.
+     *
+     * So the file comes out of the intent as it is read. What is left behind is an ACTION_VIEW
+     * intent with no data, which asks for nothing.
+     */
+    private fun takeRouteFileIn(intent: Intent?): Uri? {
+        if (intent?.action != Intent.ACTION_VIEW) return null
+        val file = intent.data ?: return null
+        intent.data = null
+        return file
+    }
 
     private val requestPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
@@ -240,7 +258,7 @@ class MainActivity : ComponentActivity() {
 
         // A `.gpx` this launch was started by (#54). Read before anything else so it is already
         // parked by the time the Route library's view model exists to be handed it.
-        pendingRouteFile = routeFileIn(intent)
+        pendingRouteFile = takeRouteFileIn(intent)
 
         // Runs already in history predate moving time, so their pace would be measured against a
         // different clock from today's runs until this fills them in (#163). Off the main thread and

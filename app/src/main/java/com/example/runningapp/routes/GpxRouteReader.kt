@@ -145,7 +145,21 @@ private class NotGpxException : SAXException()
  */
 private const val MOST_POINTS_A_ROUTE_MAY_HAVE = 200_000
 
-/** Thrown the moment a file passes [MOST_POINTS_A_ROUTE_MAY_HAVE], so the rest of it is not read. */
+/**
+ * How long the text of one element — a `<name>`, a height — may run before the file is refused.
+ *
+ * Ten thousand characters is a route name some hundred times longer than the longest anyone would
+ * write, and a height thousands of times longer than a number needs, so nothing a real exporter
+ * writes comes close. It is here for what a damaged or hostile file puts there instead: text is the
+ * one part of a GPX that grows without adding a point, so this is the bound that
+ * [MOST_POINTS_A_ROUTE_MAY_HAVE] cannot be.
+ */
+private const val MOST_CHARACTERS_ONE_ELEMENT_MAY_HAVE = 10_000
+
+/**
+ * Thrown the moment a file passes [MOST_POINTS_A_ROUTE_MAY_HAVE] or
+ * [MOST_CHARACTERS_ONE_ELEMENT_MAY_HAVE], so the rest of it is not read.
+ */
 private class TooLargeException : SAXException()
 
 /** The two elements that carry a position, and the three whose `<name>` may title a Route. */
@@ -209,7 +223,13 @@ private class RouteHandler : DefaultHandler2() {
     }
 
     override fun characters(ch: CharArray, start: Int, length: Int) {
-        text?.append(ch, start, length)
+        val gathering = text ?: return
+        // A name or a height is one short string, and the file is refused the moment it turns out to
+        // be holding something else there. [MOST_POINTS_A_ROUTE_MAY_HAVE] does not bound this: it
+        // counts points, while this grows inside a single element, so one enormous `<name>` would
+        // exhaust the heap while the point count sat at zero.
+        if (gathering.length + length > MOST_CHARACTERS_ONE_ELEMENT_MAY_HAVE) throw TooLargeException()
+        gathering.append(ch, start, length)
     }
 
     override fun endElement(uri: String?, localName: String?, qName: String?) {
