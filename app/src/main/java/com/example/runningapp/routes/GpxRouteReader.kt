@@ -1,8 +1,9 @@
 package com.example.runningapp.routes
 
 import org.xml.sax.Attributes
+import org.xml.sax.InputSource
 import org.xml.sax.SAXException
-import org.xml.sax.helpers.DefaultHandler
+import org.xml.sax.ext.DefaultHandler2
 import java.io.IOException
 import java.io.InputStream
 import javax.xml.parsers.SAXParserFactory
@@ -66,7 +67,16 @@ object GpxRouteReader {
     fun read(source: InputStream): GpxReadOutcome {
         val handler = RouteHandler()
         return try {
-            newParser().parse(source, handler)
+            val reader = newParser().xmlReader
+            reader.contentHandler = handler
+            // The doctype refusal is asked for twice, because neither way holds on both platforms:
+            // the factory feature above is the JVM's and Android ignores it, while this one is SAX's
+            // own and reports the declaration as it is read. Whichever is honoured, the file is
+            // refused before a single entity is expanded.
+            ifSupported {
+                reader.setProperty("http://xml.org/sax/properties/lexical-handler", handler)
+            }
+            reader.parse(InputSource(source))
             handler.outcome()
         } catch (notGpx: NotGpxException) {
             GpxReadOutcome.Refused(GpxRefusal.NOT_GPX)
@@ -87,26 +97,40 @@ object GpxRouteReader {
      * contents back inside the parsed document. Nothing legitimate in GPX needs entities, so they
      * are refused outright and the file reads as damaged.
      *
-     * Each feature is set on its own and its absence tolerated: the JVM's parser and Android's are
-     * different implementations, and one refusing to admit it knows a feature name must not stop the
-     * others being applied.
+     * Every setting is applied on its own and its absence tolerated, XInclude included: the JVM's
+     * parser and Android's are different implementations, and one refusing to admit it knows a name
+     * must not stop the others being applied.
+     *
+     * XInclude is the one that has to be asked for this way rather than simply assigned. Android's
+     * parser throws `UnsupportedOperationException` from `setXIncludeAware` — it reports its
+     * specification as "Unknown" version "0.0" and refuses the whole family of version-gated
+     * setters — so an unguarded assignment reads fine, passes every JVM unit test, and then takes
+     * the app down the first time a file is picked on a phone. Tolerating it costs nothing: a
+     * parser that will not admit it knows XInclude does not perform XInclude.
      */
     private fun newParser() = SAXParserFactory.newInstance().apply {
         isNamespaceAware = true
         setFeatureIfKnown("http://apache.org/xml/features/disallow-doctype-decl", true)
         setFeatureIfKnown("http://xml.org/sax/features/external-general-entities", false)
         setFeatureIfKnown("http://xml.org/sax/features/external-parameter-entities", false)
-        isXIncludeAware = false
+        ifSupported { isXIncludeAware = false }
     }.newSAXParser()
 
     private fun SAXParserFactory.setFeatureIfKnown(name: String, value: Boolean) {
+        ifSupported { setFeature(name, value) }
+    }
+
+    private inline fun ifSupported(apply: () -> Unit) {
         try {
-            setFeature(name, value)
+            apply()
         } catch (unsupported: Exception) {
-            // This parser does not know the name. The others still applied.
+            // This parser does not know the setting. The others still applied.
         }
     }
 }
+
+/** Thrown the moment a doctype declaration is read, so no entity in it is ever expanded. */
+private class DoctypeException : SAXException()
 
 /** Thrown the moment the root element turns out not to be `<gpx>`, so no more of the file is read. */
 private class NotGpxException : SAXException()
@@ -128,7 +152,24 @@ private class TooLargeException : SAXException()
 private val POINT_ELEMENTS = setOf("trkpt", "rtept")
 private val NAMED_ELEMENTS = setOf("metadata", "trk", "rte")
 
-private class RouteHandler : DefaultHandler() {
+private class RouteHandler : DefaultHandler2() {
+
+    /**
+     * A file that declares a doctype is refused here, unread.
+     *
+     * Nothing legitimate in GPX declares one, and a declaration is where an imported file asks for
+     * work to be done on its behalf: an external entity is a request to read a path on the phone and
+     * hand the contents back inside the document, and an internal one is a request to expand a short
+     * string into an arbitrarily long one — a few hundred bytes of nested declarations become
+     * gigabytes in memory, which [MOST_POINTS_A_ROUTE_MAY_HAVE] cannot bound because the growth is
+     * inside a name, not in the number of points.
+     *
+     * Android expands internal entities and does not honour the factory's doctype feature, so on the
+     * only platform this app ships to, this callback is the whole of the defence.
+     */
+    override fun startDTD(name: String?, publicId: String?, systemId: String?) {
+        throw DoctypeException()
+    }
 
     /** Where in the document we are, by local element name — `[gpx, trk, trkseg, trkpt]`. */
     private val path = ArrayDeque<String>()
