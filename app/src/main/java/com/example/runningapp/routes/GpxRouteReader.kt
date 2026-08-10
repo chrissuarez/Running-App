@@ -258,7 +258,15 @@ private class RouteHandler : DefaultHandler2() {
             }
             // A height that makes no sense is a missing height, not a broken file — the line is
             // still followable, and elevation gain is allowed to be absent.
-            "ele" -> elevation = gathered?.toDoubleOrNull()?.takeIf { it.isFinite() }
+            //
+            // Guarded by where it sits, exactly as the gathering of its text was: an `<extensions>`
+            // block may hold a `<vendor:ele>` of its own, whose text this reader never collected.
+            // Assigning from it unguarded would not merely ignore the extension — it would wipe the
+            // height already read off the point, and a file that states every height would import
+            // as one that states none.
+            "ele" -> if (path.lastOrNull() in POINT_ELEMENTS) {
+                elevation = gathered?.toDoubleOrNull()?.takeIf { it.isFinite() }
+            }
             "name" -> when (path.lastOrNull()) {
                 "metadata" -> metadataName = metadataName ?: gathered
                 "trk" -> trackName = trackName ?: gathered
@@ -268,13 +276,16 @@ private class RouteHandler : DefaultHandler2() {
     }
 
     fun outcome(): GpxReadOutcome {
-        val points = trackPoints.ifEmpty { routePoints }
+        val cameFromTrack = trackPoints.isNotEmpty()
+        val points = if (cameFromTrack) trackPoints else routePoints
         if (points.isEmpty()) return GpxReadOutcome.Refused(GpxRefusal.NO_POINTS)
         return GpxReadOutcome.Read(
-            // The file's own title for the whole thing first, then whichever part the course came
-            // from. A track's name is usually the exporting app's ("Afternoon Run"), so it is the
-            // weaker of the two.
-            name = metadataName ?: trackName ?: routeName,
+            // The file's own title for the whole thing first, then the name of whichever part the
+            // course actually came from — not the other one, which describes a line that was left
+            // behind. A file holding a named but empty `<trk>` beside a populated `<rte>` would
+            // otherwise import the route under the track's name. A track's name is usually the
+            // exporting app's ("Afternoon Run"), so it is the weaker of the two.
+            name = metadataName ?: if (cameFromTrack) trackName else routeName,
             points = points,
         )
     }
