@@ -278,4 +278,28 @@ class GpxRouteReaderTest {
             ),
         )
     }
+
+    /**
+     * An entity that names no file at all is refused just the same (#54).
+     *
+     * The declaration is what is refused, not the fetching: an internal entity asks for a short
+     * string to be expanded into a longer one, and nested declarations expand a few hundred bytes
+     * into gigabytes — which the point cap cannot bound, the growth being inside one name rather
+     * than in the number of points. This is the case a phone found: Android expands internal
+     * entities and ignores the parser feature that was meant to have stopped the doctype.
+     */
+    @Test
+    fun `refuses a file that declares an entity of its own`() {
+        assertEquals(
+            GpxRefusal.UNREADABLE,
+            refusalOf(
+                """
+                <?xml version="1.0"?>
+                <!DOCTYPE gpx [<!ENTITY expand "grown">]>
+                <gpx version="1.1"><trk><name>&expand;</name>
+                <trkseg><trkpt lat="1.0" lon="2.0"/></trkseg></trk></gpx>
+                """.trimIndent()
+            ),
+        )
+    }
 }
