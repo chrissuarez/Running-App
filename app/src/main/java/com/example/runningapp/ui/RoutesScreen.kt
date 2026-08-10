@@ -44,6 +44,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -86,6 +88,14 @@ fun RoutesScreen(
     var renaming by rememberSaveable(stateSaver = RouteIdSaver) { mutableStateOf<Long?>(null) }
     var deleting by rememberSaveable(stateSaver = RouteIdSaver) { mutableStateOf<Long?>(null) }
 
+    // The Import button floats over the list rather than in it, so the list has to be told how tall
+    // it is: without that, scrolling to the end leaves the last route's Rename and Delete sitting
+    // underneath the button, where no tap can reach them. Measured rather than assumed, because the
+    // button grows with the phone's text size and a guessed constant is wrong at 1.3× — which is
+    // where a hidden row matters most (#63).
+    val density = LocalDensity.current
+    var importButtonHeight by remember { mutableStateOf(0.dp) }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -100,6 +110,9 @@ fun RoutesScreen(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             ExtendedFloatingActionButton(
+                modifier = Modifier.onSizeChanged {
+                    importButtonHeight = with(density) { it.height.toDp() }
+                },
                 // Deaf while a file is being read rather than greyed out. An import is usually
                 // instant, so this is a guard against a double tap opening two pickers rather than
                 // a state a runner will sit looking at.
@@ -136,7 +149,15 @@ fun RoutesScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
-                contentPadding = PaddingValues(RunningUiTokens.PagePadding),
+                contentPadding = PaddingValues(
+                    start = RunningUiTokens.PagePadding,
+                    end = RunningUiTokens.PagePadding,
+                    top = RunningUiTokens.PagePadding,
+                    // Room for the floating Import button, and a gap so the last row clears it
+                    // rather than touching it.
+                    bottom = RunningUiTokens.PagePadding + importButtonHeight +
+                        RunningUiTokens.SectionSpacing,
+                ),
                 verticalArrangement = Arrangement.spacedBy(RunningUiTokens.SectionSpacing),
             ) {
                 items(routes, key = { it.id }) { route ->
