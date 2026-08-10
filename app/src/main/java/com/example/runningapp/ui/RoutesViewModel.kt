@@ -59,6 +59,8 @@ class RoutesViewModel(
             val outcome = withContext(io) { importer.import(uri) }
             _message.value = when (outcome) {
                 is RouteImportOutcome.Imported -> routeImportedMessage(outcome.name)
+                is RouteImportOutcome.AlreadySaved -> routeAlreadySavedMessage(outcome.name)
+                is RouteImportOutcome.Remeasured -> routeRemeasuredMessage(outcome.name)
                 is RouteImportOutcome.Refused -> gpxRefusalMessage(outcome.reason)
             }
             _importing.value = false
