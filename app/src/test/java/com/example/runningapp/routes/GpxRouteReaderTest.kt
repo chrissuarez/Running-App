@@ -264,6 +264,45 @@ class GpxRouteReaderTest {
         assertEquals(listOf(RoutePoint(1.0, 2.0, 10.0)), outcome.points)
     }
 
+    /**
+     * An `<extensions>` block may hold an element of any name at all, `ele` among them. Taking that
+     * one would not merely add nothing — it would take the height back off the point, and a file
+     * stating every height would import as one stating none.
+     */
+    @Test
+    fun `keeps the point's own height when an extension carries one too`() {
+        val outcome = readOrFail(
+            """
+            <gpx version="1.1" xmlns:vendor="http://example.com/vendor/v1">
+              <trk><trkseg>
+                <trkpt lat="1.0" lon="2.0">
+                  <ele>10</ele>
+                  <extensions><vendor:ele>999</vendor:ele></extensions>
+                </trkpt>
+              </trkseg></trk>
+            </gpx>
+            """.trimIndent()
+        )
+
+        assertEquals(listOf(RoutePoint(1.0, 2.0, 10.0)), outcome.points)
+    }
+
+    /** The name has to come from the part the course came from, not the part left behind. */
+    @Test
+    fun `takes the route's name when the named track is empty`() {
+        val outcome = readOrFail(
+            """
+            <gpx version="1.1">
+              <trk><name>Afternoon Run</name><trkseg/></trk>
+              <rte><name>Planned loop</name><rtept lat="1.0" lon="2.0"/></rte>
+            </gpx>
+            """.trimIndent()
+        )
+
+        assertEquals("Planned loop", outcome.name)
+        assertEquals(listOf(RoutePoint(1.0, 2.0, null)), outcome.points)
+    }
+
     /** An entity pointed at the phone's own files must never be resolved (#54). */
     @Test
     fun `refuses a file that declares a doctype`() {
