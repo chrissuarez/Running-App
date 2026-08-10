@@ -162,29 +162,38 @@ private const val MOST_CHARACTERS_ONE_ELEMENT_MAY_HAVE = 10_000
  */
 private class TooLargeException : SAXException()
 
-/** The two elements that carry a position, and the three whose `<name>` may title a Route. */
-private val POINT_ELEMENTS = setOf("trkpt", "rtept")
-private val NAMED_ELEMENTS = setOf("metadata", "trk", "rte")
-
-/** Where GPX puts a point: a track's in a segment, a route's directly in the route. */
-private val POINT_PARENTS = mapOf("trkpt" to "trkseg", "rtept" to "rte")
-
 /**
- * Whether an element of this name, sitting under this parent, is one of the file's own points.
+ * Every element this reader acts on, written as the whole way down to it from the root.
  *
- * The one rule this reader applies to every element it acts on, because the alternative has been
- * wrong twice. An `<extensions>` block may hold an element of any name whatsoever — the schema
- * invites vendors to put anything in it — and a namespace-aware parse hands over the bare local
- * name, so `<vendor:trkpt>` and `<vendor:ele>` arrive here indistinguishable from the real thing.
- * Judged by name alone, a vendor's own `trkpt` would either add a point to a course nobody drew or,
- * lacking a position, make an ordinary file unreadable.
+ * The rule is the full path and nothing shorter, because everything shorter has been wrong. An
+ * `<extensions>` block may hold elements of any names in any arrangement — the schema invites
+ * vendors to put whatever they like in one — and a namespace-aware parse hands this reader the bare
+ * local name, so `<vendor:trkpt>` arrives indistinguishable from a real one. Matching on the name
+ * alone let a vendor's point into the course; matching on the name and its parent still let in
+ * `<extensions><vendor:trkseg><vendor:trkpt/>`, which nests the shape one deeper. There is no
+ * depth at which that game ends, so it is not played: an element counts when the whole way to it is
+ * the way GPX puts it, and an element inside an `<extensions>` can never be, whatever it is called.
  *
- * The null check is not a formality. Without it the root `<gpx>`, whose parent is nothing, matches
- * the nothing a name that is not a point's returns from the map — and every file on earth is read
- * as beginning with a point that has no position.
+ * A phantom point is not a cosmetic fault. Inside a real `<trkpt>` it takes over the position being
+ * built and clears it on the way out, so the point that contained it ends with no position — and
+ * this reader refuses a file whose point has no position, on purpose. One vendor element would make
+ * an ordinary export unreadable.
+ *
+ * Matched by path rather than by namespace deliberately. GPX 1.0 and 1.1 declare different
+ * namespaces and plenty of real files declare none at all, so a namespace test would refuse files
+ * that are perfectly readable.
  */
-private fun isPoint(name: String, parent: String?): Boolean =
-    parent != null && POINT_PARENTS[name] == parent
+private val TRACK_POINT_PATH = listOf("gpx", "trk", "trkseg", "trkpt")
+private val ROUTE_POINT_PATH = listOf("gpx", "rte", "rtept")
+private val ELEVATION_PATHS = setOf(TRACK_POINT_PATH + "ele", ROUTE_POINT_PATH + "ele")
+private val NAME_PATHS = setOf(
+    listOf("gpx", "metadata", "name"),
+    listOf("gpx", "trk", "name"),
+    listOf("gpx", "rte", "name"),
+)
+
+/** Whether the element this path ends at is one of the file's own points. */
+private fun List<String>.isAPoint(): Boolean = this == TRACK_POINT_PATH || this == ROUTE_POINT_PATH
 
 private class RouteHandler : DefaultHandler2() {
 
@@ -226,19 +235,16 @@ private class RouteHandler : DefaultHandler2() {
     override fun startElement(uri: String?, localName: String?, qName: String?, attributes: Attributes) {
         val name = elementName(localName, qName)
         if (path.isEmpty() && name != "gpx") throw NotGpxException()
-        val parent = path.lastOrNull()
         path.addLast(name)
 
         when {
-            isPoint(name, parent) -> {
+            path.isAPoint() -> {
                 latitude = attributes.coordinate("lat", limit = 90.0)
                 longitude = attributes.coordinate("lon", limit = 180.0)
                 elevation = null
             }
-            // Only the text this reader has a use for is gathered, and only where GPX puts it. An
-            // `<extensions>` block can hold an element called anything at all, including `name`.
-            name == "ele" && parent in POINT_ELEMENTS -> text = StringBuilder()
-            name == "name" && parent in NAMED_ELEMENTS -> text = StringBuilder()
+            // Only the text this reader has a use for is gathered, and only where GPX puts it.
+            path in ELEVATION_PATHS || path in NAME_PATHS -> text = StringBuilder()
         }
     }
 
@@ -256,12 +262,16 @@ private class RouteHandler : DefaultHandler2() {
         val name = elementName(localName, qName)
         val gathered = text?.toString()?.trim()?.takeIf { it.isNotEmpty() }
         text = null
+
+        // Asked before the element is taken off, so what is judged is the whole way down to the
+        // element being closed — the same path its opening was judged by.
+        val isPoint = path.isAPoint()
+        val isElevation = path in ELEVATION_PATHS
+        val titles = if (path in NAME_PATHS) path.getOrNull(1) else null
         path.removeLastOrNull()
 
-        val parent = path.lastOrNull()
-
         when {
-            isPoint(name, parent) -> {
+            isPoint -> {
                 // A point that does not say where it is leaves the whole file unreadable rather
                 // than being dropped: a course with a hole in it is a different course, and quietly
                 // importing one would have the runner following a line the file never drew.
@@ -280,16 +290,8 @@ private class RouteHandler : DefaultHandler2() {
             }
             // A height that makes no sense is a missing height, not a broken file — the line is
             // still followable, and elevation gain is allowed to be absent.
-            //
-            // Guarded by where it sits, exactly as the gathering of its text was: an `<extensions>`
-            // block may hold a `<vendor:ele>` of its own, whose text this reader never collected.
-            // Assigning from it unguarded would not merely ignore the extension — it would wipe the
-            // height already read off the point, and a file that states every height would import
-            // as one that states none.
-            name == "ele" && parent in POINT_ELEMENTS -> {
-                elevation = gathered?.toDoubleOrNull()?.takeIf { it.isFinite() }
-            }
-            name == "name" -> when (parent) {
+            isElevation -> elevation = gathered?.toDoubleOrNull()?.takeIf { it.isFinite() }
+            titles != null -> when (titles) {
                 "metadata" -> metadataName = metadataName ?: gathered
                 "trk" -> trackName = trackName ?: gathered
                 "rte" -> routeName = routeName ?: gathered
