@@ -57,12 +57,21 @@ interface GoalDao {
     @Query("SELECT * FROM goals ORDER BY createdAtMillis ASC, id ASC")
     fun getAllGoalsFlow(): Flow<List<GoalRow>>
 
+    /** The goal already standing for this period and metric, if there is one. */
+    @Query("SELECT * FROM goals WHERE period = :period AND metric = :metric LIMIT 1")
+    suspend fun goalFor(period: GoalPeriod, metric: GoalMetric): GoalRow?
+
     /**
      * Sets a goal, or rewrites the one already standing for that period and metric.
      *
      * Replacing rather than a separate update, because they are the same act to the runner: a weekly
      * distance goal is one thing, and stating it again is editing it. The unique index is what makes
      * the two indistinguishable here.
+     *
+     * A replace is a delete and a fresh insert, so an edit must carry the standing goal's own id and
+     * the day it was first set — see [com.example.runningapp.ui.ProgressViewModel.goalSet]. Left to
+     * default they would both be new, and the goal would jump to the end of the order this table
+     * promises: a runner who corrected 40 km to 45 km would watch it move to the bottom of the card.
      */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun setGoal(goal: GoalRow): Long
