@@ -840,6 +840,7 @@ class MainActivity : ComponentActivity() {
                                     // The same door the settings screen's fields go through, so a
                                     // Max HR stated here queues behind anything stated there (#172).
                                     appContainer::stateHeartRates,
+                                    appContainer.database.goalDao(),
                                 )
                             )
                             val progressState by progressViewModel.state.collectAsState()
@@ -849,6 +850,10 @@ class MainActivity : ComponentActivity() {
                                 onMeasureChosen = { progressViewModel.measureChosen(it) },
                                 onMaxHrConfirmed = { progressViewModel.maxHrConfirmed(it) },
                                 onMaxHrCardDismissed = { progressViewModel.maxHrCardDismissed() },
+                                onGoalSet = { period, metric, target ->
+                                    progressViewModel.goalSet(period, metric, target)
+                                },
+                                onGoalRemoved = { goal -> progressViewModel.goalRemoved(goal) },
                                 onBack = { navigateTo(Routes.MAIN) }
                             )
                         }

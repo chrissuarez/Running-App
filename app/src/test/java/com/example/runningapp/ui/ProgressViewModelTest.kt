@@ -2,11 +2,16 @@ package com.example.runningapp.ui
 
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.UserSettings
+import com.example.runningapp.data.GoalDao
+import com.example.runningapp.data.GoalRow
 import com.example.runningapp.data.RunVolumeProjection
 import com.example.runningapp.data.SampleDao
 import com.example.runningapp.data.ScoredRunProjection
 import com.example.runningapp.data.SessionDao
 import com.example.runningapp.data.SessionRepository
+import com.example.runningapp.training.Goal
+import com.example.runningapp.training.GoalMetric
+import com.example.runningapp.training.GoalPeriod
 import com.example.runningapp.training.ProgressRange
 import com.example.runningapp.training.WeeklyMeasure
 import java.time.LocalDate
@@ -49,6 +54,10 @@ class ProgressViewModelTest {
     private val sessionDao: SessionDao = mock()
     private val sampleDao: SampleDao = mock()
     private val settingsRepository: SettingsRepository = mock()
+    private val goalDao: GoalDao = mock()
+
+    /** The goals the runner has set, as the table would hand them back. */
+    private val goalRows = MutableStateFlow<List<GoalRow>>(emptyList())
 
     /** A runner on the untouched placeholder maximum with a resting heart rate stated — Chris. */
     private val settings = MutableStateFlow(UserSettings(restingHr = 60))
@@ -61,6 +70,7 @@ class ProgressViewModelTest {
         Dispatchers.setMain(dispatcher)
         whenever(sessionDao.getScoredRunsFlow()).thenReturn(scoredRuns)
         whenever(sessionDao.getRunVolumesFlow()).thenReturn(runVolumes)
+        whenever(goalDao.getAllGoalsFlow()).thenReturn(goalRows)
         whenever(settingsRepository.userSettingsFlow).thenReturn(settings)
     }
 
@@ -353,12 +363,78 @@ class ProgressViewModelTest {
         assertNull(viewModel.state.value.maxHrCard)
     }
 
+    @Test
+    fun `goals are measured against the period the runner is in`() = runTest(dispatcher) {
+        // Today is Wednesday 5 August 2026, so this week began on the Monday.
+        val monday = LocalDate.of(2026, 8, 3)
+        runVolumes.value = listOf(
+            volumeOn(monday.minusDays(1), km = 12.0),
+            volumeOn(monday, km = 10.0),
+            volumeOn(today, km = 4.0),
+        )
+        goalRows.value = listOf(
+            GoalRow(id = 7, period = GoalPeriod.WEEK, metric = GoalMetric.DISTANCE, target = 40.0, createdAtMillis = 1),
+        )
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        val progress = viewModel.state.value.goals.single()
+        assertEquals(7L, progress.goal.id)
+        assertEquals(monday, progress.periodStart)
+        assertEquals(14.0, progress.done, 0.0001)
+    }
+
+    @Test
+    fun `a runner with no goals is handed none`() = runTest(dispatcher) {
+        runVolumes.value = listOf(volumeOn(today, km = 10.0))
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        assertEquals(emptyList<Any>(), viewModel.state.value.goals)
+    }
+
+    @Test
+    fun `setting a goal writes it, stamped with when it was set`() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.goalSet(GoalPeriod.MONTH, GoalMetric.TIME, 12.0)
+        advanceUntilIdle()
+
+        verify(goalDao).setGoal(
+            GoalRow(
+                period = GoalPeriod.MONTH,
+                metric = GoalMetric.TIME,
+                target = 12.0,
+                createdAtMillis = setAt,
+            )
+        )
+    }
+
+    @Test
+    fun `removing a goal removes that goal and nothing else`() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.goalRemoved(
+            Goal(id = 7, period = GoalPeriod.WEEK, metric = GoalMetric.DISTANCE, target = 40.0)
+        )
+        advanceUntilIdle()
+
+        verify(goalDao).deleteGoal(7L)
+    }
+
+    /** When a goal set in these tests is stamped as having been set. */
+    private val setAt = 1_700_000_000_000L
+
     private fun viewModel() = ProgressViewModel(
         SessionRepository(sessionDao = sessionDao, sampleDao = sampleDao),
         settingsRepository = settingsRepository,
         stateHeartRates = { maxHr, restingHr -> stated += maxHr to restingHr },
+        goalDao = goalDao,
         zone = zone,
         today = { today },
+        now = { setAt },
         curveDispatcher = dispatcher,
     )
 

@@ -24,7 +24,10 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -34,6 +37,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.training.FormVerdict
+import com.example.runningapp.training.Goal
+import com.example.runningapp.training.GoalMetric
+import com.example.runningapp.training.GoalPeriod
+import com.example.runningapp.training.GoalProgress
 import com.example.runningapp.training.ProgressDay
 import com.example.runningapp.training.ProgressRange
 import com.example.runningapp.training.TrainingWeek
@@ -99,8 +106,15 @@ fun ProgressScreen(
     onMaxHrConfirmed: (Int) -> Unit = {},
     /** The card closed without stating anything. */
     onMaxHrCardDismissed: () -> Unit = {},
+    /** A goal set or changed from the manage view (#82). */
+    onGoalSet: (GoalPeriod, GoalMetric, Double) -> Unit = { _, _, _ -> },
+    /** A goal removed from the manage view. */
+    onGoalRemoved: (Goal) -> Unit = {},
     onBack: () -> Unit,
 ) {
+    // Whether the manage view is open. Screen state and not the view model's: it is a sheet the
+    // runner opened, and nothing outside this screen has any business knowing about it.
+    var managingGoals by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -140,6 +154,11 @@ fun ProgressScreen(
                 )
             }
 
+            // Above the numbers and outside the empty/filled branch below: goals are what the runner
+            // came to check, and they are set before there is any history to measure them against —
+            // a runner with no Runs at all still has a target to state (#82).
+            GoalsCard(goals = state.goals, onManage = { managingGoals = true })
+
             val today = state.today
             if (today == null && state.weeks.isEmpty()) {
                 Text(
@@ -172,6 +191,15 @@ fun ProgressScreen(
                     )
                 }
             }
+        }
+
+        if (managingGoals) {
+            GoalsSheet(
+                goals = state.goals,
+                onSet = onGoalSet,
+                onRemove = onGoalRemoved,
+                onDismiss = { managingGoals = false },
+            )
         }
     }
 }
@@ -564,6 +592,20 @@ private fun ProgressScreenPreview() {
                 curve = days,
                 measure = WeeklyMeasure.DISTANCE,
                 weeks = weeks,
+                // One goal part-filled and one already met, so the preview shows both states of the
+                // bar — including the tick, which is the whole of what meeting a goal does (#82).
+                goals = listOf(
+                    GoalProgress(
+                        goal = Goal(1, GoalPeriod.WEEK, GoalMetric.DISTANCE, 40.0),
+                        periodStart = start.plusWeeks(12),
+                        done = 24.0,
+                    ),
+                    GoalProgress(
+                        goal = Goal(2, GoalPeriod.YEAR, GoalMetric.COUNT, 100.0),
+                        periodStart = LocalDate.of(2026, 1, 1),
+                        done = 118.0,
+                    ),
+                ),
             ),
             onRangeChosen = {},
             onMeasureChosen = {},
