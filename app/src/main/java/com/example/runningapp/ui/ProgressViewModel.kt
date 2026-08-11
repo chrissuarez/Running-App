@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.runningapp.SettingsRepository
+import com.example.runningapp.suggestedMaxHr
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.training.ProgressDay
 import com.example.runningapp.training.ProgressRange
@@ -21,7 +22,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -73,13 +73,13 @@ class ProgressViewModel(
      * heart rate, and every one of them goes through the single door that keeps the number and the
      * history banded against it in step.
      */
-    private val settingsRepository: SettingsRepository? = null,
+    private val settingsRepository: SettingsRepository,
     /**
      * States the runner's Max HR, in the order it was stated in — `AppContainer.stateHeartRates`.
      * Does not suspend, and deliberately: the first statement re-works the whole of history behind
      * it, and the card is answered and gone before that finishes.
      */
-    private val stateHeartRates: (Int?, Int?) -> Unit = { _, _ -> },
+    private val stateHeartRates: (Int?, Int?) -> Unit,
     /** The zone the runner's calendar days are in — which day a Run belongs to depends on it. */
     private val zone: ZoneId = ZoneId.systemDefault(),
     /**
@@ -165,11 +165,26 @@ class ProgressViewModel(
      * it away without answering. Read as a stream rather than once, so the card leaves the screen
      * as soon as the answer lands rather than at the next visit.
      */
+    /**
+     * Whether the runner has answered the card on this visit and the statement is still on its way
+     * through the queue — which is not the same as it having arrived (#65).
+     *
+     * The card has to leave the screen the moment it is answered, or a second answer can be given to
+     * a question already answered while history re-bands behind the first. But it must not be put
+     * away *for good* on the strength of an answer that has not landed: a statement can be dropped,
+     * and a card retired against a dropped one leaves the runner on the placeholder 190 with no way
+     * left to be asked. So this hides it here and now, and nothing else — the next visit reads the
+     * stored flags and asks again if the answer never made it.
+     */
+    private val answeringNow = MutableStateFlow(false)
+
     private val maxHrCard: Flow<MaxHrCardState?> = combine(
-        settingsRepository?.userSettingsFlow ?: flowOf(null),
-        recordedPeak
-    ) { settings, peak ->
-        if (settings == null || peak == null) null
+        settingsRepository.userSettingsFlow,
+        recordedPeak,
+        answeringNow
+    ) { settings, peak, answering ->
+        if (answering) null
+        else if (peak == null) null
         else if (settings.maxHrEverSet || settings.maxHrCardDismissed) null
         else MaxHrCardState(
             currentMaxHr = settings.maxHr,
@@ -216,23 +231,23 @@ class ProgressViewModel(
      * The runner has stated their Max HR from the card — either the number they typed, or the one
      * their zones are already on, which is a statement too (#103).
      *
-     * Both halves happen: the number goes to the queue that keeps statements ordered and re-works
-     * history behind the first one, and the card is put away. Put away here rather than left to the
-     * flag the statement sets, because that flag lands only after the whole of history has been
-     * re-banded — seconds later — and a card still on screen through it invites a second answer to
-     * a question already answered.
+     * The number goes to the queue that keeps statements ordered and re-works history behind the
+     * first one, and the card leaves the screen at once — but only for this visit. What retires it
+     * for good is `maxHrEverSet`, which the statement itself sets, so an answer that never lands
+     * leaves the question askable rather than the runner stranded on a maximum nobody chose.
      */
     fun maxHrConfirmed(maxHr: Int) {
+        answeringNow.value = true
         stateHeartRates(maxHr, null)
-        putMaxHrCardAway()
     }
 
-    /** The card closed with nothing stated. Still forever: being asked once is the whole design. */
-    fun maxHrCardDismissed() = putMaxHrCardAway()
-
-    private fun putMaxHrCardAway() {
-        val settings = settingsRepository ?: return
-        viewModelScope.launch { settings.setMaxHrCardDismissed() }
+    /**
+     * The card closed with nothing stated. Forever, and recorded as such: being asked once is the
+     * whole design, and a runner who declined to answer must not be asked again for having declined.
+     */
+    fun maxHrCardDismissed() {
+        answeringNow.value = true
+        viewModelScope.launch { settingsRepository.setMaxHrCardDismissed() }
     }
 }
 

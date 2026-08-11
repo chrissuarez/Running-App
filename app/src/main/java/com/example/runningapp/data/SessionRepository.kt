@@ -71,10 +71,9 @@ private const val MAX_SESSION_IDS_PER_QUERY = 500
  * How many banked seconds a heart rate has to have been held at to count as one this runner has
  * reached (#65, #103).
  *
- * Three, which is the smallest number that is more than a moment: two consecutive smoothed samples
- * can still be one artefact seen twice through the smoothing window, and anything much longer
- * starts discarding the genuine peak of a hard finish, which is exactly the reading the card wants.
- * The point of the guard is to refuse a spike, not to find a plateau.
+ * Three, which is the smallest number that is more than a moment: a strap can misreport twice, and
+ * anything much longer starts discarding the genuine peak of a hard finish, which is exactly the
+ * reading the card wants. The point of the guard is to refuse a spike, not to find a plateau.
  */
 private const val HIGHEST_HR_HELD_FOR_SECONDS = 3
 
@@ -601,8 +600,9 @@ class SessionRepository(
      *
      * What the confirmation card offers instead of a population formula: the app has kept every
      * beat it ever heard — samples are never pruned — so the runner's own evidence is there to be
-     * read, and it beats `220 − age` for the same reason a measurement beats an estimate. On this
-     * phone it is 181 against the untouched default of 190, which is the whole argument.
+     * read, and it beats `220 − age` for the same reason a measurement beats an estimate. On the
+     * phone this was built on it is 167 against the untouched default of 190, which is the whole
+     * argument.
      *
      * Spike-guarded in [SampleDao.getHighestSustainedBpm], not here, because the guard is part of
      * what the number *means*: an artefact is not a heart rate, and a maximum read off one would
