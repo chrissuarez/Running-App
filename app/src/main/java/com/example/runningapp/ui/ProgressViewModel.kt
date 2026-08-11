@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -147,11 +148,20 @@ class ProgressViewModel(
      * would be asked their age with 181 BPM of their own evidence sitting unread. So the card waits
      * for the read rather than guessing at it — a few milliseconds, once, on a card that is asked
      * once in the life of an install.
+     *
+     * Stays null for good on a phone whose card is already retired, because there the read is not
+     * worth making — see the gate below.
      */
     private val recordedPeak = MutableStateFlow<HighestRecordedHr?>(null)
 
     init {
         viewModelScope.launch {
+            // Asked only where an answer could still be offered. The card is retired for good once
+            // either flag is set, and the peak is a sort over the whole of `hr_samples` — read
+            // unconditionally it would be a full-history scan on every visit to this screen, for a
+            // card that can never be drawn again. Left unread, this stays null and so does the card.
+            val settings = settingsRepository.userSettingsFlow.first()
+            if (settings.maxHrEverSet || settings.maxHrCardDismissed) return@launch
             recordedPeak.value = HighestRecordedHr(sessionRepository.highestRecordedHr())
         }
     }

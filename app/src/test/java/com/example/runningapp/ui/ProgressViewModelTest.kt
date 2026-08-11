@@ -262,6 +262,24 @@ class ProgressViewModelTest {
     }
 
     @Test
+    fun `a retired card costs no history read at all`() = runTest(dispatcher) {
+        // The peak is a sort over the whole of hr_samples. Once the question is answered or put
+        // away it can never be asked again, so paying for that read on every visit to this screen
+        // buys a card that will not be drawn.
+        listOf(
+            UserSettings(maxHr = 181, maxHrEverSet = true),
+            UserSettings(maxHrCardDismissed = true),
+        ).forEach { retired ->
+            settings.value = retired
+
+            viewModel()
+            advanceUntilIdle()
+        }
+
+        verify(sampleDao, never()).getHighestSustainedBpm(any())
+    }
+
+    @Test
     fun `confirming states the number and takes the card off the screen`() = runTest(dispatcher) {
         whenever(sampleDao.getHighestSustainedBpm(any())).thenReturn(181)
         val viewModel = viewModel()
