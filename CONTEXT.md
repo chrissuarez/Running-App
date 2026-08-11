@@ -170,6 +170,18 @@ fatigued, and the band between is neutral.
 _Avoid_: TSB, training stress balance, freshness as a name for it — "fresh" is
 one of its three verdicts, and the number itself is Form
 
+**Goal**:
+A standing target the runner sets themselves: this much distance, time or Runs
+in a week, a month or a year. One per period-and-metric pair, and recurring —
+there is no end date and no copy per period, so a week ends and the same Goal
+measures the next one. Where they stand against it is worked out from their Runs
+on read, so editing a Goal re-measures the period they are in as well as the ones
+to come. Every finished Run counts towards one, walk and treadmill alike; a Run
+whose distance nobody measured adds its time and its one to the count and nothing
+to the distance.
+_Avoid_: target as a name for it (a target is what a Goal holds), challenge,
+streak, objective
+
 **Best Effort**:
 The fastest continuous stretch of a Run covering one of the record distances —
 1 km, a mile, 5 km, 10 km, a half marathon — measured on the clock, so a walk
