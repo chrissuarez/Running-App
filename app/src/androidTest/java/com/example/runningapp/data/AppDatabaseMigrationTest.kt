@@ -7,6 +7,8 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.example.runningapp.HrProfile
 import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.training.GoalMetric
+import com.example.runningapp.training.GoalPeriod
 import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -572,6 +574,64 @@ class AppDatabaseMigrationTest {
         assertEquals(5.1, run.distanceKm, 0.0001)
         assertEquals(1, samples.size)
         assertEquals(140, samples.single().rawBpm)
+    }
+
+    @Test
+    fun migrate26To27_addsAnEmptyGoalsTable_withEveryRunLeftAsItWas() {
+        val rawDb = openLegacyDatabase()
+        createTrackPointsTable(rawDb)
+        insertLegacySession(rawDb, id = 1)
+        rawDb.execSQL("UPDATE sessions SET endTime = 9000, durationSeconds = 2259, distanceKm = 5.1 WHERE id = 1")
+        rawDb.version = 12
+        rawDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(*appDatabaseMigrations { HrProfile(190) })
+            .build()
+        val goals = runBlockingGet { migratedDb.goalDao().getAllGoalsFlow().first() }
+        val run = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
+
+        // Empty, and deliberately: a goal is something the runner states, and reading one off their
+        // recent weeks would be the app setting a target on their behalf (#82).
+        assertEquals(emptyList<GoalRow>(), goals)
+
+        runBlockingGet {
+            migratedDb.goalDao().setGoal(
+                GoalRow(
+                    period = GoalPeriod.WEEK,
+                    metric = GoalMetric.DISTANCE,
+                    target = 40.0,
+                    createdAtMillis = 1_700_000_000_000L,
+                )
+            )
+        }
+        // Stating the same period and metric again is an edit and never a second goal — the unique
+        // index is what makes the two indistinguishable.
+        runBlockingGet {
+            migratedDb.goalDao().setGoal(
+                GoalRow(
+                    period = GoalPeriod.WEEK,
+                    metric = GoalMetric.DISTANCE,
+                    target = 50.0,
+                    createdAtMillis = 1_700_000_001_000L,
+                )
+            )
+        }
+        val stored = runBlockingGet { migratedDb.goalDao().getAllGoalsFlow().first() }.single()
+        assertEquals(50.0, stored.target, 0.0001)
+        assertEquals(GoalPeriod.WEEK, stored.period)
+
+        // And emptying it leaves the Run where it was — no key into `sessions` in either direction.
+        runBlockingGet { migratedDb.goalDao().deleteGoal(stored.id) }
+        assertEquals(
+            emptyList<GoalRow>(),
+            runBlockingGet { migratedDb.goalDao().getAllGoalsFlow().first() },
+        )
+        migratedDb.close()
+
+        assertEquals(2259L, run.durationSeconds)
+        assertEquals(9000L, run.endTime)
+        assertEquals(5.1, run.distanceKm, 0.0001)
     }
 
     @Test

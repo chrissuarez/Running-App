@@ -804,9 +804,10 @@ interface RunWalkIntervalStatDao {
         RunWalkIntervalStat::class,
         TrackPoint::class,
         Achievement::class,
-        Route::class
+        Route::class,
+        GoalRow::class
     ],
-    version = 26,
+    version = 27,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -816,6 +817,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun trackPointDao(): TrackPointDao
     abstract fun achievementDao(): AchievementDao
     abstract fun routeDao(): RouteDao
+    abstract fun goalDao(): GoalDao
 
     companion object {
         @Volatile
@@ -895,7 +897,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_22_23,
     MIGRATION_23_24,
     MIGRATION_24_25,
-    MIGRATION_25_26
+    MIGRATION_25_26,
+    MIGRATION_26_27
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1617,6 +1620,38 @@ val MIGRATION_25_26 = object : Migration(25, 26) {
                 "`polyline` TEXT NOT NULL, " +
                 "`createdAtMillis` INTEGER NOT NULL, " +
                 "`source` TEXT NOT NULL)"
+        )
+    }
+}
+
+/**
+ * Room for the runner's Goals (#82): the `goals` table, and nothing else touched.
+ *
+ * A new table with no key into `sessions` either way, for the same reason the Route library has
+ * none: setting or clearing a goal must never cost a Run, and deleting a Run must never quietly take
+ * a goal with it. Every existing row of every existing table is left where it was.
+ *
+ * There is nothing to backfill. A goal is something the runner states, and no earlier version of the
+ * app asked; a phone upgrading to v27 has no goals, which is the truth about it. Inventing one from
+ * their recent weeks would be the app setting a target on the runner's behalf.
+ *
+ * The unique index over (period, metric) is the rule "one goal per period and metric" written where
+ * it cannot be got round — the same rule the insert relies on to make stating a goal twice an edit
+ * rather than a second goal.
+ */
+val MIGRATION_26_27 = object : Migration(26, 27) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            "CREATE TABLE IF NOT EXISTS `goals` (" +
+                "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`period` TEXT NOT NULL, " +
+                "`metric` TEXT NOT NULL, " +
+                "`target` REAL NOT NULL, " +
+                "`createdAtMillis` INTEGER NOT NULL)"
+        )
+        database.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_goals_period_metric` ON `goals` " +
+                "(`period`, `metric`)"
         )
     }
 }
