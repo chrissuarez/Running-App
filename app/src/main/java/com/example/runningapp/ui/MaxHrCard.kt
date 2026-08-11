@@ -37,6 +37,7 @@ import com.example.runningapp.RESTING_HR_UNSTATED
 import com.example.runningapp.maxHrForAge
 import com.example.runningapp.parseAge
 import com.example.runningapp.parseMaxHr
+import com.example.runningapp.suggestedMaxHrForAge
 import com.example.runningapp.ui.theme.RunningAppTheme
 import com.example.runningapp.ui.theme.RunningUiTokens
 
@@ -138,7 +139,10 @@ fun MaxHrConfirmationCard(
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 val statedAge = parseAge(age)
-                val fromAge = statedAge?.let(::maxHrForAge)
+                // Through the same rule the field beneath it applies, so the age branch cannot
+                // offer what Save would then refuse: `220 − age` runs out of reserve at the old
+                // end of the range once a resting heart rate is stated.
+                val fromAge = statedAge?.let { suggestedMaxHrForAge(it, state.restingHr) }
                 OutlinedTextField(
                     value = age,
                     onValueChange = { age = it },
@@ -146,8 +150,17 @@ fun MaxHrConfirmationCard(
                     singleLine = true,
                     supportingText = {
                         Text(
-                            if (fromAge != null) "Age $statedAge suggests $fromAge BPM"
-                            else "Between $MIN_STATABLE_AGE and $MAX_STATABLE_AGE"
+                            when {
+                                fromAge != null -> "Age $statedAge suggests $fromAge BPM"
+                                // Said rather than left as a missing button: an age that gives
+                                // nothing usable is a dead end otherwise, with no way to tell it
+                                // from a number that has not been typed yet.
+                                statedAge != null ->
+                                    "Age $statedAge gives ${maxHrForAge(statedAge)} BPM, which " +
+                                        "leaves no room above your resting ${state.restingHr}. " +
+                                        "Type your own number below."
+                                else -> "Between $MIN_STATABLE_AGE and $MAX_STATABLE_AGE"
+                            }
                         )
                     },
                     keyboardOptions = KeyboardOptions(
