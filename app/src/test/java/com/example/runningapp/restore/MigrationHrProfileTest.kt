@@ -19,6 +19,7 @@ class MigrationHrProfileTest {
     private val archived = ArchivedSettings(
         maxHr = 200,
         maxHrEverSet = true,
+        maxHrCardDismissed = false,
         historyMaxHr = 160,
         restingHr = 40,
         targetZone = 2,

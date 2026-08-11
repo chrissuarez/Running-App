@@ -62,6 +62,17 @@ const val ARCHIVE_FORMAT_VERSION = 1
 data class ArchivedSettings(
     val maxHr: Int,
     val maxHrEverSet: Boolean,
+    /**
+     * Whether the one-time Max HR card has been put away (#65).
+     *
+     * Carried because on a runner who closed it without answering this flag is the *only* record
+     * that they were ever asked — [maxHrEverSet] is false for them by definition. Left out, a
+     * restore would ask a second time a question the app promised to ask once.
+     *
+     * An archive written before this field existed reads back false, which is the truth about it:
+     * the card did not exist to be put away.
+     */
+    val maxHrCardDismissed: Boolean,
     val historyMaxHr: Int,
     val restingHr: Int,
     val targetZone: Int,
@@ -91,6 +102,7 @@ val ArchivedSettings.historyHrProfile: HrProfile get() = HrProfile(historyMaxHr,
 fun UserSettings.toArchived(): ArchivedSettings = ArchivedSettings(
     maxHr = maxHr,
     maxHrEverSet = maxHrEverSet,
+    maxHrCardDismissed = maxHrCardDismissed,
     historyMaxHr = historyMaxHr,
     restingHr = restingHr,
     targetZone = targetZone,

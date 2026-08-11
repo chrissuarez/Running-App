@@ -702,6 +702,9 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { preferences ->
             preferences[PreferencesKeys.MAX_HR] = settings.maxHr
             preferences[PreferencesKeys.MAX_HR_EVER_SET] = settings.maxHrEverSet
+            // Restored so the one-shot card stays asked-once across a lost phone: for a runner who
+            // closed it without stating anything, this is the only record they were ever asked.
+            preferences[PreferencesKeys.MAX_HR_CARD_DISMISSED] = settings.maxHrCardDismissed
             preferences[PreferencesKeys.HISTORY_MAX_HR] = settings.historyMaxHr
             preferences[PreferencesKeys.RESTING_HR] = settings.restingHr
             preferences[PreferencesKeys.TARGET_ZONE] = settings.targetZone

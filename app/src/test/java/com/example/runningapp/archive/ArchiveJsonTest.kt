@@ -13,6 +13,7 @@ class ArchiveJsonTest {
     private val settings = ArchivedSettings(
         maxHr = 181,
         maxHrEverSet = true,
+        maxHrCardDismissed = true,
         historyMaxHr = 181,
         restingHr = 60,
         targetZone = 2,
@@ -91,6 +92,19 @@ class ArchiveJsonTest {
         assertEquals(listOf(stat), restored?.intervalStats)
         assertEquals(19, restored?.databaseVersion)
         assertEquals(ARCHIVE_FORMAT_VERSION, restored?.formatVersion)
+    }
+
+    @Test
+    fun `an archive written before the card existed says it was never put away`() {
+        // The one-time card is newer than the archive format. A document without the field is a
+        // phone that was never asked, which is exactly what false means here — and the only
+        // reading that leaves a restored runner askable.
+        val withoutTheField = ArchiveJson.write(document())
+            .lines()
+            .filterNot { it.contains("maxHrCardDismissed") }
+            .joinToString("\n")
+
+        assertEquals(false, ArchiveJson.read(withoutTheField)?.settings?.maxHrCardDismissed)
     }
 
     @Test
