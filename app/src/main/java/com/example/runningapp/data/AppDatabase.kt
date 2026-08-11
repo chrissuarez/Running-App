@@ -719,6 +719,25 @@ interface SampleDao {
     // be an order of magnitude more memory for a number that only needs the BPM.
     @Query("SELECT rawBpm FROM hr_samples WHERE sessionId = :sessionId")
     suspend fun getRawBpmsForSession(sessionId: Long): List<Int>
+
+    /**
+     * The highest heart rate held for [heldForSeconds] recorded seconds across the whole of history,
+     * or null where the phone has not recorded that many beats at all (#65).
+     *
+     * Read off `smoothedBpm` and never `rawBpm`: what this answers is "what is this runner's
+     * maximum", and a strap's raw feed carries occasional single readings tens of BPM above
+     * anything the heart did. Ordering by the smoothed value and then stepping past the first
+     * `heldForSeconds - 1` of them is the second guard — the value returned is one the runner
+     * reached and *stayed at* for that many banked seconds, so a smoothed bump that lasted one
+     * second cannot be offered as somebody's max.
+     *
+     * Samples are banked once a second, so the offset counts seconds. Ordered by value rather than
+     * grouped by run, which allows those seconds to come from different Runs — a runner who touched
+     * 181 in three separate sessions has been to 181 three times, which is if anything better
+     * evidence than three consecutive seconds of it.
+     */
+    @Query("SELECT smoothedBpm FROM hr_samples ORDER BY smoothedBpm DESC LIMIT 1 OFFSET (:heldForSeconds - 1)")
+    suspend fun getHighestSustainedBpm(heldForSeconds: Int): Int?
 }
 
 @Dao

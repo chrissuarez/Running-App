@@ -3,6 +3,7 @@ package com.example.runningapp.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.runningapp.SettingsRepository
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.training.ProgressDay
 import com.example.runningapp.training.ProgressRange
@@ -15,13 +16,16 @@ import java.time.LocalDate
 import java.time.ZoneId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
 
 /**
  * The Progress screen's picture of training (#63, #64): today's three numbers, the stretch of curve
@@ -38,6 +42,13 @@ data class ProgressUiState(
     val curve: List<ProgressDay> = emptyList(),
     val measure: WeeklyMeasure = WeeklyMeasure.DISTANCE,
     val weeks: List<TrainingWeek> = emptyList(),
+    /**
+     * The one-time Max HR confirmation (#65), or null whenever it is not the runner's to answer:
+     * they have answered it, they have put it away, or their own recorded evidence has not been
+     * read back yet. Null is much the commonest state — this is asked once in the life of an
+     * install.
+     */
+    val maxHrCard: MaxHrCardState? = null,
 )
 
 /**
@@ -48,8 +59,27 @@ data class ProgressUiState(
  */
 private data class VolumeToDate(val through: LocalDate?, val weeks: List<TrainingWeek>)
 
+/**
+ * The answer to "what is the highest heart rate this phone has recorded", once it has been asked —
+ * where [bpm] null is the answer "none", and no wrapper at all is the question still outstanding.
+ */
+private data class HighestRecordedHr(val bpm: Int?)
+
 class ProgressViewModel(
     sessionRepository: SessionRepository,
+    /**
+     * Where the confirmation card's answer is remembered — the dismissal only. The number itself
+     * goes through [stateHeartRates], never written here: this screen is one more surface stating a
+     * heart rate, and every one of them goes through the single door that keeps the number and the
+     * history banded against it in step.
+     */
+    private val settingsRepository: SettingsRepository? = null,
+    /**
+     * States the runner's Max HR, in the order it was stated in — `AppContainer.stateHeartRates`.
+     * Does not suspend, and deliberately: the first statement re-works the whole of history behind
+     * it, and the card is answered and gone before that finishes.
+     */
+    private val stateHeartRates: (Int?, Int?) -> Unit = { _, _ -> },
     /** The zone the runner's calendar days are in — which day a Run belongs to depends on it. */
     private val zone: ZoneId = ZoneId.systemDefault(),
     /**
@@ -108,6 +138,47 @@ class ProgressViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, VolumeToDate(through = null, weeks = emptyList()))
 
     /**
+     * The runner's own highest recorded heart rate, read once when the screen opens — and null
+     * until that read comes back, which is a different thing from a phone with nothing recorded
+     * (that is `HighestRecordedHr(null)`).
+     *
+     * The difference is the whole reason for the wrapper. Read as "no history", the moment before
+     * the answer arrives would draw the age-fallback card, and a runner who tapped in that moment
+     * would be asked their age with 181 BPM of their own evidence sitting unread. So the card waits
+     * for the read rather than guessing at it — a few milliseconds, once, on a card that is asked
+     * once in the life of an install.
+     */
+    private val recordedPeak = MutableStateFlow<HighestRecordedHr?>(null)
+
+    init {
+        viewModelScope.launch {
+            recordedPeak.value = HighestRecordedHr(sessionRepository.highestRecordedHr())
+        }
+    }
+
+    /**
+     * Whether the runner is being asked to confirm their Max HR, and what the card offers if so
+     * (#65, #103).
+     *
+     * Two flags hide it and either is enough: `maxHrEverSet` — they have stated a maximum, here or
+     * in Settings, so the question is answered — and `maxHrCardDismissed`, which is them having put
+     * it away without answering. Read as a stream rather than once, so the card leaves the screen
+     * as soon as the answer lands rather than at the next visit.
+     */
+    private val maxHrCard: Flow<MaxHrCardState?> = combine(
+        settingsRepository?.userSettingsFlow ?: flowOf(null),
+        recordedPeak
+    ) { settings, peak ->
+        if (settings == null || peak == null) null
+        else if (settings.maxHrEverSet || settings.maxHrCardDismissed) null
+        else MaxHrCardState(
+            currentMaxHr = settings.maxHr,
+            restingHr = settings.restingHr,
+            suggestedMaxHr = suggestedMaxHr(peak.bpm, settings.restingHr),
+        )
+    }
+
+    /**
      * The window is measured back from the curve's own last day rather than from today asked afresh.
      * The two are the same day except across a midnight the screen was left open through, and there
      * the curve is what the numbers above it were read off — a window ending on a day the curve does
@@ -120,7 +191,7 @@ class ProgressViewModel(
      * from up to six days early and let in a leading week the runner did not ask for.
      */
     val state: StateFlow<ProgressUiState> =
-        combine(curve, weeks, _range, _measure) { curve, volume, range, measure ->
+        combine(curve, weeks, _range, _measure, maxHrCard) { curve, volume, range, measure, card ->
             val lastDay = curve.lastOrNull()
             val endingOn = lastDay?.date ?: volume.through
             ProgressUiState(
@@ -129,6 +200,7 @@ class ProgressViewModel(
                 curve = lastDay?.let { curve.within(range, endingOn = it.date) } ?: emptyList(),
                 measure = measure,
                 weeks = endingOn?.let { volume.weeks.within(range, endingOn = it) } ?: emptyList(),
+                maxHrCard = card,
             )
         }.stateIn(viewModelScope, SharingStarted.Eagerly, ProgressUiState())
 
@@ -139,15 +211,40 @@ class ProgressViewModel(
     fun measureChosen(measure: WeeklyMeasure) {
         _measure.value = measure
     }
+
+    /**
+     * The runner has stated their Max HR from the card — either the number they typed, or the one
+     * their zones are already on, which is a statement too (#103).
+     *
+     * Both halves happen: the number goes to the queue that keeps statements ordered and re-works
+     * history behind the first one, and the card is put away. Put away here rather than left to the
+     * flag the statement sets, because that flag lands only after the whole of history has been
+     * re-banded — seconds later — and a card still on screen through it invites a second answer to
+     * a question already answered.
+     */
+    fun maxHrConfirmed(maxHr: Int) {
+        stateHeartRates(maxHr, null)
+        putMaxHrCardAway()
+    }
+
+    /** The card closed with nothing stated. Still forever: being asked once is the whole design. */
+    fun maxHrCardDismissed() = putMaxHrCardAway()
+
+    private fun putMaxHrCardAway() {
+        val settings = settingsRepository ?: return
+        viewModelScope.launch { settings.setMaxHrCardDismissed() }
+    }
 }
 
 class ProgressViewModelFactory(
     private val sessionRepository: SessionRepository,
+    private val settingsRepository: SettingsRepository,
+    private val stateHeartRates: (Int?, Int?) -> Unit,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(ProgressViewModel::class.java)) {
-            return ProgressViewModel(sessionRepository) as T
+            return ProgressViewModel(sessionRepository, settingsRepository, stateHeartRates) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

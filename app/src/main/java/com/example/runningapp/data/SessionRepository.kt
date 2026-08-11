@@ -67,6 +67,17 @@ import kotlin.math.roundToInt
  */
 private const val MAX_SESSION_IDS_PER_QUERY = 500
 
+/**
+ * How many banked seconds a heart rate has to have been held at to count as one this runner has
+ * reached (#65, #103).
+ *
+ * Three, which is the smallest number that is more than a moment: two consecutive smoothed samples
+ * can still be one artefact seen twice through the smoothing window, and anything much longer
+ * starts discarding the genuine peak of a hard finish, which is exactly the reading the card wants.
+ * The point of the guard is to refuse a spike, not to find a plateau.
+ */
+private const val HIGHEST_HR_HELD_FOR_SECONDS = 3
+
 // Labels describing a run to the AI coach (#107). Structure comes only from a plan, so the one
 // distinction the coach needs is whether the run followed a run/walk workout; these are derived
 // from RunnerSession.isRunWalkMode, not from any user-selected mode.
@@ -583,6 +594,25 @@ class SessionRepository(
     fun scoredRunsFlow(): Flow<List<ScoredRun>> = sessionDao.getScoredRunsFlow().map { rows ->
         rows.map { ScoredRun(startedAtMillis = it.startTime, effortScore = it.effortScore) }
     }
+
+    /**
+     * The highest heart rate this runner has actually been recorded at, or null where there is not
+     * enough of a record to say (#65, #103).
+     *
+     * What the confirmation card offers instead of a population formula: the app has kept every
+     * beat it ever heard — samples are never pruned — so the runner's own evidence is there to be
+     * read, and it beats `220 − age` for the same reason a measurement beats an estimate. On this
+     * phone it is 181 against the untouched default of 190, which is the whole argument.
+     *
+     * Spike-guarded in [SampleDao.getHighestSustainedBpm], not here, because the guard is part of
+     * what the number *means*: an artefact is not a heart rate, and a maximum read off one would
+     * push every zone edge up for good.
+     *
+     * Null where the samples are not wired at all, which is the same answer as a phone with no
+     * heart-rate history: nothing measured to suggest, so the card falls back to asking an age.
+     */
+    suspend fun highestRecordedHr(): Int? =
+        sampleDao?.getHighestSustainedBpm(HIGHEST_HR_HELD_FOR_SECONDS)
 
     /**
      * Every finished Run in history, oldest first — what the weekly volume bars are totalled from

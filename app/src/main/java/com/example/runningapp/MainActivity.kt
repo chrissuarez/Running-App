@@ -834,13 +834,21 @@ class MainActivity : ComponentActivity() {
                             // building the curves reads every scored Run the phone holds, and that
                             // is not work a launch should do for a screen nobody has opened (#63).
                             val progressViewModel: ProgressViewModel = viewModel(
-                                factory = ProgressViewModelFactory(sessionRepository)
+                                factory = ProgressViewModelFactory(
+                                    sessionRepository,
+                                    settingsRepository,
+                                    // The same door the settings screen's fields go through, so a
+                                    // Max HR stated here queues behind anything stated there (#172).
+                                    appContainer::stateHeartRates,
+                                )
                             )
                             val progressState by progressViewModel.state.collectAsState()
                             ProgressScreen(
                                 state = progressState,
                                 onRangeChosen = { progressViewModel.rangeChosen(it) },
                                 onMeasureChosen = { progressViewModel.measureChosen(it) },
+                                onMaxHrConfirmed = { progressViewModel.maxHrConfirmed(it) },
+                                onMaxHrCardDismissed = { progressViewModel.maxHrCardDismissed() },
                                 onBack = { navigateTo(Routes.MAIN) }
                             )
                         }

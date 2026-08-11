@@ -1,6 +1,9 @@
 package com.example.runningapp.ui
 
+import com.example.runningapp.SettingsRepository
+import com.example.runningapp.UserSettings
 import com.example.runningapp.data.RunVolumeProjection
+import com.example.runningapp.data.SampleDao
 import com.example.runningapp.data.ScoredRunProjection
 import com.example.runningapp.data.SessionDao
 import com.example.runningapp.data.SessionRepository
@@ -19,11 +22,14 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
 /**
@@ -40,12 +46,21 @@ class ProgressViewModelTest {
     private val scoredRuns = MutableStateFlow<List<ScoredRunProjection>>(emptyList())
     private val runVolumes = MutableStateFlow<List<RunVolumeProjection>>(emptyList())
     private val sessionDao: SessionDao = mock()
+    private val sampleDao: SampleDao = mock()
+    private val settingsRepository: SettingsRepository = mock()
+
+    /** A runner on the untouched placeholder maximum with a resting heart rate stated — Chris. */
+    private val settings = MutableStateFlow(UserSettings(restingHr = 60))
+
+    /** Every heart rate this screen stated, in the order it stated them. */
+    private val stated = mutableListOf<Pair<Int?, Int?>>()
 
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
         whenever(sessionDao.getScoredRunsFlow()).thenReturn(scoredRuns)
         whenever(sessionDao.getRunVolumesFlow()).thenReturn(runVolumes)
+        whenever(settingsRepository.userSettingsFlow).thenReturn(settings)
     }
 
     @After
@@ -190,8 +205,117 @@ class ProgressViewModelTest {
         assertEquals(LocalDate.of(2026, 5, 11), viewModel.state.value.weeks.first().startingOn)
     }
 
+    // --- The one-time Max HR confirmation (#65, #103) ---
+
+    @Test
+    fun `a runner who has never stated a maximum is asked, and offered their own`() = runTest(dispatcher) {
+        whenever(sampleDao.getHighestSustainedBpm(any())).thenReturn(181)
+
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        val card = viewModel.state.value.maxHrCard
+        assertEquals(MaxHrCardState(currentMaxHr = 190, restingHr = 60, suggestedMaxHr = 181), card)
+    }
+
+    @Test
+    fun `a phone with no recorded heart rate falls back to asking an age`() = runTest(dispatcher) {
+        whenever(sampleDao.getHighestSustainedBpm(any())).thenReturn(null)
+
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        // The card is still asked — it is the number every figure on the screen hangs off. It has
+        // nothing of the runner's own to offer, which is what the age input is for.
+        assertNull(viewModel.state.value.maxHrCard?.suggestedMaxHr)
+        assertEquals(190, viewModel.state.value.maxHrCard?.currentMaxHr)
+    }
+
+    @Test
+    fun `nothing is asked until the runner's own evidence has been read`() = runTest(dispatcher) {
+        // Before the read comes back there is no card at all, rather than the age-fallback one: a
+        // runner tapping in that moment would be asked their age with their own maximum unread.
+        val viewModel = viewModel()
+
+        assertNull(viewModel.state.value.maxHrCard)
+    }
+
+    @Test
+    fun `a runner who has already stated a maximum is not asked`() = runTest(dispatcher) {
+        settings.value = UserSettings(maxHr = 181, maxHrEverSet = true, restingHr = 60)
+
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.maxHrCard)
+    }
+
+    @Test
+    fun `a card put away stays away`() = runTest(dispatcher) {
+        settings.value = UserSettings(maxHrCardDismissed = true)
+
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.maxHrCard)
+    }
+
+    @Test
+    fun `confirming states the number and puts the card away`() = runTest(dispatcher) {
+        whenever(sampleDao.getHighestSustainedBpm(any())).thenReturn(181)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.maxHrConfirmed(181)
+        advanceUntilIdle()
+
+        assertEquals(listOf(181 to null), stated)
+        verify(settingsRepository).setMaxHrCardDismissed()
+    }
+
+    @Test
+    fun `keeping the current value is a statement too`() = runTest(dispatcher) {
+        // #103: the card *is* the first set, so "keep 190" is the runner saying 190 is right — and
+        // history is re-worked against it exactly as a typed number would be.
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.maxHrConfirmed(190)
+        advanceUntilIdle()
+
+        assertEquals(listOf(190 to null), stated)
+    }
+
+    @Test
+    fun `closing the card states nothing`() = runTest(dispatcher) {
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.maxHrCardDismissed()
+        advanceUntilIdle()
+
+        assertEquals(emptyList<Pair<Int?, Int?>>(), stated)
+        verify(settingsRepository).setMaxHrCardDismissed()
+    }
+
+    @Test
+    fun `the card leaves the screen as soon as the statement lands`() = runTest(dispatcher) {
+        whenever(sampleDao.getHighestSustainedBpm(any())).thenReturn(181)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+        assertNotNull(viewModel.state.value.maxHrCard)
+
+        // What the repository publishes once the statement has been applied.
+        settings.value = UserSettings(maxHr = 181, maxHrEverSet = true, restingHr = 60)
+        advanceUntilIdle()
+
+        assertNull(viewModel.state.value.maxHrCard)
+    }
+
     private fun viewModel() = ProgressViewModel(
-        SessionRepository(sessionDao = sessionDao),
+        SessionRepository(sessionDao = sessionDao, sampleDao = sampleDao),
+        settingsRepository = settingsRepository,
+        stateHeartRates = { maxHr, restingHr -> stated += maxHr to restingHr },
         zone = zone,
         today = { today },
         curveDispatcher = dispatcher,
