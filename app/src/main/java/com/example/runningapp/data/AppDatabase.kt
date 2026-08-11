@@ -724,19 +724,23 @@ interface SampleDao {
      * The highest heart rate held for [heldForSeconds] recorded seconds across the whole of history,
      * or null where the phone has not recorded that many beats at all (#65).
      *
-     * Read off `smoothedBpm` and never `rawBpm`: what this answers is "what is this runner's
-     * maximum", and a strap's raw feed carries occasional single readings tens of BPM above
-     * anything the heart did. Ordering by the smoothed value and then stepping past the first
-     * `heldForSeconds - 1` of them is the second guard — the value returned is one the runner
-     * reached and *stayed at* for that many banked seconds, so a smoothed bump that lasted one
-     * second cannot be offered as somebody's max.
+     * Read off `rawBpm` and never `smoothedBpm`, which is the column ADR 0011 wrote off: Runs
+     * recorded before #161 carry a frozen or zero smoothed reading, and their raw feed is the part
+     * that survived. Asking the wrong column would not merely be untidy — it understates the very
+     * runner it is asking about, and it does so most for whoever has the longest history.
+     *
+     * The guard against a strap artefact is therefore the offset alone, and it has to be, because
+     * a smoothed value is a five-second mean and would have carried one bad reading across five
+     * rows unnoticed. Stepping past the first `heldForSeconds - 1` raw readings means the value
+     * returned is one the strap reported that many times over, so a single wild sample — or two —
+     * cannot be offered as anybody's maximum.
      *
      * Samples are banked once a second, so the offset counts seconds. Ordered by value rather than
-     * grouped by run, which allows those seconds to come from different Runs — a runner who touched
-     * 181 in three separate sessions has been to 181 three times, which is if anything better
-     * evidence than three consecutive seconds of it.
+     * grouped by Run, which allows those seconds to come from different Runs — a runner who touched
+     * 181 in three separate Runs has been to 181 three times, which is if anything better evidence
+     * than three consecutive seconds of it.
      */
-    @Query("SELECT smoothedBpm FROM hr_samples ORDER BY smoothedBpm DESC LIMIT 1 OFFSET (:heldForSeconds - 1)")
+    @Query("SELECT rawBpm FROM hr_samples ORDER BY rawBpm DESC LIMIT 1 OFFSET (:heldForSeconds - 1)")
     suspend fun getHighestSustainedBpm(heldForSeconds: Int): Int?
 }
 

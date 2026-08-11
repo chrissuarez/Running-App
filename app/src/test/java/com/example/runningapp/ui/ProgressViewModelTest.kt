@@ -29,6 +29,7 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -261,7 +262,7 @@ class ProgressViewModelTest {
     }
 
     @Test
-    fun `confirming states the number and puts the card away`() = runTest(dispatcher) {
+    fun `confirming states the number and takes the card off the screen`() = runTest(dispatcher) {
         whenever(sampleDao.getHighestSustainedBpm(any())).thenReturn(181)
         val viewModel = viewModel()
         advanceUntilIdle()
@@ -270,7 +271,26 @@ class ProgressViewModelTest {
         advanceUntilIdle()
 
         assertEquals(listOf(181 to null), stated)
-        verify(settingsRepository).setMaxHrCardDismissed()
+        assertNull(viewModel.state.value.maxHrCard)
+    }
+
+    @Test
+    fun `an answer that never lands leaves the question askable`() = runTest(dispatcher) {
+        // A statement can be dropped on its way through the queue. Retiring the card against one
+        // would leave the runner on a maximum nobody chose, unasked and unaskable — so confirming
+        // hides the card for this visit only, and what retires it is the flag the statement sets.
+        whenever(sampleDao.getHighestSustainedBpm(any())).thenReturn(181)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.maxHrConfirmed(181)
+        advanceUntilIdle()
+
+        verify(settingsRepository, never()).setMaxHrCardDismissed()
+        // The next visit, with the statement never having arrived: asked again.
+        val nextVisit = viewModel()
+        advanceUntilIdle()
+        assertNotNull(nextVisit.state.value.maxHrCard)
     }
 
     @Test
@@ -295,6 +315,9 @@ class ProgressViewModelTest {
         advanceUntilIdle()
 
         assertEquals(emptyList<Pair<Int?, Int?>>(), stated)
+        assertNull(viewModel.state.value.maxHrCard)
+        // Recorded, unlike a confirmation: nothing else will ever record it, and a runner who
+        // declined to answer must not be asked again for having declined.
         verify(settingsRepository).setMaxHrCardDismissed()
     }
 

@@ -31,43 +31,14 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.example.runningapp.MAX_MAX_HR
+import com.example.runningapp.MAX_STATABLE_AGE
+import com.example.runningapp.MIN_STATABLE_AGE
 import com.example.runningapp.RESTING_HR_UNSTATED
-import com.example.runningapp.lowestStatableMaxHr
+import com.example.runningapp.maxHrForAge
+import com.example.runningapp.parseAge
 import com.example.runningapp.parseMaxHr
 import com.example.runningapp.ui.theme.RunningAppTheme
 import com.example.runningapp.ui.theme.RunningUiTokens
-
-/**
- * The oldest and roughest estimate of a maximum heart rate there is: `220 − age`.
- *
- * Here only as the fallback it is (#103). It is what Strava asks for and what a runner with no
- * recorded beat has to be offered, and it is a population average that misses individuals by twenty
- * BPM in either direction — which is exactly why a recorded maximum outranks it wherever one
- * exists. Never used to *correct* a stated number, only to suggest one to somebody with nothing.
- */
-fun maxHrForAge(age: Int): Int = 220 - age
-
-/** Ages this app will do arithmetic on. Outside them, `220 − age` is not a suggestion worth making. */
-const val MIN_STATABLE_AGE = 10
-const val MAX_STATABLE_AGE = 100
-
-/** A typed age, or null if it is not a whole number this app will suggest a heart rate from. */
-fun parseAge(text: String): Int? =
-    text.trim().toIntOrNull()?.takeIf { it in MIN_STATABLE_AGE..MAX_STATABLE_AGE }
-
-/**
- * The number the card offers, given the highest heart rate ever recorded and the resting one in
- * force — or null when there is nothing worth offering and the card should ask for an age instead.
- *
- * Judged by the same rule the Max HR field applies, and for the same reason: a suggestion the field
- * beneath it would refuse is a button that argues with itself. That also quietly handles the two
- * ways a recorded peak can be unusable — a strap artefact above [MAX_MAX_HR] that survived the
- * spike guard, and a history of gentle walking whose peak leaves no reserve above the runner's
- * stated resting heart rate.
- */
-fun suggestedMaxHr(highestRecordedBpm: Int?, restingHr: Int): Int? =
-    highestRecordedBpm?.takeIf { it in lowestStatableMaxHr(restingHr)..MAX_MAX_HR }
 
 /**
  * What the confirmation card needs to know, which is the runner's profile and their own evidence.
@@ -166,7 +137,8 @@ fun MaxHrConfirmationCard(
                         "starting point — a proper max HR test beats it whenever you do one.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                val fromAge = parseAge(age)?.let(::maxHrForAge)
+                val statedAge = parseAge(age)
+                val fromAge = statedAge?.let(::maxHrForAge)
                 OutlinedTextField(
                     value = age,
                     onValueChange = { age = it },
@@ -174,7 +146,7 @@ fun MaxHrConfirmationCard(
                     singleLine = true,
                     supportingText = {
                         Text(
-                            if (fromAge != null) "Age ${parseAge(age)} suggests $fromAge BPM"
+                            if (fromAge != null) "Age $statedAge suggests $fromAge BPM"
                             else "Between $MIN_STATABLE_AGE and $MAX_STATABLE_AGE"
                         )
                     },
