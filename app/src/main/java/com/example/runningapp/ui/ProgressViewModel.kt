@@ -5,11 +5,19 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.suggestedMaxHr
+import com.example.runningapp.data.GoalDao
+import com.example.runningapp.data.GoalRow
 import com.example.runningapp.data.SessionRepository
+import com.example.runningapp.training.Goal
+import com.example.runningapp.training.GoalMetric
+import com.example.runningapp.training.GoalPeriod
+import com.example.runningapp.training.GoalProgress
 import com.example.runningapp.training.ProgressDay
 import com.example.runningapp.training.ProgressRange
 import com.example.runningapp.training.TrainingWeek
+import com.example.runningapp.training.VolumeRun
 import com.example.runningapp.training.WeeklyMeasure
+import com.example.runningapp.training.goalProgressOf
 import com.example.runningapp.training.progressCurve
 import com.example.runningapp.training.weeklyVolumeOf
 import com.example.runningapp.training.within
@@ -50,6 +58,27 @@ data class ProgressUiState(
      * install.
      */
     val maxHrCard: MaxHrCardState? = null,
+    /**
+     * The runner's goals and where they stand today (#82) — empty when they have set none, which is
+     * the state the card offers "Set a goal" from rather than a state that hides it.
+     */
+    val goals: List<GoalProgress> = emptyList(),
+)
+
+/**
+ * The charts' half of [ProgressUiState] — the four flows that have to be read together because the
+ * range windows all of them against one day.
+ *
+ * Split out only so that the goals and the Max HR card can be combined in beside them: `combine`
+ * takes five flows at most, and grouping the ones that already depend on each other is better than
+ * an array of untyped flows.
+ */
+private data class ChartsUiState(
+    val range: ProgressRange,
+    val today: ProgressDay?,
+    val curve: List<ProgressDay>,
+    val measure: WeeklyMeasure,
+    val weeks: List<TrainingWeek>,
 )
 
 /**
@@ -81,6 +110,8 @@ class ProgressViewModel(
      * it, and the card is answered and gone before that finishes.
      */
     private val stateHeartRates: (Int?, Int?) -> Unit,
+    /** Where the runner's Goals are kept (#82). */
+    private val goalDao: GoalDao,
     /** The zone the runner's calendar days are in — which day a Run belongs to depends on it. */
     private val zone: ZoneId = ZoneId.systemDefault(),
     /**
@@ -91,6 +122,8 @@ class ProgressViewModel(
      * measured on the new day yet, and the curve would only gain a day of rest nobody has taken.
      */
     private val today: () -> LocalDate = { LocalDate.now(zone) },
+    /** What time it is, for stamping a goal with when it was set. */
+    private val now: () -> Long = { System.currentTimeMillis() },
     /** Where the curves are worked out — anywhere but the thread drawing them. */
     curveDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
@@ -125,18 +158,38 @@ class ProgressViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
+     * Every finished Run in history, as the volume bars and the goals both see it — read once and
+     * shared. Two readers of the same list rather than two queries: they are asking the same
+     * question of the same table, and a second stream would answer it a moment apart from the first.
+     */
+    private val volumeRuns: StateFlow<List<VolumeRun>> = sessionRepository.runVolumesFlow()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
      * Every week of training from the runner's first Run to today, built and windowed exactly as the
      * curve above is — whole on one side of the range picker, filtered on the other. Switching
      * between distance, time and Effort is then a re-read of weeks already totalled rather than
      * three rollups kept in step.
      */
-    private val weeks: StateFlow<VolumeToDate> = sessionRepository.runVolumesFlow()
+    private val weeks: StateFlow<VolumeToDate> = volumeRuns
         .map { runs ->
             val through = today()
             VolumeToDate(through, weeklyVolumeOf(runs, through = through, zone = zone))
         }
         .flowOn(curveDispatcher)
         .stateIn(viewModelScope, SharingStarted.Eagerly, VolumeToDate(through = null, weeks = emptyList()))
+
+    /**
+     * Where each goal stands in the period the runner is in now (#82).
+     *
+     * Read off the same Runs the bars are totalled from, and worked out on read every time: a goal
+     * edited, a Run deleted, a treadmill distance stated late — each of them lands here by being a
+     * new read rather than by anything remembering to correct a stored total.
+     */
+    private val goals: Flow<List<GoalProgress>> =
+        combine(goalDao.getAllGoalsFlow(), volumeRuns) { rows, runs ->
+            goalProgressOf(rows.map { it.toGoal() }, runs, on = today(), zone = zone)
+        }.flowOn(curveDispatcher)
 
     /**
      * The runner's own highest recorded heart rate, read once when the screen opens — and null
@@ -215,19 +268,56 @@ class ProgressViewModel(
      * route. Not the last week's Monday: on any day but a Monday that would measure the range back
      * from up to six days early and let in a leading week the runner did not ask for.
      */
-    val state: StateFlow<ProgressUiState> =
-        combine(curve, weeks, _range, _measure, maxHrCard) { curve, volume, range, measure, card ->
+    private val charts: Flow<ChartsUiState> =
+        combine(curve, weeks, _range, _measure) { curve, volume, range, measure ->
             val lastDay = curve.lastOrNull()
             val endingOn = lastDay?.date ?: volume.through
-            ProgressUiState(
+            ChartsUiState(
                 range = range,
                 today = lastDay,
                 curve = lastDay?.let { curve.within(range, endingOn = it.date) } ?: emptyList(),
                 measure = measure,
                 weeks = endingOn?.let { volume.weeks.within(range, endingOn = it) } ?: emptyList(),
+            )
+        }
+
+    val state: StateFlow<ProgressUiState> =
+        combine(charts, maxHrCard, goals) { charts, card, goals ->
+            ProgressUiState(
+                range = charts.range,
+                today = charts.today,
+                curve = charts.curve,
+                measure = charts.measure,
+                weeks = charts.weeks,
                 maxHrCard = card,
+                goals = goals,
             )
         }.stateIn(viewModelScope, SharingStarted.Eagerly, ProgressUiState())
+
+    /**
+     * Sets a goal, or edits the one already standing for that period and metric (#82).
+     *
+     * The target is stated in the metric's own unit, and nothing is worked out here: the bar the
+     * runner sees next is a fresh read of their Runs against the new number, so a raised target shows
+     * a week honestly unfinished rather than a bar that stayed full from the old one.
+     */
+    fun goalSet(period: GoalPeriod, metric: GoalMetric, target: Double) {
+        viewModelScope.launch {
+            goalDao.setGoal(
+                GoalRow(
+                    period = period,
+                    metric = metric,
+                    target = target,
+                    createdAtMillis = now(),
+                )
+            )
+        }
+    }
+
+    /** Removes a goal. Nothing else goes with it — no Run has ever been keyed to one. */
+    fun goalRemoved(goal: Goal) {
+        viewModelScope.launch { goalDao.deleteGoal(goal.id) }
+    }
 
     fun rangeChosen(range: ProgressRange) {
         _range.value = range
@@ -265,11 +355,12 @@ class ProgressViewModelFactory(
     private val sessionRepository: SessionRepository,
     private val settingsRepository: SettingsRepository,
     private val stateHeartRates: (Int?, Int?) -> Unit,
+    private val goalDao: GoalDao,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(ProgressViewModel::class.java)) {
-            return ProgressViewModel(sessionRepository, settingsRepository, stateHeartRates) as T
+            return ProgressViewModel(sessionRepository, settingsRepository, stateHeartRates, goalDao) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }
