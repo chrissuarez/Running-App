@@ -186,6 +186,18 @@ class GoalsTest {
     }
 
     @Test
+    fun `a treadmill run the runner stated a distance for counts that distance`() {
+        // A Stated Distance is the number off the console, and it counts everywhere a measured one
+        // does (#231). What a treadmill Run never adds is a distance nobody stated — the run above.
+        val progress = progressOf(
+            listOf(goal(GoalPeriod.WEEK, GoalMetric.DISTANCE, 20.0)),
+            listOf(runAt(monday, km = 6.4, seconds = 2_400)),
+        )
+
+        assertEquals(6.4, progress.single().done, 0.0001)
+    }
+
+    @Test
     fun `several goals are tracked at once, each on its own period`() {
         val progress = progressOf(
             listOf(

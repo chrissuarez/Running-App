@@ -46,6 +46,11 @@ enum class GoalMetric(val label: String, val unit: String) {
      * adds its hour and its one to the count, and nothing at all to the distance. That is not a Run
      * being left out: it is a distance nobody measured, and crediting it with a guess would be worse
      * than counting it as the nothing it recorded (ADR 0008).
+     *
+     * The rule is about the distance and never about the treadmill. A Stated Distance is the number
+     * the runner read off the console, and it counts everywhere a measured one does — their pace,
+     * their weekly volume, the coach, the record book (#231). A goal that ignored it would be the
+     * one place in the app calling the runner's own reading of their run less than a run.
      */
     fun amountOf(run: VolumeRun): Double = when (this) {
         DISTANCE -> run.distanceKm

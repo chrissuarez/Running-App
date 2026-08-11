@@ -3,8 +3,6 @@ package com.example.runningapp.ui
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -18,7 +16,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -224,13 +221,13 @@ fun GoalsSheet(
                 text = if (standing == null) "Set a goal" else "Change this goal",
                 style = MaterialTheme.typography.titleMedium,
             )
-            GoalChips(
+            ChipPicker(
                 options = GoalPeriod.entries,
                 selected = period,
                 labelOf = { it.label },
                 onChosen = { period = it },
             )
-            GoalChips(
+            ChipPicker(
                 options = GoalMetric.entries,
                 selected = metric,
                 labelOf = { it.label },
@@ -265,35 +262,6 @@ fun GoalsSheet(
                     Text("Save")
                 }
             }
-        }
-    }
-}
-
-/**
- * A row of chips to pick a period or a metric by.
- *
- * Its own rather than the charts' [ChipPicker]: the narrowest screen this has to survive is the same
- * 320dp at 1.3× text, and these wrap for the same reason — but this sheet's chips are its own
- * control and reaching across files to share three lines would tie two screens together for nothing.
- */
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
-@Composable
-private fun <T> GoalChips(
-    options: List<T>,
-    selected: T,
-    labelOf: (T) -> String,
-    onChosen: (T) -> Unit,
-) {
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        options.forEach { option ->
-            FilterChip(
-                selected = option == selected,
-                onClick = { onChosen(option) },
-                label = { Text(labelOf(option)) },
-            )
         }
     }
 }

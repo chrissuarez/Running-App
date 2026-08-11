@@ -412,6 +412,27 @@ class ProgressViewModelTest {
     }
 
     @Test
+    fun `editing a goal keeps it the same goal, in the same place`() = runTest(dispatcher) {
+        val standing = GoalRow(
+            id = 7,
+            period = GoalPeriod.WEEK,
+            metric = GoalMetric.DISTANCE,
+            target = 40.0,
+            createdAtMillis = 1_600_000_000_000L,
+        )
+        whenever(goalDao.goalFor(GoalPeriod.WEEK, GoalMetric.DISTANCE)).thenReturn(standing)
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        viewModel.goalSet(GoalPeriod.WEEK, GoalMetric.DISTANCE, 45.0)
+        advanceUntilIdle()
+
+        // The same row and the same day it was first set: a corrected target must not send the goal
+        // to the bottom of the card for having been corrected.
+        verify(goalDao).setGoal(standing.copy(target = 45.0))
+    }
+
+    @Test
     fun `removing a goal removes that goal and nothing else`() = runTest(dispatcher) {
         val viewModel = viewModel()
         advanceUntilIdle()

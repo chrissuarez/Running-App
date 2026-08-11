@@ -303,12 +303,17 @@ class ProgressViewModel(
      */
     fun goalSet(period: GoalPeriod, metric: GoalMetric, target: Double) {
         viewModelScope.launch {
+            // The goal this replaces, so an edit stays the same goal: its own id, and the day it was
+            // first set. Without them a corrected target would be a brand new goal, and the card
+            // would shuffle it to the bottom for having been edited.
+            val standing = goalDao.goalFor(period, metric)
             goalDao.setGoal(
                 GoalRow(
+                    id = standing?.id ?: 0,
                     period = period,
                     metric = metric,
                     target = target,
-                    createdAtMillis = now(),
+                    createdAtMillis = standing?.createdAtMillis ?: now(),
                 )
             )
         }

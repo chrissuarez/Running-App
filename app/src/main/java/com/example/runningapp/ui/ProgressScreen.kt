@@ -266,7 +266,8 @@ private fun RangePicker(selected: ProgressRange, onRangeChosen: (ProgressRange) 
 }
 
 /**
- * A row of chips to pick one of a short list by.
+ * A row of chips to pick one of a short list by — the charts' range and measure pickers, and the
+ * period and metric a goal is set by (#82).
  *
  * A FlowRow and not a Row: the narrowest screen this has to survive is 320dp with the text scaled
  * to 1.3×, and "Distance / Time / Effort Score" does not fit across it. In a Row the last chip is
@@ -274,7 +275,7 @@ private fun RangePicker(selected: ProgressRange, onRangeChosen: (ProgressRange) 
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun <T> ChipPicker(
+fun <T> ChipPicker(
     options: List<T>,
     selected: T,
     labelOf: (T) -> String,
