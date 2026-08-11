@@ -993,6 +993,29 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `the highest recorded heart rate is the one held for three seconds`() = runTest {
+        // The spike guard the card's suggestion rests on (#65, #103): a maximum offered to the
+        // runner has to be a heart rate they reached and stayed at, not a strap artefact. Three
+        // banked seconds, because samples are banked once a second.
+        val mockSampleDao: SampleDao = mock()
+        val repository = SessionRepository(sessionDao = mockDao, sampleDao = mockSampleDao)
+        whenever(mockSampleDao.getHighestSustainedBpm(3)).thenReturn(181)
+
+        assertEquals(181, repository.highestRecordedHr())
+    }
+
+    @Test
+    fun `a history with nothing recorded has no maximum to offer`() = runTest {
+        // Both ways of having nothing: samples not wired at all, and samples wired but too few to
+        // clear the guard. One answer, because the card asks the same question of both.
+        val mockSampleDao: SampleDao = mock()
+        whenever(mockSampleDao.getHighestSustainedBpm(any())).thenReturn(null)
+
+        assertNull(SessionRepository(sessionDao = mockDao).highestRecordedHr())
+        assertNull(SessionRepository(sessionDao = mockDao, sampleDao = mockSampleDao).highestRecordedHr())
+    }
+
+    @Test
     fun `the first deliberate max hr set recomputes every run's zone seconds`() = runTest {
         val mockSampleDao: SampleDao = mock()
         val repositoryWithSamples = SessionRepository(

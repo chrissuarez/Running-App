@@ -95,6 +95,10 @@ fun ProgressScreen(
     state: ProgressUiState,
     onRangeChosen: (ProgressRange) -> Unit,
     onMeasureChosen: (WeeklyMeasure) -> Unit,
+    /** A Max HR stated from the confirmation card — see [MaxHrConfirmationCard]. */
+    onMaxHrConfirmed: (Int) -> Unit = {},
+    /** The card closed without stating anything. */
+    onMaxHrCardDismissed: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     Scaffold(
@@ -123,6 +127,19 @@ fun ProgressScreen(
             // groups the compiler opened for the rest of it, and the composition that follows reads
             // a slot table that no longer describes itself — on the phone, an
             // `ArrayIndexOutOfBoundsException` inside Scaffold as the screen appeared.
+            // First, and outside the empty/filled branch below: the number it asks about is what
+            // every figure on this screen is worked out from, so it is read before them and asked
+            // even on a phone with no runs at all — a runner who calibrates before their first Run
+            // has their whole history measured right, which is the one moment the one-shot costs
+            // nothing at all.
+            state.maxHrCard?.let { card ->
+                MaxHrConfirmationCard(
+                    state = card,
+                    onConfirm = onMaxHrConfirmed,
+                    onDismiss = onMaxHrCardDismissed,
+                )
+            }
+
             val today = state.today
             if (today == null && state.weeks.isEmpty()) {
                 Text(

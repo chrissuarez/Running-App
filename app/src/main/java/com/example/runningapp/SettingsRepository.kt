@@ -28,6 +28,12 @@ data class UserSettings(
     // after it is future-only. Distinct from any dismissal flag: keeping the current value is
     // still a deliberate set, dismissing a card is not.
     val maxHrEverSet: Boolean = false,
+    // Whether the Progress screen's one-time "confirm your Max HR" card has been put away (#65).
+    // A separate fact from [maxHrEverSet] and never a substitute for it: closing the card states
+    // nothing, and confirming a number is a statement whether or not the number changed. Two
+    // events, two flags — one flag would either re-ask a runner who answered or spend the one-shot
+    // recompute on a card someone swiped away.
+    val maxHrCardDismissed: Boolean = false,
     // The other end of the reserve the zones are sliced from (#172). Unstated by default, which
     // is not a gap to fill in but a value in its own right: it reproduces the Max-HR-only model
     // exactly, so nobody's zones move until they measure and state a number.
@@ -159,6 +165,9 @@ fun maxHrEverSet(flag: Boolean?, storedMaxHr: Int?): Boolean =
 internal object PreferencesKeys {
     val MAX_HR = intPreferencesKey("max_hr")
     val MAX_HR_EVER_SET = booleanPreferencesKey("max_hr_ever_set")
+    // Whether the Progress screen's confirmation card has been put away (#65). See
+    // UserSettings.maxHrCardDismissed.
+    val MAX_HR_CARD_DISMISSED = booleanPreferencesKey("max_hr_card_dismissed")
     // The maximum every finished Run's zone times are currently banded against — not necessarily
     // the one in force. See UserSettings.historyMaxHr.
     val HISTORY_MAX_HR = intPreferencesKey("history_max_hr")
@@ -296,6 +305,7 @@ internal fun userSettingsOf(preferences: Preferences): UserSettings {
             flag = preferences[PreferencesKeys.MAX_HR_EVER_SET],
             storedMaxHr = preferences[PreferencesKeys.MAX_HR]
         ),
+        maxHrCardDismissed = preferences[PreferencesKeys.MAX_HR_CARD_DISMISSED] ?: false,
         restingHr = preferences[PreferencesKeys.RESTING_HR] ?: RESTING_HR_UNSTATED,
         // Absent for anyone whose history was last banded before this key existed. Their stored
         // maximum is the best evidence available: if they set it once and never changed it — much
@@ -636,6 +646,20 @@ class SettingsRepository(private val context: Context) {
      * part-way through is simply run again at the next launch.
      */
     suspend fun setHistoryRecordsSeeded() = put(PreferencesKeys.HISTORY_RECORDS_SEEDED, true)
+
+    /**
+     * Puts the Max HR confirmation card away for good (#65).
+     *
+     * Written on both ways out of the card — the number confirmed, and the card simply closed —
+     * because the runner has been asked and has answered, and asking again is the nagging #65
+     * exists to avoid. Only ever `true`: nothing puts the card back, so there is no setter to.
+     *
+     * Deliberately *not* a statement about anyone's heart. Confirming a number goes to
+     * `SessionRepository.setStatedProfile` as every other statement does, and this is written
+     * beside it; a card that recorded the answer here alone would leave the zones on the default
+     * the runner had just been asked to confirm.
+     */
+    suspend fun setMaxHrCardDismissed() = put(PreferencesKeys.MAX_HR_CARD_DISMISSED, true)
 
     /**
      * Forgets that history has been scored, because the history it described is being replaced (#50).

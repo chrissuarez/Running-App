@@ -211,6 +211,25 @@ class SettingsRepositoryTest {
         assertFalse(maxHrEverSet(flag = false, storedMaxHr = 180))
     }
 
+    @Test
+    fun `putting the confirmation card away says nothing about anyone's heart`() {
+        // Two events, two flags (#65, #103). Closing the card is not a statement, so it must not
+        // be readable as one — reading it as one would leave the runner's zones on the placeholder
+        // with the one-shot recompute spent and nothing to show for it.
+        val preferences = mutablePreferencesOf(PreferencesKeys.MAX_HR_CARD_DISMISSED to true)
+
+        val settings = userSettingsOf(preferences)
+
+        assertTrue(settings.maxHrCardDismissed)
+        assertFalse(settings.maxHrEverSet)
+        assertEquals(DEFAULT_MAX_HR, settings.maxHr)
+    }
+
+    @Test
+    fun `a runner who has never seen the card has not dismissed it`() {
+        assertFalse(userSettingsOf(mutablePreferencesOf()).maxHrCardDismissed)
+    }
+
     // --- What a statement of the pair actually stores (#172) ---
 
     @Test
