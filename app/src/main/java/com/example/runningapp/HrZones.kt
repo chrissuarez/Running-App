@@ -194,6 +194,19 @@ fun suggestedMaxHr(highestRecordedBpm: Int?, restingHr: Int): Int? =
     highestRecordedBpm?.takeIf { it in lowestStatableMaxHr(restingHr)..MAX_MAX_HR }
 
 /**
+ * The maximum the card offers from an age, or null when `220 − age` is not a number the field
+ * beneath it would take.
+ *
+ * The age fallback is held to the same rule as the recorded peak, and by the same function: an
+ * offer the Max HR field refuses is a button that argues with itself. It bites at the old end of
+ * the range — age 100 gives 120, which leaves no reserve above a stated resting 80 — so the two
+ * ranges agreeing on their own ([MIN_STATABLE_AGE]..[MAX_STATABLE_AGE] against [MIN_MAX_HR]) is
+ * not enough once a resting heart rate is in force.
+ */
+fun suggestedMaxHrForAge(age: Int, restingHr: Int): Int? =
+    suggestedMaxHr(maxHrForAge(age), restingHr)
+
+/**
  * A typed Max HR, or null if it is not a whole number inside the settable range.
  *
  * Deliberately not [effectiveMaxHr]: storage clamps because it must never hold an unusable

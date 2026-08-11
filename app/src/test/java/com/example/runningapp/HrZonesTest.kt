@@ -605,4 +605,28 @@ class SuggestedMaxHrTest {
             )
         }
     }
+
+    @Test
+    fun `no age and resting pair offers a maximum the field would refuse`() {
+        // The sweep that was missing: ages alone agree with the range, but a stated resting heart
+        // rate raises the floor under it, so every pair has to be asked — not just the unstated one.
+        (MIN_STATABLE_AGE..MAX_STATABLE_AGE).forEach { age ->
+            (MIN_RESTING_HR..MAX_RESTING_HR).forEach { restingHr ->
+                val offered = suggestedMaxHrForAge(age, restingHr)
+                assertEquals(
+                    "age $age with resting $restingHr offers $offered",
+                    offered,
+                    offered?.let { parseMaxHr(it.toString(), restingHr) }
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `an age whose formula leaves no reserve offers nothing at all`() {
+        // The case Codex found: 220 − 100 is 120, and a resting 80 needs at least 130.
+        assertNull(suggestedMaxHrForAge(age = 100, restingHr = 80))
+        // The same age with nothing to leave room above still offers its number.
+        assertEquals(120, suggestedMaxHrForAge(age = 100, restingHr = RESTING_HR_UNSTATED))
+    }
 }
