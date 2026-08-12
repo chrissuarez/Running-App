@@ -6,6 +6,7 @@ import com.example.runningapp.training.GoalPeriod
 import com.example.runningapp.training.GoalProgress
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -82,6 +83,51 @@ class GoalsCardTest {
         assertEquals("3", goalFieldOf(weeklyTime.copy(metric = GoalMetric.COUNT, target = 3.0)))
         // And a pair with no goal standing starts empty, because there is nothing to change.
         assertEquals("", goalFieldOf(null))
+    }
+
+    @Test
+    fun `the field is refilled when the goal it reads is saved or removed`() {
+        val weekly40 =
+            Goal(id = 3, period = GoalPeriod.WEEK, metric = GoalMetric.DISTANCE, target = 40.0)
+        val onIt = goalFieldKeyOf(GoalPeriod.WEEK, GoalMetric.DISTANCE, weekly40)
+        // Removing the goal moves the key, so the deleted target cannot sit on in the field waiting
+        // for a Save that would write it back.
+        assertNotEquals(onIt, goalFieldKeyOf(GoalPeriod.WEEK, GoalMetric.DISTANCE, null))
+        // Setting a goal on a pair that had none moves it too, so the field agrees with the heading.
+        assertNotEquals(
+            goalFieldKeyOf(GoalPeriod.MONTH, GoalMetric.TIME, null),
+            goalFieldKeyOf(
+                GoalPeriod.MONTH,
+                GoalMetric.TIME,
+                weekly40.copy(period = GoalPeriod.MONTH, metric = GoalMetric.TIME, target = 8.0),
+            ),
+        )
+        // And changing the target of the goal already in the field moves it.
+        assertNotEquals(
+            onIt,
+            goalFieldKeyOf(GoalPeriod.WEEK, GoalMetric.DISTANCE, weekly40.copy(target = 45.0)),
+        )
+    }
+
+    @Test
+    fun `a chip moves the field and typing does not`() {
+        val weekly40 =
+            Goal(id = 3, period = GoalPeriod.WEEK, metric = GoalMetric.DISTANCE, target = 40.0)
+        // Each chip names a different goal, so each chip refills the field.
+        assertNotEquals(
+            goalFieldKeyOf(GoalPeriod.WEEK, GoalMetric.DISTANCE, weekly40),
+            goalFieldKeyOf(GoalPeriod.MONTH, GoalMetric.DISTANCE, null),
+        )
+        assertNotEquals(
+            goalFieldKeyOf(GoalPeriod.WEEK, GoalMetric.DISTANCE, weekly40),
+            goalFieldKeyOf(GoalPeriod.WEEK, GoalMetric.TIME, null),
+        )
+        // Nothing the runner types is in the key, so a target being corrected is left alone — and a
+        // goal saved back at the number it already stood at leaves the field as it is.
+        assertEquals(
+            goalFieldKeyOf(GoalPeriod.WEEK, GoalMetric.DISTANCE, weekly40),
+            goalFieldKeyOf(GoalPeriod.WEEK, GoalMetric.DISTANCE, weekly40.copy(id = 99)),
+        )
     }
 
     @Test

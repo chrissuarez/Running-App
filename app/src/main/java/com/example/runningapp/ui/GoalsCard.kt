@@ -99,6 +99,23 @@ fun goalTargetHintOf(metric: GoalMetric): String = when (metric) {
 fun goalFieldOf(standing: Goal?): String =
     if (standing == null) "" else goalAmountText(standing.metric, standing.target)
 
+/**
+ * When the field is refilled from the goal the chips name (#82).
+ *
+ * Keyed on the period and the metric alone, the field only followed a chip: removing the goal the
+ * chips named left its target sitting in the field with Save live, so a runner who deleted a goal
+ * and then pressed Save wrote it straight back, and saving a brand-new goal left the field empty
+ * under a heading that had just changed to "Change this goal".
+ *
+ * So the field is refilled whenever the text it *should* read changes — that is what this key is,
+ * the pair plus the standing target as the field would write it. A chip, a save and a delete all
+ * move it, and nothing else does: typing is not in it, so a runner correcting 40 to 45 on the pair
+ * they are already on is never interrupted, and refilling the field cannot move the key that
+ * refilled it.
+ */
+fun goalFieldKeyOf(period: GoalPeriod, metric: GoalMetric, standing: Goal?): String =
+    "${period.name}/${metric.name}/${goalFieldOf(standing)}"
+
 /** One goal, said in full: "This week — 24 / 40 km". */
 fun goalLineOf(progress: GoalProgress): String {
     val done = goalAmountText(progress.goal.metric, progress.done)
@@ -193,10 +210,9 @@ fun GoalsSheet(
     val target = goalTargetOf(metric, typed)
     val rejected = typed.isNotBlank() && target == null
 
-    // The field follows the pair, because the pair is which goal is being talked about. Choosing a
-    // period or a metric the runner already has a goal for puts that goal's target up to be changed,
-    // and choosing one they have no goal for leaves an empty field to set one in.
-    LaunchedEffect(period, metric) { typed = goalFieldOf(standing) }
+    // The field follows the goal the chips name, however it moved — a chip, a save, or a bin. What
+    // it does not follow is the runner's own typing, so correcting a target is never interrupted.
+    LaunchedEffect(goalFieldKeyOf(period, metric, standing)) { typed = goalFieldOf(standing) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
@@ -288,10 +304,10 @@ fun GoalsSheet(
             ) {
                 TextButton(onClick = onDismiss) { Text("Done") }
                 Button(
-                    onClick = {
-                        target?.let { onSet(period, metric, it) }
-                        typed = ""
-                    },
+                    // Saving does not empty the field: the goal is still there and the heading still
+                    // says so, so the field goes on reading it. Blanking it here would also outlast
+                    // saving a target the pair already stood at, which changes nothing to refill it.
+                    onClick = { target?.let { onSet(period, metric, it) } },
                     enabled = target != null,
                     modifier = Modifier.padding(start = 8.dp),
                 ) {
