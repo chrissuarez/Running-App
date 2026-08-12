@@ -925,8 +925,11 @@ class SessionRepository(
      * was written to the book (see [scoreRecordsUnlessOvertaken]), so nothing is marked either, and
      * the debt stands for the next launch to pay.
      *
-     * Not what everything that scores calls: a Stated Distance re-scores a Run that was already
-     * measured, and has no debt of its own to settle.
+     * Called for a statement too, and not only for a Run finishing (#282). A Stated Distance or a
+     * stated Best Effort re-scores a Run the book has already seen — but the mark is what stops the
+     * book ever looking again, so a claim stored against a marked Run is a medal nobody goes back
+     * for if the scoring behind it ends short. [writeAndScore] lifts the mark first for exactly
+     * that reason, which leaves this to hand it back.
      */
     suspend fun scoreAndMarkRecords(sessionId: Long): List<Achievement> {
         val earned = scoreRecordsUnlessOvertaken(sessionId) ?: return emptyList()
@@ -1648,23 +1651,22 @@ class SessionRepository(
 
         val lowered = stated < session.distanceKm
         if (lowered || orphaned.isNotEmpty()) {
-            // The longest distance where the number came down, and every record a withdrawn claim
-            // may have held a place in. Not the whole book: the duration is untouched, and the
-            // records nothing was withdrawn from stand exactly as they were, so rebuilding them
-            // would be minutes of GPS arithmetic to arrive at the book already there.
-            val moved = orphaned + listOfNotNull(RecordType.LONGEST_DISTANCE.takeIf { lowered })
+            // Every record this distance can no longer hold, and the longest distance where the
+            // number came down. Asked of the *distance* rather than of the claims that happen to
+            // stand right now, because the withdrawal above runs later and inside a transaction:
+            // a claim stated in between is one this list has to have named already, and a list read
+            // from the claims would leave that record demoted with no mend coming. Naming a record
+            // nothing was withdrawn from costs a rebuild that arrives at the book already there.
+            //
+            // Not the whole book either: the duration is untouched, and the records this distance
+            // still contains stand exactly as they were.
+            val moved = RecordType.bestEffortDistances.filterNot { it.fitsWithin(stated) } +
+                listOfNotNull(RecordType.LONGEST_DISTANCE.takeIf { lowered })
             changeAndRepair(listOf(sessionId), mendOnly = moved, change = write)
         } else {
-            write()
-            try {
-                scoreRecords(sessionId)
-            } catch (e: Exception) {
-                // Its own attempt, as everywhere else the book is written: the number is stored by
-                // this point, and a book that cannot be written must not read as a distance that
-                // did not save. The next Run to contest the record scores against the stored one.
-                Log.w("StatedDistance", "Stated $stated km for run $sessionId but could not score it", e)
+            writeAndScore("StatedDistance", sessionId, write) {
+                "Stated $stated km for run $sessionId but could not score it"
             }
-            refreshHistoryBackup?.invoke()
         }
     }
 
@@ -1751,16 +1753,9 @@ class SessionRepository(
         if (worse) {
             changeAndRepair(listOf(sessionId), mendOnly = listOf(type), change = write)
         } else {
-            write()
-            try {
-                scoreRecords(sessionId)
-            } catch (e: Exception) {
-                // Its own attempt, as everywhere else the book is written: the time is stored by
-                // this point, and a book that cannot be written must not read as a statement that
-                // did not save. The next Run to contest the record scores against the stored one.
-                Log.w("StatedBestEffort", "Stated ${seconds}s at $type for run $sessionId but could not score it", e)
+            writeAndScore("StatedBestEffort", sessionId, write) {
+                "Stated ${seconds}s at $type for run $sessionId but could not score it"
             }
-            refreshHistoryBackup?.invoke()
         }
     }
 
@@ -1773,6 +1768,46 @@ class SessionRepository(
      */
     private fun RunnerSession.couldContain(type: RecordType, seconds: Int): Boolean =
         seconds <= durationSeconds && type.fitsWithin(distanceKm)
+
+    /**
+     * Makes a change that can only improve what a Run is worth, scores it, and refreshes the
+     * backup — leaving the Run owing a scoring if any of that cannot be finished (#282).
+     *
+     * The two doors are a Stated Distance corrected upward and a Best Effort stated or improved.
+     * Neither can demote a Medal, so neither needs the mend [changeAndRepair] exists for; what they
+     * do need is the debt, and one of them having it and the other not would be an accident of which
+     * was written first.
+     *
+     * **The scoring mark is lifted before the change and handed back only once the book has taken
+     * it.** A Run is marked scored once and never revisited ([scoreAndMarkRecords]), so a claim
+     * stored against a Run already carrying the mark is a medal nobody goes back for the moment
+     * anything after it ends short — the process reclaimed, the scope cancelled, the write throwing.
+     * Lifted first, every one of those endings leaves the Run owing a scoring, which the next
+     * launch's pass pays against a book nobody is moving. The cost of lifting it needlessly is one
+     * redundant re-score arriving at the same book.
+     *
+     * The scoring is still its own attempt, as everywhere else the book is written: the change is
+     * stored by that point, and a book that cannot be written must not read as a statement that did
+     * not save.
+     *
+     * The backup goes out either way — the snapshot `finalizeRun` took went out before any of this
+     * existed, and a Run restored from it would come back without it.
+     */
+    private suspend fun writeAndScore(
+        tag: String,
+        sessionId: Long,
+        change: suspend () -> Unit,
+        couldNotScore: () -> String,
+    ) {
+        sessionDao.clearRecordsScored(sessionId)
+        change()
+        try {
+            scoreAndMarkRecords(sessionId)
+        } catch (e: Exception) {
+            Log.w(tag, couldNotScore(), e)
+        }
+        refreshHistoryBackup?.invoke()
+    }
 
     /**
      * The Run once its totals have been written, or null when there is no such row.
