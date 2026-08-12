@@ -111,8 +111,9 @@ How far a treadmill Run went: the number the machine's console showed, told to t
 runner. Stated rather than measured, exactly as a Max HR or a resting heart rate is — the app never
 works it out and never guesses it, and a Run nobody stated one for has no distance at all rather
 than a distance of zero. Every rule that counts distance counts a stated one
-([ADR 0008](docs/adr/0008-a-stated-distance-is-a-real-distance.md)), save a Best Effort, which needs
-a route to find a stretch inside.
+([ADR 0008](docs/adr/0008-a-stated-distance-is-a-real-distance.md)). It buys no Best Effort: a
+measured one needs a route to find a stretch inside, and a Stated Best Effort is a claim of its own
+that this one neither makes nor implies.
 _Avoid_: manual distance, entered distance, treadmill distance
 
 **Route**:
@@ -186,8 +187,21 @@ streak, objective
 The fastest continuous stretch of a Run covering one of the record distances —
 1 km, a mile, 5 km, 10 km, a half marathon — measured on the clock, so a walk
 break inside it counts against it. Found anywhere in the Run, not at the Split
-boundaries, so a fast middle section counts.
+boundaries, so a fast middle section counts. Measured off the Run's route, or a
+Stated Best Effort where a treadmill Run has no route to measure.
 _Avoid_: PR, personal best (a Best Effort is only a claim until it places)
+
+**Stated Best Effort**:
+A Best Effort a treadmill Run is told it holds: one of the five record
+distances, and the time the console showed for it, read off the machine by the
+runner. Stated rather than measured, as a Stated Distance is, and never worked
+out from a Run's distance and duration
+([ADR 0015](docs/adr/0015-a-stated-best-effort-is-read-off-a-console-not-off-an-average.md)).
+A Run may hold one at each of the five distances, and no one of them says
+anything about another. It places in the record book exactly as a measured Best
+Effort does.
+_Avoid_: manual split, entered PB, treadmill best effort; and "lap time", which
+is what the console calls it rather than what the app keeps
 
 **Record**:
 One of the seven things a Run can be the best at: the five distances, and the
