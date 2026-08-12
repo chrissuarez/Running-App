@@ -777,6 +777,15 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            // What this run has been told it holds (#282), watched for the same
+                            // reason the medals are: stating one re-scores, and the card and the
+                            // book underneath it have to arrive at the new answer together.
+                            val sessionStatedEfforts by produceState<List<com.example.runningapp.data.StatedBestEffort>>(initialValue = emptyList(), key1 = sessionId) {
+                                sessionId?.let { id ->
+                                    sessionDetailViewModel.statedBestEfforts(id).collect { value = it }
+                                }
+                            }
+
                             // Inside this destination, and gated on the run that asked: an export is
                             // slow enough that the runner can be somewhere else by the time it
                             // lands, and a chooser opening over another screen interrupts whatever
@@ -810,6 +819,10 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onSaveFeelFeedback = { id, effort, note ->
                                     sessionDetailViewModel.saveFeelFeedback(id, effort, note)
+                                },
+                                statedBestEfforts = sessionStatedEfforts,
+                                onStateBestEffort = { id, type, seconds ->
+                                    sessionDetailViewModel.stateBestEffort(id, type, seconds)
                                 },
                                 canShareGpx = hasTrack,
                                 onShareGpx = { id -> sessionDetailViewModel.shareGpx(id) },
