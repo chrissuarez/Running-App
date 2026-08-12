@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.export.GpxFileStore
@@ -74,6 +75,25 @@ class SessionDetailViewModel(
     fun stateDistance(sessionId: Long, distanceKm: Double?) {
         viewModelScope.launch {
             sessionRepository.stateDistance(sessionId, distanceKm)
+        }
+    }
+
+    /** What a treadmill Run has been told it holds, as its page watches it (#282). */
+    fun statedBestEfforts(sessionId: Long) = sessionRepository.statedBestEffortsFlow(sessionId)
+
+    /**
+     * States the time the console showed for one of the record distances, corrects it, or takes it
+     * back (#282).
+     *
+     * Null [seconds] withdraws it. Which claims are refused, what a correction re-scores and what a
+     * withdrawal mends are all the repository's
+     * ([com.example.runningapp.data.SessionRepository.stateBestEffort]); this is only the thread it
+     * runs on. Nothing is reported back: the claims are watched, so the card redraws of its own
+     * accord.
+     */
+    fun stateBestEffort(sessionId: Long, type: RecordType, seconds: Int?) {
+        viewModelScope.launch {
+            sessionRepository.stateBestEffort(sessionId, type, seconds)
         }
     }
 

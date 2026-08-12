@@ -29,6 +29,8 @@ import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.data.bandedOnHrProfile
+import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.data.StatedBestEffort
 import com.example.runningapp.data.isTreadmill
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.computeRunWalkIntervalAnalytics
@@ -66,6 +68,10 @@ fun SessionDetailScreen(
     // How the Run felt, said or changed after the fact (#80). Null leaves the card read-only, which
     // is what a Run still being recorded gets — the repository refuses one anyway.
     onSaveFeelFeedback: ((Long, Int?, String?) -> Unit)? = null,
+    // What a treadmill Run has been told it holds, and the way to tell it (#282). Empty and null on
+    // every Run that could not hold one, which is what keeps the card off an outdoor page.
+    statedBestEfforts: List<StatedBestEffort> = emptyList(),
+    onStateBestEffort: ((Long, RecordType, Int?) -> Unit)? = null,
     // A run with no recorded GPS track — a treadmill run, or history from before #37 — has nothing to
     // put in a GPX file, so Share is left off the bar entirely rather than offered greyed out (#84).
     canShareGpx: Boolean = false,
@@ -198,6 +204,24 @@ fun SessionDetailScreen(
                         ?.let { save -> { effort: Int?, note: String? -> save(session.id, effort, note) } }
                 )
                 Spacer(modifier = Modifier.height(24.dp))
+
+                // Above the medals rather than below them, because this is where a treadmill Run's
+                // medals at the five distances come from: the claim is made here and the book
+                // answers underneath it (#282). Offered on the same terms as a Stated Distance —
+                // only a finished treadmill Run, which is all the repository will accept anyway.
+                val statingEfforts = onStateBestEffort
+                    ?.takeIf { session.isFinished() && session.isTreadmill() }
+                if (statingEfforts != null) {
+                    Text("Best efforts", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    StatedBestEffortsCard(
+                        stated = statedBestEfforts,
+                        runDurationSeconds = session.durationSeconds,
+                        statedDistanceKm = session.distanceKm,
+                        onState = { type, seconds -> statingEfforts(session.id, type, seconds) },
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
 
                 if (achievements.isNotEmpty()) {
                     Text("Achievements", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
