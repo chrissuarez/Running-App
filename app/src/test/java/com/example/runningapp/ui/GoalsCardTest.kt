@@ -73,6 +73,18 @@ class GoalsCardTest {
     }
 
     @Test
+    fun `the target field follows the pair that is chosen`() {
+        val weeklyTime = Goal(id = 2, period = GoalPeriod.WEEK, metric = GoalMetric.TIME, target = 4.0)
+        // Choosing a pair with a goal standing offers that goal's target to be changed, so a 40 typed
+        // against the distance goal can never be saved as 40 hours.
+        assertEquals("4", goalFieldOf(weeklyTime))
+        assertEquals("23.7", goalFieldOf(weeklyTime.copy(metric = GoalMetric.DISTANCE, target = 23.68)))
+        assertEquals("3", goalFieldOf(weeklyTime.copy(metric = GoalMetric.COUNT, target = 3.0)))
+        // And a pair with no goal standing starts empty, because there is nothing to change.
+        assertEquals("", goalFieldOf(null))
+    }
+
+    @Test
     fun `a refused runs target is explained in runs`() {
         assertEquals("Enter a whole number of runs, like 3", goalTargetHintOf(GoalMetric.COUNT))
         assertEquals(
