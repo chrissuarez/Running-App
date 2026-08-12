@@ -941,6 +941,54 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a claim whose scoring cannot finish leaves the Run owing one`() = runTest {
+        // A Run is marked scored once and never revisited, so a claim stored against a marked Run
+        // is a medal nobody goes back for the moment the scoring behind it ends short. The mark is
+        // lifted before the write and handed back only once the book has taken it.
+        val run = aTreadmillRun(id = 42, seconds = 1_800).copy(distanceKm = 6.0)
+        whenever(mockDao.getSessionById(42L)).thenReturn(run)
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(42L)).thenReturn(emptyList())
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenThrow(RuntimeException("no book today"))
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_440)
+
+        // The claim is stored — a book that cannot be written must not read as a statement that did
+        // not save — and the debt is left standing rather than marked paid.
+        verify(statedDao).state(
+            StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_5K, seconds = 1_440)
+        )
+        verify(mockDao).clearRecordsScored(42L)
+        verify(mockDao, never()).setRecordsScored(42L)
+    }
+
+    @Test
+    fun `a claim that scores hands the mark back`() = runTest {
+        val run = aTreadmillRun(id = 42, seconds = 1_800).copy(distanceKm = 6.0)
+        whenever(mockDao.getSessionById(42L)).thenReturn(run)
+        val claim = StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_5K, seconds = 1_440)
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(42L)).thenReturn(emptyList(), listOf(claim))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_440)
+
+        verify(mockDao).setRecordsScored(42L)
+    }
+
+    @Test
     fun `correcting the distance takes the best efforts it has made impossible with it`() = runTest {
         // A Run that says it went three kilometres cannot hold a five. A correction is the one way a
         // claim that was possible when it was made stops being one, so the same act removes it —

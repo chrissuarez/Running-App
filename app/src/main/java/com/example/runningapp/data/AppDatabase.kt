@@ -460,6 +460,19 @@ interface SessionDao {
     suspend fun setRecordsScored(sessionId: Long)
 
     /**
+     * Writes down that a Run owes the record book a scoring again (#282).
+     *
+     * A Run is marked scored once and never revisited, which is what makes the mark worth having —
+     * and what makes it a trap for anything that changes what the Run is worth *after* it was set.
+     * A statement told to a Run already carrying the mark is exactly that: the claim is stored, and
+     * a scoring that is then killed or throws leaves a medal nobody will ever go back for. Lifted
+     * before the change and handed back only once the book has taken it, so every way the work can
+     * end short leaves the debt standing for the next launch to pay.
+     */
+    @Query("UPDATE sessions SET recordsScored = 0 WHERE id = :sessionId")
+    suspend fun clearRecordsScored(sessionId: Long)
+
+    /**
      * Marks the Runs a whole-history rebuild measured (#210, #50).
      *
      * The seeding pass measures every stored Run at once, so the debt every one of them carried is
