@@ -49,12 +49,35 @@ class GoalsCardTest {
 
     @Test
     fun `a target is a positive number, and a comma is a decimal point`() {
-        assertEquals(40.0, goalTargetOf("40")!!, 0.0001)
-        assertEquals(4.5, goalTargetOf("4,5")!!, 0.0001)
+        assertEquals(40.0, goalTargetOf(GoalMetric.DISTANCE, "40")!!, 0.0001)
+        assertEquals(4.5, goalTargetOf(GoalMetric.DISTANCE, "4,5")!!, 0.0001)
         // Nothing to save rather than a goal of nothing: a target of zero is met before it is set.
-        assertNull(goalTargetOf("0"))
-        assertNull(goalTargetOf("-5"))
-        assertNull(goalTargetOf("forty"))
-        assertNull(goalTargetOf(""))
+        assertNull(goalTargetOf(GoalMetric.DISTANCE, "0"))
+        assertNull(goalTargetOf(GoalMetric.DISTANCE, "-5"))
+        assertNull(goalTargetOf(GoalMetric.DISTANCE, "forty"))
+        assertNull(goalTargetOf(GoalMetric.DISTANCE, ""))
+    }
+
+    @Test
+    fun `a part of a run is no target at all`() {
+        // Runs arrive whole, so 2.1 of them is a week nobody can finish: refused where it is typed,
+        // rather than rounded behind the runner into a goal they did not set.
+        assertNull(goalTargetOf(GoalMetric.COUNT, "2.1"))
+        assertNull(goalTargetOf(GoalMetric.COUNT, "2,5"))
+        assertNull(goalTargetOf(GoalMetric.COUNT, "0.5"))
+        assertEquals(3.0, goalTargetOf(GoalMetric.COUNT, "3")!!, 0.0001)
+        assertEquals(3.0, goalTargetOf(GoalMetric.COUNT, "3.0")!!, 0.0001)
+        // Hours and kilometres are still free to be part of one.
+        assertEquals(4.5, goalTargetOf(GoalMetric.TIME, "4.5")!!, 0.0001)
+        assertEquals(2.1, goalTargetOf(GoalMetric.DISTANCE, "2.1")!!, 0.0001)
+    }
+
+    @Test
+    fun `a refused runs target is explained in runs`() {
+        assertEquals("Enter a whole number of runs, like 3", goalTargetHintOf(GoalMetric.COUNT))
+        assertEquals(
+            "Enter a number greater than zero, like 40",
+            goalTargetHintOf(GoalMetric.DISTANCE),
+        )
     }
 }
