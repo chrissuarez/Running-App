@@ -116,5 +116,10 @@ it from.
 - **A stated Best Effort is shown as a measured one is shown.** The record book does not mark them
   apart, because the runner is not being asked to keep two classes of Record in their head. A Run's
   page is where the statement is made and corrected, and that is where it is visible as a statement.
+- **The card is absent where there is nothing it could hold.** A treadmill Run stated at 600 metres
+  contests no record distance, and a card offering five chips it must refuse would exist only to say
+  no. It appears the moment there is either a distance to claim or a claim already made — and a claim
+  already made always shows, even one a later correction should have taken away, because a row the
+  runner cannot see is a row they cannot withdraw.
 - **Splits and a Route are still out of reach.** Both need a track, and typed numbers do not make
   one. A Run holding five stated Best Efforts still has no route and no splits table.

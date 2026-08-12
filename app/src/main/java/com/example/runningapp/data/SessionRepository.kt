@@ -1578,13 +1578,9 @@ class SessionRepository(
         // away, because the alternative is a Medal standing on a claim nothing will ever look at
         // again. Nothing is orphaned by a distance being *withdrawn*: that leaves the Run with no
         // distance at all, which contradicts nothing.
-        val orphaned = if (stated > 0.0) {
-            statedBestEffortDao?.getForSession(sessionId).orEmpty()
-                .filter { it.type.distanceMeters!! > stated * 1_000.0 + STATED_DISTANCE_ROUNDING_METERS }
-                .map { it.type }
-        } else {
-            emptyList()
-        }
+        val orphaned = statedBestEffortDao?.getForSession(sessionId).orEmpty()
+            .filterNot { it.type.fitsWithin(stated) }
+            .map { it.type }
 
         val write: suspend () -> Unit = {
             sessionDao.setStatedDistance(
@@ -1594,10 +1590,23 @@ class SessionRepository(
                 // there being no moving time to measure without a track.
                 avgPaceMinPerKm = averagePaceMinPerKm(session.paceClockSeconds, stated),
             )
-            orphaned.forEach { type ->
-                Log.i("StatedDistance", "Run $sessionId is $stated km, so its stated $type goes with the correction")
-                statedBestEffortDao?.withdraw(sessionId, type)
-            }
+            // Asked again here rather than reusing the list above, because this runs inside the
+            // transaction that writes the distance and that one did not: a claim stated in the gap
+            // between them would otherwise survive a correction that has just made it impossible.
+            // What the earlier read settles is which records to *mend*, and that has to be known
+            // before the change begins. A claim landing in the gap is therefore withdrawn but leaves
+            // the record it held unmended — narrowed to a window one write wide, not closed, and the
+            // next launch's seeding debt is not owed for it. Both doors are dialogs on one screen,
+            // so reaching it means two statements from one finger in the same instant.
+            statedBestEffortDao?.getForSession(sessionId).orEmpty()
+                .filterNot { it.type.fitsWithin(stated) }
+                .forEach { claim ->
+                    Log.i(
+                        "StatedDistance",
+                        "Run $sessionId is $stated km, so its stated ${claim.type} goes with the correction"
+                    )
+                    statedBestEffortDao?.withdraw(sessionId, claim.type)
+                }
         }
 
         val lowered = stated < session.distanceKm
@@ -1722,18 +1731,11 @@ class SessionRepository(
      * Whether this Run could hold a claim of [seconds] at [type] — the arithmetic, and no judgement
      * beyond it (#282).
      *
-     * The distance is allowed the resolution the runner types it at. A Stated Distance is entered in
-     * kilometres to two places, so a genuine half marathon can be typed as `21.09` and read back as
-     * 21 090 m against a record of 21 097.5 — a shortfall that is the field's own rounding rather
-     * than the runner claiming a stretch they did not run. Anything beyond that is a Run that really
-     * is too short.
+     * Two questions, and the Run has to answer both: it lasted long enough, and it went far enough
+     * ([fitsWithin], which is where the distance half is argued).
      */
-    private fun RunnerSession.couldContain(type: RecordType, seconds: Int): Boolean {
-        if (seconds > durationSeconds) return false
-        val statedMeters = distanceKm * 1_000.0
-        if (statedMeters <= 0.0) return true
-        return type.distanceMeters!! <= statedMeters + STATED_DISTANCE_ROUNDING_METERS
-    }
+    private fun RunnerSession.couldContain(type: RecordType, seconds: Int): Boolean =
+        seconds <= durationSeconds && type.fitsWithin(distanceKm)
 
     /**
      * The Run once its totals have been written, or null when there is no such row.

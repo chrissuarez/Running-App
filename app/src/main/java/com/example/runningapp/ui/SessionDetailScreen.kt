@@ -209,8 +209,16 @@ fun SessionDetailScreen(
                 // medals at the five distances come from: the claim is made here and the book
                 // answers underneath it (#282). Offered on the same terms as a Stated Distance —
                 // only a finished treadmill Run, which is all the repository will accept anyway.
+                //
+                // Asked of the Run and not only of the screen: a Run stated at 600 metres holds no
+                // record distance, and a heading over a card that draws nothing would be a section
+                // that exists to say no.
                 val statingEfforts = onStateBestEffort
                     ?.takeIf { session.isFinished() && session.isTreadmill() }
+                    ?.takeIf {
+                        recordDistancesWithin(session.distanceKm).isNotEmpty() ||
+                            statedBestEfforts.isNotEmpty()
+                    }
                 if (statingEfforts != null) {
                     Text("Best efforts", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))

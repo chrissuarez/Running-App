@@ -104,6 +104,25 @@ interface StatedBestEffortDao {
  */
 const val STATED_DISTANCE_ROUNDING_METERS: Double = 10.0
 
+/**
+ * Whether a Run of [statedDistanceKm] is long enough to contain a claim at this record distance
+ * (#282).
+ *
+ * The one place the question is asked, because it is asked in three: the repository refuses a claim
+ * the Run could not contain, the same repository withdraws claims a corrected distance has just made
+ * impossible, and the screen offers only the distances that would survive both. Written out at each
+ * site — once inverted — it is one polarity flip away from a record book that holds a claim no
+ * screen would have accepted.
+ *
+ * A Run nobody stated a distance for contains everything: the two statements are independent, and
+ * only a distance that is actually there can be too short.
+ */
+fun RecordType.fitsWithin(statedDistanceKm: Double): Boolean {
+    val meters = statedDistanceKm * 1_000.0
+    if (meters <= 0.0) return true
+    return distanceMeters!! <= meters + STATED_DISTANCE_ROUNDING_METERS
+}
+
 /** What a Run claims, in the shape the record book ranks: seconds, by record. */
 fun List<StatedBestEffort>.byType(): Map<RecordType, Double> =
     associate { it.type to it.seconds.toDouble() }
