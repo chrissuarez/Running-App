@@ -1743,8 +1743,29 @@ class SessionRepository(
         if (standing == seconds) return
 
         val write: suspend () -> Unit = {
-            if (seconds == null) dao.withdraw(sessionId, type)
-            else dao.state(StatedBestEffort(sessionId = sessionId, type = type, seconds = seconds))
+            inTransaction {
+                // Asked again, here, inside the transaction that stores the claim — because the
+                // check above was made against the Run as it stood before any of this began, and a
+                // Stated Distance corrected downward in the meantime is exactly what turns a claim
+                // that was possible into one that is not. Storing it is the moment the claim becomes
+                // real, so storing it is where the Run has to be asked.
+                //
+                // This and the correction's own re-read are the two halves of one rule, and between
+                // them the ordering no longer matters: the database takes one writer at a time, so
+                // either the correction commits first and this refuses, or this commits first and
+                // the correction withdraws it. There is no interleaving left in which an impossible
+                // claim reaches the book.
+                val now = seconds?.let { sessionDao.getSessionById(sessionId) }
+                if (seconds != null && (now == null || !now.couldContain(type, seconds))) {
+                    Log.w(
+                        "StatedBestEffort",
+                        "Refusing ${seconds}s at $type for run $sessionId: the Run no longer contains it"
+                    )
+                    return@inTransaction
+                }
+                if (seconds == null) dao.withdraw(sessionId, type)
+                else dao.state(StatedBestEffort(sessionId = sessionId, type = type, seconds = seconds))
+            }
         }
 
         // Withdrawn, or slower than what stood: either way this Run's claim at this record just got
