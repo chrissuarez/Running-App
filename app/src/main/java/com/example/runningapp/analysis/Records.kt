@@ -32,6 +32,17 @@ enum class RecordType(val label: String, val distanceMeters: Double?, val unit: 
      * false of the two that ask how much was done rather than how quickly.
      */
     val lowerIsBetter: Boolean get() = distanceMeters != null
+
+    companion object {
+        /**
+         * The five contested as a Best Effort — the ones run over a set distance, and so the only
+         * ones a treadmill Run can be told it holds (#282).
+         *
+         * Read off [distanceMeters] rather than listed out, so a sixth record distance added to the
+         * enum is offered by every screen and every rule at once.
+         */
+        val bestEfforts: List<RecordType> get() = entries.filter { it.distanceMeters != null }
+    }
 }
 
 /** What the number attached to a record means. */
@@ -61,15 +72,21 @@ data class BestEffort(val type: RecordType, val value: Double)
  * runner took, and a best effort that quietly skipped it would be a time nobody ran.
  *
  * Who may compete:
- * - **A treadmill Run contests the longest distance and the longest time, and none of the fastest
- *   five.** Its distance is a Stated Distance — the console's number, told to the app by the runner
- *   — and it counts as a distance like any other, because a record book that cannot hold the longest
- *   Run of the runner's winter has a hole in it exactly where the winter went
- *   ([ADR 0008](docs/adr/0008-a-stated-distance-is-a-real-distance.md)). The
- *   fastest five stay out for a reason that is not about trust at all: a Best Effort is the quickest
- *   stretch found *inside* a Run by a rolling window over its track, and a treadmill Run has no
- *   track — not a poor one, none — so there is no stretch to find. Nothing derives one from an
- *   average pace to get around that; an average is not the measurement those records are of.
+ * - **A treadmill Run contests the longest distance and the longest time, and whichever of the
+ *   fastest five it has been told it holds.** Its distance is a Stated Distance — the console's
+ *   number, told to the app by the runner — and it counts as a distance like any other, because a
+ *   record book that cannot hold the longest Run of the runner's winter has a hole in it exactly
+ *   where the winter went ([ADR 0008](docs/adr/0008-a-stated-distance-is-a-real-distance.md)).
+ *
+ *   The fastest five were once barred outright, for a reason that was never about trust: a Best
+ *   Effort is the quickest stretch found *inside* a Run by a rolling window over its track, and a
+ *   treadmill Run has no track — not a poor one, none — so there is nothing here to find. That is
+ *   still true, and it is still true that nothing derives one from an average pace to get around it;
+ *   an average is not the measurement those records are of. What has changed is that the console
+ *   *does* show the stretch, and the runner can read it off and say so
+ *   ([ADR 0015](docs/adr/0015-a-stated-best-effort-is-read-off-a-console-not-off-an-average.md)).
+ *   So a treadmill Run contests exactly the distances in [stated] and no others: a Run told nothing
+ *   holds nothing, and a Run's own distance and duration turn into no claim at any shorter distance.
  * - **An outdoor Run with no usable track contests no distance record.** The fastest stretches need
  *   the track by construction, and the longest *distance* is asked of the Run's own total, which a
  *   Run can carry with nothing left of its route: history recorded before the app kept a track, and
@@ -98,6 +115,16 @@ fun bestEffortsOf(
      * arithmetic thrown away, once per Run in history.
      */
     types: Collection<RecordType> = RecordType.entries,
+    /**
+     * What this Run has been *told* it holds, in seconds by record distance (#282) — the treadmill
+     * counterpart of the rolling window, and read only where there is no track to run one over.
+     *
+     * Empty for every outdoor Run, which is not a defence in depth so much as the same rule stated
+     * twice: only a treadmill Run can be given one, and an outdoor Run's efforts are measured. A Run
+     * therefore never holds a measured effort and a stated one at the same record, so nothing here
+     * has to decide which of the two would win.
+     */
+    stated: Map<RecordType, Double> = emptyMap(),
 ): List<BestEffort> {
     if (!run.isFinished()) return emptyList()
     val treadmill = run.isTreadmill()
@@ -108,12 +135,15 @@ fun bestEffortsOf(
     // of no length, so it contests nothing either way.
     val hasDistance = (treadmill || hasRoute) && run.distanceKm > 0.0
     return RecordType.entries.filter { it in types }.mapNotNull { type ->
-        val value = when (type) {
-            RecordType.LONGEST_DURATION -> run.durationSeconds.takeIf { it > 0 }?.toDouble()
-            RecordType.LONGEST_DISTANCE -> (run.distanceKm * 1_000.0).takeIf { hasDistance }
-            // The rolling window needs a route to run over, so this is the one place a treadmill
-            // Run genuinely has nothing to offer.
-            else -> if (hasRoute) measureFastestEffortSeconds(track, type.distanceMeters!!)?.toDouble() else null
+        val value = when {
+            type == RecordType.LONGEST_DURATION -> run.durationSeconds.takeIf { it > 0 }?.toDouble()
+            type == RecordType.LONGEST_DISTANCE -> (run.distanceKm * 1_000.0).takeIf { hasDistance }
+            // The rolling window needs a route to run over. Where there is one it is the whole
+            // answer; where there is not, the only other way to hold one of these is to have been
+            // told, and a Run nobody told holds nothing.
+            hasRoute -> measureFastestEffortSeconds(track, type.distanceMeters!!)?.toDouble()
+            treadmill -> stated[type]?.takeIf { it > 0.0 }
+            else -> null
         }
         value?.let { BestEffort(type, it) }
     }

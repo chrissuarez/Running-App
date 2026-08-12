@@ -74,7 +74,7 @@ class RecordsTest {
     }
 
     @Test
-    fun `a treadmill run contests none of the fastest five, however far it went`() {
+    fun `a treadmill run told nothing contests none of the fastest five, however far it went`() {
         // Not a matter of trust: a Best Effort is a stretch found inside the Run, and there is no
         // track to find one in. Nothing derives one from the average pace to get around that.
         val run = aRun(runMode = "treadmill").copy(distanceKm = 42.0)
@@ -85,6 +85,97 @@ class RecordsTest {
             listOf(RecordType.LONGEST_DISTANCE, RecordType.LONGEST_DURATION),
             efforts.map { it.type },
         )
+    }
+
+    // --- What a treadmill Run is told it holds (#282, ADR 0015) ------------------------------
+
+    @Test
+    fun `a treadmill run contests the distances it was told, and only those`() {
+        // The console shows lap times, so one Run can honestly report a 1 km and a 5 km. They are
+        // two claims about two stretches and neither says anything about the other — including
+        // anything about the 10 km nobody mentioned.
+        val run = aRun(runMode = "treadmill").copy(distanceKm = 12.0)
+
+        val efforts = bestEffortsOf(
+            run,
+            track = emptyList(),
+            stated = mapOf(RecordType.FASTEST_1K to 280.0, RecordType.FASTEST_5K to 1_500.0),
+        )
+
+        assertEquals(280.0, efforts.valueOf(RecordType.FASTEST_1K)!!, 0.001)
+        assertEquals(1_500.0, efforts.valueOf(RecordType.FASTEST_5K)!!, 0.001)
+        assertNull(efforts.valueOf(RecordType.FASTEST_10K))
+        assertNull(efforts.valueOf(RecordType.FASTEST_MILE))
+    }
+
+    @Test
+    fun `a stated best effort is ranked exactly as a measured one is`() {
+        // The whole of what "placed in the record book like a measured one" means: the book cannot
+        // tell them apart, so a stated 24:00 beats a measured 25:00 and loses to a measured 23:00.
+        val stated = bestEffortsOf(
+            aRun(runMode = "treadmill").copy(distanceKm = 6.0),
+            track = emptyList(),
+            stated = mapOf(RecordType.FASTEST_5K to 1_440.0),
+        )
+
+        val book = listOf(
+            Achievement(sessionId = 1, type = RecordType.FASTEST_5K, medal = Medal.GOLD, value = 1_380.0),
+            Achievement(sessionId = 2, type = RecordType.FASTEST_5K, medal = Medal.SILVER, value = 1_500.0),
+        )
+        val after = standingsAfter(
+            book,
+            sessionId = 3,
+            // Only the record under test: this Run contests the two totals as well, and their
+            // standings say nothing about how a stated time is ranked.
+            efforts = stated.filter { it.type == RecordType.FASTEST_5K },
+        )
+
+        assertEquals(
+            listOf(1L to Medal.GOLD, 3L to Medal.SILVER, 2L to Medal.BRONZE),
+            after.map { it.sessionId to it.medal },
+        )
+    }
+
+    @Test
+    fun `a whole-run distance and duration claim no best effort at any shorter distance`() {
+        // The derivation ADR 0008 rejects and ADR 0015 is built on refusing: 6 km in 30:00 is not a
+        // 5 km in 25:00, and the only way this Run ever holds a 5 km is to be told one.
+        val run = aRun(runMode = "treadmill").copy(distanceKm = 6.0, durationSeconds = 1_800)
+
+        val efforts = bestEffortsOf(run, track = emptyList())
+
+        assertNull(efforts.valueOf(RecordType.FASTEST_5K))
+        assertNull(efforts.valueOf(RecordType.FASTEST_1K))
+        assertEquals(6_000.0, efforts.valueOf(RecordType.LONGEST_DISTANCE)!!, 0.001)
+    }
+
+    @Test
+    fun `an outdoor run's efforts are measured, and a statement cannot reach them`() {
+        // Nothing offers an outdoor Run a statement, and if something did the measuring would still
+        // be the answer: no Run ever holds a measured effort and a stated one at the same record.
+        // Longer than the kilometre being measured, so the rolling window has a whole one to find.
+        val track = script { running(speedMps = 5.0, seconds = 250) } // 1250 m at 3:20/km
+
+        val efforts = bestEffortsOf(
+            anOutdoorRun(distanceKm = 1.25),
+            track,
+            stated = mapOf(RecordType.FASTEST_1K to 100.0),
+        )
+
+        assertEquals(200.0, efforts.valueOf(RecordType.FASTEST_1K)!!, 2.0)
+    }
+
+    @Test
+    fun `a run still being recorded is worth nothing, whatever it has been told`() {
+        val unfinished = aRun(runMode = "treadmill").copy(distanceKm = 6.0, endTime = 0)
+
+        val efforts = bestEffortsOf(
+            unfinished,
+            track = emptyList(),
+            stated = mapOf(RecordType.FASTEST_5K to 1_440.0),
+        )
+
+        assertTrue(efforts.isEmpty())
     }
 
     @Test

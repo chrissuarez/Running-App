@@ -805,9 +805,10 @@ interface RunWalkIntervalStatDao {
         TrackPoint::class,
         Achievement::class,
         Route::class,
-        GoalRow::class
+        GoalRow::class,
+        StatedBestEffort::class
     ],
-    version = 27,
+    version = 28,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -818,6 +819,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun achievementDao(): AchievementDao
     abstract fun routeDao(): RouteDao
     abstract fun goalDao(): GoalDao
+    abstract fun statedBestEffortDao(): StatedBestEffortDao
 
     companion object {
         @Volatile
@@ -898,7 +900,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_23_24,
     MIGRATION_24_25,
     MIGRATION_25_26,
-    MIGRATION_26_27
+    MIGRATION_26_27,
+    MIGRATION_27_28
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1652,6 +1655,36 @@ val MIGRATION_26_27 = object : Migration(26, 27) {
         database.execSQL(
             "CREATE UNIQUE INDEX IF NOT EXISTS `index_goals_period_metric` ON `goals` " +
                 "(`period`, `metric`)"
+        )
+    }
+}
+
+/**
+ * The table a treadmill Run's stated Best Efforts live in (#282).
+ *
+ * Nothing to backfill: before this there was no way to state one, so every existing Run starts with
+ * none — which is exactly what an empty table says. History's records are untouched by the migration
+ * and stay exactly as they were measured.
+ *
+ * The foreign key is the rule that a statement is part of its Run, so deleting the Run takes its
+ * claims with it and no orphan can go on holding a medal. The unique index over (sessionId, type) is
+ * "one statement per record distance per Run" written where it cannot be got round — the same rule
+ * the insert relies on to make stating a time twice a correction rather than a second claim.
+ */
+val MIGRATION_27_28 = object : Migration(27, 28) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            "CREATE TABLE IF NOT EXISTS `stated_best_efforts` (" +
+                "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                "`sessionId` INTEGER NOT NULL, " +
+                "`type` TEXT NOT NULL, " +
+                "`seconds` INTEGER NOT NULL, " +
+                "FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) " +
+                "ON UPDATE NO ACTION ON DELETE CASCADE )"
+        )
+        database.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS `index_stated_best_efforts_sessionId_type` " +
+                "ON `stated_best_efforts` (`sessionId`, `type`)"
         )
     }
 }

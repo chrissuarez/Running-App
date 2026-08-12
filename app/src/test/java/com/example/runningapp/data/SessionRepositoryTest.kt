@@ -714,6 +714,360 @@ class SessionRepositoryTest {
         )
     }
 
+    // --- Stating a Best Effort a treadmill console showed (#282, ADR 0015) ---------------------
+
+    @Test
+    fun `a stated best effort is written and scored against the record book`() = runTest {
+        val run = aTreadmillRun(id = 42, seconds = 1_800).copy(distanceKm = 6.0)
+        whenever(mockDao.getSessionById(42L)).thenReturn(run)
+        val claim = StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_5K, seconds = 1_440)
+        val statedDao: StatedBestEffortDao = mock()
+        // Nothing stated when the claim is read, and the claim standing every time afterwards: the
+        // scoring must rank the Run on what it has just been told, not on what it held before.
+        whenever(statedDao.getForSession(42L)).thenReturn(emptyList(), listOf(claim))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        var refreshCount = 0
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+            refreshHistoryBackup = { refreshCount++ },
+        )
+
+        repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_440)
+
+        verify(statedDao).state(claim)
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(
+            listOf(
+                RecordType.FASTEST_5K to 1_440.0,
+                RecordType.LONGEST_DISTANCE to 6_000.0,
+                RecordType.LONGEST_DURATION to 1_800.0,
+            ),
+            book.firstValue.map { it.type to it.value },
+        )
+        // As with a stated distance: the snapshot finalizeRun took went out before the claim
+        // existed, and a Run restored from it would come back without it.
+        assertEquals(1, refreshCount)
+    }
+
+    @Test
+    fun `the same Run can be told two different record distances`() = runTest {
+        val run = aTreadmillRun(id = 42, seconds = 1_800).copy(distanceKm = 6.0)
+        whenever(mockDao.getSessionById(42L)).thenReturn(run)
+        val fiveK = StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_5K, seconds = 1_440)
+        val statedDao: StatedBestEffortDao = mock()
+        // The 5 km already stated when the 1 km is claimed: a console shows lap times, and neither
+        // claim derives the other.
+        whenever(statedDao.getForSession(42L)).thenReturn(listOf(fiveK))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_1K, seconds = 280)
+
+        verify(statedDao).state(
+            StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_1K, seconds = 280)
+        )
+        // And the 5 km is untouched — a second claim is not a correction of the first.
+        verify(statedDao, never()).withdraw(any(), any())
+    }
+
+    @Test
+    fun `only a treadmill Run can be told a best effort`() = runTest {
+        // An outdoor Run's efforts are measured, and one whose GPS recorded nothing is not rescued
+        // this way — the same refusal a stated distance makes, and what keeps any Run from holding
+        // a measured effort and a stated one at the same record.
+        whenever(mockDao.getSessionById(42L))
+            .thenReturn(session(id = 42, endTime = 1_000L).copy(runMode = "outdoor"))
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(42L)).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_440)
+
+        verify(statedDao, never()).state(any())
+    }
+
+    @Test
+    fun `a claim the Run could not contain is refused`() = runTest {
+        // Not the app doubting the runner, which it does nowhere: an implausible time is believed
+        // and corrected afterwards. What is refused is the arithmetically impossible — a 5 km that
+        // took longer than the whole Run, and a 10 km inside a Run of six.
+        whenever(mockDao.getSessionById(42L))
+            .thenReturn(aTreadmillRun(id = 42, seconds = 1_800).copy(distanceKm = 6.0))
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(42L)).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_801)
+        repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_10K, seconds = 1_700)
+        // Neither is a record run over a distance, so neither is a Best Effort to be told.
+        repositoryWithRecords.stateBestEffort(42L, RecordType.LONGEST_DISTANCE, seconds = 100)
+        repositoryWithRecords.stateBestEffort(42L, RecordType.LONGEST_DURATION, seconds = 100)
+        // And a time is a positive number of seconds or it is nothing.
+        repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 0)
+
+        verify(statedDao, never()).state(any())
+    }
+
+    @Test
+    fun `a Run nobody stated a distance for can still be told a best effort`() = runTest {
+        // The two statements are independent: a runner who noted the 5 km split and never looked at
+        // the total has still said something true.
+        whenever(mockDao.getSessionById(42L)).thenReturn(aTreadmillRun(id = 42, seconds = 1_800))
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(42L)).thenReturn(emptyList())
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_440)
+
+        verify(statedDao).state(
+            StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_5K, seconds = 1_440)
+        )
+    }
+
+    @Test
+    fun `a half marathon is allowed the rounding a stated distance is typed at`() = runTest {
+        // 21.09 km is how a genuine half marathon reads in a field that takes two decimal places,
+        // and the record is 21 097.5 m. The shortfall is the format's, not the runner's.
+        whenever(mockDao.getSessionById(42L))
+            .thenReturn(aTreadmillRun(id = 42, seconds = 7_200).copy(distanceKm = 21.09))
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(42L)).thenReturn(emptyList())
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_HALF, seconds = 7_000)
+
+        verify(statedDao).state(
+            StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_HALF, seconds = 7_000)
+        )
+    }
+
+    @Test
+    fun `stating the time already there costs nothing`() = runTest {
+        whenever(mockDao.getSessionById(42L))
+            .thenReturn(aTreadmillRun(id = 42, seconds = 1_800).copy(distanceKm = 6.0))
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(42L)).thenReturn(
+            listOf(StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_5K, seconds = 1_440))
+        )
+        var refreshCount = 0
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            statedBestEffortDao = statedDao,
+            refreshHistoryBackup = { refreshCount++ },
+        )
+
+        repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_440)
+
+        verify(statedDao, never()).state(any())
+        assertEquals(0, refreshCount)
+    }
+
+    @Test
+    fun `a slower correction rebuilds the record it held, promoting the run behind it`() = runTest {
+        // The opposite direction from a stated distance, and the same rule: a claim made worse can
+        // demote a Medal, and the Run that should move up exists nowhere but in history.
+        val medalHolder = aTreadmillRun(id = 2, seconds = 1_800).copy(distanceKm = 6.0)
+        whenever(mockDao.getSessionById(2L)).thenReturn(medalHolder)
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(2L)).thenReturn(
+            listOf(StatedBestEffort(sessionId = 2, type = RecordType.FASTEST_5K, seconds = 1_380))
+        )
+        // Every claim in history as it stands once the correction has landed. Run 1's 24:00 was
+        // second and exists nowhere but here, since only the top three are ever banked — which is
+        // why re-scoring Run 2 alone could not find it.
+        whenever(statedDao.getAll()).thenReturn(
+            listOf(
+                StatedBestEffort(sessionId = 1, type = RecordType.FASTEST_5K, seconds = 1_440),
+                StatedBestEffort(sessionId = 2, type = RecordType.FASTEST_5K, seconds = 1_500),
+            )
+        )
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(
+            listOf(Achievement(sessionId = 2, type = RecordType.FASTEST_5K, medal = Medal.GOLD, value = 1_380.0))
+        )
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockDao.getAllSessions()).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_800).copy(distanceKm = 6.0),
+                medalHolder,
+            )
+        )
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repositoryWithRecords.stateBestEffort(2L, RecordType.FASTEST_5K, seconds = 1_500)
+
+        verify(statedDao).state(
+            StatedBestEffort(sessionId = 2, type = RecordType.FASTEST_5K, seconds = 1_500)
+        )
+        // Only the record the claim was made at is rebuilt: nothing else about the Run moved.
+        verify(mockAchievementDao).deleteAchievementsOfTypes(listOf(RecordType.FASTEST_5K))
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(
+            listOf(1L to Medal.GOLD, 2L to Medal.SILVER),
+            book.firstValue.map { it.sessionId to it.medal },
+        )
+    }
+
+    @Test
+    fun `correcting the distance takes the best efforts it has made impossible with it`() = runTest {
+        // A Run that says it went three kilometres cannot hold a five. A correction is the one way a
+        // claim that was possible when it was made stops being one, so the same act removes it —
+        // otherwise a Medal stands on an impossible claim with nothing left to notice.
+        val run = aTreadmillRun(id = 2, seconds = 1_800).copy(distanceKm = 6.0)
+        whenever(mockDao.getSessionById(2L)).thenReturn(run)
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(2L)).thenReturn(
+            listOf(
+                StatedBestEffort(sessionId = 2, type = RecordType.FASTEST_1K, seconds = 280),
+                StatedBestEffort(sessionId = 2, type = RecordType.FASTEST_5K, seconds = 1_380),
+            )
+        )
+        // What is left once the correction has landed: the 1 km survives a 3 km Run, the 5 km does
+        // not, and Run 1's 24:00 exists nowhere but here.
+        whenever(statedDao.getAll()).thenReturn(
+            listOf(
+                StatedBestEffort(sessionId = 1, type = RecordType.FASTEST_5K, seconds = 1_440),
+                StatedBestEffort(sessionId = 2, type = RecordType.FASTEST_1K, seconds = 280),
+            )
+        )
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(
+            listOf(
+                Achievement(sessionId = 2, type = RecordType.FASTEST_5K, medal = Medal.GOLD, value = 1_380.0),
+                Achievement(sessionId = 2, type = RecordType.LONGEST_DISTANCE, medal = Medal.GOLD, value = 6_000.0),
+            )
+        )
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockDao.getAllSessions()).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_800).copy(distanceKm = 6.0),
+                run.copy(distanceKm = 3.0),
+            )
+        )
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repositoryWithRecords.stateDistance(2L, distanceKm = 3.0)
+
+        // The 5 km goes; the 1 km stays, because a 3 km Run holds a kilometre perfectly well.
+        verify(statedDao).withdraw(2L, RecordType.FASTEST_5K)
+        verify(statedDao, never()).withdraw(2L, RecordType.FASTEST_1K)
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        // Run 1 takes the 5 km the correction gave up, and Run 2's own 1 km is untouched by any of it.
+        assertEquals(
+            listOf(1L to RecordType.FASTEST_5K, 1L to RecordType.LONGEST_DISTANCE, 2L to RecordType.LONGEST_DISTANCE),
+            book.firstValue.map { it.sessionId to it.type }.sortedWith(compareBy({ it.first }, { it.second })),
+        )
+    }
+
+    @Test
+    fun `withdrawing the distance entirely orphans no best effort`() = runTest {
+        // A Run with no stated distance contradicts no claim: the two statements are independent in
+        // what they require of each other, and only a distance that is *there* can be too short.
+        val run = aTreadmillRun(id = 2, seconds = 1_800).copy(distanceKm = 6.0)
+        whenever(mockDao.getSessionById(2L)).thenReturn(run)
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(2L)).thenReturn(
+            listOf(StatedBestEffort(sessionId = 2, type = RecordType.FASTEST_5K, seconds = 1_380))
+        )
+        whenever(statedDao.getAll()).thenReturn(
+            listOf(StatedBestEffort(sessionId = 2, type = RecordType.FASTEST_5K, seconds = 1_380))
+        )
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(emptyList())
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockDao.getAllSessions()).thenReturn(listOf(run.copy(distanceKm = 0.0)))
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repositoryWithRecords.stateDistance(2L, distanceKm = null)
+
+        verify(statedDao, never()).withdraw(any(), any())
+    }
+
+    @Test
+    fun `a withdrawn best effort gives up the medal it held`() = runTest {
+        val medalHolder = aTreadmillRun(id = 2, seconds = 1_800).copy(distanceKm = 6.0)
+        whenever(mockDao.getSessionById(2L)).thenReturn(medalHolder)
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(2L)).thenReturn(
+            listOf(StatedBestEffort(sessionId = 2, type = RecordType.FASTEST_5K, seconds = 1_380))
+        )
+        // Withdrawn, so history holds only Run 1's claim by the time the rebuild reads it.
+        whenever(statedDao.getAll()).thenReturn(
+            listOf(StatedBestEffort(sessionId = 1, type = RecordType.FASTEST_5K, seconds = 1_440))
+        )
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(
+            listOf(Achievement(sessionId = 2, type = RecordType.FASTEST_5K, medal = Medal.GOLD, value = 1_380.0))
+        )
+        // The book still holds Run 2's gold while the rebuild measures, which is what it must see
+        // past: a Run that now claims nothing must not have its old row carried back in.
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(
+            listOf(Achievement(sessionId = 2, type = RecordType.FASTEST_5K, medal = Medal.GOLD, value = 1_380.0))
+        )
+        whenever(mockDao.getAllSessions()).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_800).copy(distanceKm = 6.0),
+                medalHolder,
+            )
+        )
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repositoryWithRecords.stateBestEffort(2L, RecordType.FASTEST_5K, seconds = null)
+
+        verify(statedDao).withdraw(2L, RecordType.FASTEST_5K)
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(
+            listOf(1L to 1_440.0),
+            book.firstValue.map { it.sessionId to it.value },
+        )
+    }
+
     @Test
     fun `getTrackPointsForMap keeps BACKFILL points and only accurate GPS points`() = runTest {
         val sessionId = 7L
