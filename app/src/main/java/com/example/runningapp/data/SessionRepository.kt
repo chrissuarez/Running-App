@@ -1014,6 +1014,10 @@ class SessionRepository(
         val runsOwedScoring = sessionDao.getSessionIdsMissingRecordScoring()
         try {
             val book = rebuildRecords(RecordType.entries)
+            if (book == null) {
+                Log.d("Records", "A stated Best Effort changed while history was being scored; leaving it for next launch")
+                return
+            }
             // Only now: until this lands, the pass is still owed. And not at all if a delete ran at
             // any point alongside it — one that started after the baseline was taken, one still
             // running now, or one already under way when it was taken, which a count of *starts*
@@ -1287,8 +1291,9 @@ class SessionRepository(
     private suspend fun repairRecordBook(types: List<RecordType>, remeasured: List<Long>): Boolean {
         if (types.isEmpty()) return true
         return try {
-            rebuildRecords(types, remeasured)
-            true
+            // Null is the rebuild declining to commit, which is not a failure but is not a repair
+            // either: the book stands as it was and the debt stays owed.
+            rebuildRecords(types, remeasured) != null
         } catch (e: Exception) {
             Log.w("Records", "Deleted run(s) held ${types.size} record(s) the book could not be rebuilt for", e)
             false
@@ -1326,14 +1331,16 @@ class SessionRepository(
     private suspend fun rebuildRecords(
         types: List<RecordType>,
         remeasured: List<Long> = emptyList(),
-    ): List<Achievement> {
+    ): List<Achievement>? {
         val dao = achievementDao ?: return emptyList()
+        // Every statement in history, in one read rather than one per Run: a query inside the loop
+        // below is a round trip per Run in the runner's life, to fetch at most five rows. Read
+        // before the measuring, and checked again after it — see the abandonment below.
+        val statedBefore = claimsAt(types)
+        val statedByRun = statedBefore.groupBy { it.sessionId }
         // One Run at a time, because a track is thousands of points and the whole history's worth
         // of them at once is not something to hold in memory. Unfinished Runs are in this list and
         // measure to nothing, which is what [bestEffortsOf] says they are worth.
-        // Every statement in history, in one read rather than one per Run: a query inside the loop
-        // below is a round trip per Run in the runner's life, to fetch at most five rows.
-        val statedByRun = statedBestEffortDao?.getAll().orEmpty().groupBy { it.sessionId }
         val measured = withContext(Dispatchers.Default) {
             sessionDao.getAllSessions().map { session ->
                 RunEfforts(session.id, effortsAt(session, types, statedByRun[session.id].orEmpty().byType()))
@@ -1342,20 +1349,50 @@ class SessionRepository(
         val measuredIds =
             measured.filter { it.efforts.isNotEmpty() }.map { it.sessionId }.toSet() + remeasured
 
-        var written = emptyList<Achievement>()
+        var written: List<Achievement>? = null
         inTransaction {
+            // The statements are asked for again, inside the transaction that writes the book, and
+            // the whole rebuild is abandoned if they have moved (#282). A Run finishing mid-measure
+            // is already answered — it scores itself, and its standing rows are carried in as
+            // `unseen` — but a *statement* has no such answer: stating or improving one takes the
+            // direct scoring path rather than this one, so a rebuild committing afterwards out of
+            // the claims it read minutes ago would overwrite that scoring with the old time, or
+            // with no row at all. Nothing later would find it: only the top three are stored.
+            //
+            // Inside, because the database takes one writer at a time — either the statement has
+            // committed by now and this sees it, or it commits afterwards and its own scoring has
+            // the last word. Abandoning costs a book left as it was and the seeding debt still
+            // owed, which the next launch pays against a history nobody is moving.
+            if (claimsAt(types) != statedBefore) {
+                Log.d("Records", "A stated Best Effort changed while the book was being rebuilt; leaving it")
+                return@inTransaction
+            }
             val unseen = dao.getAllAchievements()
                 .filter { it.type in types && it.sessionId !in measuredIds }
                 .groupBy { it.sessionId }
                 .map { (sessionId, rows) ->
                     RunEfforts(sessionId, rows.map { BestEffort(it.type, it.value) })
                 }
-            written = recordBookOf(measured + unseen)
+            val book = recordBookOf(measured + unseen)
             dao.deleteAchievementsOfTypes(types)
-            dao.insertAchievements(written)
+            dao.insertAchievements(book)
+            written = book
         }
         return written
     }
+
+    /**
+     * Every claim standing at [types], as the thing two readings of it are compared by (#282).
+     *
+     * The claim and not the row: correcting a statement replaces it, which gives the same claim a
+     * new id, and an id is not something a record book has ever ranked by. Sorted so two reads of an
+     * unchanged table compare equal whatever order the database hands them back in.
+     */
+    private suspend fun claimsAt(types: List<RecordType>): List<Triple<Long, RecordType, Int>> =
+        statedBestEffortDao?.getAll().orEmpty()
+            .filter { it.type in types }
+            .map { Triple(it.sessionId, it.type, it.seconds) }
+            .sortedWith(compareBy({ it.first }, { it.second }))
 
     /** What one Run is worth at [types], measuring its track only if one of them needs it. */
     private suspend fun effortsAt(

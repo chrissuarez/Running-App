@@ -57,6 +57,18 @@ class StatedBestEffortCardTest {
     }
 
     @Test
+    fun `a pasted number too wide to be a time is rejected, not thrown over`() {
+        // Digits all the way down, so every character check passes: the leading part is the one
+        // unbounded place, and overflowing it during recomposition would take the Run's page down
+        // rather than showing the invalid-time state the field already has.
+        assertNull(statedEffortSecondsOf("999999999999:00"))
+        assertNull(statedEffortSecondsOf("99999999999999999999:00:00"))
+        assertTrue(statedEffortIsRejected("999999999999:00"))
+        // And the bound is far past any Run rather than anywhere near one.
+        assertEquals(3_600, statedEffortSecondsOf("60:00"))
+    }
+
+    @Test
     fun `nothing typed is not a rejection`() {
         // A runner who has typed nothing has said nothing, which is allowed everywhere the field
         // appears. It is the half-typed entry that has to stop a Save.

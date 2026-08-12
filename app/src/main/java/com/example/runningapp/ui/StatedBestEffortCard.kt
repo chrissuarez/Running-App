@@ -59,10 +59,24 @@ fun statedEffortSecondsOf(typed: String): Int? {
     // and it never reaches sixty.
     val tail = parts.drop(1)
     if (tail.any { it.length != 2 || it.toInt() >= 60 }) return null
-    val numbers = parts.map { it.toInt() }
-    val seconds = numbers.fold(0L) { total, part -> total * 60 + part }
+    // The leading part is the only unbounded one, so it is the only one that can be pasted in wide
+    // enough to overflow. Bounded by digits rather than by catching the overflow, because the
+    // arithmetic below runs on every keystroke during recomposition and a throw there takes the
+    // Run's page down rather than showing the invalid-time state the field already has.
+    val lead = parts.first().toLongOrNull()?.takeIf { parts.first().length <= MAX_LEADING_DIGITS }
+        ?: return null
+    val seconds = tail.fold(lead) { total, part -> total * 60 + part.toInt() }
     return seconds.takeIf { it in 1..Int.MAX_VALUE }?.toInt()
 }
+
+/**
+ * How many digits the leading part of a typed time may have.
+ *
+ * Six is far past any Run — a thousand hours — and is chosen to be obviously beyond argument rather
+ * than to be a limit anybody meets. What it is really for is the paste of `999999999999:00`, which
+ * is digits all the way down and would otherwise overflow on its way to being rejected.
+ */
+private const val MAX_LEADING_DIGITS = 6
 
 /** True when what is typed was meant to be a time and is not one — blank says nothing, as ever. */
 fun statedEffortIsRejected(typed: String): Boolean =
