@@ -195,6 +195,10 @@ fun GoalsSheet(
                                 "${goalAmountText(progress.goal.metric, progress.goal.target)} " +
                                 progress.goal.metric.unit,
                             style = MaterialTheme.typography.bodyMedium,
+                            // Wraps rather than pushing Edit and the bin off the row: on a narrow
+                            // screen at large text the longest label was squeezing the remove
+                            // button down to a sliver, leaving a goal with no visible way out.
+                            modifier = Modifier.weight(1f),
                         )
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             TextButton(onClick = {
