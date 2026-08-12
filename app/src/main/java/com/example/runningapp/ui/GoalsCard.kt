@@ -40,6 +40,7 @@ import com.example.runningapp.training.Goal
 import com.example.runningapp.training.GoalMetric
 import com.example.runningapp.training.GoalPeriod
 import com.example.runningapp.training.GoalProgress
+import kotlin.math.floor
 import kotlin.math.roundToInt
 
 /**
@@ -66,10 +67,23 @@ fun goalAmountText(metric: GoalMetric, amount: Double): String {
  * positive, finite number in the metric's own unit, and nothing here caps it. A hundred hours a week
  * is not a week anyone has, but neither is it the app's to refuse — a target is the runner's to set
  * and theirs to correct.
+ *
+ * A Runs target is a whole number as well, because a Run only ever adds a whole one: two and a bit
+ * runs is a target no week can land on, and the card would round it to "2 / 2 runs" without ever
+ * ticking it. Refused rather than rounded, exactly as an empty or a zero target is — the runner
+ * gets their typing back to correct, not a number they did not type.
  */
-fun goalTargetOf(typed: String): Double? {
+fun goalTargetOf(metric: GoalMetric, typed: String): Double? {
     val number = typed.trim().replace(',', '.').toDoubleOrNull() ?: return null
-    return number.takeIf { it.isFinite() && it > 0.0 }
+    if (!number.isFinite() || number <= 0.0) return null
+    if (metric == GoalMetric.COUNT && number != floor(number)) return null
+    return number
+}
+
+/** What to say under the field when what is typed there is not a target of this metric. */
+fun goalTargetHintOf(metric: GoalMetric): String = when (metric) {
+    GoalMetric.COUNT -> "Enter a whole number of runs, like 3"
+    else -> "Enter a number greater than zero, like 40"
 }
 
 /** One goal, said in full: "This week — 24 / 40 km". */
@@ -163,7 +177,7 @@ fun GoalsSheet(
     var typed by remember { mutableStateOf("") }
 
     val standing = goals.firstOrNull { it.goal.period == period && it.goal.metric == metric }?.goal
-    val target = goalTargetOf(typed)
+    val target = goalTargetOf(metric, typed)
     val rejected = typed.isNotBlank() && target == null
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -244,7 +258,7 @@ fun GoalsSheet(
                 singleLine = true,
                 isError = rejected,
                 supportingText = if (rejected) {
-                    { Text("Enter a number greater than zero, like 40") }
+                    { Text(goalTargetHintOf(metric)) }
                 } else null,
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.fillMaxWidth(),
