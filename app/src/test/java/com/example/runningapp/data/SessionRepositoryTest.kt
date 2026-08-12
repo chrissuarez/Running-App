@@ -941,6 +941,29 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a claim the Run stopped containing while it was being saved is refused`() = runTest {
+        // The check that matters is the one inside the transaction that stores the claim. Here the
+        // Run reads as 6 km when the dialog is answered and as 3 km by the time the write lands —
+        // a distance corrected in between — and the claim must not reach the book.
+        val asAnswered = aTreadmillRun(id = 42, seconds = 1_800).copy(distanceKm = 6.0)
+        val asStored = asAnswered.copy(distanceKm = 3.0)
+        whenever(mockDao.getSessionById(42L)).thenReturn(asAnswered, asStored)
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(42L)).thenReturn(emptyList())
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_440)
+
+        verify(statedDao, never()).state(any())
+    }
+
+    @Test
     fun `a claim whose scoring cannot finish leaves the Run owing one`() = runTest {
         // A Run is marked scored once and never revisited, so a claim stored against a marked Run
         // is a medal nobody goes back for the moment the scoring behind it ends short. The mark is
