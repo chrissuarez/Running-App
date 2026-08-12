@@ -635,6 +635,59 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
+    fun migrate27To28_addsAnEmptyStatedBestEffortTable_andAStatementGoesWithItsRun() {
+        val rawDb = openLegacyDatabase()
+        createTrackPointsTable(rawDb)
+        insertLegacySession(rawDb, id = 1)
+        rawDb.execSQL("UPDATE sessions SET endTime = 9000, durationSeconds = 2259, distanceKm = 5.1 WHERE id = 1")
+        rawDb.version = 12
+        rawDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(*appDatabaseMigrations { HrProfile(190) })
+            .build()
+        val dao = migratedDb.statedBestEffortDao()
+        val run = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
+
+        // Empty, and nothing could have filled it: before #282 there was no way to state one, and
+        // reading one off a Run's distance and duration is the derivation ADR 0015 refuses.
+        assertEquals(emptyList<StatedBestEffort>(), runBlockingGet { dao.getAll() })
+
+        runBlockingGet {
+            dao.state(StatedBestEffort(sessionId = 1, type = RecordType.FASTEST_5K, seconds = 1_500))
+        }
+        // A second distance from the same Run is a second claim: a console shows lap times, and the
+        // 5 km says nothing about the 1 km.
+        runBlockingGet {
+            dao.state(StatedBestEffort(sessionId = 1, type = RecordType.FASTEST_1K, seconds = 280))
+        }
+        assertEquals(2, runBlockingGet { dao.getForSession(1) }.size)
+
+        // Stating the same distance again is a correction and never a second claim about the same
+        // stretch — the unique index is what makes the two indistinguishable.
+        runBlockingGet {
+            dao.state(StatedBestEffort(sessionId = 1, type = RecordType.FASTEST_5K, seconds = 1_440))
+        }
+        val fiveK = runBlockingGet { dao.getForSession(1) }.single { it.type == RecordType.FASTEST_5K }
+        assertEquals(1_440, fiveK.seconds)
+
+        runBlockingGet { dao.withdraw(1, RecordType.FASTEST_1K) }
+        assertEquals(1, runBlockingGet { dao.getForSession(1) }.size)
+
+        // And a claim is part of its Run: deleting the Run takes it, so no orphan goes on holding a
+        // place in the record book.
+        runBlockingGet { migratedDb.sessionDao().deleteSessionsByIds(listOf(1L)) }
+        assertEquals(emptyList<StatedBestEffort>(), runBlockingGet { dao.getAll() })
+
+        migratedDb.close()
+
+        // The Run was exactly where it was until it was deleted: the migration adds room, nothing else.
+        assertEquals(2259L, run.durationSeconds)
+        assertEquals(9000L, run.endTime)
+        assertEquals(5.1, run.distanceKm, 0.0001)
+    }
+
+    @Test
     fun migrate24To25_leavesEveryRunUnderNoStage_soHistoryGraduatesNothing() {
         val rawDb = openLegacyDatabase()
         createTrackPointsTable(rawDb)

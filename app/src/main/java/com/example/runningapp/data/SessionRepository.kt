@@ -258,6 +258,9 @@ class SessionRepository(
     // Null wherever records are not wired (tests, and the archive's read-only container): a run then
     // finishes without being scored rather than failing to finish.
     private val achievementDao: AchievementDao? = null,
+    // Null on the same terms as the record book it feeds: a treadmill Run then simply holds no
+    // stated Best Effort, which is what every Run held before #282 anyway.
+    private val statedBestEffortDao: StatedBestEffortDao? = null,
     private val settingsRepository: SettingsRepository? = null,
     private val coachPrescriptionRepository: CoachPrescriptionRepository? = null,
     private val aiCoachClient: AiCoachClient? = null,
@@ -865,13 +868,14 @@ class SessionRepository(
         val session = sessionDao.getSessionById(sessionId) ?: return emptyList()
         // The same accuracy-gated points the map, the splits and the GPX export are built from, so a
         // fix the run itself refused cannot come back as a record nobody ran.
-        val efforts = bestEffortsOf(session, getTrackPointsForMap(sessionId))
+        val stated = statedEffortsOf(sessionId)
+        val efforts = bestEffortsOf(session, getTrackPointsForMap(sessionId), stated = stated)
         if (efforts.isEmpty()) return emptyList()
 
         var earned: List<Achievement>? = null
         inTransaction {
             val now = sessionDao.getSessionById(sessionId)
-            if (now == null || !now.contestsAs(session)) {
+            if (now == null || !now.contestsAs(session) || statedEffortsOf(sessionId) != stated) {
                 Log.d("Records", "Run $sessionId changed while it was being measured; leaving it unscored")
                 return@inTransaction
             }
@@ -890,6 +894,12 @@ class SessionRepository(
      * Deliberately not the whole row. A Run's feel, its note and its Effort Score can all be written
      * while history is being measured — the Effort backfill runs at the same launch — and none of
      * them can change a distance or a duration, so none of them is a reason to abandon a scoring.
+     *
+     * What a Run has been *told* it holds is not in the row at all, so the caller checks that
+     * separately against the same table (#282) — for the same reason and against the same window: a
+     * stated Best Effort corrected while history is being measured scores itself and mends the book
+     * behind it, and a rewrite landing afterwards out of the older claim would put the old time
+     * back over a mend already made.
      */
     private fun RunnerSession.contestsAs(other: RunnerSession): Boolean =
         endTime == other.endTime &&
@@ -1321,9 +1331,12 @@ class SessionRepository(
         // One Run at a time, because a track is thousands of points and the whole history's worth
         // of them at once is not something to hold in memory. Unfinished Runs are in this list and
         // measure to nothing, which is what [bestEffortsOf] says they are worth.
+        // Every statement in history, in one read rather than one per Run: a query inside the loop
+        // below is a round trip per Run in the runner's life, to fetch at most five rows.
+        val statedByRun = statedBestEffortDao?.getAll().orEmpty().groupBy { it.sessionId }
         val measured = withContext(Dispatchers.Default) {
             sessionDao.getAllSessions().map { session ->
-                RunEfforts(session.id, effortsAt(session, types))
+                RunEfforts(session.id, effortsAt(session, types, statedByRun[session.id].orEmpty().byType()))
             }
         }
         val measuredIds =
@@ -1345,13 +1358,21 @@ class SessionRepository(
     }
 
     /** What one Run is worth at [types], measuring its track only if one of them needs it. */
-    private suspend fun effortsAt(session: RunnerSession, types: List<RecordType>): List<BestEffort> {
+    private suspend fun effortsAt(
+        session: RunnerSession,
+        types: List<RecordType>,
+        stated: Map<RecordType, Double> = emptyMap(),
+    ): List<BestEffort> {
         // The longest time is asked of the Run's own clock; every other record is measured against
         // ground, so it needs the track read and accuracy-gated first.
         val overGround = types.any { it != RecordType.LONGEST_DURATION }
         val track = if (overGround) getTrackPointsForMap(session.id) else emptyList()
-        return bestEffortsOf(session, track, types)
+        return bestEffortsOf(session, track, types, stated)
     }
+
+    /** What one Run has been told it holds, in the shape the record book ranks (#282). */
+    private suspend fun statedEffortsOf(sessionId: Long): Map<RecordType, Double> =
+        statedBestEffortDao?.getForSession(sessionId).orEmpty().byType()
 
     /** One-shot read of a run's heart-rate samples, ordered by elapsed second. */
     suspend fun getHrSamples(sessionId: Long): List<HrSample> =
@@ -1521,6 +1542,10 @@ class SessionRepository(
      * sessions, and re-scoring this Run alone cannot find it. That is the mend a deletion already
      * owes, which is why it goes through the same door.
      *
+     * **A correction takes any stated Best Effort it has made impossible with it** (#282, ADR 0015),
+     * and mends the records those held. A Run that says it went three kilometres cannot hold a five,
+     * and a correction is the one way a claim that was true when it was made stops being one.
+     *
      * **The Run's own Stage evaluation is not re-run and cannot be** — see
      * [evaluateAndAdjustPlan]. What a stated distance buys the coach is every evaluation after it.
      *
@@ -1546,6 +1571,21 @@ class SessionRepository(
         // pressing save on the number already there must not cost a walk of the record book.
         if (stated == session.distanceKm) return
 
+        // Claims the Run can no longer contain (#282). A stated Best Effort is independent of the
+        // distance — a Run nobody stated one for may hold any of them — but a Run that says it went
+        // three kilometres cannot hold a five, and a correction is exactly how a claim that was
+        // possible when it was made stops being one. The same act that makes it impossible takes it
+        // away, because the alternative is a Medal standing on a claim nothing will ever look at
+        // again. Nothing is orphaned by a distance being *withdrawn*: that leaves the Run with no
+        // distance at all, which contradicts nothing.
+        val orphaned = if (stated > 0.0) {
+            statedBestEffortDao?.getForSession(sessionId).orEmpty()
+                .filter { it.type.distanceMeters!! > stated * 1_000.0 + STATED_DISTANCE_ROUNDING_METERS }
+                .map { it.type }
+        } else {
+            emptyList()
+        }
+
         val write: suspend () -> Unit = {
             sessionDao.setStatedDistance(
                 sessionId = sessionId,
@@ -1554,13 +1594,20 @@ class SessionRepository(
                 // there being no moving time to measure without a track.
                 avgPaceMinPerKm = averagePaceMinPerKm(session.paceClockSeconds, stated),
             )
+            orphaned.forEach { type ->
+                Log.i("StatedDistance", "Run $sessionId is $stated km, so its stated $type goes with the correction")
+                statedBestEffortDao?.withdraw(sessionId, type)
+            }
         }
 
-        if (stated < session.distanceKm) {
-            // Only the longest distance can have moved: the duration is untouched, and a treadmill
-            // Run contests none of the fastest five. Rebuilding the rest would be minutes of GPS
-            // arithmetic to arrive at the book that is already there.
-            changeAndRepair(listOf(sessionId), mendOnly = listOf(RecordType.LONGEST_DISTANCE), change = write)
+        val lowered = stated < session.distanceKm
+        if (lowered || orphaned.isNotEmpty()) {
+            // The longest distance where the number came down, and every record a withdrawn claim
+            // may have held a place in. Not the whole book: the duration is untouched, and the
+            // records nothing was withdrawn from stand exactly as they were, so rebuilding them
+            // would be minutes of GPS arithmetic to arrive at the book already there.
+            val moved = orphaned + listOfNotNull(RecordType.LONGEST_DISTANCE.takeIf { lowered })
+            changeAndRepair(listOf(sessionId), mendOnly = moved, change = write)
         } else {
             write()
             try {
@@ -1573,6 +1620,119 @@ class SessionRepository(
             }
             refreshHistoryBackup?.invoke()
         }
+    }
+
+    /** What a Run has been told it holds, as its own page watches it (#282). */
+    fun statedBestEffortsFlow(sessionId: Long): Flow<List<StatedBestEffort>> =
+        statedBestEffortDao?.getForSessionFlow(sessionId) ?: flowOf(emptyList())
+
+    /**
+     * States the time a treadmill's console showed for one of the record distances, corrects one
+     * already stated, or takes it back (#282).
+     *
+     * The Stated Distance's twin, and deliberately the same shape
+     * ([ADR 0015](docs/adr/0015-a-stated-best-effort-is-read-off-a-console-not-off-an-average.md)):
+     * only a treadmill Run, only once the Run is finished, and the record book replayed afterwards.
+     * Null [seconds] withdraws, leaving a Run nobody stated that distance for. What differs is that
+     * a Run holds up to five of these — one per record distance — so each is stated and withdrawn on
+     * its own, and mending touches only the record the claim was made at.
+     *
+     * **Three things are refused rather than stored.** Two of them are the rules that keep the app
+     * from ever deciding a Best Effort for itself:
+     * - *Not a treadmill Run.* An outdoor Run's efforts are measured, and one whose GPS recorded
+     *   nothing is not rescued this way — the same refusal a Stated Distance makes, and what keeps
+     *   any Run from holding a measured effort and a stated one at the same record.
+     * - *Not one of the five.* The two totals are the Run's own numbers, already read off the row.
+     * - *A claim the Run could not contain*: a time longer than the whole Run, or a distance longer
+     *   than the Run's Stated Distance. That is not the app doubting the runner, which it does
+     *   nowhere and must not start doing here — an implausible time is believed and corrected
+     *   afterwards, exactly as an implausible distance is. What is refused is only the
+     *   arithmetically impossible, which is not a claim about this Run at all.
+     *
+     * The distance check is skipped where the Run has no Stated Distance, because the two statements
+     * are independent: a runner who noted the 5 km split and never looked at the total has still
+     * said something true.
+     *
+     * **A claim made worse rebuilds; a claim made better re-scores.** A slower time — or a
+     * withdrawal — can demote a Medal, and the Run that should move up behind it exists nowhere but
+     * in history, since only the top three are ever banked. That is the mend a deletion already
+     * owes, so it goes through the same door, narrowed to the one record that can have moved. Note
+     * this runs the opposite way from a Stated Distance, where a *smaller* number is the worse
+     * claim: the rule is the same and it is the direction of the record that flips, which is the one
+     * thing [RecordType.lowerIsBetter] exists to say.
+     *
+     * Either way the history backup is refreshed, and the Run's own Stage evaluation is not re-run
+     * and cannot be — see [evaluateAndAdjustPlan] and ADR 0008.
+     */
+    suspend fun stateBestEffort(
+        sessionId: Long,
+        type: RecordType,
+        seconds: Int?,
+        finalizeWaitStepMillis: Long = 250L,
+    ) {
+        val dao = statedBestEffortDao ?: return
+        if (type.distanceMeters == null) {
+            Log.w("StatedBestEffort", "Refusing $type for run $sessionId: it is not run over a distance")
+            return
+        }
+        if (seconds != null && seconds <= 0) {
+            Log.w("StatedBestEffort", "Refusing ${seconds}s at $type for run $sessionId: not a time")
+            return
+        }
+        val session = awaitFinalized(sessionId, finalizeWaitStepMillis) ?: return
+        if (!session.isTreadmill()) {
+            Log.w("StatedBestEffort", "Refusing a stated Best Effort for run $sessionId: it is not a treadmill Run")
+            return
+        }
+        if (seconds != null && !session.couldContain(type, seconds)) {
+            Log.w("StatedBestEffort", "Refusing ${seconds}s at $type for run $sessionId: the Run does not contain it")
+            return
+        }
+
+        val standing = dao.getForSession(sessionId).singleOrNull { it.type == type }?.seconds
+        // Nothing to write, and so nothing to re-score or re-snapshot: re-opening the dialog and
+        // pressing Save on the time already there must not cost a walk of the record book.
+        if (standing == seconds) return
+
+        val write: suspend () -> Unit = {
+            if (seconds == null) dao.withdraw(sessionId, type)
+            else dao.state(StatedBestEffort(sessionId = sessionId, type = type, seconds = seconds))
+        }
+
+        // Withdrawn, or slower than what stood: either way this Run's claim at this record just got
+        // worse, and a Medal may have to come off it.
+        val worse = standing != null && (seconds == null || seconds > standing)
+        if (worse) {
+            changeAndRepair(listOf(sessionId), mendOnly = listOf(type), change = write)
+        } else {
+            write()
+            try {
+                scoreRecords(sessionId)
+            } catch (e: Exception) {
+                // Its own attempt, as everywhere else the book is written: the time is stored by
+                // this point, and a book that cannot be written must not read as a statement that
+                // did not save. The next Run to contest the record scores against the stored one.
+                Log.w("StatedBestEffort", "Stated ${seconds}s at $type for run $sessionId but could not score it", e)
+            }
+            refreshHistoryBackup?.invoke()
+        }
+    }
+
+    /**
+     * Whether this Run could hold a claim of [seconds] at [type] — the arithmetic, and no judgement
+     * beyond it (#282).
+     *
+     * The distance is allowed the resolution the runner types it at. A Stated Distance is entered in
+     * kilometres to two places, so a genuine half marathon can be typed as `21.09` and read back as
+     * 21 090 m against a record of 21 097.5 — a shortfall that is the field's own rounding rather
+     * than the runner claiming a stretch they did not run. Anything beyond that is a Run that really
+     * is too short.
+     */
+    private fun RunnerSession.couldContain(type: RecordType, seconds: Int): Boolean {
+        if (seconds > durationSeconds) return false
+        val statedMeters = distanceKm * 1_000.0
+        if (statedMeters <= 0.0) return true
+        return type.distanceMeters!! <= statedMeters + STATED_DISTANCE_ROUNDING_METERS
     }
 
     /**
