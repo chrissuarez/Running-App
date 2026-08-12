@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -85,6 +86,18 @@ fun goalTargetHintOf(metric: GoalMetric): String = when (metric) {
     GoalMetric.COUNT -> "Enter a whole number of runs, like 3"
     else -> "Enter a number greater than zero, like 40"
 }
+
+/**
+ * What the target field reads when the runner has just chosen a period and a metric (#82).
+ *
+ * A period and a metric together name one goal, so choosing a pair is asking about that goal: the
+ * field shows the target it already stands at, and is empty where there is nothing standing. Left to
+ * itself the field kept whatever was last typed, which meant a 40 typed against a distance goal sat
+ * there under a heading saying "Change this goal" when the runner switched to Time — and Save would
+ * have taken them at their word and written 40 hours a week.
+ */
+fun goalFieldOf(standing: Goal?): String =
+    if (standing == null) "" else goalAmountText(standing.metric, standing.target)
 
 /** One goal, said in full: "This week — 24 / 40 km". */
 fun goalLineOf(progress: GoalProgress): String {
@@ -180,6 +193,11 @@ fun GoalsSheet(
     val target = goalTargetOf(metric, typed)
     val rejected = typed.isNotBlank() && target == null
 
+    // The field follows the pair, because the pair is which goal is being talked about. Choosing a
+    // period or a metric the runner already has a goal for puts that goal's target up to be changed,
+    // and choosing one they have no goal for leaves an empty field to set one in.
+    LaunchedEffect(period, metric) { typed = goalFieldOf(standing) }
+
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
             modifier = Modifier
@@ -220,7 +238,7 @@ fun GoalsSheet(
                                 // one: editing and setting are the same act.
                                 period = progress.goal.period
                                 metric = progress.goal.metric
-                                typed = goalAmountText(progress.goal.metric, progress.goal.target)
+                                typed = goalFieldOf(progress.goal)
                             }) { Text("Edit") }
                             IconButton(onClick = { onRemove(progress.goal) }) {
                                 Icon(
