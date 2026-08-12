@@ -33,7 +33,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.analysis.RecordType
-import com.example.runningapp.data.STATED_DISTANCE_ROUNDING_METERS
+import com.example.runningapp.data.fitsWithin
 import com.example.runningapp.data.StatedBestEffort
 import com.example.runningapp.ui.theme.RunningUiTokens
 
@@ -80,11 +80,8 @@ fun statedEffortIsRejected(typed: String): Boolean =
  * Every distance is offerable on a Run nobody stated a distance for: the two statements are
  * independent, and a runner who noted only the 5 km split has still said something true.
  */
-fun recordDistancesWithin(statedDistanceKm: Double): List<RecordType> {
-    val meters = statedDistanceKm * 1_000.0
-    if (meters <= 0.0) return RecordType.bestEfforts
-    return RecordType.bestEfforts.filter { it.distanceMeters!! <= meters + STATED_DISTANCE_ROUNDING_METERS }
-}
+fun recordDistancesWithin(statedDistanceKm: Double): List<RecordType> =
+    RecordType.bestEffortDistances.filter { it.fitsWithin(statedDistanceKm) }
 
 /**
  * What a treadmill Run has been told it holds, and the way in to telling it (#282).
@@ -109,8 +106,14 @@ fun StatedBestEffortsCard(
     modifier: Modifier = Modifier,
 ) {
     val offerable = recordDistancesWithin(statedDistanceKm)
-    val claims = stated.filter { it.type in offerable }.sortedBy { it.type.ordinal }
-    if (offerable.isEmpty() && claims.isEmpty()) return
+    // Every claim the Run holds, including any the Run is no longer long enough for. Filtering those
+    // out would hide a row that cannot then be corrected or removed while the Medal it won goes on
+    // standing — which is the exact thing ADR 0015 refuses to allow anywhere. A distance correction
+    // takes such claims with it, so this should never have a row in it; if it ever does, the runner
+    // can reach it.
+    val claims = stated.sortedBy { it.type.ordinal }
+    val untold = offerable.filter { type -> claims.none { it.type == type } }
+    if (claims.isEmpty() && untold.isEmpty()) return
 
     var editing by remember { mutableStateOf<RecordType?>(null) }
     var adding by remember { mutableStateOf(false) }
@@ -121,7 +124,7 @@ fun StatedBestEffortsCard(
             editing = open,
             // Only distances nothing has been said about yet, because stating one that is already
             // there is correcting it, and the row for it is right there on the card.
-            offerable = offerable.filter { type -> claims.none { it.type == type } },
+            offerable = untold,
             secondsAlready = claims.firstOrNull { it.type == open }?.seconds,
             runDurationSeconds = runDurationSeconds,
             onDismiss = { editing = null; adding = false },
@@ -148,7 +151,7 @@ fun StatedBestEffortsCard(
                     onClick = { editing = claim.type },
                 )
             }
-            if (claims.size < offerable.size) {
+            if (untold.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(12.dp))
                 StatedEffortRow(
                     label = if (claims.isEmpty()) "Add a best effort" else "Add another",
@@ -263,7 +266,10 @@ fun StatedBestEffortDialog(
                         }
                         else -> null
                     },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    // Text, not Number: the format needs a colon and a numeric pad has none, so
+                    // a runner on the number keyboard could not type the time they were being asked
+                    // for at all.
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

@@ -35,13 +35,16 @@ enum class RecordType(val label: String, val distanceMeters: Double?, val unit: 
 
     companion object {
         /**
-         * The five contested as a Best Effort — the ones run over a set distance, and so the only
-         * ones a treadmill Run can be told it holds (#282).
+         * The five distances contested as a Best Effort, and so the only ones a treadmill Run can
+         * be told it holds (#282).
+         *
+         * Distances rather than efforts, in the name: a [BestEffort] is a claim somebody made, and
+         * these are the five things a claim can be made *at*.
          *
          * Read off [distanceMeters] rather than listed out, so a sixth record distance added to the
          * enum is offered by every screen and every rule at once.
          */
-        val bestEfforts: List<RecordType> get() = entries.filter { it.distanceMeters != null }
+        val bestEffortDistances: List<RecordType> get() = entries.filter { it.distanceMeters != null }
     }
 }
 

@@ -8,12 +8,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Reading a lap time off a treadmill console into the app (#282).
+ * Reading a Best Effort off a treadmill console into the app (#282).
  *
  * Two rules, both applied before the repository ever sees the claim: this is a time, or it is
  * nothing; and this Run could hold a claim at that distance, or it is never offered one.
  */
-class StatedBestEffortTest {
+class StatedBestEffortCardTest {
 
     @Test
     fun `a typed time is minutes and seconds`() {
@@ -89,7 +89,7 @@ class StatedBestEffortTest {
     fun `a Run nobody stated a distance for is offered all five`() {
         // The two statements are independent: a runner who noted only the 5 km split has still said
         // something true.
-        assertEquals(RecordType.bestEfforts, recordDistancesWithin(statedDistanceKm = 0.0))
+        assertEquals(RecordType.bestEffortDistances, recordDistancesWithin(statedDistanceKm = 0.0))
     }
 
     @Test
