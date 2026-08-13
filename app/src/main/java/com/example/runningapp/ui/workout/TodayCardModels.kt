@@ -29,6 +29,12 @@ data class TodayCardUiState(
     val targetPill: String,
     /** "8 min warm-up · 3 min cool-down · ≈ 41 min". Null for an open run, which has no shape. */
     val envelopeLine: String?,
+    /**
+     * What the runner has to be told before this Workout that its numbers do not show (#291) — a 5K
+     * Test's "warm up before you start this". Null for a Workout that says the whole of itself, and
+     * on an open run, which is nobody's instruction.
+     */
+    val instructionLine: String?,
     /** Named change and why, when the coach edited today's numbers. Null when it didn't. */
     val coachNote: String?,
     /** The one link inside the card, bottom-right — an edit to the card, not an alternative to START. */
@@ -109,6 +115,7 @@ fun todayCardUiState(
             // at the global default.
             targetPill = targetPill(settings.targetHrZone),
             envelopeLine = null,
+            instructionLine = null,
             coachNote = null,
             link = if (picked != null) {
                 TodayCardLink(TodayCardLinkKind.UNDO, "Bring back ${picked.title}")
@@ -127,6 +134,9 @@ fun todayCardUiState(
         detailLine = intervalShape(planned),
         targetPill = targetPill(HrZone.ofNumberOrDefault(planned.targetZone)),
         envelopeLine = envelopeLine(planned),
+        // The Stage's own instruction, not the prescribed shape's: the coach prescribes work and
+        // never the whole Workout (#113), so this line is the plan's either way.
+        instructionLine = picked.instruction?.takeIf { it.isNotBlank() },
         coachNote = coachNote(picked, planned, settings),
         link = TodayCardLink(TodayCardLinkKind.SKIP, "Skip today"),
         workouts = stageWorkouts.map { workout ->

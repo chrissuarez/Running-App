@@ -1,5 +1,6 @@
 package com.example.runningapp
 
+import com.example.runningapp.analysis.RecordType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -299,5 +300,53 @@ class TrainingPlanModelsTest {
         assertEquals(listOf("base_builder", "sub_30_bridge", "sub_25_peak"), stages.map { it.id })
         assertEquals("Complete 4 weeks of consistent Zone 2 training.", stages[0].graduationRequirementText)
         assertEquals(listOf(false, true, true), stages.map { it.isLocked })
+    }
+
+    // --- Requirements written in numbers, and the tests that answer them (#290, #291) ----------
+
+    @Test
+    fun `only the two 5K stages state their requirement in numbers`() {
+        val stages = TrainingPlanProvider.getPlanById("5k_sub_25")!!.stages
+
+        // "4 weeks of consistent Zone 2 training" holds a genuine judgement and stays the coach's.
+        assertNull(stages[0].bestEffortRequirement)
+        // And the two that are arithmetic say so, at the numbers their own prose states: under 30
+        // minutes is 1799, and 24:59 or faster is 1499.
+        assertEquals(
+            listOf(
+                BestEffortRequirement(RecordType.FASTEST_5K, 1_799),
+                BestEffortRequirement(RecordType.FASTEST_5K, 1_499),
+            ),
+            stages.drop(1).map { it.bestEffortRequirement }
+        )
+    }
+
+    @Test
+    fun `every stage that graduates on a 5K offers a way to run one`() {
+        // A rule with no test to attempt leaves stage 2 as unreachable as it was (#291).
+        val stages = TrainingPlanProvider.getPlanById("5k_sub_25")!!.stages
+
+        stages.filter { it.bestEffortRequirement != null }.forEach { stage ->
+            val test = stage.workouts.single { it.title.endsWith("Test") }
+            // Continuous and no walk: a walk break inside a Best Effort counts against it.
+            assertEquals(0, test.walkDurationSeconds)
+            assertEquals(1, test.totalRepeats)
+            assertEquals(RunType.QUALITY, test.runType)
+            // And no envelope, so the treadmill console reads 5.00 km at the end.
+            assertEquals(0, test.warmUpSeconds)
+            assertEquals(0, test.coolDownSeconds)
+            // Which is a decision the numbers cannot show, so it is said in words.
+            assertEquals(FIVE_K_TEST_INSTRUCTION, test.instruction)
+        }
+    }
+
+    @Test
+    fun `stage 1 is offered no test, and its workouts keep their envelopes`() {
+        // A test there measures a runner still on walk breaks against a bar two stages away: the
+        // number would be discouraging and useless (#291).
+        val stageOne = TrainingPlanProvider.getPlanById("5k_sub_25")!!.stages.first()
+
+        assertTrue(stageOne.workouts.none { it.instruction != null })
+        assertTrue(stageOne.workouts.all { it.warmUpSeconds > 0 })
     }
 }

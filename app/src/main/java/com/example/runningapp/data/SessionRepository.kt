@@ -2,6 +2,7 @@ package com.example.runningapp.data
 
 import android.util.Log
 import androidx.annotation.VisibleForTesting
+import com.example.runningapp.BestEffortRequirement
 import com.example.runningapp.CoachPrescription
 import com.example.runningapp.CoachPrescriptionRepository
 import com.example.runningapp.COACH_PRESCRIPTION_MAX_AGE_DAYS
@@ -190,6 +191,16 @@ data class AiFitnessAndForm(
 data class AiTrainingContext(
     val currentStageTitle: String,
     val graduationRequirement: String,
+    /**
+     * Whether this Stage's requirement is one the app answers itself (#290) — a Best Effort at a
+     * record distance, in a time.
+     *
+     * The coach is still shown the requirement and still writes the debrief; what it may not do is
+     * graduate. The prompt says so, and [evaluateAndAdjustPlan] refuses a graduation anyway when
+     * this is true, because a prompt sentence is a promise the code has to keep (#286, #288) and the
+     * two paths must never both be able to grant.
+     */
+    val requirementIsTheAppsToAnswer: Boolean = false,
     val recentRuns: List<AiRecentRun>,
     /**
      * Which Runs [recentRuns] are, so a Prescription can be taken back when one of them is deleted
@@ -1869,8 +1880,15 @@ class SessionRepository(
      * claim: the rule is the same and it is the direction of the record that flips, which is the one
      * thing [RecordType.lowerIsBetter] exists to say.
      *
-     * Either way the history backup is refreshed, and the Run's own Stage evaluation is not re-run
+     * Either way the history backup is refreshed, and the Run's own *coach* evaluation is not re-run
      * and cannot be — see [evaluateAndAdjustPlan] and ADR 0008.
+     *
+     * The app's own rule is asked again, though (#290), because a Stated Best Effort is a Best
+     * Effort: a treadmill 5K is stated after the Run ends, so a rule that only ever looked at the
+     * finish would accept a measured 5K and silently refuse a stated one — the app disagreeing with
+     * itself, and with ADR 0015, which says a stated effort places in the record book exactly as a
+     * measured one does. The same three edges apply as at the finish: the Run's own Stage must still
+     * be the active one, so a claim typed weeks later about an old Run graduates nothing.
      */
     suspend fun stateBestEffort(
         sessionId: Long,
@@ -1936,6 +1954,17 @@ class SessionRepository(
         } else {
             writeAndScore("StatedBestEffort", sessionId, write) {
                 "Stated ${seconds}s at $type for run $sessionId but could not score it"
+            }
+        }
+
+        // A claim just stated or improved can answer a Stage requirement written in numbers (#290).
+        // Only that direction: a withdrawal or a slower time takes nothing back, because a
+        // graduation is never revoked. Asked of the Run as the write left it — the claim is read
+        // back inside the rule — and against the Stage the Run was recorded under, which is null for
+        // a Run that followed no plan.
+        if (!worse) {
+            sessionDao.getSessionById(sessionId)?.let { stored ->
+                stored.ranUnderStageId?.let { graduateOnBestEffortRequirement(it, stored) }
             }
         }
     }
@@ -2192,16 +2221,26 @@ class SessionRepository(
                 // Measured from the stored track rather than read off the Run: nothing records where
                 // the warm-up ended, so the fastest window is the only way to a 5K time the Phases
                 // either side of it have not inflated (#182).
-                fastest5kSeconds = measureFastestEffortSeconds(
-                    points = getTrackPointsForMap(session.id),
-                    targetMeters = FIVE_K_METERS
-                )
+                //
+                // Never for a Walk (#290). A Walk holds no Best Effort of any kind — CONTEXT.md
+                // says so and the record book keeps to it — so a brisk 5 km walk measured here
+                // would be the one place in the app that disagrees, and it would be the place a
+                // Stage requirement is read from.
+                fastest5kSeconds = if (session.isWalk) {
+                    null
+                } else {
+                    measureFastestEffortSeconds(
+                        points = getTrackPointsForMap(session.id),
+                        targetMeters = FIVE_K_METERS
+                    )
+                }
             )
         }
 
         return AiTrainingContext(
             currentStageTitle = stage.title,
             graduationRequirement = stage.graduationRequirementText,
+            requirementIsTheAppsToAnswer = stage.bestEffortRequirement != null,
             recentRuns = recentRuns,
             // The stored rows' ids, which [asFinalized] cannot change: it stands in for one of these
             // Runs, it is never another one.
@@ -2279,6 +2318,158 @@ class SessionRepository(
             weeklyEfforts = weeks.takeLast(AI_WEEKS_OF_EFFORT).map { it.forCoach() },
             todaysRunIsInTheNumbers = todaysRunIsInTheNumbers
         )
+    }
+
+    /**
+     * Everything the Plan has to say about the Run just finished, in the order it has to be said
+     * (#290).
+     *
+     * **The app answers first, and then the coach is asked.** That order is the whole of this
+     * function and it is not an implementation detail: where a Long Run happens to contain a
+     * qualifying 5K, both paths would otherwise have a view, and only one of them may grant. The
+     * rule runs, grants, and moves the stored Stage on; [evaluateAndAdjustPlan] then reads the
+     * settings fresh, sees the Stage it was called about is no longer the active one, and returns
+     * without asking the coach anything — the guard written for a graduation landing mid-Run
+     * (#234), catching this case exactly.
+     *
+     * So the coach is still called either way rather than skipped here. Skipping it would be a
+     * second rule saying the same thing as that guard, free to drift from it; and on a Stage the
+     * rule declined, the coach's debrief and Prescription are exactly what the runner is owed.
+     *
+     * [runType] and [finalizedRun] are passed straight through — see [evaluateAndAdjustPlan] for
+     * what each is and why the Run is handed over rather than read back.
+     */
+    suspend fun settleStageAfterRun(
+        stageId: String,
+        runType: RunType?,
+        finalizedRun: RunnerSession,
+    ) {
+        graduateOnBestEffortRequirement(stageId, finalizedRun)
+        evaluateAndAdjustPlan(stageId, runType, finalizedRun)
+    }
+
+    /**
+     * Graduates a Stage whose requirement is written in numbers, when the Run just finished answers
+     * it (#290) — and does nothing at all otherwise. Returns whether it granted.
+     *
+     * The rule, in one sentence: **any finished Run not marked a Walk, whose Best Effort at the
+     * requirement's distance clears its time, graduates the Stage.** Measured off the track or
+     * stated off a treadmill console, and any kind of Run at all — an Open Run included, because a
+     * parkrun is the truest 5K test there is and the number is the number wherever it turned up.
+     * That is the narrowing this replaces: a *structural* requirement can only be answered by a Run
+     * that followed a structure, and a time requirement is answered by a time.
+     *
+     * The three edges — not a Walk, not a Run still going, measured-or-stated — are not restated
+     * here. They are [bestEffortsOf]'s, asked through [effortsAt], which is the same measurement the
+     * record book ranks: a rule applied in one reader of a shared measurement is a bug waiting for
+     * the second reader. It also means the Walk exclusion is not a filter this has to remember —
+     * a Walk is worth no Best Effort at all, so it clears nothing.
+     *
+     * **No lock, and no re-read of the evidence.** The graduation the coach grants is wrapped in
+     * [coachingProvenance] and re-checks [theEvidenceStillStands], because a Gemini round trip
+     * leaves seconds in which the Run behind it can be deleted. There is no round trip here: the Run
+     * exists, its effort clears, it grants. Copying that machinery across would be a guard around
+     * nothing.
+     *
+     * **Forwards only, and never taken back.** No pass over history: a launch that silently jumped
+     * the runner two Stages on evidence recorded under different rules is the highest-stakes version
+     * of the one act that cannot be undone — the Stage card names an already-beaten bar instead
+     * (#293). And deleting the Run afterwards, or marking it a Walk, does not un-graduate; CONTEXT.md
+     * already says that of the Walk mark and the rule holds the same line for a delete.
+     */
+    private suspend fun graduateOnBestEffortRequirement(
+        stageId: String,
+        run: RunnerSession,
+    ): Boolean {
+        val settingsRepo = settingsRepository ?: return false
+        val plan = TrainingPlanProvider
+            .getAllPlans()
+            .firstOrNull { candidate -> candidate.stages.any { it.id == stageId } }
+            ?: return false
+        val stageIndex = plan.stages.indexOfFirst { it.id == stageId }
+        val stage = plan.stages[stageIndex]
+        // The Stage's requirement is a judgement, so it stays the coach's — stage 1's "4 weeks of
+        // consistent Zone 2 training" is met by no measurement this could take.
+        val requirement = stage.bestEffortRequirement ?: return false
+
+        val settings = settingsRepo.userSettingsFlow.first()
+        // Testing mode erases the coach's work and blocks it from writing more; a Stage advanced
+        // under it would be the one write from a desk test that outlives the desk test.
+        if (settings.testingModeEnabled) return false
+        // The Run was recorded under a Stage the runner has since left (#234): its evidence belongs
+        // to that Stage and answers nothing about this one. The same guard [evaluateAndAdjustPlan]
+        // makes, for the same reason.
+        if (stageId != settings.activeStageId) return false
+        // A Run the runner has taken out of their training answers no requirement either — the same
+        // switch that keeps it away from the coach.
+        if (!run.includeInAiTraining) return false
+
+        val seconds = effortsAt(
+            session = run,
+            types = listOf(requirement.record),
+            stated = statedEffortsOf(run.id),
+        ).firstOrNull { it.type == requirement.record }?.value ?: return false
+
+        if (seconds > requirement.withinSeconds) {
+            Log.d(
+                "StageRule",
+                "Run ${run.id} is worth ${seconds.toLong()}s at ${requirement.record}, which does not " +
+                    "clear ${requirement.withinSeconds}s for stage=$stageId"
+            )
+            return false
+        }
+
+        val nextStage = plan.stages.getOrNull(stageIndex + 1)
+        val scope = CoachWriteScope(settings.activePlanId, settings.activeStageId)
+        // Written by the app and not by the coach. This decision is already made, and handing a
+        // made decision to a model is inviting it to editorialise its way into disagreeing with a
+        // fact; it also means the graduation still lands offline and with no Gemini key.
+        settingsRepo.setLatestCoachMessage(
+            graduationMessage(stage.title, requirement, seconds, nextStage?.title),
+            scope
+        )
+        if (nextStage == null) {
+            // The last Stage of the plan. Nothing to advance to, and the Prescription is deliberately
+            // left standing: clearing it here would delete the runner's standing numbers and leave
+            // them in a Stage that never moved, which is the bug #294 exists to fix. The
+            // congratulation is the part that is true today, so it is the part that is written.
+            Log.i(
+                "StageRule",
+                "Run ${run.id} answers the requirement of the plan's last stage=$stageId; " +
+                    "there is no stage to advance to (#294)"
+            )
+            return true
+        }
+        settingsRepo.advanceStageAndClearPrescriptions(nextStage.id, scope)
+        Log.i(
+            "StageRule",
+            "Run ${run.id} is worth ${seconds.toLong()}s at ${requirement.record} and graduates " +
+                "stage=$stageId to stage=${nextStage.id}"
+        )
+        return true
+    }
+
+    /**
+     * What the runner is told when the app grants a graduation: the number they ran, and what it
+     * just finished (#290).
+     *
+     * The time is theirs — the Best Effort as measured or as stated — and not the bar they cleared,
+     * because "you ran 5 km in 27:12" is the fact and "under 30 minutes" is only what it was enough
+     * for.
+     */
+    private fun graduationMessage(
+        stageTitle: String,
+        requirement: BestEffortRequirement,
+        seconds: Double,
+        nextStageTitle: String?,
+    ): String {
+        val whole = seconds.roundToInt().coerceAtLeast(0)
+        val clock = "%d:%02d".format(whole / 60, whole % 60)
+        val distance = requirement.record.label.removePrefix("Fastest ")
+        return buildString {
+            append("You ran $distance in $clock. $stageTitle complete.")
+            if (nextStageTitle != null) append(" Next up: $nextStageTitle.")
+        }
     }
 
     /**
@@ -2453,9 +2644,21 @@ class SessionRepository(
             // would leave the plan's first stage impossible to finish. Naming more of them does not
             // loosen anything: each name still has to resolve, and one Walk among them refuses the
             // lot.
+            // And where the Stage's requirement is written in numbers, the coach may not graduate at
+            // all (#290) — the app has already answered it, before this was called, and two paths
+            // able to grant the same graduation is one of them granting it twice. The prompt tells
+            // the coach this in as many words; a prompt sentence is a promise the code has to keep.
             val evidenceRunIds = context.evidenceRunIdsNamedBy(clampedResponse)
-            val graduated = clampedResponse.graduatedToNextStage && evidenceRunIds != null
-            if (clampedResponse.graduatedToNextStage && !graduated) {
+            val graduated = clampedResponse.graduatedToNextStage &&
+                !context.requirementIsTheAppsToAnswer &&
+                evidenceRunIds != null
+            if (clampedResponse.graduatedToNextStage && context.requirementIsTheAppsToAnswer) {
+                Log.d(
+                    "AiCoach",
+                    "Refusing a graduation: stage=$stageId states its requirement in numbers, so the " +
+                        "app answers it and the coach does not"
+                )
+            } else if (clampedResponse.graduatedToNextStage && !graduated) {
                 Log.d(
                     "AiCoach",
                     "Refusing a graduation: the coach named runs at " +

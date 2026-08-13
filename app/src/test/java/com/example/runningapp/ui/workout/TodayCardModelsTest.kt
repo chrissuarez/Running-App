@@ -365,4 +365,45 @@ class TodayCardModelsTest {
         assertTrue(card(stageTitle = null, workout = null).workouts.isEmpty())
         assertTrue(stageCard(skippedToday = true).workouts.isEmpty())
     }
+
+    // --- The line a Workout's numbers cannot say for themselves (#291) -------------------------
+
+    private val fiveKTest = WorkoutTemplate(
+        id = "w2_s3",
+        title = "5K Test",
+        targetZone = 4,
+        runDurationSeconds = 1800,
+        walkDurationSeconds = 0,
+        totalRepeats = 1,
+        warmUpSeconds = 0,
+        coolDownSeconds = 0,
+        runType = RunType.QUALITY,
+        instruction = "Warm up for about 10 minutes before you start this."
+    )
+
+    @Test
+    fun `a workout carrying an instruction shows it`() {
+        // Without the line the no-envelope decision is invisible and the runner presses START cold.
+        assertEquals(
+            "Warm up for about 10 minutes before you start this.",
+            card(workout = fiveKTest).instructionLine
+        )
+    }
+
+    @Test
+    fun `a workout whose numbers say the whole of it shows no instruction`() {
+        assertNull(card().instructionLine)
+        assertNull(card(stageTitle = null, workout = null).instructionLine)
+    }
+
+    @Test
+    fun `a prescription does not rewrite the instruction`() {
+        // The coach prescribes work, not the whole Workout (#113), so the line stays the plan's.
+        val state = card(
+            workout = fiveKTest,
+            prescriptions = standing(RunType.QUALITY to prescription(run = 1900, walk = 0, repeats = 1))
+        )
+
+        assertEquals("Warm up for about 10 minutes before you start this.", state.instructionLine)
+    }
 }

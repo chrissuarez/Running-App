@@ -197,18 +197,33 @@ internal fun buildEvaluationPrompt(
     // One wrong true advances the stored stage on the spot, so fastest5kSeconds is the only field
     // allowed to answer, and its absence is stated as an absence rather than left to inference.
     appendLine("The recent runs data also includes 'runMode' ('outdoor' for a GPS-recorded run, 'treadmill' for one with no GPS), 'distanceKm' (how far the run went — measured by GPS outdoors, or read off the treadmill console and stated by the runner; null when the run has no distance at all), and 'fastest5kSeconds' (the quickest continuous 5K inside that run, measured from its GPS track, null when the run never covered 5K in one continuous stretch of recording).")
-    appendLine("durationSeconds is the whole run including its warm-up and cool-down, so on a GPS-recorded run it is NOT a 5K time and must never be compared to one; the single exception is the treadmill case set out below.")
-    appendLine("CRITICAL RULE: If the stage requirement asks for a 5K in a time, judge it ONLY from fastest5kSeconds, EXCEPT in the one case in the next rule. If fastest5kSeconds is null, set graduatedToNextStage to false, and say in coachMessage that this run does not contain a measured 5K — because it was a treadmill run with no distance recorded when runMode is 'treadmill', or because the run did not cover a continuous 5K otherwise.")
-    // The one thing a treadmill Run's two numbers can settle, and the fence around it (#231, ADR
-    // 0008). A stated distance plus a whole-run duration is a time over the whole run and nothing
-    // shorter: a 6 km run in 30:00 may hold a sub-25 5K and may not, and a coach ruling on it either
-    // way would be deriving a best effort from an average pace — the derivation the ADR rejects,
-    // with evaluateAndAdjustPlan advancing the stored Stage the moment it answered yes.
-    appendLine("EXCEPTION, for a treadmill run only (runMode 'treadmill') with a non-null distanceKm: its distanceKm and durationSeconds establish a time for the WHOLE run and nothing shorter. If the requirement asks for exactly that distance, you may judge it from durationSeconds — a 5.0 km treadmill run in 24:30 meets 'a 5K in 24:59'.")
-    appendLine("CRITICAL RULE: If that treadmill run went FURTHER than the requirement's distance, you cannot tell how fast the requirement's distance alone was covered: set graduatedToNextStage to false and say in coachMessage that the run was longer than the requirement, so its overall time does not establish the requirement's time. Never divide a distance by a duration to estimate a pace or a shorter-distance time.")
-    appendLine("CRITICAL RULE: If the stage requirement asks for any other distance or pace that fastest5kSeconds does not answer, set graduatedToNextStage to false and say in coachMessage that you cannot confirm that requirement from this run's data.")
+    appendLine("durationSeconds is the whole run including its warm-up and cool-down, so it is NOT a time for any shorter distance and must never be compared to one.")
+    appendLine("CRITICAL RULE: Never divide a distance by a duration to estimate a pace or a time at a shorter distance.")
+    // Where the Stage's requirement is written in numbers, the coach is fenced out of it entirely
+    // (#290). This one rule replaces six whose whole job was stopping the model doing arithmetic
+    // badly on a number the app had already measured: judge only from fastest5kSeconds, treat a
+    // null as an absence rather than a failure, and a treadmill exception with two more rules
+    // fencing that. None of it is needed once the comparison is made in code — "is this 5K under 30
+    // minutes" holds no judgement, and the app has already answered it before this prompt was
+    // built. What is left is keeping the coach from having a second opinion about it, and this
+    // sentence is the promise `evaluateAndAdjustPlan` keeps by refusing the graduation outright.
+    //
+    // It says what to do as well as what not to do. Told only that it may not graduate, a model
+    // reading a plainly-met requirement has nowhere to put that fact and will reach for the nearest
+    // thing it can say — most likely that the runner has not met it, which is both wrong and the
+    // opposite of the message the app has just written.
+    if (context.requirementIsTheAppsToAnswer) {
+        appendLine("CRITICAL RULE: This stage's requirement is a distance in a time, which the app measures and decides for itself — you are not being asked to judge it. Set graduatedToNextStage to false and leave graduationEvidenceRunTimestamps empty, whatever the runs show. Write coachMessage as an ordinary post-run debrief: do not say the runner has moved on to the next stage, and do not say they have failed the requirement either. If they have just met it, the app has already told them so.")
+    } else {
+        appendLine("CRITICAL RULE: If the stage requirement asks for a distance in a time that the data above does not answer, set graduatedToNextStage to false and say in coachMessage that you cannot confirm that requirement from this run's data.")
+    }
     appendLine("Use this combined context to generate the exact intervals for their NEXT run.")
-    appendLine("If they meet the requirement easily, and the data can actually establish that they met it, set graduatedToNextStage to true.")
+    // Only where graduating is still the coach's to do. Left in unconditionally it would be the one
+    // line telling a fenced-out coach to set the flag it has just been forbidden to set (#290), and
+    // a rule that contradicts another is a rule the model gets to choose between.
+    if (!context.requirementIsTheAppsToAnswer) {
+        appendLine("If they meet the requirement easily, and the data can actually establish that they met it, set graduatedToNextStage to true.")
+    }
     appendLine("Otherwise, adjust their run/walk intervals safely to build endurance.")
     appendLine("You may also set nextTargetZone (1-5) to prescribe an easier or harder target for that run.")
     appendLine("Omit nextTargetZone to leave the workout's own target zone alone.")
