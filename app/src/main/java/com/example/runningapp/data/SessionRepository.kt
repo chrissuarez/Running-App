@@ -207,13 +207,14 @@ data class AiTrainingContext(
      */
     val sourceRunIds: Set<Long> = emptySet(),
     /**
-     * Which of [sourceRunIds] may answer the Stage's requirement — everything shown that is not a
-     * Walk (#275).
+     * Which of [sourceRunIds] may answer the Stage's requirement — the structured `Run/Walk`
+     * sessions among them, so neither a Walk (#275) nor an unplanned Open Run can stand for one.
      *
      * A separate list from [sourceRunIds] because the two answer different questions. That one is
      * "what was this reply reasoned from", which every Run shown was, Walks included — a week of
      * walking is not a week of rest and a coach that could not see it would read one as the other.
-     * This one is "what could graduate a Stage", which a Walk never can.
+     * This one is "what could graduate a Stage", which only a Run that followed the plan's
+     * structure ever can.
      *
      * Kept as ids rather than read back off [AiRecentRun.sessionType], because a graduation cannot
      * be taken back and a label built for a prompt is not a thing to hang one on: reworded, the
@@ -2164,7 +2165,11 @@ class SessionRepository(
             // land on the Run that just finished before this is read.
             requirementEvidenceRunIds = storedRecentRuns
                 .map { stored -> if (stored.id == asFinalized?.id) asFinalized else stored }
-                .filterNot { it.isWalk }
+                // The same three answers [aiSessionTypeOf] gives, asked as one question: only a
+                // structured Run/Walk is evidence. The prompt says both halves of this — an Open
+                // Run may not progress a Stage, a Walk may not either — and a prompt sentence is a
+                // promise the code has to keep, because a graduation cannot be taken back.
+                .filter { it.isRunWalkMode && !it.isWalk }
                 .map { it.id }
                 .toSet(),
             fitnessAndForm = fitnessAndFormThrough(
@@ -2373,17 +2378,18 @@ class SessionRepository(
             // cannot be taken back, so the one place it is acted on refuses it outright rather than
             // trusting the telling — and the coach's message still reaches the runner either way.
             //
-            // A Walk is no evidence either (#275), for the same reason it completes no prescribed
-            // workout: a week of post-lifting walks must not push the plan forward. So the question
-            // is not "was there a Run" but "was there one that was not a Walk" — a Stage whose last
-            // three are all Walks has nothing standing for it at all.
+            // Neither is a Walk (#275), for the same reason it completes no prescribed workout: a
+            // week of post-lifting walks must not push the plan forward. Nor is an unplanned Open
+            // Run, which followed no structure to complete. So the question is not "was there a
+            // Run" but "was there a structured Run/Walk that was not a Walk" — a Stage whose last
+            // three are Walks and open jogs has nothing standing for it at all.
             val graduated = clampedResponse.graduatedToNextStage &&
                 context.requirementEvidenceRunIds.isNotEmpty()
             if (clampedResponse.graduatedToNextStage && !graduated) {
                 Log.d(
                     "AiCoach",
                     "Refusing a graduation: no run recorded under stage=$stageId can answer it " +
-                        "(${context.recentRuns.size} recent, all of them Walks or none at all)"
+                        "(${context.recentRuns.size} recent, all of them Walks or Open Runs, or none at all)"
                 )
             }
 
