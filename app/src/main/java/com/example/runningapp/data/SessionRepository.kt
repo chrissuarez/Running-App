@@ -2400,9 +2400,12 @@ class SessionRepository(
         // to that Stage and answers nothing about this one. The same guard [evaluateAndAdjustPlan]
         // makes, for the same reason.
         if (stageId != settings.activeStageId) return false
-        // A Run the runner has taken out of their training answers no requirement either — the same
-        // switch that keeps it away from the coach.
-        if (!run.includeInAiTraining) return false
+        // Deliberately *not* gated on [RunnerSession.includeInAiTraining]. That switch is consent to
+        // send this Run to Gemini — "AI training data sharing" is what Settings calls it — and this
+        // rule sends nothing anywhere: it reads the Run's own Best Effort and writes the app's own
+        // words. Refusing here would mean a runner who never turns AI sharing on can never leave
+        // stage 2, because the coach is now forbidden from granting a requirement written in
+        // numbers (ADR 0016): a privacy choice would silently become a plan that cannot progress.
 
         val seconds = effortsAt(
             session = run,
