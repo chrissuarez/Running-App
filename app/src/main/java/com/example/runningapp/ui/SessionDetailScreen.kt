@@ -65,9 +65,10 @@ fun SessionDetailScreen(
     // How far a treadmill Run went, told to the app (#231). Null means the number would be refused
     // anyway — an outdoor Run, or a Run still being recorded — and the card is then read-only.
     onStateDistance: ((Long, Double?) -> Unit)? = null,
-    // How the Run felt, said or changed after the fact (#80). Null leaves the card read-only, which
-    // is what a Run still being recorded gets — the repository refuses one anyway.
-    onSaveFeelFeedback: ((Long, Int?, String?) -> Unit)? = null,
+    // How the Run felt, and whether the runner walked it — said or changed after the fact (#80,
+    // #275). Null leaves the card read-only, which is what a Run still being recorded gets — the
+    // repository refuses one anyway.
+    onSaveFeelFeedback: ((Long, Int?, String?, Boolean) -> Unit)? = null,
     // What a treadmill Run has been told it holds, and the way to tell it (#282). Empty and null on
     // every Run that could not hold one, which is what keeps the card off an outdoor page.
     statedBestEfforts: List<StatedBestEffort> = emptyList(),
@@ -199,9 +200,14 @@ fun SessionDetailScreen(
                 FeelFeedbackCard(
                     effort = session.perceivedEffort,
                     note = session.sessionNote,
+                    isWalk = session.isWalk,
                     onSave = onSaveFeelFeedback
                         ?.takeIf { session.isFinished() }
-                        ?.let { save -> { effort: Int?, note: String? -> save(session.id, effort, note) } }
+                        ?.let { save ->
+                            { effort: Int?, note: String?, isWalk: Boolean ->
+                                save(session.id, effort, note, isWalk)
+                            }
+                        }
                 )
                 Spacer(modifier = Modifier.height(24.dp))
 
@@ -482,20 +488,22 @@ fun SummaryStats(
 private fun FeelFeedbackCard(
     effort: Int?,
     note: String?,
-    onSave: ((Int?, String?) -> Unit)?,
+    isWalk: Boolean,
+    onSave: ((Int?, String?, Boolean) -> Unit)?,
 ) {
     var showDialog by remember { mutableStateOf(false) }
     val noteText = feelNoteOf(note)
-    if (effort == null && noteText == null && onSave == null) return
+    if (effort == null && noteText == null && !isWalk && onSave == null) return
 
     if (showDialog && onSave != null) {
         FeelFeedbackDialog(
             effort = effort,
             note = noteText,
+            isWalk = isWalk,
             onDismiss = { showDialog = false },
-            onSave = { chosenEffort, typedNote ->
+            onSave = { chosenEffort, typedNote, walked ->
                 showDialog = false
-                onSave(chosenEffort, typedNote)
+                onSave(chosenEffort, typedNote, walked)
             }
         )
     }
@@ -508,6 +516,13 @@ private fun FeelFeedbackCard(
                 fontWeight = FontWeight.Bold
             )
             Spacer(modifier = Modifier.height(12.dp))
+
+            // Above the effort, because it is the bigger fact about the Run: everything below is
+            // the runner's word on how it went, and this is their word on what it was (#275).
+            if (isWalk) {
+                WalkMarker()
+                Spacer(modifier = Modifier.height(12.dp))
+            }
 
             val effortText = feelEffortText(effort)
             if (effortText != null) {
@@ -531,7 +546,7 @@ private fun FeelFeedbackCard(
                     onClick = { showDialog = true },
                     contentPadding = PaddingValues(0.dp)
                 ) {
-                    Text(feelEditLabel(effort = effort, note = noteText))
+                    Text(feelEditLabel(effort = effort, note = noteText, isWalk = isWalk))
                 }
             }
         }

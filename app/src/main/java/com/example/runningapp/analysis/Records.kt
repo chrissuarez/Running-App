@@ -99,10 +99,13 @@ data class BestEffort(val type: RecordType, val value: Double)
  * - **A Run still being recorded is worth nothing.** Its totals are not written yet, so it would
  *   compete on a duration and a distance that are only as much of it as has happened so far.
  *
- * There is no walk-only kind of Run for the eligibility rule to exclude: #94 deleted the four
- * session types, so every recorded Run is a run, and treadmill-or-outdoor is the only thing that
- * distinguishes them. Should a walk ever become a kind of Run again, this is the function that has
- * to say so.
+ * - **A Walk contests nothing at all** (#275). Not the fastest stretches, not the longest distance,
+ *   not the longest time: a walk taking a "fastest 1 km" medal — or the longest-time one, which a
+ *   slow hour on foot is the likeliest Run in anyone's history to take — makes the trophy case
+ *   meaningless. This is the one eligibility rule that is the runner's own word rather than a fact
+ *   about the recording, and it is never inferred; it is also the one that can arrive long after the
+ *   Run, which is why marking a Run as a Walk mends the book behind it
+ *   ([com.example.runningapp.data.SessionRepository.markAsWalk]).
  *
  * Pass the same accuracy-filtered points the map and the splits are built from
  * ([com.example.runningapp.data.SessionRepository.getTrackPointsForMap]) — a wild fix left in reads
@@ -130,6 +133,7 @@ fun bestEffortsOf(
     stated: Map<RecordType, Double> = emptyMap(),
 ): List<BestEffort> {
     if (!run.isFinished()) return emptyList()
+    if (run.isWalk) return emptyList()
     val treadmill = run.isTreadmill()
     // Two fixes is the least a route can be: one fix says only where the Run started.
     val hasRoute = !treadmill && track.size >= 2

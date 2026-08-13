@@ -198,6 +198,41 @@ class RecordsTest {
     }
 
     @Test
+    fun `a Walk contests nothing at all`() {
+        // Everything a Run needs to take a medal: a route, a distance measured off it, and a clock.
+        val track = script { running(speedMps = 3.0, seconds = 400) } // 1.2 km
+        val ran = anOutdoorRun(distanceKm = 1.2)
+
+        // The same outing, the runner's word being the only thing that differs.
+        assertTrue(bestEffortsOf(ran, track).isNotEmpty())
+        assertEquals(emptyList<BestEffort>(), bestEffortsOf(ran.copy(isWalk = true), track))
+    }
+
+    @Test
+    fun `a Walk does not take the longest time either`() {
+        // The record a slow hour on foot is likeliest of all to take, so the one worth naming: the
+        // rule is every record, not only the ones measured off a route.
+        val walked = aRun(runMode = "treadmill").copy(isWalk = true, durationSeconds = 7_200)
+
+        assertEquals(emptyList<BestEffort>(), bestEffortsOf(walked, track = emptyList()))
+    }
+
+    @Test
+    fun `a Walk cannot hold a stated Best Effort`() {
+        // A claim the Run was told it holds is still a claim about running, and a treadmill Walk
+        // that was told one before it was marked must stop contesting the moment it is.
+        val walked = aRun(runMode = "treadmill").copy(isWalk = true, distanceKm = 6.0)
+
+        val efforts = bestEffortsOf(
+            walked,
+            track = emptyList(),
+            stated = mapOf(RecordType.FASTEST_5K to 1_440.0),
+        )
+
+        assertEquals(emptyList<BestEffort>(), efforts)
+    }
+
+    @Test
     fun `a run recorded from sparse breadcrumbs still sets its records`() {
         // Backfilled history: one fix every fifteen seconds, fifty metres apart — 2 km at 5:00/km.
         val track = script { sparse(meters = 50.0, seconds = 15, fixes = 40) }

@@ -189,6 +189,14 @@ fun SessionItem(
                     start = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(text = dateStr, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                            // Beside the date rather than down among the four numbers, because it is
+                            // not a measurement of the Run — it is what kind of Run it was (#275).
+                            // Retagging a winter of sessions is unworkable without it: the runner
+                            // would have to open each one to see whether they had already done it.
+                            if (session.isWalk) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                WalkMarker()
+                            }
                             MedalBadge(medals = row.medals)
                         }
                     },

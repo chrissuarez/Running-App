@@ -6,10 +6,18 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Divider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -17,10 +25,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.runningapp.ui.theme.RunningUiTokens
 import kotlin.math.roundToInt
 
 /**
@@ -42,13 +53,101 @@ fun feelEditHasChanges(
     storedEffort: Int?,
     storedNote: String?,
     effort: Int?,
-    typedNote: String
+    typedNote: String,
+    /** Whether the Run is marked a Walk, and whether the switch still says so (#275). */
+    storedIsWalk: Boolean = false,
+    isWalk: Boolean = storedIsWalk,
 ): Boolean =
-    effort != storedEffort || feelNoteOf(typedNote) != feelNoteOf(storedNote)
+    effort != storedEffort ||
+        feelNoteOf(typedNote) != feelNoteOf(storedNote) ||
+        isWalk != storedIsWalk
 
-/** The way in, named for whether the Run has anything to say yet (#80). */
-fun feelEditLabel(effort: Int?, note: String?): String =
-    if (effort == null && feelNoteOf(note) == null) "Add effort / note" else "Edit effort / note"
+/**
+ * The way in, named for whether the Run has anything to say yet (#80).
+ *
+ * A Run marked a Walk has something said about it even with no effort and no note (#275), so the
+ * way back in has to be an edit rather than an invitation to add the first thing.
+ */
+fun feelEditLabel(effort: Int?, note: String?, isWalk: Boolean = false): String =
+    if (effort == null && feelNoteOf(note) == null && !isWalk) "Add effort / note"
+    else "Edit effort / note"
+
+/**
+ * The one control that says a Run was a Walk (#275) — the same switch on the sheet at the finish and
+ * on the Run's own page, because both are asking the runner the same question.
+ *
+ * A switch and not a mode picker: there is no taxonomy here, only a Run and the runner's word that
+ * they walked it. The explanation sits under it because the consequence is not guessable — a Walk's
+ * Effort Score is untouched, and what changes is the fatigue it is held to have cost and the medals
+ * it is allowed to take.
+ *
+ * The label and the switch are one target, which is the whole row: a 20dp switch at the right-hand
+ * edge is a hard thing to hit on a phone held after a run, and this is a control the runner is meant
+ * to be able to reach through a winter of history with.
+ */
+@Composable
+fun WalkSwitch(
+    isWalk: Boolean,
+    onIsWalkChanged: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .toggleable(
+                    value = isWalk,
+                    role = Role.Switch,
+                    onValueChange = onIsWalkChanged,
+                )
+                .heightIn(min = RunningUiTokens.MinTouchTarget),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "This was a walk",
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp,
+                modifier = Modifier.weight(1f),
+            )
+            // Null, because the row above is the target: a switch with its own handler would be a
+            // second toggleable inside the first, and two semantics nodes saying the same thing.
+            Switch(checked = isWalk, onCheckedChange = null)
+        }
+        Text(
+            text = "Walks build fitness in full and count far less towards fatigue. " +
+                "They don't take records or complete a planned workout.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/**
+ * The small badge that says a Run is a Walk (#275) — one marker, drawn the same on the History row
+ * and on the Run's own page.
+ *
+ * On the row it is what makes retagging a winter of sessions workable at all: without it there is no
+ * way to see which ones have already been done short of opening every one.
+ */
+@Composable
+fun WalkMarker(modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.small,
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+    ) {
+        Text(
+            text = "Walk",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+    }
+}
 
 /** An effort as the page says it back, or null on a Run that was never rated. */
 fun feelEffortText(effort: Int?): String? = effort?.let { "$it / 10" }
@@ -112,27 +211,35 @@ fun FeelFeedbackDialog(
     effort: Int?,
     note: String?,
     onDismiss: () -> Unit,
-    onSave: (Int?, String?) -> Unit,
+    onSave: (Int?, String?, Boolean) -> Unit,
+    /** Whether the Run is a Walk, and the switch that changes it — editable for ever (#275). */
+    isWalk: Boolean = false,
 ) {
     var chosenEffort by remember { mutableStateOf(effort) }
     var typedNote by remember { mutableStateOf(note.orEmpty()) }
+    var walked by remember { mutableStateOf(isWalk) }
     val hasChanges = feelEditHasChanges(
         storedEffort = effort,
         storedNote = note,
         effort = chosenEffort,
-        typedNote = typedNote
+        typedNote = typedNote,
+        storedIsWalk = isWalk,
+        isWalk = walked,
     )
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("How did that feel?") },
         text = {
-            Column {
+            // Scrolled, because this dialog now holds a slider, a note field and a switch, and at a
+            // large system text size on a narrow screen that is taller than the dialog is allowed to
+            // be — buttons and all (#238).
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     // Says only what is true today: the coach is not told any of this yet (#83),
                     // and the Effort score the app computes is heart rate's, not this number's.
-                    "Your own words about this run, kept alongside it. They never change what your " +
-                        "heart rate says about it.",
+                    "Your effort and note are your own words about this run, kept alongside it. " +
+                        "They never change what your heart rate says about it.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.height(16.dp))
@@ -155,11 +262,17 @@ fun FeelFeedbackDialog(
                     maxLines = 4,
                     modifier = Modifier.fillMaxWidth()
                 )
+                // Last, and set apart from the words above it: unlike an effort or a note, this one
+                // changes what the Run is worth — to the record book and to the curves (#275).
+                Spacer(modifier = Modifier.height(16.dp))
+                Divider()
+                Spacer(modifier = Modifier.height(16.dp))
+                WalkSwitch(isWalk = walked, onIsWalkChanged = { walked = it })
             }
         },
         confirmButton = {
             TextButton(
-                onClick = { onSave(chosenEffort, feelNoteOf(typedNote)) },
+                onClick = { onSave(chosenEffort, feelNoteOf(typedNote), walked) },
                 enabled = hasChanges
             ) {
                 Text("Save")

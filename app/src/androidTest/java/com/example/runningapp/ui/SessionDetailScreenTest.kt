@@ -148,7 +148,7 @@ class SessionDetailScreenTest {
                     intervalStats = emptyList(),
                     onDeleteSession = {},
                     onBack = {},
-                    onSaveFeelFeedback = { _, _, _ -> }
+                    onSaveFeelFeedback = { _, _, _, _ -> }
                 )
             }
         }
@@ -168,7 +168,7 @@ class SessionDetailScreenTest {
                     intervalStats = emptyList(),
                     onDeleteSession = {},
                     onBack = {},
-                    onSaveFeelFeedback = { _, _, _ -> }
+                    onSaveFeelFeedback = { _, _, _, _ -> }
                 )
             }
         }
@@ -190,7 +190,7 @@ class SessionDetailScreenTest {
                     intervalStats = emptyList(),
                     onDeleteSession = {},
                     onBack = {},
-                    onSaveFeelFeedback = { _, effort, note ->
+                    onSaveFeelFeedback = { _, effort, note, _ ->
                         savedEffort = effort
                         savedNote = note
                     }
@@ -220,7 +220,7 @@ class SessionDetailScreenTest {
                     intervalStats = emptyList(),
                     onDeleteSession = {},
                     onBack = {},
-                    onSaveFeelFeedback = { _, effort, _ -> savedEffort = effort }
+                    onSaveFeelFeedback = { _, effort, _, _ -> savedEffort = effort }
                 )
             }
         }
@@ -242,13 +242,65 @@ class SessionDetailScreenTest {
                     intervalStats = emptyList(),
                     onDeleteSession = {},
                     onBack = {},
-                    onSaveFeelFeedback = { _, _, _ -> }
+                    onSaveFeelFeedback = { _, _, _, _ -> }
                 )
             }
         }
 
         composeRule.onNodeWithText("Edit effort / note").performClick()
         composeRule.onNodeWithText("Save").assertIsNotEnabled()
+    }
+
+    // --- Saying a Run was a Walk (#275) ---------------------------------------------------------
+
+    @Test
+    fun sessionDetailScreen_marksARunAsAWalkFromItsOwnPage() {
+        var savedIsWalk: Boolean? = null
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = finishedSession(),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = {},
+                    onSaveFeelFeedback = { _, _, _, isWalk -> savedIsWalk = isWalk }
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Add effort / note").performClick()
+        composeRule.onNodeWithText("This was a walk").performClick()
+        // The switch alone is a change, so Save opens on it with no effort and no note typed.
+        composeRule.onNodeWithText("Save").performClick()
+
+        assertEquals(true, savedIsWalk)
+    }
+
+    @Test
+    fun sessionDetailScreen_showsThatARunIsAWalkAndOffersToTakeItBack() {
+        var savedIsWalk: Boolean? = null
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = finishedSession().copy(isWalk = true),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = {},
+                    onSaveFeelFeedback = { _, _, _, isWalk -> savedIsWalk = isWalk }
+                )
+            }
+        }
+
+        // Marked on the card, and the way in is an edit rather than an invitation to add the first
+        // thing — a Walk with no effort and no note has still had something said about it.
+        composeRule.onNodeWithText("Walk").assertIsDisplayed()
+        composeRule.onNodeWithText("Edit effort / note").performClick()
+        composeRule.onNodeWithText("This was a walk").performClick()
+        composeRule.onNodeWithText("Save").performClick()
+
+        assertEquals(false, savedIsWalk)
     }
 
     // --- What the Run cost (#61) ----------------------------------------------------------------

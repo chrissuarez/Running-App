@@ -18,10 +18,17 @@ class ProgressTest {
     private val zone: ZoneId = ZoneId.of("Europe/London")
     private val day1: LocalDate = LocalDate.of(2026, 3, 1)
 
-    private fun runAt(date: LocalDate, hour: Int, minute: Int, score: Int) = ScoredRun(
+    private fun runAt(
+        date: LocalDate,
+        hour: Int,
+        minute: Int,
+        score: Int,
+        isWalk: Boolean = false,
+    ) = ScoredRun(
         startedAtMillis = LocalDateTime.of(date, java.time.LocalTime.of(hour, minute))
             .atZone(zone).toInstant().toEpochMilli(),
         effortScore = score,
+        isWalk = isWalk,
     )
 
     private fun everyDay(days: Int, score: Int): List<ScoredRun> =
@@ -105,7 +112,7 @@ class ProgressTest {
     fun `a Run that crosses midnight belongs to the day it started`() {
         val lateNight = runAt(day1, 23, 50, 80)
 
-        assertEquals(mapOf(day1 to 80), dailyEffortOf(listOf(lateNight), zone))
+        assertEquals(mapOf(day1 to DayEffort(80.0, 80.0)), dailyEffortOf(listOf(lateNight), zone))
 
         val curve = progressCurve(listOf(lateNight), through = day1.plusDays(1), zone = zone)
         assertEquals(day1, curve.first().date)
@@ -119,7 +126,57 @@ class ProgressTest {
             zone,
         )
 
-        assertEquals(mapOf(day1 to 100, day1.plusDays(1) to 10), effort)
+        assertEquals(
+            mapOf(day1 to DayEffort(100.0, 100.0), day1.plusDays(1) to DayEffort(10.0, 10.0)),
+            effort,
+        )
+    }
+
+    @Test
+    fun `a Walk pays a quarter of its Score into Fatigue and all of it into Fitness`() {
+        val effort = dailyEffortOf(listOf(runAt(day1, 9, 0, 40, isWalk = true)), zone)
+
+        assertEquals(mapOf(day1 to DayEffort(40.0, 10.0)), effort)
+    }
+
+    @Test
+    fun `a day holding a Run and a Walk carries both, discounting only the Walk`() {
+        val effort = dailyEffortOf(
+            listOf(runAt(day1, 7, 0, 60), runAt(day1, 18, 0, 40, isWalk = true)),
+            zone,
+        )
+
+        assertEquals(mapOf(day1 to DayEffort(100.0, 70.0)), effort)
+    }
+
+    @Test
+    fun `a Walk builds the same Fitness as a Run and far less Fatigue`() {
+        val ran = progressCurve(listOf(runAt(day1, 9, 0, 40)), through = day1, zone = zone).single()
+        val walked = progressCurve(
+            listOf(runAt(day1, 9, 0, 40, isWalk = true)),
+            through = day1,
+            zone = zone,
+        ).single()
+
+        assertEquals(ran.fitness, walked.fitness, 1e-9)
+        assertEquals(ran.fatigue * WALK_FATIGUE_SHARE, walked.fatigue, 1e-9)
+    }
+
+    @Test
+    fun `a week of Walks leaves the runner fresher than a week of the same Runs`() {
+        val days = (0 until 7).map { it.toLong() }
+        val ranEveryDay = days.map { runAt(day1.plusDays(it), 9, 0, 45) }
+        val walkedEveryDay = days.map { runAt(day1.plusDays(it), 9, 0, 45, isWalk = true) }
+        val through = day1.plusDays(7)
+
+        val ran = progressCurve(ranEveryDay, through = through, zone = zone).last()
+        val walked = progressCurve(walkedEveryDay, through = through, zone = zone).last()
+
+        // The same training built; a quarter of the debt carried. Form is the gap between the two,
+        // so the walker is the fresher of them — which is the whole point of #275.
+        assertEquals(ran.fitness, walked.fitness, 1e-9)
+        assertTrue("walking carries less fatigue", walked.fatigue < ran.fatigue)
+        assertTrue("walking leaves more Form", walked.form > ran.form)
     }
 
     @Test

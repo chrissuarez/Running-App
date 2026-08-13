@@ -19,14 +19,46 @@ private const val FATIGUE_DAYS = 7.0
 private const val FORM_BAND = 10.0
 
 /**
- * One finished Run as the curves see it: when it began, and what it cost ([effortScoreOf]).
+ * How much of a Walk's Effort Score the Fatigue curve carries — a quarter of it (#275).
+ *
+ * The Score itself is not touched anywhere: it measures what the heart did, and a Zone-2 walk really
+ * did cost the heart what a Zone-2 easy run costs it. What differs is the fatigue that follows, and
+ * that is largely mechanical — impact, eccentric loading, muscle damage — which walking barely pays.
+ * So a Walk builds Fitness in full and is discounted here, on the short memory, where the runner's
+ * freshness is worked out.
+ *
+ * One number rather than a model, and deliberately: nothing measures the mechanical cost of a
+ * stride, so this is a judgement about the runner's own training rather than a reading of anything.
+ * It ships at a quarter and is one line to move.
+ */
+const val WALK_FATIGUE_SHARE = 0.25
+
+/**
+ * One finished Run as the curves see it: when it began, what it cost ([effortScoreOf]), and whether
+ * the runner walked it.
  *
  * The start is what places a Run on a calendar day, so a Run that crosses midnight belongs wholly to
  * the day it set off on — the day the runner would say they ran.
+ *
+ * [isWalk] is the runner's own word about the Run and is never inferred (#275). It changes nothing
+ * about the Score and everything about which curve reads how much of it.
  */
 data class ScoredRun(
     val startedAtMillis: Long,
     val effortScore: Int,
+    val isWalk: Boolean = false,
+)
+
+/**
+ * What one calendar day cost, once for each curve (#275).
+ *
+ * Two numbers rather than one because a Walk is not worth the same to both: [towardsFitness] is
+ * every Score in the day added up, and [towardsFatigue] discounts the Walks among them by
+ * [WALK_FATIGUE_SHARE]. They are equal on any day the runner did not walk, which is most of them.
+ */
+data class DayEffort(
+    val towardsFitness: Double,
+    val towardsFatigue: Double,
 )
 
 /**
@@ -63,16 +95,25 @@ enum class ProgressRange(val label: String, private val months: Long) {
 }
 
 /**
- * What each calendar day cost, adding up the Runs that started on it.
+ * What each calendar day cost, adding up the Runs that started on it — once for each curve (#275).
  *
  * Days with no Runs are absent rather than zero — the curve below fills them in, and a map of every
  * day since the runner's first would be mostly zeroes standing for nothing that happened.
+ *
+ * A day holding a Run and a Walk carries both totals honestly: the Walk's whole Score towards
+ * Fitness and a quarter of it towards Fatigue, added to the Run's whole Score on both sides.
  */
-fun dailyEffortOf(runs: Iterable<ScoredRun>, zone: ZoneId): Map<LocalDate, Int> {
-    val byDay = LinkedHashMap<LocalDate, Int>()
+fun dailyEffortOf(runs: Iterable<ScoredRun>, zone: ZoneId): Map<LocalDate, DayEffort> {
+    val byDay = LinkedHashMap<LocalDate, DayEffort>()
     runs.forEach { run ->
         val day = Instant.ofEpochMilli(run.startedAtMillis).atZone(zone).toLocalDate()
-        byDay[day] = (byDay[day] ?: 0) + run.effortScore
+        val soFar = byDay[day] ?: DayEffort(0.0, 0.0)
+        val score = run.effortScore.toDouble()
+        byDay[day] = DayEffort(
+            towardsFitness = soFar.towardsFitness + score,
+            towardsFatigue = soFar.towardsFatigue +
+                if (run.isWalk) score * WALK_FATIGUE_SHARE else score,
+        )
     }
     return byDay
 }
@@ -93,6 +134,10 @@ fun dailyEffortOf(runs: Iterable<ScoredRun>, zone: ZoneId): Map<LocalDate, Int> 
  *
  * Runs after [through] are ignored rather than folded into the last day, so a Run stamped in the
  * future — a phone whose clock has moved — cannot bend today's numbers.
+ *
+ * The two curves are fed from two totals rather than one (#275): a Walk builds Fitness in full and
+ * pays only [WALK_FATIGUE_SHARE] of its Score into Fatigue. Everything else about the arithmetic is
+ * unchanged, and on a history with no Walk in it the two totals are the same number.
  */
 fun progressCurve(
     runs: Iterable<ScoredRun>,
@@ -113,9 +158,9 @@ fun progressCurve(
         // Read before the update, so Form is yesterday's answer — and 0 on the first day, when
         // there was no yesterday to have trained in.
         val form = fitness - fatigue
-        val effort = (effortByDay[day] ?: 0).toDouble()
-        fitness += (effort - fitness) * fitnessStep
-        fatigue += (effort - fatigue) * fatigueStep
+        val effort = effortByDay[day] ?: DayEffort(0.0, 0.0)
+        fitness += (effort.towardsFitness - fitness) * fitnessStep
+        fatigue += (effort.towardsFatigue - fatigue) * fatigueStep
         days += ProgressDay(date = day, fitness = fitness, fatigue = fatigue, form = form)
         day = day.plusDays(1)
     }

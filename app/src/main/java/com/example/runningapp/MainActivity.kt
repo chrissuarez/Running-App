@@ -817,8 +817,8 @@ class MainActivity : ComponentActivity() {
                                 onStateDistance = { id, distanceKm ->
                                     sessionDetailViewModel.stateDistance(id, distanceKm)
                                 },
-                                onSaveFeelFeedback = { id, effort, note ->
-                                    sessionDetailViewModel.saveFeelFeedback(id, effort, note)
+                                onSaveFeelFeedback = { id, effort, note, isWalk ->
+                                    sessionDetailViewModel.saveFeelFeedback(id, effort, note, isWalk)
                                 },
                                 statedBestEfforts = sessionStatedEfforts,
                                 onStateBestEffort = { id, type, seconds ->
@@ -899,7 +899,7 @@ class MainActivity : ComponentActivity() {
                             // A treadmill Run, said positively: anything else — an outdoor Run, or a
                             // Run whose mode is not known — is not asked.
                             askForDistance = feelSheetRunMode == RunMode.TREADMILL.settingValue,
-                            onSave = { effort, note, distanceKm ->
+                            onSave = { effort, note, distanceKm, isWalk ->
                                 scope.launch(Dispatchers.IO) {
                                     sessionRepository.saveFeelFeedback(sessionId, effort, note)
                                     // After the feedback, so the snapshot the distance takes carries
@@ -907,6 +907,13 @@ class MainActivity : ComponentActivity() {
                                     // second copy of the whole database.
                                     if (distanceKm != null) {
                                         sessionRepository.stateDistance(sessionId, distanceKm)
+                                    }
+                                    // Last of the three, so the snapshot it takes carries the other
+                                    // two — and because it is the one that can move the record book
+                                    // (#275). Only when the switch was turned on: the sheet opens
+                                    // with it off, so leaving it alone must not cost a scoring.
+                                    if (isWalk) {
+                                        sessionRepository.markAsWalk(sessionId, true)
                                     }
                                 }
                                 feelSheetSessionId = null
