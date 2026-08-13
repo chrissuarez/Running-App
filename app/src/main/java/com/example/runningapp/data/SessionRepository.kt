@@ -89,9 +89,9 @@ private const val AI_LABEL_OPEN_RUN = "Open Run"
  * coach described as one.
  *
  * The prompt is told what this means and told not to graduate a Stage on it. Nothing enforces that
- * by reading this string back — [AiTrainingContext.requirementEvidenceRunIds] is what the refusal is
- * made of, because a graduation cannot be taken back and a label written for a prompt would stop
- * refusing the moment somebody reworded it.
+ * by reading this string back — [AiTrainingContext.requirementEvidenceRunIdsByTimestamp] is what the
+ * refusal is made of, because a graduation cannot be taken back and a label written for a prompt
+ * would stop refusing the moment somebody reworded it.
  */
 private const val AI_LABEL_WALK = "Walk"
 
@@ -261,10 +261,12 @@ data class AiTrainingContext(
      * - **A Run nobody was shown**, from a model that invented a number or reworked the one it was
      *   given. There is nothing behind it to have graduated anything.
      *
-     * A timestamp that two Runs share is not in the map at all (see `getAiTrainingContext`), so it
-     * lands here as a name that resolves to nothing. An ambiguous name is not a name, and the doubt
-     * is settled the way every doubt on this path is settled: refuse, because a graduation cannot be
-     * taken back.
+     * A timestamp that two of the Runs shown share is in the map for neither of them (see
+     * `getAiTrainingContext`), so it lands here as a name that resolves to nothing — and that is
+     * asked of every Run shown, not only of the ones that could answer the Stage, or a Walk sharing
+     * a start with a structured Run would hand the coach the Run's id under the Walk's number. An
+     * ambiguous name is not a name, and the doubt is settled the way every doubt on this path is
+     * settled: refuse, because a graduation cannot be taken back.
      */
     fun evidenceRunIdNamedBy(response: AiCoachResponse): Long? =
         response.graduationEvidenceRunTimestamp?.let { requirementEvidenceRunIdsByTimestamp[it] }
@@ -1675,7 +1677,7 @@ class SessionRepository(
      * the sheet carrying this switch is still on screen. So the Run that has just finished is judged
      * as the Run it was when it ended — sent to the coach under its old label, and able to graduate
      * a Stage. What the mark buys is every evaluation *after* it, where
-     * [AiTrainingContext.requirementEvidenceRunIds] leaves it out.
+     * [AiTrainingContext.requirementEvidenceRunIdsByTimestamp] leaves it out.
      *
      * That is the safe side of a judgement made once and never taken back, but it is a real edge:
      * only a Run that followed a Workout the coach adjusts is evaluated at all, so it is reached by
@@ -2152,8 +2154,14 @@ class SessionRepository(
         // The Stage's own Runs and no others, which is what a Stage is graduated on (#234) — see
         // [RunnerSession.ranUnderStageId].
         val storedRecentRuns = sessionDao.getLast3AiEligibleRunsOfStage(stageId)
-        val recentRuns = storedRecentRuns.map { stored ->
-            val session = if (stored.id == asFinalized?.id) asFinalized else stored
+        // The same Runs as they stand *now*: [asFinalized] is the Run that has just finished, which
+        // the read above can have caught mid-write, and it stands in for one of these rows — it is
+        // never another Run. Resolved once and read from twice below, so what the coach is shown and
+        // what may graduate the Stage cannot describe different Runs (#275, #287).
+        val recentSessions = storedRecentRuns.map { stored ->
+            if (stored.id == asFinalized?.id) asFinalized else stored
+        }
+        val recentRuns = recentSessions.map { session ->
             // The label the coach sees for a past run: whether it followed a Workout at all.
             // Whether a run is *evaluated* is no longer this — that is its Run Type (#176) — but a
             // recorded run carries no Run Type of its own, so this stays the label.
@@ -2189,23 +2197,28 @@ class SessionRepository(
             // Runs, it is never another one.
             sourceRunIds = storedRecentRuns.map { it.id }.toSet(),
             // Asked of the same rows [recentRuns] was built from, so the two cannot describe
-            // different Runs — and of [asFinalized] where it stands in for one, since the mark can
+            // different Runs — including where [asFinalized] stands in for one, since the mark can
             // land on the Run that just finished before this is read.
-            requirementEvidenceRunIdsByTimestamp = storedRecentRuns
-                .map { stored -> if (stored.id == asFinalized?.id) asFinalized else stored }
-                // The same three answers [aiSessionTypeOf] gives, asked as one question: only a
-                // structured Run/Walk is evidence. The prompt says both halves of this — an Open
-                // Run may not progress a Stage, a Walk may not either — and a prompt sentence is a
-                // promise the code has to keep, because a graduation cannot be taken back.
-                .filter { it.isRunWalkMode && !it.isWalk }
+            requirementEvidenceRunIdsByTimestamp = recentSessions
                 // Keyed by the timestamp the coach is shown for the Run — `AiRecentRun.timestamp`,
                 // which is this same field — so a reply naming one comes back to the Run it named
                 // (#287). A timestamp two Runs share names neither: it is dropped rather than left
                 // to whichever row happened to be written last, since a graduation granted on a
                 // coin toss between two Runs is exactly the thing that cannot be taken back.
+                //
+                // Grouped across *every* Run shown before any is discarded, which is the order that
+                // matters: a Walk sharing its start with a structured Run would otherwise be the
+                // only one dropped, leaving the Run answering to a timestamp the coach wrote down
+                // off the Walk — the exact substitution this whole check exists to refuse.
                 .groupBy { it.startTime }
                 .filterValues { sharingAStart -> sharingAStart.size == 1 }
-                .mapValues { (_, sharingAStart) -> sharingAStart.single().id },
+                .mapValues { (_, sharingAStart) -> sharingAStart.single() }
+                // The same three answers [aiSessionTypeOf] gives, asked as one question: only a
+                // structured Run/Walk is evidence. The prompt says both halves of this — an Open
+                // Run may not progress a Stage, a Walk may not either — and a prompt sentence is a
+                // promise the code has to keep, because a graduation cannot be taken back.
+                .filterValues { it.isRunWalkMode && !it.isWalk }
+                .mapValues { (_, evidence) -> evidence.id },
             fitnessAndForm = fitnessAndFormThrough(
                 today = today,
                 zone = zone,

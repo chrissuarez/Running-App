@@ -936,6 +936,26 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a Walk sharing a start with a Run does not hand the coach the Run under the Walk's number`() = runTest {
+        // The collision that would put the hole straight back (#287): drop the ambiguous timestamps
+        // only from among the Runs that can answer the Stage, and a Walk starting at the same
+        // instant as a structured Run is the one discarded — leaving the Run answering to a number
+        // the coach read off the Walk. So the ambiguity is settled across every Run shown, before
+        // any of them is set aside as unable to graduate anything.
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 10, seconds = 1_800).copy(isRunWalkMode = true, startTime = 5_000L),
+                aTreadmillRun(id = 11, seconds = 7_200).copy(isWalk = true, startTime = 5_000L),
+                aTreadmillRun(id = 12, seconds = 1_800).copy(isRunWalkMode = true, startTime = 6_000L),
+            )
+        )
+
+        val context = repository.getAiTrainingContext("sub_30_bridge")
+
+        assertEquals(mapOf(6_000L to 12L), context.requirementEvidenceRunIdsByTimestamp)
+    }
+
+    @Test
     fun `a Walk reaches the coach named as a Walk and never as the workout it followed`() = runTest {
         // Shown rather than hidden — a week of walking is not a week of rest — but it did not
         // complete the Workout, whatever structure it happened to follow (#275).
