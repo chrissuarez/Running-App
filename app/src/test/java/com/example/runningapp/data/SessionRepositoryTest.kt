@@ -902,16 +902,37 @@ class SessionRepositoryTest {
         // structured Run/Walk may graduate. A Walk beside a real Run must not take the Stage's
         // evidence away with it (#275) — and an unplanned Open Run beside them is no evidence
         // either, which is what the prompt says and what this list has to enforce.
-        val walked = aTreadmillRun(id = 9, seconds = 1_800).copy(isWalk = true)
-        val ran = aTreadmillRun(id = 10, seconds = 1_800).copy(isRunWalkMode = true)
-        val openRun = aTreadmillRun(id = 11, seconds = 1_800)
+        val walked = aTreadmillRun(id = 9, seconds = 1_800).copy(isWalk = true, startTime = 2_000L)
+        val ran = aTreadmillRun(id = 10, seconds = 1_800)
+            .copy(isRunWalkMode = true, startTime = 3_000L)
+        val openRun = aTreadmillRun(id = 11, seconds = 1_800).copy(startTime = 4_000L)
         whenever(mockDao.getLast3AiEligibleRunsOfStage(any()))
             .thenReturn(listOf(walked, ran, openRun))
 
         val context = repository.getAiTrainingContext("sub_30_bridge")
 
         assertEquals(setOf(9L, 10L, 11L), context.sourceRunIds)
-        assertEquals(setOf(10L), context.requirementEvidenceRunIds)
+        // Keyed by the timestamp the coach is shown, so a reply naming one comes back to it (#287).
+        assertEquals(mapOf(3_000L to 10L), context.requirementEvidenceRunIdsByTimestamp)
+    }
+
+    @Test
+    fun `two Runs that started at the same instant are named by neither of their timestamps`() = runTest {
+        // A timestamp is only a name while one Run answers to it. Two sharing one is a name that
+        // resolves to a coin toss, so it resolves to nothing at all — a graduation cannot be taken
+        // back, and this is the direction that doubt is settled in (#287).
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 10, seconds = 1_800).copy(isRunWalkMode = true, startTime = 7_000L),
+                aTreadmillRun(id = 11, seconds = 1_800).copy(isRunWalkMode = true, startTime = 7_000L),
+                aTreadmillRun(id = 12, seconds = 1_800).copy(isRunWalkMode = true, startTime = 8_000L),
+            )
+        )
+
+        val context = repository.getAiTrainingContext("sub_30_bridge")
+
+        assertEquals(setOf(10L, 11L, 12L), context.sourceRunIds)
+        assertEquals(mapOf(8_000L to 12L), context.requirementEvidenceRunIdsByTimestamp)
     }
 
     @Test
@@ -2237,8 +2258,12 @@ class SessionRepositoryTest {
         )
         // A structured Run recorded under the Stage being graduated, which is the only kind that
         // can graduate one (#234, #275).
-        whenever(mockDao.getLast3AiEligibleRunsOfStage(any()))
-            .thenReturn(listOf(aTreadmillRun(id = 1, seconds = 1_500).copy(isRunWalkMode = true)))
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L)
+            )
+        )
         whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
             MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
         )
@@ -2249,6 +2274,8 @@ class SessionRepositoryTest {
                 nextRepeats = 5,
                 nextTargetZone = 3,
                 graduatedToNextStage = true,
+                // Named, and it is the structured Run the Stage can be graduated on (#287).
+                graduationEvidenceRunTimestamp = 1_000_000L,
                 coachMessage = "Stage complete."
             )
         )
@@ -2406,6 +2433,208 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a graduation read off a Walk is refused though a real Run was shown beside it`() = runTest {
+        // The hole #287 was written for. The existence of a Run that *could* answer the Stage is not
+        // a link to the Run the graduation actually rests on: shown one old structured Run that
+        // plainly failed the requirement and a two-hour Walk, the coach can read the requirement as
+        // met from the Walk's numbers, and a guard that only asks "was there a qualifying Run"
+        // waves it through — one eligible Run switching the check off for everything beside it.
+        //
+        // So the coach names the Run it graduated on, and the name has to be one of the Runs the app
+        // agrees could answer the Stage. Naming the Walk refuses itself.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 600)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L),
+                aTreadmillRun(id = 2, seconds = 7_200)
+                    .copy(isWalk = true, startTime = 2_000_000L),
+            )
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                nextTargetZone = null,
+                graduatedToNextStage = true,
+                // The two hours of walking, named as the thing that met the requirement.
+                graduationEvidenceRunTimestamp = 2_000_000L,
+                coachMessage = "Stage complete."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
+    @Test
+    fun `a graduation that names no Run at all is refused`() = runTest {
+        // A Stage with a perfectly good structured Run under it, and a coach that said "graduated"
+        // without saying what on. Nothing to check, so nothing is granted (#287): the reply is
+        // treated as an ordinary evaluation, which is the same ending every other refusal has.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L)
+            )
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                nextTargetZone = null,
+                graduatedToNextStage = true,
+                graduationEvidenceRunTimestamp = null,
+                coachMessage = "Stage complete."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockPrescriptions).prescribe(
+            any(),
+            any(),
+            eq("Stage complete."),
+            any(),
+            eq(CoachWriteScope("5k_sub_25", "base_builder"))
+        )
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
+    @Test
+    fun `a graduation naming a Run that was never shown is refused`() = runTest {
+        // A timestamp that matches nothing — a model that invented one, or reworked the number it
+        // was given. There is no Run behind it to check the Stage against, so it is worth no more
+        // than naming nothing at all (#287).
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L)
+            )
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                nextTargetZone = null,
+                graduatedToNextStage = true,
+                graduationEvidenceRunTimestamp = 999_999L,
+                coachMessage = "Stage complete."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
+    @Test
+    fun `two Runs starting at the same instant name each other, so neither can be the evidence`() = runTest {
+        // A timestamp is a name only while it points at one Run. Two Runs sharing one — which no
+        // clock this app reads should ever produce — leave the coach's answer ambiguous, and an
+        // ambiguous name is not a name: refused, in the direction every other doubt here is settled
+        // in, because a graduation cannot be taken back (#287).
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L),
+                aTreadmillRun(id = 2, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L),
+            )
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                nextTargetZone = null,
+                graduatedToNextStage = true,
+                graduationEvidenceRunTimestamp = 1_000_000L,
+                coachMessage = "Stage complete."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
+    @Test
     fun `a run deleted while the coach was thinking has its graduation refused whole`() = runTest {
         // The third ending of an evaluation, refused for the reason the other two are (#156) — and
         // the one that matters most, because it is the one nothing can take back. A Prescription
@@ -2431,8 +2660,10 @@ class SessionRepositoryTest {
         )
         whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
             listOf(
-                aTreadmillRun(id = 1, seconds = 1_500).copy(isRunWalkMode = true),
-                aTreadmillRun(id = 2, seconds = 1_500).copy(isRunWalkMode = true),
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L),
+                aTreadmillRun(id = 2, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 2_000_000L),
             )
         )
         whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
@@ -2451,6 +2682,9 @@ class SessionRepositoryTest {
                     nextRepeats = 5,
                     nextTargetZone = 3,
                     graduatedToNextStage = true,
+                    // The Run that is about to leave history, named as the evidence — so what is
+                    // being tested is the delete, not a graduation that named nothing (#287).
+                    graduationEvidenceRunTimestamp = 2_000_000L,
                     coachMessage = "Stage complete."
                 )
             }
@@ -2509,8 +2743,10 @@ class SessionRepositoryTest {
         )
         whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
             listOf(
-                aTreadmillRun(id = 1, seconds = 1_500).copy(isRunWalkMode = true),
-                aTreadmillRun(id = 2, seconds = 1_500).copy(isRunWalkMode = true),
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L),
+                aTreadmillRun(id = 2, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 2_000_000L),
             )
         )
         whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
@@ -2523,6 +2759,9 @@ class SessionRepositoryTest {
                 nextRepeats = 5,
                 nextTargetZone = 3,
                 graduatedToNextStage = true,
+                // Run 2, which is one of the two the coach was shown and is the one that leaves
+                // history mid-thought — so the refusal under test is the delete's, not #287's.
+                graduationEvidenceRunTimestamp = 2_000_000L,
                 coachMessage = "Stage complete."
             )
         )

@@ -18,6 +18,28 @@ data class AiCoachResponse(
      */
     val nextTargetZone: Int? = null,
     val graduatedToNextStage: Boolean,
+    /**
+     * Which Run the coach graduated the Stage on, named by that Run's `timestamp` as the prompt
+     * showed it (#287).
+     *
+     * The coach has to name its evidence, because the existence of evidence is not a link to it.
+     * Shown one old structured Run that plainly failed the requirement beside a two-hour Walk, a
+     * coach can read the requirement as met from the Walk's numbers — and a guard that only asks
+     * "was there a Run that could have answered this" lets that through, because there was. Made to
+     * name one, it has to point at a Run the app agrees could answer the Stage, and pointing at the
+     * Walk refuses itself.
+     *
+     * A timestamp rather than a database id, because the timestamp is already in front of the coach
+     * and an id is not: ids are deliberately kept out of the prompt (see
+     * [AiTrainingContext.sourceRunIds]), and one sent in would invite the coach to talk to the
+     * runner about "run 47".
+     *
+     * Null — including when the model omits the field, and on every reply that is not a graduation —
+     * means no Run was named. A graduation with nothing named is refused, exactly as one naming a
+     * Walk is: [SessionRepository.evaluateAndAdjustPlan] is where that is decided, because a
+     * graduation cannot be taken back.
+     */
+    val graduationEvidenceRunTimestamp: Long? = null,
     val coachMessage: String
 )
 
@@ -95,6 +117,12 @@ internal fun buildEvaluationPrompt(
     // enforced in evaluateAndAdjustPlan, which refuses a graduation resting on Walks alone: a
     // sentence in a prompt is a promise the code has to keep, and a graduation cannot be taken back.
     appendLine("CRITICAL RULE: A 'Walk' session is a walk, not a run. It does not complete a prescribed workout and is never evidence for a stage requirement: do NOT set graduatedToNextStage to true based on Walk sessions, and do not treat one as an easy run to prescribe around. It is shown to you so you know the user was active rather than resting.")
+    // The coach names what it graduated on, and the name is checked (#287). Every other rule here
+    // tells it what may not be evidence; this one makes it say what was, which is the only form of
+    // the promise the code can hold it to. Without it a reply can be true about a Walk's numbers
+    // while a failed structured Run sits in the same list, and a guard asking only whether some
+    // qualifying Run existed grants it.
+    appendLine("CRITICAL RULE: If you set graduatedToNextStage to true, you MUST also set graduationEvidenceRunTimestamp to the exact 'timestamp' value, copied digit for digit, of the ONE recent run that meets the requirement. That run must be a 'Run/Walk' session: a 'Walk' or an 'Open Run' can never be named here. If no single run in the list both meets the requirement and is a 'Run/Walk' session, set graduatedToNextStage to false and leave graduationEvidenceRunTimestamp null — a run that meets the requirement standing beside a different run that does not is not evidence, only the run that met it is.")
     // No Interval-quality metric is sent, and none is described here (#168) — see AiRecentRun.
     appendLine("Judge a duration-and-heart-rate requirement from the run's duration and average heart rate.")
     // The evidence a 5K-in-a-time requirement needs, and the rule that stops it being answered from
@@ -128,6 +156,7 @@ internal fun buildEvaluationPrompt(
     appendLine("  \"nextRepeats\": Int,")
     appendLine("  \"nextTargetZone\": Int (optional, 1-5),")
     appendLine("  \"graduatedToNextStage\": Boolean,")
+    appendLine("  \"graduationEvidenceRunTimestamp\": Long (the timestamp of the run that met the requirement; required when graduatedToNextStage is true, null otherwise),")
     appendLine("  \"coachMessage\": String")
     appendLine("}")
     context.stageWorkout?.let { appendStageWorkout(it) }
