@@ -94,7 +94,7 @@ internal fun buildEvaluationPrompt(
     // could not see one would read it as one — but it answers no requirement (#275). Said here, and
     // enforced in evaluateAndAdjustPlan, which refuses a graduation resting on Walks alone: a
     // sentence in a prompt is a promise the code has to keep, and a graduation cannot be taken back.
-    appendLine("CRITICAL RULE: A 'Walk' session is a walk, not a run. It does not complete a prescribed workout and is never evidence for a stage requirement: do NOT set graduatedToNextStage to true based on Walk sessions, and do not treat one as an easy run to prescribe around. It is shown to you so you know the user was active — walking builds aerobic fitness and costs far less recovery than running — so take it into account in coachMessage and in how much work you prescribe next.")
+    appendLine("CRITICAL RULE: A 'Walk' session is a walk, not a run. It does not complete a prescribed workout and is never evidence for a stage requirement: do NOT set graduatedToNextStage to true based on Walk sessions, and do not treat one as an easy run to prescribe around. It is shown to you so you know the user was active rather than resting.")
     // No Interval-quality metric is sent, and none is described here (#168) — see AiRecentRun.
     appendLine("Judge a duration-and-heart-rate requirement from the run's duration and average heart rate.")
     // The evidence a 5K-in-a-time requirement needs, and the rule that stops it being answered from

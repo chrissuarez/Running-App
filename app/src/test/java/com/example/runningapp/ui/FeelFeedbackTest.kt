@@ -34,7 +34,9 @@ class FeelFeedbackTest {
                 storedEffort = 7,
                 storedNote = "Felt strong",
                 effort = 7,
-                typedNote = "Felt strong"
+                typedNote = "Felt strong",
+                storedIsWalk = false,
+                isWalk = false,
             )
         )
     }
@@ -46,7 +48,9 @@ class FeelFeedbackTest {
                 storedEffort = null,
                 storedNote = "Felt strong",
                 effort = null,
-                typedNote = "  Felt strong "
+                typedNote = "  Felt strong ",
+                storedIsWalk = false,
+                isWalk = false,
             )
         )
     }
@@ -60,7 +64,9 @@ class FeelFeedbackTest {
                 storedEffort = 7,
                 storedNote = "Felt strong",
                 effort = 7,
-                typedNote = ""
+                typedNote = "",
+                storedIsWalk = false,
+                isWalk = false,
             )
         )
     }
@@ -72,7 +78,9 @@ class FeelFeedbackTest {
                 storedEffort = null,
                 storedNote = null,
                 effort = 5,
-                typedNote = ""
+                typedNote = "",
+                storedIsWalk = false,
+                isWalk = false,
             )
         )
     }
@@ -84,17 +92,45 @@ class FeelFeedbackTest {
                 storedEffort = null,
                 storedNote = null,
                 effort = null,
-                typedNote = ""
+                typedNote = "",
+                storedIsWalk = false,
+                isWalk = false,
             )
         )
     }
 
     @Test
     fun `the way in says whether there is anything there yet`() {
-        assertEquals("Add effort / note", feelEditLabel(effort = null, note = null))
-        assertEquals("Edit effort / note", feelEditLabel(effort = 6, note = null))
-        assertEquals("Edit effort / note", feelEditLabel(effort = null, note = "Felt strong"))
+        assertEquals("Add effort / note", feelEditLabel(effort = null, note = null, isWalk = false))
+        assertEquals("Edit effort / note", feelEditLabel(effort = 6, note = null, isWalk = false))
+        assertEquals("Edit effort / note", feelEditLabel(effort = null, note = "Felt strong", isWalk = false))
         // A note of nothing but spaces is nothing said, so the way in still says "Add".
-        assertEquals("Add effort / note", feelEditLabel(effort = null, note = "   "))
+        assertEquals("Add effort / note", feelEditLabel(effort = null, note = "   ", isWalk = false))
+        // A Walk with nothing else said about it has still had something said about it (#275).
+        assertEquals("Edit effort / note", feelEditLabel(effort = null, note = null, isWalk = true))
+    }
+
+    @Test
+    fun `marking a Run a Walk, or unmarking it, is a change`() {
+        assertTrue(
+            feelEditHasChanges(
+                storedEffort = null,
+                storedNote = null,
+                effort = null,
+                typedNote = "",
+                storedIsWalk = false,
+                isWalk = true,
+            )
+        )
+        assertTrue(
+            feelEditHasChanges(
+                storedEffort = 7,
+                storedNote = "Felt strong",
+                effort = 7,
+                typedNote = "Felt strong",
+                storedIsWalk = true,
+                isWalk = false,
+            )
+        )
     }
 }

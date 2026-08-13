@@ -75,6 +75,16 @@ equivalently `today = yesterday · e^(−1/τ) + todayLoad · (1 − e^(−1/τ)
 - **Variable-effort under-scoring.** TrainingPeaks explicitly notes hrTSS "the heart doesn't respond rapidly enough" during short/intense efforts, so it under-weights them ([TrainingPeaks: TSS vs hrTSS](https://www.trainingpeaks.com/learn/articles/training-with-tss-vs-hrtss-whats-the-difference/)). Run/walk is a continuous variable-effort pattern, so LTHR-anchored scores are structurally disadvantaged for our users.
 - **Walk-recovery misattribution.** This is actually where zone-based per-sample scoring behaves *correctly*: walk-recovery time lands in Zone 1–2 and is down-weighted (weight 1–2), so the model naturally credits recovery time less than running time. The risk only appears if load is computed from `avgBpm` (which smears walk and run together) rather than from binned per-sample HR. This is a strong reason to compute the daily load from `hr_samples`, not from session averages.
 
+### Departure from the literature: a Walk pays a quarter of its Fatigue (#275)
+
+CTL and ATL are model-agnostic about the daily load input, and every source above feeds them **the same number**. This app does not: a day carries two totals, the whole Effort Score into Fitness and, for a Run the runner has marked a **Walk**, a quarter of it into Fatigue (`WALK_FATIGUE_SHARE` in `training/Progress.kt`).
+
+The reason is the one thing an HR-only model cannot see. Edwards TRIMP is a measurement of cardiac work, and it is right about a walk: thirty Zone-2 minutes on foot really did cost the heart what thirty Zone-2 minutes of easy running cost it. But the fatigue that degrades a *runner's* form is largely mechanical — impact, eccentric loading, muscle damage — and walking pays almost none of it, so the short-memory curve reads a walker as far more fatigued than they are. In practice that pushed Fatigue above Fitness after a week of post-resistance walking and had the coach hold the prescription back.
+
+Two things this deliberately is not. It is **not a correction to the Score**, which stays honest on the Run's card and in the weekly volume totals — this is a rule about who reads it. And it is **not measured**: nothing here observes the mechanical cost of a stride, so the quarter is a judgement about this runner's own data, chosen by replaying their history at 25%, 33% and 50%. It is one named constant and one line to move.
+
+None of the sources above model this, because none of them has a walk to model — they assume every logged session is the sport being trained for. The nearest published parallel is the sport-specific weighting multi-sport platforms apply to a whole activity.
+
 ## Recommendation
 
 **Primary daily load: Edwards zone-weighted TRIMP, computed per-sample from `hr_samples` against %HRmax deciles.** Then build **CTL/ATL/TSB (42-day and 7-day EWMA, `TSB = CTL − ATL`) on top of that daily Edwards load** for the fitness/fatigue/form curve.

@@ -88,12 +88,12 @@ private const val AI_LABEL_OPEN_RUN = "Open Run"
  * that happened to follow the Workout's structure did not *complete* it, so it must not reach the
  * coach described as one.
  *
- * The prompt is told what this means and told not to graduate a Stage on it, and
- * [SessionRepository.evaluateAndAdjustPlan] refuses such a graduation outright rather than trusting
- * the telling — the same belt and braces the empty-evidence rule already wears, and for the same
- * reason: a graduation cannot be taken back.
+ * The prompt is told what this means and told not to graduate a Stage on it. Nothing enforces that
+ * by reading this string back — [AiTrainingContext.requirementEvidenceRunIds] is what the refusal is
+ * made of, because a graduation cannot be taken back and a label written for a prompt would stop
+ * refusing the moment somebody reworded it.
  */
-internal const val AI_LABEL_WALK = "Walk"
+private const val AI_LABEL_WALK = "Walk"
 
 /** What the coach is told a past Run was — one label, three answers, most specific first (#275). */
 private fun aiSessionTypeOf(session: RunnerSession): String = when {
@@ -206,6 +206,20 @@ data class AiTrainingContext(
      * runner their progression.
      */
     val sourceRunIds: Set<Long> = emptySet(),
+    /**
+     * Which of [sourceRunIds] may answer the Stage's requirement — everything shown that is not a
+     * Walk (#275).
+     *
+     * A separate list from [sourceRunIds] because the two answer different questions. That one is
+     * "what was this reply reasoned from", which every Run shown was, Walks included — a week of
+     * walking is not a week of rest and a coach that could not see it would read one as the other.
+     * This one is "what could graduate a Stage", which a Walk never can.
+     *
+     * Kept as ids rather than read back off [AiRecentRun.sessionType], because a graduation cannot
+     * be taken back and a label built for a prompt is not a thing to hang one on: reworded, the
+     * check would silently stop refusing.
+     */
+    val requirementEvidenceRunIds: Set<Long> = emptySet(),
     /**
      * Null when there is no scored history to read it from — a new phone, or a runner who has never
      * run with a Strap. The coach is then told nothing about fatigue rather than being told zeroes,
@@ -1375,7 +1389,7 @@ class SessionRepository(
         // second time: the claims a Run is measured against have to be the claims that were
         // compared, or the rebuild could commit having measured one reading and checked another.
         val statedByRun: Map<Long, Map<RecordType, Double>> = statedBefore
-            .groupBy({ it.first }) { it.second to it.third.toDouble() }
+            .groupBy({ it.sessionId }) { it.type to it.seconds.toDouble() }
             .mapValues { (_, claims) -> claims.toMap() }
         // One Run at a time, because a track is thousands of points and the whole history's worth
         // of them at once is not something to hold in memory. Unfinished Runs are in this list and
@@ -1421,17 +1435,26 @@ class SessionRepository(
     }
 
     /**
+     * One statement as the record book's input sees it: which Run made it, at which record, and the
+     * time it claims (#282).
+     *
+     * The claim and not the stored row, which is what lets two readings of an unmoved table compare
+     * equal: correcting a statement replaces it, giving the same claim a new id, and an id is not
+     * something a record book has ever ranked by.
+     */
+    private data class Claim(val sessionId: Long, val type: RecordType, val seconds: Int)
+
+    /**
      * Every claim standing at [types], as the thing two readings of it are compared by (#282).
      *
-     * The claim and not the row: correcting a statement replaces it, which gives the same claim a
-     * new id, and an id is not something a record book has ever ranked by. Sorted so two reads of an
-     * unchanged table compare equal whatever order the database hands them back in.
+     * Sorted so two reads of an unchanged table compare equal whatever order the database hands
+     * them back in.
      */
-    private suspend fun claimsAt(types: List<RecordType>): List<Triple<Long, RecordType, Int>> =
+    private suspend fun claimsAt(types: List<RecordType>): List<Claim> =
         statedBestEffortDao?.getAll().orEmpty()
             .filter { it.type in types }
-            .map { Triple(it.sessionId, it.type, it.seconds) }
-            .sortedWith(compareBy({ it.first }, { it.second }))
+            .map { Claim(it.sessionId, it.type, it.seconds) }
+            .sortedWith(compareBy({ it.sessionId }, { it.type }))
 
     /** What one Run is worth at [types], measuring its track only if one of them needs it. */
     private suspend fun effortsAt(
@@ -1616,6 +1639,19 @@ class SessionRepository(
      * forward — including days the coach has already prescribed against. That is correct: the curves
      * are a live read of the truth, and the alternative is freezing numbers we know to be wrong.
      * Nothing warns and no past coaching is re-run. A Stage already graduated stays graduated.
+     *
+     * **The Run's own Stage evaluation is not re-run and cannot be**, which is the same rule a
+     * Stated Distance is under (#231, ADR 0008) and is worth stating plainly because the mark
+     * usually arrives *seconds* late rather than weeks: `finalizeRun` asks the coach at STOP, while
+     * the sheet carrying this switch is still on screen. So the Run that has just finished is judged
+     * as the Run it was when it ended — sent to the coach under its old label, and able to graduate
+     * a Stage. What the mark buys is every evaluation *after* it, where
+     * [AiTrainingContext.requirementEvidenceRunIds] leaves it out.
+     *
+     * That is the safe side of a judgement made once and never taken back, but it is a real edge:
+     * only a Run that followed a Workout the coach adjusts is evaluated at all, so it is reached by
+     * starting a planned Long Run and then walking it — never by the post-lifting walk this ticket
+     * was written for, which carries no Run Type and is never evaluated.
      *
      * Nothing changed writes nothing, so re-opening the dialog and pressing Save on the mark already
      * there costs neither a row update nor a walk of the record book.
@@ -2123,6 +2159,14 @@ class SessionRepository(
             // The stored rows' ids, which [asFinalized] cannot change: it stands in for one of these
             // Runs, it is never another one.
             sourceRunIds = storedRecentRuns.map { it.id }.toSet(),
+            // Asked of the same rows [recentRuns] was built from, so the two cannot describe
+            // different Runs — and of [asFinalized] where it stands in for one, since the mark can
+            // land on the Run that just finished before this is read.
+            requirementEvidenceRunIds = storedRecentRuns
+                .map { stored -> if (stored.id == asFinalized?.id) asFinalized else stored }
+                .filterNot { it.isWalk }
+                .map { it.id }
+                .toSet(),
             fitnessAndForm = fitnessAndFormThrough(
                 today = today,
                 zone = zone,
@@ -2333,12 +2377,12 @@ class SessionRepository(
             // workout: a week of post-lifting walks must not push the plan forward. So the question
             // is not "was there a Run" but "was there one that was not a Walk" — a Stage whose last
             // three are all Walks has nothing standing for it at all.
-            val evidence = context.recentRuns.filter { it.sessionType != AI_LABEL_WALK }
-            val graduated = clampedResponse.graduatedToNextStage && evidence.isNotEmpty()
+            val graduated = clampedResponse.graduatedToNextStage &&
+                context.requirementEvidenceRunIds.isNotEmpty()
             if (clampedResponse.graduatedToNextStage && !graduated) {
                 Log.d(
                     "AiCoach",
-                    "Refusing a graduation: no run recorded under stage=$stageId to graduate it " +
+                    "Refusing a graduation: no run recorded under stage=$stageId can answer it " +
                         "(${context.recentRuns.size} recent, all of them Walks or none at all)"
                 )
             }

@@ -55,8 +55,8 @@ fun feelEditHasChanges(
     effort: Int?,
     typedNote: String,
     /** Whether the Run is marked a Walk, and whether the switch still says so (#275). */
-    storedIsWalk: Boolean = false,
-    isWalk: Boolean = storedIsWalk,
+    storedIsWalk: Boolean,
+    isWalk: Boolean,
 ): Boolean =
     effort != storedEffort ||
         feelNoteOf(typedNote) != feelNoteOf(storedNote) ||
@@ -68,7 +68,7 @@ fun feelEditHasChanges(
  * A Run marked a Walk has something said about it even with no effort and no note (#275), so the
  * way back in has to be an edit rather than an invitation to add the first thing.
  */
-fun feelEditLabel(effort: Int?, note: String?, isWalk: Boolean = false): String =
+fun feelEditLabel(effort: Int?, note: String?, isWalk: Boolean): String =
     if (effort == null && feelNoteOf(note) == null && !isWalk) "Add effort / note"
     else "Edit effort / note"
 
@@ -213,7 +213,7 @@ fun FeelFeedbackDialog(
     onDismiss: () -> Unit,
     onSave: (Int?, String?, Boolean) -> Unit,
     /** Whether the Run is a Walk, and the switch that changes it — editable for ever (#275). */
-    isWalk: Boolean = false,
+    isWalk: Boolean,
 ) {
     var chosenEffort by remember { mutableStateOf(effort) }
     var typedNote by remember { mutableStateOf(note.orEmpty()) }

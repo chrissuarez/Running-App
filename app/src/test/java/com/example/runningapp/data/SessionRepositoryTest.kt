@@ -897,6 +897,21 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a Walk is shown to the coach but is not among the Runs that could answer the Stage`() = runTest {
+        // The two lists the context keeps apart: everything shown was reasoned from, and only the
+        // Runs that are not Walks may graduate. A Walk beside a real Run must not take the Stage's
+        // evidence away with it (#275).
+        val walked = aTreadmillRun(id = 9, seconds = 1_800).copy(isWalk = true)
+        val ran = aTreadmillRun(id = 10, seconds = 1_800)
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(walked, ran))
+
+        val context = repository.getAiTrainingContext("sub_30_bridge")
+
+        assertEquals(setOf(9L, 10L), context.sourceRunIds)
+        assertEquals(setOf(10L), context.requirementEvidenceRunIds)
+    }
+
+    @Test
     fun `a Walk reaches the coach named as a Walk and never as the workout it followed`() = runTest {
         // Shown rather than hidden — a week of walking is not a week of rest — but it did not
         // complete the Workout, whatever structure it happened to follow (#275).

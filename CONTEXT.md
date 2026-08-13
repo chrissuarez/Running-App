@@ -162,7 +162,9 @@ weekly volume bars and is marked as one in the History list. It takes no Best
 Effort and no record of any kind, completes no prescribed Workout and graduates
 no Stage, and it reaches the coach named as a Walk. Marking one takes back the
 medals it held, through the same mend a deletion owes; it does not un-graduate a
-Stage that is already past. Curves are worked out on read, so marking a session
+Stage that is already past, and it does not re-run the Run's own evaluation —
+which the coach makes at the finish, before the sheet asking the question has
+been answered, so what the mark buys is every evaluation after it. Curves are worked out on read, so marking a session
 from three weeks ago moves every Fitness, Fatigue and Form number from that day
 forward — silently, because they are a live read of the truth and the
 alternative is freezing numbers we know to be wrong.
