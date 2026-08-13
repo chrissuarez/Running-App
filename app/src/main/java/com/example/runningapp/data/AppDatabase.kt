@@ -614,6 +614,14 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE endTime > 0 ORDER BY endTime DESC LIMIT 1")
     suspend fun getMostRecentFinalizedSession(): RunnerSession?
 
+    /**
+     * The biggest single session of the last 30 days, which the coach's prescription is held under.
+     *
+     * Walks are left out (#275). This is a ceiling on what the runner is asked to *run*, so it has
+     * to be built from running: a two-hour walk would otherwise licence a two-hour workout for a
+     * runner whose longest run is twenty minutes, and the guard would be lifted by the very
+     * sessions it exists to protect a tired runner from.
+     */
     @Query(
         """
         SELECT
@@ -621,6 +629,7 @@ interface SessionDao {
             MAX(durationSeconds) AS maxDurationSeconds
         FROM sessions
         WHERE endTime > 0
+          AND isWalk = 0
           AND endTime >= :cutoffEpochMillis
         """
     )
