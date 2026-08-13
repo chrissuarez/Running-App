@@ -910,11 +910,12 @@ class MainActivity : ComponentActivity() {
                                     }
                                     // Last of the three, so the snapshot it takes carries the other
                                     // two — and because it is the one that can move the record book
-                                    // (#275). Only when the switch was turned on: the sheet opens
-                                    // with it off, so leaving it alone must not cost a scoring.
-                                    if (isWalk) {
-                                        sessionRepository.markAsWalk(sessionId, true)
-                                    }
+                                    // (#275). Handed the switch as it stands rather than only when
+                                    // it is on, so this door and the Run's own page have one
+                                    // contract: markAsWalk refuses a change of nothing itself, and
+                                    // asking it is a single read where deciding here would be a
+                                    // rule in two places free to drift apart.
+                                    sessionRepository.markAsWalk(sessionId, isWalk)
                                 }
                                 feelSheetSessionId = null
                             },
