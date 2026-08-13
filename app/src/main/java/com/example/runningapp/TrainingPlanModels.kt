@@ -1,5 +1,7 @@
 package com.example.runningapp
 
+import com.example.runningapp.analysis.RecordType
+
 data class TrainingPlan(
     val id: String,
     val name: String,
@@ -7,11 +9,50 @@ data class TrainingPlan(
     val stages: List<PlanStage>
 )
 
+/**
+ * A Stage requirement written in numbers rather than left to a judgement: a Best Effort at one
+ * record distance, in [withinSeconds] or faster (#290).
+ *
+ * "Is this 5K under 30 minutes" is arithmetic on a number the app already measures, and the app is
+ * what answers it — see
+ * [ADR 0016](docs/adr/0016-a-requirement-stated-in-numbers-is-not-the-coachs-to-judge.md). The
+ * coach is fenced out of a Stage that carries one; the prose in [PlanStage.graduationRequirementText]
+ * stays, for the screen and for the coach's debrief.
+ *
+ * A Best Effort and not a bare measurement, which is the whole of why this is safe: the app already
+ * knows what one Run is worth at a record distance
+ * ([com.example.runningapp.analysis.bestEffortsOf]), measured off the track or stated off a treadmill
+ * console (ADR 0015), never for a Walk, and never for a Run still going. Those are exactly the three
+ * edges this rule needs, so it borrows them rather than restating them and drifting.
+ *
+ * Not every requirement can have one. "4 weeks of consistent Zone 2 training" holds a genuine
+ * judgement — what counts as consistent — and stays with the coach.
+ */
+data class BestEffortRequirement(
+    /** One of the five distances contested as a Best Effort — [RecordType.bestEffortDistances]. */
+    val record: RecordType,
+    /**
+     * The slowest time that still clears the bar, inclusive and in whole seconds — so "a 5K under
+     * 30 minutes" is 1799 and "24:59 or faster" is 1499.
+     *
+     * Inclusive because a Best Effort is kept in whole seconds and a runner reads the bar off a
+     * clock: 29:59 is under thirty minutes and 25:00 is not 24:59. Stated as the number that passes
+     * rather than as the number in the prose, so there is one comparison here and no polarity to
+     * get wrong at the call site.
+     */
+    val withinSeconds: Int
+)
+
 data class PlanStage(
     val id: String,
     val title: String,
     val description: String,
     val graduationRequirementText: String,
+    /**
+     * The same requirement in numbers, where it can be written in them (#290). Null where the
+     * requirement holds a judgement, which leaves it with the coach exactly as before.
+     */
+    val bestEffortRequirement: BestEffortRequirement? = null,
     val isLocked: Boolean = true,
     val workouts: List<WorkoutTemplate>
 )
@@ -64,7 +105,17 @@ data class WorkoutTemplate(
     val coolDownSeconds: Int = 180,
     // No default: every Workout declares its kind (#173), because a Workout the plan cannot name
     // the kind of is one the coach cannot decide whether to adjust.
-    val runType: RunType
+    val runType: RunType,
+    /**
+     * One line of instruction for the runner, shown on the Today card (#291) — null for a Workout
+     * whose numbers say the whole of it.
+     *
+     * It exists because a Workout can carry a decision its numbers do not show. A 5K Test has no
+     * warm-up inside it *on purpose*, so that the treadmill console reads 5.00 km at the end and the
+     * stated distance and the stated Best Effort agree; without a line saying "warm up before you
+     * start this", the runner presses START cold and the decision is invisible.
+     */
+    val instruction: String? = null
 )
 
 /**
@@ -158,6 +209,25 @@ fun WorkoutTemplate.withCoachPrescription(
 fun List<WorkoutTemplate>.pickedOrFirst(workoutId: String?): WorkoutTemplate? =
     firstOrNull { it.id == workoutId } ?: firstOrNull()
 
+/**
+ * What a runner has to be told before a 5K Test, because the Workout's numbers do not show it
+ * (#291).
+ *
+ * A 5K Test carries no warm-up and no cool-down, and the reason is the treadmill. A warm-up
+ * recorded inside the Run leaves the console reading 6.2 km at the end rather than 5.00, so there is
+ * no whole-run 5 km to state and no console split to read — the runner would be subtracting one
+ * clock reading from another, mid-Run, at full effort, which is exactly where mistakes live. With no
+ * envelope the Run *is* the test: warm up with the app not recording, reset the console, press
+ * START. Outdoors it costs nothing either way, because the rolling window finds the effort wherever
+ * it falls inside the track.
+ *
+ * The price is that the warm-up earns no Effort Score — the same price as any jog that is not
+ * recorded today.
+ */
+const val FIVE_K_TEST_INSTRUCTION: String =
+    "Warm up for about 10 minutes before you start this — the Run itself is the test, " +
+        "so press START only when you are ready to go."
+
 object TrainingPlanProvider {
     val plans = listOf(
         TrainingPlan(
@@ -220,10 +290,28 @@ object TrainingPlanProvider {
                     title = "Stage 2: Sub-30 Bridge",
                     description = "Bridging the gap to sustained running at higher intensities.",
                     graduationRequirementText = "Successfully complete a 5K under 30 minutes.",
+                    // 1799 rather than 1800: the prose says *under* thirty minutes (#290).
+                    bestEffortRequirement = BestEffortRequirement(RecordType.FASTEST_5K, 1799),
                     isLocked = true,
                     workouts = listOf(
                         WorkoutTemplate("w2_s1", "Pace Stabilization", 2, 600, 60, 4, runType = RunType.LONG),
-                        WorkoutTemplate("w2_s2", "The 30-Minute Run", 2, 1800, 0, 1, runType = RunType.EASY)
+                        WorkoutTemplate("w2_s2", "The 30-Minute Run", 2, 1800, 0, 1, runType = RunType.EASY),
+                        // The stage graduates on a 5K and until now offered no way to attempt one
+                        // (#291): its Long run walks a minute in four, and a walk break inside a
+                        // Best Effort counts against it, so a sub-30 5K in there needed a pace the
+                        // stage does not exist to produce. Continuous, no walk, and no envelope.
+                        WorkoutTemplate(
+                            id = "w2_s3",
+                            title = "5K Test",
+                            targetZone = 4,
+                            runDurationSeconds = 1800,
+                            walkDurationSeconds = 0,
+                            totalRepeats = 1,
+                            warmUpSeconds = 0,
+                            coolDownSeconds = 0,
+                            runType = RunType.QUALITY,
+                            instruction = FIVE_K_TEST_INSTRUCTION
+                        )
                     )
                 ),
                 PlanStage(
@@ -231,12 +319,27 @@ object TrainingPlanProvider {
                     title = "Stage 3: Sub-25 Peak",
                     description = "Fine-tuning threshold and speed for performance.",
                     graduationRequirementText = "Run a 5K in 24:59 or faster.",
+                    bestEffortRequirement = BestEffortRequirement(RecordType.FASTEST_5K, 1499),
                     isLocked = true,
                     workouts = listOf(
                         // Both hard days, and neither is an endurance run — so this stage offers no
                         // Long run, and nothing here is a session the coach adjusts.
                         WorkoutTemplate("w3_s1", "Threshold Intervals", 4, 300, 120, 5, runType = RunType.QUALITY),
-                        WorkoutTemplate("w3_s2", "5K Peak Test", 4, 1500, 0, 1, runType = RunType.QUALITY)
+                        // The envelope goes, for the reason set out on [FIVE_K_TEST_INSTRUCTION]
+                        // (#291): it used to take the 480/180 default, which puts eleven minutes of
+                        // jogging inside the Run and leaves the console reading 6.2 km.
+                        WorkoutTemplate(
+                            id = "w3_s2",
+                            title = "5K Peak Test",
+                            targetZone = 4,
+                            runDurationSeconds = 1500,
+                            walkDurationSeconds = 0,
+                            totalRepeats = 1,
+                            warmUpSeconds = 0,
+                            coolDownSeconds = 0,
+                            runType = RunType.QUALITY,
+                            instruction = FIVE_K_TEST_INSTRUCTION
+                        )
                     )
                 )
             )

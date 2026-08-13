@@ -73,76 +73,30 @@ class AiCoachClientTest {
     }
 
     @Test
-    fun `a Stage asking for a 5K time is judged from the measured 5K and nothing else`() {
+    fun `the 5K numbers still reach the coach, as context and not as evidence`() {
+        // The six rules that told the coach how to judge a 5K are gone (#290, ADR 0016) — the app
+        // answers that requirement itself. What the fields are for now is the debrief.
         val prompt = buildEvaluationPrompt(
             oneRunWalkSession.copy(graduationRequirement = "Successfully complete a 5K under 30 minutes.")
         )
 
         assertTrue(prompt.contains("\"fastest5kSeconds\":1620"))
-        assertTrue(
-            prompt.contains(
-                "whole run including its warm-up and cool-down, so on a GPS-recorded run it is NOT a 5K time"
-            )
-        )
-        assertTrue(
-            prompt.contains(
-                "If the stage requirement asks for a 5K in a time, judge it ONLY from fastest5kSeconds"
-            )
-        )
+        assertTrue(prompt.contains("\"distanceKm\":5.4"))
+        assertTrue(prompt.contains("\"runMode\":\"outdoor\""))
+        listOf(
+            "judge it ONLY from fastest5kSeconds",
+            "If fastest5kSeconds is null, set graduatedToNextStage to false",
+            "establish a time for the WHOLE run and nothing shorter",
+            "went FURTHER than the requirement's distance",
+        ).forEach { retired ->
+            assertFalse("prompt still carries: $retired", prompt.contains(retired))
+        }
     }
 
     @Test
-    fun `a treadmill Run's stated distance can answer a requirement of exactly that distance`() {
-        // The one thing two numbers settle (#231, ADR 0008): a stated distance and a whole-Run
-        // duration are a time over the whole Run. 5 km in 24:30 graduates a 5K in 24:59.
+    fun `a run with no measured 5K says so as a null rather than by omission`() {
         val prompt = buildEvaluationPrompt(
             oneRunWalkSession.copy(
-                graduationRequirement = "Run a 5K in 24:59 or faster.",
-                recentRuns = oneRunWalkSession.recentRuns.map {
-                    it.copy(runMode = "treadmill", distanceKm = 5.0, fastest5kSeconds = null, durationSeconds = 1470)
-                }
-            )
-        )
-
-        assertTrue(prompt.contains("\"runMode\":\"treadmill\""))
-        assertTrue(prompt.contains("\"distanceKm\":5.0"))
-        assertTrue(
-            prompt.contains(
-                "its distanceKm and durationSeconds establish a time for the WHOLE run and nothing shorter"
-            )
-        )
-    }
-
-    @Test
-    fun `a treadmill Run longer than the requirement is declined rather than guessed at`() {
-        // 6 km in 30:00 may hold a sub-25 5K and may not, and the splits to say which were never
-        // handed over. Ruling either way is deriving a best effort from an average pace, which is
-        // what ADR 0008 refuses — with a graduation that cannot be taken back behind it.
-        val prompt = buildEvaluationPrompt(
-            oneRunWalkSession.copy(
-                graduationRequirement = "Run a 5K in 24:59 or faster.",
-                recentRuns = oneRunWalkSession.recentRuns.map {
-                    it.copy(runMode = "treadmill", distanceKm = 6.0, fastest5kSeconds = null, durationSeconds = 1800)
-                }
-            )
-        )
-
-        assertTrue(
-            prompt.contains(
-                "If that treadmill run went FURTHER than the requirement's distance, you cannot tell " +
-                    "how fast the requirement's distance alone was covered"
-            )
-        )
-        assertTrue(
-            prompt.contains("Never divide a distance by a duration to estimate a pace or a shorter-distance time.")
-        )
-    }
-
-    @Test
-    fun `a 5K that was never measured cannot graduate a Stage, and the coach is told why`() {
-        val prompt = buildEvaluationPrompt(
-            oneRunWalkSession.copy(
-                graduationRequirement = "Run a 5K in 24:59 or faster.",
                 recentRuns = oneRunWalkSession.recentRuns.map {
                     it.copy(runMode = "treadmill", distanceKm = null, fastest5kSeconds = null)
                 }
@@ -150,14 +104,29 @@ class AiCoachClientTest {
         )
 
         // Sent as an explicit null rather than left out: a field that is simply missing is a field
-        // the model can read as an oversight, and this one is the whole of the evidence.
+        // the model can read as an oversight.
         assertTrue(prompt.contains("\"fastest5kSeconds\":null"))
         assertTrue(prompt.contains("\"distanceKm\":null"))
-        assertTrue(prompt.contains("If fastest5kSeconds is null, set graduatedToNextStage to false"))
-        // A treadmill Run has no distance to be given, an outdoor one does — so the run mode is sent
-        // and the coach says which of the two it is looking at rather than guessing.
-        assertTrue(prompt.contains("treadmill run with no distance recorded when runMode is 'treadmill'"))
         assertTrue(prompt.contains("\"runMode\":\"treadmill\""))
+    }
+
+    @Test
+    fun `no run's own clock is ever turned into a time for a shorter distance`() {
+        // The one rule of the six that outlives them, because it is not about graduating: a whole-
+        // Run duration is not a 5K time, and no average pace is derived from one (ADR 0008, 0015).
+        val prompt = buildEvaluationPrompt(oneRunWalkSession)
+
+        assertTrue(
+            prompt.contains(
+                "durationSeconds is the whole run including its warm-up and cool-down, so it is NOT " +
+                    "a time for any shorter distance"
+            )
+        )
+        assertTrue(
+            prompt.contains(
+                "Never divide a distance by a duration to estimate a pace or a time at a shorter distance."
+            )
+        )
     }
 
     @Test
@@ -255,14 +224,16 @@ class AiCoachClientTest {
 
     @Test
     fun `a requirement the data cannot answer is still refused`() {
+        // Only where graduating is the coach's to do at all — a Stage stating its bar in numbers
+        // gets the fence instead (#290).
         val prompt = buildEvaluationPrompt(
             oneRunWalkSession.copy(graduationRequirement = "Run 10K at 5:00 /km.")
         )
 
         assertTrue(
             prompt.contains(
-                "If the stage requirement asks for any other distance or pace that fastest5kSeconds " +
-                    "does not answer, set graduatedToNextStage to false"
+                "If the stage requirement asks for a distance in a time that the data above does " +
+                    "not answer, set graduatedToNextStage to false"
             )
         )
     }
@@ -518,6 +489,27 @@ class AiCoachClientTest {
 
         assertTrue(prompt.contains("\"nextTargetZone\": Int (optional, 1-5)"))
         assertTrue(prompt.contains("Omit nextTargetZone to leave the workout's own target zone alone."))
+    }
+
+    @Test
+    fun `a Stage whose requirement the app answers fences the coach out of graduating`() {
+        // The app has already decided it, before this prompt was built (#290). Two paths able to
+        // grant the same graduation is one of them granting it twice.
+        val prompt = buildEvaluationPrompt(oneRunWalkSession.copy(requirementIsTheAppsToAnswer = true))
+
+        assertTrue(prompt.contains("the app measures and decides for itself"))
+        assertTrue(prompt.contains("do not say they have failed the requirement either"))
+        // And the one line that would tell it to set the flag it has just been forbidden to set is
+        // gone — a rule contradicting another is a rule the model gets to choose between.
+        assertFalse(prompt.contains("set graduatedToNextStage to true."))
+    }
+
+    @Test
+    fun `a Stage whose requirement holds a judgement still leaves it with the coach`() {
+        val prompt = buildEvaluationPrompt(oneRunWalkSession)
+
+        assertFalse(prompt.contains("the app measures and decides for itself"))
+        assertTrue(prompt.contains("set graduatedToNextStage to true."))
     }
 
     @Test

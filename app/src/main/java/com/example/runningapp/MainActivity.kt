@@ -1610,6 +1610,16 @@ fun TodayCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            // Above the coach's note and below the shape, because it is an instruction for the run
+            // about to be started rather than a remark about the last one (#291).
+            state.instructionLine?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
             state.coachNote?.let {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(

@@ -26,6 +26,20 @@ Stage's work can never graduate the next, and a Run carrying no Stage answers
 nothing (#234).
 _Avoid_: phase (a Phase is a stretch of a single Run), level, block
 
+**Stage Requirement**:
+What a Stage asks for before it will be let go of. Always written in prose for
+the runner to read, and sometimes also in numbers — a Best Effort at a record
+distance, in a time. Where it is written in numbers the app measures it and
+decides it, and the coach is fenced out of it entirely; where it holds a
+judgement, such as "4 weeks of consistent Zone 2 training", the coach decides
+([ADR 0016](docs/adr/0016-a-requirement-stated-in-numbers-is-not-the-coachs-to-judge.md)).
+A requirement written in numbers is answered by any finished Run that is not a
+Walk, whichever kind of session it was — an Open Run included, because a time is
+a time wherever it turned up. Granted forwards only, never from a pass over
+history, and never taken back (#290).
+_Avoid_: graduation criteria, goal (a Goal is the runner's own distance or time
+target), unlock condition
+
 **Workout**:
 The planned shape a Run may follow — its intervals, durations, and targets —
 taken from the training plan.

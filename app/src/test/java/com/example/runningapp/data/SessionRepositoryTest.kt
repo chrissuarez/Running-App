@@ -1000,6 +1000,47 @@ class SessionRepositoryTest {
         assertEquals(listOf("Walk"), recentRuns.map { it.sessionType })
     }
 
+    @Test
+    fun `a Walk is worth no measured 5K, whatever its track covered`() = runTest {
+        // CONTEXT.md says a Walk holds no Best Effort and the record book keeps to it, so the one
+        // place a Stage requirement is read from must not be where the app disagrees with itself
+        // (#290). A brisk 5 km walk is still a walk.
+        val trackDao: TrackPointDao = mock()
+        whenever(trackDao.getTrackPointsForSessionOnce(9L)).thenReturn(fiveKilometresIn(500))
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            trackPointDao = trackDao,
+        )
+        val ran = session(id = 9, endTime = 1_000L).copy(isRunWalkMode = true)
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(ran))
+
+        assertEquals(
+            listOf(500L),
+            repo.getAiTrainingContext("sub_30_bridge").recentRuns.map { it.fastest5kSeconds }
+        )
+
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(ran.copy(isWalk = true)))
+
+        assertEquals(
+            listOf(null),
+            repo.getAiTrainingContext("sub_30_bridge").recentRuns.map { it.fastest5kSeconds }
+        )
+    }
+
+    /** A straight 5 km covered in [seconds], as 51 backfilled fixes 100 m apart. */
+    private fun fiveKilometresIn(seconds: Long): List<TrackPoint> = (0..50).map { step ->
+        TrackPoint(
+            sessionId = 9,
+            latitude = 0.0,
+            // 100 m of longitude at the equator, so 50 legs make 5 km.
+            longitude = step * (100.0 / 111_319.49),
+            horizontalAccuracyMeters = null,
+            timestampMillis = step * seconds * 1_000 / 50,
+            source = "BACKFILL",
+        )
+    }
+
     // --- Stating a Best Effort a treadmill console showed (#282, ADR 0015) ---------------------
 
     @Test
@@ -2339,6 +2380,273 @@ class SessionRepositoryTest {
         verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
         // The debrief is about the run just finished, so it survives the graduation.
         verify(mockSettingsRepo).setLatestCoachMessage("Stage complete.", activeScope)
+    }
+
+    // --- A requirement stated in numbers is answered by the app (#290, ADR 0016) ---------------
+    //
+    // Stage 2 asks for a 5K under 30 minutes and stage 3 for one in 24:59 or faster, so both carry
+    // a BestEffortRequirement. The Runs below are treadmill Runs told what their console showed,
+    // which is the cheapest way to hand the rule a Best Effort — a measured one is the same number
+    // arriving through the same door (`bestEffortsOf`).
+
+    /** The Stage's own Runs, load and latest-finish stubs the coach's path reads on its way past. */
+    private suspend fun stubTheCoachsReads() {
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+    }
+
+    /** A finished treadmill Run of [id], told its console showed [fiveKSeconds] for 5 km. */
+    private suspend fun aRunTold(
+        id: Long,
+        fiveKSeconds: Int,
+        statedDao: StatedBestEffortDao,
+        isWalk: Boolean = false,
+        isRunWalkMode: Boolean = true,
+    ): RunnerSession {
+        whenever(statedDao.getForSession(id)).thenReturn(
+            listOf(StatedBestEffort(sessionId = id, type = RecordType.FASTEST_5K, seconds = fiveKSeconds))
+        )
+        return aTreadmillRun(id = id, seconds = 1_900)
+            .copy(distanceKm = 5.0, isWalk = isWalk, isRunWalkMode = isRunWalkMode)
+    }
+
+    @Test
+    fun `the app answers the requirement before the coach is asked anything`() = runTest {
+        // The ordering is the decision (#290): the rule grants, the stored Stage moves, and the
+        // coach's own guard then finds a Stage the Run no longer belongs to. Pinned here because a
+        // later refactor reordering these two would have the coach prescribing into a Stage the
+        // runner has already left.
+        val statedDao: StatedBestEffortDao = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+            aiCoachClient = mockCoach,
+        )
+        // The settings as the rule finds them, and then as the coach's path finds them a moment
+        // later — which is what advancing the Stage does to the second read.
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge")),
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_25_peak")),
+        )
+        stubTheCoachsReads()
+        val run = aRunTold(id = 7, fiveKSeconds = 1_632, statedDao = statedDao)
+
+        repo.settleStageAfterRun("sub_30_bridge", RunType.LONG, run)
+
+        verify(mockSettingsRepo).advanceStageAndClearPrescriptions(
+            "sub_25_peak",
+            CoachWriteScope("5k_sub_25", "sub_30_bridge")
+        )
+        // 27:12, and the runner is told what they ran rather than what the bar was.
+        verify(mockSettingsRepo).setLatestCoachMessage(
+            "You ran 5 km in 27:12. Stage 2: Sub-30 Bridge complete. Next up: Stage 3: Sub-25 Peak.",
+            CoachWriteScope("5k_sub_25", "sub_30_bridge")
+        )
+        // And the coach is never asked, because by the time it looks the Stage has moved.
+        verify(mockCoach, never()).evaluateProgress(any())
+    }
+
+    @Test
+    fun `the rule runs first even where the coach is still asked afterwards`() = runTest {
+        // The same ordering, pinned without leaning on the guard that makes it invisible: the
+        // settings do not move under the second read, so the coach is asked — and the grant still
+        // has to have happened first.
+        val statedDao: StatedBestEffortDao = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+            aiCoachClient = mockCoach,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(null)
+        val run = aRunTold(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+
+        repo.settleStageAfterRun("sub_30_bridge", RunType.LONG, run)
+
+        inOrder(mockSettingsRepo, mockCoach) {
+            verify(mockSettingsRepo).advanceStageAndClearPrescriptions(any(), any())
+            verify(mockCoach).evaluateProgress(any())
+        }
+    }
+
+    @Test
+    fun `an Open Run answers a requirement stated as a time`() = runTest {
+        // The old bar on an Open Run is sound for a structural requirement and wrong for a time
+        // (#290): a parkrun is the truest 5K test there is, and the number is the number wherever
+        // it turned up.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        val run = aRunTold(id = 7, fiveKSeconds = 1_700, statedDao = statedDao, isRunWalkMode = false)
+
+        repo.settleStageAfterRun("sub_30_bridge", runType = null, finalizedRun = run)
+
+        verify(mockSettingsRepo).advanceStageAndClearPrescriptions(eq("sub_25_peak"), any())
+    }
+
+    @Test
+    fun `a Walk graduates nothing, however quick the console said it was`() = runTest {
+        // A Walk holds no Best Effort at all, so it clears no bar — the rule inherits that from
+        // `bestEffortsOf` rather than restating it (#275, #290).
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        val run = aRunTold(id = 7, fiveKSeconds = 1_500, statedDao = statedDao, isWalk = true)
+
+        repo.settleStageAfterRun("sub_30_bridge", runType = null, finalizedRun = run)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
+    @Test
+    fun `a 5K one second over the bar does not graduate, and one on it does`() = runTest {
+        // "Under 30 minutes" is 1799 and not 1800, which is the whole of what the stored number
+        // means (#290).
+        suspend fun settleWith(fiveKSeconds: Int): SettingsRepository {
+            val statedDao: StatedBestEffortDao = mock()
+            val settingsRepo: SettingsRepository = mock()
+            val repo = SessionRepository(
+                sessionDao = mockDao,
+                settingsRepository = settingsRepo,
+                statedBestEffortDao = statedDao,
+            )
+            whenever(settingsRepo.userSettingsFlow).thenReturn(
+                flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+            )
+            stubTheCoachsReads()
+            val run = aRunTold(id = 7, fiveKSeconds = fiveKSeconds, statedDao = statedDao)
+            repo.settleStageAfterRun("sub_30_bridge", runType = null, finalizedRun = run)
+            return settingsRepo
+        }
+
+        verify(settleWith(1_799)).advanceStageAndClearPrescriptions(eq("sub_25_peak"), any())
+        verify(settleWith(1_800), never()).advanceStageAndClearPrescriptions(any(), any())
+    }
+
+    @Test
+    fun `the coach cannot graduate a Stage whose requirement the app answers`() = runTest {
+        // The prompt tells it not to, and a prompt sentence is a promise the code has to keep
+        // (#286, #288): the two paths must never both be able to grant.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        // A structured Run of the Stage's own, named as the evidence — everything the coach's own
+        // graduation needs, so the only thing refusing it is the Stage stating its bar in numbers.
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(session(id = 1, endTime = 1_000L).copy(isRunWalkMode = true, startTime = 1_000_000L))
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 600,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 4,
+                nextTargetZone = null,
+                graduatedToNextStage = true,
+                graduationEvidenceRunTimestamps = listOf(1_000_000L),
+                coachMessage = "Stage complete."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("sub_30_bridge", RunType.LONG)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        // Refused, so this is an ordinary evaluation and the debrief goes with the numbers (#156).
+        verify(mockPrescriptions).prescribe(any(), any(), eq("Stage complete."), any(), any())
+    }
+
+    @Test
+    fun `finishing the last Stage says so and leaves the prescription alone`() = runTest {
+        // There is no Stage 4 to advance to, and clearing the standing Prescription here would
+        // delete the runner's numbers and leave them in a Stage that never moved — the bug #294
+        // exists to fix. The congratulation is the part that is true today.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_25_peak"))
+        )
+        stubTheCoachsReads()
+        val run = aRunTold(id = 7, fiveKSeconds = 1_463, statedDao = statedDao)
+
+        repo.settleStageAfterRun("sub_25_peak", runType = null, finalizedRun = run)
+
+        verify(mockSettingsRepo).setLatestCoachMessage(
+            "You ran 5 km in 24:23. Stage 3: Sub-25 Peak complete.",
+            CoachWriteScope("5k_sub_25", "sub_25_peak")
+        )
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+    }
+
+    @Test
+    fun `a Best Effort stated after the Run graduates the Stage too`() = runTest {
+        // A treadmill 5K is read off the console once the Run has ended, so a rule that only ever
+        // looked at the finish would accept a measured 5K and silently refuse a stated one — the
+        // app disagreeing with ADR 0015 (#290).
+        val run = aTreadmillRun(id = 42, seconds = 1_900)
+            .copy(distanceKm = 5.0, ranUnderStageId = "sub_30_bridge")
+        whenever(mockDao.getSessionById(42L)).thenReturn(run)
+        val claim = StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_5K, seconds = 1_700)
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(42L)).thenReturn(emptyList(), listOf(claim))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repo.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_700)
+
+        verify(mockSettingsRepo).advanceStageAndClearPrescriptions(eq("sub_25_peak"), any())
     }
 
     @Test
