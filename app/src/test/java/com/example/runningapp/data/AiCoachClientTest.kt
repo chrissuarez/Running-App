@@ -175,6 +175,30 @@ class AiCoachClientTest {
     }
 
     @Test
+    fun `the coach is made to name the Run it graduated on`() {
+        // #287: every other rule tells the coach what may not be evidence, which leaves a reply
+        // that is true about the Walk's numbers while a failed structured Run sits in the same
+        // list. Made to name the one run that met the requirement, the reply carries something the
+        // code can check — and the schema has to offer the field, or there is nowhere to say it.
+        val prompt = buildEvaluationPrompt(oneRunWalkSession)
+
+        assertTrue(
+            prompt.contains(
+                "you MUST also set graduationEvidenceRunTimestamp to the exact 'timestamp' value, " +
+                    "copied digit for digit, of the ONE recent run that meets the requirement"
+            )
+        )
+        assertTrue(prompt.contains("a 'Walk' or an 'Open Run' can never be named here"))
+        assertTrue(
+            prompt.contains(
+                "a run that meets the requirement standing beside a different run that does not is " +
+                    "not evidence, only the run that met it is"
+            )
+        )
+        assertTrue(prompt.contains("\"graduationEvidenceRunTimestamp\": Long"))
+    }
+
+    @Test
     fun `a requirement the data cannot answer is still refused`() {
         val prompt = buildEvaluationPrompt(
             oneRunWalkSession.copy(graduationRequirement = "Run 10K at 5:00 /km.")

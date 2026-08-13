@@ -208,7 +208,9 @@ data class AiTrainingContext(
     val sourceRunIds: Set<Long> = emptySet(),
     /**
      * Which of [sourceRunIds] may answer the Stage's requirement — the structured `Run/Walk`
-     * sessions among them, so neither a Walk (#275) nor an unplanned Open Run can stand for one.
+     * sessions among them, so neither a Walk (#275) nor an unplanned Open Run can stand for one —
+     * keyed by the [AiRecentRun.timestamp] the coach was shown for each, so a reply naming one can
+     * be resolved back to the Run it named (#287).
      *
      * A separate list from [sourceRunIds] because the two answer different questions. That one is
      * "what was this reply reasoned from", which every Run shown was, Walks included — a week of
@@ -219,8 +221,12 @@ data class AiTrainingContext(
      * Kept as ids rather than read back off [AiRecentRun.sessionType], because a graduation cannot
      * be taken back and a label built for a prompt is not a thing to hang one on: reworded, the
      * check would silently stop refusing.
+     *
+     * Keyed by timestamp rather than listed, because the question this has to answer is not "was
+     * there evidence" but "was *this* the evidence" — see [evidenceRunIdNamedBy] and
+     * [AiCoachResponse.graduationEvidenceRunTimestamp].
      */
-    val requirementEvidenceRunIds: Set<Long> = emptySet(),
+    val requirementEvidenceRunIdsByTimestamp: Map<Long, Long> = emptyMap(),
     /**
      * Null when there is no scored history to read it from — a new phone, or a runner who has never
      * run with a Strap. The coach is then told nothing about fatigue rather than being told zeroes,
@@ -240,7 +246,29 @@ data class AiTrainingContext(
      * coach anything when the Stage offers no Workout of the Run's kind.
      */
     val stageWorkout: WorkoutTemplate? = null
-)
+) {
+    /**
+     * The Run the coach named as what it graduated the Stage on, or null when it named nothing this
+     * Stage can be graduated on (#287).
+     *
+     * Null covers every way a name can fail, because they all end the same way — a refusal:
+     * - **Nothing named.** A graduation with no evidence behind it is worth no more than one whose
+     *   evidence is a Walk; the model omitting the field is the same answer as leaving it null.
+     * - **A Run that cannot answer the Stage.** A Walk (#275) or an unplanned Open Run is shown to
+     *   the coach and is absent from this map, so naming one refuses itself. This is the whole point
+     *   of asking: a qualifying Run existing in the list must not license a graduation read off the
+     *   Walk beside it.
+     * - **A Run nobody was shown**, from a model that invented a number or reworked the one it was
+     *   given. There is nothing behind it to have graduated anything.
+     *
+     * A timestamp that two Runs share is not in the map at all (see `getAiTrainingContext`), so it
+     * lands here as a name that resolves to nothing. An ambiguous name is not a name, and the doubt
+     * is settled the way every doubt on this path is settled: refuse, because a graduation cannot be
+     * taken back.
+     */
+    fun evidenceRunIdNamedBy(response: AiCoachResponse): Long? =
+        response.graduationEvidenceRunTimestamp?.let { requirementEvidenceRunIdsByTimestamp[it] }
+}
 
 data class Max30dLoad(
     val maxDistanceKm: Double,
@@ -2163,15 +2191,21 @@ class SessionRepository(
             // Asked of the same rows [recentRuns] was built from, so the two cannot describe
             // different Runs — and of [asFinalized] where it stands in for one, since the mark can
             // land on the Run that just finished before this is read.
-            requirementEvidenceRunIds = storedRecentRuns
+            requirementEvidenceRunIdsByTimestamp = storedRecentRuns
                 .map { stored -> if (stored.id == asFinalized?.id) asFinalized else stored }
                 // The same three answers [aiSessionTypeOf] gives, asked as one question: only a
                 // structured Run/Walk is evidence. The prompt says both halves of this — an Open
                 // Run may not progress a Stage, a Walk may not either — and a prompt sentence is a
                 // promise the code has to keep, because a graduation cannot be taken back.
                 .filter { it.isRunWalkMode && !it.isWalk }
-                .map { it.id }
-                .toSet(),
+                // Keyed by the timestamp the coach is shown for the Run — `AiRecentRun.timestamp`,
+                // which is this same field — so a reply naming one comes back to the Run it named
+                // (#287). A timestamp two Runs share names neither: it is dropped rather than left
+                // to whichever row happened to be written last, since a graduation granted on a
+                // coin toss between two Runs is exactly the thing that cannot be taken back.
+                .groupBy { it.startTime }
+                .filterValues { sharingAStart -> sharingAStart.size == 1 }
+                .mapValues { (_, sharingAStart) -> sharingAStart.single().id },
             fitnessAndForm = fitnessAndFormThrough(
                 today = today,
                 zone = zone,
@@ -2380,16 +2414,25 @@ class SessionRepository(
             //
             // Neither is a Walk (#275), for the same reason it completes no prescribed workout: a
             // week of post-lifting walks must not push the plan forward. Nor is an unplanned Open
-            // Run, which followed no structure to complete. So the question is not "was there a
-            // Run" but "was there a structured Run/Walk that was not a Walk" — a Stage whose last
-            // three are Walks and open jogs has nothing standing for it at all.
-            val graduated = clampedResponse.graduatedToNextStage &&
-                context.requirementEvidenceRunIds.isNotEmpty()
+            // Run, which followed no structure to complete.
+            //
+            // And the question is not "was there a structured Run" but "was *this* the Run" (#287).
+            // Non-emptiness is not a link: shown one old structured Run that plainly failed the
+            // requirement beside a two-hour Walk, the coach can read the requirement as met from
+            // the Walk's numbers, and a check that only asked whether a qualifying Run existed
+            // would grant it — one eligible Run switching the guard off for everything shown beside
+            // it. So the coach names the Run it graduated on and the name is resolved here: it has
+            // to be a Run this Stage could actually be graduated on, or there is no graduation.
+            val evidenceRunId = context.evidenceRunIdNamedBy(clampedResponse)
+            val graduated = clampedResponse.graduatedToNextStage && evidenceRunId != null
             if (clampedResponse.graduatedToNextStage && !graduated) {
                 Log.d(
                     "AiCoach",
-                    "Refusing a graduation: no run recorded under stage=$stageId can answer it " +
-                        "(${context.recentRuns.size} recent, all of them Walks or Open Runs, or none at all)"
+                    "Refusing a graduation: the coach named run at " +
+                        "${clampedResponse.graduationEvidenceRunTimestamp} as its evidence, and no run " +
+                        "recorded under stage=$stageId that could answer the requirement is that one " +
+                        "(${context.recentRuns.size} recent, " +
+                        "${context.requirementEvidenceRunIdsByTimestamp.size} of them able to answer it)"
                 )
             }
 
@@ -2425,6 +2468,12 @@ class SessionRepository(
                 // granted wrongly is granted for good. Refused whole on a partial delete too — one
                 // of the three gone is enough — which is the direction the app already errs in:
                 // graduating late rather than twice ([RunnerSession.ranUnderStageId]).
+                //
+                // Asked of all three rather than of [evidenceRunId] alone, which is stricter and
+                // deliberately so (#287): the Run the coach named is one of these three, so a
+                // delete taking *it* away is refused here either way, and a delete taking one of
+                // the others away still empties the history the requirement's "consistently" was
+                // read against.
                 //
                 // The message goes with it, and is not written on its own: "you have finished this
                 // stage" is not true if the Run that finished it has gone. Left behind on a refused
