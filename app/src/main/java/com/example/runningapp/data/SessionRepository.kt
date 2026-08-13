@@ -1962,9 +1962,14 @@ class SessionRepository(
         // graduation is never revoked. Asked of the Run as the write left it — the claim is read
         // back inside the rule — and against the Stage the Run was recorded under, which is null for
         // a Run that followed no plan.
+        //
+        // And only where the claim that changed is the one the requirement is written in. A Run
+        // can already hold a qualifying 5K stated long before any of this existed; letting a Mile
+        // typed today re-ask the rule would graduate the Stage off that old claim, which is the
+        // pass over history the rule refuses to make.
         if (!worse) {
             sessionDao.getSessionById(sessionId)?.let { stored ->
-                stored.ranUnderStageId?.let { graduateOnBestEffortRequirement(it, stored) }
+                stored.ranUnderStageId?.let { graduateOnBestEffortRequirement(it, stored, answering = type) }
             }
         }
     }
@@ -2344,7 +2349,15 @@ class SessionRepository(
         runType: RunType?,
         finalizedRun: RunnerSession,
     ) {
-        graduateOnBestEffortRequirement(stageId, finalizedRun)
+        // Its own attempt, for the reason the record book's scoring is one: the Run is already
+        // saved by the time this is called, and a graduation that cannot be written must not cost
+        // the runner the coach's debrief below. `finalizeRun`'s scope has no handler of its own, so
+        // an unhandled read or write here would end the process rather than skip a progression.
+        try {
+            graduateOnBestEffortRequirement(stageId, finalizedRun)
+        } catch (e: Exception) {
+            Log.w("StageRule", "Could not settle stage=$stageId after run ${finalizedRun.id}", e)
+        }
         evaluateAndAdjustPlan(stageId, runType, finalizedRun)
     }
 
@@ -2376,10 +2389,16 @@ class SessionRepository(
      * of the one act that cannot be undone — the Stage card names an already-beaten bar instead
      * (#293). And deleting the Run afterwards, or marking it a Walk, does not un-graduate; CONTEXT.md
      * already says that of the Walk mark and the rule holds the same line for a delete.
+     *
+     * [answering] is the record a single stated claim just changed, where that is what prompted the
+     * ask: the rule then declines unless it is the record the requirement is written in, so an
+     * unrelated claim cannot cash in evidence the Run has held all along. Null is "the Run itself
+     * just finished" — the finalize path, where every claim it holds is equally new.
      */
     private suspend fun graduateOnBestEffortRequirement(
         stageId: String,
         run: RunnerSession,
+        answering: RecordType? = null,
     ): Boolean {
         val settingsRepo = settingsRepository ?: return false
         val plan = TrainingPlanProvider
@@ -2391,6 +2410,7 @@ class SessionRepository(
         // The Stage's requirement is a judgement, so it stays the coach's — stage 1's "4 weeks of
         // consistent Zone 2 training" is met by no measurement this could take.
         val requirement = stage.bestEffortRequirement ?: return false
+        if (answering != null && answering != requirement.record) return false
 
         val settings = settingsRepo.userSettingsFlow.first()
         // Testing mode erases the coach's work and blocks it from writing more; a Stage advanced
