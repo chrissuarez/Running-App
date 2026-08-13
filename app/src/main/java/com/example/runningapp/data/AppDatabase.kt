@@ -129,7 +129,34 @@ data class RunnerSession(
      * twice. There is no backfill, because the only Stage a backfill could write is whichever one
      * the runner is on now, which is exactly the guess this exists to stop.
      */
-    val ranUnderStageId: String? = null
+    val ranUnderStageId: String? = null,
+    /**
+     * Whether the runner walked this one (#275) — a Run marked as a Walk, and nothing more
+     * elaborate than that. There is no activity taxonomy here and no per-second classification: one
+     * whole-Run flag, defaulting to a Run.
+     *
+     * **Never inferred, and never written by the app on its own.** A treadmill Run has no GPS and no
+     * measured pace, so there is nothing in a stored Run that distinguishes a walk from a run;
+     * guessing would rewrite curves nobody asked to change. It is set by the runner on the "How did
+     * that feel?" sheet at the finish and changed on the Run's own page for ever afterwards, which
+     * is also why every Run recorded before v29 — and every Run in an older archive — comes back a
+     * Run. There is no backfill and there will not be one.
+     *
+     * **It does not touch the Effort Score.** The Score measures what the heart did, and a Zone-2
+     * walk really did cost the heart what a Zone-2 easy run costs it. What it changes is what the
+     * curves read: the whole Score builds Fitness, and only
+     * [com.example.runningapp.training.WALK_FATIGUE_SHARE] of it is carried into Fatigue, because the
+     * fatigue that degrades a runner's form is largely mechanical and walking barely pays it.
+     *
+     * **A Walk contests no record** ([com.example.runningapp.analysis.bestEffortsOf]), completes no
+     * prescribed workout and graduates no Stage. It still counts towards Goals, still fills the
+     * weekly volume bars, and still appears in history and in the coach's prompt, where it is named
+     * as a Walk.
+     *
+     * Marking one is the one edit to a finished Run that can take a medal off it, so it goes through
+     * the record book's mend ([SessionRepository.markAsWalk]).
+     */
+    val isWalk: Boolean = false
 )
 
 /**
@@ -251,7 +278,14 @@ data class MaxSessionLoad30dProjection(
  */
 data class ScoredRunProjection(
     val startTime: Long,
-    val effortScore: Int
+    val effortScore: Int,
+    /**
+     * Which of the two curves reads how much of the Score — see [RunnerSession.isWalk] (#275).
+     *
+     * Defaulted to a Run, which is what the column defaults to and what every Run in history is
+     * until the runner says otherwise; Room fills it from the query either way.
+     */
+    val isWalk: Boolean = false
 )
 
 /**
@@ -497,6 +531,17 @@ interface SessionDao {
     @Query("UPDATE sessions SET perceivedEffort = :effort, sessionNote = :note WHERE id = :sessionId")
     suspend fun updateFeelFeedback(sessionId: Long, effort: Int?, note: String?)
 
+    /**
+     * Marks a Run as a Walk, or takes the mark back (#275) — see [RunnerSession.isWalk].
+     *
+     * Its own statement rather than a column on [updateFeelFeedback], though both are written from
+     * the same two screens: a feel and a note are words kept beside a Run, and this changes what the
+     * Run is worth to the record book and to the curves. Only [SessionRepository.markAsWalk] should
+     * call it, because the mend that has to follow is half of the act.
+     */
+    @Query("UPDATE sessions SET isWalk = :isWalk WHERE id = :sessionId")
+    suspend fun setIsWalk(sessionId: Long, isWalk: Boolean)
+
     @Query(
         """
         UPDATE sessions
@@ -683,7 +728,7 @@ interface SessionDao {
      */
     @Query(
         """
-        SELECT startTime, effortScore FROM sessions
+        SELECT startTime, effortScore, isWalk FROM sessions
         WHERE endTime > 0 AND effortScore IS NOT NULL
         ORDER BY startTime ASC
         """
@@ -821,7 +866,7 @@ interface RunWalkIntervalStatDao {
         GoalRow::class,
         StatedBestEffort::class
     ],
-    version = 28,
+    version = 29,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -914,7 +959,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_24_25,
     MIGRATION_25_26,
     MIGRATION_26_27,
-    MIGRATION_27_28
+    MIGRATION_27_28,
+    MIGRATION_28_29
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1699,5 +1745,21 @@ val MIGRATION_27_28 = object : Migration(27, 28) {
             "CREATE UNIQUE INDEX IF NOT EXISTS `index_stated_best_efforts_sessionId_type` " +
                 "ON `stated_best_efforts` (`sessionId`, `type`)"
         )
+    }
+}
+
+/**
+ * Adds the Walk mark (#275) — see [RunnerSession.isWalk].
+ *
+ * Every Run already in history stays a Run, which is the column's default and the whole of the
+ * upgrade: nothing in a stored Run distinguishes a walk from a run, so an app that guessed would
+ * rewrite Fitness, Fatigue and Form on days the runner never asked it to touch. Retagging is the
+ * runner's to do, one Run at a time, and the same rule covers an older archive restored on top.
+ */
+val MIGRATION_28_29 = object : Migration(28, 29) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        if (!database.hasColumn("sessions", "isWalk")) {
+            database.execSQL("ALTER TABLE sessions ADD COLUMN isWalk INTEGER NOT NULL DEFAULT 0")
+        }
     }
 }

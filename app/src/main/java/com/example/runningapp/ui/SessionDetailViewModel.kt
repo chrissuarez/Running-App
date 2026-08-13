@@ -104,9 +104,14 @@ class SessionDetailViewModel(
      * ([com.example.runningapp.data.SessionRepository.editFeelFeedback]); this is only the thread it
      * runs on. Nothing is reported back: the row is watched, so the card redraws of its own accord.
      */
-    fun saveFeelFeedback(sessionId: Long, effort: Int?, note: String?) {
+    fun saveFeelFeedback(sessionId: Long, effort: Int?, note: String?, isWalk: Boolean) {
         viewModelScope.launch {
             sessionRepository.editFeelFeedback(sessionId, effort, note)
+            // Its own door, and after the words rather than beside them (#275): a feel and a note
+            // are kept alongside a Run, and this changes what the Run is worth to the record book
+            // and to the curves. Both refuse a change of nothing, so the dialog closing on an
+            // unchanged switch still costs neither a row update nor a walk of the book.
+            sessionRepository.markAsWalk(sessionId, isWalk)
         }
     }
 

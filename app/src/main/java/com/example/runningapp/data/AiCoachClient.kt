@@ -88,8 +88,13 @@ internal fun buildEvaluationPrompt(
     appendLine("The provided recent runs include timestamps. The run with the most recent timestamp is the workout the user JUST completed today.")
     appendLine("Base your coachMessage feedback primarily on how they performed in today's run. Make it feel like a post-run debrief.")
     appendLine("Look at the older runs to establish trends (e.g., is their heart rate consistently improving?).")
-    appendLine("The recent runs data includes a 'sessionType' ('Run/Walk' for a structured plan workout, or 'Open Run' for an unplanned open-ended run).")
+    appendLine("The recent runs data includes a 'sessionType' ('Run/Walk' for a structured plan workout, 'Open Run' for an unplanned open-ended run, or 'Walk' for a session the user has told the app they walked).")
     appendLine("CRITICAL RULE: An 'Open Run' is an unplanned run with no interval structure. Do NOT set graduatedToNextStage to true based on Open Run sessions. Progression ONLY happens via 'Run/Walk' sessions.")
+    // A Walk is shown rather than hidden — a week of walking is not a week of rest, and a coach that
+    // could not see one would read it as one — but it answers no requirement (#275). Said here, and
+    // enforced in evaluateAndAdjustPlan, which refuses a graduation resting on Walks alone: a
+    // sentence in a prompt is a promise the code has to keep, and a graduation cannot be taken back.
+    appendLine("CRITICAL RULE: A 'Walk' session is a walk, not a run. It does not complete a prescribed workout and is never evidence for a stage requirement: do NOT set graduatedToNextStage to true based on Walk sessions, and do not treat one as an easy run to prescribe around. It is shown to you so you know the user was active — walking builds aerobic fitness and costs far less recovery than running — so take it into account in coachMessage and in how much work you prescribe next.")
     // No Interval-quality metric is sent, and none is described here (#168) — see AiRecentRun.
     appendLine("Judge a duration-and-heart-rate requirement from the run's duration and average heart rate.")
     // The evidence a 5K-in-a-time requirement needs, and the rule that stops it being answered from

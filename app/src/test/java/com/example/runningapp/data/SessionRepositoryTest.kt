@@ -714,6 +714,201 @@ class SessionRepositoryTest {
         )
     }
 
+    // --- Marking a Run as a Walk (#275) --------------------------------------------------------
+
+    @Test
+    fun `marking a Run a Walk writes the mark and refreshes the backup`() = runTest {
+        whenever(mockDao.getSessionById(42L)).thenReturn(aTreadmillRun(id = 42, seconds = 1_800))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
+        var refreshCount = 0
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            refreshHistoryBackup = { refreshCount++ },
+        )
+
+        repositoryWithRecords.markAsWalk(42L, isWalk = true)
+
+        verify(mockDao).setIsWalk(42L, true)
+        // The snapshot finalizeRun took went out before the mark existed, and a Run restored from
+        // it would come back a Run.
+        assertTrue(refreshCount >= 1)
+    }
+
+    @Test
+    fun `marking a record-holding Run a Walk hands the medal to the next best Run`() = runTest {
+        // The demotion path #282 built, reached from the one edit that can take every medal at once:
+        // a Walk contests nothing, so the Run that should move up exists nowhere but in history.
+        val medalHolder = aTreadmillRun(id = 2, seconds = 3_600)
+        whenever(mockDao.getSessionById(2L)).thenReturn(medalHolder)
+        val mockAchievementDao: AchievementDao = mock()
+        val gold = Achievement(
+            sessionId = 2,
+            type = RecordType.LONGEST_DURATION,
+            medal = Medal.GOLD,
+            value = 3_600.0,
+        )
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(listOf(gold))
+        // The book still holds the gold while the rebuild measures — the rewrite is what takes it.
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(listOf(gold))
+        whenever(mockDao.getAllSessions()).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_200),
+                medalHolder.copy(isWalk = true),
+            )
+        )
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+        )
+
+        repositoryWithRecords.markAsWalk(2L, isWalk = true)
+
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(
+            listOf(1L to 1_200.0),
+            book.firstValue.map { it.sessionId to it.value },
+        )
+    }
+
+    @Test
+    fun `a Run that is a Walk no longer contests, so unmarking it puts it back in the running`() = runTest {
+        // The opposite direction, and the improvement path rather than the mend: a Run that is a Run
+        // again can only win things back, so it is re-scored rather than rebuilt from history.
+        val run = aTreadmillRun(id = 42, seconds = 1_800)
+        // A Walk when it is asked, and a Run by the time the scoring reads it back — which is the
+        // order the write actually lands in.
+        whenever(mockDao.getSessionById(42L)).thenReturn(run.copy(isWalk = true), run)
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+        )
+
+        repositoryWithRecords.markAsWalk(42L, isWalk = false)
+
+        verify(mockDao).setIsWalk(42L, false)
+        // The scoring mark is lifted before the change and handed back once the book has taken it,
+        // so nothing that ends short leaves a claim the book never went back for.
+        verify(mockDao).clearRecordsScored(42L)
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(
+            listOf(42L to 1_800.0),
+            book.firstValue.map { it.sessionId to it.value },
+        )
+        // Nothing is rebuilt from history: a Run that is a Run again can only win things back.
+        verify(mockAchievementDao, never()).getAchievementsForSessions(any())
+    }
+
+    @Test
+    fun `marking a Run the way it is already marked costs nothing`() = runTest {
+        whenever(mockDao.getSessionById(42L))
+            .thenReturn(aTreadmillRun(id = 42, seconds = 1_800).copy(isWalk = true))
+        val mockAchievementDao: AchievementDao = mock()
+        var refreshCount = 0
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            refreshHistoryBackup = { refreshCount++ },
+        )
+
+        repositoryWithRecords.markAsWalk(42L, isWalk = true)
+
+        verify(mockDao, never()).setIsWalk(any(), any())
+        verifyNoInteractions(mockAchievementDao)
+        assertEquals(0, refreshCount)
+    }
+
+    @Test
+    fun `marking a Run a Walk waits for it to be finalized`() = runTest {
+        // The sheet asking the question is on screen from the moment STOP is pressed, while
+        // finalizeRun is still writing the row whole — a mark landing first would be overwritten.
+        val unfinalized = aTreadmillRun(id = 42, seconds = 0).copy(endTime = 0L)
+        whenever(mockDao.getSessionById(42L))
+            .thenReturn(unfinalized, aTreadmillRun(id = 42, seconds = 1_800))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+        )
+
+        repositoryWithRecords.markAsWalk(42L, isWalk = true, finalizeWaitStepMillis = 1L)
+
+        verify(mockDao, times(1)).setIsWalk(42L, true)
+    }
+
+    @Test
+    fun `a Walk keeps the Effort Score it measured`() = runTest {
+        // The Score is what the heart did, and marking the Run does not touch it: what changes is
+        // which curve reads how much of it.
+        whenever(mockDao.getSessionById(42L))
+            .thenReturn(aTreadmillRun(id = 42, seconds = 1_800).copy(effortScore = 55))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+        )
+
+        repositoryWithRecords.markAsWalk(42L, isWalk = true)
+
+        verify(mockDao, never()).setEffortScore(any(), any())
+    }
+
+    @Test
+    fun `a Walk carries a quarter of its Score into the Fatigue the coach is told`() = runTest {
+        // The same read the Progress screen makes, through the repository (#275). Seven days of the
+        // same Score, walked rather than run: Fitness is untouched and Fatigue is a quarter of it.
+        val week = (0..6).map { day -> DAY_MILLIS_2026_01_05 + day * ONE_DAY_MILLIS }
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
+        whenever(mockDao.getRunVolumesFlow()).thenReturn(
+            flowOf(week.map { volumeRow(startTime = it, effortScore = 100) })
+        )
+
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(
+            flowOf(week.map { ScoredRunProjection(startTime = it, effortScore = 100) })
+        )
+        val ran = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            zone = ZoneOffset.UTC,
+            today = LocalDate.of(2026, 1, 11),
+        ).fitnessAndForm!!
+
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(
+            flowOf(week.map { ScoredRunProjection(startTime = it, effortScore = 100, isWalk = true) })
+        )
+        val walked = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            zone = ZoneOffset.UTC,
+            today = LocalDate.of(2026, 1, 11),
+        ).fitnessAndForm!!
+
+        assertEquals(ran.fitness, walked.fitness)
+        assertTrue("fatigue is far lower", walked.fatigue < ran.fatigue)
+        // And the whole point of the ticket: the same week run leaves the runner fatigued and the
+        // hold fires, where walked it does not — which is what the coach's over-caution was.
+        assertEquals(FormVerdict.FATIGUED, ran.verdict)
+        assertEquals(FormVerdict.NEUTRAL, walked.verdict)
+    }
+
+    @Test
+    fun `a Walk reaches the coach named as a Walk and never as the workout it followed`() = runTest {
+        // Shown rather than hidden — a week of walking is not a week of rest — but it did not
+        // complete the Workout, whatever structure it happened to follow (#275).
+        val walked = aTreadmillRun(id = 9, seconds = 1_800)
+            .copy(isWalk = true, isRunWalkMode = true)
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(walked))
+
+        val recentRuns = repository.getAiTrainingContext("sub_30_bridge").recentRuns
+
+        assertEquals(listOf("Walk"), recentRuns.map { it.sessionType })
+    }
+
     // --- Stating a Best Effort a treadmill console showed (#282, ADR 0015) ---------------------
 
     @Test
@@ -2095,6 +2290,52 @@ class SessionRepositoryTest {
             any(),
             eq(CoachWriteScope("5k_sub_25", "base_builder"))
         )
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
+    @Test
+    fun `a Stage whose only Runs are Walks is not graduated either`() = runTest {
+        // The prompt says a Walk is never evidence for a requirement, and a sentence in a prompt is
+        // a promise the code has to keep — so the one place a graduation is acted on refuses one
+        // resting on Walks alone, exactly as it refuses one resting on nothing (#275).
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        // Three Runs recorded under the Stage, every one of them marked a Walk afterwards — the
+        // post-lifting week the ticket is about.
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            (1L..3L).map {
+                aTreadmillRun(id = it, seconds = 1_800).copy(isWalk = true, isRunWalkMode = true)
+            }
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                nextTargetZone = null,
+                graduatedToNextStage = true,
+                coachMessage = "Stage complete."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
         verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
     }
 

@@ -246,6 +246,11 @@ fun runHeadline(run: RunnerSession, zoneId: ZoneId = ZoneId.systemDefault()): St
     // Said in the title because the page cannot show it any other way: a treadmill Run has no route
     // to draw and no distance measured off the ground, so nothing below would tell the runner which
     // kind of Run they are looking at.
-    val kind = if (RunMode.ofSettingValue(run.runMode) == RunMode.TREADMILL) "Treadmill Run" else "Run"
+    //
+    // A Walk is named as one for the same reason (#275) — it is the runner's own word about the
+    // outing, and calling it a Run at the top of its own page would contradict the marker the
+    // History row shows it under.
+    val outing = if (run.isWalk) "Walk" else "Run"
+    val kind = if (RunMode.ofSettingValue(run.runMode) == RunMode.TREADMILL) "Treadmill $outing" else outing
     return "$partOfDay $kind"
 }

@@ -84,6 +84,25 @@ private const val AI_LABEL_RUN_WALK = "Run/Walk"
 private const val AI_LABEL_OPEN_RUN = "Open Run"
 
 /**
+ * A Run the runner has marked as a Walk (#275), and the label that outranks the other two: a Walk
+ * that happened to follow the Workout's structure did not *complete* it, so it must not reach the
+ * coach described as one.
+ *
+ * The prompt is told what this means and told not to graduate a Stage on it, and
+ * [SessionRepository.evaluateAndAdjustPlan] refuses such a graduation outright rather than trusting
+ * the telling — the same belt and braces the empty-evidence rule already wears, and for the same
+ * reason: a graduation cannot be taken back.
+ */
+internal const val AI_LABEL_WALK = "Walk"
+
+/** What the coach is told a past Run was — one label, three answers, most specific first (#275). */
+private fun aiSessionTypeOf(session: RunnerSession): String = when {
+    session.isWalk -> AI_LABEL_WALK
+    session.isRunWalkMode -> AI_LABEL_RUN_WALK
+    else -> AI_LABEL_OPEN_RUN
+}
+
+/**
  * What the AI coach is told about a past Run.
  *
  * The walk-break count is deliberately absent (#167). It now counts the walks the Workout
@@ -594,7 +613,13 @@ class SessionRepository(
      * part of it.
      */
     fun scoredRunsFlow(): Flow<List<ScoredRun>> = sessionDao.getScoredRunsFlow().map { rows ->
-        rows.map { ScoredRun(startedAtMillis = it.startTime, effortScore = it.effortScore) }
+        rows.map {
+            ScoredRun(
+                startedAtMillis = it.startTime,
+                effortScore = it.effortScore,
+                isWalk = it.isWalk,
+            )
+        }
     }
 
     /**
@@ -895,6 +920,11 @@ class SessionRepository(
      * while history is being measured — the Effort backfill runs at the same launch — and none of
      * them can change a distance or a duration, so none of them is a reason to abandon a scoring.
      *
+     * The Walk mark is here for the opposite reason (#275): it changes what the Run is worth at
+     * every record at once, from everything it measured to nothing at all. Marked in the window, the
+     * Run scores itself and mends the book behind it, and a rewrite landing afterwards out of the
+     * efforts measured before the mark would put its medals straight back.
+     *
      * What a Run has been *told* it holds is not in the row at all, so the caller checks that
      * separately against the same table (#282) — for the same reason and against the same window: a
      * stated Best Effort corrected while history is being measured scores itself and mends the book
@@ -905,7 +935,8 @@ class SessionRepository(
         endTime == other.endTime &&
             runMode == other.runMode &&
             durationSeconds == other.durationSeconds &&
-            distanceKm == other.distanceKm
+            distanceKm == other.distanceKm &&
+            isWalk == other.isWalk
 
     /**
      * Scores a Run and, only once that has landed, writes down that it has been scored (#210).
@@ -1565,6 +1596,53 @@ class SessionRepository(
     }
 
     /**
+     * Marks a finished Run as a Walk, or takes the mark back (#275) — see [RunnerSession.isWalk].
+     *
+     * The runner's own word about a Run, said on the sheet at the finish and changeable on the Run's
+     * own page for ever afterwards. Nothing here infers it and nothing else writes it.
+     *
+     * **It waits for the Run to be finished**, for the same reason a Stated Distance does: the sheet
+     * that asks is on screen from the moment STOP is pressed while `finalizeRun` is still writing
+     * the row whole, so a mark landing first would be overwritten by a false a second later.
+     *
+     * **Marking a Run a Walk takes its medals off it, through the mend a deletion already owes.** A
+     * Walk contests nothing ([bestEffortsOf]), so every record it held falls vacant — and the Run
+     * that should move up behind it exists nowhere but in history, since only the top three are
+     * banked. Re-scoring this Run alone could never find it. Unmarking goes the other way: the Run
+     * can only win things back, which is the improvement path [writeAndScore] exists for.
+     *
+     * **It rewrites the past, and silently.** The curves are worked out on read, so marking a
+     * session from three weeks ago moves every Fitness, Fatigue and Form number from that day
+     * forward — including days the coach has already prescribed against. That is correct: the curves
+     * are a live read of the truth, and the alternative is freezing numbers we know to be wrong.
+     * Nothing warns and no past coaching is re-run. A Stage already graduated stays graduated.
+     *
+     * Nothing changed writes nothing, so re-opening the dialog and pressing Save on the mark already
+     * there costs neither a row update nor a walk of the record book.
+     */
+    suspend fun markAsWalk(
+        sessionId: Long,
+        isWalk: Boolean,
+        finalizeWaitStepMillis: Long = 250L,
+    ) {
+        val session = awaitFinalized(sessionId, finalizeWaitStepMillis) ?: return
+        if (session.isWalk == isWalk) return
+
+        val write: suspend () -> Unit = { sessionDao.setIsWalk(sessionId, isWalk) }
+        if (isWalk) {
+            // Every record this Run holds, mended from all of history — `mendOnly` is left null
+            // because a Walk stops contesting all of them at once, so there is no narrower list to
+            // give than "whatever it was holding".
+            Log.i("Walk", "Run $sessionId is a Walk; its records go back to the book")
+            changeAndRepair(listOf(sessionId), change = write)
+        } else {
+            writeAndScore("Walk", sessionId, write) {
+                "Run $sessionId is a Run again but could not be scored"
+            }
+        }
+    }
+
+    /**
      * States how far a treadmill Run went, or corrects a number already stated (#231).
      *
      * The runner reads it off the console after the Run; everything else here follows from it being
@@ -2017,7 +2095,10 @@ class SessionRepository(
             AiRecentRun(
                 durationSeconds = session.durationSeconds,
                 avgHr = session.avgBpm,
-                sessionType = if (session.isRunWalkMode) AI_LABEL_RUN_WALK else AI_LABEL_OPEN_RUN,
+                // A Walk says so and says nothing else (#275): it is in the list, because a week of
+                // walking is not a week of rest and a coach that could not see it would read one as
+                // the other — but it did not complete the Workout, whatever structure it followed.
+                sessionType = aiSessionTypeOf(session),
                 timestamp = session.startTime,
                 runMode = session.runMode,
                 // Zero is a distance nobody stated or measured rather than a Run that covered no
@@ -2247,9 +2328,19 @@ class SessionRepository(
             // graduate it on (#234). The coach is told this in as many words, but a graduation
             // cannot be taken back, so the one place it is acted on refuses it outright rather than
             // trusting the telling — and the coach's message still reaches the runner either way.
-            val graduated = clampedResponse.graduatedToNextStage && context.recentRuns.isNotEmpty()
+            //
+            // A Walk is no evidence either (#275), for the same reason it completes no prescribed
+            // workout: a week of post-lifting walks must not push the plan forward. So the question
+            // is not "was there a Run" but "was there one that was not a Walk" — a Stage whose last
+            // three are all Walks has nothing standing for it at all.
+            val evidence = context.recentRuns.filter { it.sessionType != AI_LABEL_WALK }
+            val graduated = clampedResponse.graduatedToNextStage && evidence.isNotEmpty()
             if (clampedResponse.graduatedToNextStage && !graduated) {
-                Log.d("AiCoach", "Refusing a graduation: no run recorded under stage=$stageId to graduate it")
+                Log.d(
+                    "AiCoach",
+                    "Refusing a graduation: no run recorded under stage=$stageId to graduate it " +
+                        "(${context.recentRuns.size} recent, all of them Walks or none at all)"
+                )
             }
 
             if (graduated) {

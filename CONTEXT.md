@@ -149,18 +149,42 @@ _Avoid_: suffer score, relative effort, training load; and on screen, the bare w
 is already what the runner rates a Run out of ten. A Best Effort is a different thing again — a
 stretch of a Run rather than a number about the whole of it.
 
+**Walk**:
+A Run the runner has said they walked. One mark on a whole Run, set on the "How
+did that feel?" sheet at the finish and changeable on the Run's own page for
+ever afterwards; never inferred, because nothing in a stored Run distinguishes a
+walk from a run and guessing would rewrite curves nobody asked to change. Its
+Effort Score is untouched — the heart really did do that work — and what changes
+is who reads it: the whole Score builds Fitness, and a quarter of it is carried
+into Fatigue, because the fatigue that degrades a runner's form is largely
+mechanical and walking barely pays it. A Walk counts towards Goals, fills the
+weekly volume bars and is marked as one in the History list. It takes no Best
+Effort and no record of any kind, completes no prescribed Workout and graduates
+no Stage, and it reaches the coach named as a Walk. Marking one takes back the
+medals it held, through the same mend a deletion owes; it does not un-graduate a
+Stage that is already past. Curves are worked out on read, so marking a session
+from three weeks ago moves every Fitness, Fatigue and Form number from that day
+forward — silently, because they are a live read of the truth and the
+alternative is freezing numbers we know to be wrong.
+_Avoid_: Run Mode (treadmill or outdoor) and Run Type (Long, Easy or Quality),
+both of which are already taken and neither of which this is; walk mode, which
+says it is chosen before a Run rather than after one; and using the word for the
+walk stretches inside a run/walk Workout, which are Intervals and bank full
+Fatigue.
+
 **Fitness**:
 What the runner has built: their Effort Scores averaged over the last 42 days,
-with the recent days counting for most. Slow to move by design — six weeks of
-training is what it takes to raise it, and a fortnight off is what it takes to
-lose much of it.
+with the recent days counting for most, and every Score in full — a Walk's
+included. Slow to move by design — six weeks of training is what it takes to
+raise it, and a fortnight off is what it takes to lose much of it.
 _Avoid_: CTL, chronic load, form (Form is the difference between this and
 Fatigue)
 
 **Fatigue**:
-What the runner is still carrying: the same Effort Scores over the last 7 days.
-The same arithmetic as Fitness on a shorter memory, so a hard weekend shows up
-here within days and in Fitness barely at all.
+What the runner is still carrying: the same Effort Scores over the last 7 days,
+except that a Walk pays only a quarter of its Score in here. The same arithmetic
+as Fitness on a shorter memory, so a hard weekend shows up here within days and
+in Fitness barely at all.
 _Avoid_: ATL, acute load, tiredness
 
 **Form**:
@@ -188,7 +212,8 @@ The fastest continuous stretch of a Run covering one of the record distances —
 1 km, a mile, 5 km, 10 km, a half marathon — measured on the clock, so a walk
 break inside it counts against it. Found anywhere in the Run, not at the Split
 boundaries, so a fast middle section counts. Measured off the Run's route, or a
-Stated Best Effort where a treadmill Run has no route to measure.
+Stated Best Effort where a treadmill Run has no route to measure. A Walk holds
+none: a walk taking a "fastest 1 km" makes the trophy case meaningless.
 _Avoid_: PR, personal best (a Best Effort is only a claim until it places)
 
 **Stated Best Effort**:

@@ -19,11 +19,16 @@ import androidx.compose.ui.unit.sp
  * the machine looking at it, which is the only moment it is free. It stays optional, like everything
  * else here: a Run with no distance is a Run with no distance, and the Run's own page can be told
  * later (ADR 0008).
+ *
+ * The Walk switch is asked here rather than before START (#275): a mode left stuck on "Walk" from
+ * last session is a silent corruption of the curves, where a switch at the finish is answered about
+ * the Run that just happened. Skippable like everything else here, and changeable for ever on the
+ * Run's own page.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeelFeedbackSheet(
-    onSave: (Int?, String?, Double?) -> Unit,
+    onSave: (Int?, String?, Double?, Boolean) -> Unit,
     onDismiss: () -> Unit,
     askForDistance: Boolean = false
 ) {
@@ -34,6 +39,7 @@ fun FeelFeedbackSheet(
     var selectedEffort by remember { mutableStateOf<Int?>(null) }
     var note by remember { mutableStateOf("") }
     var typedDistance by remember { mutableStateOf("") }
+    var walked by remember { mutableStateOf(false) }
 
     val statedDistance = statedDistanceKmOf(typedDistance)
     // A distance typed but not understood holds Save shut, even when there is an effort or a note to
@@ -89,6 +95,10 @@ fun FeelFeedbackSheet(
 
             Spacer(modifier = Modifier.height(20.dp))
 
+            WalkSwitch(isWalk = walked, onIsWalkChanged = { walked = it })
+
+            Spacer(modifier = Modifier.height(20.dp))
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -99,9 +109,11 @@ fun FeelFeedbackSheet(
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
-                    onClick = { onSave(selectedEffort, feelNoteOf(note), statedDistance) },
+                    onClick = { onSave(selectedEffort, feelNoteOf(note), statedDistance, walked) },
+                    // A Walk on its own is something to save: a runner who wants nothing else
+                    // recorded about this one still has to be able to say they walked it.
                     enabled = !distanceRejected &&
-                        (selectedEffort != null || note.isNotBlank() || statedDistance != null)
+                        (selectedEffort != null || note.isNotBlank() || statedDistance != null || walked)
                 ) {
                     Text("Save")
                 }
