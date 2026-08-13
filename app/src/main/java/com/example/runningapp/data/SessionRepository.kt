@@ -1340,13 +1340,18 @@ class SessionRepository(
         // below is a round trip per Run in the runner's life, to fetch at most five rows. Read
         // before the measuring, and checked again after it — see the abandonment below.
         val statedBefore = claimsAt(types)
-        val statedByRun = statedBefore.groupBy { it.sessionId }
+        // Regrouped out of the very list the abandonment below compares against, rather than read a
+        // second time: the claims a Run is measured against have to be the claims that were
+        // compared, or the rebuild could commit having measured one reading and checked another.
+        val statedByRun: Map<Long, Map<RecordType, Double>> = statedBefore
+            .groupBy({ it.first }) { it.second to it.third.toDouble() }
+            .mapValues { (_, claims) -> claims.toMap() }
         // One Run at a time, because a track is thousands of points and the whole history's worth
         // of them at once is not something to hold in memory. Unfinished Runs are in this list and
         // measure to nothing, which is what [bestEffortsOf] says they are worth.
         val measured = withContext(Dispatchers.Default) {
             sessionDao.getAllSessions().map { session ->
-                RunEfforts(session.id, effortsAt(session, types, statedByRun[session.id].orEmpty().byType()))
+                RunEfforts(session.id, effortsAt(session, types, statedByRun[session.id].orEmpty()))
             }
         }
         val measuredIds =
