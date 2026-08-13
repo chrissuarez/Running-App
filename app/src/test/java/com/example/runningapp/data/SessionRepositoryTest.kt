@@ -2704,6 +2704,39 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a Mile stated today does not cash in a 5K the Run has held all along`() = runTest {
+        // The Run already holds a qualifying 5K — stated before any of this existed, and so never
+        // asked of the rule. An unrelated claim typed today must not graduate the Stage off it:
+        // that is the pass over history the rule refuses to make (#290).
+        val run = aTreadmillRun(id = 42, seconds = 1_900)
+            .copy(distanceKm = 5.0, ranUnderStageId = "sub_30_bridge")
+        whenever(mockDao.getSessionById(42L)).thenReturn(run)
+        val oldFiveK = StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_5K, seconds = 1_700)
+        val newMile = StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_MILE, seconds = 500)
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(42L)).thenReturn(
+            listOf(oldFiveK),
+            listOf(oldFiveK, newMile)
+        )
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repo.stateBestEffort(42L, RecordType.FASTEST_MILE, seconds = 500)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
+    @Test
     fun `a Stage with no Run of its own is not graduated, whatever the coach says`() = runTest {
         // The coach is told in as many words that an empty list is no evidence, but a graduation
         // cannot be taken back, so the place that acts on one refuses it rather than trusting the
