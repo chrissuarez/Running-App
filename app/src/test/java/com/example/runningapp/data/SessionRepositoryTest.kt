@@ -956,6 +956,38 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `naming nothing, and naming what the Stage cannot rest on, both come back as no evidence`() {
+        // The helper the graduation is decided from, asked each way a name can fail. All of them
+        // are one answer — null, the refusal — and an empty list is the one the schema itself
+        // invites, since it tells the coach to leave the field empty when it is not graduating.
+        val context = AiTrainingContext(
+            currentStageTitle = "Base Builder",
+            graduationRequirement = "Complete 4 weeks of consistent Zone 2 training.",
+            recentRuns = emptyList(),
+            requirementEvidenceRunIdsByTimestamp = mapOf(1_000L to 10L, 2_000L to 11L)
+        )
+        val aGraduation = AiCoachResponse(
+            nextRunDurationSeconds = 360,
+            nextWalkDurationSeconds = 60,
+            nextRepeats = 5,
+            graduatedToNextStage = true,
+            coachMessage = "Stage complete."
+        )
+        fun naming(timestamps: List<Long>?) =
+            context.evidenceRunIdsNamedBy(aGraduation.copy(graduationEvidenceRunTimestamps = timestamps))
+
+        assertNull(naming(null))
+        assertNull(naming(emptyList()))
+        // A Run nobody was shown, and a Run shown but unable to answer the Stage, are the same "no".
+        assertNull(naming(listOf(9_999L)))
+        // And one bad name among good ones takes the whole graduation with it.
+        assertNull(naming(listOf(1_000L, 9_999L)))
+        assertEquals(setOf(10L, 11L), naming(listOf(1_000L, 2_000L)))
+        // The same Run named twice is still that one Run, not two runs' worth of evidence.
+        assertEquals(setOf(10L), naming(listOf(1_000L, 1_000L)))
+    }
+
+    @Test
     fun `a Walk reaches the coach named as a Walk and never as the workout it followed`() = runTest {
         // Shown rather than hidden — a week of walking is not a week of rest — but it did not
         // complete the Workout, whatever structure it happened to follow (#275).
@@ -2295,7 +2327,7 @@ class SessionRepositoryTest {
                 nextTargetZone = 3,
                 graduatedToNextStage = true,
                 // Named, and it is the structured Run the Stage can be graduated on (#287).
-                graduationEvidenceRunTimestamp = 1_000_000L,
+                graduationEvidenceRunTimestamps = listOf(1_000_000L),
                 coachMessage = "Stage complete."
             )
         )
@@ -2495,7 +2527,116 @@ class SessionRepositoryTest {
                 nextTargetZone = null,
                 graduatedToNextStage = true,
                 // The two hours of walking, named as the thing that met the requirement.
-                graduationEvidenceRunTimestamp = 2_000_000L,
+                graduationEvidenceRunTimestamps = listOf(2_000_000L),
+                coachMessage = "Stage complete."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
+    @Test
+    fun `a requirement no single Run can meet is graduated on the Runs that together met it`() = runTest {
+        // The first stage of the beginner plan asks for "4 weeks of consistent Zone 2 training", and
+        // no single Run has ever met that or ever could. A rule demanding the coach name exactly one
+        // Run would have left this stage — the one Chris is actually on — impossible to finish: the
+        // obedient answer to "name the one run that met it" is "there isn't one", forever.
+        //
+        // So the evidence is however many Runs it took, and the check is unchanged in kind: every
+        // name still has to be a Run the app agrees could answer the Stage.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L),
+                aTreadmillRun(id = 2, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 2_000_000L),
+                aTreadmillRun(id = 3, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 3_000_000L),
+            )
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                nextTargetZone = null,
+                graduatedToNextStage = true,
+                // The consistency, named run by run.
+                graduationEvidenceRunTimestamps = listOf(1_000_000L, 2_000_000L, 3_000_000L),
+                coachMessage = "Four consistent weeks. Stage complete."
+            )
+        )
+
+        repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
+
+        val activeScope = CoachWriteScope("5k_sub_25", "base_builder")
+        verify(mockSettingsRepo).advanceStageAndClearPrescriptions("sub_30_bridge", activeScope)
+        verify(mockSettingsRepo).setLatestCoachMessage("Four consistent weeks. Stage complete.", activeScope)
+    }
+
+    @Test
+    fun `one Walk among the Runs named refuses the whole graduation`() = runTest {
+        // Naming several Runs does not loosen anything, which is the thing to be sure of before
+        // allowing several at all: a graduation resting on two Runs and a Walk is a graduation
+        // resting on a Walk. Keeping the names that resolved and dropping the one that did not
+        // would grant it on less evidence than the coach itself thought it needed — the same
+        // substitution #287 refuses, read from the other end.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            coachPrescriptionRepository = mockPrescriptions,
+            aiCoachClient = mockCoach
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "base_builder"))
+        )
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 1_000_000L),
+                aTreadmillRun(id = 2, seconds = 1_500)
+                    .copy(isRunWalkMode = true, startTime = 2_000_000L),
+                aTreadmillRun(id = 3, seconds = 7_200)
+                    .copy(isWalk = true, startTime = 3_000_000L),
+            )
+        )
+        whenever(mockDao.getMaxSessionLoadLast30Days(any())).thenReturn(
+            MaxSessionLoad30dProjection(maxDistanceKm = 0.0, maxDurationSeconds = 0L)
+        )
+        whenever(mockCoach.evaluateProgress(any())).thenReturn(
+            AiCoachResponse(
+                nextRunDurationSeconds = 360,
+                nextWalkDurationSeconds = 60,
+                nextRepeats = 5,
+                nextTargetZone = null,
+                graduatedToNextStage = true,
+                // Two real Runs and the two hours of walking, counted as one consistent stretch.
+                graduationEvidenceRunTimestamps = listOf(1_000_000L, 2_000_000L, 3_000_000L),
                 coachMessage = "Stage complete."
             )
         )
@@ -2541,7 +2682,7 @@ class SessionRepositoryTest {
                 nextRepeats = 5,
                 nextTargetZone = null,
                 graduatedToNextStage = true,
-                graduationEvidenceRunTimestamp = null,
+                graduationEvidenceRunTimestamps = null,
                 coachMessage = "Stage complete."
             )
         )
@@ -2594,7 +2735,7 @@ class SessionRepositoryTest {
                 nextRepeats = 5,
                 nextTargetZone = null,
                 graduatedToNextStage = true,
-                graduationEvidenceRunTimestamp = 999_999L,
+                graduationEvidenceRunTimestamps = listOf(999_999L),
                 coachMessage = "Stage complete."
             )
         )
@@ -2643,7 +2784,7 @@ class SessionRepositoryTest {
                 nextRepeats = 5,
                 nextTargetZone = null,
                 graduatedToNextStage = true,
-                graduationEvidenceRunTimestamp = 1_000_000L,
+                graduationEvidenceRunTimestamps = listOf(1_000_000L),
                 coachMessage = "Stage complete."
             )
         )
@@ -2704,7 +2845,7 @@ class SessionRepositoryTest {
                     graduatedToNextStage = true,
                     // The Run that is about to leave history, named as the evidence — so what is
                     // being tested is the delete, not a graduation that named nothing (#287).
-                    graduationEvidenceRunTimestamp = 2_000_000L,
+                    graduationEvidenceRunTimestamps = listOf(2_000_000L),
                     coachMessage = "Stage complete."
                 )
             }
@@ -2781,7 +2922,7 @@ class SessionRepositoryTest {
                 graduatedToNextStage = true,
                 // Run 2, which is one of the two the coach was shown and is the one that leaves
                 // history mid-thought — so the refusal under test is the delete's, not #287's.
-                graduationEvidenceRunTimestamp = 2_000_000L,
+                graduationEvidenceRunTimestamps = listOf(2_000_000L),
                 coachMessage = "Stage complete."
             )
         )

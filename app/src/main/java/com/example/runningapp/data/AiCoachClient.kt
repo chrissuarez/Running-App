@@ -6,6 +6,11 @@ import com.example.runningapp.WorkoutTemplate
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonDeserializationContext
+import com.google.gson.JsonDeserializer
+import com.google.gson.JsonElement
+import com.google.gson.annotations.JsonAdapter
+import java.lang.reflect.Type
 
 data class AiCoachResponse(
     val nextRunDurationSeconds: Int,
@@ -19,29 +24,70 @@ data class AiCoachResponse(
     val nextTargetZone: Int? = null,
     val graduatedToNextStage: Boolean,
     /**
-     * Which Run the coach graduated the Stage on, named by that Run's `timestamp` as the prompt
+     * Which Runs the coach graduated the Stage on, named by each Run's `timestamp` as the prompt
      * showed it (#287).
      *
      * The coach has to name its evidence, because the existence of evidence is not a link to it.
      * Shown one old structured Run that plainly failed the requirement beside a two-hour Walk, a
      * coach can read the requirement as met from the Walk's numbers — and a guard that only asks
      * "was there a Run that could have answered this" lets that through, because there was. Made to
-     * name one, it has to point at a Run the app agrees could answer the Stage, and pointing at the
+     * name them, it has to point at Runs the app agrees could answer the Stage, and pointing at the
      * Walk refuses itself.
      *
-     * A timestamp rather than a database id, because the timestamp is already in front of the coach
+     * A list rather than a single Run, because some requirements are not the kind one Run can
+     * answer: the first stage of the beginner plan asks for "4 weeks of consistent Zone 2
+     * training", which no single Run has ever met or ever could. Made to name exactly one, a coach
+     * that obeyed the rule could never graduate that stage at all — the plan would simply stop.
+     * What is being asked for is the evidence, however many Runs it took; what is being refused is a
+     * name that does not resolve, and every name in the list has to resolve or none of it does.
+     *
+     * Timestamps rather than database ids, because the timestamp is already in front of the coach
      * and an id is not: ids are deliberately kept out of the prompt (see
      * [AiTrainingContext.sourceRunIds]), and one sent in would invite the coach to talk to the
      * runner about "run 47".
      *
-     * Null — including when the model omits the field, and on every reply that is not a graduation —
-     * means no Run was named. A graduation with nothing named is refused, exactly as one naming a
-     * Walk is: [SessionRepository.evaluateAndAdjustPlan] is where that is decided, because a
-     * graduation cannot be taken back.
+     * Null or empty — including when the model omits the field, sends something that is not a list
+     * of numbers, and on every reply that is not a graduation — means no Run was named. A graduation
+     * with nothing named is refused, exactly as one naming a Walk is:
+     * [SessionRepository.evaluateAndAdjustPlan] is where that is decided, because a graduation
+     * cannot be taken back.
      */
-    val graduationEvidenceRunTimestamp: Long? = null,
+    @field:JsonAdapter(GraduationEvidenceTimestampsAdapter::class)
+    val graduationEvidenceRunTimestamps: List<Long>? = null,
     val coachMessage: String
 )
+
+/**
+ * Reads [AiCoachResponse.graduationEvidenceRunTimestamps] out of whatever the model actually sent,
+ * turning anything unreadable into "nothing was named" rather than into a lost reply (#287).
+ *
+ * Gson's own list reader throws on a bare number where an array was asked for, and the throw does
+ * not land on this field — it lands on the whole parse, in the catch that turns a reply into null.
+ * A coach that answered a list with `1712345678000` would then have said nothing at all: no
+ * debrief, no prescription, the run's evaluation simply gone. That is a worse answer than the one
+ * this field exists to give, so a single value is read as a list of one.
+ *
+ * Anything else — a string, an object, a list with a non-number in it — returns null, which is the
+ * refusal. Dropping the unreadable entries instead would be the one genuinely dangerous reading: a
+ * graduation named on three Runs, one of them unreadable, would come back as a name on two and be
+ * granted. What could not be read was not named.
+ */
+internal class GraduationEvidenceTimestampsAdapter : JsonDeserializer<List<Long>> {
+    override fun deserialize(
+        json: JsonElement?,
+        typeOfT: Type?,
+        context: JsonDeserializationContext?
+    ): List<Long>? = when {
+        json == null || json.isJsonNull -> null
+        json.isJsonArray -> json.asJsonArray
+            .map { element -> element.asLongOrNull() ?: return null }
+        else -> json.asLongOrNull()?.let { listOf(it) }
+    }
+
+    private fun JsonElement.asLongOrNull(): Long? = runCatching {
+        takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asLong
+    }.getOrNull()
+}
 
 class AiCoachClient {
 
@@ -117,12 +163,16 @@ internal fun buildEvaluationPrompt(
     // enforced in evaluateAndAdjustPlan, which refuses a graduation resting on Walks alone: a
     // sentence in a prompt is a promise the code has to keep, and a graduation cannot be taken back.
     appendLine("CRITICAL RULE: A 'Walk' session is a walk, not a run. It does not complete a prescribed workout and is never evidence for a stage requirement: do NOT set graduatedToNextStage to true based on Walk sessions, and do not treat one as an easy run to prescribe around. It is shown to you so you know the user was active rather than resting.")
-    // The coach names what it graduated on, and the name is checked (#287). Every other rule here
+    // The coach names what it graduated on, and the names are checked (#287). Every other rule here
     // tells it what may not be evidence; this one makes it say what was, which is the only form of
     // the promise the code can hold it to. Without it a reply can be true about a Walk's numbers
     // while a failed structured Run sits in the same list, and a guard asking only whether some
     // qualifying Run existed grants it.
-    appendLine("CRITICAL RULE: If you set graduatedToNextStage to true, you MUST also set graduationEvidenceRunTimestamp to the exact 'timestamp' value, copied digit for digit, of the ONE recent run that meets the requirement. That run must be a 'Run/Walk' session: a 'Walk' or an 'Open Run' can never be named here. If no single run in the list both meets the requirement and is a 'Run/Walk' session, set graduatedToNextStage to false and leave graduationEvidenceRunTimestamp null — a run that meets the requirement standing beside a different run that does not is not evidence, only the run that met it is.")
+    //
+    // Runs, plural, because a requirement like "4 weeks of consistent Zone 2 training" is answered
+    // by several and by no single one: told to name exactly one, an obedient coach could never
+    // graduate that stage at all, and the plan would stop on it forever.
+    appendLine("CRITICAL RULE: If you set graduatedToNextStage to true, you MUST also set graduationEvidenceRunTimestamps to the list of exact 'timestamp' values, copied digit for digit, of the recent runs that are your evidence that the requirement is met. Name every run you are relying on and name no others: one run where the requirement is met by one, several where it takes several. Every run you name must be a 'Run/Walk' session — a 'Walk' or an 'Open Run' can never be named, and naming one refuses the whole graduation. If you cannot name at least one 'Run/Walk' run whose numbers you are relying on, set graduatedToNextStage to false and leave graduationEvidenceRunTimestamps empty — a run that meets the requirement standing beside a different run that does not is not evidence, only the run that met it is.")
     // No Interval-quality metric is sent, and none is described here (#168) — see AiRecentRun.
     appendLine("Judge a duration-and-heart-rate requirement from the run's duration and average heart rate.")
     // The evidence a 5K-in-a-time requirement needs, and the rule that stops it being answered from
@@ -156,7 +206,7 @@ internal fun buildEvaluationPrompt(
     appendLine("  \"nextRepeats\": Int,")
     appendLine("  \"nextTargetZone\": Int (optional, 1-5),")
     appendLine("  \"graduatedToNextStage\": Boolean,")
-    appendLine("  \"graduationEvidenceRunTimestamp\": Long (the timestamp of the run that met the requirement; required when graduatedToNextStage is true, null otherwise),")
+    appendLine("  \"graduationEvidenceRunTimestamps\": [Long] (the timestamps of the runs the requirement is met by; required and non-empty when graduatedToNextStage is true, empty otherwise),")
     appendLine("  \"coachMessage\": String")
     appendLine("}")
     context.stageWorkout?.let { appendStageWorkout(it) }

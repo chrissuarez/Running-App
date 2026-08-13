@@ -3,7 +3,10 @@ package com.example.runningapp.data
 import com.example.runningapp.RunType
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.training.FormVerdict
+import com.google.gson.Gson
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -175,27 +178,55 @@ class AiCoachClientTest {
     }
 
     @Test
-    fun `the coach is made to name the Run it graduated on`() {
+    fun `the coach is made to name the Runs it graduated on`() {
         // #287: every other rule tells the coach what may not be evidence, which leaves a reply
         // that is true about the Walk's numbers while a failed structured Run sits in the same
-        // list. Made to name the one run that met the requirement, the reply carries something the
+        // list. Made to name the runs the requirement is met by, the reply carries something the
         // code can check — and the schema has to offer the field, or there is nowhere to say it.
         val prompt = buildEvaluationPrompt(oneRunWalkSession)
 
         assertTrue(
             prompt.contains(
-                "you MUST also set graduationEvidenceRunTimestamp to the exact 'timestamp' value, " +
-                    "copied digit for digit, of the ONE recent run that meets the requirement"
+                "you MUST also set graduationEvidenceRunTimestamps to the list of exact " +
+                    "'timestamp' values, copied digit for digit, of the recent runs that are your " +
+                    "evidence that the requirement is met"
             )
         )
-        assertTrue(prompt.contains("a 'Walk' or an 'Open Run' can never be named here"))
+        assertTrue(prompt.contains("a 'Walk' or an 'Open Run' can never be named"))
         assertTrue(
             prompt.contains(
                 "a run that meets the requirement standing beside a different run that does not is " +
                     "not evidence, only the run that met it is"
             )
         )
-        assertTrue(prompt.contains("\"graduationEvidenceRunTimestamp\": Long"))
+        assertTrue(prompt.contains("\"graduationEvidenceRunTimestamps\": [Long]"))
+    }
+
+    @Test
+    fun `a requirement no single Run can meet is named by the several that met it`() {
+        // #287 round 2: the first stage of the beginner plan asks for "4 weeks of consistent Zone 2
+        // training", which no one run has ever met. Told to name exactly one run, a coach obeying
+        // the rule could never graduate that stage — the plan would stop on its first step. So the
+        // rule asks for the runs the evidence is actually made of, however many that is.
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                graduationRequirement = "Complete 4 weeks of consistent Zone 2 training."
+            )
+        )
+
+        assertTrue(
+            prompt.contains(
+                "one run where the requirement is met by one, several where it takes several"
+            )
+        )
+        // And the refusal is still available: naming nothing is what a coach that cannot point at a
+        // qualifying run has to do, rather than naming a run it is not relying on.
+        assertTrue(
+            prompt.contains(
+                "If you cannot name at least one 'Run/Walk' run whose numbers you are relying on, " +
+                    "set graduatedToNextStage to false"
+            )
+        )
     }
 
     @Test
@@ -531,5 +562,63 @@ class AiCoachClientTest {
         assertFalse(prompt.contains("keep this workout as it is"))
         assertFalse(prompt.contains("That workout is a floor"))
         assertFalse(prompt.contains("never evidence about any run"))
+    }
+
+    /**
+     * The same reader [AiCoachClient.evaluateProgress] hands the model's text to. What is being
+     * tested is not Gson but the shape of the answers a model actually sends when a list is asked
+     * for, because the one that throws takes the whole reply with it (#287).
+     */
+    private fun parse(json: String): AiCoachResponse? =
+        Gson().fromJson(json, AiCoachResponse::class.java)
+
+    private val graduatingReply = """
+        {"nextRunDurationSeconds":60,"nextWalkDurationSeconds":30,"nextRepeats":6,
+         "graduatedToNextStage":true,%s"coachMessage":"Done."}
+    """.trimIndent()
+
+    @Test
+    fun `several named timestamps are read as several`() {
+        val response = parse(graduatingReply.format("\"graduationEvidenceRunTimestamps\":[1000,2000],"))
+
+        assertEquals(listOf(1_000L, 2_000L), response?.graduationEvidenceRunTimestamps)
+    }
+
+    @Test
+    fun `one named timestamp sent bare is read as a list of one`() {
+        // A model asked for a list will sometimes send the value. Gson's own list reader throws on
+        // it, and the throw does not land on this field — it lands on the whole parse, so the run
+        // would get no debrief and no prescription at all. A worse answer than the refusal.
+        val response = parse(graduatingReply.format("\"graduationEvidenceRunTimestamps\":1000,"))
+
+        assertEquals(listOf(1_000L), response?.graduationEvidenceRunTimestamps)
+    }
+
+    @Test
+    fun `a timestamp that is not a number names nothing`() {
+        // Not "the two that could be read": a graduation resting on three runs, one of them
+        // unreadable, is not a graduation resting on two. What could not be read was not named, and
+        // the refusal is decided from null in evaluateAndAdjustPlan.
+        val partly = parse(graduatingReply.format("\"graduationEvidenceRunTimestamps\":[1000,\"yesterday\"],"))
+        val single = parse(graduatingReply.format("\"graduationEvidenceRunTimestamps\":\"yesterday\","))
+        val object_ = parse(graduatingReply.format("\"graduationEvidenceRunTimestamps\":{\"run\":1000},"))
+
+        assertNull(partly?.graduationEvidenceRunTimestamps)
+        assertNull(single?.graduationEvidenceRunTimestamps)
+        assertNull(object_?.graduationEvidenceRunTimestamps)
+        // The reply itself survives all three — the debrief is still delivered, only the graduation
+        // is refused.
+        assertEquals("Done.", partly?.coachMessage)
+    }
+
+    @Test
+    fun `the field being absent or empty or null names nothing`() {
+        val absent = parse(graduatingReply.format(""))
+        val empty = parse(graduatingReply.format("\"graduationEvidenceRunTimestamps\":[],"))
+        val explicitNull = parse(graduatingReply.format("\"graduationEvidenceRunTimestamps\":null,"))
+
+        assertNull(absent?.graduationEvidenceRunTimestamps)
+        assertEquals(emptyList<Long>(), empty?.graduationEvidenceRunTimestamps)
+        assertNull(explicitNull?.graduationEvidenceRunTimestamps)
     }
 }
