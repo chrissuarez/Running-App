@@ -763,12 +763,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // settleStageAfterRun is what declines to judge a Stage the runner has left.
                 val stageId = updatedSession.ranUnderStageId
                 if (stageId != null) {
-                    if (updatedSession.includeInAiTraining && !currentSettings.testingModeEnabled) {
+                    if (!currentSettings.testingModeEnabled) {
                         // Whether this Run is one the coach adjusts is its Run Type's answer, given
                         // once inside evaluateAndAdjustPlan (#176) — asking it here too would be the
                         // same rule in two places, free to drift apart. The app's own rule runs
                         // first, inside settleStageAfterRun, and asks nothing about Run Type: a 5K
                         // is a 5K whichever session it turned up in (#290).
+                        //
+                        // AI sharing is asked about in the same one place for the same reason —
+                        // inside evaluateAndAdjustPlan, which is the half that sends the Run
+                        // anywhere. The app's own rule is local and grants without it (#290).
                         Log.d("AiCoach", "Settling the stage after session finalization for stage: $stageId")
                         // The row as it was written a moment ago, handed over rather than left to
                         // be read back: the feel sheet is on screen from the moment STOP was
@@ -778,7 +782,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     } else {
                         Log.d(
                             "AiCoach",
-                            "Skipping AI evaluation: session opted out or testing mode enabled for stage=$stageId"
+                            "Skipping stage settlement: testing mode enabled for stage=$stageId"
                         )
                     }
                 }

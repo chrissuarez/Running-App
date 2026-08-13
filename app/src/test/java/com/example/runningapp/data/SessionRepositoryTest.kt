@@ -2526,6 +2526,30 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a runner who shares nothing with the coach still graduates`() = runTest {
+        // "AI training data sharing" is consent to send a Run to Gemini, and this rule sends nothing
+        // anywhere. Gating on it would mean a runner who never turns it on can never leave stage 2,
+        // because the coach may no longer grant a requirement written in numbers (ADR 0016) — a
+        // privacy choice quietly becoming a plan that cannot progress.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        val run = aRunTold(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+            .copy(includeInAiTraining = false)
+
+        repo.settleStageAfterRun("sub_30_bridge", runType = null, finalizedRun = run)
+
+        verify(mockSettingsRepo).advanceStageAndClearPrescriptions(eq("sub_25_peak"), any())
+    }
+
+    @Test
     fun `a 5K one second over the bar does not graduate, and one on it does`() = runTest {
         // "Under 30 minutes" is 1799 and not 1800, which is the whole of what the stored number
         // means (#290).
