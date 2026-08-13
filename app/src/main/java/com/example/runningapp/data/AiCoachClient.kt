@@ -41,6 +41,13 @@ data class AiCoachResponse(
      * What is being asked for is the evidence, however many Runs it took; what is being refused is a
      * name that does not resolve, and every name in the list has to resolve or none of it does.
      *
+     * Which Runs the answer rested on, not a Run-by-Run proof of the whole requirement. At most
+     * three Runs are ever shown, and four weeks of training is more than three Runs: read as a
+     * demand to account for every week of a requirement, the rule would refuse a Stage plainly
+     * earned, which is the same dead end one step further out. Three Runs is what this app has
+     * always judged a graduation on — the prompt says so and fences the weekly totals out of it —
+     * and this field changes which of them can be pointed at, not how far they reach.
+     *
      * Timestamps rather than database ids, because the timestamp is already in front of the coach
      * and an id is not: ids are deliberately kept out of the prompt (see
      * [AiTrainingContext.sourceRunIds]), and one sent in would invite the coach to talk to the
@@ -172,7 +179,15 @@ internal fun buildEvaluationPrompt(
     // Runs, plural, because a requirement like "4 weeks of consistent Zone 2 training" is answered
     // by several and by no single one: told to name exactly one, an obedient coach could never
     // graduate that stage at all, and the plan would stop on it forever.
-    appendLine("CRITICAL RULE: If you set graduatedToNextStage to true, you MUST also set graduationEvidenceRunTimestamps to the list of exact 'timestamp' values, copied digit for digit, of the recent runs that are your evidence that the requirement is met. Name every run you are relying on and name no others: one run where the requirement is met by one, several where it takes several. Every run you name must be a 'Run/Walk' session — a 'Walk' or an 'Open Run' can never be named, and naming one refuses the whole graduation. If you cannot name at least one 'Run/Walk' run whose numbers you are relying on, set graduatedToNextStage to false and leave graduationEvidenceRunTimestamps empty — a run that meets the requirement standing beside a different run that does not is not evidence, only the run that met it is.")
+    //
+    // And what is asked for is the runs the decision *rests on*, not a run-by-run proof of the whole
+    // requirement, because at most three are ever shown (`getLast3AiEligibleRunsOfStage`) and four
+    // weeks of training is more than three runs. Asked to account for every week, a coach reading
+    // the rule strictly would refuse a stage it has plainly earned — the same dead end as naming
+    // exactly one, one step further out. The three runs are what graduation has always been judged
+    // on here, and the weekly totals are fenced out of that judgement further down; this field
+    // records which of the three the answer came from, and nothing about how far they reach.
+    appendLine("CRITICAL RULE: If you set graduatedToNextStage to true, you MUST also set graduationEvidenceRunTimestamps to the list of exact 'timestamp' values, copied digit for digit, of the runs above that your decision rests on. Name every run you are relying on and name no others: one run where the requirement is met by one, several where it takes several. These recent runs are the only evidence there is and the only thing you may name — there are at most three of them, and a requirement covering more training than they show is still judged on them, exactly as it would be if this field had not been asked for. Every run you name must be a 'Run/Walk' session — a 'Walk' or an 'Open Run' can never be named, and naming one refuses the whole graduation. If not one 'Run/Walk' run above is something your decision rests on, set graduatedToNextStage to false and leave graduationEvidenceRunTimestamps empty — a run that meets the requirement standing beside a different run that does not is not evidence, only the run that met it is.")
     // No Interval-quality metric is sent, and none is described here (#168) — see AiRecentRun.
     appendLine("Judge a duration-and-heart-rate requirement from the run's duration and average heart rate.")
     // The evidence a 5K-in-a-time requirement needs, and the rule that stops it being answered from

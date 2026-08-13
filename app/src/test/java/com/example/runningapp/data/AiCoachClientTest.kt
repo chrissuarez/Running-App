@@ -188,8 +188,8 @@ class AiCoachClientTest {
         assertTrue(
             prompt.contains(
                 "you MUST also set graduationEvidenceRunTimestamps to the list of exact " +
-                    "'timestamp' values, copied digit for digit, of the recent runs that are your " +
-                    "evidence that the requirement is met"
+                    "'timestamp' values, copied digit for digit, of the runs above that your " +
+                    "decision rests on"
             )
         )
         assertTrue(prompt.contains("a 'Walk' or an 'Open Run' can never be named"))
@@ -223,10 +223,34 @@ class AiCoachClientTest {
         // qualifying run has to do, rather than naming a run it is not relying on.
         assertTrue(
             prompt.contains(
-                "If you cannot name at least one 'Run/Walk' run whose numbers you are relying on, " +
-                    "set graduatedToNextStage to false"
+                "If not one 'Run/Walk' run above is something your decision rests on, set " +
+                    "graduatedToNextStage to false"
             )
         )
+    }
+
+    @Test
+    fun `naming the evidence is not asked to reach further than the three runs shown`() {
+        // The dead end one step out from "name exactly one" (#287, review round 2): at most three
+        // runs are ever sent, four weeks of training is more than three runs, and a coach reading
+        // "name what you are relying on" as "account for every week" would refuse a stage plainly
+        // earned. Three runs is what this app has always judged a graduation on, so the rule says
+        // so outright rather than leaving the coach to infer a standard nothing can meet.
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                graduationRequirement = "Complete 4 weeks of consistent Zone 2 training."
+            )
+        )
+
+        assertTrue(
+            prompt.contains(
+                "there are at most three of them, and a requirement covering more training than " +
+                    "they show is still judged on them"
+            )
+        )
+        // And the fence that keeps the weekly totals out of the judgement is still the reason it
+        // has to be the runs: they are the only evidence, and the only thing nameable.
+        assertTrue(prompt.contains("These recent runs are the only evidence there is and the only thing you may name"))
     }
 
     @Test
