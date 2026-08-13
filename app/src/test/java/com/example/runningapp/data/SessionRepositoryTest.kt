@@ -2454,6 +2454,36 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `an opted-out Run is not sent to the coach, whatever row sorts latest`() = runTest {
+        // Consent belongs to the Run being evaluated, not to whichever row `getMostRecentFinalized
+        // Session` happens to return — a restored future-dated session is enough to make them
+        // different rows, and the shareable one must not speak for the opted-out one (#290).
+        val statedDao: StatedBestEffortDao = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+            aiCoachClient = mockCoach,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        // Some other row sorts latest, and it is shareable.
+        whenever(mockDao.getMostRecentFinalizedSession()).thenReturn(
+            RunnerSession(startTime = 0L, isRunWalkMode = true, includeInAiTraining = true)
+        )
+        // The Run that actually finished answers nothing and is not the runner's to share.
+        val run = aRunTold(id = 7, fiveKSeconds = 1_900, statedDao = statedDao)
+            .copy(includeInAiTraining = false)
+
+        repo.settleStageAfterRun("sub_30_bridge", RunType.LONG, run)
+
+        verify(mockCoach, never()).evaluateProgress(any())
+    }
+
+    @Test
     fun `the rule runs first even where the coach is still asked afterwards`() = runTest {
         // The same ordering, pinned without leaning on the guard that makes it invisible: the
         // settings do not move under the second read, so the coach is asked — and the grant still

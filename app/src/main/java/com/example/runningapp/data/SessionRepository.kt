@@ -2535,11 +2535,17 @@ class SessionRepository(
                 )
                 return
             }
-            val latestFinalizedSession = sessionDao.getMostRecentFinalizedSession()
-            if (latestFinalizedSession?.includeInAiTraining == false) {
+            // The Run this evaluation is *about*, asked of the row that was handed over rather than
+            // of whichever row sorts latest. Consent belongs to a Run, and "the most recent
+            // finalized session" is only the same Run while no other row can sort after it — a
+            // restored future-dated session or a clock moved back is enough to make them different,
+            // and then an opted-out Run's context would be sent on a shareable row's say-so. The
+            // fallback stands for the callers that hand over no Run (#290).
+            val consentingRun = finalizedRun ?: sessionDao.getMostRecentFinalizedSession()
+            if (consentingRun?.includeInAiTraining == false) {
                 Log.d(
                     "AiCoach",
-                    "Skipping AI evaluation: latest session is excluded from AI training. stageId=$stageId"
+                    "Skipping AI evaluation: the run is excluded from AI training. stageId=$stageId"
                 )
                 return
             }
