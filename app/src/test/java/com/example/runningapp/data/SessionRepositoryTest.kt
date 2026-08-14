@@ -21,6 +21,7 @@ import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.training.FormVerdict
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
@@ -29,6 +30,7 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -51,12 +53,17 @@ import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.verifyNoInteractions
 import org.mockito.kotlin.whenever
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
 
 /** Monday 5 January 2026, midday UTC — the first day of the training weeks these tests read. */
 private const val DAY_MILLIS_2026_01_05 = 1_767_614_400_000L
 private const val ONE_DAY_MILLIS = 24L * 60 * 60 * 1000
+private const val ONE_HOUR_MILLIS = 60L * 60 * 1000
 
 class SessionRepositoryTest {
 
@@ -2722,6 +2729,32 @@ class SessionRepositoryTest {
             verify(mockDao).getLastCompletedRunStartOfWorkouts(capture())
             assertEquals(planTests, firstValue)
         }
+    }
+
+    @Test
+    fun `midnight makes a Test due with no Run recorded to prompt it`() = runTest {
+        // Both the flow's other inputs are database reads, so nothing moves them on a phone that is
+        // pocketed and not run with. Eleven o'clock on the twentieth night: due tomorrow, and
+        // "tomorrow" has to arrive on its own (Codex P2).
+        val zone = ZoneId.of("Europe/London")
+        val startedAt = LocalDate.of(2026, 8, 14).atTime(23, 0).atZone(zone).toInstant()
+        val clock = object : Clock() {
+            override fun instant(): Instant = startedAt.plusMillis(testScheduler.currentTime)
+            override fun getZone(): ZoneId = zone
+            override fun withZone(overridden: ZoneId): Clock = this
+        }
+        val repo = dueFlow(lastTestStart = startedAt.minus(20, ChronoUnit.DAYS).toEpochMilli())
+
+        val answers = mutableListOf<Boolean>()
+        val collecting = launch { repo.testDueFlow(planTests, zone, clock).toList(answers) }
+        runCurrent()
+        assertEquals(listOf(false), answers)
+
+        advanceTimeBy(ONE_HOUR_MILLIS + 1)
+        runCurrent()
+        assertEquals(listOf(false, true), answers)
+
+        collecting.cancel()
     }
 
     @Test
