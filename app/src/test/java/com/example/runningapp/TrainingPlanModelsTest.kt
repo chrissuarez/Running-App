@@ -1,6 +1,7 @@
 package com.example.runningapp
 
 import com.example.runningapp.analysis.RecordType
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -320,6 +321,19 @@ class TrainingPlanModelsTest {
             ),
             stages.drop(1).map { it.bestEffortRequirement }
         )
+    }
+
+    @Test
+    fun `a requirement can only be stated at a distance a Best Effort is run over`() {
+        // The two records that ask how *much* was done are measured in metres and in the Run's own
+        // clock, so a bar of "1799 seconds" against either compares a time to something that is not
+        // one — silently, inside a rule that grants a promotion (#293).
+        RecordType.entries.filter { it.distanceMeters == null }.forEach { record ->
+            assertThrows(IllegalArgumentException::class.java) {
+                BestEffortRequirement(record, 1_799)
+            }
+        }
+        RecordType.bestEffortDistances.forEach { BestEffortRequirement(it, 1_799) }
     }
 
     @Test

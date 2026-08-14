@@ -439,20 +439,24 @@ interface AchievementDao {
      * and a treadmill claim is already in. Re-deriving any of that here would be a second reader of
      * a shared measurement, keeping its own rules until the day they drift.
      *
-     * [medal] is [Medal.GOLD] at every call site and is a parameter only so the ranking stays the
-     * book's: gold *is* the best effort, whichever direction the record is better in, so nothing
-     * here has to know that a fastest-5K is won by the smaller number.
+     * The quickest and not the gold, though on an intact book they are the same row: the caller
+     * only ever asks this of a record run over a set distance
+     * ([com.example.runningapp.BestEffortRequirement], which refuses any other), where the smaller
+     * number is the better one. Ordering says so outright rather than leaning on the book holding
+     * exactly one gold per record, which is an invariant of how the book is written rather than
+     * anything the schema enforces.
      */
     @Query(
         """
         SELECT s.startTime AS runStartedAtMillis, a.value AS seconds
         FROM achievements a
         JOIN sessions s ON s.id = a.sessionId
-        WHERE a.type = :type AND a.medal = :medal
+        WHERE a.type = :type
+        ORDER BY a.value ASC
         LIMIT 1
         """
     )
-    fun getStandingBestFlow(type: RecordType, medal: Medal): Flow<HistoryBestEffort?>
+    fun getQuickestInHistoryFlow(type: RecordType): Flow<HistoryBestEffort?>
 
     /**
      * How many medals each Run holds, counted in the database rather than by reading the book out
