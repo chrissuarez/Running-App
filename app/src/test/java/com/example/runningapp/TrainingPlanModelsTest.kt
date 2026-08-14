@@ -3,6 +3,7 @@ package com.example.runningapp
 import com.example.runningapp.analysis.RecordType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -348,5 +349,27 @@ class TrainingPlanModelsTest {
 
         assertTrue(stageOne.workouts.none { it.instruction != null })
         assertTrue(stageOne.workouts.all { it.warmUpSeconds > 0 })
+    }
+
+    @Test
+    fun `every stage that graduates on a 5K names its Test`() {
+        // The prompt counts three weeks from the last Run of the Stage's Test (#292), so a Stage
+        // whose Test is unnamed is one whose prompt can never fire.
+        val stages = TrainingPlanProvider.getPlanById("5k_sub_25")!!.stages
+
+        stages.filter { it.bestEffortRequirement != null }.forEach { stage ->
+            val test = stage.testWorkout
+            assertNotNull("${stage.id} names no Test", test)
+            assertEquals(stage.workouts.single { it.title.endsWith("Test") }, test)
+            // One Test per Stage: a second would be two ways of measuring the same bar.
+            assertEquals(1, stage.workouts.count { it.isTest })
+        }
+    }
+
+    @Test
+    fun `a stage whose requirement is a judgement has no Test`() {
+        val stageOne = TrainingPlanProvider.getPlanById("5k_sub_25")!!.stages.first()
+
+        assertNull(stageOne.testWorkout)
     }
 }

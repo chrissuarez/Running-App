@@ -131,6 +131,24 @@ data class RunnerSession(
      */
     val ranUnderStageId: String? = null,
     /**
+     * The Stage's Workout this Run followed (#292), written with the row at START from
+     * [com.example.runningapp.run.RunConfig.workout] — the Workout the card was showing when the
+     * runner pressed it, and never the shape the coach prescribed into it (a Prescription changes a
+     * Workout's numbers and never its identity, #113).
+     *
+     * It is here for one question: when the runner last ran their Stage's Test. That date is
+     * derived and not claimed (ADR 0001) — a stored "last tested" field would be a second copy of a
+     * fact history already holds, and it would drift the first time a Run was deleted — so history
+     * has to be able to say which Runs were the Test, and nothing in a stored Run said so. Its
+     * shape does not: a Test is a Workout the plan *named* as one ([com.example.runningapp.WorkoutTemplate.isTest]).
+     *
+     * Like [ranUnderStageId] nothing ever moves it, and null is "no Workout recorded": a Run
+     * recorded before v30, one that skipped today's plan, and one run with no plan attached are all
+     * the same null. There is no backfill — the only Workout a backfill could write is a guess, and
+     * a wrongly-guessed Test would silence the prompt for three weeks.
+     */
+    val ranUnderWorkoutId: String? = null,
+    /**
      * Whether the runner walked this one (#275) — a Run marked as a Walk, and nothing more
      * elaborate than that. There is no activity taxonomy here and no per-second classification: one
      * whole-Run flag, defaulting to a Run.
@@ -615,6 +633,36 @@ interface SessionDao {
     suspend fun getMostRecentFinalizedSession(): RunnerSession?
 
     /**
+     * When the runner last completed [workoutId] — the Stage's Test — or null if they never have
+     * (#292). The date the three-week prompt counts from, derived off history rather than stored
+     * (ADR 0001).
+     *
+     * The Run's *start*, because that is what places a Run on a calendar day everywhere else the
+     * app counts days.
+     *
+     * Three conditions, and each is the same one asked elsewhere. Finished, because a Run still
+     * going is not a Test that was run. Longer than the two minutes
+     * [getLast3AiEligibleRunsOfStage] calls long enough to mean something, so a START pressed and
+     * stopped again does not cost the runner three weeks of prompting. And not a Walk — a Walk
+     * completes no prescribed Workout (CONTEXT.md) and is worth no Best Effort, so it cannot be the
+     * test it did not take.
+     *
+     * Deliberately not filtered on the Stage: a Workout id names one Workout of one Stage, and a
+     * runner back for a second go at a Stage is running the same Test they ran the first time.
+     * Passing or failing is not asked either — the effort was paid either way (#292).
+     */
+    @Query(
+        """
+        SELECT MAX(startTime) FROM sessions
+        WHERE endTime > 0
+          AND durationSeconds > 120
+          AND isWalk = 0
+          AND ranUnderWorkoutId = :workoutId
+        """
+    )
+    fun getLastCompletedRunStartOfWorkout(workoutId: String): Flow<Long?>
+
+    /**
      * The biggest single session of the last 30 days, which the coach's prescription is held under.
      *
      * Walks are left out (#275). This is a ceiling on what the runner is asked to *run*, so it has
@@ -875,7 +923,7 @@ interface RunWalkIntervalStatDao {
         GoalRow::class,
         StatedBestEffort::class
     ],
-    version = 29,
+    version = 30,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -969,7 +1017,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_25_26,
     MIGRATION_26_27,
     MIGRATION_27_28,
-    MIGRATION_28_29
+    MIGRATION_28_29,
+    MIGRATION_29_30
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1769,6 +1818,23 @@ val MIGRATION_28_29 = object : Migration(28, 29) {
     override fun migrate(database: SupportSQLiteDatabase) {
         if (!database.hasColumn("sessions", "isWalk")) {
             database.execSQL("ALTER TABLE sessions ADD COLUMN isWalk INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+}
+
+/**
+ * Room for the Workout each Run followed (#292): [RunnerSession.ranUnderWorkoutId].
+ *
+ * Nullable and left null, for the reason [MIGRATION_24_25] leaves the Stage null: no earlier
+ * version wrote a Run's Workout down, so there is nothing for SQL to recover it from, and the one
+ * value a backfill could reach is a guess. Here the guess would be the expensive kind — a past Run
+ * wrongly called a Test would silence the three-week prompt for three weeks — so history simply
+ * holds no Test, and the first Test the runner runs from here starts the clock.
+ */
+val MIGRATION_29_30 = object : Migration(29, 30) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        if (!database.hasColumn("sessions", "ranUnderWorkoutId")) {
+            database.execSQL("ALTER TABLE sessions ADD COLUMN ranUnderWorkoutId TEXT")
         }
     }
 }

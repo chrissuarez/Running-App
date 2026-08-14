@@ -1039,6 +1039,14 @@ fun MainScreen(
         userSettings.activeStageId
     )
     val stageWorkouts = activeStage?.workouts.orEmpty()
+    // Whether the Stage's Test is due (#292). Keyed on the Test itself, so graduating into a Stage
+    // that offers a different one — or none — asks the question again rather than carrying the old
+    // answer across. False until the first read comes back: a prompt that flickers in is better
+    // than one that flickers out.
+    val testWorkoutId = activeStage?.testWorkout?.id
+    val fiveKTestDue by remember(sessionRepository, testWorkoutId) {
+        sessionRepository.fiveKTestDueFlow(testWorkoutId)
+    }.collectAsState(initial = false)
     // No testing-mode check: turning testing mode on erases the debrief, and the coach is refused
     // the write while it stays on, so there is nothing left to filter out on read (#113).
     val coachMessage = userSettings.latestCoachMessage?.takeIf { it.isNotBlank() }
@@ -1052,7 +1060,8 @@ fun MainScreen(
         prescriptions = coachPrescriptions,
         nowEpochMillis = System.currentTimeMillis(),
         runMode = selectedRunMode,
-        skippedToday = skipPlanToday
+        skippedToday = skipPlanToday,
+        fiveKTestDue = fiveKTestDue
     )
 
     // Taken from the card rather than from the pick itself, so START runs exactly what the card is
@@ -1626,6 +1635,17 @@ fun TodayCard(
                     text = it,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.secondary
+                )
+            }
+            // Directly above the rows it points at (#292), so "pick it below" names something the
+            // eye lands on next — and below the card's own workout, because the Test is an offer
+            // for another day and never a correction to the Run about to be started.
+            state.testDueLine?.let {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
             if (state.workouts.isNotEmpty()) {

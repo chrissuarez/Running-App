@@ -714,6 +714,34 @@ class AppDatabaseMigrationTest {
         assertEquals(9000L, run.endTime)
     }
 
+    @Test
+    fun migrate29To30_leavesEveryRunUnderNoWorkout_soHistoryHoldsNoTest() {
+        val rawDb = openLegacyDatabase()
+        createTrackPointsTable(rawDb)
+        insertLegacySession(rawDb, id = 1)
+        rawDb.execSQL("UPDATE sessions SET endTime = 9000, durationSeconds = 2259 WHERE id = 1")
+        rawDb.version = 12
+        rawDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(*appDatabaseMigrations { HrProfile(190) })
+            .build()
+        val run = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
+        val lastTest = runBlockingGet {
+            migratedDb.sessionDao().getLastCompletedRunStartOfWorkout("w3_s2").first()
+        }
+        migratedDb.close()
+
+        // Null rather than guessed at (#292): a past Run wrongly called a Test would silence the
+        // three-week prompt for three weeks, so history simply holds no Test and the first one the
+        // runner runs from here starts the clock.
+        assertNull(run.ranUnderWorkoutId)
+        assertNull(lastTest)
+        // The Run itself is untouched: the migration adds room and nothing else.
+        assertEquals(2259L, run.durationSeconds)
+        assertEquals(9000L, run.endTime)
+    }
+
     /**
      * Builds the sessions/hr_samples/run_walk_interval_stats tables as they stood at v11 and v12
      * (identical across those two versions), leaving the file's version unset for the caller.

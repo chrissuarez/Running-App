@@ -100,6 +100,12 @@ sealed interface RunEffect {
         val hrProfile: HrProfile,
         /** The Stage this Run is recorded under — see `RunnerSession.ranUnderStageId` (#234). */
         val ranUnderStageId: String?,
+        /**
+         * The Workout this Run follows, or null for one following none — see
+         * `RunnerSession.ranUnderWorkoutId` (#292). Written at START for the same reason the Stage
+         * is: it is what the Run is, and a Run whose process is killed never reaches a finish.
+         */
+        val ranUnderWorkoutId: String?,
     ) : RunEffect
 
     /** Write the finished Run's totals to its row. Emitted once per Run, and only with an id. */

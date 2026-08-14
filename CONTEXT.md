@@ -45,6 +45,17 @@ The planned shape a Run may follow — its intervals, durations, and targets —
 taken from the training plan.
 _Avoid_: session, plan (the Plan is the whole schedule of Workouts)
 
+**Test**:
+The one Workout of a Stage that exists to answer its Requirement — a 5K run
+flat out, with no warm-up or cool-down inside it. Named by the plan and never
+inferred from its shape. Every Run writes down the Workout it followed, so when
+the runner last ran their Test is read off history and never stored (#292). The
+app says a Test is due three weeks after the last one, held while Form is below
+−10, and it stays pickable on any day either way — a prompt, never a gate. A
+Test that misses the bar is still a Test: it states the gap, resets the three
+weeks, and changes nothing else.
+_Avoid_: time trial, assessment, benchmark
+
 **Run Type**:
 What kind of work a Workout is: Long, Easy, or Quality. The Stage offers one of
 each and the runner chooses; it is what makes two Workouts different in kind
