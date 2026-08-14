@@ -79,8 +79,23 @@ val PlanStage.testWorkout: WorkoutTemplate?
  * Test's own length ([com.example.runningapp.training.wasRunFarEnough]), so the answer travels with
  * the question.
  */
-val TrainingPlan.tests: List<WorkoutTemplate>
-    get() = stages.mapNotNull { it.testWorkout }
+val TrainingPlan.tests: List<PlanTest>
+    get() = stages.mapNotNull { stage ->
+        stage.testWorkout?.let { PlanTest(it, stage.bestEffortRequirement?.record) }
+    }
+
+/**
+ * A Test and the distance it exists to cover — the Stage's Requirement, or null for a Stage whose
+ * Requirement is not written in a Best Effort (#292).
+ *
+ * The two travel together because deciding whether a Run *was* this Test needs both: a Run that
+ * covered the distance has taken the test whatever the clock says, and one that did not is judged
+ * on how much of the Workout it ran ([com.example.runningapp.training.wasRunFarEnough]).
+ */
+data class PlanTest(
+    val workout: WorkoutTemplate,
+    val distance: RecordType?,
+)
 
 /**
  * What kind of work a Workout is (#173) — the thing that makes two Workouts differ in kind rather
