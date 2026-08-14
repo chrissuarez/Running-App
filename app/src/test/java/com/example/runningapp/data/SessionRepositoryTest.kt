@@ -2693,9 +2693,14 @@ class SessionRepositoryTest {
     private val planTests = TrainingPlanProvider.getPlanById("5k_sub_25")!!.tests
 
     /** A Run of [planTests]' first Test that ran the whole of it, however many days back. */
-    private fun aTestRun(startedAt: Long, durationSeconds: Int = 1_800) = TestRunProjection(
+    private fun aTestRun(
+        startedAt: Long,
+        durationSeconds: Int = 1_800,
+        distanceKm: Double = 0.0,
+    ) = TestRunProjection(
         startTime = startedAt,
         durationSeconds = durationSeconds,
+        distanceKm = distanceKm,
         ranUnderWorkoutId = "w2_s3",
     )
 
@@ -2743,7 +2748,7 @@ class SessionRepositoryTest {
         assertFalse(repo.testDueFlow(planTests).first())
         argumentCaptor<List<String>>().apply {
             verify(mockDao).getCompletedRunsOfWorkouts(capture())
-            assertEquals(planTests.map { it.id }, firstValue)
+            assertEquals(planTests.map { it.workout.id }, firstValue)
         }
     }
 
@@ -2754,6 +2759,25 @@ class SessionRepositoryTest {
         val repo = dueFlow(testRuns = listOf(aTestRun(daysAgo(1), durationSeconds = 121)))
 
         assertTrue(repo.testDueFlow(planTests).first())
+    }
+
+    @Test
+    fun `a 5K run faster than the Workout is scheduled for is still a Test`() = runTest {
+        // Stage 2 schedules thirty minutes to test a bar of *under* thirty, so the runner who
+        // passes it stops before the clock does. Judged on the clock alone, the better the Run the
+        // less it counted — and the runner it graduates would be asked for another the same
+        // afternoon (Codex P2).
+        val passed = aTestRun(daysAgo(1), durationSeconds = 1_560, distanceKm = 5.01)
+
+        assertFalse(dueFlow(testRuns = listOf(passed)).testDueFlow(planTests).first())
+    }
+
+    @Test
+    fun `a Run that stopped short of the distance is judged on the clock`() = runTest {
+        // Three kilometres in twenty-six minutes is neither the distance nor most of the Workout.
+        val abandoned = aTestRun(daysAgo(1), durationSeconds = 1_560, distanceKm = 3.0)
+
+        assertTrue(dueFlow(testRuns = listOf(abandoned)).testDueFlow(planTests).first())
     }
 
     @Test

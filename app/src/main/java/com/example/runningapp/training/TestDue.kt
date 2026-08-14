@@ -73,6 +73,11 @@ private fun testIsHeldByForm(form: Double?): Boolean =
  * testing. But the Run ends when the runner presses STOP, and pressing it a few seconds before the
  * clock runs out is a Test that was run, so the last tenth is given away rather than argued over.
  *
+ * The clock is the second question and never the first, because the Workout's length is the time the
+ * Stage expects the distance to take and not the time the test takes: Stage 2 schedules thirty
+ * minutes to test a bar of *under* thirty, so the runner who passes it stops before the clock does.
+ * Judged on the clock alone, the better the Run the less it counted (Codex P2).
+ *
  * The alternative — the two minutes every other "long enough to mean something" check in the app
  * uses — let a thirty-minute Test abandoned after two silence the prompt for three weeks, for a Test
  * nobody ran. That check is asked of Runs in general, where two minutes really is the line between
@@ -81,11 +86,21 @@ private fun testIsHeldByForm(form: Double?): Boolean =
 const val TEST_COMPLETION_SHARE = 0.9
 
 /**
- * Whether a Run of [test] lasting [durationSeconds] went far enough into it to be that Test (#292).
+ * Whether a Run of [test] was that Test — it covered the distance, or failing that it ran
+ * [TEST_COMPLETION_SHARE] of the Workout (#292).
  *
- * Measured against the Workout's whole planned length rather than its main set, because a Test has
- * no warm-up or cool-down to leave out — the Run itself is the test, which is what its own
- * instruction tells the runner.
+ * [coveredTheDistance] is the Stage Requirement's distance measured or stated on the Run, answered
+ * where distances are read ([com.example.runningapp.data.wasCoveredBy]) and handed here, the same
+ * way [testIsDue] is handed a Form rather than working one out. It settles it on its own: a runner
+ * who covered 5 km has taken the test whatever the clock says, and that includes every runner the
+ * Stage is about to graduate.
+ *
+ * The clock is the fallback, for the Run that has no distance to read — a treadmill Test whose
+ * console was never typed in. Measured against the Workout's whole planned length rather than its
+ * main set, because a Test has no warm-up or cool-down to leave out.
  */
-fun wasRunFarEnough(test: WorkoutTemplate, durationSeconds: Int): Boolean =
-    durationSeconds >= test.plannedSeconds * TEST_COMPLETION_SHARE
+fun wasRunFarEnough(
+    test: WorkoutTemplate,
+    durationSeconds: Int,
+    coveredTheDistance: Boolean,
+): Boolean = coveredTheDistance || durationSeconds >= test.plannedSeconds * TEST_COMPLETION_SHARE

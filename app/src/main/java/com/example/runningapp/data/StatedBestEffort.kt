@@ -105,6 +105,21 @@ interface StatedBestEffortDao {
 const val STATED_DISTANCE_ROUNDING_METERS: Double = 10.0
 
 /**
+ * Whether a Run of [distanceKm] actually got this far — [fitsWithin]'s measurement asked the other
+ * way round (#292).
+ *
+ * The same ten-metre allowance, because it is the same typed number being read; what differs is the
+ * answer for a Run with no distance at all. There it is false rather than true: "this Run is not too
+ * short to hold the claim" is a fact about a claim already made, while "this Run covered 5 km" is a
+ * fact about the Run, and a Run nobody measured has not been shown to have covered anything.
+ */
+fun RecordType.wasCoveredBy(distanceKm: Double): Boolean {
+    val meters = distanceKm * 1_000.0
+    if (meters <= 0.0) return false
+    return distanceMeters!! <= meters + STATED_DISTANCE_ROUNDING_METERS
+}
+
+/**
  * Whether a Run of [statedDistanceKm] is long enough to contain a claim at this record distance
  * (#282).
  *

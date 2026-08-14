@@ -291,12 +291,14 @@ data class MaxSessionLoad30dProjection(
  * One Run of a Test, reduced to what deciding "was that a test?" needs (#292): when it began, how
  * long it lasted, and which Test it followed.
  *
- * The duration comes back with the row rather than being filtered in SQL because the length that
- * counts is the Test's own, which lives in the plan — see [SessionDao.getCompletedRunsOfWorkouts].
+ * The duration and distance come back with the row rather than being filtered in SQL, because both
+ * are judged against the Test's own numbers and those live in the plan — see
+ * [SessionDao.getCompletedRunsOfWorkouts].
  */
 data class TestRunProjection(
     val startTime: Long,
     val durationSeconds: Int,
+    val distanceKm: Double,
     val ranUnderWorkoutId: String,
 )
 
@@ -677,7 +679,7 @@ interface SessionDao {
      */
     @Query(
         """
-        SELECT startTime, durationSeconds, ranUnderWorkoutId FROM sessions
+        SELECT startTime, durationSeconds, distanceKm, ranUnderWorkoutId FROM sessions
         WHERE endTime > 0
           AND isWalk = 0
           AND ranUnderWorkoutId IN (:workoutIds)

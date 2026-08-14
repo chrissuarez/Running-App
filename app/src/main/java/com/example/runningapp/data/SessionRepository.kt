@@ -13,6 +13,7 @@ import com.example.runningapp.RunType
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.StatedHeartRates
 import com.example.runningapp.TrainingPlanProvider
+import com.example.runningapp.PlanTest
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.clearedBy
 import com.example.runningapp.testWorkout
@@ -702,9 +703,9 @@ class SessionRepository(
      * Stage's own, for the reason set out on [SessionDao.getCompletedRunsOfWorkouts]: the Test that
      * graduated a Stage was still a test, and it was run days ago.
      *
-     * The last Test is the newest Run of one of them that went far enough into it to be it
-     * ([wasRunFarEnough]) — asked here rather than in SQL, which cannot reach the plan to learn how
-     * long each Test is.
+     * The last Test is the newest Run of one of them that was actually that Test ([wasRunFarEnough])
+     * — asked here rather than in SQL, which cannot reach the plan to learn what each Test asks
+     * for.
      *
      * The two facts the rule needs, each read where it already lives: when a Test was last run, off
      * history, and the runner's Form, off the same curve the Progress screen draws. The decision
@@ -717,12 +718,12 @@ class SessionRepository(
      * a weekend would otherwise hold Friday's answer until some Run was recorded.
      */
     fun testDueFlow(
-        planTests: List<WorkoutTemplate>,
+        planTests: List<PlanTest>,
         zone: ZoneId = ZoneId.systemDefault(),
         clock: Clock = Clock.system(zone),
     ): Flow<Boolean> {
         if (planTests.isEmpty()) return flowOf(false)
-        val testsById = planTests.associateBy { it.id }
+        val testsById = planTests.associateBy { it.workout.id }
         return combine(
             sessionDao.getCompletedRunsOfWorkouts(testsById.keys.toList()),
             scoredRunsFlow(),
@@ -730,8 +731,13 @@ class SessionRepository(
         ) { testRuns, scoredRuns, today ->
             testIsDue(
                 lastTestStartedAtMillis = testRuns.firstOrNull { run ->
-                    testsById[run.ranUnderWorkoutId]
-                        ?.let { wasRunFarEnough(it, run.durationSeconds) } == true
+                    testsById[run.ranUnderWorkoutId]?.let { test ->
+                        wasRunFarEnough(
+                            test = test.workout,
+                            durationSeconds = run.durationSeconds,
+                            coveredTheDistance = test.distance?.wasCoveredBy(run.distanceKm) == true,
+                        )
+                    } == true
                 }?.startTime,
                 // Yesterday's Fitness less yesterday's Fatigue, as the screen and the coach both
                 // read it — null while no Run in history has a Score to build a curve from.

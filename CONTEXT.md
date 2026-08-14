@@ -54,8 +54,9 @@ of any Stage, since the Test that graduated one was still a test (#292). The
 app says a Test is due three weeks after the last one, held while Form is below
 −10, and it stays pickable on any day either way — a prompt, never a gate. A
 Test that misses the bar is still a Test: it states the gap, resets the three
-weeks, and changes nothing else. A Test abandoned partway is not one: the Run
-has to last nine tenths of the Workout's own length to have been it.
+weeks, and changes nothing else. A Test abandoned partway is not one: to have
+been the Test a Run has to cover the Requirement's distance, or failing that
+last nine tenths of the Workout's own length.
 _Avoid_: time trial, assessment, benchmark
 
 **Run Type**:
