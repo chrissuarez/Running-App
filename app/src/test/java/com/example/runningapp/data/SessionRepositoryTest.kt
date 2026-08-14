@@ -2,6 +2,7 @@ package com.example.runningapp.data
 
 import androidx.datastore.preferences.core.mutablePreferencesOf
 import com.example.runningapp.COACH_PRESCRIPTION_MAX_AGE_DAYS
+import com.example.runningapp.BestEffortRequirement
 import com.example.runningapp.CoachPrescription
 import com.example.runningapp.CoachPrescriptions
 import com.example.runningapp.CoachPrescriptionRepository
@@ -21,6 +22,7 @@ import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.training.FormVerdict
+import com.example.runningapp.training.HistoryBestEffort
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.flowOf
@@ -2855,6 +2857,63 @@ class SessionRepositoryTest {
         assertFalse(repo.testDueFlow(planTests).first())
     }
 
+    // --- A bar already beaten in history is said out loud (#293) --------------------------------
+
+    @Test
+    fun `a Stage whose requirement is a judgement asks the record book nothing`() = runTest {
+        val bookDao: AchievementDao = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = bookDao,
+            settingsRepository = mockSettingsRepo,
+        )
+
+        assertNull(repo.bestInHistoryFlow(requirement = null).first())
+        verifyNoInteractions(bookDao)
+    }
+
+    @Test
+    fun `the bar already beaten is the gold in the record book at the requirement's distance`() =
+        runTest {
+            val bookDao: AchievementDao = mock()
+            val repo = SessionRepository(
+                sessionDao = mockDao,
+                achievementDao = bookDao,
+                settingsRepository = mockSettingsRepo,
+            )
+            val gold = HistoryBestEffort(seconds = 1_661.0, runStartedAtMillis = 1_781_434_800_000L)
+            whenever(bookDao.getStandingBestFlow(RecordType.FASTEST_5K, Medal.GOLD))
+                .thenReturn(flowOf(gold))
+
+            val best = repo.bestInHistoryFlow(
+                BestEffortRequirement(RecordType.FASTEST_5K, 1_799)
+            ).first()
+
+            // The book and not the Runs: a Walk, an unfinished Run and a treadmill claim are all
+            // already settled there, the same way the graduation rule settles them.
+            assertEquals(gold, best)
+            verify(bookDao).getStandingBestFlow(RecordType.FASTEST_5K, Medal.GOLD)
+        }
+
+    @Test
+    fun `naming an already-beaten bar changes nothing`() = runTest {
+        val bookDao: AchievementDao = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = bookDao,
+            settingsRepository = mockSettingsRepo,
+        )
+        whenever(bookDao.getStandingBestFlow(any(), any())).thenReturn(
+            flowOf(HistoryBestEffort(seconds = 1_200.0, runStartedAtMillis = 1_781_434_800_000L))
+        )
+
+        repo.bestInHistoryFlow(BestEffortRequirement(RecordType.FASTEST_5K, 1_799)).first()
+
+        // Forwards only (ADR 0016): the card says the bar was beaten and the app grants nothing on
+        // the strength of it — no Stage advanced, no message written, nothing.
+        verifyNoInteractions(mockSettingsRepo)
+    }
+
     // --- A failed Test states the gap and changes nothing else (#292) --------------------------
 
     @Test
@@ -5499,6 +5558,13 @@ class SessionRepositoryTest {
         override suspend fun deleteAchievementsOfTypes(types: List<RecordType>) {
             rows.removeAll { it.type in types }
         }
+
+        // The real query joins the Run in for its start time; this book holds no Runs, so it
+        // answers with the effort alone. The Stage card's own tests read a stubbed dao instead.
+        override fun getStandingBestFlow(type: RecordType, medal: Medal) = flowOf(
+            rows.firstOrNull { it.type == type && it.medal == medal }
+                ?.let { HistoryBestEffort(seconds = it.value, runStartedAtMillis = 0L) }
+        )
 
         /** The book with its row ids dropped, ordered, so two of them can be compared. */
         fun standings(): List<Triple<Long, Medal, RecordType>> =

@@ -23,7 +23,9 @@ import com.example.runningapp.effectiveMaxHr
 import com.example.runningapp.historyHrProfile
 import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
+import com.example.runningapp.training.HistoryBestEffort
 import com.example.runningapp.training.ScoredRun
+import com.example.runningapp.training.asClock
 import com.example.runningapp.training.TrainingWeek
 import com.example.runningapp.training.VolumeRun
 import com.example.runningapp.training.effortScoreOf
@@ -34,6 +36,7 @@ import com.example.runningapp.training.wasRunFarEnough
 import com.example.runningapp.training.progressCurve
 import com.example.runningapp.training.weeklyVolumeOf
 import com.example.runningapp.analysis.BestEffort
+import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.analysis.RouteThumbnail
 import com.example.runningapp.analysis.routeThumbnailOf
@@ -746,6 +749,23 @@ class SessionRepository(
                 zone = zone,
             )
         }
+    }
+
+    /**
+     * The best Run in history at [requirement]'s distance, for the Stage card to name where the
+     * runner has already beaten the bar (#293) — and null where there is nothing to name.
+     *
+     * A read and nothing else: nothing here grants, advances or writes anything. The rule stays
+     * forwards-only (ADR 0016) and this only says out loud what history already holds, so the card
+     * can stop looking like a bug to a runner with a qualifying 5K behind them.
+     *
+     * Null [requirement] is a Stage whose requirement is a judgement — stage 1's "4 weeks of
+     * consistent Zone 2 training" — which has no bar to have been beaten and so says nothing.
+     */
+    fun bestInHistoryFlow(requirement: BestEffortRequirement?): Flow<HistoryBestEffort?> {
+        val dao = achievementDao ?: return flowOf(null)
+        if (requirement == null) return flowOf(null)
+        return dao.getStandingBestFlow(requirement.record, Medal.GOLD)
     }
 
     /**
@@ -2607,11 +2627,6 @@ class SessionRepository(
         return "You ran $distance in ${asClock(seconds)}. ${asClock(gap)} off the bar."
     }
 
-    /** Whole seconds as a runner reads them off a clock: "27:41". */
-    private fun asClock(seconds: Double): String {
-        val whole = seconds.roundToInt().coerceAtLeast(0)
-        return "%d:%02d".format(whole / 60, whole % 60)
-    }
 
     /**
      * Ask the coach about the Run just finished, and write what it says down.
