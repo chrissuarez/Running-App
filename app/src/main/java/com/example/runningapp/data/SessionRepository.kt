@@ -41,15 +41,18 @@ import com.example.runningapp.analysis.standingsAfter
 import com.example.runningapp.analysis.bestEffortsOf
 import com.example.runningapp.recording.SessionRecorder
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -703,20 +706,23 @@ class SessionRepository(
      * history, and the runner's Form, off the same curve the Progress screen draws. The decision
      * itself is [testIsDue] and is nowhere near either read.
      *
-     * The day is taken as each emission is made, so a phone left on the record screen overnight
-     * keeps yesterday's answer until something else moves — a Test that becomes due at midnight is
-     * offered the next time the screen is opened, which is when it can be acted on anyway.
+     * The calendar day is a third input and not something read as each emission is made (Codex P2),
+     * because it is the only one of the three that moves on its own. Both halves of the rule are
+     * answers about today — a Test comes due at midnight, and Form recovers
+     * across a rest day the curve only counts once the day exists — so a phone kept in a pocket over
+     * a weekend would otherwise hold Friday's answer until some Run was recorded.
      */
     fun testDueFlow(
         planTestWorkoutIds: List<String>,
         zone: ZoneId = ZoneId.systemDefault(),
+        clock: Clock = Clock.system(zone),
     ): Flow<Boolean> {
         if (planTestWorkoutIds.isEmpty()) return flowOf(false)
         return combine(
             sessionDao.getLastCompletedRunStartOfWorkouts(planTestWorkoutIds),
             scoredRunsFlow(),
-        ) { lastTestStartedAtMillis, scoredRuns ->
-            val today = LocalDate.now(zone)
+            localDays(zone, clock),
+        ) { lastTestStartedAtMillis, scoredRuns, today ->
             testIsDue(
                 lastTestStartedAtMillis = lastTestStartedAtMillis,
                 // Yesterday's Fitness less yesterday's Fatigue, as the screen and the coach both
@@ -725,6 +731,29 @@ class SessionRepository(
                 today = today,
                 zone = zone,
             )
+        }
+    }
+
+    /**
+     * Today, and today again each time the calendar turns over — the passage of time as something a
+     * rule can be combined with rather than something it has to remember to read (Codex P2 on #292).
+     *
+     * It sleeps to the next local midnight rather than polling, so an app left open costs one wake
+     * a day. A phone that dozes through midnight wakes the sleep late and the new day lands a moment
+     * after the runner returns to the screen, which is a prompt that appears rather than one that
+     * was already wrong — the direction [testDueFlow] wants (see its `initial = false`).
+     *
+     * Midnight is taken from [zone] each time round, so the day the runner is in is the day their
+     * phone says they are in, through a timezone change or the end of summer time.
+     */
+    private fun localDays(zone: ZoneId, clock: Clock): Flow<LocalDate> = flow {
+        while (true) {
+            val today = LocalDate.now(clock.withZone(zone))
+            emit(today)
+            val nextMidnight = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            // Never negative and never zero: a clock that has jumped past the next midnight would
+            // otherwise spin this loop, and the day is re-read at the top anyway.
+            delay((nextMidnight - clock.millis()).coerceAtLeast(1L))
         }
     }
 
