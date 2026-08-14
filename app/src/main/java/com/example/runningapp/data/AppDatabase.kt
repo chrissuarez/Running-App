@@ -288,6 +288,19 @@ data class MaxSessionLoad30dProjection(
 )
 
 /**
+ * One Run of a Test, reduced to what deciding "was that a test?" needs (#292): when it began, how
+ * long it lasted, and which Test it followed.
+ *
+ * The duration comes back with the row rather than being filtered in SQL because the length that
+ * counts is the Test's own, which lives in the plan — see [SessionDao.getCompletedRunsOfWorkouts].
+ */
+data class TestRunProjection(
+    val startTime: Long,
+    val durationSeconds: Int,
+    val ranUnderWorkoutId: String,
+)
+
+/**
  * A finished Run reduced to the two things the Fitness and Fatigue curves need (#63): the day it
  * began, and what it cost.
  *
@@ -633,9 +646,9 @@ interface SessionDao {
     suspend fun getMostRecentFinalizedSession(): RunnerSession?
 
     /**
-     * When the runner last completed any of [workoutIds] — the plan's Tests — or null if they never
-     * have (#292). The date the three-week prompt counts from, derived off history rather than
-     * stored (ADR 0001).
+     * Every finished Run of any of [workoutIds] — the plan's Tests — newest first (#292). What the
+     * date the three-week prompt counts from is derived from, off history rather than stored
+     * (ADR 0001).
      *
      * Every Test of the plan and not only the Stage's own, because a Test is a 5 km run flat out
      * whichever Stage's Workout it was, and the runner who has just been graduated by one has
@@ -646,12 +659,17 @@ interface SessionDao {
      * The Run's *start*, because that is what places a Run on a calendar day everywhere else the
      * app counts days.
      *
-     * Three conditions, and each is the same one asked elsewhere. Finished, because a Run still
-     * going is not a Test that was run. Longer than the two minutes
-     * [getLast3AiEligibleRunsOfStage] calls long enough to mean something, so a START pressed and
-     * stopped again does not cost the runner three weeks of prompting. And not a Walk — a Walk
-     * completes no prescribed Workout (CONTEXT.md) and is worth no Best Effort, so it cannot be the
-     * test it did not take.
+     * Two conditions here and a third above the query. Finished, because a Run still going is not a
+     * Test that was run. And not a Walk — a Walk completes no prescribed Workout (CONTEXT.md) and is
+     * worth no Best Effort, so it cannot be the test it did not take.
+     *
+     * How *much* of the Test was run is not asked here, because the answer differs per Workout and
+     * SQL has no way to reach the plan: the rows come back with their durations and
+     * [com.example.runningapp.training.wasRunFarEnough] settles it against each Test's own length.
+     * A `durationSeconds > 120` would have admitted a 30-minute Test abandoned after two minutes and
+     * cost the runner three weeks of prompting for a Test nobody ran (Codex P2).
+     *
+     * Newest first, so the caller stops at the first row that counts rather than sorting them.
      *
      * Deliberately not filtered on the Stage: a Workout id names one Workout of one Stage, and a
      * runner back for a second go at a Stage is running the same Test they ran the first time.
@@ -659,14 +677,14 @@ interface SessionDao {
      */
     @Query(
         """
-        SELECT MAX(startTime) FROM sessions
+        SELECT startTime, durationSeconds, ranUnderWorkoutId FROM sessions
         WHERE endTime > 0
-          AND durationSeconds > 120
           AND isWalk = 0
           AND ranUnderWorkoutId IN (:workoutIds)
+        ORDER BY startTime DESC
         """
     )
-    fun getLastCompletedRunStartOfWorkouts(workoutIds: List<String>): Flow<Long?>
+    fun getCompletedRunsOfWorkouts(workoutIds: List<String>): Flow<List<TestRunProjection>>
 
     /**
      * The biggest single session of the last 30 days, which the coach's prescription is held under.

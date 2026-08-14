@@ -1057,10 +1057,10 @@ fun MainScreen(
     // Stage the runner has just been graduated out of still counts as the last one — and asked at
     // all only where the Stage in front of them offers a Test to pick. False until the first read
     // comes back: a prompt that flickers in is better than one that flickers out.
-    val planTestWorkoutIds = if (activeStage?.testWorkout == null) {
+    val planTests = if (activeStage?.testWorkout == null) {
         emptyList()
     } else {
-        TrainingPlanProvider.getPlanById(userSettings.activePlanId.orEmpty())?.testWorkoutIds.orEmpty()
+        TrainingPlanProvider.getPlanById(userSettings.activePlanId.orEmpty())?.tests.orEmpty()
     }
     // Collected only while the screen is in front of the runner, and restarted each time it comes
     // back (Codex P2). The rule's answer depends on the calendar day, and the day cannot be waited
@@ -1072,10 +1072,10 @@ fun MainScreen(
     // Held in a var across the restart rather than re-collected into a fresh state, so the answer
     // already on screen stays there while the new read comes back: a prompt that flickers in is
     // better than one that flickers out.
-    var testDue by remember(sessionRepository, planTestWorkoutIds) { mutableStateOf(false) }
-    LaunchedEffect(sessionRepository, planTestWorkoutIds, screenIsResumed) {
+    var testDue by remember(sessionRepository, planTests) { mutableStateOf(false) }
+    LaunchedEffect(sessionRepository, planTests, screenIsResumed) {
         if (!screenIsResumed) return@LaunchedEffect
-        sessionRepository.testDueFlow(planTestWorkoutIds).collect { testDue = it }
+        sessionRepository.testDueFlow(planTests).collect { testDue = it }
     }
     // No testing-mode check: turning testing mode on erases the debrief, and the coach is refused
     // the write while it stays on, so there is nothing left to filter out on read (#113).

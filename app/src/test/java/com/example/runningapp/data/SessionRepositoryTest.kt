@@ -14,6 +14,7 @@ import com.example.runningapp.RunType
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.StatedHeartRates
 import com.example.runningapp.TrainingPlanProvider
+import com.example.runningapp.tests
 import com.example.runningapp.UserSettings
 import com.example.runningapp.userSettingsOf
 import com.example.runningapp.WorkoutTemplate
@@ -2689,21 +2690,36 @@ class SessionRepositoryTest {
         System.currentTimeMillis() - daysAgo * ONE_DAY_MILLIS
 
     /** Both Tests of the 5K plan, which is what history is asked about. */
-    private val planTests = listOf("w2_s3", "w3_s2")
+    private val planTests = TrainingPlanProvider.getPlanById("5k_sub_25")!!.tests
+
+    /** A Run of [planTests]' first Test that ran the whole of it, however many days back. */
+    private fun aTestRun(startedAt: Long, durationSeconds: Int = 1_800) = TestRunProjection(
+        startTime = startedAt,
+        durationSeconds = durationSeconds,
+        ranUnderWorkoutId = "w2_s3",
+    )
 
     private fun dueFlow(
         lastTestStart: Long?,
         scored: List<ScoredRunProjection> = emptyList(),
+    ): SessionRepository = dueFlow(
+        testRuns = lastTestStart?.let { listOf(aTestRun(it)) }.orEmpty(),
+        scored = scored,
+    )
+
+    private fun dueFlow(
+        testRuns: List<TestRunProjection>,
+        scored: List<ScoredRunProjection> = emptyList(),
     ): SessionRepository {
-        whenever(mockDao.getLastCompletedRunStartOfWorkouts(any())).thenReturn(flowOf(lastTestStart))
+        whenever(mockDao.getCompletedRunsOfWorkouts(any())).thenReturn(flowOf(testRuns))
         whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(scored))
         return repository
     }
 
     @Test
     fun `a plan offering no Test never asks history anything`() = runTest {
-        assertFalse(repository.testDueFlow(planTestWorkoutIds = emptyList()).first())
-        verify(mockDao, never()).getLastCompletedRunStartOfWorkouts(any())
+        assertFalse(repository.testDueFlow(planTests = emptyList()).first())
+        verify(mockDao, never()).getCompletedRunsOfWorkouts(any())
     }
 
     @Test
@@ -2726,9 +2742,54 @@ class SessionRepositoryTest {
 
         assertFalse(repo.testDueFlow(planTests).first())
         argumentCaptor<List<String>>().apply {
-            verify(mockDao).getLastCompletedRunStartOfWorkouts(capture())
-            assertEquals(planTests, firstValue)
+            verify(mockDao).getCompletedRunsOfWorkouts(capture())
+            assertEquals(planTests.map { it.id }, firstValue)
         }
+    }
+
+    @Test
+    fun `a Test abandoned two minutes in was not a Test`() = runTest {
+        // START on the 30-minute Test and STOP straight after. Counted as a Test, that costs the
+        // runner three weeks of prompting for a Test nobody ran (Codex P2).
+        val repo = dueFlow(testRuns = listOf(aTestRun(daysAgo(1), durationSeconds = 121)))
+
+        assertTrue(repo.testDueFlow(planTests).first())
+    }
+
+    @Test
+    fun `a Test stopped a few seconds early was still a Test`() = runTest {
+        // The Run ends when STOP is pressed, so the last tenth is given away rather than argued
+        // over: 27 minutes of the 30-minute Test is a Test that was run.
+        val repo = dueFlow(testRuns = listOf(aTestRun(daysAgo(1), durationSeconds = 1_620)))
+
+        assertFalse(repo.testDueFlow(planTests).first())
+    }
+
+    @Test
+    fun `the last Test is the last one actually run, not the last one started`() = runTest {
+        // Yesterday's attempt was abandoned; the one before it three weeks ago was run in full. The
+        // abandoned Run must not be allowed to date the prompt from yesterday.
+        val repo = dueFlow(
+            testRuns = listOf(
+                aTestRun(daysAgo(1), durationSeconds = 121),
+                aTestRun(daysAgo(21), durationSeconds = 1_800),
+            )
+        )
+
+        assertTrue(repo.testDueFlow(planTests).first())
+    }
+
+    @Test
+    fun `each Test is measured against its own length`() = runTest {
+        // 22:30 is three quarters of Stage 2's Test and the whole of nine tenths of Stage 3's, so
+        // the same Run is a Test under one Workout id and an abandoned one under the other.
+        val peakTest = aTestRun(daysAgo(1), durationSeconds = 1_350).copy(ranUnderWorkoutId = "w3_s2")
+
+        assertFalse(dueFlow(testRuns = listOf(peakTest)).testDueFlow(planTests).first())
+        assertTrue(
+            dueFlow(testRuns = listOf(peakTest.copy(ranUnderWorkoutId = "w2_s3")))
+                .testDueFlow(planTests).first()
+        )
     }
 
     @Test

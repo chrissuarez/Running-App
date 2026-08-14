@@ -29,6 +29,7 @@ import com.example.runningapp.training.effortScoreOf
 import com.example.runningapp.training.FormVerdict
 import com.example.runningapp.training.formVerdictOf
 import com.example.runningapp.training.testIsDue
+import com.example.runningapp.training.wasRunFarEnough
 import com.example.runningapp.training.progressCurve
 import com.example.runningapp.training.weeklyVolumeOf
 import com.example.runningapp.analysis.BestEffort
@@ -696,11 +697,14 @@ class SessionRepository(
     /**
      * Whether the runner's Test is due, for the Today card to say so (#292).
      *
-     * [planTestWorkoutIds] is every Test the active plan holds, or empty for a plan whose Stages
-     * offer none — which answers false for ever without asking history anything. All of them
-     * rather than the Stage's own, for the reason set out on
-     * [SessionDao.getLastCompletedRunStartOfWorkouts]: the Test that graduated a Stage was still a
-     * test, and it was run days ago.
+     * [planTests] is every Test the active plan holds, or empty for a plan whose Stages offer none —
+     * which answers false for ever without asking history anything. All of them rather than the
+     * Stage's own, for the reason set out on [SessionDao.getCompletedRunsOfWorkouts]: the Test that
+     * graduated a Stage was still a test, and it was run days ago.
+     *
+     * The last Test is the newest Run of one of them that went far enough into it to be it
+     * ([wasRunFarEnough]) — asked here rather than in SQL, which cannot reach the plan to learn how
+     * long each Test is.
      *
      * The two facts the rule needs, each read where it already lives: when a Test was last run, off
      * history, and the runner's Form, off the same curve the Progress screen draws. The decision
@@ -713,18 +717,22 @@ class SessionRepository(
      * a weekend would otherwise hold Friday's answer until some Run was recorded.
      */
     fun testDueFlow(
-        planTestWorkoutIds: List<String>,
+        planTests: List<WorkoutTemplate>,
         zone: ZoneId = ZoneId.systemDefault(),
         clock: Clock = Clock.system(zone),
     ): Flow<Boolean> {
-        if (planTestWorkoutIds.isEmpty()) return flowOf(false)
+        if (planTests.isEmpty()) return flowOf(false)
+        val testsById = planTests.associateBy { it.id }
         return combine(
-            sessionDao.getLastCompletedRunStartOfWorkouts(planTestWorkoutIds),
+            sessionDao.getCompletedRunsOfWorkouts(testsById.keys.toList()),
             scoredRunsFlow(),
             localDays(zone, clock),
-        ) { lastTestStartedAtMillis, scoredRuns, today ->
+        ) { testRuns, scoredRuns, today ->
             testIsDue(
-                lastTestStartedAtMillis = lastTestStartedAtMillis,
+                lastTestStartedAtMillis = testRuns.firstOrNull { run ->
+                    testsById[run.ranUnderWorkoutId]
+                        ?.let { wasRunFarEnough(it, run.durationSeconds) } == true
+                }?.startTime,
                 // Yesterday's Fitness less yesterday's Fatigue, as the screen and the coach both
                 // read it — null while no Run in history has a Score to build a curve from.
                 form = progressCurve(scoredRuns, through = today, zone = zone).lastOrNull()?.form,
