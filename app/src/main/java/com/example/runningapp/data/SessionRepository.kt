@@ -15,6 +15,7 @@ import com.example.runningapp.StatedHeartRates
 import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.clearedBy
+import com.example.runningapp.testWorkout
 import com.example.runningapp.isCoachAdjusted
 import com.example.runningapp.HrProfile
 import com.example.runningapp.effectiveMaxHr
@@ -27,6 +28,7 @@ import com.example.runningapp.training.VolumeRun
 import com.example.runningapp.training.effortScoreOf
 import com.example.runningapp.training.FormVerdict
 import com.example.runningapp.training.formVerdictOf
+import com.example.runningapp.training.fiveKTestIsDue
 import com.example.runningapp.training.progressCurve
 import com.example.runningapp.training.weeklyVolumeOf
 import com.example.runningapp.analysis.BestEffort
@@ -684,6 +686,40 @@ class SessionRepository(
                 startedAtMillis = it.startTime,
                 effortScore = it.effortScore,
                 isWalk = it.isWalk,
+            )
+        }
+    }
+
+    /**
+     * Whether the Stage's Test is due, for the Today card to say so (#292) — false the whole time
+     * for a Stage that offers no Test ([testWorkoutId] null).
+     *
+     * The two facts the rule needs, each read where it already lives: when the Test was last run,
+     * off history ([SessionDao.getLastCompletedRunStartOfWorkout]), and the runner's Form, off the
+     * same curve the Progress screen draws. The decision itself is [fiveKTestIsDue] and is nowhere
+     * near either read.
+     *
+     * The day is taken as each emission is made, so a phone left on the record screen overnight
+     * keeps yesterday's answer until something else moves — a Test that becomes due at midnight is
+     * offered the next time the screen is opened, which is when it can be acted on anyway.
+     */
+    fun fiveKTestDueFlow(
+        testWorkoutId: String?,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): Flow<Boolean> {
+        if (testWorkoutId == null) return flowOf(false)
+        return combine(
+            sessionDao.getLastCompletedRunStartOfWorkout(testWorkoutId),
+            scoredRunsFlow(),
+        ) { lastTestStartedAtMillis, scoredRuns ->
+            val today = LocalDate.now(zone)
+            fiveKTestIsDue(
+                lastTestStartedAtMillis = lastTestStartedAtMillis,
+                // Yesterday's Fitness less yesterday's Fatigue, as the screen and the coach both
+                // read it — null while no Run in history has a Score to build a curve from.
+                form = progressCurve(scoredRuns, through = today, zone = zone).lastOrNull()?.form,
+                today = today,
+                zone = zone,
             )
         }
     }
@@ -2439,6 +2475,21 @@ class SessionRepository(
                 "Run ${run.id} is worth ${seconds.toLong()}s at ${requirement.record}, which does not " +
                     "clear ${requirement.withinSeconds}s for stage=$stageId"
             )
+            // A failed Test states the gap and changes nothing else (#292). Only a Test says it:
+            // any Run can hold a Best Effort short of the bar, and telling a runner they were
+            // "2:41 off" after an easy Tuesday is a verdict on a run that was never an attempt.
+            //
+            // It reaches into nothing. The Test is a Quality Run, so the coach is not asked about
+            // it at all (ADR 0006) and no Prescription of any kind is written; this is one sentence
+            // in the same slot the app writes a graduation into, and the effort it names has
+            // already reset the three weeks by being in history.
+            val testWorkoutId = stage.testWorkout?.id
+            if (testWorkoutId != null && run.ranUnderWorkoutId == testWorkoutId) {
+                settingsRepo.setLatestCoachMessage(
+                    missedTestMessage(requirement, seconds),
+                    CoachWriteScope(settings.activePlanId, settings.activeStageId)
+                )
+            }
             return false
         }
 
@@ -2486,13 +2537,33 @@ class SessionRepository(
         seconds: Double,
         nextStageTitle: String?,
     ): String {
-        val whole = seconds.roundToInt().coerceAtLeast(0)
-        val clock = "%d:%02d".format(whole / 60, whole % 60)
         val distance = requirement.record.label.removePrefix("Fastest ")
         return buildString {
-            append("You ran $distance in $clock. $stageTitle complete.")
+            append("You ran $distance in ${asClock(seconds)}. $stageTitle complete.")
             if (nextStageTitle != null) append(" Next up: $nextStageTitle.")
         }
+    }
+
+    /**
+     * What the runner is told when the Test they just ran did not clear the bar (#292): the number
+     * they ran, and how far off it was.
+     *
+     * The gap is measured to the slowest time that would have passed
+     * ([BestEffortRequirement.withinSeconds]) — the time they have to reach, which on a bar written
+     * as "under 30 minutes" is 29:59 and not 30:00. It is stated and nothing more: no
+     * encouragement, no advice, and nothing about the next Run, because a Test that came up short
+     * is a measurement and the plan does not move on it.
+     */
+    private fun missedTestMessage(requirement: BestEffortRequirement, seconds: Double): String {
+        val distance = requirement.record.label.removePrefix("Fastest ")
+        val gap = (seconds - requirement.withinSeconds).coerceAtLeast(0.0)
+        return "You ran $distance in ${asClock(seconds)}. ${asClock(gap)} off the bar."
+    }
+
+    /** Whole seconds as a runner reads them off a clock: "27:41". */
+    private fun asClock(seconds: Double): String {
+        val whole = seconds.roundToInt().coerceAtLeast(0)
+        return "%d:%02d".format(whole / 60, whole % 60)
     }
 
     /**

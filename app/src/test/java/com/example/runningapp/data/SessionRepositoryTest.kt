@@ -2675,6 +2675,151 @@ class SessionRepositoryTest {
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
     }
 
+    // --- The card is told when a Test is due (#292) --------------------------------------------
+
+    /** The Test's last outing, [daysAgo] days back — read the same way the runner counts days. */
+    private fun daysAgo(daysAgo: Long): Long =
+        System.currentTimeMillis() - daysAgo * ONE_DAY_MILLIS
+
+    private fun dueFlow(
+        lastTestStart: Long?,
+        scored: List<ScoredRunProjection> = emptyList(),
+        testWorkoutId: String? = "w3_s2",
+    ): SessionRepository {
+        whenever(mockDao.getLastCompletedRunStartOfWorkout(any())).thenReturn(flowOf(lastTestStart))
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(scored))
+        return repository
+    }
+
+    @Test
+    fun `a Stage offering no Test never asks history anything`() = runTest {
+        assertFalse(repository.fiveKTestDueFlow(testWorkoutId = null).first())
+        verify(mockDao, never()).getLastCompletedRunStartOfWorkout(any())
+    }
+
+    @Test
+    fun `a Test never run is due`() = runTest {
+        assertTrue(dueFlow(lastTestStart = null).fiveKTestDueFlow("w3_s2").first())
+    }
+
+    @Test
+    fun `a Test three weeks old is due and a fortnight-old one is not`() = runTest {
+        assertTrue(dueFlow(lastTestStart = daysAgo(22)).fiveKTestDueFlow("w3_s2").first())
+        assertFalse(dueFlow(lastTestStart = daysAgo(14)).fiveKTestDueFlow("w3_s2").first())
+    }
+
+    @Test
+    fun `a fatigued runner is held, however long it has been`() = runTest {
+        // A week of hard Runs finishing yesterday, which is what leaves Form below −10 — the same
+        // read the Progress screen and the coach make.
+        val hardWeek = (1L..7L).map { day ->
+            ScoredRunProjection(startTime = daysAgo(day), effortScore = 100)
+        }
+
+        val repo = dueFlow(lastTestStart = daysAgo(90), scored = hardWeek)
+
+        assertFalse(repo.fiveKTestDueFlow("w3_s2").first())
+    }
+
+    // --- A failed Test states the gap and changes nothing else (#292) --------------------------
+
+    @Test
+    fun `a Test that misses the bar is told how far off it was`() = runTest {
+        val statedDao: StatedBestEffortDao = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+            aiCoachClient = mockCoach,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_25_peak"))
+        )
+        stubTheCoachsReads()
+        // 27:41 against stage 3's bar of 24:59, run as the Stage's own Test.
+        val run = aRunTold(id = 7, fiveKSeconds = 1_661, statedDao = statedDao)
+            .copy(ranUnderWorkoutId = "w3_s2")
+
+        repo.settleStageAfterRun("sub_25_peak", RunType.QUALITY, run)
+
+        verify(mockSettingsRepo).setLatestCoachMessage(
+            "You ran 5 km in 27:41. 2:42 off the bar.",
+            CoachWriteScope("5k_sub_25", "sub_25_peak")
+        )
+        // It reaches into nothing else: no graduation, and the coach is never asked about a
+        // Quality Run at all (ADR 0006).
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockCoach, never()).evaluateProgress(any())
+    }
+
+    @Test
+    fun `an ordinary Run short of the bar is told nothing`() = runTest {
+        // Any Run can hold a Best Effort short of the requirement. Only a Test was an attempt, and
+        // "2:42 off the bar" after an easy Tuesday is a verdict on a run nobody offered.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_25_peak"))
+        )
+        stubTheCoachsReads()
+        val run = aRunTold(id = 7, fiveKSeconds = 1_661, statedDao = statedDao)
+            .copy(ranUnderWorkoutId = "w3_s1")
+
+        repo.settleStageAfterRun("sub_25_peak", runType = null, finalizedRun = run)
+
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
+    @Test
+    fun `a Test that clears the bar is congratulated and not measured against it`() = runTest {
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_25_peak"))
+        )
+        stubTheCoachsReads()
+        val run = aRunTold(id = 7, fiveKSeconds = 1_463, statedDao = statedDao)
+            .copy(ranUnderWorkoutId = "w3_s2")
+
+        repo.settleStageAfterRun("sub_25_peak", RunType.QUALITY, run)
+
+        verify(mockSettingsRepo).setLatestCoachMessage(
+            "You ran 5 km in 24:23. Stage 3: Sub-25 Peak complete.",
+            CoachWriteScope("5k_sub_25", "sub_25_peak")
+        )
+    }
+
+    @Test
+    fun `a Test with no 5K to read says nothing at all`() = runTest {
+        // A treadmill Test whose console was never typed in holds no Best Effort, so there is no
+        // number to state and nothing to be off the bar by.
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(7L)).thenReturn(emptyList())
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_25_peak"))
+        )
+        stubTheCoachsReads()
+        val run = aTreadmillRun(id = 7, seconds = 1_900).copy(ranUnderWorkoutId = "w3_s2")
+
+        repo.settleStageAfterRun("sub_25_peak", RunType.QUALITY, run)
+
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
     @Test
     fun `a Best Effort stated after the Run graduates the Stage too`() = runTest {
         // A treadmill 5K is read off the console once the Run has ended, so a rule that only ever

@@ -87,6 +87,7 @@ object Run {
                     includeInAiTraining = event.config.includeInAiTraining,
                     hrProfile = event.config.hrProfile,
                     ranUnderStageId = event.config.ranUnderStageId,
+                    ranUnderWorkoutId = event.config.workout?.id,
                 ),
             ),
         )

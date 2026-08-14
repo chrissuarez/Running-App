@@ -58,6 +58,16 @@ data class PlanStage(
 )
 
 /**
+ * The Stage's Test, or null for a Stage that offers none (#292).
+ *
+ * The first one declared, because a Stage has one requirement and so has one Test; a second would
+ * be two ways of measuring the same bar, and the three-week prompt would then be counting from
+ * whichever of them was run last while claiming to count from "the last test".
+ */
+val PlanStage.testWorkout: WorkoutTemplate?
+    get() = workouts.firstOrNull { it.isTest }
+
+/**
  * What kind of work a Workout is (#173) — the thing that makes two Workouts differ in kind rather
  * than only in length. Stage 1 offers one of each and the runner picks; the later stages, which
  * are locked and still shaped as they were, only declare what they already are.
@@ -115,7 +125,20 @@ data class WorkoutTemplate(
      * stated distance and the stated Best Effort agree; without a line saying "warm up before you
      * start this", the runner presses START cold and the decision is invisible.
      */
-    val instruction: String? = null
+    val instruction: String? = null,
+    /**
+     * Whether this Workout is the Stage's Test — the one that exists to answer a requirement
+     * written in numbers (#292).
+     *
+     * Declared rather than inferred. A Stage's Test could be guessed at from its shape — no
+     * envelope, one continuous repeat, a hard target zone — but every one of those is a coincidence
+     * waiting to happen, and what a Test is for is not a fact about its numbers: it is the Workout
+     * whose Run is *counted* as a test, which is the whole of what the three-week prompt is about
+     * ([com.example.runningapp.training.fiveKTestIsDue]).
+     *
+     * At most one per Stage — see [PlanStage.testWorkout].
+     */
+    val isTest: Boolean = false
 )
 
 /**
@@ -310,7 +333,8 @@ object TrainingPlanProvider {
                             warmUpSeconds = 0,
                             coolDownSeconds = 0,
                             runType = RunType.QUALITY,
-                            instruction = FIVE_K_TEST_INSTRUCTION
+                            instruction = FIVE_K_TEST_INSTRUCTION,
+                            isTest = true
                         )
                     )
                 ),
@@ -338,7 +362,8 @@ object TrainingPlanProvider {
                             warmUpSeconds = 0,
                             coolDownSeconds = 0,
                             runType = RunType.QUALITY,
-                            instruction = FIVE_K_TEST_INSTRUCTION
+                            instruction = FIVE_K_TEST_INSTRUCTION,
+                            isTest = true
                         )
                     )
                 )

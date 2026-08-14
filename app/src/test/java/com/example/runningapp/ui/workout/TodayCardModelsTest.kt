@@ -7,6 +7,7 @@ import com.example.runningapp.UserSettings
 import com.example.runningapp.WorkoutTemplate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -43,7 +44,8 @@ class TodayCardModelsTest {
         prescriptions: CoachPrescriptions = CoachPrescriptions.NONE,
         nowEpochMillis: Long = now,
         runMode: String = "outdoor",
-        skippedToday: Boolean = false
+        skippedToday: Boolean = false,
+        fiveKTestDue: Boolean = false
     ) = todayCardUiState(
         stageTitle,
         stageWorkouts,
@@ -52,7 +54,8 @@ class TodayCardModelsTest {
         prescriptions,
         nowEpochMillis,
         runMode,
-        skippedToday
+        skippedToday,
+        fiveKTestDue
     )
 
     @Test
@@ -378,7 +381,8 @@ class TodayCardModelsTest {
         warmUpSeconds = 0,
         coolDownSeconds = 0,
         runType = RunType.QUALITY,
-        instruction = "Warm up for about 10 minutes before you start this."
+        instruction = "Warm up for about 10 minutes before you start this.",
+        isTest = true
     )
 
     @Test
@@ -405,5 +409,65 @@ class TodayCardModelsTest {
         )
 
         assertEquals("Warm up for about 10 minutes before you start this.", state.instructionLine)
+    }
+
+    // --- The card says when a 5K test is due (#292) ------------------------------------------
+
+    /** A Stage that offers a Test as well as an ordinary Workout, which is how they all do. */
+    private val stageWithATest = listOf(aerobicFoundation, fiveKTest)
+
+    @Test
+    fun `a due test is offered on the card`() {
+        val state = card(stageWorkouts = stageWithATest, fiveKTestDue = true)
+
+        assertEquals("A 5K test is due. Pick it below whenever you fancy it.", state.testDueLine)
+    }
+
+    @Test
+    fun `nothing is said while the test is not due`() {
+        assertNull(card(stageWorkouts = stageWithATest, fiveKTestDue = false).testDueLine)
+    }
+
+    @Test
+    fun `a stage with no test never says one is due`() {
+        // Nothing else can make the flag true, but the card is not the place that rule is kept.
+        assertNull(card(fiveKTestDue = true).testDueLine)
+    }
+
+    @Test
+    fun `the prompt goes once the test is today's pick`() {
+        // The card is then the whole prompt; telling the runner to pick what they have picked
+        // reads as a second, unmet ask.
+        val state = card(
+            stageWorkouts = stageWithATest,
+            pickedWorkoutId = fiveKTest.id,
+            fiveKTestDue = true
+        )
+
+        assertEquals("5K Test", state.title)
+        assertNull(state.testDueLine)
+    }
+
+    @Test
+    fun `a skipped day says nothing about the test`() {
+        // The open-run card offers no Workout to pick the Test from, so "pick it below" would
+        // point at nothing.
+        val state = card(stageWorkouts = stageWithATest, skippedToday = true, fiveKTestDue = true)
+
+        assertEquals("Open run", state.title)
+        assertNull(state.testDueLine)
+    }
+
+    @Test
+    fun `the prompt does not displace the instruction or the coach's note`() {
+        val state = card(
+            stageWorkouts = stageWithATest,
+            settings = UserSettings(latestCoachMessage = "Nice work. Ten minutes more next time."),
+            prescriptions = standing(RunType.LONG to prescription()),
+            fiveKTestDue = true
+        )
+
+        assertNotNull(state.testDueLine)
+        assertEquals("Coach: Nice work.", state.coachNote)
     }
 }

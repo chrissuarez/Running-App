@@ -594,6 +594,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     // The Stage this Run counts towards, written down at the start of it rather
                     // than worked out at the finish, by which time it can have moved (#234).
                     ranUnderStageId = effect.ranUnderStageId,
+                    // And which of the Stage's Workouts it is, which is how history is later
+                    // asked when the runner last ran their Test (#292).
+                    ranUnderWorkoutId = effect.ranUnderWorkoutId,
                 )
             )
             Log.d(TAG, "Started DB Session: $runRowId (Mode: ${effect.runModeSettingValue})")
