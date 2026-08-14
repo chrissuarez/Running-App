@@ -1039,13 +1039,17 @@ fun MainScreen(
         userSettings.activeStageId
     )
     val stageWorkouts = activeStage?.workouts.orEmpty()
-    // Whether the Stage's Test is due (#292). Keyed on the Test itself, so graduating into a Stage
-    // that offers a different one — or none — asks the question again rather than carrying the old
-    // answer across. False until the first read comes back: a prompt that flickers in is better
-    // than one that flickers out.
-    val testWorkoutId = activeStage?.testWorkout?.id
-    val fiveKTestDue by remember(sessionRepository, testWorkoutId) {
-        sessionRepository.fiveKTestDueFlow(testWorkoutId)
+    // Whether the Test is due (#292). Asked of every Test the plan holds, so a Test run under the
+    // Stage the runner has just been graduated out of still counts as the last one — and asked at
+    // all only where the Stage in front of them offers a Test to pick. False until the first read
+    // comes back: a prompt that flickers in is better than one that flickers out.
+    val planTestWorkoutIds = if (activeStage?.testWorkout == null) {
+        emptyList()
+    } else {
+        TrainingPlanProvider.getPlanById(userSettings.activePlanId.orEmpty())?.testWorkoutIds.orEmpty()
+    }
+    val testDue by remember(sessionRepository, planTestWorkoutIds) {
+        sessionRepository.testDueFlow(planTestWorkoutIds)
     }.collectAsState(initial = false)
     // No testing-mode check: turning testing mode on erases the debrief, and the coach is refused
     // the write while it stays on, so there is nothing left to filter out on read (#113).
@@ -1061,7 +1065,7 @@ fun MainScreen(
         nowEpochMillis = System.currentTimeMillis(),
         runMode = selectedRunMode,
         skippedToday = skipPlanToday,
-        fiveKTestDue = fiveKTestDue
+        testDue = testDue
     )
 
     // Taken from the card rather than from the pick itself, so START runs exactly what the card is

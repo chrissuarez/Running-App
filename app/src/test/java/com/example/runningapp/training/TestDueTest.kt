@@ -7,7 +7,7 @@ import java.time.LocalDate
 import java.time.ZoneId
 
 /** The acceptance criteria for #292: when the card says a 5K Test is due. */
-class FiveKTestTest {
+class TestDueTest {
 
     private val zone: ZoneId = ZoneId.of("Europe/London")
     private val today: LocalDate = LocalDate.of(2026, 8, 14)
@@ -19,7 +19,7 @@ class FiveKTestTest {
     private fun due(
         lastTestStartedAtMillis: Long?,
         form: Double? = 0.0,
-    ) = fiveKTestIsDue(lastTestStartedAtMillis, form, today, zone)
+    ) = testIsDue(lastTestStartedAtMillis, form, today, zone)
 
     @Test
     fun `a runner who has never tested is due one`() {

@@ -28,7 +28,7 @@ import com.example.runningapp.training.VolumeRun
 import com.example.runningapp.training.effortScoreOf
 import com.example.runningapp.training.FormVerdict
 import com.example.runningapp.training.formVerdictOf
-import com.example.runningapp.training.fiveKTestIsDue
+import com.example.runningapp.training.testIsDue
 import com.example.runningapp.training.progressCurve
 import com.example.runningapp.training.weeklyVolumeOf
 import com.example.runningapp.analysis.BestEffort
@@ -691,29 +691,33 @@ class SessionRepository(
     }
 
     /**
-     * Whether the Stage's Test is due, for the Today card to say so (#292) — false the whole time
-     * for a Stage that offers no Test ([testWorkoutId] null).
+     * Whether the runner's Test is due, for the Today card to say so (#292).
      *
-     * The two facts the rule needs, each read where it already lives: when the Test was last run,
-     * off history ([SessionDao.getLastCompletedRunStartOfWorkout]), and the runner's Form, off the
-     * same curve the Progress screen draws. The decision itself is [fiveKTestIsDue] and is nowhere
-     * near either read.
+     * [planTestWorkoutIds] is every Test the active plan holds, or empty for a plan whose Stages
+     * offer none — which answers false for ever without asking history anything. All of them
+     * rather than the Stage's own, for the reason set out on
+     * [SessionDao.getLastCompletedRunStartOfWorkouts]: the Test that graduated a Stage was still a
+     * test, and it was run days ago.
+     *
+     * The two facts the rule needs, each read where it already lives: when a Test was last run, off
+     * history, and the runner's Form, off the same curve the Progress screen draws. The decision
+     * itself is [testIsDue] and is nowhere near either read.
      *
      * The day is taken as each emission is made, so a phone left on the record screen overnight
      * keeps yesterday's answer until something else moves — a Test that becomes due at midnight is
      * offered the next time the screen is opened, which is when it can be acted on anyway.
      */
-    fun fiveKTestDueFlow(
-        testWorkoutId: String?,
+    fun testDueFlow(
+        planTestWorkoutIds: List<String>,
         zone: ZoneId = ZoneId.systemDefault(),
     ): Flow<Boolean> {
-        if (testWorkoutId == null) return flowOf(false)
+        if (planTestWorkoutIds.isEmpty()) return flowOf(false)
         return combine(
-            sessionDao.getLastCompletedRunStartOfWorkout(testWorkoutId),
+            sessionDao.getLastCompletedRunStartOfWorkouts(planTestWorkoutIds),
             scoredRunsFlow(),
         ) { lastTestStartedAtMillis, scoredRuns ->
             val today = LocalDate.now(zone)
-            fiveKTestIsDue(
+            testIsDue(
                 lastTestStartedAtMillis = lastTestStartedAtMillis,
                 // Yesterday's Fitness less yesterday's Fatigue, as the screen and the coach both
                 // read it — null while no Run in history has a Score to build a curve from.

@@ -15,7 +15,7 @@ import java.time.ZoneId
 const val DAYS_BETWEEN_TESTS = 21L
 
 /**
- * Whether the runner should be prompted to run their Stage's 5K Test (#292).
+ * Whether the runner should be prompted to run their Stage's Test (#292).
  *
  * **A prompt, and never a gate.** The Test stays pickable at any time and from the first day of the
  * Stage; this only decides whether the card says anything about it. The Plan is a menu and not a
@@ -31,7 +31,7 @@ const val DAYS_BETWEEN_TESTS = 21L
  * [form] is yesterday's Fitness less yesterday's Fatigue, the number the Progress screen shows.
  * Null is "no curve to read yet", which holds nothing: nothing says the runner is tired.
  */
-fun fiveKTestIsDue(
+fun testIsDue(
     lastTestStartedAtMillis: Long?,
     form: Double?,
     today: LocalDate,

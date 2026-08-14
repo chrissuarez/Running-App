@@ -68,6 +68,17 @@ val PlanStage.testWorkout: WorkoutTemplate?
     get() = workouts.firstOrNull { it.isTest }
 
 /**
+ * The ids of every Test the plan holds, in Stage order — what "when did the runner last test"
+ * is asked of (#292).
+ *
+ * The whole plan rather than one Stage, because a Test is the same 5 km flat out whichever Stage
+ * offered it. Asked a Stage at a time, the Test that graduated a Stage would stop counting the
+ * moment it succeeded, and the new Stage would ask for another the same afternoon.
+ */
+val TrainingPlan.testWorkoutIds: List<String>
+    get() = stages.mapNotNull { it.testWorkout?.id }
+
+/**
  * What kind of work a Workout is (#173) — the thing that makes two Workouts differ in kind rather
  * than only in length. Stage 1 offers one of each and the runner picks; the later stages, which
  * are locked and still shaped as they were, only declare what they already are.
@@ -134,7 +145,7 @@ data class WorkoutTemplate(
      * envelope, one continuous repeat, a hard target zone — but every one of those is a coincidence
      * waiting to happen, and what a Test is for is not a fact about its numbers: it is the Workout
      * whose Run is *counted* as a test, which is the whole of what the three-week prompt is about
-     * ([com.example.runningapp.training.fiveKTestIsDue]).
+     * ([com.example.runningapp.training.testIsDue]).
      *
      * At most one per Stage — see [PlanStage.testWorkout].
      */
