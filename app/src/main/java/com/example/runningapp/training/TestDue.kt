@@ -1,5 +1,7 @@
 package com.example.runningapp.training
 
+import com.example.runningapp.WorkoutTemplate
+import com.example.runningapp.plannedSeconds
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -61,3 +63,29 @@ fun testIsDue(
  */
 private fun testIsHeldByForm(form: Double?): Boolean =
     form != null && formVerdictOf(form) == FormVerdict.FATIGUED
+
+/**
+ * How much of a Test has to actually be run for it to count as having been run — nine tenths of it
+ * (#292, Codex P2).
+ *
+ * A Test is one continuous effort with no envelope around it, so unlike every other Workout there is
+ * no part of it that is not the measurement: stopping early is not finishing early, it is not
+ * testing. But the Run ends when the runner presses STOP, and pressing it a few seconds before the
+ * clock runs out is a Test that was run, so the last tenth is given away rather than argued over.
+ *
+ * The alternative — the two minutes every other "long enough to mean something" check in the app
+ * uses — let a thirty-minute Test abandoned after two silence the prompt for three weeks, for a Test
+ * nobody ran. That check is asked of Runs in general, where two minutes really is the line between
+ * a session and a mis-tap; a Test is a specific length and can be asked against its own.
+ */
+const val TEST_COMPLETION_SHARE = 0.9
+
+/**
+ * Whether a Run of [test] lasting [durationSeconds] went far enough into it to be that Test (#292).
+ *
+ * Measured against the Workout's whole planned length rather than its main set, because a Test has
+ * no warm-up or cool-down to leave out — the Run itself is the test, which is what its own
+ * instruction tells the runner.
+ */
+fun wasRunFarEnough(test: WorkoutTemplate, durationSeconds: Int): Boolean =
+    durationSeconds >= test.plannedSeconds * TEST_COMPLETION_SHARE

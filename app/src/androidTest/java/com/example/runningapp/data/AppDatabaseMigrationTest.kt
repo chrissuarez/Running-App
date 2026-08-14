@@ -728,7 +728,7 @@ class AppDatabaseMigrationTest {
             .build()
         val run = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val lastTest = runBlockingGet {
-            migratedDb.sessionDao().getLastCompletedRunStartOfWorkouts(listOf("w2_s3", "w3_s2")).first()
+            migratedDb.sessionDao().getCompletedRunsOfWorkouts(listOf("w2_s3", "w3_s2")).first()
         }
         migratedDb.close()
 
@@ -736,7 +736,7 @@ class AppDatabaseMigrationTest {
         // three-week prompt for three weeks, so history simply holds no Test and the first one the
         // runner runs from here starts the clock.
         assertNull(run.ranUnderWorkoutId)
-        assertNull(lastTest)
+        assertEquals(emptyList<TestRunProjection>(), lastTest)
         // The Run itself is untouched: the migration adds room and nothing else.
         assertEquals(2259L, run.durationSeconds)
         assertEquals(9000L, run.endTime)
