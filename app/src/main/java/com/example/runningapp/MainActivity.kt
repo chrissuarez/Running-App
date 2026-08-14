@@ -81,6 +81,8 @@ import com.example.runningapp.ui.SessionDetailScreen
 import com.example.runningapp.ui.SessionDetailViewModel
 import com.example.runningapp.ui.SessionDetailViewModelFactory
 import com.example.runningapp.ui.SettingsScreen
+import com.example.runningapp.training.HistoryBestEffort
+import com.example.runningapp.training.alreadyBeatenLine
 import com.example.runningapp.ui.TrainingPlanScreen
 import com.example.runningapp.ui.backupResultMessage
 import com.example.runningapp.ui.strapRowSummary
@@ -99,6 +101,8 @@ import com.example.runningapp.ui.workout.TodayCardUiState
 import com.example.runningapp.ui.workout.todayCardUiState
 import com.example.runningapp.ui.workout.mapWorkoutPlayerUiState
 import com.example.runningapp.ui.workout.zoneBandColor
+import java.time.LocalDate
+import java.time.ZoneId
 
 class MainActivity : ComponentActivity() {
 
@@ -831,9 +835,33 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         composable(Routes.TRAINING_PLAN) {
+                            // The bar the active Stage asks for, and the best the runner has ever
+                            // been at that distance (#293). Read straight off the record book, so
+                            // it re-answers itself when a Run is deleted, marked a Walk or told
+                            // what the treadmill console said.
+                            val requirement = TrainingPlanProvider.resolveActiveStage(
+                                userSettings.activePlanId,
+                                userSettings.activeStageId
+                            )?.bestEffortRequirement
+                            val bestInHistory by produceState<HistoryBestEffort?>(
+                                initialValue = null,
+                                sessionRepository,
+                                requirement
+                            ) {
+                                sessionRepository.bestInHistoryFlow(requirement)
+                                    .collect { value = it }
+                            }
                             TrainingPlanScreen(
                                 activePlanId = userSettings.activePlanId,
                                 activeStageId = userSettings.activeStageId,
+                                alreadyBeatenLine = requirement?.let {
+                                    alreadyBeatenLine(
+                                        requirement = it,
+                                        best = bestInHistory,
+                                        today = LocalDate.now(),
+                                        zone = ZoneId.systemDefault()
+                                    )
+                                },
                                 onActivatePlan = { planId, stageId ->
                                     scope.launch {
                                         settingsRepository.setActivePlan(planId, stageId)

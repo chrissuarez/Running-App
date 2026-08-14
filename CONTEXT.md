@@ -36,7 +36,10 @@ judgement, such as "4 weeks of consistent Zone 2 training", the coach decides
 A requirement written in numbers is answered by any finished Run that is not a
 Walk, whichever kind of session it was — an Open Run included, because a time is
 a time wherever it turned up. Granted forwards only, never from a pass over
-history, and never taken back (#290).
+history, and never taken back (#290). Where history already holds a Run that
+would clear the bar, the Stage card names it and says a new one would count —
+a statement of what happened, never an offer, and nothing changes when it
+appears (#293).
 _Avoid_: graduation criteria, goal (a Goal is the runner's own distance or time
 target), unlock condition
 

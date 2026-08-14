@@ -10,6 +10,7 @@ import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.hrZoneOf
 import com.example.runningapp.run.RunMode
+import com.example.runningapp.training.HistoryBestEffort
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "sessions")
@@ -427,6 +428,31 @@ interface AchievementDao {
     /** What one Run won, for its own page. */
     @Query("SELECT * FROM achievements WHERE sessionId = :sessionId")
     fun getAchievementsForSessionFlow(sessionId: Long): Flow<List<Achievement>>
+
+    /**
+     * The best Run in history at one record, and when it was run — what the Stage card names when
+     * the runner has already beaten its bar (#293). Null where nothing has ever placed there.
+     *
+     * Asked of the record book rather than of the Runs, which is the whole of why it is safe to ask
+     * over all of history: the book holds efforts as [com.example.runningapp.analysis.bestEffortsOf]
+     * measured or was told them, so a Walk is already absent, a Run still going is already absent,
+     * and a treadmill claim is already in. Re-deriving any of that here would be a second reader of
+     * a shared measurement, keeping its own rules until the day they drift.
+     *
+     * [medal] is [Medal.GOLD] at every call site and is a parameter only so the ranking stays the
+     * book's: gold *is* the best effort, whichever direction the record is better in, so nothing
+     * here has to know that a fastest-5K is won by the smaller number.
+     */
+    @Query(
+        """
+        SELECT s.startTime AS runStartedAtMillis, a.value AS seconds
+        FROM achievements a
+        JOIN sessions s ON s.id = a.sessionId
+        WHERE a.type = :type AND a.medal = :medal
+        LIMIT 1
+        """
+    )
+    fun getStandingBestFlow(type: RecordType, medal: Medal): Flow<HistoryBestEffort?>
 
     /**
      * How many medals each Run holds, counted in the database rather than by reading the book out

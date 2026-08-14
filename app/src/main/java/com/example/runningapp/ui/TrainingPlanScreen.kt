@@ -41,6 +41,13 @@ import com.example.runningapp.TrainingPlanProvider
 fun TrainingPlanScreen(
     activePlanId: String?,
     activeStageId: String?,
+    /**
+     * What the active Stage says about a bar the runner has already beaten in history (#293), or
+     * null when they have not — see [com.example.runningapp.training.alreadyBeatenLine]. Shown on
+     * the active Stage alone: a locked Stage's bar is not one the runner is being asked to clear
+     * yet, and a Stage already past is not one they are staring at wondering why it did not count.
+     */
+    alreadyBeatenLine: String?,
     onActivatePlan: (planId: String, stageId: String) -> Unit,
     onBack: () -> Unit
 ) {
@@ -96,9 +103,11 @@ fun TrainingPlanScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
                     plan.stages.forEach { stage ->
+                        val isActiveStage = stage.id == selectedStageId
                         StageCard(
                             stage = stage,
-                            isActive = stage.id == selectedStageId
+                            isActive = isActiveStage,
+                            alreadyBeatenLine = alreadyBeatenLine.takeIf { isActiveStage }
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                     }
@@ -115,7 +124,8 @@ fun TrainingPlanScreen(
 @Composable
 private fun StageCard(
     stage: PlanStage,
-    isActive: Boolean
+    isActive: Boolean,
+    alreadyBeatenLine: String?
 ) {
     val cardColor = when {
         isActive -> MaterialTheme.colorScheme.primaryContainer
@@ -194,6 +204,18 @@ private fun StageCard(
                         text = stage.graduationRequirementText,
                         style = MaterialTheme.typography.bodySmall
                     )
+                    // Directly under the bar it is about, because it is a remark on that sentence
+                    // and not a second thing the Stage asks for. It states a fact and offers
+                    // nothing (#293), so it is text and never a control: there is nothing here to
+                    // tap, because there is nothing here the app is about to grant.
+                    if (alreadyBeatenLine != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = alreadyBeatenLine,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                 }
             }
         }
