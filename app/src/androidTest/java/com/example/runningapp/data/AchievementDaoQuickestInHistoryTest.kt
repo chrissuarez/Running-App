@@ -22,7 +22,7 @@ import org.junit.runner.RunWith
  * a row whose Run was deleted years ago.
  */
 @RunWith(AndroidJUnit4::class)
-class AchievementDaoStandingBestTest {
+class AchievementDaoQuickestInHistoryTest {
     private lateinit var database: AppDatabase
     private lateinit var sessionDao: SessionDao
     private lateinit var achievementDao: AchievementDao
@@ -41,7 +41,7 @@ class AchievementDaoStandingBestTest {
     }
 
     @Test
-    fun getStandingBestFlow_answersWithTheGoldAndTheDayItWasRun() {
+    fun getQuickestInHistoryFlow_answersWithTheQuickestAndTheDayItWasRun() {
         runBlocking {
             val fast = sessionDao.insertSession(runStartedAt(1_781_434_800_000L))
             val slower = sessionDao.insertSession(runStartedAt(1_700_000_000_000L))
@@ -52,7 +52,7 @@ class AchievementDaoStandingBestTest {
                 )
             )
 
-            val best = achievementDao.getStandingBestFlow(RecordType.FASTEST_5K, Medal.GOLD).first()
+            val best = achievementDao.getQuickestInHistoryFlow(RecordType.FASTEST_5K).first()
 
             assertEquals(1_661.0, best?.seconds)
             assertEquals(1_781_434_800_000L, best?.runStartedAtMillis)
@@ -60,7 +60,7 @@ class AchievementDaoStandingBestTest {
     }
 
     @Test
-    fun getStandingBestFlow_saysNothingAboutADistanceNothingHasPlacedAt() {
+    fun getQuickestInHistoryFlow_saysNothingAboutADistanceNothingHasPlacedAt() {
         runBlocking {
             val run = sessionDao.insertSession(runStartedAt(1_781_434_800_000L))
             achievementDao.insertAchievements(
@@ -69,7 +69,7 @@ class AchievementDaoStandingBestTest {
                 )
             )
 
-            assertNull(achievementDao.getStandingBestFlow(RecordType.FASTEST_5K, Medal.GOLD).first())
+            assertNull(achievementDao.getQuickestInHistoryFlow(RecordType.FASTEST_5K).first())
         }
     }
 

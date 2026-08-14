@@ -41,7 +41,19 @@ data class BestEffortRequirement(
      * get wrong at the call site.
      */
     val withinSeconds: Int
-)
+) {
+    init {
+        // A time at a set distance, and only that. The two records asked how *much* was done rather
+        // than how quickly are measured in metres and in the Run's own clock, and a bar of
+        // "1799 seconds" against either would be comparing a time to something that is not one —
+        // silently, and in a rule that grants a promotion. A duration requirement or a distance one
+        // is a new kind of requirement with its own comparison, not this one with a different enum
+        // (ADR 0016).
+        require(record.distanceMeters != null) {
+            "A Best Effort requirement is a time at a set distance; ${record.name} is not one"
+        }
+    }
+}
 
 data class PlanStage(
     val id: String,

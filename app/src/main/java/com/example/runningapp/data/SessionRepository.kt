@@ -36,7 +36,6 @@ import com.example.runningapp.training.wasRunFarEnough
 import com.example.runningapp.training.progressCurve
 import com.example.runningapp.training.weeklyVolumeOf
 import com.example.runningapp.analysis.BestEffort
-import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.analysis.RouteThumbnail
 import com.example.runningapp.analysis.routeThumbnailOf
@@ -761,11 +760,19 @@ class SessionRepository(
      *
      * Null [requirement] is a Stage whose requirement is a judgement — stage 1's "4 weeks of
      * consistent Zone 2 training" — which has no bar to have been beaten and so says nothing.
+     *
+     * Silent under testing mode, which is the one state where "run one now and it counts" is not
+     * true: [graduateOnBestEffortRequirement] refuses to grant while it is on, and a card promising
+     * a graduation the rule will decline is worse than a card that says nothing.
      */
     fun bestInHistoryFlow(requirement: BestEffortRequirement?): Flow<HistoryBestEffort?> {
-        val dao = achievementDao ?: return flowOf(null)
         if (requirement == null) return flowOf(null)
-        return dao.getStandingBestFlow(requirement.record, Medal.GOLD)
+        val dao = achievementDao ?: return flowOf(null)
+        val settings = settingsRepository?.userSettingsFlow ?: return flowOf(null)
+        return combine(
+            dao.getQuickestInHistoryFlow(requirement.record),
+            settings,
+        ) { best, userSettings -> best.takeUnless { userSettings.testingModeEnabled } }
     }
 
     /**
@@ -2626,7 +2633,6 @@ class SessionRepository(
         val gap = (seconds - requirement.withinSeconds).coerceAtLeast(0.0)
         return "You ran $distance in ${asClock(seconds)}. ${asClock(gap)} off the bar."
     }
-
 
     /**
      * Ask the coach about the Run just finished, and write what it says down.

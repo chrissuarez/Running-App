@@ -835,14 +835,20 @@ class MainActivity : ComponentActivity() {
                             )
                         }
                         composable(Routes.TRAINING_PLAN) {
-                            // The bar the active Stage asks for, and the best the runner has ever
-                            // been at that distance (#293). Read straight off the record book, so
-                            // it re-answers itself when a Run is deleted, marked a Walk or told
-                            // what the treadmill console said.
-                            val requirement = TrainingPlanProvider.resolveActiveStage(
+                            // Which Stage the runner is actually in, asked of the one place that
+                            // walk is made. The screen marks a card ACTIVE by this id and the line
+                            // below is about that same Stage, so both have to be the same answer:
+                            // resolving it twice is two fallbacks that agree until one of them
+                            // changes.
+                            val activeStage = TrainingPlanProvider.resolveActiveStage(
                                 userSettings.activePlanId,
                                 userSettings.activeStageId
-                            )?.bestEffortRequirement
+                            )
+                            // The bar that Stage asks for, and the best the runner has ever been at
+                            // that distance (#293). Read straight off the record book, so it
+                            // re-answers itself when a Run is deleted, marked a Walk or told what
+                            // the treadmill console said.
+                            val requirement = activeStage?.bestEffortRequirement
                             val bestInHistory by produceState<HistoryBestEffort?>(
                                 initialValue = null,
                                 sessionRepository,
@@ -853,7 +859,13 @@ class MainActivity : ComponentActivity() {
                             }
                             TrainingPlanScreen(
                                 activePlanId = userSettings.activePlanId,
-                                activeStageId = userSettings.activeStageId,
+                                activeStageId = activeStage?.id,
+                                // The day is read here rather than waited for the way the Test-due
+                                // prompt waits for it (#292): nothing about this line falls due or
+                                // is held, and the only thing today's date decides is whether the
+                                // Run's year is printed alongside its day. A screen left open
+                                // across New Year re-reads it the next time it is opened, which is
+                                // the whole of what is owed.
                                 alreadyBeatenLine = requirement?.let {
                                     alreadyBeatenLine(
                                         requirement = it,
