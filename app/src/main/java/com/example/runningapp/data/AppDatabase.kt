@@ -633,9 +633,15 @@ interface SessionDao {
     suspend fun getMostRecentFinalizedSession(): RunnerSession?
 
     /**
-     * When the runner last completed [workoutId] — the Stage's Test — or null if they never have
-     * (#292). The date the three-week prompt counts from, derived off history rather than stored
-     * (ADR 0001).
+     * When the runner last completed any of [workoutIds] — the plan's Tests — or null if they never
+     * have (#292). The date the three-week prompt counts from, derived off history rather than
+     * stored (ADR 0001).
+     *
+     * Every Test of the plan and not only the Stage's own, because a Test is a 5 km run flat out
+     * whichever Stage's Workout it was, and the runner who has just been graduated by one has
+     * plainly tested today. Asked of the Stage's Workout alone, a graduation would silence the last
+     * Test along with the Stage that offered it and the new Stage would ask for another the same
+     * afternoon — which is the "test too often and the number measures noise" this exists to stop.
      *
      * The Run's *start*, because that is what places a Run on a calendar day everywhere else the
      * app counts days.
@@ -657,10 +663,10 @@ interface SessionDao {
         WHERE endTime > 0
           AND durationSeconds > 120
           AND isWalk = 0
-          AND ranUnderWorkoutId = :workoutId
+          AND ranUnderWorkoutId IN (:workoutIds)
         """
     )
-    fun getLastCompletedRunStartOfWorkout(workoutId: String): Flow<Long?>
+    fun getLastCompletedRunStartOfWorkouts(workoutIds: List<String>): Flow<Long?>
 
     /**
      * The biggest single session of the last 30 days, which the coach's prescription is held under.

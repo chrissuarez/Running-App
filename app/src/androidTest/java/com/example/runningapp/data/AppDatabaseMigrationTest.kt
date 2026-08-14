@@ -728,7 +728,7 @@ class AppDatabaseMigrationTest {
             .build()
         val run = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val lastTest = runBlockingGet {
-            migratedDb.sessionDao().getLastCompletedRunStartOfWorkout("w3_s2").first()
+            migratedDb.sessionDao().getLastCompletedRunStartOfWorkouts(listOf("w2_s3", "w3_s2")).first()
         }
         migratedDb.close()
 

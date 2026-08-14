@@ -45,7 +45,7 @@ class TodayCardModelsTest {
         nowEpochMillis: Long = now,
         runMode: String = "outdoor",
         skippedToday: Boolean = false,
-        fiveKTestDue: Boolean = false
+        testDue: Boolean = false
     ) = todayCardUiState(
         stageTitle,
         stageWorkouts,
@@ -55,7 +55,7 @@ class TodayCardModelsTest {
         nowEpochMillis,
         runMode,
         skippedToday,
-        fiveKTestDue
+        testDue
     )
 
     @Test
@@ -418,20 +418,20 @@ class TodayCardModelsTest {
 
     @Test
     fun `a due test is offered on the card`() {
-        val state = card(stageWorkouts = stageWithATest, fiveKTestDue = true)
+        val state = card(stageWorkouts = stageWithATest, testDue = true)
 
-        assertEquals("A 5K test is due. Pick it below whenever you fancy it.", state.testDueLine)
+        assertEquals("Your 5K Test is due. Pick it below whenever you fancy it.", state.testDueLine)
     }
 
     @Test
     fun `nothing is said while the test is not due`() {
-        assertNull(card(stageWorkouts = stageWithATest, fiveKTestDue = false).testDueLine)
+        assertNull(card(stageWorkouts = stageWithATest, testDue = false).testDueLine)
     }
 
     @Test
     fun `a stage with no test never says one is due`() {
         // Nothing else can make the flag true, but the card is not the place that rule is kept.
-        assertNull(card(fiveKTestDue = true).testDueLine)
+        assertNull(card(testDue = true).testDueLine)
     }
 
     @Test
@@ -441,7 +441,7 @@ class TodayCardModelsTest {
         val state = card(
             stageWorkouts = stageWithATest,
             pickedWorkoutId = fiveKTest.id,
-            fiveKTestDue = true
+            testDue = true
         )
 
         assertEquals("5K Test", state.title)
@@ -452,7 +452,7 @@ class TodayCardModelsTest {
     fun `a skipped day says nothing about the test`() {
         // The open-run card offers no Workout to pick the Test from, so "pick it below" would
         // point at nothing.
-        val state = card(stageWorkouts = stageWithATest, skippedToday = true, fiveKTestDue = true)
+        val state = card(stageWorkouts = stageWithATest, skippedToday = true, testDue = true)
 
         assertEquals("Open run", state.title)
         assertNull(state.testDueLine)
@@ -464,7 +464,7 @@ class TodayCardModelsTest {
             stageWorkouts = stageWithATest,
             settings = UserSettings(latestCoachMessage = "Nice work. Ten minutes more next time."),
             prescriptions = standing(RunType.LONG to prescription()),
-            fiveKTestDue = true
+            testDue = true
         )
 
         assertNotNull(state.testDueLine)

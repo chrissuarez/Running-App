@@ -36,9 +36,9 @@ data class TodayCardUiState(
      */
     val instructionLine: String?,
     /**
-     * "A 5K test is due" — the prompt at three weeks, held until the runner is fresh (#292). Null
-     * whenever there is nothing to say: no Test in the Stage, not due yet, Form below −10, or the
-     * Test is already today's Pick, in which case the card is the prompt.
+     * "Your 5K Test is due" — the prompt at three weeks, held until the runner is fresh (#292).
+     * Null whenever there is nothing to say: no Test in the Stage, not due yet, Form below −10, or
+     * the Test is already today's Pick, in which case the card is the prompt.
      */
     val testDueLine: String?,
     /** Named change and why, when the coach edited today's numbers. Null when it didn't. */
@@ -110,10 +110,10 @@ fun todayCardUiState(
     skippedToday: Boolean,
     /**
      * Whether the Stage's Test is due — three weeks since the last one and Form above −10 (#292),
-     * worked out where history and the curves are ([com.example.runningapp.training.fiveKTestIsDue])
-     * and handed here. False whenever the Stage has no Test to be due.
+     * worked out where history and the curves are ([com.example.runningapp.training.testIsDue])
+     * and handed here. False whenever the plan has no Test to be due.
      */
-    fiveKTestDue: Boolean = false
+    testDue: Boolean = false
 ): TodayCardUiState {
     val picked = stageWorkouts.pickedOrFirst(pickedWorkoutId)
     val planned = picked?.withCoachPrescription(prescriptions, nowEpochMillis)
@@ -155,8 +155,10 @@ fun todayCardUiState(
         instructionLine = picked.instruction?.takeIf { it.isNotBlank() },
         // Silent once the Test *is* today's Run: the card is then the whole prompt, and a line
         // telling the runner to pick what they have already picked reads as a second, unmet ask.
-        testDueLine = TEST_DUE_LINE.takeIf {
-            fiveKTestDue && !picked.isTest && stageWorkouts.any { workout -> workout.isTest }
+        testDueLine = if (testDue && !picked.isTest) {
+            stageWorkouts.firstOrNull { it.isTest }?.let(::testDueLine)
+        } else {
+            null
         },
         coachNote = coachNote(picked, planned, settings),
         link = TodayCardLink(TodayCardLinkKind.SKIP, "Skip today"),
@@ -179,11 +181,16 @@ fun todayCardUiState(
 /**
  * What the card says when a Test is due (#292).
  *
- * A statement and an offer, in that order, and no more than that: it names the fact — it has been
- * three weeks — and points at the row that runs it. It carries no urgency and no deadline, because
- * the Test is a Workout on a menu and picking something else today is not a failure.
+ * A statement and an offer, in that order, and no more than that: it names the Test the Stage
+ * actually offers and points at the row that runs it. It carries no urgency and no deadline,
+ * because the Test is a Workout on a menu and picking something else today is not a failure.
+ *
+ * The Workout's own title rather than the words "5K test": the Stage names its Test — "5K Test",
+ * "5K Peak Test" — and a card naming it something else would be the one place in the app calling
+ * the same Workout by two names.
  */
-private const val TEST_DUE_LINE = "A 5K test is due. Pick it below whenever you fancy it."
+private fun testDueLine(test: WorkoutTemplate): String =
+    "Your ${test.title} is due. Pick it below whenever you fancy it."
 
 private fun runTypeLabel(runType: RunType): String = when (runType) {
     RunType.LONG -> "Long"

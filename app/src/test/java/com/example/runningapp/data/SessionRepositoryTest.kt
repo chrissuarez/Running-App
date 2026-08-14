@@ -2681,31 +2681,47 @@ class SessionRepositoryTest {
     private fun daysAgo(daysAgo: Long): Long =
         System.currentTimeMillis() - daysAgo * ONE_DAY_MILLIS
 
+    /** Both Tests of the 5K plan, which is what history is asked about. */
+    private val planTests = listOf("w2_s3", "w3_s2")
+
     private fun dueFlow(
         lastTestStart: Long?,
         scored: List<ScoredRunProjection> = emptyList(),
-        testWorkoutId: String? = "w3_s2",
     ): SessionRepository {
-        whenever(mockDao.getLastCompletedRunStartOfWorkout(any())).thenReturn(flowOf(lastTestStart))
+        whenever(mockDao.getLastCompletedRunStartOfWorkouts(any())).thenReturn(flowOf(lastTestStart))
         whenever(mockDao.getScoredRunsFlow()).thenReturn(flowOf(scored))
         return repository
     }
 
     @Test
-    fun `a Stage offering no Test never asks history anything`() = runTest {
-        assertFalse(repository.fiveKTestDueFlow(testWorkoutId = null).first())
-        verify(mockDao, never()).getLastCompletedRunStartOfWorkout(any())
+    fun `a plan offering no Test never asks history anything`() = runTest {
+        assertFalse(repository.testDueFlow(planTestWorkoutIds = emptyList()).first())
+        verify(mockDao, never()).getLastCompletedRunStartOfWorkouts(any())
     }
 
     @Test
     fun `a Test never run is due`() = runTest {
-        assertTrue(dueFlow(lastTestStart = null).fiveKTestDueFlow("w3_s2").first())
+        assertTrue(dueFlow(lastTestStart = null).testDueFlow(planTests).first())
     }
 
     @Test
     fun `a Test three weeks old is due and a fortnight-old one is not`() = runTest {
-        assertTrue(dueFlow(lastTestStart = daysAgo(22)).fiveKTestDueFlow("w3_s2").first())
-        assertFalse(dueFlow(lastTestStart = daysAgo(14)).fiveKTestDueFlow("w3_s2").first())
+        assertTrue(dueFlow(lastTestStart = daysAgo(22)).testDueFlow(planTests).first())
+        assertFalse(dueFlow(lastTestStart = daysAgo(14)).testDueFlow(planTests).first())
+    }
+
+    @Test
+    fun `the Test that graduated a Stage still counts as the last one`() = runTest {
+        // The Stage the runner has just left offered the Test they ran to leave it, and the Stage
+        // they land in offers a different one. Asked of the new Stage's Workout alone, history
+        // would hold nothing and the card would ask for another Test the same afternoon.
+        val repo = dueFlow(lastTestStart = daysAgo(1))
+
+        assertFalse(repo.testDueFlow(planTests).first())
+        argumentCaptor<List<String>>().apply {
+            verify(mockDao).getLastCompletedRunStartOfWorkouts(capture())
+            assertEquals(planTests, firstValue)
+        }
     }
 
     @Test
@@ -2718,7 +2734,7 @@ class SessionRepositoryTest {
 
         val repo = dueFlow(lastTestStart = daysAgo(90), scored = hardWeek)
 
-        assertFalse(repo.fiveKTestDueFlow("w3_s2").first())
+        assertFalse(repo.testDueFlow(planTests).first())
     }
 
     // --- A failed Test states the gap and changes nothing else (#292) --------------------------

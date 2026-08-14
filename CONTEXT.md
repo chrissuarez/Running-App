@@ -49,7 +49,8 @@ _Avoid_: session, plan (the Plan is the whole schedule of Workouts)
 The one Workout of a Stage that exists to answer its Requirement — a 5K run
 flat out, with no warm-up or cool-down inside it. Named by the plan and never
 inferred from its shape. Every Run writes down the Workout it followed, so when
-the runner last ran their Test is read off history and never stored (#292). The
+the runner last ran a Test is read off history and never stored — the last Test
+of any Stage, since the Test that graduated one was still a test (#292). The
 app says a Test is due three weeks after the last one, held while Form is below
 −10, and it stays pickable on any day either way — a prompt, never a gate. A
 Test that misses the bar is still a Test: it states the gap, resets the three
