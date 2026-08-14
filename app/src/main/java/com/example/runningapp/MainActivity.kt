@@ -1039,6 +1039,20 @@ fun MainScreen(
         userSettings.activeStageId
     )
     val stageWorkouts = activeStage?.workouts.orEmpty()
+    // Whether this screen is actually in front of the runner. Two things need it: the strap chase
+    // below, which may only reach for a foreground service from the foreground (#193), and the
+    // Test-due read, which has to re-ask the calendar what day it is when the runner comes back.
+    val screenLifecycle = LocalLifecycleOwner.current.lifecycle
+    var screenIsResumed by remember(screenLifecycle) {
+        mutableStateOf(screenLifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
+    DisposableEffect(screenLifecycle) {
+        val observer = LifecycleEventObserver { _, _ ->
+            screenIsResumed = screenLifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+        }
+        screenLifecycle.addObserver(observer)
+        onDispose { screenLifecycle.removeObserver(observer) }
+    }
     // Whether the Test is due (#292). Asked of every Test the plan holds, so a Test run under the
     // Stage the runner has just been graduated out of still counts as the last one — and asked at
     // all only where the Stage in front of them offers a Test to pick. False until the first read
@@ -1048,9 +1062,21 @@ fun MainScreen(
     } else {
         TrainingPlanProvider.getPlanById(userSettings.activePlanId.orEmpty())?.testWorkoutIds.orEmpty()
     }
-    val testDue by remember(sessionRepository, planTestWorkoutIds) {
-        sessionRepository.testDueFlow(planTestWorkoutIds)
-    }.collectAsState(initial = false)
+    // Collected only while the screen is in front of the runner, and restarted each time it comes
+    // back (Codex P2). The rule's answer depends on the calendar day, and the day cannot be waited
+    // for from inside a coroutine: `delay` on the main dispatcher counts uptime and stops counting
+    // in deep sleep, so a phone asleep from Friday night to Monday wakes with hours still to run on
+    // a sleep that should have ended at midnight. Resuming re-reads the day directly, which is the
+    // one reading that cannot be late.
+    //
+    // Held in a var across the restart rather than re-collected into a fresh state, so the answer
+    // already on screen stays there while the new read comes back: a prompt that flickers in is
+    // better than one that flickers out.
+    var testDue by remember(sessionRepository, planTestWorkoutIds) { mutableStateOf(false) }
+    LaunchedEffect(sessionRepository, planTestWorkoutIds, screenIsResumed) {
+        if (!screenIsResumed) return@LaunchedEffect
+        sessionRepository.testDueFlow(planTestWorkoutIds).collect { testDue = it }
+    }
     // No testing-mode check: turning testing mode on erases the debrief, and the coach is refused
     // the write while it stays on, so there is nothing left to filter out on read (#113).
     val coachMessage = userSettings.latestCoachMessage?.takeIf { it.isNotBlank() }
@@ -1085,26 +1111,15 @@ fun MainScreen(
     // ACTION_START_FOREGROUND so they serialize on the service's main thread.
     val autoConnectContext = LocalContext.current
     val activeStrapAddress = userSettings.activeDeviceAddress
-    // Whether this screen is actually in front of the runner. A foreground service may only be
-    // started from the foreground, and stopping a Run re-fires the effect below — so a Run stopped
-    // from the notification, or stopped and pocketed, reached for the strap from the background and
-    // Android killed the app for it (#193).
+    // A foreground service may only be started from the foreground, and stopping a Run re-fires the
+    // effect below — so a Run stopped from the notification, or stopped and pocketed, reached for
+    // the strap from the background and Android killed the app for it (#193). Hence screenIsResumed
+    // above.
     //
     // A key rather than a check inside the effect, because everything the effect tests is read from
     // the composition: held as a check, coming back to the screen would either never re-ask the
     // question or re-ask it against the state of whenever the effect was launched. As a key,
     // returning to the screen recomposes and the question is asked again, freshly.
-    val autoConnectLifecycle = LocalLifecycleOwner.current.lifecycle
-    var screenIsResumed by remember(autoConnectLifecycle) {
-        mutableStateOf(autoConnectLifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
-    }
-    DisposableEffect(autoConnectLifecycle) {
-        val observer = LifecycleEventObserver { _, _ ->
-            screenIsResumed = autoConnectLifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
-        }
-        autoConnectLifecycle.addObserver(observer)
-        onDispose { autoConnectLifecycle.removeObserver(observer) }
-    }
     LaunchedEffect(hrService, activeStrapAddress, isSessionActive, state.isSimulating, screenIsResumed) {
         // Checked at fire time, not as a key: without BLUETOOTH_CONNECT the service's connect
         // path dead-ends immediately, so promoting it to foreground here would strand an idle
