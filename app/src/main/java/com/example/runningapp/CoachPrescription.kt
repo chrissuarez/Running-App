@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -122,6 +123,70 @@ private fun coachDebriefKey(generation: CoachWorkGeneration) = when (generation)
     CoachWorkGeneration.STANDING -> PreferencesKeys.LATEST_COACH_MESSAGE
     CoachWorkGeneration.PREVIOUS -> PreferencesKeys.PREVIOUS_COACH_MESSAGE
 }
+
+/**
+ * Who wrote the debrief that is standing (#296).
+ *
+ * One slot holds the text the runner reads after a Run, and two different writers put things in it:
+ * the coach, whose words came back from Gemini, and the app itself, which writes a graduation, a
+ * Plan finished, or a Test missed in its own words because a requirement written in numbers is not
+ * the coach's to judge ([ADR 0016](docs/adr/0016-a-requirement-stated-in-numbers-is-not-the-coachs-to-judge.md)).
+ * Without a name on it the screen has to guess, and it guessed "AI Coach Debrief" over every one of
+ * them — handing back, in the one place the runner actually looks, the attribution the design took
+ * away. A runner with AI sharing switched off was being congratulated by a coach they never turned
+ * on.
+ *
+ * Stamped where the message is written, never worked out afterwards from what the text looks like.
+ */
+enum class DebriefAuthor(internal val stored: String) {
+    /** Gemini's words, sent the Runs the runner consented to share. */
+    COACH("coach"),
+
+    /** The app's own words, written offline and with no Gemini key. */
+    APP("app");
+
+    internal companion object {
+        /**
+         * Absent is [COACH]: every debrief stored before this stamp existed came from the coach —
+         * the app's own writes (#290, #292, #294) all shipped after it. Unreadable is [COACH] too,
+         * for the same reason a corrupt provenance id does not take coaching away: a value this app
+         * never wrote must not be what decides the heading.
+         */
+        fun of(stored: String?): DebriefAuthor = entries.firstOrNull { it.stored == stored } ?: COACH
+    }
+}
+
+/**
+ * The name on one generation's debrief, which travels with it (#296).
+ *
+ * Prefixed like every other generation-scoped key, so promoting the previous generation brings the
+ * name back along with the text it belongs to — see [copyCoachWork].
+ */
+private fun coachDebriefAuthorKey(generation: CoachWorkGeneration) =
+    stringPreferencesKey("${generation.keyPrefix}debrief_author")
+
+/**
+ * The standing debrief and the name of whoever wrote it, put down together (#296).
+ *
+ * Together because a stamp that can be written without its text — or left behind when the text is
+ * replaced — is a heading over somebody else's words, which is the whole of this bug. Every writer
+ * of the standing slot goes through here, the coach's included ([writeCoachWork]), so the stamp is
+ * always overwritten rather than inherited from whatever stood before.
+ */
+internal fun MutablePreferences.writeStandingDebrief(message: String, author: DebriefAuthor) {
+    this[coachDebriefKey(CoachWorkGeneration.STANDING)] = message
+    this[coachDebriefAuthorKey(CoachWorkGeneration.STANDING)] = author.stored
+}
+
+/** The standing debrief gone, its name with it — a stamp cannot outlive the text it names. */
+internal fun MutablePreferences.removeStandingDebrief() {
+    remove(coachDebriefKey(CoachWorkGeneration.STANDING))
+    remove(coachDebriefAuthorKey(CoachWorkGeneration.STANDING))
+}
+
+/** Who wrote the standing debrief, as the card asks it (#296). */
+internal fun debriefAuthorOf(preferences: Preferences): DebriefAuthor =
+    DebriefAuthor.of(preferences[coachDebriefAuthorKey(CoachWorkGeneration.STANDING)])
 
 /**
  * One Run Type's five keys in one generation, spelled from the type itself so a slot cannot be added
@@ -271,7 +336,10 @@ internal fun MutablePreferences.writeCoachWork(
 ) {
     copyCoachWork(from = CoachWorkGeneration.STANDING, to = CoachWorkGeneration.PREVIOUS)
     writeCoachPrescription(runType, prescription)
-    this[coachDebriefKey(CoachWorkGeneration.STANDING)] = debrief
+    // Stamped [DebriefAuthor.COACH] rather than left alone, because what stood before may have been
+    // the app's (#296): a graduation or a missed Test writes into this same slot, and a stamp that
+    // is only ever written by one of the two writers is a stale name over the other's words.
+    writeStandingDebrief(debrief, DebriefAuthor.COACH)
     this[coachSourceRunsKey(CoachWorkGeneration.STANDING)] =
         sourceRunIds.map { it.toString() }.toSet()
 }
@@ -367,6 +435,10 @@ private fun MutablePreferences.copyCoachWork(from: CoachWorkGeneration, to: Coac
     }
     copyKey(coachSourceRunsKey(from), coachSourceRunsKey(to))
     copyKey(coachDebriefKey(from), coachDebriefKey(to))
+    // The name travels with the text (#296). Promoted without it, the app's own graduation comes
+    // back up under the coach's heading — and an install that never stamped one keeps the absence,
+    // which reads as the coach and is right for every debrief written before the stamp existed.
+    copyKey(coachDebriefAuthorKey(from), coachDebriefAuthorKey(to))
 }
 
 /**
@@ -387,6 +459,7 @@ private fun MutablePreferences.removeCoachWork(generation: CoachWorkGeneration) 
     RunType.entries.flatMap { CoachPrescriptionKeys.of(it, generation).all }
         .plus(coachSourceRunsKey(generation))
         .plus(coachDebriefKey(generation))
+        .plus(coachDebriefAuthorKey(generation))
         .forEach { remove(it) }
 }
 

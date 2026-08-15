@@ -7,6 +7,7 @@ import com.example.runningapp.CoachPrescription
 import com.example.runningapp.CoachPrescriptions
 import com.example.runningapp.CoachPrescriptionRepository
 import com.example.runningapp.CoachWriteScope
+import com.example.runningapp.DebriefAuthor
 import com.example.runningapp.PreferencesKeys
 import com.example.runningapp.coachWriteAllowed
 import com.example.runningapp.HrProfile
@@ -2390,7 +2391,7 @@ class SessionRepositoryTest {
         verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
         verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
         // The debrief is about the run just finished, so it survives the graduation.
-        verify(mockSettingsRepo).setLatestCoachMessage("Stage complete.", activeScope)
+        verify(mockSettingsRepo).setLatestDebrief("Stage complete.", DebriefAuthor.COACH, activeScope)
     }
 
     // --- A requirement stated in numbers is answered by the app (#290, ADR 0016) ---------------
@@ -2456,8 +2457,11 @@ class SessionRepositoryTest {
             CoachWriteScope("5k_sub_25", "sub_30_bridge")
         )
         // 27:12, and the runner is told what they ran rather than what the bar was.
-        verify(mockSettingsRepo).setLatestCoachMessage(
+        verify(mockSettingsRepo).setLatestDebrief(
             "You ran 5 km in 27:12. Stage 2: Sub-30 Bridge complete. Next up: Stage 3: Sub-25 Peak.",
+            // Stamped as the app's, because the app wrote it: the card must not head these words
+            // with the coach's name (#296).
+            DebriefAuthor.APP,
             CoachWriteScope("5k_sub_25", "sub_30_bridge")
         )
         // And the coach is never asked, because by the time it looks the Stage has moved.
@@ -2563,7 +2567,7 @@ class SessionRepositoryTest {
         repo.settleStageAfterRun("sub_30_bridge", runType = null, finalizedRun = run)
 
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -2709,7 +2713,7 @@ class SessionRepositoryTest {
         // The Prescription stands, and the debrief slot is written by the completion itself rather
         // than by a second write that could land without it.
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -2740,7 +2744,7 @@ class SessionRepositoryTest {
         repo.settleStageAfterRun("sub_25_peak", runType = null, finalizedRun = run, zone = london)
 
         verify(mockSettingsRepo, never()).completePlan(any(), any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -3041,7 +3045,7 @@ class SessionRepositoryTest {
         // Forwards only (ADR 0016): the card says the bar was beaten and the app grants nothing on
         // the strength of it — no Stage advanced, no message written, nothing.
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -3118,8 +3122,9 @@ class SessionRepositoryTest {
 
         repo.settleStageAfterRun("sub_25_peak", RunType.QUALITY, run)
 
-        verify(mockSettingsRepo).setLatestCoachMessage(
+        verify(mockSettingsRepo).setLatestDebrief(
             "You ran 5 km in 27:41. 2:42 off the bar.",
+            DebriefAuthor.APP,
             CoachWriteScope("5k_sub_25", "sub_25_peak")
         )
         // It reaches into nothing else: no graduation, and the coach is never asked about a
@@ -3147,7 +3152,7 @@ class SessionRepositoryTest {
 
         repo.settleStageAfterRun("sub_25_peak", runType = null, finalizedRun = run)
 
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -3198,7 +3203,7 @@ class SessionRepositoryTest {
 
         repo.settleStageAfterRun("sub_25_peak", RunType.QUALITY, run)
 
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -3259,7 +3264,7 @@ class SessionRepositoryTest {
         repo.stateBestEffort(42L, RecordType.FASTEST_MILE, seconds = 500)
 
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -3308,7 +3313,7 @@ class SessionRepositoryTest {
             any(),
             eq(CoachWriteScope("5k_sub_25", "base_builder"))
         )
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -3354,7 +3359,7 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -3402,7 +3407,7 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -3456,7 +3461,7 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -3512,7 +3517,12 @@ class SessionRepositoryTest {
 
         val activeScope = CoachWriteScope("5k_sub_25", "base_builder")
         verify(mockSettingsRepo).advanceStageAndClearPrescriptions("sub_30_bridge", activeScope)
-        verify(mockSettingsRepo).setLatestCoachMessage("Four consistent weeks. Stage complete.", activeScope)
+        verify(mockSettingsRepo).setLatestDebrief(
+            "Four consistent weeks. Stage complete.",
+            // The coach's own words about a requirement that is a judgement — its name goes on it.
+            DebriefAuthor.COACH,
+            activeScope
+        )
     }
 
     @Test
@@ -3565,7 +3575,7 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -3618,7 +3628,7 @@ class SessionRepositoryTest {
             any(),
             eq(CoachWriteScope("5k_sub_25", "base_builder"))
         )
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -3664,7 +3674,7 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -3713,7 +3723,7 @@ class SessionRepositoryTest {
         repo.evaluateAndAdjustPlan("base_builder", RunType.LONG)
 
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -3782,7 +3792,7 @@ class SessionRepositoryTest {
         // The message goes with it: "you have finished this stage" is not true if the Run that
         // finished it has gone, and left behind it would stand about a Stage the runner is still in
         // with nothing under it and nothing to take it back.
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
         // Nor is the graduation quietly downgraded to a Prescription: the whole evaluation is
         // refused, not the graduation alone.
         verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
@@ -3810,7 +3820,7 @@ class SessionRepositoryTest {
             aiCoachClient = mockCoach
         )
         mockSettingsRepo.stub {
-            onBlocking { setLatestCoachMessage(any(), any()) }.doSuspendableAnswer { order += "message" }
+            onBlocking { setLatestDebrief(any(), any(), any()) }.doSuspendableAnswer { order += "message" }
             onBlocking { advanceStageAndClearPrescriptions(anyOrNull(), any()) }
                 .doSuspendableAnswer { order += "advance" }
         }
@@ -3999,7 +4009,7 @@ class SessionRepositoryTest {
         verify(mockCoach, never()).evaluateProgress(any())
         verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
         verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -4024,7 +4034,7 @@ class SessionRepositoryTest {
         verify(mockCoach, never()).evaluateProgress(any())
         verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
         verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -4048,7 +4058,7 @@ class SessionRepositoryTest {
         verify(mockCoach, never()).evaluateProgress(any())
         verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
         verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -4070,7 +4080,7 @@ class SessionRepositoryTest {
         verify(mockCoach, never()).evaluateProgress(any())
         verify(mockPrescriptions, never()).prescribe(any(), any(), any(), any(), any())
         verify(mockPrescriptions, never()).amendStanding(any(), any(), any())
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
     }
 
     @Test
@@ -4127,7 +4137,7 @@ class SessionRepositoryTest {
         assertEquals(3, prescribed.firstValue.targetZone)
         // The debrief travels with the numbers it explains, in the one write (#156) — so the
         // settings door is not the one it goes through on an ordinary evaluation.
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(anyOrNull(), any())
         verify(mockSettingsRepo, never()).setCoachingEnabled(any())
         verify(mockSettingsRepo, never()).setTargetZone(any())
@@ -4517,7 +4527,7 @@ class SessionRepositoryTest {
         assertEquals(3, held.firstValue.targetZone)
         assertEquals(standing.prescribedAtEpochMillis, held.firstValue.prescribedAtEpochMillis)
         // Nothing was learned about the runner, so nothing is said about them.
-        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(anyOrNull(), any())
     }
 

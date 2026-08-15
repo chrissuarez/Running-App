@@ -98,6 +98,7 @@ import com.example.runningapp.ui.workout.TimelineSegmentType
 import com.example.runningapp.ui.workout.TodayCardWorkout
 import com.example.runningapp.ui.workout.TodayCardLinkKind
 import com.example.runningapp.ui.workout.TodayCardUiState
+import com.example.runningapp.ui.workout.debriefHeading
 import com.example.runningapp.ui.workout.todayCardUiState
 import com.example.runningapp.ui.workout.mapWorkoutPlayerUiState
 import com.example.runningapp.ui.workout.zoneBandColor
@@ -1123,7 +1124,7 @@ fun MainScreen(
     }
     // No testing-mode check: turning testing mode on erases the debrief, and the coach is refused
     // the write while it stays on, so there is nothing left to filter out on read (#113).
-    val coachMessage = userSettings.latestCoachMessage?.takeIf { it.isNotBlank() }
+    val debrief = userSettings.latestDebrief?.takeIf { it.isNotBlank() }
     // The card resolves today's workout itself (adaptation included) so the screen and the run
     // read the same numbers — see withCoachPrescription (#111).
     val todayCard = todayCardUiState(
@@ -1285,7 +1286,7 @@ fun MainScreen(
                     // note, as this used to, left the numbers changed and the reasoning nowhere.
                     // The two no longer duplicate each other: one line of what changed on the
                     // card, the whole argument here.
-                    if (coachMessage != null) {
+                    if (debrief != null) {
                         item {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1293,13 +1294,13 @@ fun MainScreen(
                             ) {
                                 Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
                                     Text(
-                                        text = "AI Coach Debrief",
+                                        text = debriefHeading(userSettings.latestDebriefAuthor),
                                         style = MaterialTheme.typography.titleSmall,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = coachMessage,
+                                        text = debrief,
                                         style = MaterialTheme.typography.bodyMedium
                                     )
                                 }

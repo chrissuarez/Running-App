@@ -7,6 +7,7 @@ import com.example.runningapp.CoachPrescription
 import com.example.runningapp.CoachPrescriptionRepository
 import com.example.runningapp.COACH_PRESCRIPTION_MAX_AGE_DAYS
 import com.example.runningapp.CoachWriteScope
+import com.example.runningapp.DebriefAuthor
 import com.example.runningapp.isFreshAt
 import com.example.runningapp.HrZone
 import com.example.runningapp.RunType
@@ -2598,8 +2599,9 @@ class SessionRepository(
             // already reset the three weeks by being in history.
             val testWorkoutId = stage.testWorkout?.id
             if (testWorkoutId != null && run.ranUnderWorkoutId == testWorkoutId) {
-                settingsRepo.setLatestCoachMessage(
+                settingsRepo.setLatestDebrief(
                     missedTestMessage(requirement, seconds),
+                    DebriefAuthor.APP,
                     CoachWriteScope(settings.activePlanId, settings.activeStageId)
                 )
             }
@@ -2657,8 +2659,13 @@ class SessionRepository(
         // Written by the app and not by the coach. This decision is already made, and handing a
         // made decision to a model is inviting it to editorialise its way into disagreeing with a
         // fact; it also means the graduation still lands offline and with no Gemini key.
-        settingsRepo.setLatestCoachMessage(
+        //
+        // And stamped as the app's, so the screen says so too (#296): the slot is shared with the
+        // coach's debrief and the card names whoever is in it. Told it is the coach's, a runner with
+        // AI sharing switched off is congratulated by a coach they never turned on.
+        settingsRepo.setLatestDebrief(
             graduationMessage(stage.title, requirement, seconds, nextStageTitle = nextStage.title),
+            DebriefAuthor.APP,
             scope
         )
         settingsRepo.advanceStageAndClearPrescriptions(nextStage.id, scope)
@@ -2980,7 +2987,13 @@ class SessionRepository(
                     if (!theEvidenceStillStands(context.sourceRunIds, refusing = "the graduation")) {
                         return
                     }
-                    settingsRepo.setLatestCoachMessage(clampedResponse.coachMessage, scope)
+                    // The coach's own words, come back from Gemini about a Stage whose requirement
+                    // is a judgement — so the card names the coach over them (#296).
+                    settingsRepo.setLatestDebrief(
+                        clampedResponse.coachMessage,
+                        DebriefAuthor.COACH,
+                        scope
+                    )
                     settingsRepo.advanceStageAndClearPrescriptions(nextStageId, scope)
                 }
             } else {
