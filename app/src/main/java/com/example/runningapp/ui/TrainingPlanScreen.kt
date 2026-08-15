@@ -35,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.PlanStage
 import com.example.runningapp.TrainingPlanProvider
+import com.example.runningapp.lockedStageIds
 import com.example.runningapp.training.PlanCompletion
 import com.example.runningapp.training.planCompleteLine
 
@@ -116,6 +117,10 @@ fun TrainingPlanScreen(
                     val completion = planCompletion?.takeIf { it.planId == plan.id }
                     val completedStageId =
                         if (completion == null) null else plan.stages.lastOrNull()?.id
+                    // Locked-ness is the Stage's position against the one the runner is in, asked
+                    // of the same id the ACTIVE badge is decided by (#301) — so the padlock lands
+                    // ahead of the runner and never on them.
+                    val lockedStageIds = plan.lockedStageIds(selectedStageId)
                     plan.stages.forEach { stage ->
                         val isActiveStage = stage.id == selectedStageId
                         // The whole sentence, built here from the stored completion and this
@@ -131,6 +136,7 @@ fun TrainingPlanScreen(
                         StageCard(
                             stage = stage,
                             isActive = isActiveStage,
+                            isLocked = stage.id in lockedStageIds,
                             // Suppressed once the plan is complete (#293, #294). "Run one now and it
                             // counts" is an offer the rule will not honour any more — the one thing
                             // that line may never be.
@@ -154,6 +160,12 @@ fun TrainingPlanScreen(
 private fun StageCard(
     stage: PlanStage,
     isActive: Boolean,
+    /**
+     * Whether this Stage is one the runner has not reached — later in the Plan than the Stage they
+     * are in ([com.example.runningapp.lockedStageIds]). Never true of the Stage they are in, so the
+     * padlock and the ACTIVE badge can no longer both be candidates for the same card (#301).
+     */
+    isLocked: Boolean,
     alreadyBeatenLine: String?,
     /**
      * What this Stage's Requirement has become, on the Stage that finished the plan (#294): the fact
@@ -168,18 +180,19 @@ private fun StageCard(
 ) {
     val isComplete = completedLine != null
     val cardColor = when {
-        // Before the locked branch, and so is the badge below: the completed Stage is the plan's
-        // last, which is declared locked as every Stage after the first is, and a card showing a
-        // padlock over the sentence saying it is finished would be the screen contradicting itself.
+        // Still ahead of the locked branch, and so is the badge below. The runner's own Stage can no
+        // longer be locked (#301), but the plan they finished stays theirs on any reading: a card
+        // showing a padlock over the sentence saying it is finished would be the screen
+        // contradicting itself.
         isComplete || isActive -> MaterialTheme.colorScheme.primaryContainer
-        stage.isLocked -> MaterialTheme.colorScheme.surfaceVariant
+        isLocked -> MaterialTheme.colorScheme.surfaceVariant
         else -> MaterialTheme.colorScheme.surface
     }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .alpha(if (stage.isLocked && !isComplete) 0.72f else 1f),
+            .alpha(if (isLocked && !isComplete) 0.72f else 1f),
         colors = CardDefaults.cardColors(containerColor = cardColor)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -188,10 +201,16 @@ private fun StageCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Given the room and made to wrap, because at 320dp with large text the title ran
+                // straight into the padlock beside it (#301). The badge takes what it needs; the
+                // title takes the rest and folds onto a second line rather than touching it.
                 Text(
                     text = stage.title,
                     style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .padding(end = 8.dp)
                 )
 
                 when {
@@ -209,14 +228,7 @@ private fun StageCard(
                             )
                         }
                     }
-                    stage.isLocked -> {
-                        Icon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = "Locked stage",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+                    // The runner's own Stage before the padlock (#301).
                     isActive -> {
                         Surface(
                             shape = MaterialTheme.shapes.small,
@@ -230,6 +242,14 @@ private fun StageCard(
                                 fontWeight = FontWeight.Bold
                             )
                         }
+                    }
+                    isLocked -> {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = "Locked stage",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                 }
             }

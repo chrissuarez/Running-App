@@ -74,9 +74,33 @@ data class PlanStage(
      * requirement holds a judgement, which leaves it with the coach exactly as before.
      */
     val bestEffortRequirement: BestEffortRequirement? = null,
-    val isLocked: Boolean = true,
     val workouts: List<WorkoutTemplate>
 )
+
+/**
+ * Where the runner stands in this Plan: the position of the Stage [activeStageId] names, or 0 where
+ * it names none or names a Stage this Plan does not hold.
+ *
+ * The one walk, shared by the two questions that must never answer differently — which Stage the
+ * runner is in ([TrainingPlanProvider.resolveActiveStage]) and which Stages are still shut
+ * ([lockedStageIds]). A padlock on the card that says ACTIVE is exactly what #301 was.
+ */
+private fun TrainingPlan.activeStageIndex(activeStageId: String?): Int =
+    stages.indexOfFirst { it.id == activeStageId }.takeIf { it >= 0 } ?: 0
+
+/**
+ * The Stages of this Plan the runner has not reached: every Stage after the one they are in (#301).
+ *
+ * Worked out rather than declared. A Stage used to carry a static `isLocked` flag that no
+ * graduation ever cleared, so from Stage 2 onwards the screen drew a padlock and no ACTIVE badge on
+ * the Stage the runner was actually training in — and #293 puts an offer of graduation inside that
+ * same card, so the app was promising a way out of a Stage it had drawn as shut.
+ *
+ * The fallback in [activeStageIndex] is also what gives a Plan the runner has not activated the
+ * shape it should have: its first Stage open and everything past it shut.
+ */
+fun TrainingPlan.lockedStageIds(activeStageId: String?): Set<String> =
+    stages.drop(activeStageIndex(activeStageId) + 1).mapTo(mutableSetOf()) { it.id }
 
 /**
  * The Stage's Test, or null for a Stage that offers none (#292).
@@ -314,7 +338,6 @@ object TrainingPlanProvider {
                     title = "Stage 1: Base Builder",
                     description = "Focus on building aerobic capacity and consistency.",
                     graduationRequirementText = "Complete 4 weeks of consistent Zone 2 training.",
-                    isLocked = false,
                     // One Workout of each Run Type (#173) — the week lives inside the stage, and the
                     // runner picks which of the three they are doing today.
                     workouts = listOf(
@@ -366,7 +389,6 @@ object TrainingPlanProvider {
                     graduationRequirementText = "Successfully complete a 5K under 30 minutes.",
                     // 1799 rather than 1800: the prose says *under* thirty minutes (#290).
                     bestEffortRequirement = BestEffortRequirement(RecordType.FASTEST_5K, 1799),
-                    isLocked = true,
                     workouts = listOf(
                         WorkoutTemplate("w2_s1", "Pace Stabilization", 2, 600, 60, 4, runType = RunType.LONG),
                         WorkoutTemplate("w2_s2", "The 30-Minute Run", 2, 1800, 0, 1, runType = RunType.EASY),
@@ -395,7 +417,6 @@ object TrainingPlanProvider {
                     description = "Fine-tuning threshold and speed for performance.",
                     graduationRequirementText = "Run a 5K in 24:59 or faster.",
                     bestEffortRequirement = BestEffortRequirement(RecordType.FASTEST_5K, 1499),
-                    isLocked = true,
                     workouts = listOf(
                         // Both hard days, and neither is an endurance run — so this stage offers no
                         // Long run, and nothing here is a session the coach adjusts.
@@ -430,7 +451,6 @@ object TrainingPlanProvider {
                     title = "Stage 1: Desk Test Stage",
                     description = "Quick verification stage for interval state machine behavior.",
                     graduationRequirementText = "Complete 2 short run/walk repeats.",
-                    isLocked = false,
                     workouts = listOf(
                         WorkoutTemplate(
                             id = "desk_test_workout",
@@ -456,14 +476,15 @@ object TrainingPlanProvider {
      * The Stage the runner is in: the one [stageId] names, or the plan's first when it names none
      * or names one this plan does not hold. Null when no plan is attached.
      *
-     * The one place that walk is made, because the answer is not private to whoever asked. The card
+     * The one place that walk is asked for as a Stage, because the answer is not private to whoever
+     * asked — the position itself is [activeStageIndex], which the padlocks read too. The card
      * shows this Stage's title, the Run follows its Workouts, and the Run is stamped with it at
      * START (#234) — a Run stamped with a Stage other than the one it was shown and run under is
      * evidence filed against work nobody did.
      */
     fun resolveActiveStage(planId: String?, stageId: String?): PlanStage? {
         val plan = planId?.let { getPlanById(it) } ?: return null
-        return plan.stages.firstOrNull { it.id == stageId } ?: plan.stages.firstOrNull()
+        return plan.stages.getOrNull(plan.activeStageIndex(stageId))
     }
 
     /**

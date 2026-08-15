@@ -23,7 +23,10 @@ for leaving it. A runner is in exactly one Stage at a time. Every Run writes
 down the Stage it was run under, fixed when START is pressed, and a Stage's
 requirement is answered only by the Runs recorded under that Stage — so one
 Stage's work can never graduate the next, and a Run carrying no Stage answers
-nothing (#234).
+nothing (#234). A Stage later in the Plan than the one the runner is in is
+locked, and shown as such; the Stage they are in never is, and neither is one
+they have left. That is worked out from where they stand rather than declared on
+the Stage, so a graduation clears the padlock by itself (#301).
 _Avoid_: phase (a Phase is a stretch of a single Run), level, block
 
 **Stage Requirement**:

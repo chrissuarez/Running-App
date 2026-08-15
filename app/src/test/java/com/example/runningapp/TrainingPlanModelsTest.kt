@@ -19,6 +19,7 @@ class TrainingPlanModelsTest {
     private val base =
         WorkoutTemplate("w1_s2", "Aerobic Foundation", 2, 300, 60, 5, runType = RunType.LONG)
     private val now = 1_700_000_000_000L
+    private val sub25Plan = TrainingPlanProvider.getPlanById("5k_sub_25")!!
 
     // More work than [base], since a prescription asking for less applies nothing (#170).
     private fun prescription(
@@ -301,7 +302,31 @@ class TrainingPlanModelsTest {
         val stages = TrainingPlanProvider.getPlanById("5k_sub_25")!!.stages
         assertEquals(listOf("base_builder", "sub_30_bridge", "sub_25_peak"), stages.map { it.id })
         assertEquals("Complete 4 weeks of consistent Zone 2 training.", stages[0].graduationRequirementText)
-        assertEquals(listOf(false, true, true), stages.map { it.isLocked })
+    }
+
+    // --- Which Stages are locked (#301) ---------------------------------------------------------
+
+    @Test
+    fun `the stage the runner is in is never locked, and neither is one they have left`() {
+        // The whole of #301: staged into Stage 2, the padlock is on Stage 3 and nowhere else. Under
+        // the static flag it sat on Stage 2 as well — on the card the runner was training in.
+        assertEquals(setOf("sub_25_peak"), sub25Plan.lockedStageIds("sub_30_bridge"))
+        // And graduating clears it, which nothing did before, because nothing ever wrote the flag.
+        assertEquals(emptySet<String>(), sub25Plan.lockedStageIds("sub_25_peak"))
+    }
+
+    @Test
+    fun `stages after the first are locked while the runner is in the first`() {
+        assertEquals(setOf("sub_30_bridge", "sub_25_peak"), sub25Plan.lockedStageIds("base_builder"))
+    }
+
+    @Test
+    fun `a plan the runner is in no stage of stands at its first stage`() {
+        // The same walk resolveActiveStage makes, so an unactivated plan reads the way it always
+        // did — first Stage open, everything past it shut — and a stale id names no Stage rather
+        // than locking the lot.
+        assertEquals(setOf("sub_30_bridge", "sub_25_peak"), sub25Plan.lockedStageIds(null))
+        assertEquals(setOf("sub_30_bridge", "sub_25_peak"), sub25Plan.lockedStageIds("desk_test_stage"))
     }
 
     // --- Requirements written in numbers, and the tests that answer them (#290, #291) ----------
