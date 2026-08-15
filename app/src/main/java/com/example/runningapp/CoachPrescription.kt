@@ -138,21 +138,42 @@ private fun coachDebriefKey(generation: CoachWorkGeneration) = when (generation)
  *
  * Stamped where the message is written, never worked out afterwards from what the text looks like.
  */
-enum class DebriefAuthor(internal val stored: String) {
+enum class DebriefAuthor(internal val stored: String?) {
     /** Gemini's words, sent the Runs the runner consented to share. */
     COACH("coach"),
 
     /** The app's own words, written offline and with no Gemini key. */
-    APP("app");
+    APP("app"),
+
+    /**
+     * Nobody this app can name — a debrief that was standing before the stamp existed (#296).
+     *
+     * Has no stored spelling, and never gets one: it is only ever what an absent stamp reads as, so
+     * it cannot be written by anyone and cannot come back out of storage. The screen says "Run
+     * Debrief" over it, which is true of both writers.
+     */
+    UNKNOWN(null);
 
     internal companion object {
         /**
-         * Absent is [COACH]: every debrief stored before this stamp existed came from the coach —
-         * the app's own writes (#290, #292, #294) all shipped after it. Unreadable is [COACH] too,
-         * for the same reason a corrupt provenance id does not take coaching away: a value this app
-         * never wrote must not be what decides the heading.
+         * Absent is [UNKNOWN], because an unstamped debrief may have been written by either of
+         * them. The app's own writes — a Stage granted (#290), a Test missed (#292), a Plan
+         * finished (#294) — all shipped *before* this stamp did, so an install upgrading into #296
+         * can be standing on the app's own words with nothing beside them. Reading that absence as
+         * [COACH] would put "AI Coach Debrief" over exactly the messages this change exists to stop
+         * misattributing, to runners who may never have turned a coach on. Which of the two wrote
+         * it cannot be recovered afterwards: the Prescription's provenance does not discriminate —
+         * the missed-Test path writes no Prescription at all and leaves the coach's `source_runs`
+         * where they were — and guessing from what the text looks like is the thing this stamp
+         * replaced. So the screen names no writer rather than name the wrong one.
+         *
+         * Unreadable is [COACH] all the same, for the reason a corrupt provenance id does not take
+         * coaching away: a stamp *is* present, and a value this app never wrote must not be what
+         * decides the heading.
          */
-        fun of(stored: String?): DebriefAuthor = entries.firstOrNull { it.stored == stored } ?: COACH
+        fun of(stored: String?): DebriefAuthor =
+            if (stored == null) UNKNOWN
+            else entries.firstOrNull { it.stored == stored } ?: COACH
     }
 }
 
@@ -172,10 +193,16 @@ private fun coachDebriefAuthorKey(generation: CoachWorkGeneration) =
  * replaced — is a heading over somebody else's words, which is the whole of this bug. Every writer
  * of the standing slot goes through here, the coach's included ([writeCoachWork]), so the stamp is
  * always overwritten rather than inherited from whatever stood before.
+ *
+ * [DebriefAuthor.UNKNOWN] cannot be written: it is what an absent stamp reads as, and storing it
+ * would make the app the author of an anonymity it could have named.
  */
 internal fun MutablePreferences.writeStandingDebrief(message: String, author: DebriefAuthor) {
+    val name = requireNotNull(author.stored) {
+        "A debrief is written by the coach or by the app; $author is only what an absent stamp reads as."
+    }
     this[coachDebriefKey(CoachWorkGeneration.STANDING)] = message
-    this[coachDebriefAuthorKey(CoachWorkGeneration.STANDING)] = author.stored
+    this[coachDebriefAuthorKey(CoachWorkGeneration.STANDING)] = name
 }
 
 /** The standing debrief gone, its name with it — a stamp cannot outlive the text it names. */
@@ -437,7 +464,7 @@ private fun MutablePreferences.copyCoachWork(from: CoachWorkGeneration, to: Coac
     copyKey(coachDebriefKey(from), coachDebriefKey(to))
     // The name travels with the text (#296). Promoted without it, the app's own graduation comes
     // back up under the coach's heading — and an install that never stamped one keeps the absence,
-    // which reads as the coach and is right for every debrief written before the stamp existed.
+    // which stays unnamed rather than being promoted into a writer nobody recorded.
     copyKey(coachDebriefAuthorKey(from), coachDebriefAuthorKey(to))
 }
 
