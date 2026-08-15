@@ -23,7 +23,8 @@ gh pr comment <N> --body "@codex review"
 ```
 
 Codex never re-reviews a new push on its own. Every round starts with this comment, including the
-first — and record the comment id, the poll needs it.
+first — and record the **UTC timestamp** you sent it (`date -u +%Y-%m-%dT%H:%M:%SZ`), because that
+is what tells this round's answers from the last one's. Not the comment id: see step 2.
 
 ### 2. Poll for the verdict
 
@@ -37,8 +38,28 @@ Codex answers in **two** places, and a round can finish in either:
 Watch both. A poll that watches only the inline list sleeps through a clean verdict; a poll that
 counts comments without filtering to the bot is fooled by your own replies.
 
+**Separate this round's answers by `created_at`, never by comment id.** The two endpoints number
+their comments from **different sequences**: an inline review comment's id (`3790247978`) is nowhere
+near the issue comment id of the `@codex review` that asked for it (`5304184714`). Anchoring the
+inline poll on the tag comment's id — `select(.id > <tag id>)` — therefore excludes *every* finding
+for ever, and the poll runs its full 20 minutes and reports clean while a P1 sits on the PR. That
+happened on #307. Filter both endpoints on the step-1 timestamp instead, and `--paginate` so a long
+thread does not hide the newest page:
+
+```
+SINCE=<the step-1 timestamp>
+gh api repos/chrissuarez/Running-App/pulls/<N>/comments --paginate \
+  --jq ".[]|select(.user.login==\"chatgpt-codex-connector[bot]\")|select(.created_at > \"$SINCE\")|\"\(.id) \(.path):\(.line)\n\(.body)\""
+gh api repos/chrissuarez/Running-App/issues/<N>/comments --paginate \
+  --jq ".[]|select(.user.login==\"chatgpt-codex-connector[bot]\")|select(.created_at > \"$SINCE\")|.body"
+```
+
 Poll in the background (`run_in_background: true`) with a `sleep 30` loop, up to 20 minutes, and
 report the round's outcome to Chris as soon as it lands. Codex typically answers in 4–10 minutes.
+
+A poll that finds nothing is a claim you have to be able to defend. Before reporting a round clean
+on a timeout, run the unfiltered inline query once — `select(.user.login=="chatgpt-codex-connector[bot]")`
+and nothing else — and look at what comes back. Silence from a filter is not silence from Codex.
 
 Check the **Reviewed commit sha against HEAD** (`git rev-parse --short=10 HEAD`). A verdict on an
 older commit is a verdict on code you have already changed — re-tag and poll again.
