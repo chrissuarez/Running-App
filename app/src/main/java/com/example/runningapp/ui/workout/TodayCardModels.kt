@@ -246,11 +246,17 @@ private fun totalMinutes(workout: WorkoutTemplate): Int {
  * because that is what all three of its messages are about: a Stage granted, a Plan finished, a Test
  * short of its bar.
  *
+ * A debrief carried over from before the stamp existed has no name to put on it — either writer
+ * could have left it (#290, #292, #294 all shipped before #296) — so it is headed "Run Debrief",
+ * which is true whoever wrote it. Naming a writer the app cannot name is the bug, in either
+ * direction.
+ *
  * A function rather than a `when` in the composable so the wording is testable without a device.
  */
 fun debriefHeading(author: DebriefAuthor): String = when (author) {
     DebriefAuthor.COACH -> "AI Coach Debrief"
     DebriefAuthor.APP -> "Plan Update"
+    DebriefAuthor.UNKNOWN -> "Run Debrief"
 }
 
 /**
@@ -272,7 +278,9 @@ private fun coachNote(
     // Only the coach's own words are quoted as the coach's (#296). What is standing may be the
     // app's — a Plan finished or a Test missed leaves the Prescription untouched, so the numbers can
     // still be adjusted while the slot holds a sentence the coach never wrote. That sentence does
-    // not explain this adjustment either, which is what the plain statement below is for.
+    // not explain this adjustment either, which is what the plain statement below is for. An
+    // unstamped debrief is not quoted either: "Coach: …" is a claim about who said it, and an
+    // absent stamp is precisely not knowing.
     val message = settings.latestDebrief
         ?.takeIf { it.isNotBlank() && settings.latestDebriefAuthor == DebriefAuthor.COACH }
         ?: return "Coach: Today's intervals were adjusted for you."

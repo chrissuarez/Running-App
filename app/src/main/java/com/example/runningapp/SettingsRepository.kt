@@ -75,9 +75,10 @@ data class UserSettings(
     val latestDebrief: String? = null,
     // Who wrote that debrief (#296). The app writes into the same slot — a graduation, a Plan
     // finished, a Test missed — and the screen puts a heading over whatever is there, so the name
-    // has to be stored with the text rather than guessed at from it. Defaults to the coach, which
-    // is what every debrief stored before this stamp existed was.
-    val latestDebriefAuthor: DebriefAuthor = DebriefAuthor.COACH,
+    // has to be stored with the text rather than guessed at from it. Defaults to unknown, the same
+    // as an absent stamp: the app's own writes (#290, #292, #294) shipped before the stamp did, so
+    // a debrief with no name beside it could have come from either writer and neither may be named.
+    val latestDebriefAuthor: DebriefAuthor = DebriefAuthor.UNKNOWN,
     val simulationEnabled: Boolean = false,
     val testingModeEnabled: Boolean = false,
     // The folder the runner picked for full archives, as a Storage Access Framework tree Uri, and

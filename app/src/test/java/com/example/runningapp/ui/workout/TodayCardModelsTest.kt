@@ -18,7 +18,9 @@ class TodayCardModelsTest {
 
     private val aerobicFoundation =
         WorkoutTemplate("w1_s2", "Aerobic Foundation", 2, 300, 60, 5, warmUpSeconds = 480, coolDownSeconds = 180, runType = RunType.LONG)
-    private val settings = UserSettings()
+    // The coach named on the standing debrief, because most of these cases are about the line the
+    // card quotes from it and only the coach's own words are ever quoted (#296).
+    private val settings = UserSettings(latestDebriefAuthor = DebriefAuthor.COACH)
 
     private val now = 1_700_000_000_000L
 
@@ -463,7 +465,7 @@ class TodayCardModelsTest {
     fun `the prompt does not displace the instruction or the coach's note`() {
         val state = card(
             stageWorkouts = stageWithATest,
-            settings = UserSettings(latestDebrief = "Nice work. Ten minutes more next time."),
+            settings = settings.copy(latestDebrief = "Nice work. Ten minutes more next time."),
             prescriptions = standing(RunType.LONG to prescription()),
             testDue = true
         )
@@ -479,6 +481,30 @@ class TodayCardModelsTest {
         // model's — to a runner with AI sharing switched off, a coach they never turned on.
         assertEquals("AI Coach Debrief", debriefHeading(DebriefAuthor.COACH))
         assertEquals("Plan Update", debriefHeading(DebriefAuthor.APP))
+    }
+
+    @Test
+    fun `a debrief with no name on it is headed by neither writer`() {
+        // Upgrading into #296 with text already in the slot: the app was writing graduations,
+        // missed Tests and finished Plans there before the stamp existed, so an unstamped debrief
+        // may be either writer's. "Run Debrief" is true whoever wrote it; "AI Coach Debrief" is a
+        // claim the app cannot make, and the one this ticket exists to stop making.
+        assertEquals("Run Debrief", debriefHeading(DebriefAuthor.UNKNOWN))
+    }
+
+    @Test
+    fun `the card does not quote an unnamed debrief as the coach's`() {
+        // "Coach: …" says who said it. An absent stamp is precisely not knowing, so the note falls
+        // back to the plain statement rather than putting words in the coach's mouth.
+        val state = card(
+            settings = UserSettings(
+                latestDebrief = "You ran 5 km in 27:12. Stage 2: Sub-30 Bridge complete.",
+                latestDebriefAuthor = DebriefAuthor.UNKNOWN
+            ),
+            prescriptions = standing(RunType.LONG to prescription())
+        )
+
+        assertEquals("Coach: Today's intervals were adjusted for you.", state.coachNote)
     }
 
     @Test

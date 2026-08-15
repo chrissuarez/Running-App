@@ -8,6 +8,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -399,14 +400,32 @@ class CoachPrescriptionTest {
     }
 
     @Test
-    fun `a debrief with no name on it is the coach's`() {
+    fun `a debrief with no name on it is nobody's`() {
         // Every install upgrading into #296 has one of these: text in the slot, no stamp beside it.
-        // The coach is the only writer those builds had that the card ever headed, so the absence
-        // has to read as the coach or the upgrade renames history.
+        // The app was already writing graduations (#290), missed Tests (#292) and finished Plans
+        // (#294) into that slot before the stamp existed, so the text may be either writer's and
+        // reading the absence as the coach would head the app's own words "AI Coach Debrief" —
+        // the bug, to a runner who may never have turned a coach on.
         val preferences = mutablePreferencesOf()
-        preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = "Shortened after Tuesday."
+        preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = "You ran 5 km in 27:12. Stage 2 complete."
 
-        assertEquals(DebriefAuthor.COACH, debriefAuthorOf(preferences))
+        assertEquals(DebriefAuthor.UNKNOWN, debriefAuthorOf(preferences))
+    }
+
+    @Test
+    fun `unknown is never written and never comes back out of storage`() {
+        // It has no stored spelling at all, so no write can put it down and no read can find it.
+        assertNull(DebriefAuthor.UNKNOWN.stored)
+        assertEquals(
+            listOf(DebriefAuthor.COACH, DebriefAuthor.APP),
+            DebriefAuthor.entries.filter { it.stored != null }
+        )
+
+        val preferences = mutablePreferencesOf()
+        assertThrows(IllegalArgumentException::class.java) {
+            preferences.writeStandingDebrief("Whoever wrote this.", DebriefAuthor.UNKNOWN)
+        }
+        assertEquals(0, preferences.asMap().size)
     }
 
     @Test
