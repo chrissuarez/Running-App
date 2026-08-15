@@ -39,9 +39,23 @@ a time wherever it turned up. Granted forwards only, never from a pass over
 history, and never taken back (#290). Where history already holds a Run that
 would clear the bar, the Stage card names it and says a new one would count —
 a statement of what happened, never an offer, and nothing changes when it
-appears (#293).
+appears (#293). On the last Stage of a Plan, answering it records a Plan
+Completion rather than moving the runner anywhere (#294).
 _Avoid_: graduation criteria, goal (a Goal is the runner's own distance or time
 target), unlock condition
+
+**Plan Completion**:
+The runner finishing a whole Plan: they cleared the last Stage's Requirement and
+there was no Stage after it. Recorded at the moment it is granted — the Plan, the
+day, and the effort in seconds — and never worked out from history afterwards.
+Granted once per Plan: a later Run clearing the bar again moves nothing and says
+nothing, because this records the day the Plan ended and not the runner's best.
+Never taken back, and carried in the archive. The runner stays in that last Stage
+with its Workouts and their standing Prescription; what changes is that the card
+stops calling it something to achieve, the already-beaten line is no longer shown
+on it, and the coach is told (#294).
+_Avoid_: graduation (a graduation moves a runner to the next Stage; there is no
+next Stage here), finishing a Stage, maintenance mode
 
 **Workout**:
 The planned shape a Run may follow — its intervals, durations, and targets —

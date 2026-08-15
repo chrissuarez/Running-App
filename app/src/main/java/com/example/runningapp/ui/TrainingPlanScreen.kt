@@ -35,6 +35,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.PlanStage
 import com.example.runningapp.TrainingPlanProvider
+import com.example.runningapp.training.PlanCompletion
+import com.example.runningapp.training.planCompleteLine
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,6 +50,12 @@ fun TrainingPlanScreen(
      * yet, and a Stage already past is not one they are staring at wondering why it did not count.
      */
     alreadyBeatenLine: String?,
+    /**
+     * The Plan the runner has finished, if they have finished one (#294) — the whole of what the
+     * completed Stage's card says, and the only place this screen learns that anything is complete.
+     * It asks history nothing.
+     */
+    planCompletion: PlanCompletion?,
     onActivatePlan: (planId: String, stageId: String) -> Unit,
     onBack: () -> Unit
 ) {
@@ -102,12 +110,33 @@ fun TrainingPlanScreen(
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
+                    // Which Stage of this plan, if any, is the one the runner finished: the last
+                    // one, and only where the stored completion is about this plan. Keyed by plan
+                    // id so that a completion never claims a different plan is over.
+                    val completion = planCompletion?.takeIf { it.planId == plan.id }
+                    val completedStageId =
+                        if (completion == null) null else plan.stages.lastOrNull()?.id
                     plan.stages.forEach { stage ->
                         val isActiveStage = stage.id == selectedStageId
+                        // The whole sentence, built here from the stored completion and this
+                        // Stage's own Requirement — null on every other Stage and on a plan nobody
+                        // has finished. Null where a completed Stage somehow carries no Requirement
+                        // in numbers, which cannot arise from the rule that writes one: a
+                        // completion is granted by that Requirement being answered.
+                        val completedLine = if (completion == null || stage.id != completedStageId) {
+                            null
+                        } else {
+                            stage.bestEffortRequirement?.let { planCompleteLine(completion, it) }
+                        }
                         StageCard(
                             stage = stage,
                             isActive = isActiveStage,
-                            alreadyBeatenLine = alreadyBeatenLine.takeIf { isActiveStage }
+                            // Suppressed once the plan is complete (#293, #294). "Run one now and it
+                            // counts" is an offer the rule will not honour any more — the one thing
+                            // that line may never be.
+                            alreadyBeatenLine = alreadyBeatenLine
+                                .takeIf { isActiveStage && completedLine == null },
+                            completedLine = completedLine
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                     }
@@ -125,10 +154,24 @@ fun TrainingPlanScreen(
 private fun StageCard(
     stage: PlanStage,
     isActive: Boolean,
-    alreadyBeatenLine: String?
+    alreadyBeatenLine: String?,
+    /**
+     * What this Stage's Requirement has become, on the Stage that finished the plan (#294): the fact
+     * that it was met, on a day, in a time. Null on every Stage the runner has not finished a plan
+     * on — which is every card but one, and all of them until they do.
+     *
+     * Non-null is the whole of "this Stage is complete" as far as the card is concerned: the badge,
+     * the replaced Requirement line, and the suppressed already-beaten line are one state, not three
+     * flags that could disagree.
+     */
+    completedLine: String?
 ) {
+    val isComplete = completedLine != null
     val cardColor = when {
-        isActive -> MaterialTheme.colorScheme.primaryContainer
+        // Before the locked branch, and so is the badge below: the completed Stage is the plan's
+        // last, which is declared locked as every Stage after the first is, and a card showing a
+        // padlock over the sentence saying it is finished would be the screen contradicting itself.
+        isComplete || isActive -> MaterialTheme.colorScheme.primaryContainer
         stage.isLocked -> MaterialTheme.colorScheme.surfaceVariant
         else -> MaterialTheme.colorScheme.surface
     }
@@ -136,7 +179,7 @@ private fun StageCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .alpha(if (stage.isLocked) 0.72f else 1f),
+            .alpha(if (stage.isLocked && !isComplete) 0.72f else 1f),
         colors = CardDefaults.cardColors(containerColor = cardColor)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -152,6 +195,20 @@ private fun StageCard(
                 )
 
                 when {
+                    isComplete -> {
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = MaterialTheme.colorScheme.primary
+                        ) {
+                            Text(
+                                text = "COMPLETE",
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                     stage.isLocked -> {
                         Icon(
                             imageVector = Icons.Default.Lock,
@@ -193,17 +250,30 @@ private fun StageCard(
                 color = MaterialTheme.colorScheme.surface
             ) {
                 Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = "Graduation Requirement:",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = stage.graduationRequirementText,
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                    // On the Stage that finished the plan the Requirement is gone and the fact
+                    // stands in its place (#294) — with no "Graduation Requirement:" label over it,
+                    // because there is nothing left here to graduate and the sentence names itself.
+                    // Leaving the bar printed as something to achieve, beside a congratulation
+                    // saying it was achieved, is the whole of what this ticket is about.
+                    if (completedLine != null) {
+                        Text(
+                            text = completedLine,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    } else {
+                        Text(
+                            text = "Graduation Requirement:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = stage.graduationRequirementText,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                     // Directly under the bar it is about, because it is a remark on that sentence
                     // and not a second thing the Stage asks for. It states a fact and offers
                     // nothing (#293), so it is text and never a control: there is nothing here to

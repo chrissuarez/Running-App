@@ -55,6 +55,15 @@ data class BestEffortRequirement(
     }
 }
 
+/**
+ * The distance a Requirement is written at, as a sentence names it: "5 km", not "Fastest 5 km".
+ *
+ * One home for it, because three sentences say it — the bar already beaten (#293), the graduation
+ * that grants, and the plan that is complete (#294) — and a record renamed in the book must not
+ * leave two of them saying one thing and the third another.
+ */
+val BestEffortRequirement.distanceLabel: String get() = record.label.removePrefix("Fastest ")
+
 data class PlanStage(
     val id: String,
     val title: String,

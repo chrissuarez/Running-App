@@ -16,6 +16,7 @@ import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.PlanTest
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.clearedBy
+import com.example.runningapp.distanceLabel
 import com.example.runningapp.testWorkout
 import com.example.runningapp.isCoachAdjusted
 import com.example.runningapp.HrProfile
@@ -24,6 +25,7 @@ import com.example.runningapp.historyHrProfile
 import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
 import com.example.runningapp.training.HistoryBestEffort
+import com.example.runningapp.training.PlanCompletion
 import com.example.runningapp.training.ScoredRun
 import com.example.runningapp.training.asClock
 import com.example.runningapp.training.TrainingWeek
@@ -210,6 +212,19 @@ data class AiTrainingContext(
      * two paths must never both be able to grant.
      */
     val requirementIsTheAppsToAnswer: Boolean = false,
+    /**
+     * Whether the runner has already finished this Stage's whole Plan (#294).
+     *
+     * Told to the coach because otherwise it is told forever that the runner is in "Stage 3: Sub-25
+     * Peak — run a 5K in 24:59 or faster", and it will keep coaching them toward a time they have
+     * already run. The Stage is still theirs and still has Workouts; it is no longer something to
+     * achieve.
+     *
+     * True on the finished Plan's **last** Stage and on no other, because that is the Stage the
+     * completion is about: an earlier Stage of the same plan, which a runner who re-attached the
+     * plan would be in, has a Stage after it and is not the end of anything.
+     */
+    val planComplete: Boolean = false,
     val recentRuns: List<AiRecentRun>,
     /**
      * Which Runs [recentRuns] are, so a Prescription can be taken back when one of them is deleted
@@ -2298,12 +2313,23 @@ class SessionRepository(
          */
         stageWorkout: WorkoutTemplate? = null,
     ): AiTrainingContext {
-        val stage = TrainingPlanProvider
+        // The Plan as well as the Stage, because whether the runner has finished it is a fact about
+        // the Plan and the Stage cannot answer it.
+        val plan = TrainingPlanProvider
             .getAllPlans()
-            .asSequence()
-            .flatMap { it.stages.asSequence() }
-            .firstOrNull { it.id == stageId }
+            .firstOrNull { candidate -> candidate.stages.any { it.id == stageId } }
             ?: throw IllegalArgumentException("Stage not found for id: $stageId")
+        val stage = plan.stages.first { it.id == stageId }
+        // Whether this Stage is the finished end of a finished Plan (#294). Read here rather than
+        // passed in, because it is a fact about the Stage the coach is being asked about, and a
+        // caller that forgot it would leave the coach aiming the runner at a bar they have cleared.
+        //
+        // The last Stage and no other. A completion is the end of the plan, and the coach is told
+        // there is nothing after this Stage — said about a Stage there plainly is something after,
+        // as an earlier Stage of a re-attached plan would be, that is a sentence the runner's own
+        // plan contradicts.
+        val planComplete = settingsRepository?.userSettingsFlow?.first()
+            ?.planCompletion?.planId == plan.id && plan.stages.lastOrNull()?.id == stageId
 
         // The Stage's own Runs and no others, which is what a Stage is graduated on (#234) — see
         // [RunnerSession.ranUnderStageId].
@@ -2356,6 +2382,7 @@ class SessionRepository(
             currentStageTitle = stage.title,
             graduationRequirement = stage.graduationRequirementText,
             requirementIsTheAppsToAnswer = stage.bestEffortRequirement != null,
+            planComplete = planComplete,
             recentRuns = recentRuns,
             // The stored rows' ids, which [asFinalized] cannot change: it stands in for one of these
             // Runs, it is never another one.
@@ -2458,13 +2485,15 @@ class SessionRepository(
         stageId: String,
         runType: RunType?,
         finalizedRun: RunnerSession,
+        /** The zone the runner's calendar days are in — which day a finished plan is recorded on. */
+        zone: ZoneId = ZoneId.systemDefault(),
     ) {
         // Its own attempt, for the reason the record book's scoring is one: the Run is already
         // saved by the time this is called, and a graduation that cannot be written must not cost
         // the runner the coach's debrief below. `finalizeRun`'s scope has no handler of its own, so
         // an unhandled read or write here would end the process rather than skip a progression.
         try {
-            graduateOnBestEffortRequirement(stageId, finalizedRun)
+            graduateOnBestEffortRequirement(stageId, finalizedRun, zone = zone)
         } catch (e: Exception) {
             Log.w("StageRule", "Could not settle stage=$stageId after run ${finalizedRun.id}", e)
         }
@@ -2500,6 +2529,11 @@ class SessionRepository(
      * (#293). And deleting the Run afterwards, or marking it a Walk, does not un-graduate; CONTEXT.md
      * already says that of the Walk mark and the rule holds the same line for a delete.
      *
+     * **On the plan's last Stage it records a Plan Completion instead of advancing** (#294). There
+     * is no Stage to move to, so what is granted is the end of the plan: the plan, the day and the
+     * time, written once and never again, beside the sentence that says so. The runner keeps that
+     * Stage, its Workouts and their standing Prescription — see [PlanCompletion].
+     *
      * [answering] is the record a single stated claim just changed, where that is what prompted the
      * ask: the rule then declines unless it is the record the requirement is written in, so an
      * unrelated claim cannot cash in evidence the Run has held all along. Null is "the Run itself
@@ -2509,6 +2543,11 @@ class SessionRepository(
         stageId: String,
         run: RunnerSession,
         answering: RecordType? = null,
+        /**
+         * The zone the runner's calendar days are in. Only a finished plan reads it, for the day it
+         * records (#294) — everything else here is arithmetic on seconds.
+         */
+        zone: ZoneId = ZoneId.systemDefault(),
     ): Boolean {
         val settingsRepo = settingsRepository ?: return false
         val plan = TrainingPlanProvider
@@ -2569,25 +2608,59 @@ class SessionRepository(
 
         val nextStage = plan.stages.getOrNull(stageIndex + 1)
         val scope = CoachWriteScope(settings.activePlanId, settings.activeStageId)
+        if (nextStage == null) {
+            // The last Stage of the plan: the runner has finished the whole thing (#294).
+            //
+            // Nothing to advance to, and the Prescription is deliberately left standing — clearing
+            // it would delete the runner's standing numbers and leave them in a Stage that never
+            // moved. They stay in this Stage, running its Workouts; what changes is that it is
+            // recorded as finished, so the screen stops calling it something to achieve and the
+            // coach stops being told to aim them at a time they have already run.
+            //
+            // Once: a Plan already recorded as complete is not completed again, so a second
+            // qualifying Run does not move the recorded day or time and does not congratulate the
+            // runner twice. Checked here so the rule plainly declines rather than granting into a
+            // write that quietly does nothing, and checked again inside the write itself
+            // ([SettingsRepository.completePlan]), where nothing can change between the two.
+            if (settings.planCompletion?.planId == plan.id) {
+                Log.d(
+                    "StageRule",
+                    "Run ${run.id} clears the bar of stage=$stageId again, but plan=${plan.id} is " +
+                        "already complete; nothing to grant (#294)"
+                )
+                return false
+            }
+            settingsRepo.completePlan(
+                completion = PlanCompletion(
+                    planId = plan.id,
+                    // The day of the Run, not of this write. They are the same afternoon except
+                    // when they are not — a Run finished at 00:05, a stated Best Effort typed the
+                    // next morning — and the fact being recorded is about the Run.
+                    completedOnEpochDay = Instant.ofEpochMilli(run.startTime)
+                        .atZone(zone)
+                        .toLocalDate()
+                        .toEpochDay(),
+                    // Whole seconds, as a Best Effort is ranked and as the runner reads it off a
+                    // clock. The time is theirs, never the bar it was enough for.
+                    seconds = seconds.roundToInt(),
+                ),
+                message = planCompleteMessage(stage.title, requirement, seconds, plan.name),
+                scope = scope,
+            )
+            Log.i(
+                "StageRule",
+                "Run ${run.id} is worth ${seconds.toLong()}s at ${requirement.record} and finishes " +
+                    "the last stage=$stageId of plan=${plan.id} (#294)"
+            )
+            return true
+        }
         // Written by the app and not by the coach. This decision is already made, and handing a
         // made decision to a model is inviting it to editorialise its way into disagreeing with a
         // fact; it also means the graduation still lands offline and with no Gemini key.
         settingsRepo.setLatestCoachMessage(
-            graduationMessage(stage.title, requirement, seconds, nextStage?.title),
+            graduationMessage(stage.title, requirement, seconds, nextStageTitle = nextStage.title),
             scope
         )
-        if (nextStage == null) {
-            // The last Stage of the plan. Nothing to advance to, and the Prescription is deliberately
-            // left standing: clearing it here would delete the runner's standing numbers and leave
-            // them in a Stage that never moved, which is the bug #294 exists to fix. The
-            // congratulation is the part that is true today, so it is the part that is written.
-            Log.i(
-                "StageRule",
-                "Run ${run.id} answers the requirement of the plan's last stage=$stageId; " +
-                    "there is no stage to advance to (#294)"
-            )
-            return true
-        }
         settingsRepo.advanceStageAndClearPrescriptions(nextStage.id, scope)
         Log.i(
             "StageRule",
@@ -2609,13 +2682,36 @@ class SessionRepository(
         stageTitle: String,
         requirement: BestEffortRequirement,
         seconds: Double,
-        nextStageTitle: String?,
+        nextStageTitle: String,
+    ): String = "${stageComplete(stageTitle, requirement, seconds)} Next up: $nextStageTitle."
+
+    /**
+     * What the runner is told when the Stage they just finished was the last one: the same fact, and
+     * then the end of the plan said out loud (#294).
+     *
+     * The closing sentence goes exactly where "Next up" would. Until now the *absence* of "Next up"
+     * was the only signal that anything had ended, and silence at the one moment the whole plan
+     * exists to produce is the failure this ticket is about.
+     *
+     * The plan's own name, as the runner chose it off the Training Plan screen, rather than a
+     * shortened one: a rule for trimming a name is a rule that gets a name wrong.
+     */
+    private fun planCompleteMessage(
+        stageTitle: String,
+        requirement: BestEffortRequirement,
+        seconds: Double,
+        planName: String,
+    ): String =
+        "${stageComplete(stageTitle, requirement, seconds)} That's the whole plan: $planName, done."
+
+    /** The half both messages open with: the time the runner ran, and what it just finished. */
+    private fun stageComplete(
+        stageTitle: String,
+        requirement: BestEffortRequirement,
+        seconds: Double,
     ): String {
-        val distance = requirement.record.label.removePrefix("Fastest ")
-        return buildString {
-            append("You ran $distance in ${asClock(seconds)}. $stageTitle complete.")
-            if (nextStageTitle != null) append(" Next up: $nextStageTitle.")
-        }
+        val distance = requirement.distanceLabel
+        return "You ran $distance in ${asClock(seconds)}. $stageTitle complete."
     }
 
     /**
@@ -2629,7 +2725,7 @@ class SessionRepository(
      * is a measurement and the plan does not move on it.
      */
     private fun missedTestMessage(requirement: BestEffortRequirement, seconds: Double): String {
-        val distance = requirement.record.label.removePrefix("Fastest ")
+        val distance = requirement.distanceLabel
         val gap = (seconds - requirement.withinSeconds).coerceAtLeast(0.0)
         return "You ran $distance in ${asClock(seconds)}. ${asClock(gap)} off the bar."
     }

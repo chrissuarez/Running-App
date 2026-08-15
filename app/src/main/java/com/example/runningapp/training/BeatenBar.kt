@@ -1,6 +1,7 @@
 package com.example.runningapp.training
 
 import com.example.runningapp.BestEffortRequirement
+import com.example.runningapp.distanceLabel
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -60,7 +61,7 @@ fun alreadyBeatenLine(
     // The same comparison the rule itself makes, and in the same direction: [withinSeconds] is the
     // slowest time that still passes, so there is no polarity here to get wrong separately.
     if (best == null || best.seconds > requirement.withinSeconds) return null
-    val distance = requirement.record.label.removePrefix("Fastest ")
+    val distance = requirement.distanceLabel
     val day = Instant.ofEpochMilli(best.runStartedAtMillis).atZone(zone).toLocalDate()
     return "Your $distance on ${asDay(day, today)} was ${asClock(best.seconds)} — " +
         "fast enough for this stage. Run one now and it counts."

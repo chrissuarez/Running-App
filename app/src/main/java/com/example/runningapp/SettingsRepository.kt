@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.runningapp.archive.ArchivedSettings
+import com.example.runningapp.training.PlanCompletion
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -63,6 +64,11 @@ data class UserSettings(
     // about is how a Run got stamped with one it was never shown (#234), and every disagreement
     // after that is the same bug wearing a different reader's clothes.
     val activeStageId: String? = null,
+    // The Plan the runner has finished, if they have finished one (#294). Recorded by the
+    // graduation rule at the moment it grants on a Plan's last Stage, and never worked out from
+    // history afterwards — see [PlanCompletion]. Null is "no Plan has been finished", which is the
+    // truth about every runner until one is.
+    val planCompletion: PlanCompletion? = null,
     // The coach's debrief of the run just finished — text the app renders and nothing reads. Its
     // prescription for the *next* run is not here and is not a setting; see [CoachPrescription].
     val latestCoachMessage: String? = null,
@@ -183,6 +189,11 @@ internal object PreferencesKeys {
     val ACTIVE_DEVICE_ADDRESS = stringPreferencesKey("active_device_address")
     val ACTIVE_PLAN_ID = stringPreferencesKey("active_plan_id")
     val ACTIVE_STAGE_ID = stringPreferencesKey("active_stage_id")
+    // The Plan the runner has finished, and what finished it (#294). Three keys because a
+    // completion is three facts, written and read as one — see [planCompletionOf].
+    val PLAN_COMPLETE_PLAN_ID = stringPreferencesKey("plan_complete_plan_id")
+    val PLAN_COMPLETE_DAY = longPreferencesKey("plan_complete_day")
+    val PLAN_COMPLETE_SECONDS = intPreferencesKey("plan_complete_seconds")
     val LATEST_COACH_MESSAGE = stringPreferencesKey("latest_coach_message")
     // The debrief belonging to the word the coach said before the standing one, kept so that a
     // rollback moves the text and the numbers together (#156). Never read by the card: only the
@@ -285,6 +296,43 @@ internal fun MutablePreferences.clearCoachWork() {
 }
 
 /**
+ * The Plan the runner has finished, out of the three keys that hold it (#294), or null where no Plan
+ * has been finished.
+ *
+ * All three or none. They are only ever written together, in one edit, so a partial trio cannot
+ * arise from this app — and reading one anyway would be inventing the missing part of a fact that
+ * exists precisely once and cannot be taken back. A completion missing its day is not a completion.
+ */
+internal fun planCompletionOf(preferences: Preferences): PlanCompletion? {
+    val planId = preferences[PreferencesKeys.PLAN_COMPLETE_PLAN_ID] ?: return null
+    val day = preferences[PreferencesKeys.PLAN_COMPLETE_DAY] ?: return null
+    val seconds = preferences[PreferencesKeys.PLAN_COMPLETE_SECONDS] ?: return null
+    return PlanCompletion(planId = planId, completedOnEpochDay = day, seconds = seconds)
+}
+
+/**
+ * Stores a Plan the runner has finished, or takes all three keys away where there is none — the
+ * whole fact in one write, which is what makes [planCompletionOf]'s all-or-none read true.
+ */
+internal fun MutablePreferences.writePlanCompletion(completion: PlanCompletion?) {
+    // A completion naming no Plan is no completion, the same reading [planCompletionOf] gives half
+    // a trio of keys. It cannot be built in Kotlin, but it can arrive: an archive is JSON read by
+    // Gson, which fills a field a truncated document never mentioned with null whatever the type
+    // says. Refused here rather than at the read, so one malformed field costs a restore a fact it
+    // never really had instead of costing it the whole archive.
+    @Suppress("SENSELESS_COMPARISON")
+    if (completion == null || completion.planId == null) {
+        remove(PreferencesKeys.PLAN_COMPLETE_PLAN_ID)
+        remove(PreferencesKeys.PLAN_COMPLETE_DAY)
+        remove(PreferencesKeys.PLAN_COMPLETE_SECONDS)
+        return
+    }
+    this[PreferencesKeys.PLAN_COMPLETE_PLAN_ID] = completion.planId
+    this[PreferencesKeys.PLAN_COMPLETE_DAY] = completion.completedOnEpochDay
+    this[PreferencesKeys.PLAN_COMPLETE_SECONDS] = completion.seconds
+}
+
+/**
  * Everything stored, read as what it means (#234).
  *
  * Pure and separate from the flow that publishes it, for the reason [coachWriteAllowed] is: the
@@ -333,6 +381,7 @@ internal fun userSettingsOf(preferences: Preferences): UserSettings {
             preferences[PreferencesKeys.ACTIVE_PLAN_ID],
             preferences[PreferencesKeys.ACTIVE_STAGE_ID]
         )?.id,
+        planCompletion = planCompletionOf(preferences),
         latestCoachMessage = preferences[PreferencesKeys.LATEST_COACH_MESSAGE],
         simulationEnabled = preferences[PreferencesKeys.SIMULATION_ENABLED] ?: false,
         testingModeEnabled = preferences[PreferencesKeys.TESTING_MODE_ENABLED] ?: false,
@@ -623,6 +672,35 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
+     * Records that the runner has finished a whole Plan, and tells them so — one write, once (#294).
+     *
+     * **One write** because the two halves are one event. A congratulation stored without the
+     * completion is the bug #294 exists to fix, read out loud: the runner is told they have finished
+     * and the screen goes on asking them for the time they have just run. A completion stored
+     * without the congratulation is the same failure with the message missing.
+     *
+     * **Once**, and decided inside the edit where nothing can change between the check and the
+     * store: a Plan already recorded as complete is left exactly as it stands, so a second
+     * qualifying Run does not move the day, does not move the time, and does not congratulate the
+     * runner again. This records the day the Plan was finished, not the runner's best — the record
+     * book already owns that.
+     *
+     * Only a completion of *this* Plan stops it. A completion belonging to another Plan is
+     * overwritten rather than obeyed: one slot holds the fact, and the fact is about a Plan.
+     *
+     * Goes through [editCoachWrite] like every other write of the graduation rule's, for the same
+     * reason [advanceStageAndClearPrescriptions] does: a runner who changed plans while this was
+     * being decided must not have the plan they left declared finished.
+     */
+    suspend fun completePlan(completion: PlanCompletion, message: String, scope: CoachWriteScope) {
+        context.dataStore.editCoachWrite(scope) { preferences ->
+            if (planCompletionOf(preferences)?.planId == completion.planId) return@editCoachWrite
+            preferences.writePlanCompletion(completion)
+            preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = message
+        }
+    }
+
+    /**
      * Remembers the folder the runner picked for archives (#85).
      *
      * The Uri alone is not the permission — that is taken separately and persistently, at the
@@ -720,6 +798,13 @@ class SettingsRepository(private val context: Context) {
             settings.activeStageId
                 ?.let { preferences[PreferencesKeys.ACTIVE_STAGE_ID] = it }
                 ?: preferences.remove(PreferencesKeys.ACTIVE_STAGE_ID)
+            // Where the runner is in their training, which is what the two keys above are, includes
+            // having reached the end of it (#294). An archive written before the field existed
+            // carries none and reads back as no Plan finished, which is the truth about it — and it
+            // is taken away rather than left standing, because everything else here is being
+            // replaced by the archive's answer and a completion held over would be a claim about a
+            // Plan this phone's history no longer holds.
+            preferences.writePlanCompletion(settings.planCompletion)
             // The seeding mark describes history that has just been replaced, so it goes with it
             // (#50): the archive may have been written before the record book existed, and its runs
             // deserve the same one-off scoring any other unscored history gets at the next launch.
