@@ -70,9 +70,14 @@ data class UserSettings(
     // history afterwards — see [PlanCompletion]. Null is "no Plan has been finished", which is the
     // truth about every runner until one is.
     val planCompletion: PlanCompletion? = null,
-    // The coach's debrief of the run just finished — text the app renders and nothing reads. Its
+    // The debrief of the run just finished — text the app renders and nothing reads. The coach's
     // prescription for the *next* run is not here and is not a setting; see [CoachPrescription].
-    val latestCoachMessage: String? = null,
+    val latestDebrief: String? = null,
+    // Who wrote that debrief (#296). The app writes into the same slot — a graduation, a Plan
+    // finished, a Test missed — and the screen puts a heading over whatever is there, so the name
+    // has to be stored with the text rather than guessed at from it. Defaults to the coach, which
+    // is what every debrief stored before this stamp existed was.
+    val latestDebriefAuthor: DebriefAuthor = DebriefAuthor.COACH,
     val simulationEnabled: Boolean = false,
     val testingModeEnabled: Boolean = false,
     // The folder the runner picked for full archives, as a Storage Access Framework tree Uri, and
@@ -293,7 +298,9 @@ internal fun coachWriteAllowed(
  */
 internal fun MutablePreferences.clearCoachWork() {
     clearCoachPrescriptions()
-    remove(PreferencesKeys.LATEST_COACH_MESSAGE)
+    // The debrief and the name on it, together: a stamp left behind is a heading waiting over words
+    // that are gone (#296).
+    removeStandingDebrief()
 }
 
 /**
@@ -353,6 +360,22 @@ internal fun MutablePreferences.writePlanCompletion(completion: PlanCompletion?)
 }
 
 /**
+ * A finished Plan recorded and the runner told so, or nothing at all where this Plan is already
+ * recorded as finished (#294).
+ *
+ * Pure and separate from the write around it, for the reason [coachWriteAllowed] is: "once" is the
+ * rule this holds, and a rule is worth reading and testing without a DataStore behind it.
+ *
+ * The congratulation is stamped [DebriefAuthor.APP] — always, with no author to pass in — because
+ * it is written from the Plan's own numbers, offline and with no Gemini key (#296).
+ */
+internal fun MutablePreferences.completePlanOnce(completion: PlanCompletion, message: String) {
+    if (planCompletionOf(this)?.planId == completion.planId) return
+    writePlanCompletion(completion)
+    writeStandingDebrief(message, DebriefAuthor.APP)
+}
+
+/**
  * Everything stored, read as what it means (#234).
  *
  * Pure and separate from the flow that publishes it, for the reason [coachWriteAllowed] is: the
@@ -402,7 +425,8 @@ internal fun userSettingsOf(preferences: Preferences): UserSettings {
             preferences[PreferencesKeys.ACTIVE_STAGE_ID]
         )?.id,
         planCompletion = planCompletionOf(preferences),
-        latestCoachMessage = preferences[PreferencesKeys.LATEST_COACH_MESSAGE],
+        latestDebrief = preferences[PreferencesKeys.LATEST_COACH_MESSAGE],
+        latestDebriefAuthor = debriefAuthorOf(preferences),
         simulationEnabled = preferences[PreferencesKeys.SIMULATION_ENABLED] ?: false,
         testingModeEnabled = preferences[PreferencesKeys.TESTING_MODE_ENABLED] ?: false,
         backupFolderUri = preferences[PreferencesKeys.BACKUP_FOLDER_URI],
@@ -665,10 +689,17 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
-    /** The coach's debrief of the run just finished — displayed text, never a knob. */
-    suspend fun setLatestCoachMessage(message: String, scope: CoachWriteScope) {
+    /**
+     * The debrief of the run just finished — displayed text, never a knob.
+     *
+     * [author] is required rather than defaulted because this slot has two writers and the screen
+     * names one of them over what it finds (#296): a caller that does not say is a caller whose
+     * words get somebody else's name. The app's own writes — a graduation (#290), a Test missed
+     * (#292) — pass [DebriefAuthor.APP]; only text that came back from Gemini is the coach's.
+     */
+    suspend fun setLatestDebrief(message: String, author: DebriefAuthor, scope: CoachWriteScope) {
         context.dataStore.editCoachWrite(scope) { preferences ->
-            preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = message
+            preferences.writeStandingDebrief(message, author)
         }
     }
 
@@ -714,9 +745,7 @@ class SettingsRepository(private val context: Context) {
      */
     suspend fun completePlan(completion: PlanCompletion, message: String, scope: CoachWriteScope) {
         context.dataStore.editCoachWrite(scope) { preferences ->
-            if (planCompletionOf(preferences)?.planId == completion.planId) return@editCoachWrite
-            preferences.writePlanCompletion(completion)
-            preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = message
+            preferences.completePlanOnce(completion, message)
         }
     }
 

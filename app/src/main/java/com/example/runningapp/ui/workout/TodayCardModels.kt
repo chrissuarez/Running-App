@@ -1,6 +1,7 @@
 package com.example.runningapp.ui.workout
 
 import com.example.runningapp.CoachPrescriptions
+import com.example.runningapp.DebriefAuthor
 import com.example.runningapp.HrZone
 import com.example.runningapp.RunType
 import com.example.runningapp.UserSettings
@@ -237,6 +238,22 @@ private fun totalMinutes(workout: WorkoutTemplate): Int {
 }
 
 /**
+ * The heading over the debrief card, which names whoever wrote what is in it (#296).
+ *
+ * Two writers share that slot and only one of them is the coach. "AI Coach Debrief" over the app's
+ * own graduation is the app claiming a model said something it did not — and to a runner with AI
+ * sharing switched off, a coach they never turned on. The app's heading names the Plan instead,
+ * because that is what all three of its messages are about: a Stage granted, a Plan finished, a Test
+ * short of its bar.
+ *
+ * A function rather than a `when` in the composable so the wording is testable without a device.
+ */
+fun debriefHeading(author: DebriefAuthor): String = when (author) {
+    DebriefAuthor.COACH -> "AI Coach Debrief"
+    DebriefAuthor.APP -> "Plan Update"
+}
+
+/**
  * Prescribed numbers are shown directly, plus one line naming the change and why — never the
  * original numbers, and never a silent edit. Falls back to a plain statement when the coach changed
  * the numbers without leaving a reason.
@@ -252,7 +269,12 @@ private fun coachNote(
     settings: UserSettings
 ): String? {
     if (planned == picked) return null
-    val message = settings.latestCoachMessage?.takeIf { it.isNotBlank() }
+    // Only the coach's own words are quoted as the coach's (#296). What is standing may be the
+    // app's — a Plan finished or a Test missed leaves the Prescription untouched, so the numbers can
+    // still be adjusted while the slot holds a sentence the coach never wrote. That sentence does
+    // not explain this adjustment either, which is what the plain statement below is for.
+    val message = settings.latestDebrief
+        ?.takeIf { it.isNotBlank() && settings.latestDebriefAuthor == DebriefAuthor.COACH }
         ?: return "Coach: Today's intervals were adjusted for you."
     return "Coach: ${firstSentence(message)}"
 }

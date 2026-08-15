@@ -3,6 +3,7 @@ package com.example.runningapp
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.mutablePreferencesOf
+import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -395,6 +396,68 @@ class CoachPrescriptionTest {
         assertFalse(preferences.rollBackCoachWorkFedBy(setOf(2L)))
 
         assertEquals("You have finished this stage.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+    }
+
+    @Test
+    fun `a debrief with no name on it is the coach's`() {
+        // Every install upgrading into #296 has one of these: text in the slot, no stamp beside it.
+        // The coach is the only writer those builds had that the card ever headed, so the absence
+        // has to read as the coach or the upgrade renames history.
+        val preferences = mutablePreferencesOf()
+        preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = "Shortened after Tuesday."
+
+        assertEquals(DebriefAuthor.COACH, debriefAuthorOf(preferences))
+    }
+
+    @Test
+    fun `a name this app never wrote is read as the coach's`() {
+        val preferences = mutablePreferencesOf()
+        preferences.writeStandingDebrief("Shortened after Tuesday.", DebriefAuthor.COACH)
+        preferences[stringPreferencesKey("coach_debrief_author")] = "gemini"
+
+        assertEquals(DebriefAuthor.COACH, debriefAuthorOf(preferences))
+    }
+
+    @Test
+    fun `the coach's next debrief takes the app's name off the standing one`() {
+        // The graduation the app wrote is replaced by real coaching a run later. A stamp only the
+        // app ever wrote would leave "Plan Update" over Gemini's words for good.
+        val preferences = mutablePreferencesOf()
+        preferences.writeStandingDebrief("You ran 5 km in 27:12. Stage 2 complete.", DebriefAuthor.APP)
+
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 660), "Longer.", setOf(2L))
+
+        assertEquals("Longer.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+        assertEquals(DebriefAuthor.COACH, debriefAuthorOf(preferences))
+    }
+
+    @Test
+    fun `a rollback brings the promoted debrief's own name back with it`() {
+        // A missed Test writes the app's words into the standing slot without touching the numbers
+        // (#292), so the stamp says APP while the coach's latest Prescription stands. Deleting the
+        // Run that Prescription was reasoned from promotes the coach's previous work — text and
+        // name together, or the runner reads Gemini's "Steady." under the app's heading.
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 600), "Steady.", setOf(1L))
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 660), "Longer.", setOf(2L))
+        preferences.writeStandingDebrief("You were 2:41 off.", DebriefAuthor.APP)
+
+        assertTrue(preferences.rollBackCoachWorkFedBy(setOf(2L)))
+
+        assertEquals("Steady.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+        assertEquals(DebriefAuthor.COACH, debriefAuthorOf(preferences))
+    }
+
+    @Test
+    fun `a rollback with nothing behind it takes the name away too`() {
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 660), "Longer.", setOf(2L))
+
+        assertTrue(preferences.rollBackCoachWorkFedBy(setOf(2L)))
+
+        // Nothing left at all: a stamp outliving the text it names is a heading over an empty slot,
+        // waiting to be inherited by whoever writes next.
+        assertEquals(0, preferences.asMap().size)
     }
 
     @Test

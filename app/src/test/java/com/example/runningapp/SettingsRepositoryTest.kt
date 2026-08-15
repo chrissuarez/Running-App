@@ -1,6 +1,7 @@
 package com.example.runningapp
 
 import androidx.datastore.preferences.core.mutablePreferencesOf
+import androidx.datastore.preferences.core.stringPreferencesKey
 import com.example.runningapp.archive.ArchiveJson
 import com.example.runningapp.training.PlanCompletion
 import org.junit.Assert.assertEquals
@@ -264,10 +265,8 @@ class SettingsRepositoryTest {
     fun `dropping the coach's work takes the debrief with the prescription`() {
         // The debrief explains the prescription. Clearing the numbers and keeping the text leaves
         // the runner reading about a workout that is not the one queued.
-        val preferences = mutablePreferencesOf(
-            PreferencesKeys.LATEST_COACH_MESSAGE to "Shortened after Tuesday.",
-            PreferencesKeys.ACTIVE_PLAN_ID to "5k_sub_25"
-        )
+        val preferences = mutablePreferencesOf(PreferencesKeys.ACTIVE_PLAN_ID to "5k_sub_25")
+        preferences.writeStandingDebrief("Shortened after Tuesday.", DebriefAuthor.COACH)
         // Every Run Type's slot, since the debrief is written about whichever one the coach adapted
         // and all three go together (#175).
         RunType.entries.forEach { runType ->
@@ -286,9 +285,46 @@ class SettingsRepositoryTest {
         preferences.clearCoachWork()
 
         assertNull(preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+        // And the name that was on it (#296): left behind, it heads whatever lands in the slot next.
+        assertNull(preferences[stringPreferencesKey("coach_debrief_author")])
         assertEquals(CoachPrescriptions.NONE, preferences.coachPrescriptions())
         // Untouched: this says which plan is attached, not what the coach said about it.
         assertEquals("5k_sub_25", preferences[PreferencesKeys.ACTIVE_PLAN_ID])
+    }
+
+    @Test
+    fun `the congratulation for a finished Plan is the app's, not the coach's`() {
+        // Written from the Plan's own numbers, offline and with no Gemini key (#294) — so the card
+        // must not head it with the coach's name (#296).
+        val preferences = mutablePreferencesOf()
+
+        preferences.completePlanOnce(
+            PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = 1_632),
+            "You ran 5 km in 27:12. That is the whole of 5K Sub-25."
+        )
+
+        assertEquals(
+            "You ran 5 km in 27:12. That is the whole of 5K Sub-25.",
+            preferences[PreferencesKeys.LATEST_COACH_MESSAGE]
+        )
+        assertEquals(DebriefAuthor.APP, debriefAuthorOf(preferences))
+    }
+
+    @Test
+    fun `a Plan already finished is not congratulated again`() {
+        val preferences = mutablePreferencesOf()
+        val completion = PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = 1_632)
+        preferences.completePlanOnce(completion, "That is the whole of 5K Sub-25.")
+        // The coach's ordinary debrief, written about a Run after the Plan was finished.
+        preferences.writeStandingDebrief("Steady all the way through.", DebriefAuthor.COACH)
+
+        preferences.completePlanOnce(completion.copy(seconds = 1_500), "That is the whole of 5K Sub-25.")
+
+        // Neither the day and time it records nor the words on screen are moved by a second
+        // qualifying Run — including the name over them.
+        assertEquals(1_632, preferences[PreferencesKeys.PLAN_COMPLETE_SECONDS])
+        assertEquals("Steady all the way through.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+        assertEquals(DebriefAuthor.COACH, debriefAuthorOf(preferences))
     }
 
     @Test

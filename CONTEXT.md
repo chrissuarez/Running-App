@@ -294,6 +294,20 @@ _Avoid_: award, badge
 Where an effort placed: gold, silver or bronze. There is no fourth place.
 _Avoid_: rank, position
 
+**Debrief**:
+The sentences the runner is shown after a Run, in the card on the Today screen.
+One slot, two writers, and the card says which: the coach writes one to explain
+its Prescription, and the app writes its own for the things that are not the
+coach's to judge — a Stage granted, a Plan finished, a Test short of its bar
+([ADR 0016](docs/adr/0016-a-requirement-stated-in-numbers-is-not-the-coachs-to-judge.md)).
+Whose it is is stored beside it when it is written, never worked out afterwards
+from how the words read: the app's own congratulation under the coach's name
+hands back, on screen, the attribution the rule took away — and a runner with AI
+sharing switched off must never be congratulated by a coach they never turned on.
+_Avoid_: coach message as a name for the whole slot (only the coach's Debrief is
+the coach's; the preference key is still spelled `latest_coach_message`, from
+when the coach was its only writer), summary, feedback.
+
 **Prescription**:
 What the AI coach writes after a Run: the intervals and target zone for the next
 Workout of one Run Type, and nothing else. The coach holds one per Run Type —

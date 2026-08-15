@@ -2,6 +2,7 @@ package com.example.runningapp.ui.workout
 
 import com.example.runningapp.CoachPrescription
 import com.example.runningapp.CoachPrescriptions
+import com.example.runningapp.DebriefAuthor
 import com.example.runningapp.RunType
 import com.example.runningapp.UserSettings
 import com.example.runningapp.WorkoutTemplate
@@ -160,7 +161,7 @@ class TodayCardModelsTest {
     fun `an adapted workout shows the adapted numbers and one line naming the change`() {
         val state = card(
             settings = settings.copy(
-                latestCoachMessage = "Shortened after Tuesday — your heart rate drifted in the last two intervals."
+                latestDebrief = "Shortened after Tuesday — your heart rate drifted in the last two intervals."
             ),
             prescriptions = standing(RunType.LONG to prescription())
         )
@@ -177,7 +178,7 @@ class TodayCardModelsTest {
     fun `only the debrief's first sentence reaches the card`() {
         val state = card(
             settings = settings.copy(
-                latestCoachMessage = "Shortened after Tuesday. Your heart rate drifted in the last " +
+                latestDebrief = "Shortened after Tuesday. Your heart rate drifted in the last " +
                     "two intervals, and the final one was cut short.\n\nWe will build back up next week."
             ),
             prescriptions = standing(RunType.LONG to prescription())
@@ -189,7 +190,7 @@ class TodayCardModelsTest {
     fun `the coach's own decimals do not cut the sentence in half`() {
         val state = card(
             settings = settings.copy(
-                latestCoachMessage = "Your pace was 5.30 min/km, so today eases off. And then more."
+                latestDebrief = "Your pace was 5.30 min/km, so today eases off. And then more."
             ),
             prescriptions = standing(RunType.LONG to prescription())
         )
@@ -199,7 +200,7 @@ class TodayCardModelsTest {
     @Test
     fun `a debrief with no sentence end is shown whole rather than guessed at`() {
         val state = card(
-            settings = settings.copy(latestCoachMessage = "Easing off today"),
+            settings = settings.copy(latestDebrief = "Easing off today"),
             prescriptions = standing(RunType.LONG to prescription())
         )
         assertEquals("Coach: Easing off today", state.coachNote)
@@ -462,12 +463,37 @@ class TodayCardModelsTest {
     fun `the prompt does not displace the instruction or the coach's note`() {
         val state = card(
             stageWorkouts = stageWithATest,
-            settings = UserSettings(latestCoachMessage = "Nice work. Ten minutes more next time."),
+            settings = UserSettings(latestDebrief = "Nice work. Ten minutes more next time."),
             prescriptions = standing(RunType.LONG to prescription()),
             testDue = true
         )
 
         assertNotNull(state.testDueLine)
         assertEquals("Coach: Nice work.", state.coachNote)
+    }
+
+    @Test
+    fun `the debrief card is headed by whoever wrote it`() {
+        // The app writes a graduation, a Plan finished and a missed Test into the same slot the
+        // coach's debrief lives in (#296). Headed "AI Coach Debrief", the app's own words become a
+        // model's — to a runner with AI sharing switched off, a coach they never turned on.
+        assertEquals("AI Coach Debrief", debriefHeading(DebriefAuthor.COACH))
+        assertEquals("Plan Update", debriefHeading(DebriefAuthor.APP))
+    }
+
+    @Test
+    fun `the card does not quote the app's words as the coach's`() {
+        // Finishing a Plan leaves the standing Prescription alone (#294), so the numbers can be
+        // adapted while the slot holds a sentence the coach never wrote. The note still says the
+        // intervals changed — it just stops attributing an app-written congratulation to the coach.
+        val state = card(
+            settings = UserSettings(
+                latestDebrief = "You ran 5 km in 27:12. Stage 2: Sub-30 Bridge complete.",
+                latestDebriefAuthor = DebriefAuthor.APP
+            ),
+            prescriptions = standing(RunType.LONG to prescription())
+        )
+
+        assertEquals("Coach: Today's intervals were adjusted for you.", state.coachNote)
     }
 }
