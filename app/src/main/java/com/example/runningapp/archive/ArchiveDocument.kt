@@ -4,6 +4,7 @@ import com.example.runningapp.HrProfile
 import com.example.runningapp.UserSettings
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.RunWalkIntervalStat
+import com.example.runningapp.training.PlanCompletion
 
 /**
  * Everything an archive carries that a GPX file cannot (#85).
@@ -82,7 +83,19 @@ data class ArchivedSettings(
     val aiDataSharingEnabled: Boolean,
     val runMode: String,
     val activePlanId: String?,
-    val activeStageId: String?
+    val activeStageId: String?,
+    /**
+     * The Plan the runner has finished, where they have finished one (#294).
+     *
+     * Carried for the same reason the Stage they are in is: it is where they are in their training,
+     * and it is the one moment in the app that happens exactly once and can never be re-earned.
+     * Left out, a lost phone would take the end of the plan with it — and no later Run could put it
+     * back, because the rule that grants it declines a Plan it has already finished.
+     *
+     * An archive written before this field existed reads back null, which is the truth about it: no
+     * Plan had been finished under an app that could not record one.
+     */
+    val planCompletion: PlanCompletion? = null
 )
 
 /**
@@ -112,5 +125,6 @@ fun UserSettings.toArchived(): ArchivedSettings = ArchivedSettings(
     aiDataSharingEnabled = aiDataSharingEnabled,
     runMode = runMode,
     activePlanId = activePlanId,
-    activeStageId = activeStageId
+    activeStageId = activeStageId,
+    planCompletion = planCompletion
 )

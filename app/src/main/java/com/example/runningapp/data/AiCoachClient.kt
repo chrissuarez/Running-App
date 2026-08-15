@@ -217,6 +217,14 @@ internal fun buildEvaluationPrompt(
     } else {
         appendLine("CRITICAL RULE: If the stage requirement asks for a distance in a time that the data above does not answer, set graduatedToNextStage to false and say in coachMessage that you cannot confirm that requirement from this run's data.")
     }
+    // The end of the plan, said to the coach because nothing else here would tell it (#294). Left
+    // out, it is told forever that the runner is in a stage whose requirement is "run a 5K in 24:59
+    // or faster" and will go on setting them that as the thing to work toward — a target they
+    // cleared the day the plan ended. It changes nothing about what may be graduated: the rule above
+    // has already forbidden that, and this stage is the last one there is.
+    if (context.planComplete) {
+        appendLine("The runner has already completed this stage's requirement and finished this whole training plan — this is the last stage and there is no stage after it. This stage is now simply what they keep doing. Do not set them the requirement as a target, do not suggest they have yet to meet it, and do not talk about moving on to a next stage: there is not one. Keep prescribing this stage's kind of work as an ongoing routine.")
+    }
     appendLine("Use this combined context to generate the exact intervals for their NEXT run.")
     // Only where graduating is still the coach's to do. Left in unconditionally it would be the one
     // line telling a fenced-out coach to set the flag it has just been forbidden to set (#290), and

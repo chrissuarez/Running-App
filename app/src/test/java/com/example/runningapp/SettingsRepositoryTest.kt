@@ -1,6 +1,8 @@
 package com.example.runningapp
 
 import androidx.datastore.preferences.core.mutablePreferencesOf
+import com.example.runningapp.archive.ArchiveJson
+import com.example.runningapp.training.PlanCompletion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -133,6 +135,63 @@ class SettingsRepositoryTest {
         )
 
         assertNull(settings.activeStageId)
+    }
+
+    @Test
+    fun `a finished plan reads back as the plan, the day and the time`() {
+        val settings = userSettingsOf(
+            mutablePreferencesOf(
+                PreferencesKeys.PLAN_COMPLETE_PLAN_ID to "5k_sub_25",
+                PreferencesKeys.PLAN_COMPLETE_DAY to 20_679L,
+                PreferencesKeys.PLAN_COMPLETE_SECONDS to 1_492
+            )
+        )
+
+        assertEquals(PlanCompletion("5k_sub_25", 20_679L, 1_492), settings.planCompletion)
+    }
+
+    @Test
+    fun `part of a completion is not a completion`() {
+        // The three keys are only ever written together, so a partial trio cannot come from this
+        // app — and inventing the missing half of a fact that happens once and cannot be taken back
+        // is not a reading worth having (#294).
+        assertNull(
+            userSettingsOf(
+                mutablePreferencesOf(
+                    PreferencesKeys.PLAN_COMPLETE_PLAN_ID to "5k_sub_25",
+                    PreferencesKeys.PLAN_COMPLETE_SECONDS to 1_492
+                )
+            ).planCompletion
+        )
+    }
+
+    @Test
+    fun `a completion naming no plan is not stored`() {
+        // It cannot be built in Kotlin, but it can arrive: an archive is JSON read by Gson, which
+        // fills a field a truncated document never mentioned with null whatever the type says.
+        // Stored as it stands it would go under a key with nothing to put there (#294).
+        val halfWritten = ArchiveJson.read(
+            """
+            {
+              "formatVersion": 1,
+              "createdAtEpochMillis": 1,
+              "databaseVersion": 19,
+              "settings": { "maxHr": 181, "planCompletion": { "seconds": 1492 } },
+              "runs": [],
+              "intervalStats": []
+            }
+            """.trimIndent()
+        )!!.settings.planCompletion
+        val preferences = mutablePreferencesOf()
+
+        preferences.writePlanCompletion(halfWritten)
+
+        assertNull(userSettingsOf(preferences).planCompletion)
+    }
+
+    @Test
+    fun `a runner who has finished nothing has finished nothing`() {
+        assertNull(userSettingsOf(mutablePreferencesOf()).planCompletion)
     }
 
     @Test

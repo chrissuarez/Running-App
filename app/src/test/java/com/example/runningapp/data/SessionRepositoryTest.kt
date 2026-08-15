@@ -23,6 +23,7 @@ import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.training.FormVerdict
 import com.example.runningapp.training.HistoryBestEffort
+import com.example.runningapp.training.PlanCompletion
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.flowOf
@@ -2659,11 +2660,62 @@ class SessionRepositoryTest {
         verify(mockPrescriptions).prescribe(any(), any(), eq("Stage complete."), any(), any())
     }
 
+    // --- Finishing the whole Plan (#294) -------------------------------------------------------
+
+    /** London, so a Run stamped at midday is plainly inside one day whatever the machine's zone. */
+    private val london = ZoneId.of("Europe/London")
+
+    /** A Run of [fiveKSeconds] that started at noon on [day] — the day a finished plan records. */
+    private suspend fun aRunOn(day: String, fiveKSeconds: Int, statedDao: StatedBestEffortDao) =
+        aRunTold(id = 7, fiveKSeconds = fiveKSeconds, statedDao = statedDao).copy(
+            startTime = LocalDate.parse(day).atTime(12, 0).atZone(london).toInstant().toEpochMilli()
+        )
+
+    /** The rule's own settings, carrying [completion] as the Plan the runner has finished. */
+    private fun onTheLastStage(completion: PlanCompletion? = null) = UserSettings(
+        activePlanId = "5k_sub_25",
+        activeStageId = "sub_25_peak",
+        planCompletion = completion
+    )
+
     @Test
-    fun `finishing the last Stage says so and leaves the prescription alone`() = runTest {
+    fun `finishing the last Stage records the plan as complete and says so`() = runTest {
         // There is no Stage 4 to advance to, and clearing the standing Prescription here would
         // delete the runner's numbers and leave them in a Stage that never moved — the bug #294
-        // exists to fix. The congratulation is the part that is true today.
+        // exists to fix. What replaces it is a recorded completion: the plan, the day and the time.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(onTheLastStage()))
+        stubTheCoachsReads()
+        val run = aRunOn("2026-08-14", fiveKSeconds = 1_463, statedDao = statedDao)
+
+        repo.settleStageAfterRun("sub_25_peak", runType = null, finalizedRun = run, zone = london)
+
+        verify(mockSettingsRepo).completePlan(
+            PlanCompletion(
+                planId = "5k_sub_25",
+                // The Run's own day, not the day this write happened.
+                completedOnEpochDay = LocalDate.parse("2026-08-14").toEpochDay(),
+                seconds = 1_463
+            ),
+            "You ran 5 km in 24:23. Stage 3: Sub-25 Peak complete. " +
+                "That's the whole plan: 5K to Sub-25 Progressive Plan, done.",
+            CoachWriteScope("5k_sub_25", "sub_25_peak")
+        )
+        // The Prescription stands, and the debrief slot is written by the completion itself rather
+        // than by a second write that could land without it.
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
+    @Test
+    fun `a plan already finished is not finished a second time`() = runTest {
+        // A later Run clearing the bar again records nothing and congratulates nobody: this is the
+        // day the plan was finished, not the runner's best — the record book owns that (#294).
         val statedDao: StatedBestEffortDao = mock()
         val repo = SessionRepository(
             sessionDao = mockDao,
@@ -2671,18 +2723,96 @@ class SessionRepositoryTest {
             statedBestEffortDao = statedDao,
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
-            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_25_peak"))
+            flowOf(
+                onTheLastStage(
+                    PlanCompletion(
+                        planId = "5k_sub_25",
+                        completedOnEpochDay = LocalDate.parse("2026-08-14").toEpochDay(),
+                        seconds = 1_492
+                    )
+                )
+            )
         )
         stubTheCoachsReads()
-        val run = aRunTold(id = 7, fiveKSeconds = 1_463, statedDao = statedDao)
+        // Quicker than the recorded time, which changes nothing either.
+        val run = aRunOn("2026-09-01", fiveKSeconds = 1_400, statedDao = statedDao)
 
-        repo.settleStageAfterRun("sub_25_peak", runType = null, finalizedRun = run)
+        repo.settleStageAfterRun("sub_25_peak", runType = null, finalizedRun = run, zone = london)
 
-        verify(mockSettingsRepo).setLatestCoachMessage(
-            "You ran 5 km in 24:23. Stage 3: Sub-25 Peak complete.",
-            CoachWriteScope("5k_sub_25", "sub_25_peak")
+        verify(mockSettingsRepo, never()).completePlan(any(), any(), any())
+        verify(mockSettingsRepo, never()).setLatestCoachMessage(any(), any())
+    }
+
+    @Test
+    fun `a completion belonging to another plan does not stand in the way of this one`() = runTest {
+        // Keyed by plan id, so a plan finished under a different plan is not this plan's ending
+        // (#294).
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
         )
-        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(
+                onTheLastStage(
+                    PlanCompletion(
+                        planId = "desk_test_plan",
+                        completedOnEpochDay = 0L,
+                        seconds = 1_400
+                    )
+                )
+            )
+        )
+        stubTheCoachsReads()
+        val run = aRunOn("2026-08-14", fiveKSeconds = 1_463, statedDao = statedDao)
+
+        repo.settleStageAfterRun("sub_25_peak", runType = null, finalizedRun = run, zone = london)
+
+        verify(mockSettingsRepo).completePlan(
+            eq(PlanCompletion("5k_sub_25", LocalDate.parse("2026-08-14").toEpochDay(), 1_463)),
+            any(),
+            any()
+        )
+    }
+
+    @Test
+    fun `a Run short of the bar finishes nothing`() = runTest {
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(onTheLastStage()))
+        stubTheCoachsReads()
+        val run = aRunOn("2026-08-14", fiveKSeconds = 1_500, statedDao = statedDao)
+
+        repo.settleStageAfterRun("sub_25_peak", runType = null, finalizedRun = run, zone = london)
+
+        verify(mockSettingsRepo, never()).completePlan(any(), any(), any())
+    }
+
+    @Test
+    fun `the coach is told the plan is finished, and not told so while it is not`() = runTest {
+        // The Stage is still theirs and still has Workouts; what must stop is the coach being told
+        // forever to aim them at a time they have already run (#294).
+        val repo = SessionRepository(sessionDao = mockDao, settingsRepository = mockSettingsRepo)
+        stubTheCoachsReads()
+
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(onTheLastStage()))
+        assertFalse(repo.getAiTrainingContext("sub_25_peak").planComplete)
+
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(onTheLastStage(PlanCompletion("5k_sub_25", 20_000L, 1_492)))
+        )
+        assertTrue(repo.getAiTrainingContext("sub_25_peak").planComplete)
+        // An earlier Stage of the same plan is not the end of anything: a runner who re-attached
+        // the plan is in Stage 1, and telling the coach there is no Stage after it is a sentence
+        // their own plan contradicts.
+        assertFalse(repo.getAiTrainingContext("sub_30_bridge").planComplete)
+        // And a Stage of a plan nobody has finished is not swept up by it.
+        assertFalse(repo.getAiTrainingContext("desk_test_stage").planComplete)
     }
 
     // --- The card is told when a Test is due (#292) --------------------------------------------
@@ -3037,9 +3167,15 @@ class SessionRepositoryTest {
 
         repo.settleStageAfterRun("sub_25_peak", RunType.QUALITY, run)
 
-        verify(mockSettingsRepo).setLatestCoachMessage(
-            "You ran 5 km in 24:23. Stage 3: Sub-25 Peak complete.",
-            CoachWriteScope("5k_sub_25", "sub_25_peak")
+        // Stage 3 is the last of the plan, so the congratulation travels with the completion it is
+        // about rather than on its own (#294).
+        verify(mockSettingsRepo).completePlan(
+            any(),
+            eq(
+                "You ran 5 km in 24:23. Stage 3: Sub-25 Peak complete. " +
+                    "That's the whole plan: 5K to Sub-25 Progressive Plan, done."
+            ),
+            eq(CoachWriteScope("5k_sub_25", "sub_25_peak"))
         )
     }
 

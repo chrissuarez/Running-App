@@ -874,6 +874,10 @@ class MainActivity : ComponentActivity() {
                                         zone = ZoneId.systemDefault()
                                     )
                                 },
+                                // Read straight off the settings, which is the only place a
+                                // finished plan is recorded (#294) — nothing here measures or
+                                // infers it.
+                                planCompletion = userSettings.planCompletion,
                                 onActivatePlan = { planId, stageId ->
                                     scope.launch {
                                         settingsRepository.setActivePlan(planId, stageId)

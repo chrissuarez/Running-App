@@ -513,6 +513,28 @@ class AiCoachClientTest {
     }
 
     @Test
+    fun `the coach is told when the runner has finished the whole plan`() {
+        // Otherwise it is told forever that they are in a stage asking for a time they have already
+        // run, and it goes on coaching them toward it (#294).
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(requirementIsTheAppsToAnswer = true, planComplete = true)
+        )
+
+        assertTrue(prompt.contains("finished this whole training plan"))
+        assertTrue(prompt.contains("Do not set them the requirement as a target"))
+        assertTrue(prompt.contains("do not talk about moving on to a next stage"))
+    }
+
+    @Test
+    fun `a plan still under way says nothing about being finished`() {
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(requirementIsTheAppsToAnswer = true)
+        )
+
+        assertFalse(prompt.contains("finished this whole training plan"))
+    }
+
+    @Test
     fun `the coach is shown the Workout its numbers replace`() {
         // Without this the coach adjusts intervals it has never seen (#246), and the floor (#170)
         // and the ceiling measure the answer against numbers it was never told.

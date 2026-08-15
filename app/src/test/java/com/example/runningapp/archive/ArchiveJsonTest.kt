@@ -2,6 +2,7 @@ package com.example.runningapp.archive
 
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.training.PlanCompletion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -106,6 +107,38 @@ class ArchiveJsonTest {
 
         assertEquals(false, ArchiveJson.read(withoutTheField)?.settings?.maxHrCardDismissed)
     }
+
+    @Test
+    fun `a finished plan survives a lost phone`() {
+        // The one moment in the app that happens exactly once and can never be re-earned: left out
+        // of the archive, a restore would be the only way to lose it for good (#294).
+        val completed = document().copy(
+            settings = settings.copy(
+                planCompletion = PlanCompletion(
+                    planId = "5k_sub_25",
+                    completedOnEpochDay = 20_679L,
+                    seconds = 1_492
+                )
+            )
+        )
+
+        val restored = ArchiveJson.read(ArchiveJson.write(completed))
+
+        assertEquals(completed.settings, restored?.settings)
+    }
+
+    @Test
+    fun `an archive written before a plan could be finished says none was`() {
+        // A document with no such field is a phone from an app that could not finish a plan, which
+        // is exactly what null means here (#294).
+        val withoutTheField = ArchiveJson.write(document())
+            .lines()
+            .filterNot { it.contains("planCompletion") }
+            .joinToString("\n")
+
+        assertNull(ArchiveJson.read(withoutTheField)?.settings?.planCompletion)
+    }
+
 
     @Test
     fun `an empty history is a document, not a failure`() {
