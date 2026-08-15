@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.runningapp.archive.ArchivedSettings
 import com.example.runningapp.training.PlanCompletion
+import java.time.LocalDate
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -311,17 +312,36 @@ internal fun planCompletionOf(preferences: Preferences): PlanCompletion? {
 }
 
 /**
+ * The days a Plan can plausibly have been finished on: after the epoch, and inside the range a
+ * calendar day can be read back in.
+ *
+ * The floor is 1 rather than 0 because a completion is the day of a *Run*, and this app recorded no
+ * Runs in 1970 — a zero there is a field a document never carried, not an afternoon.
+ */
+private val PLAN_COMPLETION_DAYS = 1L..LocalDate.MAX.toEpochDay()
+
+/**
  * Stores a Plan the runner has finished, or takes all three keys away where there is none — the
  * whole fact in one write, which is what makes [planCompletionOf]'s all-or-none read true.
  */
 internal fun MutablePreferences.writePlanCompletion(completion: PlanCompletion?) {
-    // A completion naming no Plan is no completion, the same reading [planCompletionOf] gives half
-    // a trio of keys. It cannot be built in Kotlin, but it can arrive: an archive is JSON read by
-    // Gson, which fills a field a truncated document never mentioned with null whatever the type
-    // says. Refused here rather than at the read, so one malformed field costs a restore a fact it
-    // never really had instead of costing it the whole archive.
+    // A completion missing any of its three parts is no completion, the same reading
+    // [planCompletionOf] gives half a trio of keys. It cannot be built in Kotlin, but it can
+    // arrive: an archive is JSON read by Gson, which fills a field a truncated document never
+    // mentioned — with null whatever a reference type says, and with a silent 0 for a Long or an
+    // Int, which is why the day and the time are checked and not only the Plan. A completion stored
+    // out of those defaults would put the runner's finest afternoon on 1 January 1970 in 0:00, and
+    // a day far enough out of range would make the card throw rather than read wrong.
+    //
+    // Refused here rather than at the read, so one malformed field costs a restore a fact it never
+    // really had instead of costing it the whole archive.
     @Suppress("SENSELESS_COMPARISON")
-    if (completion == null || completion.planId == null) {
+    if (completion == null ||
+        completion.planId == null ||
+        completion.planId.isBlank() ||
+        completion.completedOnEpochDay !in PLAN_COMPLETION_DAYS ||
+        completion.seconds <= 0
+    ) {
         remove(PreferencesKeys.PLAN_COMPLETE_PLAN_ID)
         remove(PreferencesKeys.PLAN_COMPLETE_DAY)
         remove(PreferencesKeys.PLAN_COMPLETE_SECONDS)

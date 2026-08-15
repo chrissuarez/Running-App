@@ -190,6 +190,49 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `a completion naming no day and no time is not stored`() {
+        // The other half of the same hazard, and the quieter one: Gson fills an absent Long or Int
+        // with 0 rather than null, so a truncated document that does name the Plan arrives looking
+        // complete. Stored, the card would call the runner's finest afternoon 1 January 1970 and
+        // their time 0:00 (#294).
+        val dayless = ArchiveJson.read(
+            """
+            {
+              "formatVersion": 1,
+              "createdAtEpochMillis": 1,
+              "databaseVersion": 19,
+              "settings": { "maxHr": 181, "planCompletion": { "planId": "5k_sub_25" } },
+              "runs": [],
+              "intervalStats": []
+            }
+            """.trimIndent()
+        )!!.settings.planCompletion
+        val preferences = mutablePreferencesOf()
+
+        preferences.writePlanCompletion(dayless)
+
+        assertNull(userSettingsOf(preferences).planCompletion)
+    }
+
+    @Test
+    fun `a completion on a day no calendar can read is not stored`() {
+        // A day far enough out of range does not read wrong, it throws: the card formats it with
+        // LocalDate.ofEpochDay. Refused at the write, so a hand-edited archive costs a fact rather
+        // than the screen that would show it (#294).
+        val preferences = mutablePreferencesOf()
+
+        preferences.writePlanCompletion(
+            PlanCompletion(
+                planId = "5k_sub_25",
+                completedOnEpochDay = Long.MAX_VALUE,
+                seconds = 1_492
+            )
+        )
+
+        assertNull(userSettingsOf(preferences).planCompletion)
+    }
+
+    @Test
     fun `a runner who has finished nothing has finished nothing`() {
         assertNull(userSettingsOf(mutablePreferencesOf()).planCompletion)
     }
