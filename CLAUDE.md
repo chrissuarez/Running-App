@@ -12,6 +12,11 @@ Issues live in GitHub Issues for `chrissuarez/Running-App`, operated via the `gh
 
 Default vocabulary — the five canonical roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`) used as-is. See `docs/agents/triage-labels.md`.
 
+### Codex review loop
+
+`/codex-loop [PR]` drives a PR through Codex review until it is clean or the findings have become
+tickets. See `.claude/skills/codex-loop/SKILL.md`.
+
 ### Domain docs
 
 Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root (created lazily by `/domain-modeling`). See `docs/agents/domain.md`.
