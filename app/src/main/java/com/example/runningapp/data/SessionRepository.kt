@@ -47,6 +47,7 @@ import com.example.runningapp.analysis.recordBookOf
 import com.example.runningapp.analysis.standingsAfter
 import com.example.runningapp.analysis.bestEffortsOf
 import com.example.runningapp.recording.SessionRecorder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
@@ -2722,15 +2723,29 @@ class SessionRepository(
      * be taken back. Named, it gets its own attempt, and its value goes to [finishSheetClosed]
      * whether or not the attempt landed.
      *
-     * **The gate is closed even when a write fails**, which is the other reason this exists. A
-     * throw on the way to [finishSheetClosed] would leave [finishSheetOpenFor] naming this Run for
-     * the life of the process: the finish has already been and gone, and the launch pass runs once,
-     * so nothing left would ever settle it. Settling on what did land is the smaller loss than never
-     * settling at all. Failures are logged and not rethrown, because by here the sheet is off
-     * screen and there is nobody to tell — and on the process-wide scope this is called from, an
-     * unhandled throw would take the app down and lose the settlement with it. Closing the gate is
-     * [finishSheetClosed]'s to do and not this function's, because there it is the same step as the
-     * settlement that carries the word — see the rule there.
+     * **Nothing in the runner's answer may leave this function throwing**, which is the other reason
+     * this exists. It is called on a process-wide scope whose [kotlinx.coroutines.SupervisorJob]
+     * only stops one child's failure reaching its siblings — it does not handle the failure, so a
+     * throw out of here reaches the default handler and takes the app down, and takes the
+     * settlement with it. Failures are logged instead, because by here the sheet is off screen and
+     * there is nobody to tell. That is one rule and it covers every step, so it is stated once, as
+     * the guard around the whole body. Cancellation is not a failure and goes on out.
+     *
+     * The two guards inside the body are not a second copy of that rule; they are a different rule
+     * — **a step that fails must not skip the steps after it**. The answer does as much of itself as
+     * it can: an effort that throws must still let the Walk mark be attempted, and neither may cost
+     * the Run its close, because a throw on the way to [finishSheetClosed] would leave
+     * [finishSheetOpenFor] naming this Run for the life of the process — the finish has already been
+     * and gone, and the launch pass runs once, so nothing left would ever settle it. Settling on
+     * what did land is the smaller loss than never settling at all.
+     *
+     * The outer guard therefore catches only what the close itself throws, and there the loss is
+     * real: the sheet state is gone and the gate may already be clear, so this Run's settlement
+     * waits for the next launch's pass rather than being retried here. A retry in this process would
+     * be a second copy of that pass, and a database that has just refused a read is not a database
+     * worth asking twice in the same second. Closing the gate is [finishSheetClosed]'s to do and not
+     * this function's, because there it is the same step as the settlement that carries the word —
+     * see the rule there.
      */
     suspend fun finishSheetAnswered(
         sessionId: Long,
@@ -2740,22 +2755,28 @@ class SessionRepository(
         writes: suspend () -> Unit,
     ) {
         try {
-            writes()
-        } catch (e: Exception) {
-            Log.w("StageRule", "Could not store the finish sheet's answer for run $sessionId; settling on what landed", e)
-        }
-        if (markedAsWalk != null) {
-            // Last of the answer's writes, so the snapshot it takes carries the others, and its own
-            // attempt so nothing above can cost the Run its mark. [markAsWalk] refuses a change of
-            // nothing itself, which is why the switch is handed over as it stands rather than only
-            // when it is on: deciding that here would be the same rule in a second place.
             try {
-                markAsWalk(sessionId, markedAsWalk, finalizeWaitStepMillis)
+                writes()
             } catch (e: Exception) {
-                Log.w("StageRule", "Could not store the Walk mark for run $sessionId; settling on the runner's word", e)
+                Log.w("StageRule", "Could not store the finish sheet's answer for run $sessionId; settling on what landed", e)
             }
+            if (markedAsWalk != null) {
+                // Last of the answer's writes, so the snapshot it takes carries the others, and its
+                // own attempt so nothing above can cost the Run its mark. [markAsWalk] refuses a
+                // change of nothing itself, which is why the switch is handed over as it stands
+                // rather than only when it is on: deciding that here would be the same rule twice.
+                try {
+                    markAsWalk(sessionId, markedAsWalk, finalizeWaitStepMillis)
+                } catch (e: Exception) {
+                    Log.w("StageRule", "Could not store the Walk mark for run $sessionId; settling on the runner's word", e)
+                }
+            }
+            finishSheetClosed(sessionId, markedAsWalk, zone, finalizeWaitStepMillis)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (failure: Throwable) {
+            Log.e("StageRule", "The finish sheet's answer for run $sessionId did not complete; the next launch's pass owes this Run its settlement", failure)
         }
-        finishSheetClosed(sessionId, markedAsWalk, zone, finalizeWaitStepMillis)
     }
 
     /**
