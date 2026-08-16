@@ -24,11 +24,15 @@ import kotlinx.coroutines.withContext
  * ### The single thread
  *
  * Every write lands on one thread of its own, which is what makes this safe to call from the main
- * thread, the session thread and a finalization coroutine alike without a lock at any call site,
- * and what keeps the file in the order the events happened. That thread outlives the service on
- * purpose — the line recording a teardown must not be cancelled by the teardown it is recording,
- * the same reason `HrForegroundService.finalizationScope` is detached (#310, and see
- * `HrForegroundService.kt`).
+ * thread, the session thread and a finalization coroutine alike without a lock at any call site.
+ * That thread outlives the service on purpose — the line recording a teardown must not be cancelled
+ * by the teardown it is recording, the same reason `HrForegroundService.finalizationScope` is
+ * detached (#310, and see `HrForegroundService.kt`).
+ *
+ * The file is in the order the writes were *asked for*, which for two threads asking at the same
+ * instant is not quite the order they happened in. That is why each line carries its own clock,
+ * read at the call rather than at the append: a reader who cares sorts on the timestamps, and never
+ * has to trust the file's own order.
  *
  * ### The bound
  *

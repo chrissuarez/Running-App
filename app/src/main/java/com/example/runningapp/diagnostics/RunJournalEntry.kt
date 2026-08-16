@@ -52,6 +52,11 @@ enum class RunJournalEvent(val token: String) {
      *
      * The line #310 was written for: in #309 one of these, timestamped, would have closed the
      * ticket on its own.
+     *
+     * A demote is the only `stopSelf()` in the app, so every one of them is written down — including
+     * the one that hands back a start the platform refused to promote. Those read as a `demoted`
+     * with a [PROMOTION_REFUSED] above it rather than a [PROMOTED], which is how a hand-back of
+     * something never held is told apart from a Run losing its foreground state.
      */
     DEMOTED("demoted"),
 

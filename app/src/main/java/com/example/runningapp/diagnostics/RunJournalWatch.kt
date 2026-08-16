@@ -7,11 +7,11 @@ import com.example.runningapp.run.AcquisitionPhase
  * The published facts a Run Journal line can be derived from.
  *
  * Everything here the service already publishes on `HrState`, which is the point: the Run
- * lifecycle and the Strap are journaled by *watching* rather than by a call at each of the dozen
- * places that move them — the same reason Promotion is derived rather than claimed
- * (ADR 0001). A line cannot be forgotten at a new call site if there is no call site.
+ * lifecycle and the Strap are journaled by reading what was just published rather than by a call at
+ * each of the dozen places that move them — the same reason Promotion is derived rather than
+ * claimed (ADR 0001). A line cannot be forgotten at a new call site if there is no call site.
  */
-data class RunVitals(
+data class JournaledState(
     val sessionStatus: SessionStatus = SessionStatus.IDLE,
     /** The live Run's row, null before it lands and again once the Run is over. */
     val runRowId: Long? = null,
@@ -23,7 +23,7 @@ data class RunVitals(
  * changed nothing the journal cares about, which is nearly every one of them: the state this reads
  * republishes every second while a Run is on.
  */
-fun journalEntriesFor(before: RunVitals, after: RunVitals): List<RunJournalEntry> {
+fun journalEntriesFor(before: JournaledState, after: JournaledState): List<RunJournalEntry> {
     // The Run being named is whichever of the two knows one. On a stop the live Run has already
     // been cleared by the time the status says so, and a stop line naming no Run is the one line
     // a lost Run's diagnosis cannot do without.
@@ -87,19 +87,20 @@ private fun strapEntries(
 private fun AcquisitionPhase.Connected.describe() = "$name $address"
 
 /**
- * The Run Journal's ear: hand it what the service has just published and the lines that follow
- * are written.
+ * The Run Journal's ear: hand it what the service has just published and the lines that follow are
+ * written.
  *
- * Holds the one thing the rule above cannot be given — what was true last time — and nothing else.
- * Touched only from the thread that collects the published state.
+ * Holds the one thing [journalEntriesFor] cannot be given — what was true last time — and nothing
+ * else. Not thread-safe, and does not need to be: it is fed from the one thread the Run and the
+ * Acquisition publish on.
  */
 class RunJournalWatch(private val journal: RunJournal) {
 
-    private var last = RunVitals()
+    private var last = JournaledState()
 
-    fun observe(vitals: RunVitals) {
-        val entries = journalEntriesFor(last, vitals)
-        last = vitals
+    fun observe(published: JournaledState) {
+        val entries = journalEntriesFor(last, published)
+        last = published
         journal.write(entries)
     }
 }
