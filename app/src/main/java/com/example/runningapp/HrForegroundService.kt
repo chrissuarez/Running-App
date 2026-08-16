@@ -2047,17 +2047,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         Log.d(TAG, "onDestroy called - Clean Exit")
 
         // Android does not say why a service is being destroyed, so what goes down is what this
-        // service knew as it went: whether a Run was still live, and whether it still held the
-        // Promotion. A destroy with a live Run and no demote above it is a Run the system took
-        // (#310).
+        // service knew at the moment the destroy began — whether a Run was still live, and whether
+        // it still held the Promotion — and not a settled account of how it ended: the teardown
+        // below has not run yet, and the session inbox may still be mid-message. A destroy with a
+        // live Run and no demote above it is a Run the system took (#310).
         journal(
             RunJournalEvent.SERVICE_DESTROYED,
             "status=${_hrState.value.sessionStatus} promoted=${promotion.isPromoted} bound=$isActivityBound"
         )
-        // Waited out here, before any of the teardown below, because a destroy is often followed
-        // straight away by the process being reclaimed — and a line still queued behind a slow
-        // append is a line that dies with it. Bounded, and it gives up rather than throwing, so the
-        // wait can never be what ends the app (#310).
+        // First of two drains, and the one that is the whole of #310: waited out here, before any
+        // of the teardown below, because a destroy is often followed straight away by the process
+        // being reclaimed — and a line still queued behind a slow append is a line that dies with
+        // it. Taken before teardown so the line lands even if teardown later hangs. Bounded, and it
+        // gives up rather than throwing, so the wait can never be what ends the app (#310).
         runJournal.flushBlocking()
 
         // 0. Anything that opens a GATT from here on closes it itself; the sweep below is the
@@ -2119,6 +2121,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // owner of the decision. acquire/release are idempotent, so a preceding demote is fine.
         releaseWakeLock()
         audioCueManager?.shutdown()
+
+        // Second of the two drains, and the reason the first is not enough: the session inbox was
+        // still running when that one was taken, so a lifecycle or Acquisition line it wrote on its
+        // way out queued behind it with nothing left to wait for it. The drain is repeated here
+        // rather than the quit and join above being lifted over the snapshot: that order is what
+        // lets a late connect see [destroyed] and what leaves step 2 alone with [openGatts], and a
+        // diagnostic is never worth risking the Bluetooth teardown those steps are protecting. Same
+        // bounded wait, so this cannot be what ends the app either (#309, #310).
+        runJournal.flushBlocking()
         Log.d(TAG, "Service destroyed")
     }
 }
