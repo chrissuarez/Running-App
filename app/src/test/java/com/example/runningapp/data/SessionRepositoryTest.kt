@@ -2977,6 +2977,24 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a close that fails does not escape the runner's answer`() = runTest {
+        // The answer runs on the process-wide scope, whose SupervisorJob stops one child's failure
+        // reaching its siblings but does not handle it — so a throw out of the close reaches the
+        // default handler and takes the app down (#297). Nothing the runner's answer does may cost
+        // them the app; the settlement is left to the next launch's pass instead.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.setStageSettled(7L))
+            .thenThrow(IllegalStateException("the settlement could not be marked"))
+
+        repo.finishSheetOpened(7L)
+        repo.finishSheetAnswered(7L) {}
+
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
     fun `a settlement reaching the Run while the sheet's word is on its way judges nothing`() = runTest {
         // The gate says a word about this Run is still coming, so it may not read as open until the
         // settlement carrying that word owns the lock (#297). Opened first and settled after, the
