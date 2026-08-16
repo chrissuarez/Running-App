@@ -693,6 +693,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // a stale packet would look fresh. A real packet repopulates both within a second.
         lastHrTimestamp = 0L
         _hrState.update { it.copy(bpm = 0, distanceKm = 0.0, paceMinPerKm = 0.0) }
+        // Where the runner's clock was when they pressed START (#304), read here on the way in and
+        // not inside the write below. The write is dispatched to IO and runs at some later moment,
+        // so a zone read there is a reading of whenever the insert got a thread — a phone that
+        // crossed a border, or landed, between START and the insert would stamp the Run with a zone
+        // the runner was never in when they set off. An observation of the device has to be taken
+        // when the thing being observed happened.
+        val ranAtUtcOffsetSeconds = utcOffsetSecondsAt(
+            effect.startedAtMillis,
+            ZoneId.systemDefault(),
+        )
         recorderWriteScope.launch {
             val runRowId = database.sessionDao().insertSession(
                 RunnerSession(
@@ -710,14 +720,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     // And which of the Stage's Workouts it is, which is how history is later
                     // asked when the runner last ran their Test (#292).
                     ranUnderWorkoutId = effect.ranUnderWorkoutId,
-                    // Where the runner's clock was when they pressed START (#304). Read from the
-                    // phone here rather than carried on the effect, because it is an observation of
-                    // the device at this moment and not a decision the rulebook made — the same
-                    // reason the clock below is read here.
-                    ranAtUtcOffsetSeconds = utcOffsetSecondsAt(
-                        effect.startedAtMillis,
-                        ZoneId.systemDefault(),
-                    ),
+                    // Read from the phone rather than carried on the effect, because it is an
+                    // observation of the device and not a decision the rulebook made — taken above,
+                    // before this write was dispatched.
+                    ranAtUtcOffsetSeconds = ranAtUtcOffsetSeconds,
                 )
             )
             Log.d(TAG, "Started DB Session: $runRowId (Mode: ${effect.runModeSettingValue})")
