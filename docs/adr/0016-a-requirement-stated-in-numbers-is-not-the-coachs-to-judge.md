@@ -44,9 +44,38 @@ time, graduates the Stage.**
   the number is the number wherever it turned up. No further carve-outs: the moment one is carved
   out we are back to the structural reasoning this narrowing exists to drop.
 
+## The rule is asked once the runner's word is in
+
+Not at STOP. **Never a Walk** is only a promise the code keeps if the Walk mark has arrived by the
+time the rule is asked, and the mark is the runner's own word given on the "How did that feel?"
+sheet — which goes up at STOP and is answered seconds later. Asked at STOP, an outdoor activity
+covering a qualifying 5 km could advance the Stage a moment before the app was told it was a walk,
+and a graduation cannot be taken back. That was
+[#297](https://github.com/chrissuarez/Running-App/issues/297).
+
+So the Run is put to the Plan when the finish sheet resolves — Save or dismissed, both being an
+answer. Two cases have no sheet to wait for and are settled without one: a Run stopped from the
+notification, which opens no sheet at all, and a Run whose sheet died with the process or was never
+answered, which the next launch settles. A `stageSettled` column on the Run carries that debt across
+a process boundary, exactly as `recordsScored` carries the record book's; every Run recorded before
+the column existed arrives already settled, because a launch that walked all of history putting each
+Run to the rule is the very pass the rule refuses to make.
+
+**The row is read back rather than frozen, and that is a change.** The finalize path used to hand
+its own copy of the row over so a distance typed into the sheet could not join the judgement of the
+Run it belonged to ([#231](https://github.com/chrissuarez/Running-App/issues/231), ADR 0008) — a
+race, won by whichever of the two was quicker. Waiting for the sheet dissolves the race instead of
+freezing against it: the sheet's answers are always in, because the judgement is what waited. A
+stated distance still grants nothing on its own — a treadmill Run's Best Effort comes only from a
+Stated Best Effort read off the console, never from a distance over a duration — so the typo this
+guarded against still cannot graduate a Stage. What it lets in that matters is the Walk mark.
+
+A statement made *later*, on the Run's own page, is a different thing and still never replays the
+judgement. Only a Stated Best Effort re-asks the rule, and only once the Run has been settled at all.
+
 ## The app asks first, and the coach is asked afterwards
 
-The rule runs in the finalize path, **before** the coach is asked anything. Where a Long Run happens
+The rule runs **before** the coach is asked anything, in the same settlement. Where a Long Run happens
 to contain a qualifying 5K, both would otherwise have a view: the rule grants and moves the stored
 Stage on, and the existing "the Run was recorded under a Stage the runner has since left" guard then
 sees the Stage has moved and skips the coach for free. That guard was written for a graduation
@@ -73,7 +102,8 @@ be machinery guarding nothing.
   ([#293](https://github.com/chrissuarez/Running-App/issues/293)).
 - **Never revoked.** Deleting the Run that graduated, or marking it a Walk afterwards, does not
   un-graduate. CONTEXT.md already says this of the Walk mark, and the rule holds the same line for a
-  delete.
+  delete. "Afterwards" means after the finish sheet: a mark made *on* that sheet is in before the
+  rule is asked at all, so there is nothing there to revoke (#297).
 - **A Stated Best Effort typed after the Run re-asks the rule.** This is the one place the rule looks
   at a Run again, and it has to: a treadmill 5K is stated after the Run has ended, so a rule that
   only ever looked at the finish would accept a measured 5K and silently refuse a stated one. It is
@@ -105,6 +135,12 @@ also means the graduation lands offline and with no Gemini key.
   alone, which is the least wrong thing available until
   [#294](https://github.com/chrissuarez/Running-App/issues/294) decides what finishing a plan
   actually offers.
+- **A rescued Run is settled by the rescue, which is to say not at all.** A Run whose process died
+  mid-recording ([#192](https://github.com/chrissuarez/Running-App/issues/192)) comes back with its
+  Stage question already closed. It reached no finish and no sheet, so nobody was ever asked what it
+  was, and granting a Stage off it a launch later is the pass over history this rule refuses. It also
+  keeps the rescue and the launch pass off the same row, which is otherwise a race between two
+  passes that start together.
 - **A future requirement stated in numbers has a place to go.** A pace, a distance, a duration — each
   is a new kind of requirement and a new comparison, and none of them is a new argument about who
   decides.

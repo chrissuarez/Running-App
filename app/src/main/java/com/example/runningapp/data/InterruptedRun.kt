@@ -127,6 +127,13 @@ fun RunnerSession.finishedFromRecord(
         // re-running the pass must not overwrite a start position that is already there.
         startLatitude = startLatitude ?: firstFix?.latitude,
         startLongitude = startLongitude ?: firstFix?.longitude,
+        // Settled, so nothing puts this Run to the Plan afterwards (#297). It reached no finish and
+        // no finish sheet, and its runner was never asked what it was — so a graduation granted off
+        // it a launch later would be the app deciding a Stage on a Run nobody ever closed. That is
+        // the pass over history the graduation rule refuses to make (ADR 0016), and it is also what
+        // this Run has always got: nothing here ever settled a Stage. Said here rather than left to
+        // the default so a rescue cannot race the launch pass for the same row.
+        stageSettled = true,
     )
 }
 

@@ -81,6 +81,12 @@ import kotlin.math.roundToInt
 private const val MAX_SESSION_IDS_PER_QUERY = 500
 
 /**
+ * No finish sheet is on screen (#297). Not a row id: Room hands out ids from 1 up, so nothing can
+ * ever be mistaken for this.
+ */
+private const val NO_FINISH_SHEET = -1L
+
+/**
  * How many banked seconds a heart rate has to have been held at to count as one this runner has
  * reached (#65, #103).
  *
@@ -1919,18 +1925,18 @@ class SessionRepository(
      * are a live read of the truth, and the alternative is freezing numbers we know to be wrong.
      * Nothing warns and no past coaching is re-run. A Stage already graduated stays graduated.
      *
-     * **The Run's own Stage evaluation is not re-run and cannot be**, which is the same rule a
-     * Stated Distance is under (#231, ADR 0008) and is worth stating plainly because the mark
-     * usually arrives *seconds* late rather than weeks: `finalizeRun` asks the coach at STOP, while
-     * the sheet carrying this switch is still on screen. So the Run that has just finished is judged
-     * as the Run it was when it ended — sent to the coach under its old label, and able to graduate
-     * a Stage. What the mark buys is every evaluation *after* it, where
-     * [AiTrainingContext.requirementEvidenceRunIdsByTimestamp] leaves it out.
+     * **The Run's own Stage settlement is not re-run and does not have to be** — because it waits
+     * for this mark rather than racing it (#297). The sheet carrying this switch goes up at STOP and
+     * the Run's Stage is settled when the sheet closes, so a mark made there is in *before* the Run
+     * is put to the Plan: it graduates nothing, and it reaches the coach named as a Walk. That is
+     * what makes "a Walk graduates nothing" a promise the code keeps rather than a race it usually
+     * wins; it used to be asked at STOP, seconds too early, which is the whole of #297.
      *
-     * That is the safe side of a judgement made once and never taken back, but it is a real edge:
-     * only a Run that followed a Workout the coach adjusts is evaluated at all, so it is reached by
-     * starting a planned Long Run and then walking it — never by the post-lifting walk this ticket
-     * was written for, which carries no Run Type and is never evaluated.
+     * A mark made *afterwards* — on the Run's own page, an hour or three weeks later — is a
+     * different thing and is still never replayed, the same rule a Stated Distance is under (#231,
+     * ADR 0008). What it buys is every evaluation after it, where
+     * [AiTrainingContext.requirementEvidenceRunIdsByTimestamp] leaves the Run out. A Stage already
+     * graduated stays graduated.
      *
      * Nothing changed writes nothing, so re-opening the dialog and pressing Save on the mark already
      * there costs neither a row update nor a walk of the record book.
@@ -2194,8 +2200,21 @@ class SessionRepository(
         // can already hold a qualifying 5K stated long before any of this existed; letting a Mile
         // typed today re-ask the rule would graduate the Stage off that old claim, which is the
         // pass over history the rule refuses to make.
+        //
+        // And only once the Run's Stage has been settled at all (#297). A Run whose finish sheet is
+        // still open has not been judged yet, and the settlement waiting on that sheet reads every
+        // claim the Run holds — this one included — when it comes. Asking here first would be the
+        // rule granting before the runner has said whether the Run was a walk, which is the whole of
+        // what that wait exists for.
         if (!worse) {
             sessionDao.getSessionById(sessionId)?.let { stored ->
+                if (!stored.stageSettled) {
+                    Log.d(
+                        "StageRule",
+                        "Run $sessionId has not been settled yet; its settlement will read this claim (#297)"
+                    )
+                    return@let
+                }
                 stored.ranUnderStageId?.let { graduateOnBestEffortRequirement(it, stored, answering = type) }
             }
         }
@@ -2580,8 +2599,11 @@ class SessionRepository(
      * second rule saying the same thing as that guard, free to drift from it; and on a Stage the
      * rule declined, the coach's debrief and Prescription are exactly what the runner is owed.
      *
-     * [runType] and [finalizedRun] are passed straight through — see [evaluateAndAdjustPlan] for
-     * what each is and why the Run is handed over rather than read back.
+     * **When** this is asked is [settleStageForRun]'s question, and it is a separate one: this
+     * decides what the Plan has to say about a Run, and that decides the moment the Run is ready to
+     * be asked about. [finalizedRun] is the Run as the caller found it at that moment.
+     *
+     * [runType] and [finalizedRun] are passed straight through — see [evaluateAndAdjustPlan].
      */
     suspend fun settleStageAfterRun(
         stageId: String,
@@ -2600,6 +2622,199 @@ class SessionRepository(
             Log.w("StageRule", "Could not settle stage=$stageId after run ${finalizedRun.id}", e)
         }
         evaluateAndAdjustPlan(stageId, runType, finalizedRun)
+    }
+
+    /**
+     * The Run whose "How did that feel?" sheet is on screen, or [NO_FINISH_SHEET] when none is
+     * (#297).
+     *
+     * One Run, because one Run finishes at a time and the sheet is the finish of it. In memory and
+     * deliberately not stored: it says what is happening in *this* process, and a process that dies
+     * takes the sheet down with it — after which nothing is still coming and the launch pass is
+     * right to settle. Persisting it would turn a sheet the runner never saw again into a Stage
+     * question held open for ever.
+     *
+     * A row id rather than a nullable one boxed into an `AtomicReference`, because that class
+     * compares by *identity*: two boxed copies of the same id are two objects, so a
+     * compare-and-set on one would silently fail to clear the other and hold the Stage open for
+     * ever. Here the comparison is on the number.
+     */
+    private val finishSheetOpenFor = AtomicLong(NO_FINISH_SHEET)
+
+    /**
+     * The finish sheet has been put on screen for a Run (#297) — called as STOP is pressed, before
+     * the Run has finished finalizing.
+     *
+     * This is the gate, and it is a gate rather than a wait on purpose: the finish cannot know how
+     * long the runner will look at the sheet, and a settlement that timed out would be a promise
+     * kept on a stopwatch. Registered *before* the stop is issued, so the finish that follows can
+     * only ever find it already here.
+     */
+    fun finishSheetOpened(sessionId: Long) {
+        finishSheetOpenFor.set(sessionId)
+    }
+
+    /**
+     * The runner has finished with the sheet — Save or dismissed — so their word about the Run is
+     * in and the Stage can be settled (#297).
+     *
+     * Dismissing counts, and has to: a runner who swipes the sheet away has said the Run was what
+     * it looks like, and holding the graduation until the next launch over a sheet they declined
+     * would be the app sulking. What Save adds is only that the mark, the note and any stated
+     * distance are written first — the caller sees to that order, because they are its writes.
+     *
+     * **It waits for the Run to be finished**, the same wait every other door off this sheet makes
+     * ([markAsWalk], [stateDistance]) and for the same reason: the sheet is on screen from the
+     * moment STOP is pressed while `finalizeRun` is still writing the row. A runner who dismisses it
+     * inside that second would otherwise find a Run with no end time, which is a Run nothing here
+     * can judge — and the Stage would then hold until the next launch. Save reaches the wait having
+     * already made it and returns on the first read.
+     */
+    suspend fun finishSheetClosed(
+        sessionId: Long,
+        zone: ZoneId = ZoneId.systemDefault(),
+        finalizeWaitStepMillis: Long = 250L,
+    ) {
+        finishSheetOpenFor.compareAndSet(sessionId, NO_FINISH_SHEET)
+        awaitFinalized(sessionId, finalizeWaitStepMillis) ?: return
+        settleStageForRun(sessionId, zone)
+    }
+
+    /**
+     * Puts a finished Run to the Plan — the app's graduation rule and then the coach — once the
+     * runner can no longer change what the Run was (#297).
+     *
+     * **The judgement waits for the finish sheet.** A Walk graduates nothing, because a Walk holds
+     * no Best Effort at all; but the Walk mark is the runner's own word and it arrives *on the
+     * finish sheet*, seconds after STOP. Settling at STOP therefore settled the Run before the one
+     * fact that can withdraw it from the judgement — so an outdoor activity covering a qualifying
+     * 5 km could advance the Stage a moment before the app was told it was a walk, and a graduation
+     * cannot be taken back. The rule now asks when the sheet resolves; while the sheet is open this
+     * returns having done nothing, leaving the debt for [finishSheetClosed] to pay.
+     *
+     * **A Run nobody was shown a sheet for is settled here and now.** A STOP from the notification
+     * opens no sheet, so there is no word still coming, and waiting for one would hold the Run's
+     * graduation and the coach's debrief until the next launch.
+     *
+     * **The row is read back rather than handed over, and that is the change** (#231, ADR 0008).
+     * The finish used to hand its own copy over so that a distance typed into the sheet could not
+     * join the judgement of the Run it belonged to — a race, won by whichever of the two was
+     * quicker. Waiting for the sheet dissolves the race instead of keeping it: everything the sheet
+     * says is always in, because the judgement is what waited for it. What that lets in is a stated
+     * distance, and it grants nothing on its own — a treadmill Run's Best Effort comes only from a
+     * Stated Best Effort read off the console ([bestEffortsOf]), never from a distance over a
+     * duration — so a typo can still no more graduate a Stage than it could before. What it lets in
+     * that matters is the Walk mark, which is the whole point, and the runner's effort and note,
+     * which the coach was always meant to have.
+     *
+     * **Once.** [RunnerSession.stageSettled] is written when the settlement returns, and a Run
+     * already carrying it is left alone: a graduation cannot be taken back, so a second grant is not
+     * a harmless repeat. Written after rather than before, as the record book's mark is (#210), so
+     * a process that dies part-way leaves the debt standing rather than losing the Run its
+     * graduation for good. The cost of that choice is the narrow case where the coach's write lands
+     * and the mark does not, which spends one more Gemini call at the next launch and overwrites a
+     * Prescription slot with another answer about the same Run.
+     *
+     * **A Run still being recorded keeps its debt** rather than being judged on totals that are
+     * only as much of it as has happened so far.
+     *
+     * **One settlement at a time**, under [settling]. Two callers can reach the same Run — the
+     * finish and the sheet, when the runner answers the sheet before the finish gets here — and
+     * "read the mark, then write it" is not one step: both would read a debt and both would grant.
+     * The rule's own "the Stage has since moved" guard would decline the second, and the plan's
+     * completion is checked again inside its write, so neither could grant twice; but the second
+     * would still spend a Gemini call on a Run already judged. The lock makes the read and the write
+     * one step and the question is put once.
+     *
+     * **The one hole left** is a process that dies with the sheet on screen. The sheet is restored
+     * with the Activity, but this gate is in memory and is not, so the launch pass settles the Run
+     * before the restored sheet can be answered — and a Walk ticked into it lands too late, exactly
+     * as it did before #297. Living with it beats the alternatives: a stored gate would hold a Stage
+     * open for ever on a sheet nobody will ever answer, and the pass is what keeps a Run from never
+     * being judged at all.
+     */
+    suspend fun settleStageForRun(sessionId: Long, zone: ZoneId = ZoneId.systemDefault()) {
+        if (finishSheetOpenFor.get() == sessionId) {
+            Log.d("StageRule", "Run $sessionId still has its finish sheet open; the Stage waits (#297)")
+            return
+        }
+        settling.withLock {
+            val run = sessionDao.getSessionById(sessionId) ?: return
+            if (!run.isFinished()) {
+                Log.d("StageRule", "Run $sessionId is not finished; leaving its Stage owing a settlement")
+                return
+            }
+            if (run.stageSettled) return
+            val stageId = run.ranUnderStageId
+            if (stageId != null) {
+                settleStageAfterRun(stageId, runTypeOf(stageId, run.ranUnderWorkoutId), run, zone)
+            }
+            // Marked even where there was no Stage to settle: the column says the question has been
+            // put and cannot be put again, and a Run that ran under no Stage has had its answer.
+            sessionDao.setStageSettled(sessionId)
+        }
+    }
+
+    /**
+     * Held while a Run is being put to the Plan, so the debt is read and paid as one step (#297).
+     *
+     * Across Runs and not per Run, which is broader than it strictly has to be and costs nothing:
+     * a settlement is a couple of reads and at most one Gemini round trip, and two Runs are only
+     * ever settled at once by the launch pass, which walks them one at a time anyway.
+     */
+    private val settling = Mutex()
+
+    /**
+     * The kind of Run a Run was, recovered from the Workout it followed (#297).
+     *
+     * The finish had it to hand — it is the Workout's own [WorkoutTemplate.runType], read off the
+     * config the Run was pinned with at START — and a settlement paid at the next launch has only
+     * the row. Both must reach the same answer or a Long Run settled late would slip past the gate
+     * that decides whether the coach is asked at all (#176). They do, because the row's
+     * [RunnerSession.ranUnderWorkoutId] is written from that same Workout.
+     *
+     * Null is "no Workout recorded" — a Run with no plan attached, one that skipped today's plan, or
+     * one recorded before v30 — and null is what the gate reads as "not a Run the coach adjusts".
+     */
+    private fun runTypeOf(stageId: String, workoutId: String?): RunType? {
+        if (workoutId == null) return null
+        return TrainingPlanProvider.getAllPlans()
+            .firstOrNull { plan -> plan.stages.any { it.id == stageId } }
+            ?.stages?.firstOrNull { it.id == stageId }
+            ?.workouts?.firstOrNull { it.id == workoutId }
+            ?.runType
+    }
+
+    /**
+     * Settles the Stage of every finished Run the finish left owing one, at launch (#297).
+     *
+     * The finish sheet is what normally closes the question, and it is in the app's process: a
+     * process killed between STOP and the sheet — or a runner who walked away from a sheet the next
+     * launch will not show again — leaves a Run finished, in history, and never put to the Plan.
+     * This is the launch that puts it.
+     *
+     * **Not a pass over history.** Every Run recorded before this shipped arrives already settled
+     * (`MIGRATION_30_31`), so the list can only hold Runs finished since — and the rule itself still
+     * declines any Run recorded under a Stage the runner has since left, which is what a Run old
+     * enough to be a surprise will almost always be. Forwards only is ADR 0016's, and this keeps it.
+     *
+     * One Run at a time, each marked as its settlement lands, so a pass cut short keeps what it paid
+     * for. Failures are logged and never thrown: a Stage that cannot be settled is not a reason to
+     * take the app down on the way to the first screen.
+     */
+    suspend fun settleStagesMissedAtTheFinish(zone: ZoneId = ZoneId.systemDefault()) {
+        val sessionIds = sessionDao.getSessionIdsOwingStageSettlement()
+        if (sessionIds.isEmpty()) return
+        var settled = 0
+        sessionIds.forEach { sessionId ->
+            try {
+                settleStageForRun(sessionId, zone)
+                settled++
+            } catch (e: Exception) {
+                Log.w("StageRule", "Could not settle the Stage of run $sessionId; leaving it for next launch", e)
+            }
+        }
+        Log.d("StageRule", "Settled the Stage of $settled of ${sessionIds.size} run(s) the finish had missed")
     }
 
     /**
@@ -2847,18 +3062,27 @@ class SessionRepository(
      * written. Both are still recorded in full and still count toward the 30-day load; those happen
      * on the way in, before this is called.
      *
-     * [finalizedRun] is the Run just finished, as its row stood at the finish. **A distance stated
-     * after that does not join this judgement** (#231, ADR 0008): the sheet asking for one is on
-     * screen while this is still in flight, and this reads the last three Runs out of the database
-     * on its way to the coach — so without the row, a number typed quickly enough would be judged
-     * as though it had been there all along. That is the one case where a typo could graduate a
-     * Stage, and a graduation cannot be taken back. A Run's own Stage evaluation is not replayed
-     * when a distance arrives later, for the same reason: it is a judgement made once, about one
-     * Run, under the Stage in force at that moment — which the Run now writes down for itself
-     * ([RunnerSession.ranUnderStageId], #234), so that it can be shown to that Stage and to no
-     * other, though replaying the judgement is still not something that happens. What a stated
-     * distance buys the coach is every evaluation *after* it — which is where an indoor winter was
-     * going missing.
+     * [finalizedRun] is the Run this evaluation is about, as its row stood when the Run was put to
+     * the Plan — which is once the finish sheet had closed (#297), not at STOP. So everything the
+     * runner typed into that sheet is in it: the Walk mark, which is the point, and their effort,
+     * note and any stated distance along with it. The row is handed over rather than looked up here
+     * because *which* Run this is about must not be guessed at: this reads the last three Runs out
+     * of the database on its way to the coach, and "the most recent finalized session" stops being
+     * this Run the moment a restored future-dated row or a clock moved back can sort after it.
+     *
+     * The sheet used to be a race — the judgement was made at STOP and a number typed quickly
+     * enough would join it, so the row was frozen to keep it out (#231, ADR 0008). Waiting for the
+     * sheet dissolves that race rather than freezing against it: the sheet's answers are always in,
+     * and a stated distance still graduates nothing by itself, because a treadmill Run's Best Effort
+     * comes only from a Stated Best Effort read off the console and never from a distance over a
+     * duration ([bestEffortsOf]).
+     *
+     * **A judgement made once, and never replayed.** A distance or a mark that arrives *later* —
+     * on the Run's own page, an hour or three weeks on — does not re-run this: it is a judgement
+     * about one Run under the Stage in force at that moment, which the Run writes down for itself
+     * ([RunnerSession.ranUnderStageId], #234) so it can be shown to that Stage and to no other. What
+     * a later statement buys the coach is every evaluation *after* it — which is where an indoor
+     * winter was going missing.
      */
     suspend fun evaluateAndAdjustPlan(
         stageId: String,

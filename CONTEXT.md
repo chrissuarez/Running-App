@@ -42,7 +42,11 @@ judgement, such as "4 weeks of consistent Zone 2 training", the coach decides
 ([ADR 0016](docs/adr/0016-a-requirement-stated-in-numbers-is-not-the-coachs-to-judge.md)).
 A requirement written in numbers is answered by any finished Run that is not a
 Walk, whichever kind of session it was — an Open Run included, because a time is
-a time wherever it turned up. Granted forwards only, never from a pass over
+a time wherever it turned up. It is asked once the runner can no longer change
+what the Run was: when the "How did that feel?" sheet closes, or straight away
+for a Run no sheet was shown for, or at the next launch for a sheet nobody ever
+answered. Never at STOP, because the Walk mark has not been given yet (#297).
+Granted forwards only, never from a pass over
 history, and never taken back (#290). Where history already holds a Run that
 would clear the bar, the Stage card names it and says a new one would count —
 a statement of what happened, never an offer, and nothing changes when it
@@ -212,11 +216,14 @@ into Fatigue, because the fatigue that degrades a runner's form is largely
 mechanical and walking barely pays it. A Walk counts towards Goals, fills the
 weekly volume bars and is marked as one in the History list. It takes no Best
 Effort and no record of any kind, completes no prescribed Workout and graduates
-no Stage, and it reaches the coach named as a Walk. Marking one takes back the
+no Stage, and it reaches the coach named as a Walk. A mark made on the finish
+sheet is in before the Run is judged at all: the Run's Stage is settled when that
+sheet closes, not at STOP, precisely so that a walk cannot graduate a Stage a
+moment before the app is told it was one (#297). Marking one takes back the
 medals it held, through the same mend a deletion owes; it does not un-graduate a
-Stage that is already past, and it does not re-run the Run's own evaluation —
-which the coach makes at the finish, before the sheet asking the question has
-been answered, so what the mark buys is every evaluation after it. Curves are worked out on read, so marking a session
+Stage that is already past, and a mark made afterwards — on the Run's own page —
+does not re-run the Run's own judgement, so what it buys is every evaluation
+after it. Curves are worked out on read, so marking a session
 from three weeks ago moves every Fitness, Fatigue and Form number from that day
 forward — silently, because they are a live read of the truth and the
 alternative is freezing numbers we know to be wrong.

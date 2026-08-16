@@ -272,6 +272,24 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Puts any Run the finish never settled to the Plan, once per process (#297).
+     *
+     * After the rescue pass in the list above and not waiting on it, as none of these do. Ordering
+     * costs nothing here either: a Run this pass ran past while it was still interrupted has no end
+     * time, so the settlement declines it and leaves its debt for the launch after the rescue
+     * finishes it.
+     *
+     * On the container's own scope, for the same reason the moving-time backfill is — see above. It
+     * matters as much here as anywhere: a Stage settled is a Stage marked, so a pass cancelled
+     * because the runner backed out of an Activity keeps every settlement it made, but would not be
+     * resumed for the life of the process.
+     */
+    fun settleMissedStagesOnce() {
+        if (!missedStagesSettled.compareAndSet(false, true)) return
+        applicationScope.launch { sessionRepository.settleStagesMissedAtTheFinish() }
+    }
+
+    /**
      * Scores the history recorded before the Effort Score shipped, once per process (#62).
      *
      * Started after the rescue pass, though nothing makes them run in that order: both are launched
@@ -309,6 +327,7 @@ class AppContainer(context: Context) {
     private val recordsSeeded = AtomicBoolean(false)
     private val effortScored = AtomicBoolean(false)
     private val missedRecordsScored = AtomicBoolean(false)
+    private val missedStagesSettled = AtomicBoolean(false)
 
     /**
      * When this process began, as far as anything here is concerned — the container is built once,

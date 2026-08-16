@@ -293,6 +293,12 @@ class MainActivity : ComponentActivity() {
         // it any. This is the launch that goes back for it (#210).
         runningAppContainer().scoreMissedRecordsOnce()
 
+        // A Run whose finish sheet was never answered — the process killed between STOP and the
+        // sheet, or a runner who walked away from it — was never put to the Plan at all, so it holds
+        // no graduation and nothing else will ever offer it one. This is the launch that goes back
+        // for it (#297).
+        runningAppContainer().settleMissedStagesOnce()
+
         // Every Run recorded before the Effort Score shipped has the beats to work one out and no
         // Score stored, so history would read as unscored until each Run was run again (#62). This
         // is the launch that scores it, from the samples those Runs already kept.
@@ -490,10 +496,19 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onStopSession = {
                                     hrService?.hrState?.value?.let {
-                                        if (it.activeDbSessionId != null &&
+                                        val runRowId = it.activeDbSessionId
+                                        if (runRowId != null &&
                                             (it.sessionStatus == SessionStatus.RUNNING || it.sessionStatus == SessionStatus.PAUSED)
                                         ) {
-                                            feelSheetSessionId = it.activeDbSessionId
+                                            feelSheetSessionId = runRowId
+                                            // And the Stage waits for what this sheet is about to
+                                            // be told (#297). Said here rather than where the sheet
+                                            // is drawn, and before the stop below is issued, so the
+                                            // finalization that follows can only ever find the
+                                            // sheet already claimed: a Walk marked on this sheet
+                                            // must reach the graduation rule, and the rule is asked
+                                            // seconds after STOP.
+                                            sessionRepository.finishSheetOpened(runRowId)
                                             // The Run's own pinned mode (HrState.activeRunMode) and
                                             // nothing else. Falling back to the live setting would
                                             // let an outdoor Run be asked for a distance it cannot
@@ -961,10 +976,25 @@ class MainActivity : ComponentActivity() {
                                     // asking it is a single read where deciding here would be a
                                     // rule in two places free to drift apart.
                                     sessionRepository.markAsWalk(sessionId, isWalk)
+                                    // Last of all, and after the mark above rather than beside it:
+                                    // this is the Run being put to the Plan, and the whole reason
+                                    // it waited for this sheet is that a Walk graduates nothing
+                                    // (#297). A settlement asked before the mark was written would
+                                    // be the judgement this wait exists to prevent.
+                                    sessionRepository.finishSheetClosed(sessionId)
                                 }
                                 feelSheetSessionId = null
                             },
-                            onDismiss = { feelSheetSessionId = null }
+                            onDismiss = {
+                                feelSheetSessionId = null
+                                // A runner who swipes the sheet away has said the Run was what it
+                                // looks like, which is an answer (#297). Holding the graduation
+                                // until the next launch over a sheet they declined would leave the
+                                // plan stuck on a Run that plainly cleared its bar.
+                                scope.launch(Dispatchers.IO) {
+                                    sessionRepository.finishSheetClosed(sessionId)
+                                }
+                            }
                         )
                     }
                   }
