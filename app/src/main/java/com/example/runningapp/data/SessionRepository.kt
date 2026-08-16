@@ -2667,6 +2667,9 @@ class SessionRepository(
      * inside that second would otherwise find a Run with no end time, which is a Run nothing here
      * can judge — and the Stage would then hold until the next launch. Save reaches the wait having
      * already made it and returns on the first read.
+     *
+     * Called through [finishSheetAnswered], which is what sees to that order and to the gate being
+     * closed whether or not the writes land.
      */
     suspend fun finishSheetClosed(
         sessionId: Long,
@@ -2676,6 +2679,35 @@ class SessionRepository(
         finishSheetOpenFor.compareAndSet(sessionId, NO_FINISH_SHEET)
         awaitFinalized(sessionId, finalizeWaitStepMillis) ?: return
         settleStageForRun(sessionId, zone)
+    }
+
+    /**
+     * The runner's answer to the sheet: what the answer had to store, and then the close (#297).
+     *
+     * One door rather than two calls at the caller, because the order between them is a rule and not
+     * a convenience — the Stage may only be settled once [writes] are in, and [writes] is whatever
+     * that exit stored, a Save's three statements or nothing at all for a dismissal.
+     *
+     * **The gate is closed even when [writes] fails**, which is the whole reason this exists. A
+     * throw on the way to [finishSheetClosed] would leave [finishSheetOpenFor] naming this Run for
+     * the life of the process: the finish has already been and gone, and the launch pass runs once,
+     * so nothing left would ever settle it. Settling on what did land is the smaller loss than never
+     * settling at all. The failure is logged and not rethrown, because by here the sheet is off
+     * screen and there is nobody to tell — and on the process-wide scope this is called from, an
+     * unhandled throw would take the app down and lose the settlement with it.
+     */
+    suspend fun finishSheetAnswered(
+        sessionId: Long,
+        zone: ZoneId = ZoneId.systemDefault(),
+        finalizeWaitStepMillis: Long = 250L,
+        writes: suspend () -> Unit,
+    ) {
+        try {
+            writes()
+        } catch (e: Exception) {
+            Log.w("StageRule", "Could not store the finish sheet's answer for run $sessionId; settling on what landed", e)
+        }
+        finishSheetClosed(sessionId, zone, finalizeWaitStepMillis)
     }
 
     /**
@@ -2754,17 +2786,36 @@ class SessionRepository(
      * being judged at all.
      */
     suspend fun settleStageForRun(sessionId: Long, zone: ZoneId = ZoneId.systemDefault()) {
+        // The mark is history the same way a Score is not: it is not derivable from anything the
+        // snapshot holds, so a copy taken without it restores a Run that has been judged as a Run
+        // that has not. Every snapshot this Run has behind it was taken before now — the after-run
+        // work is booked at the finish and the feel sheet writes its own — so without this the
+        // Downloads copy always says `stageSettled = false`, and a Clear-storage restore would
+        // spend another Gemini call on this Run and overwrite its debrief and Prescription with a
+        // second answer about it. Outside the lock, because it copies the whole database and no
+        // other settlement should wait on that (#297).
+        if (settleOneStage(sessionId, zone)) refreshHistoryBackup?.invoke()
+    }
+
+    /**
+     * The settlement itself, and whether it wrote the mark (#297).
+     *
+     * Split from [settleStageForRun] only over who owes the snapshot: one Run settled at its own
+     * door owes one each time, and the launch pass owes one for the whole pass however many Runs it
+     * settles — the rule [rescueInterruptedRuns] already keeps, for the same reason.
+     */
+    private suspend fun settleOneStage(sessionId: Long, zone: ZoneId): Boolean {
         if (finishSheetOpenFor.get() == sessionId) {
             Log.d("StageRule", "Run $sessionId still has its finish sheet open; the Stage waits (#297)")
-            return
+            return false
         }
         settling.withLock {
-            val run = sessionDao.getSessionById(sessionId) ?: return
+            val run = sessionDao.getSessionById(sessionId) ?: return false
             if (!run.isFinished()) {
                 Log.d("StageRule", "Run $sessionId is not finished; leaving its Stage owing a settlement")
-                return
+                return false
             }
-            if (run.stageSettled) return
+            if (run.stageSettled) return false
             val stageId = run.ranUnderStageId
             if (stageId != null) {
                 settleStageAfterRun(stageId, runTypeOf(stageId, run.ranUnderWorkoutId), run, zone)
@@ -2772,6 +2823,7 @@ class SessionRepository(
             // Marked even where there was no Stage to settle: the column says the question has been
             // put and cannot be put again, and a Run that ran under no Stage has had its answer.
             sessionDao.setStageSettled(sessionId)
+            return true
         }
     }
 
@@ -2826,13 +2878,18 @@ class SessionRepository(
         var settled = 0
         sessionIds.forEach { sessionId ->
             try {
-                settleStageForRun(sessionId, zone)
-                settled++
+                if (settleOneStage(sessionId, zone)) settled++
             } catch (e: Exception) {
                 Log.w("StageRule", "Could not settle the Stage of run $sessionId; leaving it for next launch", e)
             }
         }
         Log.d("StageRule", "Settled the Stage of $settled of ${sessionIds.size} run(s) the finish had missed")
+        // Once for the pass, and only if a mark was written: the snapshot is a copy of the whole
+        // database, so a pass that settled ten Runs owes one copy and a pass that settled none owes
+        // nothing — the rule [rescueInterruptedRuns] keeps. What is owed is the same as at the
+        // single Run's own door: a snapshot taken before these marks restores Runs that have been
+        // judged as Runs that have not, and each would be judged again (#297).
+        if (settled > 0) refreshHistoryBackup?.invoke()
     }
 
     /**

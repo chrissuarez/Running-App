@@ -2850,6 +2850,7 @@ class SessionRepositoryTest {
         statedDao: StatedBestEffortDao,
         coach: AiCoachClient? = null,
         activeStageId: String = "sub_30_bridge",
+        refreshHistoryBackup: (suspend () -> Unit)? = null,
     ): SessionRepository {
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
             flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = activeStageId))
@@ -2860,6 +2861,7 @@ class SessionRepositoryTest {
             settingsRepository = mockSettingsRepo,
             statedBestEffortDao = statedDao,
             aiCoachClient = coach,
+            refreshHistoryBackup = refreshHistoryBackup,
         )
     }
 
@@ -2913,6 +2915,42 @@ class SessionRepositoryTest {
         repo.finishSheetClosed(7L)
 
         verify(mockSettingsRepo).advanceStageAndClearPrescriptions(eq("sub_25_peak"), any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `a write that fails on the way out of the sheet still settles the Stage`() = runTest {
+        // The sheet's writes are the last thing between STOP and the settlement, and they are the
+        // one step here that can throw. A throw that carried the close away with it would leave the
+        // gate naming this Run: the finish has already declined it and the launch pass has already
+        // run for this process, so nothing left would settle it until the process was killed (#297).
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+
+        repo.finishSheetOpened(7L)
+        repo.settleStageForRun(7L)
+        repo.finishSheetAnswered(7L) { throw IllegalStateException("the Save could not be written") }
+
+        verify(mockSettingsRepo).advanceStageAndClearPrescriptions(eq("sub_25_peak"), any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `the answer's writes land before the Stage is settled`() = runTest {
+        // The order is the ticket: a Walk ticked into the sheet has to be in the row before the rule
+        // reads it (#297), so the door that closes the gate is the same one that stores the answer.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+
+        repo.finishSheetOpened(7L)
+        repo.settleStageForRun(7L)
+        repo.finishSheetAnswered(7L) {
+            whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(isWalk = true))
+        }
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
         verify(mockDao).setStageSettled(7L)
     }
 
@@ -3028,6 +3066,63 @@ class SessionRepositoryTest {
 
         verify(mockSettingsRepo).advanceStageAndClearPrescriptions(eq("sub_25_peak"), any())
         verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `the mark left by the sheet's settlement is folded into the Downloads snapshot`() = runTest {
+        // Every snapshot this Run has behind it was taken before the mark: the after-run work is
+        // booked at the finish and the feel sheet writes its own. Without a refresh here the copy
+        // in Downloads always says the Run has not been judged, so a Clear-storage restore would
+        // spend another Gemini call on it and overwrite its debrief and Prescription (#297).
+        var snapshots = 0
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao, refreshHistoryBackup = { snapshots++ })
+        val run = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+
+        repo.settleStageForRun(7L)
+        assertEquals("the settlement owes a snapshot", 1, snapshots)
+
+        // And nothing moved the second time, so nothing is owed: a Run already carrying the mark is
+        // not worth a copy of the whole database.
+        whenever(mockDao.getSessionById(7L)).thenReturn(run.copy(stageSettled = true))
+        repo.settleStageForRun(7L)
+        assertEquals("a Run already settled owes nothing", 1, snapshots)
+    }
+
+    @Test
+    fun `the launch pass takes one snapshot for the whole pass`() = runTest {
+        // The pass walks every Run the finish missed, and the snapshot is a copy of the whole
+        // database: one for the pass, not one per Run (#297) — the rule the rescue pass keeps.
+        var snapshots = 0
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao, refreshHistoryBackup = { snapshots++ })
+        // Short of the bar, so the rule declines all three and only the mark is written.
+        listOf(7L, 8L, 9L).forEach { aRunOwingSettlement(id = it, fiveKSeconds = 2_400, statedDao = statedDao) }
+        whenever(mockDao.getSessionIdsOwingStageSettlement()).thenReturn(listOf(7L, 8L, 9L))
+
+        repo.settleStagesMissedAtTheFinish()
+
+        verify(mockDao).setStageSettled(7L)
+        verify(mockDao).setStageSettled(8L)
+        verify(mockDao).setStageSettled(9L)
+        assertEquals("three Runs settled, one snapshot", 1, snapshots)
+    }
+
+    @Test
+    fun `a launch pass that settled nothing takes no snapshot`() = runTest {
+        // The finish can close a question the pass is already holding a list of. Nothing moved, so
+        // a launch should not pay for a copy of the whole database (#297).
+        var snapshots = 0
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao, refreshHistoryBackup = { snapshots++ })
+        val run = aRunOwingSettlement(id = 7, fiveKSeconds = 2_400, statedDao = statedDao)
+        whenever(mockDao.getSessionById(7L)).thenReturn(run.copy(stageSettled = true))
+        whenever(mockDao.getSessionIdsOwingStageSettlement()).thenReturn(listOf(7L))
+
+        repo.settleStagesMissedAtTheFinish()
+
+        verify(mockDao, never()).setStageSettled(any())
+        assertEquals("nothing settled, nothing copied", 0, snapshots)
     }
 
     @Test

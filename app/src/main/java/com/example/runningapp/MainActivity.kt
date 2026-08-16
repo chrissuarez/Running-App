@@ -962,12 +962,15 @@ class MainActivity : ComponentActivity() {
                         // statements, and nothing at all for a dismissal, because a runner who
                         // swipes the sheet away has said the Run was what it looks like and that is
                         // an answer too.
+                        //
+                        // Handed to the container rather than launched here, because the first thing
+                        // this does is take the sheet away: a scope that belongs to the composition
+                        // is cancelled by the runner leaving the app on the exit itself, and the
+                        // gate would go on naming this Run for the life of the process, with the
+                        // finish already past and the launch pass already run.
                         val closeSheet: (suspend () -> Unit) -> Unit = { writes ->
                             feelSheetSessionId = null
-                            scope.launch(Dispatchers.IO) {
-                                writes()
-                                sessionRepository.finishSheetClosed(sessionId)
-                            }
+                            appContainer.answerFinishSheet(sessionId, writes)
                         }
                         FeelFeedbackSheet(
                             // A treadmill Run, said positively: anything else — an outdoor Run, or a
