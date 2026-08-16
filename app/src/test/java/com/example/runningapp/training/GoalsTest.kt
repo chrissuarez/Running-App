@@ -297,6 +297,44 @@ class GoalsTest {
     }
 
     @Test
+    fun `a Run a day ahead across the Monday belongs to the week it fell in, not this one`() {
+        // #304: the phone is still on Sunday and the runner, having flown west, is on Monday. The
+        // Run is real and a day ahead is allowed, but it is next week's Run — a week that has
+        // already closed cannot be met by a Run from after it closed.
+        val sunday = monday.plusDays(6)
+        val nextMonday = LocalDateTime.of(sunday.plusDays(1), LocalTime.of(9, 0))
+            .atZone(zone).toInstant().toEpochMilli()
+        val run = VolumeRun(nextMonday, 5.0, 1800, null, ranAtUtcOffsetSeconds = 0)
+
+        val progress = goalProgressOf(
+            listOf(goal(GoalPeriod.WEEK, GoalMetric.DISTANCE, 20.0)),
+            listOf(run),
+            on = sunday,
+            zone = zone,
+        )
+
+        assertEquals(0.0, progress.single().done, 0.0001)
+    }
+
+    @Test
+    fun `a Run a day ahead across the first of the month belongs to the new month`() {
+        // The same rule, stated once for every period: read off the Run's own period start.
+        val lastDay = LocalDate.of(2026, 3, 31)
+        val firstOfApril = LocalDateTime.of(lastDay.plusDays(1), LocalTime.of(9, 0))
+            .atZone(zone).toInstant().toEpochMilli()
+        val run = VolumeRun(firstOfApril, 5.0, 1800, null, ranAtUtcOffsetSeconds = 0)
+
+        val progress = goalProgressOf(
+            listOf(goal(GoalPeriod.MONTH, GoalMetric.DISTANCE, 20.0)),
+            listOf(run),
+            on = lastDay,
+            zone = zone,
+        )
+
+        assertEquals(0.0, progress.single().done, 0.0001)
+    }
+
+    @Test
     fun `a Run stamped further ahead than any clock allows is still ignored`() {
         val on = monday.plusDays(3)
         val wayAhead = LocalDateTime.of(on.plusDays(2), LocalTime.of(9, 0))

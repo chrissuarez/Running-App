@@ -114,8 +114,6 @@ fun weeklyVolumeOf(
     through: LocalDate,
     zone: ZoneId,
 ): List<TrainingWeek> {
-    val lastWeek = through.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
-
     val totals = HashMap<LocalDate, TrainingWeek>()
     runs.forEach { run ->
         // Dated, not weeked: a Run stamped Sunday while the runner is on Wednesday shares the
@@ -140,6 +138,15 @@ fun weeklyVolumeOf(
             runsWithoutScore = soFar.runsWithoutScore + if (run.effortScore == null) 1 else 0,
         )
     }
+
+    // The bars run through the week the runner is in, and through the week of the last Run taken in
+    // if that is later. A Run one day ahead of the phone can fall on the far side of a Monday, and a
+    // Run accepted above and then left out of the range would be counted and never drawn — with one
+    // such Run and no others, the chart would come back empty.
+    val lastWeek = maxOf(
+        through.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)),
+        totals.keys.maxOrNull() ?: LocalDate.MIN,
+    )
 
     var week = totals.keys.minOrNull() ?: return emptyList()
     val weeks = mutableListOf<TrainingWeek>()
