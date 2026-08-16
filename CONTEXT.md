@@ -268,6 +268,16 @@ to the distance.
 _Avoid_: target as a name for it (a target is what a Goal holds), challenge,
 streak, objective
 
+**Today**:
+The calendar day the runner is in, and the zone that day is read in. Observed,
+never captured: anything that needs the zone asks the phone for it at the moment
+it answers, rather than holding the one it started with — and the same for the
+clock a sleep to midnight is aimed at. It is the one input to a rule that moves
+on its own, in two ways at once: midnight arrives, and the runner can fly. A
+zone taken once and held for the life of a screen answers a runner where they
+took off from, a calendar day out (#299).
+_Avoid_: the device timezone, the current date
+
 **Best Effort**:
 The fastest continuous stretch of a Run covering one of the record distances —
 1 km, a mile, 5 km, 10 km, a half marathon — measured on the clock, so a walk

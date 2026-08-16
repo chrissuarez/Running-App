@@ -748,24 +748,33 @@ class SessionRepository(
      * history, and the runner's Form, off the same curve the Progress screen draws. The decision
      * itself is [testIsDue] and is nowhere near either read.
      *
-     * The calendar day is a third input and not something read as each emission is made (Codex P2),
-     * because it is the only one of the three that moves on its own. Both halves of the rule are
-     * answers about today — a Test comes due at midnight, and Form recovers
-     * across a rest day the curve only counts once the day exists — so a phone kept in a pocket over
-     * a weekend would otherwise hold Friday's answer until some Run was recorded.
+     * The calendar day is a third input and moves on its own, unlike the other two: both halves of
+     * the rule are answers about today — a Test comes due at midnight, and Form recovers across a
+     * rest day the curve only counts once the day exists — so a phone kept in a pocket over a
+     * weekend would otherwise hold Friday's answer until some Run was recorded. [dayTurns] is what
+     * makes the answer arrive on its own; the day itself is read below.
+     *
+     * [zone] is asked, not held (#299): the day the app is in is observed, so a runner who lands in
+     * another zone with this card in front of them is answered where they are and not where they
+     * took off from. Which is why [clock] is a plain clock and not one bound to a zone — the zone
+     * comes from [zone] every time, and nowhere else.
      */
     fun testDueFlow(
         planTests: List<PlanTest>,
-        zone: ZoneId = ZoneId.systemDefault(),
-        clock: Clock = Clock.system(zone),
+        zone: () -> ZoneId = ZoneId::systemDefault,
+        clock: Clock = Clock.systemUTC(),
     ): Flow<Boolean> {
         if (planTests.isEmpty()) return flowOf(false)
         val testsById = planTests.associateBy { it.workout.id }
         return combine(
             sessionDao.getCompletedRunsOfWorkouts(testsById.keys.toList()),
             scoredRunsFlow(),
-            localDays(zone, clock),
-        ) { testRuns, scoredRuns, today ->
+            dayTurns(zone, clock),
+        ) { testRuns, scoredRuns, _ ->
+            // Read here, at the answer, rather than carried down from the turn of the day that
+            // woke it: every emission is answered in the zone the phone is in as it is answered.
+            val here = zone()
+            val today = LocalDate.now(clock.withZone(here))
             testIsDue(
                 lastTestStartedAtMillis = testRuns.firstOrNull { run ->
                     testsById[run.ranUnderWorkoutId]?.let { test ->
@@ -778,9 +787,9 @@ class SessionRepository(
                 }?.startTime,
                 // Yesterday's Fitness less yesterday's Fatigue, as the screen and the coach both
                 // read it — null while no Run in history has a Score to build a curve from.
-                form = progressCurve(scoredRuns, through = today, zone = zone).lastOrNull()?.form,
+                form = progressCurve(scoredRuns, through = today, zone = here).lastOrNull()?.form,
                 today = today,
-                zone = zone,
+                zone = here,
             )
         }
     }
@@ -811,22 +820,30 @@ class SessionRepository(
     }
 
     /**
-     * Today, and today again each time the calendar turns over — the passage of time as something a
-     * rule can be combined with rather than something it has to remember to read (Codex P2 on #292).
+     * A nudge now, and another each time the calendar turns over — the passage of time as something
+     * a rule can be combined with rather than something it has to remember to read (Codex P2 on
+     * #292).
+     *
+     * It emits nothing but the nudge. The day itself is read by whoever was woken, at the moment
+     * they answer, so nothing here can hand on a day that was true when the sleep started and is
+     * not true now (#299).
      *
      * It sleeps to the next local midnight rather than polling, so an app left open costs one wake
      * a day. A phone that dozes through midnight wakes the sleep late and the new day lands a moment
      * after the runner returns to the screen, which is a prompt that appears rather than one that
      * was already wrong — the direction [testDueFlow] wants (see its `initial = false`).
      *
-     * Midnight is taken from [zone] each time round, so the day the runner is in is the day their
-     * phone says they are in, through a timezone change or the end of summer time.
+     * Midnight is worked out in [zone]'s answer each time round, so the sleep is aimed at the
+     * runner's own midnight through a timezone change or the end of summer time.
      */
-    private fun localDays(zone: ZoneId, clock: Clock): Flow<LocalDate> = flow {
+    private fun dayTurns(zone: () -> ZoneId, clock: Clock): Flow<Unit> = flow {
         while (true) {
-            val today = LocalDate.now(clock.withZone(zone))
-            emit(today)
-            val nextMidnight = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+            emit(Unit)
+            // Read after the answer has been given, so the sleep is aimed from where the runner is
+            // now rather than from where they were when the last one was set.
+            val here = zone()
+            val nextMidnight = LocalDate.now(clock.withZone(here))
+                .plusDays(1).atStartOfDay(here).toInstant().toEpochMilli()
             // Never negative and never zero: a clock that has jumped past the next midnight would
             // otherwise spin this loop, and the day is re-read at the top anyway.
             delay((nextMidnight - clock.millis()).coerceAtLeast(1L))

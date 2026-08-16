@@ -25,6 +25,7 @@ import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.training.FormVerdict
 import com.example.runningapp.training.HistoryBestEffort
 import com.example.runningapp.training.PlanCompletion
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.flowOf
@@ -3453,11 +3454,44 @@ class SessionRepositoryTest {
         val repo = dueFlow(lastTestStart = startedAt.minus(20, ChronoUnit.DAYS).toEpochMilli())
 
         val answers = mutableListOf<Boolean>()
-        val collecting = launch { repo.testDueFlow(planTests, zone, clock).toList(answers) }
+        val collecting = launch { repo.testDueFlow(planTests, { zone }, clock).toList(answers) }
         runCurrent()
         assertEquals(listOf(false), answers)
 
         advanceTimeBy(ONE_HOUR_MILLIS + 1)
+        runCurrent()
+        assertEquals(listOf(false, true), answers)
+
+        collecting.cancel()
+    }
+
+    @Test
+    fun `the zone is read at each answer, not held from when the card opened`() = runTest {
+        // The runner flies London to Auckland with the Today card in front of them. At this one
+        // instant it is still the 15th in London and already the 16th in Auckland, and the Test was
+        // last run on the 26th at an hour that is the 26th in both places — so it comes due on the
+        // 16th, and only the zone decides whether that day has arrived (#299).
+        val london = ZoneId.of("Europe/London")
+        val auckland = ZoneId.of("Pacific/Auckland")
+        val now = LocalDate.of(2026, 8, 15).atTime(20, 0).atZone(london).toInstant()
+        val lastTest = LocalDate.of(2026, 7, 26).atTime(9, 0).atZone(london).toInstant()
+        val clock = Clock.fixed(now, ZoneOffset.UTC)
+        var here = london
+        // Shared rather than state, so the second read is made even though nothing about history
+        // changed — it is the zone under the answer that moved, not the Runs.
+        val scored = MutableSharedFlow<List<ScoredRunProjection>>(replay = 1)
+        scored.tryEmit(emptyList())
+        whenever(mockDao.getCompletedRunsOfWorkouts(any()))
+            .thenReturn(flowOf(listOf(aTestRun(lastTest.toEpochMilli()))))
+        whenever(mockDao.getScoredRunsFlow()).thenReturn(scored)
+
+        val answers = mutableListOf<Boolean>()
+        val collecting = launch { repository.testDueFlow(planTests, { here }, clock).toList(answers) }
+        runCurrent()
+        assertEquals(listOf(false), answers)
+
+        here = auckland
+        scored.tryEmit(emptyList())
         runCurrent()
         assertEquals(listOf(false, true), answers)
 

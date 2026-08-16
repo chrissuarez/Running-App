@@ -47,6 +47,9 @@ class ProgressViewModelTest {
 
     private val dispatcher = StandardTestDispatcher()
     private val zone: ZoneId = ZoneId.of("Europe/London")
+
+    /** Where the runner is now — a var, because the phone's zone is theirs to change (#299). */
+    private var here: ZoneId = zone
     private val today: LocalDate = LocalDate.of(2026, 8, 5)
 
     private val scoredRuns = MutableStateFlow<List<ScoredRunProjection>>(emptyList())
@@ -139,6 +142,29 @@ class ProgressViewModelTest {
 
         assertEquals(today, viewModel.state.value.today?.date)
     }
+
+    @Test
+    fun `the curve is drawn in the zone the runner is in now, not the one it opened in`() =
+        runTest(dispatcher) {
+            // Half past eleven at night on the 4th, London. Carried to Auckland the same Run falls
+            // on the 5th, and the curve it starts begins a day later (#299).
+            val lateOnThe4th = ScoredRunProjection(
+                startTime = LocalDate.of(2026, 8, 4).atTime(LocalTime.of(23, 30))
+                    .atZone(zone).toInstant().toEpochMilli(),
+                effortScore = 80,
+            )
+            val viewModel = viewModel()
+            scoredRuns.value = listOf(lateOnThe4th)
+            advanceUntilIdle()
+            assertEquals(LocalDate.of(2026, 8, 4), viewModel.state.value.curve.first().date)
+
+            here = ZoneId.of("Pacific/Auckland")
+            // A second read of the same history — the Score is only there to make the read happen.
+            scoredRuns.value = listOf(lateOnThe4th.copy(effortScore = 81))
+            advanceUntilIdle()
+
+            assertEquals(LocalDate.of(2026, 8, 5), viewModel.state.value.curve.first().date)
+        }
 
     @Test
     fun `distance is the measure the weekly bars open on`() = runTest(dispatcher) {
@@ -453,7 +479,7 @@ class ProgressViewModelTest {
         settingsRepository = settingsRepository,
         stateHeartRates = { maxHr, restingHr -> stated += maxHr to restingHr },
         goalDao = goalDao,
-        zone = zone,
+        zone = { here },
         today = { today },
         now = { setAt },
         curveDispatcher = dispatcher,

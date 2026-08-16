@@ -112,8 +112,14 @@ class ProgressViewModel(
     private val stateHeartRates: (Int?, Int?) -> Unit,
     /** Where the runner's Goals are kept (#82). */
     private val goalDao: GoalDao,
-    /** The zone the runner's calendar days are in — which day a Run belongs to depends on it. */
-    private val zone: ZoneId = ZoneId.systemDefault(),
+    /**
+     * The zone the runner's calendar days are in — which day a Run belongs to depends on it.
+     *
+     * Asked each time a chart is built, never held (#299): the day the app is in is observed. A
+     * screen left open while the phone crosses into another zone is redrawn where the runner is,
+     * not where they opened it.
+     */
+    private val zone: () -> ZoneId = ZoneId::systemDefault,
     /**
      * What day it is, asked each time the curve is built rather than fixed at construction.
      *
@@ -121,7 +127,7 @@ class ProgressViewModel(
      * landing, or the screen being opened again. That is the honest thing to show: nothing has been
      * measured on the new day yet, and the curve would only gain a day of rest nobody has taken.
      */
-    private val today: () -> LocalDate = { LocalDate.now(zone) },
+    private val today: () -> LocalDate = { LocalDate.now(zone()) },
     /** What time it is, for stamping a goal with when it was set. */
     private val now: () -> Long = { System.currentTimeMillis() },
     /** Where the curves are worked out — anywhere but the thread drawing them. */
@@ -153,7 +159,7 @@ class ProgressViewModel(
      * the screen is a curve that is ready when it arrives.
      */
     private val curve: StateFlow<List<ProgressDay>> = sessionRepository.scoredRunsFlow()
-        .map { runs -> progressCurve(runs, through = today(), zone = zone) }
+        .map { runs -> progressCurve(runs, through = today(), zone = zone()) }
         .flowOn(curveDispatcher)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
@@ -174,7 +180,7 @@ class ProgressViewModel(
     private val weeks: StateFlow<VolumeToDate> = volumeRuns
         .map { runs ->
             val through = today()
-            VolumeToDate(through, weeklyVolumeOf(runs, through = through, zone = zone))
+            VolumeToDate(through, weeklyVolumeOf(runs, through = through, zone = zone()))
         }
         .flowOn(curveDispatcher)
         .stateIn(viewModelScope, SharingStarted.Eagerly, VolumeToDate(through = null, weeks = emptyList()))
@@ -188,7 +194,7 @@ class ProgressViewModel(
      */
     private val goals: Flow<List<GoalProgress>> =
         combine(goalDao.getAllGoalsFlow(), volumeRuns) { rows, runs ->
-            goalProgressOf(rows.map { it.toGoal() }, runs, on = today(), zone = zone)
+            goalProgressOf(rows.map { it.toGoal() }, runs, on = today(), zone = zone())
         }.flowOn(curveDispatcher)
 
     /**
