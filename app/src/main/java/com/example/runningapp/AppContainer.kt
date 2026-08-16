@@ -312,6 +312,9 @@ class AppContainer(context: Context) {
      * Stores the runner's answer to a Run's finish sheet and closes the gate behind it, off any
      * screen's lifetime (#297).
      *
+     * [markedAsWalk] travels beside [writes] rather than inside it because it is the word the
+     * settlement reads — see [SessionRepository.finishSheetAnswered]. Null is a dismissal.
+     *
      * On the container's own scope because the sheet's exit *removes the sheet* — the composition
      * that raised it is gone by the time the writes land, so a launch on its scope is cancelled by
      * the runner leaving the app, or by the Activity being destroyed the instant after Save. That
@@ -322,8 +325,10 @@ class AppContainer(context: Context) {
      * Not `once`, unlike everything above: this is the answer to one sheet, and there is one sheet
      * per Run.
      */
-    fun answerFinishSheet(sessionId: Long, writes: suspend () -> Unit) {
-        applicationScope.launch { sessionRepository.finishSheetAnswered(sessionId, writes = writes) }
+    fun answerFinishSheet(sessionId: Long, markedAsWalk: Boolean?, writes: suspend () -> Unit) {
+        applicationScope.launch {
+            sessionRepository.finishSheetAnswered(sessionId, markedAsWalk, writes = writes)
+        }
     }
 
     /**

@@ -2937,6 +2937,46 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a Walk ticked into a Save whose other writes fail still graduates nothing`() = runTest {
+        // The Walk is not one of the answer's writes, it is the word the settlement reads (#297).
+        // When it shared a block with the effort and the stated distance, an effort that threw took
+        // it down too and the Stage was then judged on the `isWalk = false` still on the row — a
+        // graduation on a walk, and a graduation cannot be taken back.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        assertFalse("the row at STOP carries no mark", asItEnded.isWalk)
+
+        repo.finishSheetOpened(7L)
+        repo.settleStageForRun(7L)
+        repo.finishSheetAnswered(7L, markedAsWalk = true) {
+            throw IllegalStateException("the effort could not be written")
+        }
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
+        // Still asked and answered, so the gate is closed and no launch pass owes this Run.
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `a Walk the mark itself could not store still graduates nothing`() = runTest {
+        // The word beats the column, because the column is a write and a write can fail (#297).
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.setIsWalk(any(), any()))
+            .thenThrow(IllegalStateException("the mark could not be written"))
+
+        repo.finishSheetOpened(7L)
+        repo.settleStageForRun(7L)
+        repo.finishSheetAnswered(7L, markedAsWalk = true) {}
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
     fun `the answer's writes land before the Stage is settled`() = runTest {
         // The order is the ticket: a Walk ticked into the sheet has to be in the row before the rule
         // reads it (#297), so the door that closes the gate is the same one that stores the answer.

@@ -958,26 +958,31 @@ class MainActivity : ComponentActivity() {
                         // Every way off this sheet ends here, which is why both exits go through one
                         // lambda: the Run's Stage has been waiting on this sheet since STOP (#297),
                         // and an exit that forgot to say so would hold the plan until the next
-                        // launch. [writes] is whatever that exit had to store first — a Save's three
-                        // statements, and nothing at all for a dismissal, because a runner who
-                        // swipes the sheet away has said the Run was what it looks like and that is
-                        // an answer too.
+                        // launch. [writes] is whatever that exit had to store first — a Save's
+                        // effort, note and any stated distance, and nothing at all for a dismissal,
+                        // because a runner who swipes the sheet away has said the Run was what it
+                        // looks like and that is an answer too.
+                        //
+                        // The Walk switch is handed over by name rather than written in [writes],
+                        // because it is not one of the answer's writes but the word the settlement
+                        // reads: inside the block it would share the fate of the writes beside it,
+                        // and a mark lost to somebody else's failure is a Stage graduated on a walk.
                         //
                         // Handed to the container rather than launched here, because the first thing
                         // this does is take the sheet away: a scope that belongs to the composition
                         // is cancelled by the runner leaving the app on the exit itself, and the
                         // gate would go on naming this Run for the life of the process, with the
                         // finish already past and the launch pass already run.
-                        val closeSheet: (suspend () -> Unit) -> Unit = { writes ->
+                        val closeSheet: (Boolean?, suspend () -> Unit) -> Unit = { markedAsWalk, writes ->
                             feelSheetSessionId = null
-                            appContainer.answerFinishSheet(sessionId, writes)
+                            appContainer.answerFinishSheet(sessionId, markedAsWalk, writes)
                         }
                         FeelFeedbackSheet(
                             // A treadmill Run, said positively: anything else — an outdoor Run, or a
                             // Run whose mode is not known — is not asked.
                             askForDistance = feelSheetRunMode == RunMode.TREADMILL.settingValue,
                             onSave = { effort, note, distanceKm, isWalk ->
-                                closeSheet {
+                                closeSheet(isWalk) {
                                     sessionRepository.saveFeelFeedback(sessionId, effort, note)
                                     // After the feedback, so the snapshot the distance takes carries
                                     // both. Only when there is one: stating nothing must not cost a
@@ -985,21 +990,9 @@ class MainActivity : ComponentActivity() {
                                     if (distanceKm != null) {
                                         sessionRepository.stateDistance(sessionId, distanceKm)
                                     }
-                                    // Last of the three, so the snapshot it takes carries the other
-                                    // two — and because it is the one that can move the record book
-                                    // (#275). Handed the switch as it stands rather than only when
-                                    // it is on, so this door and the Run's own page have one
-                                    // contract: markAsWalk refuses a change of nothing itself, and
-                                    // asking it is a single read where deciding here would be a
-                                    // rule in two places free to drift apart.
-                                    //
-                                    // And before the Stage is settled, never beside it: the whole
-                                    // reason the Stage waited for this sheet is that a Walk
-                                    // graduates nothing (#297).
-                                    sessionRepository.markAsWalk(sessionId, isWalk)
                                 }
                             },
-                            onDismiss = { closeSheet {} }
+                            onDismiss = { closeSheet(null) {} }
                         )
                     }
                   }

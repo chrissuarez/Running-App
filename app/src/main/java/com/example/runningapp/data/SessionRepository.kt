@@ -2661,6 +2661,10 @@ class SessionRepository(
      * would be the app sulking. What Save adds is only that the mark, the note and any stated
      * distance are written first — the caller sees to that order, because they are its writes.
      *
+     * [markedAsWalk] is the runner's word about what the Run was, carried into the settlement rather
+     * than left to be read back off the column — see [settleStageForRun]. Null is "the sheet said
+     * nothing about it", which is a dismissal, and then the row is the only word there is.
+     *
      * **It waits for the Run to be finished**, the same wait every other door off this sheet makes
      * ([markAsWalk], [stateDistance]) and for the same reason: the sheet is on screen from the
      * moment STOP is pressed while `finalizeRun` is still writing the row. A runner who dismisses it
@@ -2673,31 +2677,42 @@ class SessionRepository(
      */
     suspend fun finishSheetClosed(
         sessionId: Long,
+        markedAsWalk: Boolean? = null,
         zone: ZoneId = ZoneId.systemDefault(),
         finalizeWaitStepMillis: Long = 250L,
     ) {
         finishSheetOpenFor.compareAndSet(sessionId, NO_FINISH_SHEET)
         awaitFinalized(sessionId, finalizeWaitStepMillis) ?: return
-        settleStageForRun(sessionId, zone)
+        settleStageForRun(sessionId, zone, markedAsWalk)
     }
 
     /**
      * The runner's answer to the sheet: what the answer had to store, and then the close (#297).
      *
      * One door rather than two calls at the caller, because the order between them is a rule and not
-     * a convenience — the Stage may only be settled once [writes] are in, and [writes] is whatever
-     * that exit stored, a Save's three statements or nothing at all for a dismissal.
+     * a convenience — the Stage may only be settled once the answer is in, and [writes] is whatever
+     * else that exit stored, a Save's effort, note and any stated distance, or nothing at all for a
+     * dismissal.
      *
-     * **The gate is closed even when [writes] fails**, which is the whole reason this exists. A
+     * **The Walk mark is named here rather than left inside [writes]**, because it is not one write
+     * among several: it is the word the settlement reads, and the whole reason the Stage waited for
+     * this sheet (#297). As an anonymous statement in the block it shared the block's fate — an
+     * effort or a stated distance that threw took the mark down with it, and the settlement then
+     * read the `isWalk = false` still on the row and could graduate a Stage on a walk, which cannot
+     * be taken back. Named, it gets its own attempt, and its value goes to [finishSheetClosed]
+     * whether or not the attempt landed.
+     *
+     * **The gate is closed even when a write fails**, which is the other reason this exists. A
      * throw on the way to [finishSheetClosed] would leave [finishSheetOpenFor] naming this Run for
      * the life of the process: the finish has already been and gone, and the launch pass runs once,
      * so nothing left would ever settle it. Settling on what did land is the smaller loss than never
-     * settling at all. The failure is logged and not rethrown, because by here the sheet is off
+     * settling at all. Failures are logged and not rethrown, because by here the sheet is off
      * screen and there is nobody to tell — and on the process-wide scope this is called from, an
      * unhandled throw would take the app down and lose the settlement with it.
      */
     suspend fun finishSheetAnswered(
         sessionId: Long,
+        markedAsWalk: Boolean? = null,
         zone: ZoneId = ZoneId.systemDefault(),
         finalizeWaitStepMillis: Long = 250L,
         writes: suspend () -> Unit,
@@ -2707,7 +2722,18 @@ class SessionRepository(
         } catch (e: Exception) {
             Log.w("StageRule", "Could not store the finish sheet's answer for run $sessionId; settling on what landed", e)
         }
-        finishSheetClosed(sessionId, zone, finalizeWaitStepMillis)
+        if (markedAsWalk != null) {
+            // Last of the answer's writes, so the snapshot it takes carries the others, and its own
+            // attempt so nothing above can cost the Run its mark. [markAsWalk] refuses a change of
+            // nothing itself, which is why the switch is handed over as it stands rather than only
+            // when it is on: deciding that here would be the same rule in a second place.
+            try {
+                markAsWalk(sessionId, markedAsWalk, finalizeWaitStepMillis)
+            } catch (e: Exception) {
+                Log.w("StageRule", "Could not store the Walk mark for run $sessionId; settling on the runner's word", e)
+            }
+        }
+        finishSheetClosed(sessionId, markedAsWalk, zone, finalizeWaitStepMillis)
     }
 
     /**
@@ -2725,6 +2751,15 @@ class SessionRepository(
      * **A Run nobody was shown a sheet for is settled here and now.** A STOP from the notification
      * opens no sheet, so there is no word still coming, and waiting for one would hold the Run's
      * graduation and the coach's debrief until the next launch.
+     *
+     * **[markedAsWalk] is the runner's word, and it beats the column.** The sheet hands it over
+     * rather than trusting the settlement to read it back, because the read and the write are two
+     * steps and only one of them can fail: a mark that could not be stored would otherwise be judged
+     * as the `isWalk = false` left standing, and a Stage graduated on a walk cannot be taken back
+     * (#297). The row is still what is judged in every other respect — only this one column is
+     * answered by the word. Null is "nobody said", which is every caller but the sheet: the finish,
+     * and the launch pass, where the row is all there is and the sheet's writes have long since
+     * landed or been lost with the process.
      *
      * **The row is read back rather than handed over, and that is the change** (#231, ADR 0008).
      * The finish used to hand its own copy over so that a distance typed into the sheet could not
@@ -2785,7 +2820,11 @@ class SessionRepository(
      * open for ever on a sheet nobody will ever answer, and the pass is what keeps a Run from never
      * being judged at all.
      */
-    suspend fun settleStageForRun(sessionId: Long, zone: ZoneId = ZoneId.systemDefault()) {
+    suspend fun settleStageForRun(
+        sessionId: Long,
+        zone: ZoneId = ZoneId.systemDefault(),
+        markedAsWalk: Boolean? = null,
+    ) {
         // The mark is history the same way a Score is not: it is not derivable from anything the
         // snapshot holds, so a copy taken without it restores a Run that has been judged as a Run
         // that has not. Every snapshot this Run has behind it was taken before now — the after-run
@@ -2794,7 +2833,7 @@ class SessionRepository(
         // spend another Gemini call on this Run and overwrite its debrief and Prescription with a
         // second answer about it. Outside the lock, because it copies the whole database and no
         // other settlement should wait on that (#297).
-        if (settleOneStage(sessionId, zone)) refreshHistoryBackup?.invoke()
+        if (settleOneStage(sessionId, zone, markedAsWalk)) refreshHistoryBackup?.invoke()
     }
 
     /**
@@ -2803,8 +2842,14 @@ class SessionRepository(
      * Split from [settleStageForRun] only over who owes the snapshot: one Run settled at its own
      * door owes one each time, and the launch pass owes one for the whole pass however many Runs it
      * settles — the rule [rescueInterruptedRuns] already keeps, for the same reason.
+     *
+     * [markedAsWalk] is the runner's word where there is one — see [settleStageForRun].
      */
-    private suspend fun settleOneStage(sessionId: Long, zone: ZoneId): Boolean {
+    private suspend fun settleOneStage(
+        sessionId: Long,
+        zone: ZoneId,
+        markedAsWalk: Boolean? = null,
+    ): Boolean {
         if (finishSheetOpenFor.get() == sessionId) {
             Log.d("StageRule", "Run $sessionId still has its finish sheet open; the Stage waits (#297)")
             return false
@@ -2818,7 +2863,17 @@ class SessionRepository(
             if (run.stageSettled) return false
             val stageId = run.ranUnderStageId
             if (stageId != null) {
-                settleStageAfterRun(stageId, runTypeOf(stageId, run.ranUnderWorkoutId), run, zone)
+                // Judged on the runner's word about the Walk, not on the column — the column is a
+                // write that can fail and the word cannot (#297). Everything else is the row as
+                // stored, and where the two agree this is the row itself.
+                val asTheRunnerSaid =
+                    if (markedAsWalk != null && markedAsWalk != run.isWalk) run.copy(isWalk = markedAsWalk) else run
+                settleStageAfterRun(
+                    stageId,
+                    runTypeOf(stageId, run.ranUnderWorkoutId),
+                    asTheRunnerSaid,
+                    zone
+                )
             }
             // Marked even where there was no Stage to settle: the column says the question has been
             // put and cannot be put again, and a Run that ran under no Stage has had its answer.
