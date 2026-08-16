@@ -23,6 +23,8 @@ import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.training.FormVerdict
+import com.example.runningapp.training.GoalMetric
+import com.example.runningapp.training.GoalPeriod
 import com.example.runningapp.training.HistoryBestEffort
 import com.example.runningapp.training.PlanCompletion
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -6515,6 +6517,170 @@ class SessionRepositoryTest {
         timestampMillis = timestampMillis,
         source = TrackPointSource.GPS
     )
+
+    // --- What the Run felt like, and what the runner is aiming at (#83) ---
+
+    @Test
+    fun `how a Run felt, what was written about it and the weather it was run in reach the coach`() =
+        runTest {
+            val felt = aTreadmillRun(id = 9, seconds = 1_500).copy(
+                runMode = "outdoor",
+                perceivedEffort = 9,
+                sessionNote = "Legs like lead the whole way.",
+                weatherTempC = 3.6,
+                weatherFeelsLikeC = -0.4,
+                weatherHumidityPercent = 88,
+                weatherWindSpeedKmh = 29.5,
+                weatherConditionCode = 65
+            )
+            whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(felt))
+
+            val recentRun = repository.getAiTrainingContext("sub_30_bridge").recentRuns.single()
+
+            assertEquals(9, recentRun.perceivedEffort)
+            assertEquals("Legs like lead the whole way.", recentRun.note)
+            // The runner's own words, verbatim: the whole value of a note is the words they chose.
+            assertEquals(
+                "Heavy rain, 4°C, feels like 0°C, 88% humidity, 30 km/h wind",
+                recentRun.weather
+            )
+        }
+
+    @Test
+    fun `a Run nobody said anything about says nothing, rather than saying nothing happened`() =
+        runTest {
+            // A treadmill Run with the sheet walked past — the ordinary case, and the one where a
+            // nought would read as a run that felt like nothing on a still, mild day.
+            whenever(mockDao.getLast3AiEligibleRunsOfStage(any()))
+                .thenReturn(listOf(aTreadmillRun(id = 9, seconds = 1_500)))
+
+            val recentRun = repository.getAiTrainingContext("sub_30_bridge").recentRuns.single()
+
+            assertNull(recentRun.perceivedEffort)
+            assertNull(recentRun.note)
+            assertNull(recentRun.weather)
+        }
+
+    @Test
+    fun `a note the runner cleared is nothing written, not something written`() = runTest {
+        // The finish sheet leaves the column null when it is walked past, but the edit path writes
+        // a cleared note through as an empty string (#80) — so the emptiness arrives both ways and
+        // has to be answered once, here.
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any()))
+            .thenReturn(listOf(aTreadmillRun(id = 9, seconds = 1_500).copy(sessionNote = "   ")))
+
+        assertNull(repository.getAiTrainingContext("sub_30_bridge").recentRuns.single().note)
+    }
+
+    @Test
+    fun `a note typed while the Run is being judged cannot join its own Run's evaluation`() =
+        runTest {
+            // The same rule as the stated distance (#231): the sheet is on screen while this read
+            // happens, and a Run is judged on what it was when it ended.
+            val asFinalized = aTreadmillRun(id = 8, seconds = 1_500)
+            whenever(mockDao.getLast3AiEligibleRunsOfStage(any()))
+                .thenReturn(listOf(asFinalized.copy(perceivedEffort = 2, sessionNote = "Easy day.")))
+
+            val recentRun = repository
+                .getAiTrainingContext("sub_30_bridge", asFinalized = asFinalized)
+                .recentRuns
+                .single()
+
+            assertNull(recentRun.perceivedEffort)
+            assertNull(recentRun.note)
+        }
+
+    /** Wednesday of the week beginning Monday 5 January 2026, in the zone these tests read. */
+    private val goalsToday = LocalDate.of(2026, 1, 7)
+
+    private fun repositoryWithGoals(vararg goals: GoalRow): SessionRepository {
+        val mockGoalDao: GoalDao = mock()
+        whenever(mockGoalDao.getAllGoalsFlow()).thenReturn(flowOf(goals.toList()))
+        return SessionRepository(
+            sessionDao = mockDao,
+            goalDao = mockGoalDao,
+            settingsRepository = mockSettingsRepo
+        )
+    }
+
+    private fun goalRow(id: Long, period: GoalPeriod, metric: GoalMetric, target: Double) = GoalRow(
+        id = id,
+        period = period,
+        metric = metric,
+        target = target,
+        createdAtMillis = DAY_MILLIS_2026_01_05
+    )
+
+    @Test
+    fun `the runner's goals and where they stand reach the coach`() = runTest {
+        // Two 5 km Runs in the week the runner is in: 10 of 40 km, and 2 of 3 runs.
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
+        whenever(mockDao.getRunVolumesFlow()).thenReturn(
+            flowOf(
+                listOf(
+                    volumeRow(startTime = DAY_MILLIS_2026_01_05, effortScore = null),
+                    volumeRow(startTime = DAY_MILLIS_2026_01_05 + ONE_DAY_MILLIS, effortScore = null)
+                )
+            )
+        )
+        val repo = repositoryWithGoals(
+            goalRow(1, GoalPeriod.WEEK, GoalMetric.DISTANCE, target = 40.0),
+            goalRow(2, GoalPeriod.WEEK, GoalMetric.COUNT, target = 3.0)
+        )
+
+        val goals = repo
+            .getAiTrainingContext("sub_30_bridge", zone = ZoneOffset.UTC, today = goalsToday)
+            .goals
+
+        assertEquals(
+            listOf(
+                AiGoal(period = "This week", metric = "Distance", done = "10", target = "40", unit = "km"),
+                AiGoal(period = "This week", metric = "Runs", done = "2", target = "3", unit = "runs")
+            ),
+            goals
+        )
+    }
+
+    @Test
+    fun `only the period the runner is in now is counted towards a goal`() = runTest {
+        // Last week is over, and a coach comparing this Monday's nothing to last week's 40 km would
+        // read a fresh period as a collapse.
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
+        whenever(mockDao.getRunVolumesFlow()).thenReturn(
+            flowOf(listOf(volumeRow(startTime = DAY_MILLIS_2026_01_05 - 3 * ONE_DAY_MILLIS, effortScore = null)))
+        )
+        val repo = repositoryWithGoals(goalRow(1, GoalPeriod.WEEK, GoalMetric.DISTANCE, target = 40.0))
+
+        val goal = repo
+            .getAiTrainingContext("sub_30_bridge", zone = ZoneOffset.UTC, today = goalsToday)
+            .goals
+            .single()
+
+        assertEquals("0", goal.done)
+    }
+
+    @Test
+    fun `a runner who has set no goals sends the coach no goals block`() = runTest {
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
+        val repo = repositoryWithGoals()
+
+        val context = repo
+            .getAiTrainingContext("sub_30_bridge", zone = ZoneOffset.UTC, today = goalsToday)
+
+        assertEquals(emptyList<AiGoal>(), context.goals)
+        // And history is not walked to find that out: with no goal to measure there is nothing for
+        // the read to answer.
+        verify(mockDao, never()).getRunVolumesFlow()
+    }
+
+    @Test
+    fun `with no goals wired at all the coach is told nothing about them`() = runTest {
+        // The archive's read-only container and every test that does not care: a missing goalDao is
+        // the same silence as a runner who has set none.
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
+
+        assertEquals(emptyList<AiGoal>(), repository.getAiTrainingContext("sub_30_bridge").goals)
+    }
 
     private fun volumeRow(startTime: Long, effortScore: Int?) = RunVolumeProjection(
         startTime = startTime,

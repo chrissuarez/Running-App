@@ -33,6 +33,8 @@ import com.example.runningapp.training.asClock
 import com.example.runningapp.training.TrainingWeek
 import com.example.runningapp.training.VolumeRun
 import com.example.runningapp.training.effortScoreOf
+import com.example.runningapp.training.goalAmountText
+import com.example.runningapp.training.goalProgressOf
 import com.example.runningapp.training.FormVerdict
 import com.example.runningapp.training.formVerdictOf
 import com.example.runningapp.training.testIsDue
@@ -157,7 +159,41 @@ data class AiRecentRun(
      * cool-down included. Null when the Run's track never covered 5K in one continuous stretch of
      * recording, which is an absence of evidence and never a failed attempt (#182).
      */
-    val fastest5kSeconds: Long?
+    val fastest5kSeconds: Long?,
+    /**
+     * How hard the Run felt to the runner, 1–10, off the "How did that feel?" sheet (#78, #83).
+     *
+     * Null where they never said, which is every Run the sheet was walked past and every Run
+     * recorded before there was one. Never a nought and never a middling 5 stood in for them: a Run
+     * nobody rated is a Run nobody rated, and a coach handed a number would weigh it exactly as
+     * hard as one the runner actually gave.
+     *
+     * Context and nothing more. It is deliberately unrelated to [com.example.runningapp.data.RunnerSession.effortScore],
+     * which is what the Run cost measured beat by beat — the prompt says so, because a coach reading
+     * a 9 as a training load would prescribe against a number the app never measured.
+     */
+    val perceivedEffort: Int? = null,
+    /**
+     * What the runner wrote about the Run, word for word (#78, #83).
+     *
+     * Verbatim because the whole value of it is the words they chose — "legs like lead" and "felt
+     * flat" are the runner's own reading of a Run whose numbers may look identical. Null where they
+     * wrote nothing, blank included: an empty note is the absence of a note, not a note saying
+     * nothing.
+     *
+     * Quoted back to the coach as the runner's words and fenced as such in the prompt. A note is
+     * the one field here whose text a person chooses freely, and the coach's answer moves the
+     * stored plan — so it is read as how the Run went, never as something addressed to the coach.
+     */
+    val note: String? = null,
+    /**
+     * The weather the Run was run in, as one line (#79, #83) — see [weatherSummaryOf].
+     *
+     * Null where none was recorded: every treadmill Run, every Run with no GPS fix to place, and
+     * any outdoor Run the fetch never reached. A slow hour into a headwind reads fairly only if the
+     * headwind is in front of the coach.
+     */
+    val weather: String? = null
 )
 
 /**
@@ -203,6 +239,31 @@ data class AiFitnessAndForm(
      */
     val todaysRunIsInTheNumbers: Boolean
 )
+
+/**
+ * One of the runner's own Goals, and where they stand against it, as the coach is told it (#83).
+ *
+ * The period the runner is in now and no other — a Goal card is about the week they are having, and
+ * last week's is over ([goalProgressOf]).
+ *
+ * [done] and [target] are text rather than numbers, and rounded here by the same [goalAmountText]
+ * the Goals card rounds by. The coach and the runner are then reading one pair of numbers rather
+ * than two that agree most of the time: a runner looking at "24 / 40 km" must not be told by the
+ * coach they are 15.7 km short.
+ */
+data class AiGoal(
+    /** How the runner says the period — "This week", "This month", "This year". */
+    val period: String,
+    /** What the Goal is counted in — "Distance", "Time", "Runs". */
+    val metric: String,
+    val done: String,
+    val target: String,
+    /** The word after the numbers — "km", "hours", "runs". */
+    val unit: String
+) {
+    /** The Goal on one line, as the prompt writes it: "This week 24 of 40 km". */
+    internal fun forPrompt(): String = "$period $done of $target $unit"
+}
 
 data class AiTrainingContext(
     val currentStageTitle: String,
@@ -285,7 +346,25 @@ data class AiTrainingContext(
      * finish never gets here with one missing: [evaluateAndAdjustPlan] returns without asking the
      * coach anything when the Stage offers no Workout of the Run's kind.
      */
-    val stageWorkout: WorkoutTemplate? = null
+    val stageWorkout: WorkoutTemplate? = null,
+    /**
+     * The runner's own standing Goals and where they stand against them (#82, #83), in the order
+     * they were set. Empty where they have set none, and the prompt then says nothing about goals
+     * at all rather than saying there are none — a runner who has never used the feature is not a
+     * runner failing at it.
+     *
+     * Told to the coach so a debrief can read a hard week as the week the runner meant to have.
+     * Fenced hard in the prompt for the same reason it is worth sending: a coach shown "12 of 40 km
+     * with two days left" has an obvious way to help, and it is the one way this app will not
+     * allow — a Goal is the runner's to chase across a period, never work to buy with one harder
+     * prescription, and never evidence that a Stage has been earned.
+     *
+     * Not gated on [RunnerSession.includeInAiTraining], on the same terms as [fitnessAndForm]: this
+     * is a total over a period, not a Run described to the coach. The runs the coach is shown
+     * one by one are the eligible ones and only those (`getLast3AiEligibleRunsOfStage`), which is
+     * where that switch has always done its work.
+     */
+    val goals: List<AiGoal> = emptyList()
 ) {
     /**
      * The Runs the coach named as what it graduated the Stage on, or null when it named anything
@@ -375,6 +454,15 @@ class SessionRepository(
     // Null on the same terms as the record book it feeds: a treadmill Run then simply holds no
     // stated Best Effort, which is what every Run held before #282 anyway.
     private val statedBestEffortDao: StatedBestEffortDao? = null,
+    /**
+     * The runner's own Goals, read so the coach can be told where they stand (#83).
+     *
+     * Null wherever goals are not wired — tests, and the archive's read-only container — and the
+     * coach is then told nothing about goals at all, which is the same thing it is told about a
+     * runner who has set none. Nothing else in this class reads it: a Goal answers no requirement
+     * and moves no curve, so there is no path here it could go wrong on.
+     */
+    private val goalDao: GoalDao? = null,
     private val settingsRepository: SettingsRepository? = null,
     private val coachPrescriptionRepository: CoachPrescriptionRepository? = null,
     private val aiCoachClient: AiCoachClient? = null,
@@ -2509,8 +2597,51 @@ class SessionRepository(
                         points = getTrackPointsForMap(session.id),
                         targetMeters = FIVE_K_METERS
                     )
-                }
+                },
+                // How the Run felt, in the runner's own numbers and words (#78, #83). Read off the
+                // same row as everything else here, which is what makes [asFinalized] carry it too:
+                // the sheet asking for it is on screen while this read happens, so the Run is
+                // described by what it was when it ended and never by what was typed since.
+                perceivedEffort = session.perceivedEffort,
+                // Blank is nothing written, not something written. The finish sheet leaves the
+                // column null when it is walked past, but the edit path writes a runner's cleared
+                // note through (#80), so the emptiness can arrive either way and is answered once.
+                note = session.sessionNote?.takeIf { it.isNotBlank() },
+                weather = weatherSummaryOf(
+                    tempC = session.weatherTempC,
+                    feelsLikeC = session.weatherFeelsLikeC,
+                    humidityPercent = session.weatherHumidityPercent,
+                    windSpeedKmh = session.weatherWindSpeedKmh,
+                    conditionCode = session.weatherConditionCode
+                )
             )
+        }
+
+        // The runner's own targets, and where a period that is still running has got to (#82, #83).
+        // Read here at the moment the coach is asked, like the curves: there is nothing on the far
+        // side of a sent prompt for a later emission to redraw.
+        val goals = goalDao?.getAllGoalsFlow()?.first().orEmpty()
+        val goalProgress = if (goals.isEmpty()) {
+            // The read below is a whole pass over history, and with no goal to measure there is
+            // nothing for it to answer. Skipped rather than computed and thrown away.
+            emptyList()
+        } else {
+            goalProgressOf(
+                goals = goals.map { it.toGoal() },
+                runs = runVolumesFlow().first(),
+                on = today,
+                zone = zone
+            ).map { progress ->
+                AiGoal(
+                    period = progress.goal.period.thisPeriod,
+                    metric = progress.goal.metric.label,
+                    // The card's own rounding, so the coach quotes the runner the numbers the
+                    // runner is looking at ([goalAmountText]).
+                    done = goalAmountText(progress.goal.metric, progress.done),
+                    target = goalAmountText(progress.goal.metric, progress.goal.target),
+                    unit = progress.goal.metric.unit
+                )
+            }
         }
 
         return AiTrainingContext(
@@ -2559,7 +2690,8 @@ class SessionRepository(
                         !asFinalized.ranOn(zone).isAfter(today)
                     )
             ),
-            stageWorkout = stageWorkout
+            stageWorkout = stageWorkout,
+            goals = goalProgress
         )
     }
 

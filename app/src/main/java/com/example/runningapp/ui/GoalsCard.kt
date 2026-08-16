@@ -41,25 +41,9 @@ import com.example.runningapp.training.Goal
 import com.example.runningapp.training.GoalMetric
 import com.example.runningapp.training.GoalPeriod
 import com.example.runningapp.training.GoalProgress
+import com.example.runningapp.training.goalAmountText
 import kotlin.math.floor
 import kotlin.math.roundToInt
-
-/**
- * A goal's number as it is written on the bar — whole where it is whole, and to a tenth where it is
- * not.
- *
- * Runs are counted and never fractional. Kilometres and hours are, but only just: "24.0 / 40 km" is
- * a precision nobody asked for, and "23.7" is one they can see the point of.
- */
-fun goalAmountText(metric: GoalMetric, amount: Double): String {
-    if (metric == GoalMetric.COUNT) return amount.roundToInt().toString()
-    val rounded = (amount * 10).roundToInt() / 10.0
-    return if (rounded == rounded.roundToInt().toDouble()) {
-        rounded.roundToInt().toString()
-    } else {
-        rounded.toString()
-    }
-}
 
 /**
  * What a goal has typed into it, as a target — null when it is not one (#82).

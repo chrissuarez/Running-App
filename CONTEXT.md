@@ -264,7 +264,12 @@ measures the next one. Where they stand against it is worked out from their Runs
 on read, so editing a Goal re-measures the period they are in as well as the ones
 to come. Every finished Run counts towards one, walk and treadmill alike; a Run
 whose distance nobody measured adds its time and its one to the count and nothing
-to the distance.
+to the distance. The coach is told where the runner stands against each one, in
+the period it is being measured over, so a debrief can read a hard week as the
+week the runner meant to have — and told just as plainly that a Goal is the
+runner's own target and not the plan's: it graduates no Stage, and a shortfall is
+never work for the coach to make up, because a Goal is chased across a whole
+period and never bought with one harder Run (#83).
 _Avoid_: target as a name for it (a target is what a Goal holds), challenge,
 streak, objective
 

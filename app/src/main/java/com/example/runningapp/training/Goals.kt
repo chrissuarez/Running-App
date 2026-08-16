@@ -6,6 +6,7 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.temporal.TemporalAdjusters
+import kotlin.math.roundToInt
 
 /**
  * The stretch of time a Goal is asked of, and starts over at the end of (#82).
@@ -76,6 +77,27 @@ data class Goal(
     val metric: GoalMetric,
     val target: Double,
 )
+
+/**
+ * A goal's number as it is written on the bar — whole where it is whole, and to a tenth where it is
+ * not.
+ *
+ * Runs are counted and never fractional. Kilometres and hours are, but only just: "24.0 / 40 km" is
+ * a precision nobody asked for, and "23.7" is one they can see the point of.
+ *
+ * Here rather than on the card, because the card is no longer the only reader: the coach is told
+ * where the runner stands too (#83), and one rounding is what keeps the two from quoting the runner
+ * different numbers for the same week.
+ */
+fun goalAmountText(metric: GoalMetric, amount: Double): String {
+    if (metric == GoalMetric.COUNT) return amount.roundToInt().toString()
+    val rounded = (amount * 10).roundToInt() / 10.0
+    return if (rounded == rounded.roundToInt().toDouble()) {
+        rounded.roundToInt().toString()
+    } else {
+        rounded.toString()
+    }
+}
 
 /**
  * How far into a Goal the runner is, in the period they are in now.

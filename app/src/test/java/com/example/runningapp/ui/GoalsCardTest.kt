@@ -4,6 +4,7 @@ import com.example.runningapp.training.Goal
 import com.example.runningapp.training.GoalMetric
 import com.example.runningapp.training.GoalPeriod
 import com.example.runningapp.training.GoalProgress
+import com.example.runningapp.training.goalAmountText
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals

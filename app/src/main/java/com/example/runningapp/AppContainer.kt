@@ -154,6 +154,9 @@ class AppContainer(context: Context) {
             intervalStatDao = database.runWalkIntervalStatDao(),
             achievementDao = database.achievementDao(),
             statedBestEffortDao = database.statedBestEffortDao(),
+            // Read for one thing only: telling the coach where the runner stands against their own
+            // targets (#83). Without it the coach is simply told nothing about goals.
+            goalDao = database.goalDao(),
             settingsRepository = settingsRepository,
             coachPrescriptionRepository = coachPrescriptionRepository,
             aiCoachClient = aiCoachClient,
