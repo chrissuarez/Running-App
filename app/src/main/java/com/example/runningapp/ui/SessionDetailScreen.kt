@@ -27,6 +27,7 @@ import com.example.runningapp.data.Achievement
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.ranAt
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.data.bandedOnHrProfile
 import com.example.runningapp.analysis.RecordType
@@ -39,7 +40,8 @@ import com.example.runningapp.data.averagePaceText
 import com.example.runningapp.data.inTargetZoneSeconds
 import com.example.runningapp.data.secondsInZone
 import com.example.runningapp.ui.workout.zoneChartColor
-import java.text.SimpleDateFormat
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -337,8 +339,9 @@ fun SummaryStats(
     elevationGainMeters: Double? = null,
     onStateDistance: ((Double?) -> Unit)? = null,
 ) {
-    val sdf = SimpleDateFormat("EEEE, MMM d, yyyy 'at' HH:mm", Locale.getDefault())
-    val dateStr = sdf.format(Date(session.startTime))
+    // The date and time the runner set off under, read off the Run's own stamp (#304).
+    val dateStr = DateTimeFormatter.ofPattern("EEEE, MMM d, yyyy 'at' HH:mm", Locale.getDefault())
+        .format(session.ranAt(ZoneId.systemDefault()))
     var showDistanceDialog by remember { mutableStateOf(false) }
 
     if (showDistanceDialog && onStateDistance != null) {

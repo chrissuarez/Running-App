@@ -32,10 +32,12 @@ import androidx.compose.ui.unit.dp
 import com.example.runningapp.analysis.RouteThumbnail
 import com.example.runningapp.analysis.ThumbPoint
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.ranAt
 import com.example.runningapp.run.RunMode
 import com.example.runningapp.ui.theme.RunningAppTheme
 import com.example.runningapp.ui.theme.RunningUiTokens
-import java.text.SimpleDateFormat
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.*
 import kotlin.math.roundToInt
 
@@ -145,8 +147,9 @@ fun SessionItem(
     onLongClick: () -> Unit
 ) {
     val session = row.session
-    val sdf = SimpleDateFormat("MMM d, HH:mm", Locale.getDefault())
-    val dateStr = sdf.format(Date(session.startTime))
+    // The date and time the runner set off under, read off the Run's own stamp (#304).
+    val dateStr = DateTimeFormatter.ofPattern("MMM d, HH:mm", Locale.getDefault())
+        .format(session.ranAt(ZoneId.systemDefault()))
 
     Card(
         modifier = Modifier

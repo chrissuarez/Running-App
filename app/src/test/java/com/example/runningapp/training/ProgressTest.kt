@@ -226,4 +226,29 @@ class ProgressTest {
         // before it, which is the whole reason a three-month view is not a three-month history.
         assertEquals(50.0, threeMonths.first().fitness, 0.5)
     }
+
+    @Test
+    fun `a Run keeps the day it was run on when the phone has since flown`() {
+        // #304: 23:30 on day1 in London. Read in Sydney it is the small hours of day2, so the
+        // effort would land on a day the runner did not train.
+        val lateOnDay1 = LocalDateTime.of(day1, java.time.LocalTime.of(23, 30))
+            .atZone(zone).toInstant().toEpochMilli()
+        val run = ScoredRun(lateOnDay1, effortScore = 100, ranAtUtcOffsetSeconds = 0)
+
+        val effort = dailyEffortOf(listOf(run), zone = ZoneId.of("Australia/Sydney"))
+
+        assertEquals(setOf(day1), effort.keys)
+    }
+
+    @Test
+    fun `a Run that wrote down no offset is still read in the phone's zone`() {
+        // Every Run recorded before v32, unchanged.
+        val lateOnDay1 = LocalDateTime.of(day1, java.time.LocalTime.of(23, 30))
+            .atZone(zone).toInstant().toEpochMilli()
+        val run = ScoredRun(lateOnDay1, effortScore = 100, ranAtUtcOffsetSeconds = null)
+
+        val effort = dailyEffortOf(listOf(run), zone = ZoneId.of("Australia/Sydney"))
+
+        assertEquals(setOf(day1.plusDays(1)), effort.keys)
+    }
 }

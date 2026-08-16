@@ -386,4 +386,64 @@ class WeeklyVolumeTest {
         // are told apart in words on the screen, not in height.
         assertEquals(0.0, WeeklyMeasure.EFFORT_SCORE.amountOf(week.copy(effortScore = null)), 0.001)
     }
+
+    @Test
+    fun `a Run keeps the week it was run in when the phone has since flown`() {
+        // #304: 23:30 on the Sunday in London closes that week. Read in Sydney it is Monday
+        // morning and starts the next one, which is a week the runner never ran.
+        val sunday = monday.plusDays(6)
+        val lateOnSunday = LocalDateTime.of(sunday, LocalTime.of(23, 30))
+            .atZone(zone).toInstant().toEpochMilli()
+        val run = VolumeRun(
+            startedAtMillis = lateOnSunday,
+            distanceKm = 5.0,
+            timeSeconds = 1800,
+            effortScore = null,
+            ranAtUtcOffsetSeconds = 0,
+        )
+        val sydney = ZoneId.of("Australia/Sydney")
+
+        val weeks = weeklyVolumeOf(listOf(run), through = sunday.plusDays(1), zone = sydney)
+
+        assertEquals(monday, weeks.first { it.distanceKm > 0.0 }.startingOn)
+    }
+
+    @Test
+    fun `a Run that wrote down no offset is still read in the phone's zone`() {
+        // Every Run recorded before v32. Nothing about their behaviour changes.
+        val sunday = monday.plusDays(6)
+        val lateOnSunday = LocalDateTime.of(sunday, LocalTime.of(23, 30))
+            .atZone(zone).toInstant().toEpochMilli()
+        val run = VolumeRun(lateOnSunday, 5.0, 1800, null, ranAtUtcOffsetSeconds = null)
+
+        val weeks = weeklyVolumeOf(listOf(run), through = sunday.plusDays(2), zone = ZoneId.of("Australia/Sydney"))
+
+        assertEquals(monday.plusDays(7), weeks.first { it.distanceKm > 0.0 }.startingOn)
+    }
+
+    @Test
+    fun `a Run a day ahead of the phone still counts towards its own week`() {
+        // #304: ran Saturday evening in Sydney, landed in London on Saturday morning. The Run's own
+        // day is the phone's tomorrow, and it is a Run the runner really ran this week.
+        val saturday = monday.plusDays(5)
+        val saturdayEveningInSydney = LocalDateTime.of(saturday, LocalTime.of(19, 0))
+            .atZone(ZoneId.of("Australia/Sydney")).toInstant().toEpochMilli()
+        val run = VolumeRun(saturdayEveningInSydney, 10.0, 3600, null, ranAtUtcOffsetSeconds = 10 * 3600)
+
+        val weeks = weeklyVolumeOf(listOf(run), through = monday.plusDays(4), zone = zone)
+
+        assertEquals(10.0, weeks.single { it.startingOn == monday }.distanceKm, 0.0001)
+    }
+
+    @Test
+    fun `a Run stamped further ahead than any clock allows is still ignored`() {
+        val wayAhead = LocalDateTime.of(monday.plusDays(30), LocalTime.of(9, 0))
+            .atZone(zone).toInstant().toEpochMilli()
+        val run = VolumeRun(wayAhead, 10.0, 3600, null, ranAtUtcOffsetSeconds = 0)
+
+        assertEquals(
+            emptyList<TrainingWeek>(),
+            weeklyVolumeOf(listOf(run), through = monday.plusDays(4), zone = zone),
+        )
+    }
 }

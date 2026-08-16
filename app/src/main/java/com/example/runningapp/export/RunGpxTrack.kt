@@ -2,8 +2,8 @@ package com.example.runningapp.export
 
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.ranAt
 import com.example.runningapp.data.TrackPoint
-import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -93,8 +93,12 @@ object RunGpxTrack {
         )
     }
 
+    /**
+     * Named for the evening the runner ran, read off the Run's own stamp (#304). [zoneId] is only
+     * the fallback for a Run recorded before v32 — see [RunnerSession.ranAt].
+     */
     fun runName(session: RunnerSession, zoneId: ZoneId = ZoneId.systemDefault()): String =
-        "Run " + NAME_FORMAT.format(Instant.ofEpochMilli(session.startTime).atZone(zoneId))
+        "Run " + NAME_FORMAT.format(session.ranAt(zoneId))
 
     /**
      * Lower-case and hyphenated: it becomes a real file name in Drive, on a laptop, in an email.
@@ -105,7 +109,7 @@ object RunGpxTrack {
      * change repeats — but never an id.
      */
     fun fileName(session: RunnerSession, zoneId: ZoneId = ZoneId.systemDefault()): String =
-        "run-" + FILE_NAME_FORMAT.format(Instant.ofEpochMilli(session.startTime).atZone(zoneId)) +
+        "run-" + FILE_NAME_FORMAT.format(session.ranAt(zoneId)) +
             "-" + session.id + "." + GpxWriter.FILE_EXTENSION
 
     /**

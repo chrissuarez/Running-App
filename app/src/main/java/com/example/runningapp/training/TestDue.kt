@@ -2,9 +2,7 @@ package com.example.runningapp.training
 
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.plannedSeconds
-import java.time.Instant
 import java.time.LocalDate
-import java.time.ZoneId
 
 /**
  * How long after a Test the next one is due — three weeks, and not four (#292).
@@ -24,25 +22,24 @@ const val DAYS_BETWEEN_TESTS = 21L
  * cursor (ADR 0005), so nothing here can stop a Run — and gating would also refuse a Test on the
  * one day the runner actually feels good.
  *
- * [lastTestStartedAtMillis] is when the runner last completed the Stage's Test Workout, read off
- * history and never stored (ADR 0001, [com.example.runningapp.PlanStage.testWorkout]). Null is "no
- * Test in history", which is due: a runner with no number at all has nothing to have measured
- * recently. Passing or failing makes no difference — the effort was paid either way, so a Test that
- * missed the bar resets the three weeks exactly like one that cleared it.
+ * [lastTestRanOn] is the day the runner last completed the Stage's Test Workout, read off history
+ * and never stored (ADR 0001, [com.example.runningapp.PlanStage.testWorkout]). A day and not a
+ * moment, because the day a Run happened on is the Run's own fact and is read off the Run's stamp
+ * rather than worked out here (#304, [com.example.runningapp.ranOn]). Null is "no Test in history",
+ * which is due: a runner with no number at all has nothing to have measured recently. Passing or
+ * failing makes no difference — the effort was paid either way, so a Test that missed the bar
+ * resets the three weeks exactly like one that cleared it.
  *
  * [form] is yesterday's Fitness less yesterday's Fatigue, the number the Progress screen shows.
  * Null is "no curve to read yet", which holds nothing: nothing says the runner is tired.
  */
 fun testIsDue(
-    lastTestStartedAtMillis: Long?,
+    lastTestRanOn: LocalDate?,
     form: Double?,
     today: LocalDate,
-    zone: ZoneId,
 ): Boolean {
     if (testIsHeldByForm(form)) return false
-    val lastTest = lastTestStartedAtMillis
-        ?: return true
-    val lastTestDay = Instant.ofEpochMilli(lastTest).atZone(zone).toLocalDate()
+    val lastTestDay = lastTestRanOn ?: return true
     return !today.isBefore(lastTestDay.plusDays(DAYS_BETWEEN_TESTS))
 }
 

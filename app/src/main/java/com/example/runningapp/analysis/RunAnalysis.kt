@@ -3,9 +3,9 @@ package com.example.runningapp.analysis
 import com.example.runningapp.HrProfile
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.ranAt
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.run.RunMode
-import java.time.Instant
 import java.time.ZoneId
 import kotlin.math.abs
 
@@ -235,7 +235,8 @@ data class RunChart(
  * runner would name it (#44). Replaces "Session Summary", which named the screen rather than the Run.
  */
 fun runHeadline(run: RunnerSession, zoneId: ZoneId = ZoneId.systemDefault()): String {
-    val hour = Instant.ofEpochMilli(run.startTime).atZone(zoneId).hour
+    // The hour the runner set off, on the clock they set off under (#304).
+    val hour = run.ranAt(zoneId).hour
     val partOfDay = when {
         hour < 5 -> "Night"
         hour < 12 -> "Morning"

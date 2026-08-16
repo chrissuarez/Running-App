@@ -1,7 +1,8 @@
 package com.example.runningapp.training
 
+import com.example.runningapp.isBeyondAnyonesToday
+import com.example.runningapp.ranOn
 import java.time.DayOfWeek
-import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.temporal.TemporalAdjusters
@@ -23,6 +24,12 @@ data class VolumeRun(
     val distanceKm: Double,
     val timeSeconds: Long,
     val effortScore: Int?,
+    /**
+     * Where the runner's clock was when this Run set off, or null for a Run that never wrote it
+     * down — see [com.example.runningapp.data.RunnerSession.ranAtUtcOffsetSeconds] (#304). It is
+     * what places the Run on a calendar day, so the day survives the runner flying home.
+     */
+    val ranAtUtcOffsetSeconds: Int? = null,
 )
 
 /**
@@ -97,8 +104,10 @@ enum class WeeklyMeasure(val label: String, val unit: String) {
  * side with nothing but their order to place them in time, so a missing week would silently close
  * the gap and draw a fortnight off as two hard weeks in a row.
  *
- * Runs after [through] are ignored rather than folded into the last week, the same guard
- * [progressCurve] keeps against a phone whose clock has moved.
+ * Runs stamped beyond any runner's [through] are ignored rather than folded into the last week —
+ * the same guard [progressCurve] keeps against a phone whose clock has moved. Beyond *anyone's*
+ * today rather than beyond this phone's, because a Run carries its own day now and a runner who has
+ * flown west holds one honestly a day ahead of the phone (#304, [isBeyondAnyonesToday]).
  */
 fun weeklyVolumeOf(
     runs: Iterable<VolumeRun>,
@@ -111,9 +120,9 @@ fun weeklyVolumeOf(
     runs.forEach { run ->
         // Dated, not weeked: a Run stamped Sunday while the runner is on Wednesday shares the
         // current week's Monday, so a week-level guard would let tomorrow into today's bar.
-        val ranOn = Instant.ofEpochMilli(run.startedAtMillis).atZone(zone).toLocalDate()
-        if (ranOn.isAfter(through)) return@forEach
-        val weekStart = ranOn.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        val day = ranOn(run.startedAtMillis, run.ranAtUtcOffsetSeconds, zone)
+        if (day.isBeyondAnyonesToday(through)) return@forEach
+        val weekStart = day.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
         val soFar = totals[weekStart] ?: emptyWeek(weekStart)
         totals[weekStart] = soFar.copy(
             distanceKm = soFar.distanceKm + run.distanceKm,

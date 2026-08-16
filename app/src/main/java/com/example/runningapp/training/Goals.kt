@@ -1,7 +1,8 @@
 package com.example.runningapp.training
 
+import com.example.runningapp.isBeyondAnyonesToday
+import com.example.runningapp.ranOn
 import java.time.DayOfWeek
-import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.temporal.TemporalAdjusters
@@ -106,8 +107,10 @@ data class GoalProgress(
  * belongs wholly to the day the runner would say they ran — the same rule the curves and the weekly
  * bars keep (#60).
  *
- * Runs stamped after [on] are ignored rather than counted early, the same guard [progressCurve] and
- * [weeklyVolumeOf] keep against a phone whose clock has moved.
+ * Runs stamped beyond any runner's [on] are ignored rather than counted early, the same guard
+ * [progressCurve] and [weeklyVolumeOf] keep against a phone whose clock has moved — and beyond
+ * *anyone's* today rather than beyond this phone's, because a runner who has flown west holds a Run
+ * honestly a day ahead of it (#304, [isBeyondAnyonesToday]).
  */
 fun goalProgressOf(
     goals: Iterable<Goal>,
@@ -118,14 +121,14 @@ fun goalProgressOf(
     val goalList = goals.toList()
     if (goalList.isEmpty()) return emptyList()
 
-    val ranOn = runs.mapNotNull { run ->
-        val day = Instant.ofEpochMilli(run.startedAtMillis).atZone(zone).toLocalDate()
-        if (day.isAfter(on)) null else day to run
+    val daysRunOn = runs.mapNotNull { run ->
+        val day = ranOn(run.startedAtMillis, run.ranAtUtcOffsetSeconds, zone)
+        if (day.isBeyondAnyonesToday(on)) null else day to run
     }
 
     return goalList.map { goal ->
         val from = goal.period.startOn(on)
-        val done = ranOn
+        val done = daysRunOn
             .filter { (day, _) -> !day.isBefore(from) }
             .sumOf { (_, run) -> goal.metric.amountOf(run) }
         GoalProgress(goal = goal, periodStart = from, done = done)
