@@ -35,6 +35,7 @@ import com.example.runningapp.data.StatedBestEffort
 import com.example.runningapp.data.isTreadmill
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.computeRunWalkIntervalAnalytics
+import com.example.runningapp.data.wmoConditionLabel
 import com.example.runningapp.data.averagePace
 import com.example.runningapp.data.averagePaceText
 import com.example.runningapp.data.inTargetZoneSeconds
@@ -712,41 +713,11 @@ private fun formatMinutesSeconds(seconds: Int): String {
     return "%02d:%02d".format(mins, secs)
 }
 
-// https://open-meteo.com/en/docs (WMO Weather interpretation codes)
-private val WMO_CONDITION_LABELS = mapOf(
-    0 to "Clear sky",
-    1 to "Mainly clear",
-    2 to "Partly cloudy",
-    3 to "Overcast",
-    45 to "Fog",
-    48 to "Fog",
-    51 to "Light drizzle",
-    53 to "Drizzle",
-    55 to "Heavy drizzle",
-    56 to "Freezing drizzle",
-    57 to "Freezing drizzle",
-    61 to "Light rain",
-    63 to "Rain",
-    65 to "Heavy rain",
-    66 to "Freezing rain",
-    67 to "Freezing rain",
-    71 to "Light snow",
-    73 to "Snow",
-    75 to "Heavy snow",
-    77 to "Snow grains",
-    80 to "Light showers",
-    81 to "Showers",
-    82 to "Heavy showers",
-    85 to "Snow showers",
-    86 to "Snow showers",
-    95 to "Thunderstorm",
-    96 to "Thunderstorm with hail",
-    99 to "Thunderstorm with hail"
-)
-
 private fun formatWeatherLine(session: RunnerSession): String {
     val tempC = session.weatherTempC ?: return ""
-    val condition = session.weatherConditionCode?.let { WMO_CONDITION_LABELS[it] }
+    // The same words the coach is given for the same code — see [wmoConditionLabel]. The line's own
+    // shape stays this page's, because a page has room for separators a prompt has no use for.
+    val condition = wmoConditionLabel(session.weatherConditionCode)
     return buildString {
         append("%.0f°C".format(tempC))
         session.weatherFeelsLikeC?.let { append(", feels %.0f°C".format(it)) }
