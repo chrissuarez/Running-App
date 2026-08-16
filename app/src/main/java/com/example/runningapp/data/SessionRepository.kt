@@ -2674,6 +2674,21 @@ class SessionRepository(
      *
      * Called through [finishSheetAnswered], which is what sees to that order and to the gate being
      * closed whether or not the writes land.
+     *
+     * **The gate is opened and the word is settled as one step, under [settling].** That is the
+     * whole shape of this function and the rule [finishSheetOpenFor] exists to keep: the gate says
+     * "a word about this Run is still coming", so it may not read as open until the settlement
+     * carrying that word owns the lock. Opening it first and settling after left a gap — the wait
+     * below genuinely suspends — and the finish's own settlement, which carries no word, could take
+     * the lock inside it, judge the Run off the `isWalk` on the row and graduate a Stage that cannot
+     * be taken back (#297). Every settlement without a word tests the gate under this same lock
+     * ([settleOneStage]), so there is no moment at which one can see the gate open and the word not
+     * yet in.
+     *
+     * The wait is made *before* the lock rather than inside it, because it can last seconds and no
+     * other Run's settlement should queue behind a row that is still being written. Waiting with the
+     * gate still closed is what the gate is for: a settlement arriving during the wait declines and
+     * leaves the debt here, which is exactly what it would have done a moment earlier.
      */
     suspend fun finishSheetClosed(
         sessionId: Long,
@@ -2681,9 +2696,14 @@ class SessionRepository(
         zone: ZoneId = ZoneId.systemDefault(),
         finalizeWaitStepMillis: Long = 250L,
     ) {
-        finishSheetOpenFor.compareAndSet(sessionId, NO_FINISH_SHEET)
-        awaitFinalized(sessionId, finalizeWaitStepMillis) ?: return
-        settleStageForRun(sessionId, zone, markedAsWalk)
+        val finalized = awaitFinalized(sessionId, finalizeWaitStepMillis)
+        val settled = settling.withLock {
+            finishSheetOpenFor.compareAndSet(sessionId, NO_FINISH_SHEET)
+            finalized != null && settleUnderSettling(sessionId, zone, markedAsWalk)
+        }
+        // Outside the lock, for the reason [settleStageForRun] gives: the snapshot copies the whole
+        // database and no other settlement should wait on that.
+        if (settled) refreshHistoryBackup?.invoke()
     }
 
     /**
@@ -2708,7 +2728,9 @@ class SessionRepository(
      * so nothing left would ever settle it. Settling on what did land is the smaller loss than never
      * settling at all. Failures are logged and not rethrown, because by here the sheet is off
      * screen and there is nobody to tell — and on the process-wide scope this is called from, an
-     * unhandled throw would take the app down and lose the settlement with it.
+     * unhandled throw would take the app down and lose the settlement with it. Closing the gate is
+     * [finishSheetClosed]'s to do and not this function's, because there it is the same step as the
+     * settlement that carries the word — see the rule there.
      */
     suspend fun finishSheetAnswered(
         sessionId: Long,
@@ -2804,6 +2826,14 @@ class SessionRepository(
      * would still spend a Gemini call on a Run already judged. The lock makes the read and the write
      * one step and the question is put once.
      *
+     * That same lock is what the wait above is written in terms of, and it has to be: **the gate
+     * does not open until the settlement carrying the runner's word owns the lock**. The gate says a
+     * word is still coming, so a settlement that finds it clear must be able to trust that the word
+     * is already in — which is only true if opening the gate and settling the word are one step
+     * ([finishSheetClosed]) and the gate is tested inside the lock ([settleOneStage]). Two steps with
+     * anything in between is a window for this settlement, carrying no word, to judge the Run off the
+     * `isWalk` on the row.
+     *
      * **A sheet the runner walks away from is left waiting, deliberately.** The Stage then settles
      * whenever they come back to it, or at the next cold start — which arrives on its own, because
      * Android reclaims a backgrounded process soon enough. The alternative considered was treating
@@ -2837,11 +2867,20 @@ class SessionRepository(
     }
 
     /**
-     * The settlement itself, and whether it wrote the mark (#297).
+     * A settlement nobody has spoken for: the gate, and then the settlement itself, as one step —
+     * and whether it wrote the mark (#297).
      *
      * Split from [settleStageForRun] only over who owes the snapshot: one Run settled at its own
      * door owes one each time, and the launch pass owes one for the whole pass however many Runs it
      * settles — the rule [rescueInterruptedRuns] already keeps, for the same reason.
+     *
+     * **This is the door for a settlement that carries no word**, which is every one but the sheet's,
+     * and so it is the door that tests the gate. The test is inside [settling] and not before it,
+     * because the sheet opens the gate and settles the word under that same lock: tested outside, a
+     * gate cleared a moment before the word's settlement had the lock would read as "nothing is
+     * coming" and let this one judge the Run off the column (#297). The sheet's own settlement goes
+     * straight to [settleUnderSettling] from inside the lock it already holds — [settling] is not
+     * reentrant, and there is nothing left for it to test.
      *
      * [markedAsWalk] is the runner's word where there is one — see [settleStageForRun].
      */
@@ -2849,37 +2888,51 @@ class SessionRepository(
         sessionId: Long,
         zone: ZoneId,
         markedAsWalk: Boolean? = null,
-    ): Boolean {
+    ): Boolean = settling.withLock {
         if (finishSheetOpenFor.get() == sessionId) {
             Log.d("StageRule", "Run $sessionId still has its finish sheet open; the Stage waits (#297)")
+            return@withLock false
+        }
+        settleUnderSettling(sessionId, zone, markedAsWalk)
+    }
+
+    /**
+     * The settlement itself, with [settling] already held, and whether it wrote the mark (#297).
+     *
+     * Callers own the lock so that the gate and the settlement can be one step — see
+     * [finishSheetClosed] for the rule and [settleOneStage] for the gate.
+     *
+     * [markedAsWalk] is the runner's word where there is one — see [settleStageForRun].
+     */
+    private suspend fun settleUnderSettling(
+        sessionId: Long,
+        zone: ZoneId,
+        markedAsWalk: Boolean?,
+    ): Boolean {
+        val run = sessionDao.getSessionById(sessionId) ?: return false
+        if (!run.isFinished()) {
+            Log.d("StageRule", "Run $sessionId is not finished; leaving its Stage owing a settlement")
             return false
         }
-        settling.withLock {
-            val run = sessionDao.getSessionById(sessionId) ?: return false
-            if (!run.isFinished()) {
-                Log.d("StageRule", "Run $sessionId is not finished; leaving its Stage owing a settlement")
-                return false
-            }
-            if (run.stageSettled) return false
-            val stageId = run.ranUnderStageId
-            if (stageId != null) {
-                // Judged on the runner's word about the Walk, not on the column — the column is a
-                // write that can fail and the word cannot (#297). Everything else is the row as
-                // stored, and where the two agree this is the row itself.
-                val asTheRunnerSaid =
-                    if (markedAsWalk != null && markedAsWalk != run.isWalk) run.copy(isWalk = markedAsWalk) else run
-                settleStageAfterRun(
-                    stageId,
-                    runTypeOf(stageId, run.ranUnderWorkoutId),
-                    asTheRunnerSaid,
-                    zone
-                )
-            }
-            // Marked even where there was no Stage to settle: the column says the question has been
-            // put and cannot be put again, and a Run that ran under no Stage has had its answer.
-            sessionDao.setStageSettled(sessionId)
-            return true
+        if (run.stageSettled) return false
+        val stageId = run.ranUnderStageId
+        if (stageId != null) {
+            // Judged on the runner's word about the Walk, not on the column — the column is a
+            // write that can fail and the word cannot (#297). Everything else is the row as
+            // stored, and where the two agree this is the row itself.
+            val asTheRunnerSaid =
+                if (markedAsWalk != null && markedAsWalk != run.isWalk) run.copy(isWalk = markedAsWalk) else run
+            settleStageAfterRun(
+                stageId,
+                runTypeOf(stageId, run.ranUnderWorkoutId),
+                asTheRunnerSaid,
+                zone
+            )
         }
+        // Marked even where there was no Stage to settle: the column says the question has been
+        // put and cannot be put again, and a Run that ran under no Stage has had its answer.
+        sessionDao.setStageSettled(sessionId)
+        return true
     }
 
     /**
