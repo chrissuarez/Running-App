@@ -8,6 +8,7 @@ import com.example.runningapp.archive.ArchivedSettings
 import com.example.runningapp.archive.Archiver
 import com.example.runningapp.archive.RunArchiveContents
 import com.example.runningapp.archive.SafArchiveFolder
+import com.example.runningapp.data.AfterRunWorker
 import com.example.runningapp.data.AiCoachClient
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.DatabaseBackupManager
@@ -164,6 +165,11 @@ class AppContainer(context: Context) {
                     DatabaseBackupManager.backup(appContext, database)
                 }
             },
+            // The durable version of the line above, for the rescue that finishes a Run whose
+            // service was torn down (#309): the process may not outlive the snapshot, so the
+            // request goes into WorkManager's database and the copy happens whether this process
+            // lives or not. Blocks until that write is done, and is only ever called from IO.
+            bookAfterRunWork = { runRowId -> AfterRunWorker.enqueue(appContext, runRowId) },
             // A re-tally of history is all of it or none: see SessionRepository.inTransaction.
             inTransaction = { block -> database.withTransaction { block() } }
         )

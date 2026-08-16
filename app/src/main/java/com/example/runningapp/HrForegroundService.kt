@@ -2127,19 +2127,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     /**
      * What is done about a Run this service is being torn down out from under (#309).
      *
-     * Two things, in the order they can be lost. The runner is told first, because that is a call
-     * on main that lands now, where the finish below is a coroutine on a process Android may be
-     * about to reclaim — and of the two, being told is the one nothing else will do later. The Run
-     * is then finished from the seconds it already wrote, which is the same rescue the launch pass
-     * makes ([SessionRepository.rescueRunLostToTeardown]), taken now rather than at some cold start
-     * that may be days away: this teardown can happen inside a process that goes on living, and the
-     * pass will not look at a Run younger than the process it is running in. Row 9133 sat
-     * unfinished for two hours with the app used throughout, which is the whole of the ticket's
-     * second complaint.
+     * Two things, in the order they can be lost. Both a bounded moment into the teardown rather
+     * than at the top of it, for the reason given at the call site. The runner is told first,
+     * because that is a call on main that lands now, where the finish below is a coroutine on a
+     * process Android may be about to reclaim — and of the two, being told is the one nothing else
+     * will do later. The Run is then finished from the seconds it already wrote, which is the same
+     * rescue the launch pass makes ([SessionRepository.rescueRunLostToTeardown]), taken now rather
+     * than at some cold start that may be days away: this teardown can happen inside a process that
+     * goes on living, and the pass will not look at a Run younger than the process it is running
+     * in. Row 9133 sat unfinished for two hours with the app used throughout, which is the whole of
+     * the ticket's second complaint.
      *
      * On [finalizationScope] and under [NonCancellable] for the same reason the Run's own finalize
-     * is: `serviceScope` is cancelled a moment from now, and a launch not yet dequeued dies before
-     * its body ever runs.
+     * is: `serviceScope` is already cancelled by the time onDestroy gets here, and even were it not,
+     * a launch onto it that is not yet dequeued dies before its body ever runs.
      *
      * Two waits before the rescue, and both are about reading a settled Run.
      *
@@ -2156,6 +2157,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * Then the Run's own tail writes ([awaitRecorderWrites]). A rescue reads the samples and fixes
      * back out of the database to rebuild the totals, so anything still queued would be a second
      * the Run recorded and the rescue did not count.
+     *
+     * Both waits are only worth anything because of where onDestroy calls this from: after the
+     * session inbox has been quit and joined and after the location thread and `serviceScope` have
+     * gone, so nothing is left that could start another finalize or queue another sample. A set
+     * that can still be added to is not a set that can be waited for — called any earlier, the
+     * publish-then-perform order of [dispatchRunEvent] means the very STOP whose RUNNING snapshot
+     * sent us here could launch its finalize after both lists were taken, and the row would end up
+     * holding whichever of the two wrote last. Called from where it is, that STOP is in
+     * [finalizationScope]'s children, is waited out, and the decline is the answer.
      */
     private fun endRunLostToTeardown(runRowId: Long) {
         Log.w(TAG, "Service destroyed with run $runRowId still recording; finishing it from its record")
@@ -2245,10 +2255,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // service-destroyed is an event the journal waits out for itself, because a destroy is
         // often followed straight away by the process being reclaimed (#310).
 
-        // Read from the same snapshot the line above was written from, so what the journal says
-        // happened and what is done about it can never be two different answers (#309).
-        runLostToTeardown(stateAtTeardown.sessionStatus, stateAtTeardown.activeDbSessionId)
-            ?.let { endRunLostToTeardown(it) }
+        // What is done about a Run this teardown took is decided from that same snapshot, so what
+        // the journal says happened and what is done about it can never be two different answers —
+        // but it is acted on below, once nothing can still be working on that Run (#309).
 
         // 0. Anything that opens a GATT from here on closes it itself; the sweep below is the
         // last one there will be. Set before the join, so a connect that outlasts it sees this.
@@ -2302,6 +2311,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         serviceScope.cancel()
 
         locationTracker?.shutdown()
+
+        // The Run the teardown took, read from the snapshot at the top and finished here (#309).
+        // Here, and not up beside that snapshot, because this is the first point at which nothing
+        // can start work on that Run any more: the session inbox is quit and joined, so no further
+        // run event will be dispatched and no STOP will emit a finalize, and GPS and serviceScope
+        // are down, so no further sample or track point will be queued. Everything the rescue does
+        // is waiting for work in flight and then reading what that work left behind
+        // ([endRunLostToTeardown]), and waiting only settles a set nothing can add to. Taken above,
+        // a STOP dispatching at that instant would launch its finalize after the rescue had looked,
+        // and the two would write the same row with the totals going to whichever landed last —
+        // the Run's own, banked as it ran, or the poorer ones the rescue rebuilds from the record.
+        runLostToTeardown(stateAtTeardown.sessionStatus, stateAtTeardown.activeDbSessionId)
+            ?.let { endRunLostToTeardown(it) }
 
         // The one wake-lock release outside Promotion, and deliberately so: destruction can be
         // system-initiated, arriving without any demotion having happened. A wake lock must never
