@@ -1,6 +1,7 @@
 package com.example.runningapp.diagnostics
 
 import com.example.runningapp.SessionStatus
+import com.example.runningapp.isRecording
 import com.example.runningapp.run.AcquisitionPhase
 
 /**
@@ -59,9 +60,6 @@ private fun runEvent(before: SessionStatus, after: SessionStatus): RunJournalEve
     before.isRecording && !after.isRecording -> RunJournalEvent.RUN_STOPPED
     else -> null
 }
-
-private val SessionStatus.isRecording: Boolean
-    get() = this == SessionStatus.RUNNING || this == SessionStatus.PAUSED
 
 /**
  * The Strap, read off the Acquisition's phase rather than off the connection callbacks — so a
