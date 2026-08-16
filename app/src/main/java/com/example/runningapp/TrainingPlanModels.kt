@@ -488,6 +488,24 @@ object TrainingPlanProvider {
     }
 
     /**
+     * The Plan a Stage belongs to, found by the Stage's own id — or null where no Plan holds one by
+     * that name.
+     *
+     * A Stage id is unique across every Plan, so the Stage names its Plan without being asked
+     * alongside it. Four callers walked the plans themselves to work this out, which is the same
+     * rule written four times and free to drift the first time a Plan is added; this is that walk,
+     * once.
+     */
+    fun planHoldingStage(stageId: String?): TrainingPlan? {
+        if (stageId == null) return null
+        return getAllPlans().firstOrNull { plan -> plan.stages.any { it.id == stageId } }
+    }
+
+    /** The Stage itself, wherever it lives — see [planHoldingStage]. */
+    fun stageById(stageId: String?): PlanStage? =
+        planHoldingStage(stageId)?.stages?.firstOrNull { it.id == stageId }
+
+    /**
      * Everything a stage offers: all of its workouts, one per Run Type, in the order the plan
      * declares them (#173). Empty when no plan is attached.
      *
