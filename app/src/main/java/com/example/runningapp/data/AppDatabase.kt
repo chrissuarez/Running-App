@@ -198,7 +198,37 @@ data class RunnerSession(
      * app can never undo, and a column defaulting to a debt would have made the first launch after
      * the upgrade exactly that pass.
      */
-    val stageSettled: Boolean = false
+    val stageSettled: Boolean = false,
+    /**
+     * How far east of UTC the runner was when they pressed START, in seconds (#304) — written with
+     * the row at START from the phone's own zone, and the whole of what says which calendar day
+     * this Run happened on.
+     *
+     * It is here because a day is not a property of a moment. Every reader used to take [startTime]
+     * and re-read it in whatever zone the phone happened to be in at the time of asking, so a Run
+     * at half past eleven at night moved to a different calendar day the moment the runner flew:
+     * the weekly bars re-totalled, the curve's day moved, the GPX came out named for the wrong
+     * evening. Most of that self-corrects on the way home, which is what made it easy to live with —
+     * but a Plan Completion records its day once and can never re-earn it
+     * ([com.example.runningapp.training.PlanCompletion]), so for that one fact the wrong day is
+     * permanent.
+     *
+     * Seconds rather than hours because zones offset by three quarters of an hour exist. An offset
+     * rather than a zone id because the offset is the fact: a zone id would have to be resolved back
+     * through that year's daylight-saving rules to say anything, and governments rewrite those after
+     * the fact. It follows that this says where the runner's clock was and not where the runner was
+     * — two countries on the same offset are the same thing here, which is all a day boundary asks.
+     *
+     * Like [ranUnderStageId] nothing ever moves it: it is where a Run happened, and no later reading
+     * of the Run changes that.
+     *
+     * Null is "this Run never wrote one down": every Run recorded before v32, and every Run in an
+     * older archive. Those are read the way they always were, in the zone the phone is in now — see
+     * [com.example.runningapp.ranOn], which is the only way anything should ask. There is no
+     * backfill, because the only offset a backfill could write is the one the phone is on today,
+     * which is exactly the guess this exists to stop.
+     */
+    val ranAtUtcOffsetSeconds: Int? = null
 )
 
 /**
@@ -324,6 +354,8 @@ data class TestRunProjection(
     val durationSeconds: Int,
     val distanceKm: Double,
     val ranUnderWorkoutId: String,
+    /** The Run's own stamp — see [RunnerSession.ranAtUtcOffsetSeconds] and [com.example.runningapp.ranOn]. */
+    val ranAtUtcOffsetSeconds: Int? = null,
 )
 
 /**
@@ -342,7 +374,9 @@ data class ScoredRunProjection(
      * Defaulted to a Run, which is what the column defaults to and what every Run in history is
      * until the runner says otherwise; Room fills it from the query either way.
      */
-    val isWalk: Boolean = false
+    val isWalk: Boolean = false,
+    /** The Run's own stamp — see [RunnerSession.ranAtUtcOffsetSeconds] and [com.example.runningapp.ranOn]. */
+    val ranAtUtcOffsetSeconds: Int? = null,
 )
 
 /**
@@ -358,7 +392,9 @@ data class RunVolumeProjection(
     val distanceKm: Double,
     val durationSeconds: Long,
     val movingTimeSeconds: Long?,
-    val effortScore: Int?
+    val effortScore: Int?,
+    /** The Run's own stamp — see [RunnerSession.ranAtUtcOffsetSeconds] and [com.example.runningapp.ranOn]. */
+    val ranAtUtcOffsetSeconds: Int? = null,
 )
 
 /** How many medals one Run holds — what the medal badge on its History row counts (#51). */
@@ -471,7 +507,8 @@ interface AchievementDao {
      */
     @Query(
         """
-        SELECT s.startTime AS runStartedAtMillis, a.value AS seconds
+        SELECT s.startTime AS runStartedAtMillis, a.value AS seconds,
+               s.ranAtUtcOffsetSeconds AS ranAtUtcOffsetSeconds
         FROM achievements a
         JOIN sessions s ON s.id = a.sessionId
         WHERE a.type = :type
@@ -746,7 +783,8 @@ interface SessionDao {
      */
     @Query(
         """
-        SELECT startTime, durationSeconds, distanceKm, ranUnderWorkoutId FROM sessions
+        SELECT startTime, durationSeconds, distanceKm, ranUnderWorkoutId,
+               ranAtUtcOffsetSeconds FROM sessions
         WHERE endTime > 0
           AND isWalk = 0
           AND ranUnderWorkoutId IN (:workoutIds)
@@ -878,7 +916,7 @@ interface SessionDao {
      */
     @Query(
         """
-        SELECT startTime, effortScore, isWalk FROM sessions
+        SELECT startTime, effortScore, isWalk, ranAtUtcOffsetSeconds FROM sessions
         WHERE endTime > 0 AND effortScore IS NOT NULL
         ORDER BY startTime ASC
         """
@@ -898,7 +936,8 @@ interface SessionDao {
      */
     @Query(
         """
-        SELECT startTime, distanceKm, durationSeconds, movingTimeSeconds, effortScore FROM sessions
+        SELECT startTime, distanceKm, durationSeconds, movingTimeSeconds, effortScore,
+               ranAtUtcOffsetSeconds FROM sessions
         WHERE endTime > 0
         ORDER BY startTime ASC
         """
@@ -1016,7 +1055,7 @@ interface RunWalkIntervalStatDao {
         GoalRow::class,
         StatedBestEffort::class
     ],
-    version = 31,
+    version = 32,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1112,7 +1151,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_27_28,
     MIGRATION_28_29,
     MIGRATION_29_30,
-    MIGRATION_30_31
+    MIGRATION_30_31,
+    MIGRATION_31_32
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1954,5 +1994,25 @@ val MIGRATION_30_31 = object : Migration(30, 31) {
             database.execSQL("ALTER TABLE sessions ADD COLUMN stageSettled INTEGER NOT NULL DEFAULT 0")
         }
         database.execSQL("UPDATE sessions SET stageSettled = 1")
+    }
+}
+
+/**
+ * Room for the offset a Run was recorded at (#304): [RunnerSession.ranAtUtcOffsetSeconds].
+ *
+ * Left null on every Run already in history, which is neither a repair nor a debt but the plain
+ * truth: those Runs never wrote down where the runner's clock was, and nothing can work it out
+ * afterwards. The only offset this could fill them with is the one the phone is on the day of the
+ * upgrade, and a runner who upgrades abroad would have their whole history re-dated to where they
+ * are standing — the exact fault the column exists to stop, applied to every Run at once. They keep
+ * being read in the phone's current zone, as they always have been.
+ *
+ * An older archive restored on top comes back the same way, and for the same reason.
+ */
+val MIGRATION_31_32 = object : Migration(31, 32) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        if (!database.hasColumn("sessions", "ranAtUtcOffsetSeconds")) {
+            database.execSQL("ALTER TABLE sessions ADD COLUMN ranAtUtcOffsetSeconds INTEGER")
+        }
     }
 }

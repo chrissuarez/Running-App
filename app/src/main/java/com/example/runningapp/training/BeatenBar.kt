@@ -1,8 +1,8 @@
 package com.example.runningapp.training
 
+import com.example.runningapp.ranOn
 import com.example.runningapp.BestEffortRequirement
 import com.example.runningapp.distanceLabel
-import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -24,6 +24,12 @@ data class HistoryBestEffort(
     val seconds: Double,
     /** When the Run holding it started — what the line names it by. */
     val runStartedAtMillis: Long,
+    /**
+     * Where the runner's clock was when that Run set off, or null for a Run that never wrote it
+     * down — see [com.example.runningapp.data.RunnerSession.ranAtUtcOffsetSeconds] (#304). The
+     * line names a day, and the day it names is the Run's own.
+     */
+    val ranAtUtcOffsetSeconds: Int? = null,
 )
 
 /**
@@ -62,7 +68,7 @@ fun alreadyBeatenLine(
     // slowest time that still passes, so there is no polarity here to get wrong separately.
     if (best == null || best.seconds > requirement.withinSeconds) return null
     val distance = requirement.distanceLabel
-    val day = Instant.ofEpochMilli(best.runStartedAtMillis).atZone(zone).toLocalDate()
+    val day = ranOn(best.runStartedAtMillis, best.ranAtUtcOffsetSeconds, zone)
     return "Your $distance on ${asDay(day, today)} was ${asClock(best.seconds)} — " +
         "fast enough for this stage. Run one now and it counts."
 }

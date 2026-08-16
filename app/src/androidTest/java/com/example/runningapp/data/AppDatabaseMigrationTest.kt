@@ -770,6 +770,31 @@ class AppDatabaseMigrationTest {
         assertEquals(9000L, run.endTime)
     }
 
+    @Test
+    fun migrate31To32_leavesEveryRunWithoutAnOffset_soHistoryIsNotReDatedToWhereThePhoneIs() {
+        val rawDb = openLegacyDatabase()
+        createTrackPointsTable(rawDb)
+        insertLegacySession(rawDb, id = 1)
+        rawDb.execSQL("UPDATE sessions SET endTime = 9000, durationSeconds = 2259 WHERE id = 1")
+        rawDb.version = 12
+        rawDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(*appDatabaseMigrations { HrProfile(190) })
+            .build()
+        val run = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
+        migratedDb.close()
+
+        // Null rather than filled in (#304). The only offset a backfill could write is the one the
+        // phone is on the day of the upgrade, so a runner upgrading abroad would have their whole
+        // history re-dated to where they are standing — the fault the column exists to stop,
+        // applied to every Run at once. They keep being read in the phone's current zone.
+        assertNull(run.ranAtUtcOffsetSeconds)
+        // The Run itself is untouched: the migration adds room and nothing else.
+        assertEquals(2259L, run.durationSeconds)
+        assertEquals(9000L, run.endTime)
+    }
+
     /**
      * Builds the sessions/hr_samples/run_walk_interval_stats tables as they stood at v11 and v12
      * (identical across those two versions), leaving the file's version unset for the caller.

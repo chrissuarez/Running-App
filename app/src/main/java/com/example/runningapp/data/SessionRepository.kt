@@ -25,6 +25,7 @@ import com.example.runningapp.effectiveMaxHr
 import com.example.runningapp.historyHrProfile
 import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
+import com.example.runningapp.ranOn
 import com.example.runningapp.training.HistoryBestEffort
 import com.example.runningapp.training.PlanCompletion
 import com.example.runningapp.training.ScoredRun
@@ -728,6 +729,7 @@ class SessionRepository(
                 startedAtMillis = it.startTime,
                 effortScore = it.effortScore,
                 isWalk = it.isWalk,
+                ranAtUtcOffsetSeconds = it.ranAtUtcOffsetSeconds,
             )
         }
     }
@@ -776,7 +778,7 @@ class SessionRepository(
             val here = zone()
             val today = LocalDate.now(clock.withZone(here))
             testIsDue(
-                lastTestStartedAtMillis = testRuns.firstOrNull { run ->
+                lastTestRanOn = testRuns.firstOrNull { run ->
                     testsById[run.ranUnderWorkoutId]?.let { test ->
                         wasRunFarEnough(
                             test = test.workout,
@@ -784,12 +786,11 @@ class SessionRepository(
                             coveredTheDistance = test.distance?.wasCoveredBy(run.distanceKm) == true,
                         )
                     } == true
-                }?.startTime,
+                }?.let { ranOn(it.startTime, it.ranAtUtcOffsetSeconds, here) },
                 // Yesterday's Fitness less yesterday's Fatigue, as the screen and the coach both
                 // read it — null while no Run in history has a Score to build a curve from.
                 form = progressCurve(scoredRuns, through = today, zone = here).lastOrNull()?.form,
                 today = today,
-                zone = here,
             )
         }
     }
@@ -886,6 +887,7 @@ class SessionRepository(
                 distanceKm = it.distanceKm,
                 timeSeconds = it.movingTimeSeconds ?: it.durationSeconds,
                 effortScore = it.effortScore,
+                ranAtUtcOffsetSeconds = it.ranAtUtcOffsetSeconds,
             )
         }
     }
@@ -2554,7 +2556,7 @@ class SessionRepository(
                 // nothing missing from the numbers.
                 todaysRunIsInTheNumbers = asFinalized == null || (
                     asFinalized.effortScore != null &&
-                        !Instant.ofEpochMilli(asFinalized.startTime).atZone(zone).toLocalDate().isAfter(today)
+                        !asFinalized.ranOn(zone).isAfter(today)
                     )
             ),
             stageWorkout = stageWorkout
@@ -3172,13 +3174,13 @@ class SessionRepository(
             settingsRepo.completePlan(
                 completion = PlanCompletion(
                     planId = plan.id,
-                    // The day of the Run, not of this write. They are the same afternoon except
-                    // when they are not — a Run finished at 00:05, a stated Best Effort typed the
-                    // next morning — and the fact being recorded is about the Run.
-                    completedOnEpochDay = Instant.ofEpochMilli(run.startTime)
-                        .atZone(zone)
-                        .toLocalDate()
-                        .toEpochDay(),
+                    // The day of the Run, not of this write, and the Run's own day rather than its
+                    // start re-read here (#304). They are the same afternoon except when they are
+                    // not — a Run finished at 00:05, a stated Best Effort typed the next morning,
+                    // a runner who has since flown — and the fact being recorded is about the Run.
+                    // This is the one day in the app that is never re-derived, so [zone] is only
+                    // ever the fallback for a Run recorded before v32.
+                    completedOnEpochDay = run.ranOn(zone).toEpochDay(),
                     // Whole seconds, as a Best Effort is ranked and as the runner reads it off a
                     // clock. The time is theirs, never the bar it was enough for.
                     seconds = seconds.roundToInt(),

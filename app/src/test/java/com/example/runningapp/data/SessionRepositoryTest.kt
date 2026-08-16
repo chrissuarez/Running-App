@@ -46,6 +46,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.argThat
 import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.doSuspendableAnswer
 import org.mockito.kotlin.anyOrNull
@@ -2682,6 +2683,71 @@ class SessionRepositoryTest {
         activeStageId = "sub_25_peak",
         planCompletion = completion
     )
+
+    @Test
+    fun `the day a plan is recorded on is the Run's own, wherever the phone is by then`() = runTest {
+        // #304's headline case. A Run at 23:30 in London, and the claim typed the next morning
+        // after the runner has flown to Sydney — where the same moment reads as the fifteenth.
+        // Every other day in the app self-corrects on the way home; this one is written once.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(onTheLastStage()))
+        stubTheCoachsReads()
+        val run = aRunTold(id = 7, fiveKSeconds = 1_463, statedDao = statedDao).copy(
+            startTime = LocalDate.parse("2026-08-14").atTime(23, 30)
+                .atZone(london).toInstant().toEpochMilli(),
+            ranAtUtcOffsetSeconds = 3_600,
+        )
+
+        repo.settleStageAfterRun(
+            "sub_25_peak",
+            runType = null,
+            finalizedRun = run,
+            zone = ZoneId.of("Australia/Sydney"),
+        )
+
+        verify(mockSettingsRepo).completePlan(
+            argThat { completedOnEpochDay == LocalDate.parse("2026-08-14").toEpochDay() },
+            any(),
+            any(),
+        )
+    }
+
+    @Test
+    fun `a Run that wrote down no offset records the day in the phone's zone`() = runTest {
+        // Every Run recorded before v32: nothing can say where its clock was, so the fallback is
+        // the behaviour it has always had rather than a guess dressed up as a fact.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+        )
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(onTheLastStage()))
+        stubTheCoachsReads()
+        val run = aRunTold(id = 7, fiveKSeconds = 1_463, statedDao = statedDao).copy(
+            startTime = LocalDate.parse("2026-08-14").atTime(23, 30)
+                .atZone(london).toInstant().toEpochMilli(),
+            ranAtUtcOffsetSeconds = null,
+        )
+
+        repo.settleStageAfterRun(
+            "sub_25_peak",
+            runType = null,
+            finalizedRun = run,
+            zone = ZoneId.of("Australia/Sydney"),
+        )
+
+        verify(mockSettingsRepo).completePlan(
+            argThat { completedOnEpochDay == LocalDate.parse("2026-08-15").toEpochDay() },
+            any(),
+            any(),
+        )
+    }
 
     @Test
     fun `finishing the last Stage records the plan as complete and says so`() = runTest {

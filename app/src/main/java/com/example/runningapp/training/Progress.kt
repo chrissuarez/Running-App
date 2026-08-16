@@ -1,6 +1,6 @@
 package com.example.runningapp.training
 
-import java.time.Instant
+import com.example.runningapp.ranOn
 import java.time.LocalDate
 import java.time.ZoneId
 import kotlin.math.exp
@@ -47,6 +47,12 @@ data class ScoredRun(
     val startedAtMillis: Long,
     val effortScore: Int,
     val isWalk: Boolean = false,
+    /**
+     * Where the runner's clock was when this Run set off, or null for a Run that never wrote it
+     * down — see [com.example.runningapp.data.RunnerSession.ranAtUtcOffsetSeconds] (#304). It is
+     * what places the Run on a calendar day, so the day survives the runner flying home.
+     */
+    val ranAtUtcOffsetSeconds: Int? = null,
 )
 
 /**
@@ -106,7 +112,7 @@ enum class ProgressRange(val label: String, private val months: Long) {
 fun dailyEffortOf(runs: Iterable<ScoredRun>, zone: ZoneId): Map<LocalDate, DayEffort> {
     val byDay = LinkedHashMap<LocalDate, DayEffort>()
     runs.forEach { run ->
-        val day = Instant.ofEpochMilli(run.startedAtMillis).atZone(zone).toLocalDate()
+        val day = ranOn(run.startedAtMillis, run.ranAtUtcOffsetSeconds, zone)
         val soFar = byDay[day] ?: DayEffort(0.0, 0.0)
         val score = run.effortScore.toDouble()
         byDay[day] = DayEffort(

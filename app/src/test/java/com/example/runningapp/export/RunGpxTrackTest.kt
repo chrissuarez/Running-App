@@ -276,4 +276,26 @@ class RunGpxTrackTest {
             RunGpxTrack.fileName(session(id = 8L, start = startTime + 20_000), utc)
         )
     }
+
+    @Test
+    fun `a Run is named for the evening it was run, not for where the phone is now`() {
+        // #304: 03:20 UTC is 13:20 in Sydney and 04:20 in London on the same date, but the Run was
+        // recorded five hours behind UTC — 22:20 the evening before.
+        val ranInNewYork = session().copy(ranAtUtcOffsetSeconds = -5 * 3600)
+
+        assertEquals(
+            "Run 25 Jul 2025, 22:20",
+            RunGpxTrack.runName(ranInNewYork, ZoneId.of("Australia/Sydney")),
+        )
+        assertEquals(
+            "run-2025-07-25-2220-1.gpx",
+            RunGpxTrack.fileName(ranInNewYork, ZoneId.of("Australia/Sydney")),
+        )
+    }
+
+    @Test
+    fun `a Run that wrote down no offset is still named in the phone's zone`() {
+        assertEquals("Run 26 Jul 2025, 03:20", RunGpxTrack.runName(session(), utc))
+        assertEquals("run-2025-07-26-0320-1.gpx", RunGpxTrack.fileName(session(), utc))
+    }
 }

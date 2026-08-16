@@ -4,26 +4,23 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
-import java.time.ZoneId
 
 /** The acceptance criteria for #292: when the card says a 5K Test is due. */
 class TestDueTest {
 
-    private val zone: ZoneId = ZoneId.of("Europe/London")
     private val today: LocalDate = LocalDate.of(2026, 8, 14)
 
-    /** Midday on [daysAgo] days ago, which is safely inside its own calendar day in [zone]. */
-    private fun daysAgo(daysAgo: Long): Long =
-        today.minusDays(daysAgo).atTime(12, 0).atZone(zone).toInstant().toEpochMilli()
+    /** The day [daysAgo] days before today — the day the Run itself says it happened on. */
+    private fun daysAgo(daysAgo: Long): LocalDate = today.minusDays(daysAgo)
 
     private fun due(
-        lastTestStartedAtMillis: Long?,
+        lastTestRanOn: LocalDate?,
         form: Double? = 0.0,
-    ) = testIsDue(lastTestStartedAtMillis, form, today, zone)
+    ) = testIsDue(lastTestRanOn, form, today)
 
     @Test
     fun `a runner who has never tested is due one`() {
-        assertTrue(due(lastTestStartedAtMillis = null))
+        assertTrue(due(lastTestRanOn = null))
     }
 
     @Test
@@ -47,7 +44,7 @@ class TestDueTest {
         // Below −10 the number would measure the fatigue rather than the fitness, and under
         // ADR 0016 that number graduates a Stage.
         assertFalse(due(daysAgo(90), form = -10.1))
-        assertFalse(due(lastTestStartedAtMillis = null, form = -40.0))
+        assertFalse(due(lastTestRanOn = null, form = -40.0))
     }
 
     @Test
@@ -63,10 +60,11 @@ class TestDueTest {
     }
 
     @Test
-    fun `the three weeks are counted in the runner's own calendar days`() {
-        // A Test late on its day and a prompt early on the day three weeks later are 21 days
-        // apart to the runner, whatever the clock reading between them says.
-        val lateOnTheDay = today.minusDays(21).atTime(23, 30).atZone(zone).toInstant().toEpochMilli()
-        assertTrue(due(lateOnTheDay))
+    fun `the three weeks are counted in whole calendar days`() {
+        // A Test late on its day and a prompt early on the day three weeks later are 21 days apart
+        // to the runner, whatever the clock reading between them says. Which day the Test was on is
+        // the Run's own fact and is not worked out here any more (#304) — see RunDayTest.
+        assertTrue(due(daysAgo(21)))
+        assertFalse(due(daysAgo(20)))
     }
 }

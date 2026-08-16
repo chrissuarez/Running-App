@@ -278,6 +278,24 @@ zone taken once and held for the life of a screen answers a runner where they
 took off from, a calendar day out (#299).
 _Avoid_: the device timezone, the current date
 
+**The day a Run happened**:
+The calendar day the runner would say they ran, and the exact opposite of **Today**:
+captured, never observed. A Run writes down how far east of UTC its runner's clock
+was the moment START was pressed, and every reader that places the Run on a day —
+the weekly bars, the Progress curve, the Goals, the Stage's Test clock, the day a
+finished Plan is recorded on, the GPX name, the date on its own page — reads that
+rather than re-reading the start moment in whichever zone the phone is in now. A
+Run near midnight otherwise changes the day it happened on the moment the runner
+flies, and for a Plan Completion, whose day is recorded once and can never be
+re-earned, that change is permanent (#304). A Run recorded before the app kept
+this has no stamp and nothing can work one out, so those are still read in the
+phone's zone; there is no backfill, because the only offset a backfill could write
+is a guess at today's. It follows that a Run's day can honestly lead **Today** by
+one — a runner who ran on Saturday evening in Sydney and landed on Saturday
+morning in London — and the guards that keep a slipped phone clock out of the
+week's totals allow exactly that one day and no more.
+_Avoid_: the run date, the session timezone
+
 **Best Effort**:
 The fastest continuous stretch of a Run covering one of the record distances —
 1 km, a mile, 5 km, 10 km, a half marathon — measured on the clock, so a walk

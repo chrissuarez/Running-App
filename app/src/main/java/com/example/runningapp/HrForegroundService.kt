@@ -90,6 +90,7 @@ import com.example.runningapp.foreground.ForegroundPromotion
 import com.example.runningapp.foreground.PromotionHost
 import com.example.runningapp.foreground.SCOPE_DRAIN_PASSES
 import com.example.runningapp.foreground.drainChildren
+import java.time.ZoneId
 
 // Exactly the Run's lifecycle, under the screen's older names — [RunLifecycle.asSessionStatus] is
 // the only thing that writes it, so there is no value here a Run cannot be in.
@@ -709,6 +710,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     // And which of the Stage's Workouts it is, which is how history is later
                     // asked when the runner last ran their Test (#292).
                     ranUnderWorkoutId = effect.ranUnderWorkoutId,
+                    // Where the runner's clock was when they pressed START (#304). Read from the
+                    // phone here rather than carried on the effect, because it is an observation of
+                    // the device at this moment and not a decision the rulebook made — the same
+                    // reason the clock below is read here.
+                    ranAtUtcOffsetSeconds = utcOffsetSecondsAt(
+                        effect.startedAtMillis,
+                        ZoneId.systemDefault(),
+                    ),
                 )
             )
             Log.d(TAG, "Started DB Session: $runRowId (Mode: ${effect.runModeSettingValue})")

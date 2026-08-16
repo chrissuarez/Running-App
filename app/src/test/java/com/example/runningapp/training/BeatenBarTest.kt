@@ -76,4 +76,28 @@ class BeatenBarTest {
             assertTrue("said \"$it\": $line", !line.lowercase().contains(it))
         }
     }
+
+    @Test
+    fun `the day named is the Run's own, not the one the phone is in now`() {
+        // #304: 23:30 on 14 June 2026 in London. Read in Sydney the same moment is the fifteenth,
+        // and the card would name the runner a day they did not run.
+        val lateOnJune14 = LocalDate.of(2026, 6, 14).atTime(23, 30)
+            .atZone(ZONE).toInstant().toEpochMilli()
+        val best = HistoryBestEffort(1700.0, lateOnJune14, ranAtUtcOffsetSeconds = 3600)
+
+        val line = alreadyBeatenLine(SUB_30, best, today = TODAY, zone = ZoneId.of("Australia/Sydney"))
+
+        assertTrue(line!!, line.contains("14 June"))
+    }
+
+    @Test
+    fun `a Run that wrote down no offset is still named in the phone's zone`() {
+        val lateOnJune14 = LocalDate.of(2026, 6, 14).atTime(23, 30)
+            .atZone(ZONE).toInstant().toEpochMilli()
+        val best = HistoryBestEffort(1700.0, lateOnJune14, ranAtUtcOffsetSeconds = null)
+
+        val line = alreadyBeatenLine(SUB_30, best, today = TODAY, zone = ZoneId.of("Australia/Sydney"))
+
+        assertTrue(line!!, line.contains("15 June"))
+    }
 }

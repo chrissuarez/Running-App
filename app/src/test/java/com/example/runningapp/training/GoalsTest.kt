@@ -241,4 +241,75 @@ class GoalsTest {
         assertFalse(after.single().met)
         assertEquals(25.0, after.single().done, 0.0001)
     }
+
+    @Test
+    fun `a Run keeps the week it was run in when the phone has since flown`() {
+        // #304: 23:30 on the Sunday before [monday] closes the previous week in London. Read in
+        // Sydney it is Monday morning, which would credit this week's goal with last week's Run.
+        val lastSunday = monday.minusDays(1)
+        val lateOnSunday = LocalDateTime.of(lastSunday, LocalTime.of(23, 30))
+            .atZone(zone).toInstant().toEpochMilli()
+        val run = VolumeRun(lateOnSunday, 5.0, 1800, null, ranAtUtcOffsetSeconds = 0)
+
+        val progress = goalProgressOf(
+            listOf(goal(GoalPeriod.WEEK, GoalMetric.DISTANCE, 20.0)),
+            listOf(run),
+            on = monday.plusDays(3),
+            zone = ZoneId.of("Australia/Sydney"),
+        )
+
+        assertEquals(0.0, progress.single().done, 0.0001)
+    }
+
+    @Test
+    fun `a Run that wrote down no offset is still read in the phone's zone`() {
+        val lastSunday = monday.minusDays(1)
+        val lateOnSunday = LocalDateTime.of(lastSunday, LocalTime.of(23, 30))
+            .atZone(zone).toInstant().toEpochMilli()
+        val run = VolumeRun(lateOnSunday, 5.0, 1800, null, ranAtUtcOffsetSeconds = null)
+
+        val progress = goalProgressOf(
+            listOf(goal(GoalPeriod.WEEK, GoalMetric.DISTANCE, 20.0)),
+            listOf(run),
+            on = monday.plusDays(3),
+            zone = ZoneId.of("Australia/Sydney"),
+        )
+
+        assertEquals(5.0, progress.single().done, 0.0001)
+    }
+
+    @Test
+    fun `a Run a day ahead of the phone still counts towards this week's goal`() {
+        // #304: the Run's own day leads the phone's by one because the runner has flown west.
+        val on = monday.plusDays(3)
+        val ranTomorrow = LocalDateTime.of(on.plusDays(1), LocalTime.of(9, 0))
+            .atZone(zone).toInstant().toEpochMilli()
+        val run = VolumeRun(ranTomorrow, 5.0, 1800, null, ranAtUtcOffsetSeconds = 0)
+
+        val progress = goalProgressOf(
+            listOf(goal(GoalPeriod.WEEK, GoalMetric.DISTANCE, 20.0)),
+            listOf(run),
+            on = on,
+            zone = zone,
+        )
+
+        assertEquals(5.0, progress.single().done, 0.0001)
+    }
+
+    @Test
+    fun `a Run stamped further ahead than any clock allows is still ignored`() {
+        val on = monday.plusDays(3)
+        val wayAhead = LocalDateTime.of(on.plusDays(2), LocalTime.of(9, 0))
+            .atZone(zone).toInstant().toEpochMilli()
+        val run = VolumeRun(wayAhead, 5.0, 1800, null, ranAtUtcOffsetSeconds = 0)
+
+        val progress = goalProgressOf(
+            listOf(goal(GoalPeriod.WEEK, GoalMetric.DISTANCE, 20.0)),
+            listOf(run),
+            on = on,
+            zone = zone,
+        )
+
+        assertEquals(0.0, progress.single().done, 0.0001)
+    }
 }
