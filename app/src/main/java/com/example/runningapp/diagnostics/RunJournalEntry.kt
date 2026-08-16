@@ -17,19 +17,25 @@ import java.time.format.DateTimeFormatter
  *
  * @property absenceIsEvidence Whether a reader is entitled to conclude something from this event
  * *not* being there. Most of the journal is read forwards — the lines say what happened. These few
- * are read backwards: a [SERVICE_CREATED] with no [SERVICE_DESTROYED] above it says the process
- * died, a stop with no [RUN_FINALIZED] after it says the totals never reached the row, a destroy
- * with a live Run and no [DEMOTED] above it says the system took the service. That reasoning only
- * holds while a missing line means the event did not happen. All three are written at moments the
- * process may be about to go away — a teardown, a hand-back, a finalize the service no longer
- * outlives — so a line merely queued behind a slow append or an archive copy dies with the process,
- * and the journal then says something false, which is worse than a journal that says nothing.
+ * are read backwards, and each one is an inference somebody actually draws off a phone: a
+ * [SERVICE_CREATED] with no [SERVICE_DESTROYED] above it says the process died, a [RUN_STARTED]
+ * with no [RUN_STOPPED] after it says the Run died still recording (#309), a Run with no
+ * [RUN_ROW_CREATED] never got a row, a stop with no [RUN_FINALIZED] after it says the totals never
+ * reached the row, a destroy with a live Run and no [DEMOTED] above it says the system took the
+ * service. That reasoning only holds while a missing line means the event did not happen. Every one
+ * of them is written at a moment the process may be about to go away — a row landing on a service
+ * that may not outlive it, a stop, a teardown, a hand-back, a finalize — so a line merely queued
+ * behind a slow append or an archive copy dies with the process, and the journal then says
+ * something false, which is worse than a journal that says nothing.
  *
  * So an event whose absence is evidence is waited for where it is written, by [RunJournal.write]
- * itself rather than by each call site remembering to. Marking these three covers every other line
+ * itself rather than by each call site remembering to. Marking these five covers every other line
  * as well: the journal has one writer thread and it is FIFO, so waiting for a decisive line has
- * already landed everything queued in front of it. That is what keeps this set small — nothing is
- * marked for being important, only for being read by its absence.
+ * already landed everything queued in front of it. That is what keeps this set small — an event is
+ * marked because its own absence is read, never for being important. [PROMOTED] is the test of
+ * that: it matters, and which of it and [PROMOTION_REFUSED] is present is how a hand-back of
+ * something never held is told apart — but nothing is concluded from either being missing, so
+ * neither waits, and the [DEMOTED] that follows lands them both anyway.
  */
 enum class RunJournalEvent(val token: String, val absenceIsEvidence: Boolean = false) {
 
@@ -46,13 +52,18 @@ enum class RunJournalEvent(val token: String, val absenceIsEvidence: Boolean = f
      * the insert is asynchronous, so a Run that died between the two is a Run with no row, and only
      * the absence of this line says so.
      */
-    RUN_ROW_CREATED("run-row-created"),
+    RUN_ROW_CREATED("run-row-created", absenceIsEvidence = true),
 
     RUN_PAUSED("run-paused"),
     RUN_RESUMED("run-resumed"),
 
-    /** The Run left RUNNING or PAUSED. Written once per Run, whatever the stop then does. */
-    RUN_STOPPED("run-stopped"),
+    /**
+     * The Run left RUNNING or PAUSED. Written once per Run, whatever the stop then does.
+     *
+     * A [RUN_STARTED] with no `run-stopped` after it is a Run that stopped recording without ever
+     * being stopped — which is how #309 reads, and the reason the ticket exists.
+     */
+    RUN_STOPPED("run-stopped", absenceIsEvidence = true),
 
     /** The Run's totals reached its row. A Run stopped but never finalized stops here. */
     RUN_FINALIZED("run-finalized", absenceIsEvidence = true),

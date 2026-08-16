@@ -23,9 +23,8 @@ data class JournaledState(
  * changed nothing the journal cares about, which is nearly every one of them: the state this reads
  * republishes every second while a Run is on.
  *
- * [strapRunRowId] is the Run that was live when the Strap now connected was connected, and is what
- * a Strap event falls back to when no Run is live — see [strapRunRowIdAfter] for where it comes
- * from.
+ * [strapRunRowId] is the Run the Strap now connected has been worn for, and is what a Strap event
+ * falls back to when no Run is live — see [RunHeldFor] for the rule it is kept by.
  */
 fun journalEntriesFor(
     before: JournaledState,
@@ -49,22 +48,6 @@ fun journalEntriesFor(
 }
 
 /**
- * The Run a Strap event should fall back to after [entries] have been written — read back off the
- * `strap-connected` line rather than worked out again, so which Run a connection belongs to is
- * decided in exactly one place.
- *
- * A connection carries its Run only for as long as it lasts: a release forgets it, so a Strap that
- * connects an hour after a Run ended is named for no Run rather than for the Run before it. A
- * journal that guesses wrong is worse than one with a gap in it (#310).
- */
-fun strapRunRowIdAfter(entries: List<RunJournalEntry>, current: Long?): Long? {
-    val connected = entries.lastOrNull { it.event == RunJournalEvent.STRAP_CONNECTED }
-    if (connected != null) return connected.runRowId
-    if (entries.any { it.event == RunJournalEvent.STRAP_DISCONNECTED }) return null
-    return current
-}
-
-/**
  * A Run stops once, however many steps its stop takes: STOPPING and STOPPED are both "not
  * recording", and only the crossing out of RUNNING or PAUSED is news.
  */
@@ -85,10 +68,13 @@ private val SessionStatus.isRecording: Boolean
  * retry, which leaves [AcquisitionPhase.Connected] and comes back to it, reads as the dropout it
  * is, and a retry that goes round again reads as nothing at all.
  *
- * A release names [runRowId] if a Run is live and [strapRunRowId] — the Run the connection was made
- * during — if none is. On a normal stop the Run publishes its cleared row before the Acquisition
+ * A release names [runRowId] if a Run is live and [strapRunRowId] — the Run the Strap has been worn
+ * for — if none is. On a normal stop the Run publishes its cleared row before the Acquisition
  * publishes the release, so without the fallback the closing `strap-disconnected` of every strapped
- * Run reads `run=-` and a journal holding two Runs cannot say which one let go of the Strap.
+ * Run reads `run=-` and a journal holding two Runs cannot say which one let go of the Strap. That
+ * holds for a Strap put on before START as much as one connected mid-Run: the connection itself
+ * names no Run, and the Run it turned out to be worn for arrives afterwards ([RunHeldFor]).
+ *
  * An arrival has no such gap and takes the live Run only, so a Strap connected long after a Run
  * finished is named for no Run rather than inheriting that Run's row.
  */
@@ -133,18 +119,29 @@ private fun AcquisitionPhase.Connected.describe() = "$name $address"
  * written.
  *
  * Holds the two things [journalEntriesFor] cannot be given — what was true last time, and the Run
- * the Strap now connected was connected during — and nothing else. Not thread-safe, and does not
- * need to be: it is fed from the one thread the Run and the Acquisition publish on.
+ * the Strap now connected has been worn for — and nothing else, so [journalEntriesFor] stays a pure
+ * function of what was published. Not thread-safe, and does not need to be: it is fed from the one
+ * thread the Run and the Acquisition publish on.
  */
 class RunJournalWatch(private val journal: RunJournal) {
 
     private var last = JournaledState()
-    private var strapRunRowId: Long? = null
+
+    /** A Strap connection is a holding like a Promotion is, and is remembered by the same rule. */
+    private val strapWornFor = RunHeldFor()
 
     fun observe(published: JournaledState) {
-        val entries = journalEntriesFor(last, published, strapRunRowId)
+        val entries = journalEntriesFor(last, published, strapWornFor.runRowId)
         last = published
-        strapRunRowId = strapRunRowIdAfter(entries, strapRunRowId)
+        // Read off the lines just written rather than worked out again, so which Run a connection
+        // belongs to is decided in exactly one place. The release ends the holding and the arrival
+        // begins one; a Strap that changes address does both in that order, and is left holding the
+        // new connection only.
+        if (entries.any { it.event == RunJournalEvent.STRAP_DISCONNECTED }) {
+            strapWornFor.ends(published.runRowId)
+        }
+        if (entries.any { it.event == RunJournalEvent.STRAP_CONNECTED }) strapWornFor.begins()
+        strapWornFor.observe(published.runRowId)
         journal.write(entries)
     }
 }
