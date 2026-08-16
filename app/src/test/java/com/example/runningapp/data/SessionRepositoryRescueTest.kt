@@ -41,6 +41,10 @@ class SessionRepositoryRescueTest {
 
     private var backupsRefreshed = 0
 
+    // What the production wiring hands to WorkManager. Recorded rather than counted, because the
+    // point of the durable handoff is that it names the Run that has just been stamped.
+    private val runsBooked = mutableListOf<Long>()
+
     private val repository = SessionRepository(
         sessionDao = sessionDao,
         sampleDao = sampleDao,
@@ -48,6 +52,7 @@ class SessionRepositoryRescueTest {
         achievementDao = achievementDao,
         settingsRepository = settingsRepository,
         refreshHistoryBackup = { backupsRefreshed++ },
+        bookAfterRunWork = { runsBooked += it },
     )
 
     private fun interruptedRun(id: Long) = RunnerSession(id = id, startTime = startedAt, runMode = "outdoor")
@@ -119,6 +124,10 @@ class SessionRepositoryRescueTest {
 
         verify(sessionDao, times(2)).updateSession(any())
         assertEquals(1, backupsRefreshed)
+        // And no durable booking per Run. That handoff belongs to the teardown, whose process is
+        // dying; this pass runs at launch on a process that is not, and a booking each would mean a
+        // copy of the whole database for every Run in the list.
+        assertTrue(runsBooked.isEmpty())
     }
 
     @Test
@@ -282,7 +291,67 @@ class SessionRepositoryRescueTest {
         // Named rather than searched for: no list is asked for, so nothing else in the database can
         // be caught up in a teardown's rescue.
         verify(sessionDao, never()).getInterruptedSessionIds(any())
-        assertEquals(1, backupsRefreshed)
+    }
+
+    @Test
+    fun `the snapshot for a teardown's Run is booked to outlive the process, not taken on it`() =
+        runTest {
+            // Whatever took the service down can take the process next, and it can do it after the
+            // row is stamped. A copy taken here might never finish or never start, and the Run is
+            // out of the launch pass's reach the moment it is stamped — so the Downloads snapshot
+            // would sit one Run behind until something else happened to refresh it.
+            whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+            whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 22))
+            whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+
+            assertTrue(repository.rescueRunLostToTeardown(67L))
+
+            assertEquals(listOf(67L), runsBooked)
+            assertEquals(0, backupsRefreshed)
+        }
+
+    @Test
+    fun `the booking is made the instant the row is stamped, before anything hangs off it`() =
+        runTest {
+            // Everything after the stamp — measuring the moving time, scoring the record book — is
+            // real work on a real database, and all of it is window in which the process can go.
+            // Booked first, that window costs the Run nothing.
+            whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+            whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 22))
+            whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+            val order = mutableListOf<String>()
+            val repository = SessionRepository(
+                sessionDao = sessionDao,
+                sampleDao = sampleDao,
+                trackPointDao = trackPointDao,
+                achievementDao = achievementDao,
+                settingsRepository = settingsRepository,
+                bookAfterRunWork = { order += "booked" },
+            )
+            whenever(sessionDao.setRecordsScored(67L)).then { order += "scored"; Unit }
+
+            repository.rescueRunLostToTeardown(67L)
+
+            assertEquals(listOf("booked", "scored"), order)
+        }
+
+    @Test
+    fun `a booking that throws still leaves the Run finished`() = runTest {
+        val repository = SessionRepository(
+            sessionDao = sessionDao,
+            sampleDao = sampleDao,
+            trackPointDao = trackPointDao,
+            achievementDao = achievementDao,
+            settingsRepository = settingsRepository,
+            bookAfterRunWork = { throw IllegalStateException("WorkManager not initialised") },
+        )
+        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 22))
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+
+        assertTrue(repository.rescueRunLostToTeardown(67L))
+
+        verify(sessionDao).updateSession(any())
     }
 
     @Test
@@ -299,6 +368,7 @@ class SessionRepositoryRescueTest {
 
         verify(sessionDao, never()).updateSession(any())
         assertEquals(0, backupsRefreshed)
+        assertTrue(runsBooked.isEmpty())
     }
 
     @Test
@@ -311,6 +381,7 @@ class SessionRepositoryRescueTest {
 
         verify(sessionDao, never()).updateSession(any())
         assertEquals(0, backupsRefreshed)
+        assertTrue(runsBooked.isEmpty())
     }
 
     @Test

@@ -381,6 +381,22 @@ class SessionRepository(
     // wherever no backup target is wired.
     private val refreshHistoryBackup: (suspend () -> Unit)? = null,
     /**
+     * Books the after-run work for a Run that has just been written down, and returns only once the
+     * request is in WorkManager's own database (`AfterRunWorker.enqueue`).
+     *
+     * The difference from [refreshHistoryBackup] is whose life the snapshot depends on. That one
+     * copies the database here and now, on this process; this one hands the job to something that
+     * survives the process. A teardown rescue needs the second kind, because the thing that took
+     * the service down is often about to take the process with it: the row would be stamped
+     * finished, the Run would no longer qualify for the launch pass, and the Downloads snapshot
+     * would stay one Run behind until some later operation happened to refresh it (#309).
+     *
+     * Injected rather than reached for through a `Context`, so this class stays a repository over
+     * DAOs and the tests can watch the booking without WorkManager. Null in tests and wherever no
+     * backup target is wired; the teardown rescue then falls back to the in-process snapshot.
+     */
+    private val bookAfterRunWork: ((Long) -> Unit)? = null,
+    /**
      * Runs a block as one database transaction, so a re-tally of history is all of it or none.
      *
      * Re-banding walks every finished run one row at a time. Failing part-way through — a full
@@ -938,12 +954,23 @@ class SessionRepository(
      *
      * Returns whether the Run was put back, so the caller can say so in the Run Journal — a
      * `run-finalized` from here is the answer to a `service-destroyed` that names a live Run.
+     *
+     * Hands the snapshot to [bookAfterRunWork] rather than taking one here, and hands it over the
+     * moment the row is stamped rather than when this returns. Whatever ended the service can end
+     * the process at any point after that stamp, and a Run that is stamped finished is a Run the
+     * launch pass will never look at again — so an in-process copy that had not finished, or not
+     * started, would leave the Downloads snapshot permanently one Run behind, and a Clear storage
+     * in that window would restore a history without this Run in it. The normal finalization has
+     * always answered this the same way; the teardown rescue is the same finish arriving by another
+     * door, so it gets the same durable handoff.
      */
     suspend fun rescueRunLostToTeardown(runRowId: Long): Boolean = statedProfile.withLock {
         val settings = settingsRepository ?: return@withLock false
         val historyProfile = settings.userSettingsFlow.first().historyHrProfile
-        val rescued = finishFromRecord(runRowId, historyProfile)
-        if (rescued) refreshHistoryBackup?.invoke()
+        val rescued = finishFromRecord(runRowId, historyProfile, onRowFinished = bookAfterRunWork)
+        // Nothing durable wired to hand it to — tests, and the archive's read-only container. Then
+        // the in-process copy is the only snapshot there is, and one late is better than none.
+        if (rescued && bookAfterRunWork == null) refreshHistoryBackup?.invoke()
         rescued
     }
 
@@ -959,9 +986,22 @@ class SessionRepository(
      * coached under, which is the one its seconds mean anything against. Neither global number would
      * do — the one in force is wrong for a Run started before a future-only Max HR correction, and
      * the one history is banded against is wrong for every Run started after it.
+     * @param onRowFinished run the instant the Run's totals reach its row, before any of the work
+     * that hangs off them. This is where a caller whose process may be about to end puts whatever
+     * has to outlive it, and the reason it is here rather than at the call site is that the
+     * measuring and scoring below take real time on a real database — a handoff made after this
+     * function returns would leave the whole of that time as a window in which the Run is finished
+     * on disk and spoken for by nobody. The launch pass passes nothing: its process is not dying,
+     * and it snapshots once for the whole list instead of once per Run. Called from IO, which is
+     * what lets it be something that blocks. A throw here is swallowed: the row is finished by this
+     * point and must stay finished, whatever the handoff made of it.
      * @return whether the Run's totals reached its row.
      */
-    private suspend fun finishFromRecord(runRowId: Long, historyProfile: HrProfile): Boolean {
+    private suspend fun finishFromRecord(
+        runRowId: Long,
+        historyProfile: HrProfile,
+        onRowFinished: ((Long) -> Unit)? = null,
+    ): Boolean {
         val samples = sampleDao ?: return false
         try {
             val session = sessionDao.getSessionById(runRowId) ?: return false
@@ -985,6 +1025,14 @@ class SessionRepository(
                     .isNotEmpty(),
             ) ?: return false
             sessionDao.updateSession(finished)
+            try {
+                onRowFinished?.invoke(runRowId)
+            } catch (e: Exception) {
+                // Outside the rescue's own catch on purpose: this Run is in history now, and a
+                // handoff that failed must not turn that into "could not rescue" and leave the row
+                // to a launch pass that will not have it.
+                Log.w("InterruptedRun", "Rescued run $runRowId but could not book its after-run work", e)
+            }
             Log.w(
                 "InterruptedRun",
                 "Rescued run $runRowId: duration=${finished.durationSeconds}s " +
