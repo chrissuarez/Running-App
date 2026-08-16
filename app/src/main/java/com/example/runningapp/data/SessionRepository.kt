@@ -963,14 +963,26 @@ class SessionRepository(
      * in that window would restore a history without this Run in it. The normal finalization has
      * always answered this the same way; the teardown rescue is the same finish arriving by another
      * door, so it gets the same durable handoff.
+     *
+     * The in-process copy is what is left when that handoff does not happen — either because
+     * nothing durable is wired to take it (tests, the archive's read-only container) or because the
+     * booking threw. One rule for both, and it is written as one: the fallback is owed whenever the
+     * booking did not come back, because a rescued Run with neither snapshot behind it is exactly
+     * the Run a Clear storage would lose. A copy taken here and now may not outlive the teardown,
+     * but a copy that might happen beats one that certainly will not.
      */
     suspend fun rescueRunLostToTeardown(runRowId: Long): Boolean = statedProfile.withLock {
         val settings = settingsRepository ?: return@withLock false
         val historyProfile = settings.userSettingsFlow.first().historyHrProfile
-        val rescued = finishFromRecord(runRowId, historyProfile, onRowFinished = bookAfterRunWork)
-        // Nothing durable wired to hand it to — tests, and the archive's read-only container. Then
-        // the in-process copy is the only snapshot there is, and one late is better than none.
-        if (rescued && bookAfterRunWork == null) refreshHistoryBackup?.invoke()
+        var booked = false
+        val rescued = finishFromRecord(runRowId, historyProfile, onRowFinished = { rowId ->
+            // Set after the call and not before it, so a booking that throws leaves this false and
+            // the fallback below owns the snapshot. The throw itself is swallowed by
+            // [finishFromRecord] — the row is finished by then and must stay finished.
+            bookAfterRunWork?.invoke(rowId)
+            booked = bookAfterRunWork != null
+        })
+        if (rescued && !booked) refreshHistoryBackup?.invoke()
         rescued
     }
 
