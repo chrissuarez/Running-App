@@ -3025,6 +3025,42 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a second Run stopping does not settle the first Run's word away`() = runTest {
+        // Two Runs can be owing their word at once (#297). The sheet is taken off screen the moment
+        // it is answered and its writes and settlement run on afterwards, with START already armed
+        // again — so a runner who saves run 1 and immediately starts and stops run 2 has run 2's
+        // STOP arrive while run 1's answer is still in flight. Held in one slot, run 2 replaced run
+        // 1, and a wordless settlement reaching run 1 then judged it off the `isWalk = false` on its
+        // row and graduated a Stage that cannot be taken back.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        assertFalse("the row carries no mark, because the mark's write failed", asItEnded.isWalk)
+        // Still being written when the sheet goes, finished a step later — so the sheet waits.
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(endTime = 0L), asItEnded)
+
+        repo.finishSheetOpened(7L)
+        val sheet = launch { repo.finishSheetClosed(7L, markedAsWalk = true, finalizeWaitStepMillis = 1L) }
+        // Run 1's answer is now inside its wait, its word not yet settled.
+        runCurrent()
+        // The runner starts and stops a second Run, which raises a sheet of its own.
+        repo.finishSheetOpened(8L)
+        // And run 1's finalizer reaches it, carrying no word. It runs to the end without the clock
+        // moving, so run 1's answer cannot resume underneath it.
+        launch { repo.settleStageForRun(7L) }
+        runCurrent()
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockDao, never()).setStageSettled(7L)
+
+        // And when run 1's Walk lands, it graduates nothing.
+        sheet.join()
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
+        verify(mockDao, times(1)).setStageSettled(7L)
+    }
+
+    @Test
     fun `the answer's writes land before the Stage is settled`() = runTest {
         // The order is the ticket: a Walk ticked into the sheet has to be in the row before the rule
         // reads it (#297), so the door that closes the gate is the same one that stores the answer.
