@@ -8,11 +8,11 @@ import org.junit.Test
 
 class RunJournalWatchTest {
 
-    private val idle = RunVitals()
-    private val running = RunVitals(sessionStatus = SessionStatus.RUNNING, runRowId = 41)
+    private val idle = JournaledState()
+    private val running = JournaledState(sessionStatus = SessionStatus.RUNNING, runRowId = 41)
     private val paused = running.copy(sessionStatus = SessionStatus.PAUSED)
 
-    private fun events(before: RunVitals, after: RunVitals) =
+    private fun events(before: JournaledState, after: JournaledState) =
         journalEntriesFor(before, after).map { it.event }
 
     @Test
@@ -43,7 +43,7 @@ class RunJournalWatchTest {
     @Test
     fun `a run stopping is one line, not one per step of the stop`() {
         val stopping = running.copy(sessionStatus = SessionStatus.STOPPING)
-        val stopped = RunVitals(sessionStatus = SessionStatus.STOPPED, runRowId = null)
+        val stopped = JournaledState(sessionStatus = SessionStatus.STOPPED, runRowId = null)
 
         assertEquals(listOf(RunJournalEvent.RUN_STOPPED), events(running, stopping))
         assertEquals(emptyList<RunJournalEvent>(), events(stopping, stopped))
@@ -51,7 +51,7 @@ class RunJournalWatchTest {
 
     @Test
     fun `the run that stopped is named, though the live run is already gone`() {
-        val stopped = RunVitals(sessionStatus = SessionStatus.STOPPED, runRowId = null)
+        val stopped = JournaledState(sessionStatus = SessionStatus.STOPPED, runRowId = null)
 
         assertEquals(
             listOf(RunJournalEntry(RunJournalEvent.RUN_STOPPED, runRowId = 41)),
@@ -118,7 +118,7 @@ class RunJournalWatchTest {
         val connected = running.copy(
             acquisition = AcquisitionPhase.Connected(address = "AA:BB", name = "HRM-Pro")
         )
-        val stopped = RunVitals(sessionStatus = SessionStatus.STOPPED, runRowId = null)
+        val stopped = JournaledState(sessionStatus = SessionStatus.STOPPED, runRowId = null)
 
         assertEquals(
             listOf(RunJournalEvent.RUN_STOPPED, RunJournalEvent.STRAP_DISCONNECTED),

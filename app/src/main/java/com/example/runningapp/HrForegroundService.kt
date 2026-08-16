@@ -45,7 +45,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -85,7 +84,7 @@ import com.example.runningapp.data.averagePaceMinPerKm
 import com.example.runningapp.diagnostics.RunJournal
 import com.example.runningapp.diagnostics.RunJournalEvent
 import com.example.runningapp.diagnostics.RunJournalWatch
-import com.example.runningapp.diagnostics.RunVitals
+import com.example.runningapp.diagnostics.JournaledState
 import com.example.runningapp.foreground.ForegroundPromotion
 import com.example.runningapp.foreground.PromotionHost
 
@@ -360,13 +359,37 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     /**
      * The half of the journal that is derived rather than called: the Run's lifecycle and the Strap
-     * are watched off published state, so no future call site can forget to write a line.
+     * are read off what has just been published, so no future call site can forget to write a line.
+     *
+     * Touched only from [sessionHandlerThread] — see [journalPublishedState].
      */
     private lateinit var runJournalWatch: RunJournalWatch
 
     /** One journal line, against whichever Run is live. */
     private fun journal(event: RunJournalEvent, detail: String? = null) {
         runJournal.write(event, _hrState.value.activeDbSessionId, detail)
+    }
+
+    /**
+     * Journal whatever the publish that just happened changed (#310).
+     *
+     * Called from the two inboxes, on [sessionHandlerThread], immediately after each has published
+     * — deliberately not by collecting [_hrState]. A collector would fail this ticket twice over.
+     * It would run on `serviceScope`, which `onDestroy` cancels, so the pause or stop published as
+     * the service goes down — the shape of #309 exactly — could lose its line to the very teardown
+     * it was recording. And [_hrState] is a StateFlow, so it conflates: a pause and the resume
+     * after it, landing between two turns of the collector, would arrive as one emission saying
+     * nothing had changed, and neither line would ever be written.
+     *
+     * Reading it here has neither problem. Every publish is seen, in the order it was published,
+     * on the thread that published it, and the line is handed to a writer that outlives this
+     * service ([RunJournal]).
+     */
+    private fun journalPublishedState() {
+        val state = _hrState.value
+        runJournalWatch.observe(
+            JournaledState(state.sessionStatus, state.activeDbSessionId, state.acquisition.phase)
+        )
     }
 
     // Both written on main (or a Binder thread) and read on the session thread, which is the Run's
@@ -467,6 +490,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val outcome = Run.onEvent(runState, event)
         runState = outcome.state
         publishRun(runState, event.nowMillis)
+        // Between the publish and the effects: the journal describes what is now true, and it must
+        // say so before an effect can act on it — a stop's own effects end in the demote, and a
+        // journal that read the state afterwards would file the two in the wrong order.
+        journalPublishedState()
         outcome.effects.forEach(::perform)
     }
 
@@ -910,17 +937,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         runJournal = appContainer.runJournal
         runJournalWatch = RunJournalWatch(runJournal)
         journal(RunJournalEvent.SERVICE_CREATED)
-
-        // The Run and the Strap, journaled by watching what is published rather than by a call at
-        // each of the places that move them — see [RunJournalWatch]. Deduped because this state
-        // republishes every second while a Run is on, and all but a handful of those emissions say
-        // nothing new.
-        serviceScope.launch {
-            _hrState
-                .map { RunVitals(it.sessionStatus, it.activeDbSessionId, it.acquisition.phase) }
-                .distinctUntilChanged()
-                .collect { runJournalWatch.observe(it) }
-        }
 
         serviceScope.launch {
             settingsRepository.userSettingsFlow.collect { settings ->
@@ -1616,6 +1632,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val outcome = Acquisition.decide(acquisitionState, event, acquisitionContext())
         acquisitionState = outcome.state
         _hrState.update { it.copy(acquisition = outcome.state) }
+        journalPublishedState()
         outcome.effects.forEach { performAcquisition(it) }
         // An Acquisition taking off needs the pulse, and pre-run there may be no Run to have
         // started it. Edge-triggered: a chase that is already under way has one already, and
@@ -2037,7 +2054,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             RunJournalEvent.SERVICE_DESTROYED,
             "status=${_hrState.value.sessionStatus} promoted=${promotion.isPromoted} bound=$isActivityBound"
         )
-
 
         // 0. Anything that opens a GATT from here on closes it itself; the sweep below is the
         // last one there will be. Set before the join, so a connect that outlasts it sees this.
