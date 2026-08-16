@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -81,6 +82,10 @@ import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointSource
 import com.example.runningapp.data.averagePaceMinPerKm
+import com.example.runningapp.diagnostics.RunJournal
+import com.example.runningapp.diagnostics.RunJournalEvent
+import com.example.runningapp.diagnostics.RunJournalWatch
+import com.example.runningapp.diagnostics.RunVitals
 import com.example.runningapp.foreground.ForegroundPromotion
 import com.example.runningapp.foreground.PromotionHost
 
@@ -343,6 +348,26 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var pickedWorkoutId: String? = null
 
     private lateinit var database: AppDatabase
+
+    /**
+     * What this service will still be able to say about a lost Run tomorrow (#310).
+     *
+     * Taken from the container rather than built here: the file outlives any one service, and the
+     * writes go to a thread that outlives this one — so a line recording a teardown is not cancelled
+     * by the teardown it records.
+     */
+    private lateinit var runJournal: RunJournal
+
+    /**
+     * The half of the journal that is derived rather than called: the Run's lifecycle and the Strap
+     * are watched off published state, so no future call site can forget to write a line.
+     */
+    private lateinit var runJournalWatch: RunJournalWatch
+
+    /** One journal line, against whichever Run is live. */
+    private fun journal(event: RunJournalEvent, detail: String? = null) {
+        runJournal.write(event, _hrState.value.activeDbSessionId, detail)
+    }
 
     // Both written on main (or a Binder thread) and read on the session thread, which is the Run's
     // inbox: the pulse asks whether to feed the Run a simulated reading, and the published state
@@ -701,6 +726,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
                 database.sessionDao().updateSession(updatedSession)
 
+                // Against the Run's own id rather than the live one, which this stop has already
+                // cleared. A Run journaled as stopped but never as finalized is a Run whose totals
+                // never reached its row — which is what an interrupted Run looks like from here.
+                runJournal.write(
+                    RunJournalEvent.RUN_FINALIZED,
+                    runRowId,
+                    "duration=${updatedSession.durationSeconds}s"
+                )
+
                 // The Downloads snapshot of the history the Run now belongs to, and the Run's
                 // weather, handed to WorkManager rather than launched here (#122). A STOP from the
                 // notification ends with this service taking itself down, and Android is free to
@@ -871,7 +905,23 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         super.onCreate()
         val appContainer = runningAppContainer()
         settingsRepository = appContainer.settingsRepository
-        
+
+        // First thing, so a service that then falls over on its way up has said it existed (#310).
+        runJournal = appContainer.runJournal
+        runJournalWatch = RunJournalWatch(runJournal)
+        journal(RunJournalEvent.SERVICE_CREATED)
+
+        // The Run and the Strap, journaled by watching what is published rather than by a call at
+        // each of the places that move them — see [RunJournalWatch]. Deduped because this state
+        // republishes every second while a Run is on, and all but a handful of those emissions say
+        // nothing new.
+        serviceScope.launch {
+            _hrState
+                .map { RunVitals(it.sessionStatus, it.activeDbSessionId, it.acquisition.phase) }
+                .distinctUntilChanged()
+                .collect { runJournalWatch.observe(it) }
+        }
+
         serviceScope.launch {
             settingsRepository.userSettingsFlow.collect { settings ->
                 currentSettings = settings
@@ -1296,9 +1346,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // Reporting false matters: claiming success would have us posting run updates
                 // to a notification the platform never created.
                 Log.w(TAG, "Foreground promotion refused: ${e.message}")
+                journal(RunJournalEvent.PROMOTION_REFUSED, "${e.javaClass.simpleName}: ${e.message}")
                 return false
             }
             acquireWakeLock()
+            journal(RunJournalEvent.PROMOTED)
             return true
         }
 
@@ -1307,6 +1359,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // handed back: releaseWakeLock and stopForeground are both no-ops in that case, and
             // stopSelf is the whole point of the call.
             Log.d(TAG, "demote - dropping notification/wake lock, BLE untouched")
+            // The line #310 exists for: a demote while a Run is still live is the whole of what
+            // happened in #309, and nothing else on the phone would have recorded it an hour later.
+            journal(RunJournalEvent.DEMOTED, "status=${_hrState.value.sessionStatus}")
             releaseWakeLock()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -1973,7 +2028,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "onDestroy called - Clean Exit")
-        
+
+        // Android does not say why a service is being destroyed, so what goes down is what this
+        // service knew as it went: whether a Run was still live, and whether it still held the
+        // Promotion. A destroy with a live Run and no demote above it is a Run the system took
+        // (#310).
+        journal(
+            RunJournalEvent.SERVICE_DESTROYED,
+            "status=${_hrState.value.sessionStatus} promoted=${promotion.isPromoted} bound=$isActivityBound"
+        )
+
+
         // 0. Anything that opens a GATT from here on closes it itself; the sweep below is the
         // last one there will be. Set before the join, so a connect that outlasts it sees this.
         destroyed = true

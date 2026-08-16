@@ -45,6 +45,12 @@ object ArchiveZip {
     /** Where the raw database snapshot lands — the half a restore actually reads (#86). */
     const val DATABASE_DIRECTORY = "database"
 
+    /**
+     * Where the Run Journal lands (#310). Nothing restores from it; it is here so a Run that died
+     * on a phone weeks ago can still be diagnosed from the backup.
+     */
+    const val DIAGNOSTICS_DIRECTORY = "diagnostics"
+
     suspend fun write(destination: OutputStream, entries: Iterable<ArchiveEntry>) {
         val zip = ZipOutputStream(destination)
         entries.forEach { entry ->
