@@ -146,6 +146,47 @@ class RunJournalWatchTest {
     }
 
     @Test
+    fun `a second block for a different reason is its own line, naming that reason`() {
+        // What the phone does when the adapter comes back on mid-Run without BLUETOOTH_CONNECT: the
+        // block never lifts, it changes its reason. A journal that told only the first would blame
+        // Bluetooth for a Run that finished strapless for want of a permission (#224).
+        val bluetoothOff = running.copy(
+            acquisition = AcquisitionPhase.Blocked(AcquisitionBlock.BluetoothUnavailable)
+        )
+        val cannotConnect = running.copy(
+            acquisition = AcquisitionPhase.Blocked(AcquisitionBlock.PermissionMissing)
+        )
+
+        assertEquals(
+            listOf(
+                "run=41 run-started",
+                "run=41 run-row-created",
+                "run=41 acquisition-blocked",
+                "run=41 acquisition-blocked",
+            ),
+            journaled(running, bluetoothOff, cannotConnect)
+        )
+        assertEquals(
+            listOf(RunJournalEntry(RunJournalEvent.ACQUISITION_BLOCKED, runRowId = 41, detail = "PermissionMissing")),
+            journalEntriesFor(bluetoothOff, cannotConnect)
+        )
+    }
+
+    @Test
+    fun `the same block republished is not told twice`() {
+        // The state this reads republishes every second while a Run is on, so a block restated is
+        // the ordinary case and must be silent.
+        val blocked = running.copy(
+            acquisition = AcquisitionPhase.Blocked(AcquisitionBlock.BluetoothUnavailable)
+        )
+        val restated = running.copy(
+            acquisition = AcquisitionPhase.Blocked(AcquisitionBlock.BluetoothUnavailable)
+        )
+
+        assertEquals(emptyList<RunJournalEvent>(), events(blocked, restated))
+    }
+
+    @Test
     fun `the strap going away as the run stops is told alongside the stop`() {
         val connected = running.copy(
             acquisition = AcquisitionPhase.Connected(address = "AA:BB", name = "HRM-Pro")

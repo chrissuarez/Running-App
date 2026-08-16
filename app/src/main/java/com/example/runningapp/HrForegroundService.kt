@@ -81,6 +81,7 @@ import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointSource
 import com.example.runningapp.data.averagePaceMinPerKm
+import com.example.runningapp.diagnostics.PromotionRunWatch
 import com.example.runningapp.diagnostics.RunJournal
 import com.example.runningapp.diagnostics.RunJournalEvent
 import com.example.runningapp.diagnostics.RunJournalWatch
@@ -371,6 +372,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     /**
+     * Which Run the Promotion is being held for, so the hand-back can be named after it (#310).
+     *
+     * Nothing but the `demoted` line reads this — see [PromotionRunWatch] for why the live Run alone
+     * cannot answer it.
+     */
+    private val promotionRun = PromotionRunWatch()
+
+    /**
      * Journal whatever the publish that just happened changed (#310).
      *
      * Called from the two inboxes, on [sessionHandlerThread], immediately after each has published
@@ -387,6 +396,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      */
     private fun journalPublishedState() {
         val state = _hrState.value
+        promotionRun.observe(state.activeDbSessionId)
         runJournalWatch.observe(
             JournaledState(state.sessionStatus, state.activeDbSessionId, state.acquisition.phase)
         )
@@ -756,6 +766,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // Against the Run's own id rather than the live one, which this stop has already
                 // cleared. A Run journaled as stopped but never as finalized is a Run whose totals
                 // never reached its row — which is what an interrupted Run looks like from here.
+                // Read that way, the line has to be on disk before this coroutine can be lost with
+                // the process, and run-finalized is one the journal waits out for itself (#310).
                 runJournal.write(
                     RunJournalEvent.RUN_FINALIZED,
                     runRowId,
@@ -1377,7 +1389,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             Log.d(TAG, "demote - dropping notification/wake lock, BLE untouched")
             // The line #310 exists for: a demote while a Run is still live is the whole of what
             // happened in #309, and nothing else on the phone would have recorded it an hour later.
-            journal(RunJournalEvent.DEMOTED, "status=${_hrState.value.sessionStatus}")
+            // Named after the Run the Promotion was held for, not merely the live one — on a normal
+            // stop the live Run has already been cleared by the time the hand-back runs, and a
+            // `demoted` naming no Run cannot be tied to the stop that caused it. The same rule as
+            // the Strap's release in RunJournalWatch: a line names the Run it belongs to, falling
+            // back to the one it was held for.
+            val state = _hrState.value
+            runJournal.write(
+                RunJournalEvent.DEMOTED,
+                promotionRun.handBack(state.activeDbSessionId),
+                "status=${state.sessionStatus}",
+            )
             releaseWakeLock()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -2055,12 +2077,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             RunJournalEvent.SERVICE_DESTROYED,
             "status=${_hrState.value.sessionStatus} promoted=${promotion.isPromoted} bound=$isActivityBound"
         )
-        // First of two drains, and the one that is the whole of #310: waited out here, before any
-        // of the teardown below, because a destroy is often followed straight away by the process
-        // being reclaimed — and a line still queued behind a slow append is a line that dies with
-        // it. Taken before teardown so the line lands even if teardown later hangs. Bounded, and it
-        // gives up rather than throwing, so the wait can never be what ends the app (#310).
-        runJournal.flushBlocking()
+        // Written before any of the teardown below, and on disk by the time that write returns:
+        // service-destroyed is an event the journal waits out for itself, because a destroy is
+        // often followed straight away by the process being reclaimed (#310).
 
         // 0. Anything that opens a GATT from here on closes it itself; the sweep below is the
         // last one there will be. Set before the join, so a connect that outlasts it sees this.
@@ -2122,9 +2141,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         releaseWakeLock()
         audioCueManager?.shutdown()
 
-        // Second of the two drains, and the reason the first is not enough: the session inbox was
-        // still running when that one was taken, so a lifecycle or Acquisition line it wrote on its
-        // way out queued behind it with nothing left to wait for it. The drain is repeated here
+        // The one drain this teardown takes for itself, and it is not the destroyed line's: that
+        // one waits for itself above. This is for the session inbox, which was still running then
+        // — a lifecycle or Acquisition line it wrote on its way out is ordinary, so nothing waited
+        // for it, and there is nothing left running that would. The drain is taken here
         // rather than the quit and join above being lifted over the snapshot: that order is what
         // lets a late connect see [destroyed] and what leaves step 2 alone with [openGatts], and a
         // diagnostic is never worth risking the Bluetooth teardown those steps are protecting. Same

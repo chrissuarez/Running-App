@@ -136,12 +136,71 @@ class RunJournalTest {
 
         val busy = journal.occupy(forMillis = 1000L)
 
-        journal.write(RunJournalEvent.SERVICE_DESTROYED)
+        // An ordinary line, so the writer is still held when the wait below is taken: a decisive
+        // one would have waited the occupier out on its own and left nothing to time out on.
+        journal.write(RunJournalEvent.RUN_STOPPED)
         // Returns, and returns on time: a teardown must not be held up by a journal it cannot get
         // written, and must not be brought down by one either.
         val waited = measureTimeMillis { journal.flushBlocking(timeoutMs = 50L) }
         assertTrue("waited ${waited}ms", waited < 500L)
 
+        busy.join()
+    }
+
+    @Test
+    fun `an event read by its absence is on disk by the time write returns`() {
+        val journal = journal()
+        journal.write(RunJournalEvent.SERVICE_CREATED)
+        runBlocking { journal.flush() }
+
+        // The writer taken up the way an archive copy takes it, so a queued line would still be
+        // queued here: the shape in which a reclaimed process loses one (#309, #310).
+        val busy = journal.occupy(forMillis = 300L)
+
+        journal.write(RunJournalEvent.RUN_FINALIZED, runRowId = 41)
+
+        assertTrue(
+            "run-finalized was still only queued when write returned",
+            File(folder.root, RunJournal.CURRENT_FILE_NAME).readText().contains("run-finalized")
+        )
+        busy.join()
+    }
+
+    @Test
+    fun `an ordinary event does not hold up whoever wrote it`() {
+        val journal = journal()
+        journal.write(RunJournalEvent.SERVICE_CREATED)
+        runBlocking { journal.flush() }
+
+        val busy = journal.occupy(forMillis = 500L)
+
+        // Back before the writer is free again: the wait is for the lines a reader reasons about
+        // the absence of, and every other call site stays as cheap as it was.
+        val waited = measureTimeMillis { journal.write(RunJournalEvent.RUN_STARTED, runRowId = 41) }
+        assertTrue("waited ${waited}ms", waited < 250L)
+        assertTrue(busy.isAlive)
+
+        busy.join()
+    }
+
+    @Test
+    fun `an ordinary line queued first lands with the one that is waited for`() {
+        val journal = journal()
+        journal.write(RunJournalEvent.SERVICE_CREATED)
+        runBlocking { journal.flush() }
+
+        val busy = journal.occupy(forMillis = 300L)
+
+        // One writer thread, in the order the writes were asked for: waiting for the decisive line
+        // has already landed everything queued in front of it, which is what keeps the set of
+        // events that wait down to three.
+        journal.write(RunJournalEvent.RUN_STOPPED, runRowId = 41)
+        journal.write(RunJournalEvent.RUN_FINALIZED, runRowId = 41)
+
+        assertEquals(
+            listOf("service-created", "run-stopped", "run-finalized"),
+            File(folder.root, RunJournal.CURRENT_FILE_NAME).readLines().map { it.substringAfterLast(' ') }
+        )
         busy.join()
     }
 
