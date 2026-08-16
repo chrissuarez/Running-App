@@ -6,46 +6,47 @@ import org.junit.Test
 
 class WeatherSummaryTest {
 
+    private fun runInWeather(
+        tempC: Double? = null,
+        feelsLikeC: Double? = null,
+        humidityPercent: Int? = null,
+        windSpeedKmh: Double? = null,
+        conditionCode: Int? = null,
+    ) = RunnerSession(
+        startTime = 0L,
+        weatherTempC = tempC,
+        weatherFeelsLikeC = feelsLikeC,
+        weatherHumidityPercent = humidityPercent,
+        weatherWindSpeedKmh = windSpeedKmh,
+        weatherConditionCode = conditionCode,
+    )
+
     @Test
     fun `a full snapshot reads as one line, conditions first`() {
         assertEquals(
             "Light rain, 12°C, feels like 10°C, 80% humidity, 15 km/h wind",
-            weatherSummaryOf(
+            runInWeather(
                 tempC = 11.6,
                 feelsLikeC = 9.8,
                 humidityPercent = 80,
                 windSpeedKmh = 15.2,
                 conditionCode = 61,
-            )
+            ).weatherSummary()
         )
     }
 
     @Test
-    fun `a snapshot with nothing in it is no line at all`() {
-        // Every indoor Run, and every outdoor one recorded before the weather was fetched. An empty
-        // string would still be a field the coach reads as a measurement of nothing.
-        assertNull(
-            weatherSummaryOf(
-                tempC = null,
-                feelsLikeC = null,
-                humidityPercent = null,
-                windSpeedKmh = null,
-                conditionCode = null,
-            )
-        )
+    fun `a Run with no weather recorded has no line at all`() {
+        // Every treadmill Run, and every outdoor one the fetch never reached. An empty string would
+        // still be a field the coach reads as a measurement of nothing.
+        assertNull(runInWeather().weatherSummary())
     }
 
     @Test
     fun `the parts that were recorded are said and the rest are left out`() {
         assertEquals(
             "8°C, 20 km/h wind",
-            weatherSummaryOf(
-                tempC = 8.0,
-                feelsLikeC = null,
-                humidityPercent = null,
-                windSpeedKmh = 20.0,
-                conditionCode = null,
-            )
+            runInWeather(tempC = 8.0, windSpeedKmh = 20.0).weatherSummary()
         )
     }
 
@@ -55,14 +56,16 @@ class WeatherSummaryTest {
         // and nothing the coach could reason from.
         assertEquals(
             "14°C",
-            weatherSummaryOf(
-                tempC = 14.0,
-                feelsLikeC = null,
-                humidityPercent = null,
-                windSpeedKmh = null,
-                conditionCode = 42,
-            )
+            runInWeather(tempC = 14.0, conditionCode = 42).weatherSummary()
         )
+    }
+
+    @Test
+    fun `just under freezing is a zero, never a minus zero`() {
+        // "%.0f" writes -0.4°C as "-0°C". A minus sign against a zero says something about the cold
+        // that is not true, and the run detail page and the coach both go through this.
+        assertEquals("0°C", celsiusText(-0.4))
+        assertEquals("-1°C", celsiusText(-0.6))
     }
 
     @Test

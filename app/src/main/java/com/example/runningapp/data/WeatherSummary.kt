@@ -47,6 +47,19 @@ private val WMO_CONDITION_LABELS = mapOf(
 fun wmoConditionLabel(code: Int?): String? = code?.let { WMO_CONDITION_LABELS[it] }
 
 /**
+ * A temperature as this app writes one: whole degrees.
+ *
+ * Rounded rather than formatted to no decimal places, which is not the same thing just below
+ * freezing: `"%.0f"` writes −0.4°C as "-0°C", and a minus sign against a zero says something about
+ * the cold that is not true. A tenth of a degree is a precision the fetch does not have and nobody
+ * would train differently for.
+ */
+fun celsiusText(degreesC: Double): String = "${degreesC.roundToInt()}°C"
+
+/** A wind speed as this app writes one: whole kilometres per hour, for the same reason. */
+fun kmhText(speedKmh: Double): String = "${speedKmh.roundToInt()} km/h"
+
+/**
  * The weather a Run was run in, as one line — what the coach is told about it (#83).
  *
  * Null rather than an empty string when nothing was recorded, which is every treadmill Run and every
@@ -55,26 +68,18 @@ fun wmoConditionLabel(code: Int?): String? = code?.let { WMO_CONDITION_LABELS[it
  * on a still day. Absent, it can only say the weather is unknown.
  *
  * Only the parts that were recorded, in the order a runner would say them — what it was doing, then
- * how warm, then how it felt, then the rest. Rounded to whole degrees and whole km/h exactly as the
- * run detail page rounds them: a tenth of a degree is a precision the fetch does not have and nobody
- * would train differently for.
+ * how warm, then how it felt, then the rest. The run detail page says the same parts in its own
+ * order behind its own separators, because a page has room for punctuation a prompt has no use for;
+ * what the two share is [celsiusText], [kmhText] and [wmoConditionLabel], so they can never quote
+ * the runner a different number or a different word for the same reading.
  */
-fun weatherSummaryOf(
-    tempC: Double?,
-    feelsLikeC: Double?,
-    humidityPercent: Int?,
-    windSpeedKmh: Double?,
-    conditionCode: Int?,
-): String? {
-    // Rounded rather than formatted to no decimal places, which is not the same thing just below
-    // freezing: "%.0f" writes a feels-like of -0.4°C as "-0°C", and a coach reading a minus sign
-    // against a zero is being told something about the cold that is not true.
+fun RunnerSession.weatherSummary(): String? {
     val parts = listOfNotNull(
-        wmoConditionLabel(conditionCode),
-        tempC?.let { "${it.roundToInt()}°C" },
-        feelsLikeC?.let { "feels like ${it.roundToInt()}°C" },
-        humidityPercent?.let { "$it% humidity" },
-        windSpeedKmh?.let { "${it.roundToInt()} km/h wind" },
+        wmoConditionLabel(weatherConditionCode),
+        weatherTempC?.let { celsiusText(it) },
+        weatherFeelsLikeC?.let { "feels like ${celsiusText(it)}" },
+        weatherHumidityPercent?.let { "$it% humidity" },
+        weatherWindSpeedKmh?.let { "${kmhText(it)} wind" },
     )
     return parts.takeIf { it.isNotEmpty() }?.joinToString(", ")
 }

@@ -35,6 +35,8 @@ import com.example.runningapp.data.StatedBestEffort
 import com.example.runningapp.data.isTreadmill
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.computeRunWalkIntervalAnalytics
+import com.example.runningapp.data.celsiusText
+import com.example.runningapp.data.kmhText
 import com.example.runningapp.data.wmoConditionLabel
 import com.example.runningapp.data.averagePace
 import com.example.runningapp.data.averagePaceText
@@ -719,11 +721,11 @@ private fun formatWeatherLine(session: RunnerSession): String {
     // shape stays this page's, because a page has room for separators a prompt has no use for.
     val condition = wmoConditionLabel(session.weatherConditionCode)
     return buildString {
-        append("%.0f°C".format(tempC))
-        session.weatherFeelsLikeC?.let { append(", feels %.0f°C".format(it)) }
+        append(celsiusText(tempC))
+        session.weatherFeelsLikeC?.let { append(", feels ${celsiusText(it)}") }
         condition?.let { append(" · $it") }
         session.weatherHumidityPercent?.let { append(" · $it% humidity") }
-        session.weatherWindSpeedKmh?.let { append(" · %.0f km/h wind".format(it)) }
+        session.weatherWindSpeedKmh?.let { append(" · ${kmhText(it)} wind") }
     }
 }
 
