@@ -2737,6 +2737,15 @@ class SessionRepository(
      * would still spend a Gemini call on a Run already judged. The lock makes the read and the write
      * one step and the question is put once.
      *
+     * **A sheet the runner walks away from is left waiting, deliberately.** The Stage then settles
+     * whenever they come back to it, or at the next cold start — which arrives on its own, because
+     * Android reclaims a backgrounded process soon enough. The alternative considered was treating
+     * *leaving the app* as an answer: it settles sooner and it takes the sheet away, so a phone call
+     * landing in the second after STOP would cost the runner their effort, their note and, on a
+     * treadmill, the only prompt that ever asks how far they went. A stage message arriving late is
+     * the smaller loss than a distance that is never asked for, and the Run's own page carries all
+     * four for ever either way.
+     *
      * **The one hole left** is a process that dies with the sheet on screen. The sheet is restored
      * with the Activity, but this gate is in memory and is not, so the launch pass settles the Run
      * before the restored sheet can be answered — and a Walk ticked into it lands too late, exactly
