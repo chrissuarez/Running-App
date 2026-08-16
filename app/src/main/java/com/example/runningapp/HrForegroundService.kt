@@ -40,7 +40,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.job
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -89,6 +88,8 @@ import com.example.runningapp.diagnostics.RunJournalWatch
 import com.example.runningapp.diagnostics.JournaledState
 import com.example.runningapp.foreground.ForegroundPromotion
 import com.example.runningapp.foreground.PromotionHost
+import com.example.runningapp.foreground.SCOPE_DRAIN_PASSES
+import com.example.runningapp.foreground.drainChildren
 
 // Exactly the Run's lifecycle, under the screen's older names — [RunLifecycle.asSessionStatus] is
 // the only thing that writes it, so there is no value here a Run cannot be in.
@@ -222,11 +223,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * rows in question (#309). Written once, because two copies of it would be two answers to what
      * "the Run's last second" means.
      *
-     * The children as they stand when this is called: nothing may still be writing samples by then,
-     * because both callers run after the Run they are finishing is over.
+     * A drain rather than a join of the children as they stand ([drainChildren]): the wait is not
+     * over until the scope is empty. Both callers run after the Run they are finishing is over, but
+     * "over" is decided by producers that stop on a bounded promise — a session thread joined with
+     * a timeout, a location looper asked to quit safely and never joined — so a fix or an event
+     * that was already queued can still land a write behind a snapshot taken here. The scope is
+     * shared with the Run's own finalize and that is not a conflict but the point: whichever of the
+     * two is waiting waits for every write the Run made, not only for the ones it started.
      */
-    private suspend fun awaitRecorderWrites() =
-        recorderWriteScope.coroutineContext.job.children.toList().joinAll()
+    private suspend fun awaitRecorderWrites() {
+        if (!drainChildren(recorderWriteScope.coroutineContext.job)) {
+            Log.w(TAG, "Recorder writes were still arriving after $SCOPE_DRAIN_PASSES passes; not waiting further")
+        }
+    }
 
     // Letting a GATT go outlives the service too. The handle leaves [openGatts] the moment the
     // Acquisition is done with it, and the state that says so publishes before the close runs — so
@@ -2151,30 +2160,43 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * Run banked as it ran and are better than any rebuilt from the record, so the rescue waits for
      * them and then declines the row it finds already finished
      * ([SessionRepository.rescueRunLostToTeardown]). Waiting is what makes that check decisive
-     * rather than a read that a concurrent write can overtake. The children are taken here, before
-     * this coroutine joins them, because a coroutine cannot wait for a set that includes itself.
+     * rather than a read that a concurrent write can overtake. The scope is drained rather than
+     * snapshotted and joined ([drainChildren]) — the wait is over when the scope is empty, not when
+     * the finalizes that happened to be running at the first look are done — and the rescue leaves
+     * its own job out, because a coroutine cannot wait for a set that includes itself.
      *
      * Then the Run's own tail writes ([awaitRecorderWrites]). A rescue reads the samples and fixes
      * back out of the database to rebuild the totals, so anything still queued would be a second
      * the Run recorded and the rescue did not count.
      *
-     * Both waits are only worth anything because of where onDestroy calls this from: after the
-     * session inbox has been quit and joined and after the location thread and `serviceScope` have
-     * gone, so nothing is left that could start another finalize or queue another sample. A set
-     * that can still be added to is not a set that can be waited for — called any earlier, the
-     * publish-then-perform order of [dispatchRunEvent] means the very STOP whose RUNNING snapshot
-     * sent us here could launch its finalize after both lists were taken, and the row would end up
-     * holding whichever of the two wrote last. Called from where it is, that STOP is in
-     * [finalizationScope]'s children, is waited out, and the decline is the answer.
+     * Where onDestroy calls this from is what makes both waits short: after the session inbox has
+     * been quit and joined and after the location thread and `serviceScope` have gone, almost
+     * nothing is left that could start another finalize or queue another sample. Called any
+     * earlier, the publish-then-perform order of [dispatchRunEvent] means the very STOP whose
+     * RUNNING snapshot sent us here would routinely launch its finalize behind the rescue, and the
+     * row would end up holding whichever of the two wrote last. Called from where it is, that STOP
+     * is in [finalizationScope]'s children, is waited out, and the decline is the answer.
+     *
+     * What the drains add is that neither wait depends on that quiescence being perfect, which it
+     * is not: the session thread is joined with a timeout ([SESSION_THREAD_JOIN_TIMEOUT_MS]) and
+     * the location looper is asked to quit safely and never joined, so a dispatch or a fix that was
+     * already queued can still run and launch its write after the first look. A snapshot would miss
+     * it; a drain looks again.
      */
     private fun endRunLostToTeardown(runRowId: Long) {
         Log.w(TAG, "Service destroyed with run $runRowId still recording; finishing it from its record")
         notifyRunLostToTeardown()
-        val finalizesInFlight = finalizationScope.coroutineContext.job.children.toList()
         finalizationScope.launch {
+            // This coroutine's own job, taken here and not inside the NonCancellable below, where
+            // `coroutineContext.job` is NonCancellable's and not a child of the scope at all. It is
+            // what the drain leaves out: the rescue is one of the finalize scope's children, and a
+            // drain that joined itself would never return.
+            val rescue = coroutineContext.job
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                 try {
-                    finalizesInFlight.joinAll()
+                    if (!drainChildren(finalizationScope.coroutineContext.job, except = rescue)) {
+                        Log.w(TAG, "Finalizes were still arriving after $SCOPE_DRAIN_PASSES passes; not waiting further")
+                    }
                     awaitRecorderWrites()
                     if (sessionRepository.rescueRunLostToTeardown(runRowId)) {
                         // The answer to the `service-destroyed` line above, which named this Run as
