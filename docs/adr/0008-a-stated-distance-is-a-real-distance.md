@@ -102,12 +102,21 @@ distances, so the next Long Run is judged against a season that is actually ther
 number arrived late is judged on its duration and its heart rate, as it is today. A Stage graduated
 one Run later is a small loss; a Stage graduated by a typo, with no way back, is not.
 
-**And that has to hold even when the runner is quick.** The Run's own evaluation is still in flight
-while the sheet is on screen — it reads the last three Runs out of the database on its way to
-asking the coach — so a number typed fast enough would slip into the judgement of its own Run,
-which is the single case where a typo can graduate a Stage nothing can ungraduate. So the
-evaluation judges the Run **as it stood when it was finalized**. A number that arrives after that
-waits for the next one, which is where this section already had it going.
+**And that has to hold even when the runner is quick.** The Run's own evaluation used to be in
+flight while the sheet was on screen — it reads the last three Runs out of the database on its way
+to asking the coach — so a number typed fast enough would slip into the judgement of its own Run,
+which looked like the single case where a typo could graduate a Stage nothing can ungraduate. The
+answer here was to judge the Run **as it stood when it was finalized**, freezing the row against the
+race.
+
+[#297](https://github.com/chrissuarez/Running-App/issues/297) later replaced the freeze, because the
+same race lost the *Walk mark* — which arrives on that same sheet, and which withdraws a Run from
+the judgement entirely. The judgement now waits for the sheet to close instead of racing it, so the
+race is gone rather than frozen against, and everything the sheet says is always in. The typo this
+section worried about is still no threat: a treadmill Run's Best Effort comes only from a Stated
+Best Effort read off the console, never from a distance over a duration, so a mistyped distance
+cannot graduate a Stage however quickly it is typed. What has not changed is anything said *later*:
+a number typed on the Run's own page waits for the next evaluation, exactly as this section has it.
 
 ## Consequences
 

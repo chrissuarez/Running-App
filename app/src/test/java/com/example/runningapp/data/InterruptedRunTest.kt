@@ -70,6 +70,21 @@ class InterruptedRunTest {
     }
 
     @Test
+    fun `a rescued Run comes back with its Stage question already closed`() {
+        // It reached no finish and no finish sheet, so its runner was never asked what it was.
+        // Leaving the question open would have the launch pass put it to the graduation rule a
+        // launch later — a Stage decided on a Run nobody ever closed (#297, ADR 0016).
+        val finished = interrupted.finishedFromRecord(
+            samples = emptyList(),
+            track = listOf(fixAt(50.8152, startedAt + 300_000)),
+            mappedTrack = emptyList(),
+            profile = profile,
+        )!!
+
+        assertTrue(finished.stageSettled)
+    }
+
+    @Test
     fun `one fix at the moment it started is not`() {
         // A START that got a fix and died. Nothing says the Run ever got past its first instant,
         // and finishing it would put a zero-second Run into history.

@@ -882,36 +882,23 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     "Finalized DB Session: $runRowId. Evidence: duration=${updatedSession.durationSeconds} moving=$movingTime"
                 )
 
-                // The Stage this Run was recorded under rather than the one in force now (#234).
-                // They are the same Stage on every ordinary finish, and where they are not it is
-                // because an earlier Run's evaluation graduated the plan while this one was still
-                // going — in which case this Run is evidence about the Stage it was run under, and
-                // settleStageAfterRun is what declines to judge a Stage the runner has left.
-                val stageId = updatedSession.ranUnderStageId
-                if (stageId != null) {
-                    if (!currentSettings.testingModeEnabled) {
-                        // Whether this Run is one the coach adjusts is its Run Type's answer, given
-                        // once inside evaluateAndAdjustPlan (#176) — asking it here too would be the
-                        // same rule in two places, free to drift apart. The app's own rule runs
-                        // first, inside settleStageAfterRun, and asks nothing about Run Type: a 5K
-                        // is a 5K whichever session it turned up in (#290).
-                        //
-                        // AI sharing is asked about in the same one place for the same reason —
-                        // inside evaluateAndAdjustPlan, which is the half that sends the Run
-                        // anywhere. The app's own rule is local and grants without it (#290).
-                        Log.d("AiCoach", "Settling the stage after session finalization for stage: $stageId")
-                        // The row as it was written a moment ago, handed over rather than left to
-                        // be read back: the feel sheet is on screen from the moment STOP was
-                        // pressed, and a distance stated into it must not join the judgement of the
-                        // Run it belongs to (#231).
-                        sessionRepository.settleStageAfterRun(stageId, totals.runType, updatedSession)
-                    } else {
-                        Log.d(
-                            "AiCoach",
-                            "Skipping stage settlement: testing mode enabled for stage=$stageId"
-                        )
-                    }
-                }
+                // Everything the Plan has to say about this Run — the app's graduation rule, and
+                // then the coach — asked by name rather than by handing the row over (#297).
+                //
+                // The row is deliberately not passed. The feel sheet has been on screen since STOP
+                // and it carries the Walk mark: the runner's own word, and the one fact that
+                // withdraws a Run from the judgement entirely. A Run judged off this copy is judged
+                // before that word can arrive, which is a Stage graduated on a walk. So this call
+                // finds the sheet still open and leaves the settlement to it, and settles here and
+                // now only for a Run no sheet was shown for — a STOP from the notification. Either
+                // way the Run keeps the debt until a settlement returns, so a process reclaimed in
+                // between leaves it to the launch pass rather than losing the graduation for good.
+                //
+                // Nothing about the Stage, the Run Type, testing mode or AI sharing is decided here:
+                // each is asked once, inside the rule or inside the coach's own path, and asking
+                // again here would be the same rule in two places free to drift apart.
+                Log.d("AiCoach", "Settling the stage after session finalization for run: $runRowId")
+                sessionRepository.settleStageForRun(runRowId)
             }
         }
     }

@@ -175,7 +175,30 @@ data class RunnerSession(
      * Marking one is the one edit to a finished Run that can take a medal off it, so it goes through
      * the record book's mend ([SessionRepository.markAsWalk]).
      */
-    val isWalk: Boolean = false
+    val isWalk: Boolean = false,
+    /**
+     * Whether this Run's Stage has been settled — the app's graduation rule asked of it, and the
+     * coach asked after (#297). See [SessionRepository.settleStageForRun].
+     *
+     * False is a debt, exactly as [recordsScored]'s false is: it says the question has not been put
+     * yet, never that the answer was no. What makes it a debt rather than a step in the finish is
+     * [isWalk]: the mark is the runner's own word, given on the finish sheet *after* STOP, and a
+     * Walk graduates nothing — so a Stage settled at STOP is settled before the one fact that can
+     * withdraw the Run from the judgement. The settlement therefore waits for the sheet to resolve,
+     * and this column is what carries the wait across a process that dies in between, for the
+     * launch pass ([SessionRepository.settleStagesMissedAtTheFinish]) to pay.
+     *
+     * Written only once the settlement has *returned*, never beside the row being stamped finished,
+     * for [recordsScored]'s reason: an ending in between leaves the debt standing rather than
+     * losing the Run its graduation for good.
+     *
+     * **Every Run recorded before v31 arrives already settled**, which is the migration doing
+     * nothing rather than a fact about those Runs. The rule is forwards-only (ADR 0016): a pass that
+     * jumped the runner two Stages on old evidence is the highest-stakes version of the one act the
+     * app can never undo, and a column defaulting to a debt would have made the first launch after
+     * the upgrade exactly that pass.
+     */
+    val stageSettled: Boolean = false
 )
 
 /**
@@ -581,6 +604,20 @@ interface SessionDao {
     suspend fun setRecordsScoredForSessions(sessionIds: List<Long>)
 
     /**
+     * Finished Runs whose Stage nobody has settled yet (#297) — see [RunnerSession.stageSettled].
+     *
+     * `endTime > 0` as everywhere else here: a Run still being recorded has no Best Effort to judge
+     * and settles itself when it finishes. Oldest first, so a launch paying more than one debt puts
+     * the Runs to the rule in the order they were run — which is the order the Stages moved in.
+     */
+    @Query("SELECT id FROM sessions WHERE stageSettled = 0 AND endTime > 0 ORDER BY startTime ASC")
+    suspend fun getSessionIdsOwingStageSettlement(): List<Long>
+
+    /** Closes a Run's Stage question — written only once the settlement has returned. */
+    @Query("UPDATE sessions SET stageSettled = 1 WHERE id = :sessionId")
+    suspend fun setStageSettled(sessionId: Long)
+
+    /**
      * Writes a Stated Distance and the pace that follows from it (#231).
      *
      * The two together, because pace is quoted from the stored column in the archive and the export:
@@ -979,7 +1016,7 @@ interface RunWalkIntervalStatDao {
         GoalRow::class,
         StatedBestEffort::class
     ],
-    version = 30,
+    version = 31,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1074,7 +1111,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_26_27,
     MIGRATION_27_28,
     MIGRATION_28_29,
-    MIGRATION_29_30
+    MIGRATION_29_30,
+    MIGRATION_30_31
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -1892,5 +1930,29 @@ val MIGRATION_29_30 = object : Migration(29, 30) {
         if (!database.hasColumn("sessions", "ranUnderWorkoutId")) {
             database.execSQL("ALTER TABLE sessions ADD COLUMN ranUnderWorkoutId TEXT")
         }
+    }
+}
+
+/**
+ * Room for whether a Run's Stage has been settled (#297): [RunnerSession.stageSettled].
+ *
+ * **Every Run already in history arrives settled**, which is the opposite of what [MIGRATION_21_22]
+ * does with the record book's mark and for the opposite reason. There, an unscored history was the
+ * repair. Here, the settlement *grants a Stage* — and the graduation rule is forwards-only
+ * ([ADR 0016](docs/adr/0016-a-requirement-stated-in-numbers-is-not-the-coachs-to-judge.md)): a
+ * launch that walked every Run ever recorded and put each to the rule is precisely the pass over
+ * history the rule refuses to make, and it would land as the runner being jumped two Stages by an
+ * upgrade. So the column is added as a debt and every existing row is paid off in the same breath,
+ * leaving the pass with only the Runs recorded from here.
+ *
+ * The same is true of an older archive restored on top: its rows come back settled, and a Run
+ * restored from a backup has already had whatever settlement it was going to get.
+ */
+val MIGRATION_30_31 = object : Migration(30, 31) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        if (!database.hasColumn("sessions", "stageSettled")) {
+            database.execSQL("ALTER TABLE sessions ADD COLUMN stageSettled INTEGER NOT NULL DEFAULT 0")
+        }
+        database.execSQL("UPDATE sessions SET stageSettled = 1")
     }
 }

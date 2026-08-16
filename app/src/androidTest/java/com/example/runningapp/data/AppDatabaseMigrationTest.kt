@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -738,6 +739,33 @@ class AppDatabaseMigrationTest {
         assertNull(run.ranUnderWorkoutId)
         assertEquals(emptyList<TestRunProjection>(), lastTest)
         // The Run itself is untouched: the migration adds room and nothing else.
+        assertEquals(2259L, run.durationSeconds)
+        assertEquals(9000L, run.endTime)
+    }
+
+    @Test
+    fun migrate30To31_leavesEveryRunAlreadySettled_soTheLaunchPassJumpsNobody() {
+        val rawDb = openLegacyDatabase()
+        createTrackPointsTable(rawDb)
+        insertLegacySession(rawDb, id = 1)
+        rawDb.execSQL("UPDATE sessions SET endTime = 9000, durationSeconds = 2259 WHERE id = 1")
+        rawDb.version = 12
+        rawDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(*appDatabaseMigrations { HrProfile(190) })
+            .build()
+        val run = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
+        val owing = runBlockingGet { migratedDb.sessionDao().getSessionIdsOwingStageSettlement() }
+        migratedDb.close()
+
+        // Settled rather than owing, which is the opposite of what the record book's mark does on
+        // an upgrade and deliberately so (#297): the settlement *grants a Stage*, and a launch that
+        // put every Run ever recorded to the rule is exactly the pass over history the rule refuses
+        // to make (ADR 0016). The pass must find nothing here.
+        assertTrue(run.stageSettled)
+        assertEquals(emptyList<Long>(), owing)
+        // The Run itself is untouched: the migration adds room and closes the question, nothing else.
         assertEquals(2259L, run.durationSeconds)
         assertEquals(9000L, run.endTime)
     }

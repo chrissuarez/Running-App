@@ -2819,6 +2819,282 @@ class SessionRepositoryTest {
         assertFalse(repo.getAiTrainingContext("desk_test_stage").planComplete)
     }
 
+    // --- When the Stage is settled: once the runner's word is in (#297) ------------------------
+    //
+    // The rule above is asked of a Run; these are about the moment it is asked. The Walk mark is
+    // the runner's own word and it arrives on the finish sheet, seconds after STOP — so a
+    // judgement made at STOP is made before the one fact that can withdraw the Run from it.
+
+    /**
+     * A finished Run of the Stage under test, in the database and owing a settlement — which is
+     * what every Run reaches the finish owing.
+     */
+    private suspend fun aRunOwingSettlement(
+        id: Long,
+        fiveKSeconds: Int,
+        statedDao: StatedBestEffortDao,
+        isWalk: Boolean = false,
+        workoutId: String? = null,
+    ): RunnerSession {
+        val run = aRunTold(id = id, fiveKSeconds = fiveKSeconds, statedDao = statedDao, isWalk = isWalk)
+            .copy(ranUnderStageId = "sub_30_bridge", ranUnderWorkoutId = workoutId, stageSettled = false)
+        whenever(mockDao.getSessionById(id)).thenReturn(run)
+        return run
+    }
+
+    private fun repositoryForSettling(statedDao: StatedBestEffortDao, coach: AiCoachClient? = null) =
+        SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            statedBestEffortDao = statedDao,
+            aiCoachClient = coach,
+        )
+
+    @Test
+    fun `a Run whose finish sheet is still open is not settled at the finish`() = runTest {
+        // The sheet carrying the Walk switch is on screen from the moment STOP is pressed. Judging
+        // the Run before it resolves is judging it before the runner has said what it was (#297).
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+
+        repo.finishSheetOpened(7L)
+        repo.settleStageForRun(7L)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        // And the debt stands, so the sheet — or the next launch — still has it to pay.
+        verify(mockDao, never()).setStageSettled(any())
+    }
+
+    @Test
+    fun `the Walk marked on the finish sheet reaches the rule`() = runTest {
+        // The defect this ticket is about (#297): the Run cleared the bar as it ended, and the
+        // runner then said it was a walk. A Walk holds no Best Effort, so it graduates nothing —
+        // and that promise is only kept if the mark is in before the rule is asked.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        assertFalse("the row at STOP carries no mark", asItEnded.isWalk)
+
+        repo.finishSheetOpened(7L)
+        // The finish is reached first and finds the sheet open, exactly as it does on the phone.
+        repo.settleStageForRun(7L)
+        // The runner ticks the switch, and the sheet closes behind it.
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(isWalk = true))
+        repo.finishSheetClosed(7L)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
+        // Asked and answered: the question is closed either way.
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `closing the finish sheet on a Run that cleared the bar graduates the Stage`() = runTest {
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+
+        repo.finishSheetOpened(7L)
+        repo.settleStageForRun(7L)
+        repo.finishSheetClosed(7L)
+
+        verify(mockSettingsRepo).advanceStageAndClearPrescriptions(eq("sub_25_peak"), any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `a sheet dismissed before the Run has finished waits for it`() = runTest {
+        // Dismissing writes nothing, so nothing else on this path makes the wait every other door
+        // off the sheet makes. Without it a runner who swipes the sheet away inside the second after
+        // STOP finds a Run with no end time, and the Stage holds until the next launch (#297).
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        val run = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        // Still being written when the sheet goes, finished a step later.
+        whenever(mockDao.getSessionById(7L)).thenReturn(run.copy(endTime = 0L), run)
+
+        repo.finishSheetOpened(7L)
+        repo.finishSheetClosed(7L, finalizeWaitStepMillis = 1L)
+
+        verify(mockSettingsRepo).advanceStageAndClearPrescriptions(eq("sub_25_peak"), any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `a Run nobody was shown a finish sheet for is settled at the finish`() = runTest {
+        // A STOP from the notification shows no sheet at all, so there is no word still coming and
+        // nothing to wait for. Waiting anyway would hold the graduation until the next launch.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+
+        repo.settleStageForRun(7L)
+
+        verify(mockSettingsRepo).advanceStageAndClearPrescriptions(eq("sub_25_peak"), any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `a Stage already settled is not settled again`() = runTest {
+        // The mark is what stops the launch pass re-judging a Run every time the app opens — and a
+        // graduation cannot be taken back, so a second grant is not a harmless repeat.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        val run = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.getSessionById(7L)).thenReturn(run.copy(stageSettled = true))
+
+        repo.settleStageForRun(7L)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockDao, never()).setStageSettled(any())
+    }
+
+    @Test
+    fun `the Run Type the coach is gated on is read back off the Workout the Run followed`() = runTest {
+        // The finish hands it over; a launch paying the debt days later has only the row. Both must
+        // reach the same answer, or a Long Run settled at launch would slip past the gate (#176).
+        val statedDao: StatedBestEffortDao = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = repositoryForSettling(statedDao, mockCoach)
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        // Stage 2's Long run, and a Run well short of the bar so the rule declines and the coach
+        // is the only thing left to reach.
+        aRunOwingSettlement(id = 7, fiveKSeconds = 2_400, statedDao = statedDao, workoutId = "w2_s1")
+
+        repo.settleStageForRun(7L)
+
+        verify(mockCoach).evaluateProgress(any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `a Run that followed no Workout asks the coach nothing`() = runTest {
+        val statedDao: StatedBestEffortDao = mock()
+        val mockCoach: AiCoachClient = mock()
+        val repo = repositoryForSettling(statedDao, mockCoach)
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        aRunOwingSettlement(id = 7, fiveKSeconds = 2_400, statedDao = statedDao, workoutId = null)
+
+        repo.settleStageForRun(7L)
+
+        verify(mockCoach, never()).evaluateProgress(any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `the launch pass settles the Run a lost finish left owing`() = runTest {
+        // The process dying between STOP and the sheet takes the sheet with it, so nothing is left
+        // in this process to close the question. The next launch is what closes it (#297).
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.getSessionIdsOwingStageSettlement()).thenReturn(listOf(7L))
+
+        repo.settleStagesMissedAtTheFinish()
+
+        verify(mockSettingsRepo).advanceStageAndClearPrescriptions(eq("sub_25_peak"), any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `a Run recorded under a Stage the runner has left settles without granting`() = runTest {
+        // The debt is still paid, so the pass does not carry it forever — but the Run's evidence
+        // belongs to the Stage it was run under, and that Stage is behind the runner now (#234).
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_25_peak"))
+        )
+        stubTheCoachsReads()
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+
+        repo.settleStageForRun(7L)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `a Run still being recorded is not settled, and keeps the debt`() = runTest {
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        stubTheCoachsReads()
+        val run = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.getSessionById(7L)).thenReturn(run.copy(endTime = 0L))
+
+        repo.settleStageForRun(7L)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockDao, never()).setStageSettled(any())
+    }
+
+    @Test
+    fun `a claim stated before the Run is settled does not jump the settlement`() = runTest {
+        // A stated Best Effort re-asks the rule (ADR 0016) — but not before the Run has been put to
+        // the Plan at all. The settlement waiting on the finish sheet reads every claim the Run
+        // holds when it comes, so asking here first would grant before the runner had said whether
+        // the Run was a walk (#297).
+        val run = aTreadmillRun(id = 42, seconds = 1_900)
+            .copy(distanceKm = 5.0, ranUnderStageId = "sub_30_bridge", stageSettled = false)
+        whenever(mockDao.getSessionById(42L)).thenReturn(run)
+        val claim = StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_5K, seconds = 1_700)
+        val statedDao: StatedBestEffortDao = mock()
+        whenever(statedDao.getForSession(42L)).thenReturn(emptyList(), listOf(claim))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
+        )
+        val repo = SessionRepository(
+            sessionDao = mockDao,
+            settingsRepository = mockSettingsRepo,
+            achievementDao = mockAchievementDao,
+            statedBestEffortDao = statedDao,
+        )
+
+        repo.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_700)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+    }
+
     // --- The card is told when a Test is due (#292) --------------------------------------------
 
     /** The Test's last outing, [daysAgo] days back — read the same way the runner counts days. */
@@ -3211,8 +3487,11 @@ class SessionRepositoryTest {
         // A treadmill 5K is read off the console once the Run has ended, so a rule that only ever
         // looked at the finish would accept a measured 5K and silently refuse a stated one — the
         // app disagreeing with ADR 0015 (#290).
+        //
+        // Its Stage is settled, which is what "after the Run" means: the claim is being typed on the
+        // Run's own page, long after the finish sheet closed and the Run was put to the Plan (#297).
         val run = aTreadmillRun(id = 42, seconds = 1_900)
-            .copy(distanceKm = 5.0, ranUnderStageId = "sub_30_bridge")
+            .copy(distanceKm = 5.0, ranUnderStageId = "sub_30_bridge", stageSettled = true)
         whenever(mockDao.getSessionById(42L)).thenReturn(run)
         val claim = StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_5K, seconds = 1_700)
         val statedDao: StatedBestEffortDao = mock()
@@ -3239,8 +3518,10 @@ class SessionRepositoryTest {
         // The Run already holds a qualifying 5K — stated before any of this existed, and so never
         // asked of the rule. An unrelated claim typed today must not graduate the Stage off it:
         // that is the pass over history the rule refuses to make (#290).
+        // Settled, so the refusal below is the rule declining an unrelated claim and not the
+        // settlement this Run is still owed declining to be jumped (#297).
         val run = aTreadmillRun(id = 42, seconds = 1_900)
-            .copy(distanceKm = 5.0, ranUnderStageId = "sub_30_bridge")
+            .copy(distanceKm = 5.0, ranUnderStageId = "sub_30_bridge", stageSettled = true)
         whenever(mockDao.getSessionById(42L)).thenReturn(run)
         val oldFiveK = StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_5K, seconds = 1_700)
         val newMile = StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_MILE, seconds = 500)
