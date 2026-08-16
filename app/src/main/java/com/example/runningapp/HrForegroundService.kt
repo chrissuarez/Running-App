@@ -897,8 +897,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // Nothing about the Stage, the Run Type, testing mode or AI sharing is decided here:
                 // each is asked once, inside the rule or inside the coach's own path, and asking
                 // again here would be the same rule in two places free to drift apart.
+                // Guarded like the moving-time and record-book calls above it, and for the same
+                // reason: this runs as a root child of [finalizationScope], whose SupervisorJob
+                // keeps a failure from the siblings but does not handle it, so a database error
+                // here would reach the default handler and take the app down. Logged and left —
+                // the Run keeps its debt, and the launch pass is what pays it.
                 Log.d("AiCoach", "Settling the stage after session finalization for run: $runRowId")
-                sessionRepository.settleStageForRun(runRowId)
+                try {
+                    sessionRepository.settleStageForRun(runRowId)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not settle the Stage for run $runRowId; it keeps the debt", e)
+                }
             }
         }
     }
