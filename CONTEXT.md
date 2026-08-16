@@ -9,7 +9,11 @@ words the code and the issues should use for that.
 **Run**:
 One recorded outing, from the moment the runner presses START until it is
 stopped or auto-stops. A live thing before it is a saved one: it holds the
-clock, the Phase it is in, and everything counted so far.
+clock, the Phase it is in, and everything counted so far. A Run can also end
+without being stopped — the system taking the service out from under it while it
+was still recording — and that is not a way for a Run to disappear: it is
+finished there and then from the seconds it had already written down, and the
+runner is told it happened (#309).
 _Avoid_: session, activity
 
 **Plan**:

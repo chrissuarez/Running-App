@@ -262,6 +262,66 @@ class SessionRepositoryRescueTest {
         assertEquals(0, backupsRefreshed)
     }
 
+    // ------------------------------------------------------------------------------------------
+    // The Run a service teardown left recording (#309). The launch pass above cannot have it: it
+    // began after this process did, so it is outside the pass's query for as long as the process
+    // lives — which in #309 was hours.
+    // ------------------------------------------------------------------------------------------
+
+    @Test
+    fun `the Run a teardown was holding is finished without waiting for a launch`() = runTest {
+        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 22))
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+
+        assertTrue(repository.rescueRunLostToTeardown(67L))
+
+        val saved = argumentCaptor<RunnerSession>()
+        verify(sessionDao).updateSession(saved.capture())
+        assertEquals(22, saved.firstValue.durationSeconds)
+        // Named rather than searched for: no list is asked for, so nothing else in the database can
+        // be caught up in a teardown's rescue.
+        verify(sessionDao, never()).getInterruptedSessionIds(any())
+        assertEquals(1, backupsRefreshed)
+    }
+
+    @Test
+    fun `a Run that had already been finished is left exactly as it was finished`() = runTest {
+        // The race the teardown opens and the launch pass never could: a stop's finalize landing
+        // between the teardown and this rescue. The Run's own totals are the ones it banked as it
+        // ran; totals rebuilt from the record are the second-best answer, and must not overwrite
+        // the best one.
+        whenever(sessionDao.getSessionById(67L))
+            .thenReturn(interruptedRun(67L).copy(endTime = startedAt + 22_000, durationSeconds = 22))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 22))
+
+        assertEquals(false, repository.rescueRunLostToTeardown(67L))
+
+        verify(sessionDao, never()).updateSession(any())
+        assertEquals(0, backupsRefreshed)
+    }
+
+    @Test
+    fun `a teardown that lost a Run with nothing recorded costs nothing`() = runTest {
+        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(emptyList())
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+
+        assertEquals(false, repository.rescueRunLostToTeardown(67L))
+
+        verify(sessionDao, never()).updateSession(any())
+        assertEquals(0, backupsRefreshed)
+    }
+
+    @Test
+    fun `a Run that cannot be rebuilt at the teardown is left for the next launch`() = runTest {
+        whenever(sessionDao.getSessionById(67L)).thenThrow(IllegalStateException("corrupt page"))
+
+        assertEquals(false, repository.rescueRunLostToTeardown(67L))
+
+        verify(sessionDao, never()).updateSession(any())
+    }
+
     @Test
     fun `the cut-off is the caller's, so a run of this process is never in the list`() = runTest {
         // The pass only ever asks about Runs older than the process asking, which is what keeps a

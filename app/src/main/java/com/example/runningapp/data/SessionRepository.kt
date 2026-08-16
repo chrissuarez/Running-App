@@ -894,7 +894,10 @@ class SessionRepository(
      * timing.
      *
      * Runs one Run at a time and keeps going past a failure: a Run that cannot be rebuilt should
-     * cost the others nothing, and it stays interrupted for the next launch to try again.
+     * cost the others nothing, and it stays interrupted for the next launch to try again. What one
+     * Run's rescue is, is [finishFromRecord] — the same rescue a teardown asks for by name
+     * ([rescueRunLostToTeardown]), so a Run put back at the moment it was lost and a Run put back a
+     * launch later come out identical.
      *
      * Holds [statedProfile] for the whole pass, because this is the one other writer of banded zone
      * seconds. A re-tally only ever visits finished Runs, so a rescue landing beside one would slip
@@ -906,76 +909,114 @@ class SessionRepository(
      * profile the re-tally has finished storing.
      */
     suspend fun rescueInterruptedRuns(startedBeforeMillis: Long) = statedProfile.withLock {
-        val samples = sampleDao ?: return@withLock
         val settings = settingsRepository ?: return@withLock
         val interruptedIds = sessionDao.getInterruptedSessionIds(startedBeforeMillis)
         if (interruptedIds.isEmpty()) return@withLock
 
-        // What history is banded against, and only for a Run carrying no Reserve of its own (#228).
-        // A Run that carries one is rebuilt on *that*: it is the Reserve the Run was recorded and
-        // coached under, which is the one its seconds mean anything against.
-        //
-        // Neither global number would do. The one in force is wrong for a Run started before a
-        // future-only Max HR correction, and the one history is banded against is wrong for every
-        // Run started after it — and a rescue is by definition a Run that ran some time ago.
-        val current = settings.userSettingsFlow.first()
-        val historyProfile = current.historyHrProfile
-        var rescued = 0
-        interruptedIds.forEach { sessionId ->
-            try {
-                val session = sessionDao.getSessionById(sessionId) ?: return@forEach
-                // Read once and gated here rather than through [getTrackPointsForMap], because the
-                // rebuild wants both: every fix says when the Run was recording, the accepted ones
-                // say where it went. See [finishedFromRecord].
-                val track = trackPointDao?.getTrackPointsForSessionOnce(sessionId).orEmpty()
-                val finished = session.finishedFromRecord(
-                    samples = samples.getSamplesForSessionOnce(sessionId),
-                    track = track,
-                    mappedTrack = track.acceptedForMap(),
-                    profile = session.bandedOnHrProfile() ?: historyProfile,
-                    bankedIntervals = intervalStatDao
-                        ?.getIntervalStatsForSession(sessionId)
-                        .orEmpty()
-                        .isNotEmpty(),
-                ) ?: return@forEach
-                sessionDao.updateSession(finished)
-                rescued++
-                Log.w(
-                    "InterruptedRun",
-                    "Rescued run $sessionId: duration=${finished.durationSeconds}s " +
-                        "distance=${"%.2f".format(finished.distanceKm)}km avgBpm=${finished.avgBpm}"
-                )
-            } catch (e: Exception) {
-                Log.w("InterruptedRun", "Could not rescue run $sessionId; leaving it for next launch", e)
-                return@forEach
-            }
-            try {
-                // After the row is finished, not before: this measures the same stored track and
-                // rewrites avgPaceMinPerKm over moving time, which is the pace the app quotes (#163).
-                computeMovingTime(sessionId)
-            } catch (e: Exception) {
-                // Its own attempt, because the row is already finished by this point and will never
-                // be offered to this pass again. Failing here leaves movingTimeSeconds null, which
-                // is the state [backfillMovingTime] picks up at the next launch — so the Run is in
-                // history with everything else it needs, and the one number it is missing is
-                // already somebody's job.
-                Log.w("InterruptedRun", "Rescued run $sessionId but could not measure its moving time", e)
-            }
-            try {
-                // A rescued Run has just finished, however long ago it was run, so it is scored like
-                // any other (#49). Its own attempt for the same reason as the moving time above: the
-                // row is already in history, and a book that cannot be written must not undo that.
-                // Marked as scored by the same call, and only once the scoring has returned, so a
-                // failure here leaves the Run owing one for the launch pass to pay (#210).
-                scoreAndMarkRecords(sessionId)
-            } catch (e: Exception) {
-                Log.w("InterruptedRun", "Rescued run $sessionId but could not score its records", e)
-            }
-        }
+        val historyProfile = settings.userSettingsFlow.first().historyHrProfile
+        val rescued = interruptedIds.count { finishFromRecord(it, historyProfile) }
 
         // Only once, and only if something moved: the snapshot is a copy of the whole database, and
         // a launch that rescued nothing should not pay for one.
         if (rescued > 0) refreshHistoryBackup?.invoke()
+    }
+
+    /**
+     * Finishes the one Run a service teardown left recording, at the moment it was left (#309).
+     *
+     * The same rescue as the launch pass above, asked for a Run by name. The pass exists for a Run
+     * whose *process* died, and it is safe because a process cannot be recording a Run older than
+     * itself — but a service can be taken down inside a process that goes on living, and then the
+     * pass's own rule keeps it away: the Run began after this process did, so it is outside the
+     * query, and the row sits at `endTime = 0` for as long as the process lasts. That is what
+     * happened in #309 — the Run was still unfinished two hours later with the app used since.
+     *
+     * What makes this safe is not a clock but the caller: the only caller is the teardown of the
+     * service that was recording this Run ([com.example.runningapp.run.runLostToTeardown]), so
+     * there is nothing left to be recording it. Nothing here may be called about a live Run, and
+     * [finishFromRecord] will not touch a Run that already has an end time either way.
+     *
+     * Returns whether the Run was put back, so the caller can say so in the Run Journal — a
+     * `run-finalized` from here is the answer to a `service-destroyed` that names a live Run.
+     */
+    suspend fun rescueRunLostToTeardown(sessionId: Long): Boolean = statedProfile.withLock {
+        val settings = settingsRepository ?: return@withLock false
+        val historyProfile = settings.userSettingsFlow.first().historyHrProfile
+        val rescued = finishFromRecord(sessionId, historyProfile)
+        if (rescued) refreshHistoryBackup?.invoke()
+        rescued
+    }
+
+    /**
+     * One Run put back from what it wrote down, and everything that hangs off a Run being finished.
+     *
+     * Never throws: a Run that cannot be rebuilt costs the caller nothing and stays interrupted for
+     * the next launch to try again — which for the pass means the Runs after it in the list are
+     * still rescued, and for a teardown means the loss is no worse than it already was.
+     *
+     * @param historyProfile what to band against where the Run carries no Reserve of its own (#228).
+     * A Run that carries one is rebuilt on *that*: it is the Reserve the Run was recorded and
+     * coached under, which is the one its seconds mean anything against. Neither global number would
+     * do — the one in force is wrong for a Run started before a future-only Max HR correction, and
+     * the one history is banded against is wrong for every Run started after it.
+     * @return whether the Run's totals reached its row.
+     */
+    private suspend fun finishFromRecord(sessionId: Long, historyProfile: HrProfile): Boolean {
+        val samples = sampleDao ?: return false
+        try {
+            val session = sessionDao.getSessionById(sessionId) ?: return false
+            // A Run that already has an end time is a Run somebody finished, and totals derived
+            // from the record are not an improvement on the ones the Run itself banked. The launch
+            // pass only ever asks about Runs with no end time; the teardown asks about the Run it
+            // was holding, and a finalize that beat it there is exactly the case this declines.
+            if (session.endTime != 0L) return false
+            // Read once and gated here rather than through [getTrackPointsForMap], because the
+            // rebuild wants both: every fix says when the Run was recording, the accepted ones
+            // say where it went. See [finishedFromRecord].
+            val track = trackPointDao?.getTrackPointsForSessionOnce(sessionId).orEmpty()
+            val finished = session.finishedFromRecord(
+                samples = samples.getSamplesForSessionOnce(sessionId),
+                track = track,
+                mappedTrack = track.acceptedForMap(),
+                profile = session.bandedOnHrProfile() ?: historyProfile,
+                bankedIntervals = intervalStatDao
+                    ?.getIntervalStatsForSession(sessionId)
+                    .orEmpty()
+                    .isNotEmpty(),
+            ) ?: return false
+            sessionDao.updateSession(finished)
+            Log.w(
+                "InterruptedRun",
+                "Rescued run $sessionId: duration=${finished.durationSeconds}s " +
+                    "distance=${"%.2f".format(finished.distanceKm)}km avgBpm=${finished.avgBpm}"
+            )
+        } catch (e: Exception) {
+            Log.w("InterruptedRun", "Could not rescue run $sessionId; leaving it for next launch", e)
+            return false
+        }
+        try {
+            // After the row is finished, not before: this measures the same stored track and
+            // rewrites avgPaceMinPerKm over moving time, which is the pace the app quotes (#163).
+            computeMovingTime(sessionId)
+        } catch (e: Exception) {
+            // Its own attempt, because the row is already finished by this point and will never
+            // be offered to this pass again. Failing here leaves movingTimeSeconds null, which
+            // is the state [backfillMovingTime] picks up at the next launch — so the Run is in
+            // history with everything else it needs, and the one number it is missing is
+            // already somebody's job.
+            Log.w("InterruptedRun", "Rescued run $sessionId but could not measure its moving time", e)
+        }
+        try {
+            // A rescued Run has just finished, however long ago it was run, so it is scored like
+            // any other (#49). Its own attempt for the same reason as the moving time above: the
+            // row is already in history, and a book that cannot be written must not undo that.
+            // Marked as scored by the same call, and only once the scoring has returned, so a
+            // failure here leaves the Run owing one for the launch pass to pay (#210).
+            scoreAndMarkRecords(sessionId)
+        } catch (e: Exception) {
+            Log.w("InterruptedRun", "Rescued run $sessionId but could not score its records", e)
+        }
+        return true
     }
 
     /**

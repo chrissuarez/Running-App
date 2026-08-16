@@ -61,6 +61,7 @@ import com.example.runningapp.run.AcquisitionState
 import com.example.runningapp.run.CueTag
 import com.example.runningapp.run.SCAN_UNAVAILABLE
 import com.example.runningapp.run.ScannedStrap
+import com.example.runningapp.run.runLostToTeardown
 import java.util.concurrent.ConcurrentHashMap
 import com.example.runningapp.run.IntervalKind
 import com.example.runningapp.run.Run
@@ -92,6 +93,18 @@ import com.example.runningapp.foreground.PromotionHost
 // Exactly the Run's lifecycle, under the screen's older names — [RunLifecycle.asSessionStatus] is
 // the only thing that writes it, so there is no value here a Run cannot be in.
 enum class SessionStatus { IDLE, RUNNING, PAUSED, STOPPING, STOPPED }
+
+/**
+ * Whether the Run is still taking down seconds.
+ *
+ * The one reading of "recording", kept beside the states it reads, because two places draw
+ * conclusions from it and they must not be allowed to differ: the Run Journal, which calls the
+ * crossing out of it a stop, and [com.example.runningapp.run.runLostToTeardown], which calls a
+ * teardown that arrives while it is still true a Run lost. A second copy of this rule is how the
+ * journal would come to say a Run was stopped that the teardown then rescued as unstopped.
+ */
+val SessionStatus.isRecording: Boolean
+    get() = this == SessionStatus.RUNNING || this == SessionStatus.PAUSED
 enum class SessionPhase { WARM_UP, MAIN, COOL_DOWN }
 enum class StructuredWorkoutPhase { RUN, WALK }
 
@@ -415,6 +428,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     companion object {
         const val CHANNEL_ID = "HrServiceChannel"
         const val NOTIFICATION_ID = 1
+
+        /**
+         * Where the app says a Run stopped recording without being stopped (#309).
+         *
+         * Its own channel rather than the Promotion's, for both halves of what a channel is: the
+         * runner can silence a live Run's ongoing notification without silencing the one thing the
+         * app has to interrupt them for, and this one is at high importance so it makes a sound —
+         * the Promotion's, which is posted and reposted every few seconds, must not.
+         */
+        const val LOST_RUN_CHANNEL_ID = "RunStoppedRecordingChannel"
+
+        /** Not [NOTIFICATION_ID]: that one goes away with the service this is announcing. */
+        const val LOST_RUN_NOTIFICATION_ID = 2
         const val ACTION_START_FOREGROUND = "ACTION_START_FOREGROUND"
         // The explicit act of beginning a run (#110). Distinct from ACTION_START_FOREGROUND,
         // which now only acquires the strap as a sensor: connecting is no longer starting.
@@ -1597,6 +1623,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             )
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(serviceChannel)
+            // Made here, at onCreate, rather than where it is used: the one place it is used is a
+            // teardown, on a process that may be reclaimed in the next instant, and a notification
+            // posted to a channel that does not exist yet is a notification nobody sees (#309).
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    LOST_RUN_CHANNEL_ID,
+                    "Run stopped recording",
+                    NotificationManager.IMPORTANCE_HIGH
+                )
+            )
         }
     }
 
@@ -2064,6 +2100,98 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         return true
     }
 
+    /**
+     * What is done about a Run this service is being torn down out from under (#309).
+     *
+     * Two things, in the order they can be lost. The runner is told first, because that is a call
+     * on main that lands now, where the finish below is a coroutine on a process Android may be
+     * about to reclaim — and of the two, being told is the one nothing else will do later. The Run
+     * is then finished from the seconds it already wrote, which is the same rescue the launch pass
+     * makes ([SessionRepository.rescueRunLostToTeardown]), taken now rather than at some cold start
+     * that may be days away: this teardown can happen inside a process that goes on living, and the
+     * pass will not look at a Run younger than the process it is running in. Row 9133 sat
+     * unfinished for two hours with the app used throughout, which is the whole of the ticket's
+     * second complaint.
+     *
+     * On [finalizationScope] and under [NonCancellable] for the same reason the Run's own finalize
+     * is: `serviceScope` is cancelled a moment from now, and a launch not yet dequeued dies before
+     * its body ever runs.
+     *
+     * The Run's own tail writes are waited for first. A rescue reads the samples and fixes back out
+     * of the database to rebuild the totals, so anything still queued on [recorderWriteScope] would
+     * be a second the Run recorded and the rescue did not count — the same join, for the same
+     * reason, as the one the finalize takes before it stamps the row.
+     */
+    private fun endRunLostToTeardown(runRowId: Long) {
+        Log.w(TAG, "Service destroyed with run $runRowId still recording; finishing it from its record")
+        notifyRunLostToTeardown()
+        finalizationScope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                try {
+                    recorderWriteScope.coroutineContext.job.children.toList().joinAll()
+                    if (sessionRepository.rescueRunLostToTeardown(runRowId)) {
+                        // The answer to the `service-destroyed` line above, which named this Run as
+                        // still recording: its totals reached its row after all. A reader who finds
+                        // no such line knows the Run is still owed one, and that the launch pass is
+                        // who owes it (#310).
+                        runJournal.write(
+                            RunJournalEvent.RUN_FINALIZED,
+                            runRowId,
+                            "rescued after the service was destroyed"
+                        )
+                    }
+                } catch (e: Exception) {
+                    // The Run keeps its `endTime = 0` and the launch pass has it. Nothing here is
+                    // worth taking a dying process down for.
+                    Log.w(TAG, "Could not finish run $runRowId after the teardown", e)
+                }
+            }
+        }
+    }
+
+    /**
+     * Tell the runner their Run stopped recording, out loud enough to be noticed (#309).
+     *
+     * The Run in #309 died mid-stride and the phone said nothing: no notification, no sound, and
+     * the Promotion's own notification going away with the service is a thing disappearing rather
+     * than a thing being said. It was caught by a glance at the screen 80 seconds later, and the
+     * hour of running that followed was only saved because the runner happened to start a fresh Run.
+     *
+     * Its own channel at high importance, so it makes a sound and shows itself, and its own id so
+     * it survives the Promotion's notification being taken down alongside the service. Dismissable
+     * — it is news, not a control.
+     *
+     * It says what was kept, because the honest answer is "most of it": the seconds up to the cut
+     * are in the database and [endRunLostToTeardown] is putting them back as this is posted. A
+     * runner who is told only that something broke would reasonably assume the Run was lost.
+     */
+    private fun notifyRunLostToTeardown() {
+        val activityIntent = Intent(this, MainActivity::class.java)
+        val activityPendingIntent = PendingIntent.getActivity(
+            this, 4, activityIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val text = "The run wasn't stopped from the app — everything recorded up to that moment " +
+            "has been saved to your history. Tap to check it."
+        val notification = NotificationCompat.Builder(this, LOST_RUN_CHANNEL_ID)
+            .setContentTitle("Your run stopped recording")
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setSmallIcon(android.R.drawable.stat_notify_error)
+            .setCategory(NotificationCompat.CATEGORY_ERROR)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(activityPendingIntent)
+            .build()
+        try {
+            getSystemService(NotificationManager::class.java).notify(LOST_RUN_NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            // Nothing left to tell them with, and a teardown is not the place to make a fuss about
+            // it. The Run is still being put back either way.
+            Log.w(TAG, "Could not tell the runner their run stopped recording", e)
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "onDestroy called - Clean Exit")
@@ -2073,13 +2201,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // it still held the Promotion — and not a settled account of how it ended: the teardown
         // below has not run yet, and the session inbox may still be mid-message. A destroy with a
         // live Run and no demote above it is a Run the system took (#310).
+        val stateAtTeardown = _hrState.value
         journal(
             RunJournalEvent.SERVICE_DESTROYED,
-            "status=${_hrState.value.sessionStatus} promoted=${promotion.isPromoted} bound=$isActivityBound"
+            "status=${stateAtTeardown.sessionStatus} promoted=${promotion.isPromoted} " +
+                "bound=$isActivityBound"
         )
         // Written before any of the teardown below, and on disk by the time that write returns:
         // service-destroyed is an event the journal waits out for itself, because a destroy is
         // often followed straight away by the process being reclaimed (#310).
+
+        // Read from the same snapshot the line above was written from, so what the journal says
+        // happened and what is done about it can never be two different answers (#309).
+        runLostToTeardown(stateAtTeardown.sessionStatus, stateAtTeardown.activeDbSessionId)
+            ?.let { endRunLostToTeardown(it) }
 
         // 0. Anything that opens a GATT from here on closes it itself; the sweep below is the
         // last one there will be. Set before the join, so a connect that outlasts it sees this.
