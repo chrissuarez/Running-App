@@ -2842,13 +2842,26 @@ class SessionRepositoryTest {
         return run
     }
 
-    private fun repositoryForSettling(statedDao: StatedBestEffortDao, coach: AiCoachClient? = null) =
-        SessionRepository(
+    /**
+     * A repository settling Runs for a runner in [activeStageId], with the coach's own reads stubbed
+     * — the arrange every test in this section makes.
+     */
+    private suspend fun repositoryForSettling(
+        statedDao: StatedBestEffortDao,
+        coach: AiCoachClient? = null,
+        activeStageId: String = "sub_30_bridge",
+    ): SessionRepository {
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
+            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = activeStageId))
+        )
+        stubTheCoachsReads()
+        return SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
             statedBestEffortDao = statedDao,
             aiCoachClient = coach,
         )
+    }
 
     @Test
     fun `a Run whose finish sheet is still open is not settled at the finish`() = runTest {
@@ -2856,10 +2869,6 @@ class SessionRepositoryTest {
         // the Run before it resolves is judging it before the runner has said what it was (#297).
         val statedDao: StatedBestEffortDao = mock()
         val repo = repositoryForSettling(statedDao)
-        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
-            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
-        )
-        stubTheCoachsReads()
         aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
 
         repo.finishSheetOpened(7L)
@@ -2877,10 +2886,6 @@ class SessionRepositoryTest {
         // and that promise is only kept if the mark is in before the rule is asked.
         val statedDao: StatedBestEffortDao = mock()
         val repo = repositoryForSettling(statedDao)
-        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
-            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
-        )
-        stubTheCoachsReads()
         val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
         assertFalse("the row at STOP carries no mark", asItEnded.isWalk)
 
@@ -2901,10 +2906,6 @@ class SessionRepositoryTest {
     fun `closing the finish sheet on a Run that cleared the bar graduates the Stage`() = runTest {
         val statedDao: StatedBestEffortDao = mock()
         val repo = repositoryForSettling(statedDao)
-        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
-            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
-        )
-        stubTheCoachsReads()
         aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
 
         repo.finishSheetOpened(7L)
@@ -2922,10 +2923,6 @@ class SessionRepositoryTest {
         // STOP finds a Run with no end time, and the Stage holds until the next launch (#297).
         val statedDao: StatedBestEffortDao = mock()
         val repo = repositoryForSettling(statedDao)
-        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
-            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
-        )
-        stubTheCoachsReads()
         val run = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
         // Still being written when the sheet goes, finished a step later.
         whenever(mockDao.getSessionById(7L)).thenReturn(run.copy(endTime = 0L), run)
@@ -2938,15 +2935,33 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a distance stated into the sheet graduates nothing, however absurd`() = runTest {
+        // The wait lets the sheet's stated distance into the judgement of its own Run, which #231
+        // froze the row to keep out. It is safe, but not for the reason it looks: a stated distance
+        // is a real distance and does place at LONGEST_DISTANCE. What bars it from a graduation is
+        // BestEffortRequirement refusing to be written at anything but a fixed distance, so the two
+        // records a distance can move are the two no requirement may be written in. Pinned here,
+        // because a requirement written in a distance or a duration would silently undo it.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        // Forty kilometres in 1900 seconds, told to a Run that has claimed no effort at any distance.
+        whenever(statedDao.getForSession(7L)).thenReturn(emptyList())
+        val absurd = aTreadmillRun(id = 7, seconds = 1_900)
+            .copy(distanceKm = 40.0, ranUnderStageId = "sub_30_bridge", stageSettled = false)
+        whenever(mockDao.getSessionById(7L)).thenReturn(absurd)
+
+        repo.settleStageForRun(7L)
+
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
     fun `a Run nobody was shown a finish sheet for is settled at the finish`() = runTest {
         // A STOP from the notification shows no sheet at all, so there is no word still coming and
         // nothing to wait for. Waiting anyway would hold the graduation until the next launch.
         val statedDao: StatedBestEffortDao = mock()
         val repo = repositoryForSettling(statedDao)
-        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
-            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
-        )
-        stubTheCoachsReads()
         aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
 
         repo.settleStageForRun(7L)
@@ -2961,10 +2976,6 @@ class SessionRepositoryTest {
         // graduation cannot be taken back, so a second grant is not a harmless repeat.
         val statedDao: StatedBestEffortDao = mock()
         val repo = repositoryForSettling(statedDao)
-        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
-            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
-        )
-        stubTheCoachsReads()
         val run = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
         whenever(mockDao.getSessionById(7L)).thenReturn(run.copy(stageSettled = true))
 
@@ -2981,10 +2992,6 @@ class SessionRepositoryTest {
         val statedDao: StatedBestEffortDao = mock()
         val mockCoach: AiCoachClient = mock()
         val repo = repositoryForSettling(statedDao, mockCoach)
-        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
-            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
-        )
-        stubTheCoachsReads()
         // Stage 2's Long run, and a Run well short of the bar so the rule declines and the coach
         // is the only thing left to reach.
         aRunOwingSettlement(id = 7, fiveKSeconds = 2_400, statedDao = statedDao, workoutId = "w2_s1")
@@ -3000,10 +3007,6 @@ class SessionRepositoryTest {
         val statedDao: StatedBestEffortDao = mock()
         val mockCoach: AiCoachClient = mock()
         val repo = repositoryForSettling(statedDao, mockCoach)
-        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
-            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
-        )
-        stubTheCoachsReads()
         aRunOwingSettlement(id = 7, fiveKSeconds = 2_400, statedDao = statedDao, workoutId = null)
 
         repo.settleStageForRun(7L)
@@ -3018,10 +3021,6 @@ class SessionRepositoryTest {
         // in this process to close the question. The next launch is what closes it (#297).
         val statedDao: StatedBestEffortDao = mock()
         val repo = repositoryForSettling(statedDao)
-        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
-            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
-        )
-        stubTheCoachsReads()
         aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
         whenever(mockDao.getSessionIdsOwingStageSettlement()).thenReturn(listOf(7L))
 
@@ -3036,11 +3035,7 @@ class SessionRepositoryTest {
         // The debt is still paid, so the pass does not carry it forever — but the Run's evidence
         // belongs to the Stage it was run under, and that Stage is behind the runner now (#234).
         val statedDao: StatedBestEffortDao = mock()
-        val repo = repositoryForSettling(statedDao)
-        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
-            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_25_peak"))
-        )
-        stubTheCoachsReads()
+        val repo = repositoryForSettling(statedDao, activeStageId = "sub_25_peak")
         aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
 
         repo.settleStageForRun(7L)
@@ -3053,10 +3048,6 @@ class SessionRepositoryTest {
     fun `a Run still being recorded is not settled, and keeps the debt`() = runTest {
         val statedDao: StatedBestEffortDao = mock()
         val repo = repositoryForSettling(statedDao)
-        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
-            flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
-        )
-        stubTheCoachsReads()
         val run = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
         whenever(mockDao.getSessionById(7L)).thenReturn(run.copy(endTime = 0L))
 

@@ -65,10 +65,17 @@ Run to the rule is the very pass the rule refuses to make.
 its own copy of the row over so a distance typed into the sheet could not join the judgement of the
 Run it belonged to ([#231](https://github.com/chrissuarez/Running-App/issues/231), ADR 0008) — a
 race, won by whichever of the two was quicker. Waiting for the sheet dissolves the race instead of
-freezing against it: the sheet's answers are always in, because the judgement is what waited. A
-stated distance still grants nothing on its own — a treadmill Run's Best Effort comes only from a
-Stated Best Effort read off the console, never from a distance over a duration — so the typo this
-guarded against still cannot graduate a Stage. What it lets in that matters is the Walk mark.
+freezing against it: the sheet's answers are always in, because the judgement is what waited. What
+it lets in that matters is the Walk mark.
+
+A stated distance comes in with it and still grants nothing — but by a guard this decision must name
+rather than assume. A stated distance is a real distance and does place in the record book, at
+`LONGEST_DISTANCE`. What keeps it out of a graduation is the `require` at the top of this document's
+own type: **a Best Effort requirement is a time at a fixed distance**, so the two records a stated
+distance can move are exactly the two no requirement may be written in, and a treadmill Run's
+fastest efforts come only from a Stated Best Effort read off the console. The typo #231 guarded
+against is therefore barred by that `require` and not by the wait — and the first requirement
+written in a distance or a duration reopens the question.
 
 A statement made *later*, on the Run's own page, is a different thing and still never replays the
 judgement. Only a Stated Best Effort re-asks the rule, and only once the Run has been settled at all.

@@ -112,11 +112,20 @@ race.
 [#297](https://github.com/chrissuarez/Running-App/issues/297) later replaced the freeze, because the
 same race lost the *Walk mark* — which arrives on that same sheet, and which withdraws a Run from
 the judgement entirely. The judgement now waits for the sheet to close instead of racing it, so the
-race is gone rather than frozen against, and everything the sheet says is always in. The typo this
-section worried about is still no threat: a treadmill Run's Best Effort comes only from a Stated
-Best Effort read off the console, never from a distance over a duration, so a mistyped distance
-cannot graduate a Stage however quickly it is typed. What has not changed is anything said *later*:
-a number typed on the Run's own page waits for the next evaluation, exactly as this section has it.
+race is gone rather than frozen against, and everything the sheet says is always in.
+
+The typo this section worried about is still no threat, but the guard is not the one it looks like
+and is worth naming exactly. A stated distance *does* reach the record book — it is the Run's
+longest distance, which is the whole of ADR 0008. What it can never reach is a **graduation**:
+`BestEffortRequirement` refuses to be written at anything but a fixed distance
+(`record.distanceMeters != null`, ADR 0016), so the two records a stated distance can move are
+precisely the two no requirement may be written in, and a treadmill Run's *fastest* efforts come
+only from a Stated Best Effort read off the console. A mistyped distance therefore cannot graduate a
+Stage however quickly it is typed — because of that `require`, not because of the wait. A future
+requirement written in a distance or a duration would have to answer this question again.
+
+What has not changed is anything said *later*: a number typed on the Run's own page waits for the
+next evaluation, exactly as this section has it.
 
 ## Consequences
 

@@ -2436,9 +2436,7 @@ class SessionRepository(
     ): AiTrainingContext {
         // The Plan as well as the Stage, because whether the runner has finished it is a fact about
         // the Plan and the Stage cannot answer it.
-        val plan = TrainingPlanProvider
-            .getAllPlans()
-            .firstOrNull { candidate -> candidate.stages.any { it.id == stageId } }
+        val plan = TrainingPlanProvider.planHoldingStage(stageId)
             ?: throw IllegalArgumentException("Stage not found for id: $stageId")
         val stage = plan.stages.first { it.id == stageId }
         // Whether this Stage is the finished end of a finished Plan (#294). Read here rather than
@@ -2700,12 +2698,19 @@ class SessionRepository(
      * The finish used to hand its own copy over so that a distance typed into the sheet could not
      * join the judgement of the Run it belonged to — a race, won by whichever of the two was
      * quicker. Waiting for the sheet dissolves the race instead of keeping it: everything the sheet
-     * says is always in, because the judgement is what waited for it. What that lets in is a stated
-     * distance, and it grants nothing on its own — a treadmill Run's Best Effort comes only from a
-     * Stated Best Effort read off the console ([bestEffortsOf]), never from a distance over a
-     * duration — so a typo can still no more graduate a Stage than it could before. What it lets in
-     * that matters is the Walk mark, which is the whole point, and the runner's effort and note,
-     * which the coach was always meant to have.
+     * says is always in, because the judgement is what waited for it. What that lets in that matters
+     * is the Walk mark, which is the whole point, and the runner's effort and note, which the coach
+     * was always meant to have.
+     *
+     * It lets a stated distance in too, and that still graduates nothing — but the guard is worth
+     * naming exactly, because it is not the one it looks like. A stated distance *does* reach
+     * [bestEffortsOf], as the Run's `LONGEST_DISTANCE`; what it can never reach is a graduation,
+     * because [BestEffortRequirement] refuses to be written at anything but a fixed distance
+     * (`record.distanceMeters != null`), so the two records a distance can move are the two no
+     * requirement may be written in. A treadmill Run's *fastest* efforts come only from a Stated
+     * Best Effort read off the console, never from a distance over a duration. So the typo #231
+     * guarded against is barred by that `require` and not by this wait — and a requirement stated in
+     * a distance or a duration, if one is ever written, has to answer the question again.
      *
      * **Once.** [RunnerSession.stageSettled] is written when the settlement returns, and a Run
      * already carrying it is left alone: a graduation cannot be taken back, so a second grant is not
@@ -2717,6 +2722,12 @@ class SessionRepository(
      *
      * **A Run still being recorded keeps its debt** rather than being judged on totals that are
      * only as much of it as has happened so far.
+     *
+     * **A Run finished under testing mode is settled, and settled as nothing.** Both halves decline
+     * it — the rule refuses to grant and the coach refuses to be asked — and the mark still goes on,
+     * so a desk test leaves no debt for a later launch to pay once testing mode is off. That is the
+     * behaviour a Run finished under testing mode has always had, said once here rather than left
+     * as a third copy of the check.
      *
      * **One settlement at a time**, under [settling]. Two callers can reach the same Run — the
      * finish and the sheet, when the runner answers the sheet before the finish gets here — and
@@ -2778,9 +2789,7 @@ class SessionRepository(
      */
     private fun runTypeOf(stageId: String, workoutId: String?): RunType? {
         if (workoutId == null) return null
-        return TrainingPlanProvider.getAllPlans()
-            .firstOrNull { plan -> plan.stages.any { it.id == stageId } }
-            ?.stages?.firstOrNull { it.id == stageId }
+        return TrainingPlanProvider.stageById(stageId)
             ?.workouts?.firstOrNull { it.id == workoutId }
             ?.runType
     }
@@ -2867,10 +2876,7 @@ class SessionRepository(
         zone: ZoneId = ZoneId.systemDefault(),
     ): Boolean {
         val settingsRepo = settingsRepository ?: return false
-        val plan = TrainingPlanProvider
-            .getAllPlans()
-            .firstOrNull { candidate -> candidate.stages.any { it.id == stageId } }
-            ?: return false
+        val plan = TrainingPlanProvider.planHoldingStage(stageId) ?: return false
         val stageIndex = plan.stages.indexOfFirst { it.id == stageId }
         val stage = plan.stages[stageIndex]
         // The Stage's requirement is a judgement, so it stays the coach's — stage 1's "4 weeks of
@@ -3266,9 +3272,7 @@ class SessionRepository(
             }
 
             if (graduated) {
-                val plan = TrainingPlanProvider
-                    .getAllPlans()
-                    .firstOrNull { currentPlan -> currentPlan.stages.any { it.id == stageId } }
+                val plan = TrainingPlanProvider.planHoldingStage(stageId)
 
                 val nextStageId = plan
                     ?.stages

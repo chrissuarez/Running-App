@@ -955,12 +955,26 @@ class MainActivity : ComponentActivity() {
                     }
 
                     feelSheetSessionId?.let { sessionId ->
+                        // Every way off this sheet ends here, which is why both exits go through one
+                        // lambda: the Run's Stage has been waiting on this sheet since STOP (#297),
+                        // and an exit that forgot to say so would hold the plan until the next
+                        // launch. [writes] is whatever that exit had to store first — a Save's three
+                        // statements, and nothing at all for a dismissal, because a runner who
+                        // swipes the sheet away has said the Run was what it looks like and that is
+                        // an answer too.
+                        val closeSheet: (suspend () -> Unit) -> Unit = { writes ->
+                            feelSheetSessionId = null
+                            scope.launch(Dispatchers.IO) {
+                                writes()
+                                sessionRepository.finishSheetClosed(sessionId)
+                            }
+                        }
                         FeelFeedbackSheet(
                             // A treadmill Run, said positively: anything else — an outdoor Run, or a
                             // Run whose mode is not known — is not asked.
                             askForDistance = feelSheetRunMode == RunMode.TREADMILL.settingValue,
                             onSave = { effort, note, distanceKm, isWalk ->
-                                scope.launch(Dispatchers.IO) {
+                                closeSheet {
                                     sessionRepository.saveFeelFeedback(sessionId, effort, note)
                                     // After the feedback, so the snapshot the distance takes carries
                                     // both. Only when there is one: stating nothing must not cost a
@@ -975,26 +989,14 @@ class MainActivity : ComponentActivity() {
                                     // contract: markAsWalk refuses a change of nothing itself, and
                                     // asking it is a single read where deciding here would be a
                                     // rule in two places free to drift apart.
+                                    //
+                                    // And before the Stage is settled, never beside it: the whole
+                                    // reason the Stage waited for this sheet is that a Walk
+                                    // graduates nothing (#297).
                                     sessionRepository.markAsWalk(sessionId, isWalk)
-                                    // Last of all, and after the mark above rather than beside it:
-                                    // this is the Run being put to the Plan, and the whole reason
-                                    // it waited for this sheet is that a Walk graduates nothing
-                                    // (#297). A settlement asked before the mark was written would
-                                    // be the judgement this wait exists to prevent.
-                                    sessionRepository.finishSheetClosed(sessionId)
                                 }
-                                feelSheetSessionId = null
                             },
-                            onDismiss = {
-                                feelSheetSessionId = null
-                                // A runner who swipes the sheet away has said the Run was what it
-                                // looks like, which is an answer (#297). Holding the graduation
-                                // until the next launch over a sheet they declined would leave the
-                                // plan stuck on a Run that plainly cleared its bar.
-                                scope.launch(Dispatchers.IO) {
-                                    sessionRepository.finishSheetClosed(sessionId)
-                                }
-                            }
+                            onDismiss = { closeSheet {} }
                         )
                     }
                   }
