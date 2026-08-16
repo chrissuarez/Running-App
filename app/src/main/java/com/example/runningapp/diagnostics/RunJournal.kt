@@ -65,10 +65,20 @@ class RunJournal(
     /**
      * Write these entries down, in this order.
      *
-     * Returns immediately: the clock is read here, on the caller's thread, so a line carries the
-     * moment the event happened rather than the moment the writer thread got to it. A journal that
-     * timestamped its own IO would be a journal that lies about a stall — which is exactly the kind
-     * of thing it is kept to catch.
+     * The clock is read here, on the caller's thread, so a line carries the moment the event
+     * happened rather than the moment the writer thread got to it. A journal that timestamped its
+     * own IO would be a journal that lies about a stall — which is exactly the kind of thing it is
+     * kept to catch.
+     *
+     * Returns as soon as the lines are queued, except for an event whose absence a reader is
+     * entitled to draw a conclusion from ([RunJournalEvent.absenceIsEvidence]): those are waited
+     * out here, so that the moment this returns the line is on disk rather than queued behind an
+     * append or an archive copy on a process Android may reclaim in the next instant. The rule
+     * lives here rather than at the call sites because a call site can forget it, and the fourth
+     * one to forget it would put the journal back to saying something false (#309, #310).
+     *
+     * The wait is [flushBlocking]'s: bounded, and it gives up rather than throwing, so writing a
+     * line down can never be what ends the app.
      */
     fun write(entries: List<RunJournalEntry>) {
         if (entries.isEmpty()) return
@@ -84,6 +94,7 @@ class RunJournal(
                 Log.w("RunJournal", "Could not write ${lines.size} line(s)", e)
             }
         }
+        if (entries.any { it.event.absenceIsEvidence }) flushBlocking()
     }
 
     private fun append(lines: List<String>) {
@@ -123,11 +134,12 @@ class RunJournal(
      * The same wait as [flush], from a caller that cannot suspend, and never for longer than
      * [timeoutMs].
      *
-     * For teardown, and for nothing else — every other call site stays non-blocking. `onDestroy()`
-     * runs on main and returns into a process Android may reclaim immediately afterwards, so a
-     * service-destroyed line still queued behind a slow append or an archive copy dies with the
-     * process. That line is the whole of #310: the one that says a Run's recording ended because the
-     * system took the service, which is what #309 could not be told.
+     * For the lines a reader is entitled to reason about the absence of — [write] takes this wait
+     * for them itself — and for the teardown's own last drain. Every other write stays
+     * non-blocking. `onDestroy()` runs on main and returns into a process Android may reclaim
+     * immediately afterwards, so a service-destroyed line still queued behind a slow append or an
+     * archive copy dies with the process. That line is the whole of #310: the one that says a Run's
+     * recording ended because the system took the service, which is what #309 could not be told.
      *
      * Both waits work the same way — a do-nothing task behind everything already queued on the one
      * writer thread, which cannot run until every write asked for before it has.

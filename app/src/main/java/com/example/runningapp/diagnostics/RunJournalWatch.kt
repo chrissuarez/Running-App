@@ -111,8 +111,17 @@ private fun strapEntries(
     if (after is AcquisitionPhase.GaveUp && before !is AcquisitionPhase.GaveUp) {
         entries += RunJournalEntry(RunJournalEvent.ACQUISITION_GAVE_UP, runRowId)
     }
-    if (after is AcquisitionPhase.Blocked && before !is AcquisitionPhase.Blocked) {
-        entries += RunJournalEntry(RunJournalEvent.ACQUISITION_BLOCKED, runRowId, after.reason.toString())
+    // The same rule as the arrival and the release above: what is compared is what the phase
+    // carries, not merely which phase it is, so a change within one phase type is not swallowed.
+    // A block is news when it blocks for a reason the app was not already blocked for. The adapter
+    // coming back on mid-Run with BLUETOOTH_CONNECT missing steps straight from
+    // Blocked(BluetoothUnavailable) to Blocked(PermissionMissing) (#224), and a journal keeping the
+    // stale reason would name Bluetooth for a Run that in fact finished strapless for want of a
+    // permission — the wrong answer to the only question a lost Run asks (#310).
+    val wasBlockedBy = (before as? AcquisitionPhase.Blocked)?.reason
+    val nowBlockedBy = (after as? AcquisitionPhase.Blocked)?.reason
+    if (nowBlockedBy != null && nowBlockedBy != wasBlockedBy) {
+        entries += RunJournalEntry(RunJournalEvent.ACQUISITION_BLOCKED, runRowId, nowBlockedBy.toString())
     }
     return entries
 }
