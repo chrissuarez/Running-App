@@ -213,6 +213,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // flushes the tail before the snapshot.
     private val recorderWriteScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    /**
+     * Wait for every second the Run has recorded to be in the database.
+     *
+     * Both ways a Run's totals can be written take this wait, and take the same one: the finalize,
+     * which must not stamp an end time onto a row whose last seconds are still queued (#84), and the
+     * rescue of a Run a teardown left recording, which rebuilds those totals by reading the very
+     * rows in question (#309). Written once, because two copies of it would be two answers to what
+     * "the Run's last second" means.
+     *
+     * The children as they stand when this is called: nothing may still be writing samples by then,
+     * because both callers run after the Run they are finishing is over.
+     */
+    private suspend fun awaitRecorderWrites() =
+        recorderWriteScope.coroutineContext.job.children.toList().joinAll()
+
     // Letting a GATT go outlives the service too. The handle leaves [openGatts] the moment the
     // Acquisition is done with it, and the state that says so publishes before the close runs — so
     // a terminal phase can reach stopSelf() and onDestroy() in between. On serviceScope that
@@ -785,7 +800,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // is complete" — the history snapshot below, and the GPX export, which offers Share
                 // the moment it sees one (#84). Stamping first would let a runner who shares
                 // straight after stopping export the Run minus its final seconds.
-                recorderWriteScope.coroutineContext.job.children.toList().joinAll()
+                awaitRecorderWrites()
 
                 database.sessionDao().updateSession(updatedSession)
 
@@ -1562,6 +1577,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         handler.post { serviceScope.launch { reconcileForegroundPromotion() } }
     }
 
+    /**
+     * What tapping a notification does: bring the app up.
+     *
+     * Both notifications this service posts do it — the Promotion's, which is where a runner
+     * returns to a Run in progress, and the one that says a Run stopped recording, which is where
+     * they go to check what was saved (#309). Distinct [requestCode]s so the two are separate
+     * pending intents rather than one rewritten by whichever was posted last.
+     */
+    private fun openTheApp(requestCode: Int): PendingIntent = PendingIntent.getActivity(
+        this,
+        requestCode,
+        Intent(this, MainActivity::class.java),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+    )
+
     private fun createNotification(content: String): Notification {
         val stopIntent = Intent(this, HrForegroundService::class.java).apply {
             action = ACTION_STOP_FOREGROUND
@@ -1571,19 +1601,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        val activityIntent = Intent(this, MainActivity::class.java)
-        val activityPendingIntent = PendingIntent.getActivity(
-            this, 0, activityIntent, 
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("HR Monitor")
             .setContentText(content)
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
-            .setContentIntent(activityPendingIntent)
+            .setContentIntent(openTheApp(requestCode = 0))
 
         when (_hrState.value.sessionStatus) {
             SessionStatus.RUNNING -> {
@@ -2117,18 +2141,31 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * is: `serviceScope` is cancelled a moment from now, and a launch not yet dequeued dies before
      * its body ever runs.
      *
-     * The Run's own tail writes are waited for first. A rescue reads the samples and fixes back out
-     * of the database to rebuild the totals, so anything still queued on [recorderWriteScope] would
-     * be a second the Run recorded and the rescue did not count — the same join, for the same
-     * reason, as the one the finalize takes before it stamps the row.
+     * Two waits before the rescue, and both are about reading a settled Run.
+     *
+     * A finalize already in flight is waited out first. What this acts on is what the service knew
+     * when the destroy began, and a STOP is published from the session thread a moment after the
+     * Run itself has emitted its finalize — so a teardown landing in that window reads a Run that
+     * is still RUNNING and whose totals are on their way to the row. Those totals are the ones the
+     * Run banked as it ran and are better than any rebuilt from the record, so the rescue waits for
+     * them and then declines the row it finds already finished
+     * ([SessionRepository.rescueRunLostToTeardown]). Waiting is what makes that check decisive
+     * rather than a read that a concurrent write can overtake. The children are taken here, before
+     * this coroutine joins them, because a coroutine cannot wait for a set that includes itself.
+     *
+     * Then the Run's own tail writes ([awaitRecorderWrites]). A rescue reads the samples and fixes
+     * back out of the database to rebuild the totals, so anything still queued would be a second
+     * the Run recorded and the rescue did not count.
      */
     private fun endRunLostToTeardown(runRowId: Long) {
         Log.w(TAG, "Service destroyed with run $runRowId still recording; finishing it from its record")
         notifyRunLostToTeardown()
+        val finalizesInFlight = finalizationScope.coroutineContext.job.children.toList()
         finalizationScope.launch {
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                 try {
-                    recorderWriteScope.coroutineContext.job.children.toList().joinAll()
+                    finalizesInFlight.joinAll()
+                    awaitRecorderWrites()
                     if (sessionRepository.rescueRunLostToTeardown(runRowId)) {
                         // The answer to the `service-destroyed` line above, which named this Run as
                         // still recording: its totals reached its row after all. A reader who finds
@@ -2161,18 +2198,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * it survives the Promotion's notification being taken down alongside the service. Dismissable
      * — it is news, not a control.
      *
-     * It says what was kept, because the honest answer is "most of it": the seconds up to the cut
-     * are in the database and [endRunLostToTeardown] is putting them back as this is posted. A
-     * runner who is told only that something broke would reasonably assume the Run was lost.
+     * It sends the runner to look, rather than telling them the Run is safe. Posted before the
+     * rescue and not after it, because this call lands now and a coroutine on a process about to be
+     * reclaimed may not — but that means it cannot promise an outcome it has not got yet. A Run
+     * that recorded nothing at all is not put back ([finishedFromRecord]), and a runner told their
+     * Run was saved would go looking through their history for something that was never there.
      */
     private fun notifyRunLostToTeardown() {
-        val activityIntent = Intent(this, MainActivity::class.java)
-        val activityPendingIntent = PendingIntent.getActivity(
-            this, 4, activityIntent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-        val text = "The run wasn't stopped from the app — everything recorded up to that moment " +
-            "has been saved to your history. Tap to check it."
+        val text = "The run wasn't stopped from the app. Whatever it recorded up to that moment is " +
+            "being saved — tap to check your history."
         val notification = NotificationCompat.Builder(this, LOST_RUN_CHANNEL_ID)
             .setContentTitle("Your run stopped recording")
             .setContentText(text)
@@ -2181,7 +2215,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             .setCategory(NotificationCompat.CATEGORY_ERROR)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
-            .setContentIntent(activityPendingIntent)
+            .setContentIntent(openTheApp(requestCode = 4))
             .build()
         try {
             getSystemService(NotificationManager::class.java).notify(LOST_RUN_NOTIFICATION_ID, notification)

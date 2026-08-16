@@ -939,10 +939,10 @@ class SessionRepository(
      * Returns whether the Run was put back, so the caller can say so in the Run Journal — a
      * `run-finalized` from here is the answer to a `service-destroyed` that names a live Run.
      */
-    suspend fun rescueRunLostToTeardown(sessionId: Long): Boolean = statedProfile.withLock {
+    suspend fun rescueRunLostToTeardown(runRowId: Long): Boolean = statedProfile.withLock {
         val settings = settingsRepository ?: return@withLock false
         val historyProfile = settings.userSettingsFlow.first().historyHrProfile
-        val rescued = finishFromRecord(sessionId, historyProfile)
+        val rescued = finishFromRecord(runRowId, historyProfile)
         if (rescued) refreshHistoryBackup?.invoke()
         rescued
     }
@@ -961,10 +961,10 @@ class SessionRepository(
      * the one history is banded against is wrong for every Run started after it.
      * @return whether the Run's totals reached its row.
      */
-    private suspend fun finishFromRecord(sessionId: Long, historyProfile: HrProfile): Boolean {
+    private suspend fun finishFromRecord(runRowId: Long, historyProfile: HrProfile): Boolean {
         val samples = sampleDao ?: return false
         try {
-            val session = sessionDao.getSessionById(sessionId) ?: return false
+            val session = sessionDao.getSessionById(runRowId) ?: return false
             // A Run that already has an end time is a Run somebody finished, and totals derived
             // from the record are not an improvement on the ones the Run itself banked. The launch
             // pass only ever asks about Runs with no end time; the teardown asks about the Run it
@@ -973,38 +973,38 @@ class SessionRepository(
             // Read once and gated here rather than through [getTrackPointsForMap], because the
             // rebuild wants both: every fix says when the Run was recording, the accepted ones
             // say where it went. See [finishedFromRecord].
-            val track = trackPointDao?.getTrackPointsForSessionOnce(sessionId).orEmpty()
+            val track = trackPointDao?.getTrackPointsForSessionOnce(runRowId).orEmpty()
             val finished = session.finishedFromRecord(
-                samples = samples.getSamplesForSessionOnce(sessionId),
+                samples = samples.getSamplesForSessionOnce(runRowId),
                 track = track,
                 mappedTrack = track.acceptedForMap(),
                 profile = session.bandedOnHrProfile() ?: historyProfile,
                 bankedIntervals = intervalStatDao
-                    ?.getIntervalStatsForSession(sessionId)
+                    ?.getIntervalStatsForSession(runRowId)
                     .orEmpty()
                     .isNotEmpty(),
             ) ?: return false
             sessionDao.updateSession(finished)
             Log.w(
                 "InterruptedRun",
-                "Rescued run $sessionId: duration=${finished.durationSeconds}s " +
+                "Rescued run $runRowId: duration=${finished.durationSeconds}s " +
                     "distance=${"%.2f".format(finished.distanceKm)}km avgBpm=${finished.avgBpm}"
             )
         } catch (e: Exception) {
-            Log.w("InterruptedRun", "Could not rescue run $sessionId; leaving it for next launch", e)
+            Log.w("InterruptedRun", "Could not rescue run $runRowId; leaving it for next launch", e)
             return false
         }
         try {
             // After the row is finished, not before: this measures the same stored track and
             // rewrites avgPaceMinPerKm over moving time, which is the pace the app quotes (#163).
-            computeMovingTime(sessionId)
+            computeMovingTime(runRowId)
         } catch (e: Exception) {
             // Its own attempt, because the row is already finished by this point and will never
             // be offered to this pass again. Failing here leaves movingTimeSeconds null, which
             // is the state [backfillMovingTime] picks up at the next launch — so the Run is in
             // history with everything else it needs, and the one number it is missing is
             // already somebody's job.
-            Log.w("InterruptedRun", "Rescued run $sessionId but could not measure its moving time", e)
+            Log.w("InterruptedRun", "Rescued run $runRowId but could not measure its moving time", e)
         }
         try {
             // A rescued Run has just finished, however long ago it was run, so it is scored like
@@ -1012,9 +1012,9 @@ class SessionRepository(
             // row is already in history, and a book that cannot be written must not undo that.
             // Marked as scored by the same call, and only once the scoring has returned, so a
             // failure here leaves the Run owing one for the launch pass to pay (#210).
-            scoreAndMarkRecords(sessionId)
+            scoreAndMarkRecords(runRowId)
         } catch (e: Exception) {
-            Log.w("InterruptedRun", "Rescued run $sessionId but could not score its records", e)
+            Log.w("InterruptedRun", "Rescued run $runRowId but could not score its records", e)
         }
         return true
     }
