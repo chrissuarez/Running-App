@@ -436,6 +436,23 @@ class WeeklyVolumeTest {
     }
 
     @Test
+    fun `a Run a day ahead across the Monday is drawn in the week it fell in`() {
+        // #304: the phone is on Sunday, the runner is on Monday. The Run is taken in, so it has to
+        // be drawn — a Run counted and then left outside the range would be a Run that vanished,
+        // and with no other Runs the chart would come back empty.
+        val sunday = monday.plusDays(6)
+        val nextMonday = LocalDateTime.of(sunday.plusDays(1), LocalTime.of(9, 0))
+            .atZone(zone).toInstant().toEpochMilli()
+        val run = VolumeRun(nextMonday, 10.0, 3600, null, ranAtUtcOffsetSeconds = 0)
+
+        val weeks = weeklyVolumeOf(listOf(run), through = sunday, zone = zone)
+
+        assertEquals(1, weeks.size)
+        assertEquals(monday.plusWeeks(1), weeks.single().startingOn)
+        assertEquals(10.0, weeks.single().distanceKm, 0.0001)
+    }
+
+    @Test
     fun `a Run stamped further ahead than any clock allows is still ignored`() {
         val wayAhead = LocalDateTime.of(monday.plusDays(30), LocalTime.of(9, 0))
             .atZone(zone).toInstant().toEpochMilli()

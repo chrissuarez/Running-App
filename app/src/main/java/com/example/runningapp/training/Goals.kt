@@ -129,7 +129,12 @@ fun goalProgressOf(
     return goalList.map { goal ->
         val from = goal.period.startOn(on)
         val done = daysRunOn
-            .filter { (day, _) -> !day.isBefore(from) }
+            // A Run counts towards the period *its own day* falls in, which is not always the one
+            // the phone is in. The day-ahead Run the guard above admits is a real Run, but a Monday
+            // Run held by a runner who has flown west is next week's, and crediting it to the week
+            // ending on the phone's Sunday would let a goal be met by a Run from after it closed.
+            // Said once, as the period's own start, so the month and the year keep it too.
+            .filter { (day, _) -> goal.period.startOn(day) == from }
             .sumOf { (_, run) -> goal.metric.amountOf(run) }
         GoalProgress(goal = goal, periodStart = from, done = done)
     }
