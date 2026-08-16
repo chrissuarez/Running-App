@@ -81,7 +81,7 @@ import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointSource
 import com.example.runningapp.data.averagePaceMinPerKm
-import com.example.runningapp.diagnostics.PromotionRunWatch
+import com.example.runningapp.diagnostics.RunHeldFor
 import com.example.runningapp.diagnostics.RunJournal
 import com.example.runningapp.diagnostics.RunJournalEvent
 import com.example.runningapp.diagnostics.RunJournalWatch
@@ -374,10 +374,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     /**
      * Which Run the Promotion is being held for, so the hand-back can be named after it (#310).
      *
-     * Nothing but the `demoted` line reads this — see [PromotionRunWatch] for why the live Run alone
-     * cannot answer it.
+     * Nothing but the `demoted` line reads this — see [RunHeldFor] for why the live Run alone
+     * cannot answer it, and for why a Promotion, unlike a Strap, never has to be told it has begun.
      */
-    private val promotionRun = PromotionRunWatch()
+    private val promotionRun = RunHeldFor()
 
     /**
      * Journal whatever the publish that just happened changed (#310).
@@ -1391,13 +1391,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // happened in #309, and nothing else on the phone would have recorded it an hour later.
             // Named after the Run the Promotion was held for, not merely the live one — on a normal
             // stop the live Run has already been cleared by the time the hand-back runs, and a
-            // `demoted` naming no Run cannot be tied to the stop that caused it. The same rule as
-            // the Strap's release in RunJournalWatch: a line names the Run it belongs to, falling
-            // back to the one it was held for.
+            // `demoted` naming no Run cannot be tied to the stop that caused it. The same rule the
+            // Strap's release is named by, and kept in the one place both read it from: a line
+            // names the Run it belongs to, falling back to the one it was held for (RunHeldFor).
             val state = _hrState.value
             runJournal.write(
                 RunJournalEvent.DEMOTED,
-                promotionRun.handBack(state.activeDbSessionId),
+                promotionRun.ends(state.activeDbSessionId),
                 "status=${state.sessionStatus}",
             )
             releaseWakeLock()

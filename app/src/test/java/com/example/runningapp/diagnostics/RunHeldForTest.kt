@@ -4,9 +4,10 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
-class PromotionRunWatchTest {
+/** The rule both the Promotion's hand-back and the Strap's release are named by (#310). */
+class RunHeldForTest {
 
-    private val watch = PromotionRunWatch()
+    private val watch = RunHeldFor()
 
     /**
      * The sequence off the phone, in the order the service publishes it: the Promotion is taken
@@ -21,7 +22,7 @@ class PromotionRunWatchTest {
         watch.observe(9140)
         watch.observe(null)
 
-        assertEquals(9140L, watch.handBack(null))
+        assertEquals(9140L, watch.ends(null))
     }
 
     /** The #309 shape: the foreground state goes back with a Run still recording. */
@@ -29,7 +30,7 @@ class PromotionRunWatchTest {
     fun `a hand-back with a run live names that run`() {
         watch.observe(9140)
 
-        assertEquals(9140L, watch.handBack(9140))
+        assertEquals(9140L, watch.ends(9140))
     }
 
     /** A pre-run Acquisition's Promotion being unwound belongs to no Run. */
@@ -37,7 +38,7 @@ class PromotionRunWatchTest {
     fun `a hand-back with no run at all names none`() {
         watch.observe(null)
 
-        assertNull(watch.handBack(null))
+        assertNull(watch.ends(null))
     }
 
     /**
@@ -49,11 +50,11 @@ class PromotionRunWatchTest {
     fun `a later hand-back does not inherit the finished run`() {
         watch.observe(9140)
         watch.observe(null)
-        watch.handBack(null)
+        watch.ends(null)
 
         watch.observe(null)
 
-        assertNull(watch.handBack(null))
+        assertNull(watch.ends(null))
     }
 
     /**
@@ -64,10 +65,25 @@ class PromotionRunWatchTest {
     fun `each promotion answers with its own run`() {
         watch.observe(9140)
         watch.observe(null)
-        assertEquals(9140L, watch.handBack(null))
+        assertEquals(9140L, watch.ends(null))
 
         watch.observe(9141)
         watch.observe(null)
-        assertEquals(9141L, watch.handBack(null))
+        assertEquals(9141L, watch.ends(null))
+    }
+
+    /**
+     * The Strap's shape, which the Promotion never has: a Run that wore no Strap ends with nothing
+     * to release the Run it left remembered, so the holding that begins afterwards has to say so
+     * itself. Without this the next Strap put on would be named for a Run that was over before it.
+     */
+    @Test
+    fun `a holding beginning drops the run left over from before it`() {
+        watch.observe(9140)
+        watch.observe(null)
+
+        watch.begins()
+
+        assertNull(watch.ends(null))
     }
 }

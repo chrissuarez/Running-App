@@ -263,4 +263,62 @@ class RunJournalWatchTest {
             journaled(idle.copy(acquisition = strap), running.copy(acquisition = strap), running)
         )
     }
+
+    @Test
+    fun `a strap worn from before the run is released to the run whose stop took it off`() {
+        // The two gaps at once, which is the ordinary strapped Run: the Strap is put on before
+        // START, so the arrival names no Run, and it is released after the stop has cleared the
+        // live row, so there is none left to name either. What ties the closing line to the Run is
+        // the Run seen live while the Strap was on.
+        assertEquals(
+            listOf(
+                "run=- strap-connected",
+                "run=41 run-started",
+                "run=41 run-row-created",
+                "run=41 run-stopped",
+                "run=41 strap-disconnected",
+            ),
+            journaled(
+                idle.copy(acquisition = strap),
+                running.copy(acquisition = strap),
+                JournaledState(sessionStatus = SessionStatus.STOPPED, acquisition = strap),
+                JournaledState(sessionStatus = SessionStatus.STOPPED),
+            )
+        )
+    }
+
+    @Test
+    fun `a strapless run is not what the next strap is named for, and the run after it still is`() {
+        // The other side of the same memory. A Run that wore no Strap has no release to forget it
+        // by, so the connection that follows has to forget it instead: naming that Strap for a Run
+        // which was over before it was put on is the wrong guess the journal must never make (#310).
+        // The Run after it proves the forgetting is per connection and not a memory switched off.
+        val nextRun = running.copy(runRowId = 42)
+        val stopped = JournaledState(sessionStatus = SessionStatus.STOPPED)
+
+        assertEquals(
+            listOf(
+                "run=41 run-started",
+                "run=41 run-row-created",
+                "run=41 run-stopped",
+                "run=- strap-connected",
+                "run=- strap-disconnected",
+                "run=42 run-started",
+                "run=42 run-row-created",
+                "run=42 strap-connected",
+                "run=42 run-stopped",
+                "run=42 strap-disconnected",
+            ),
+            journaled(
+                running,
+                stopped,
+                stopped.copy(acquisition = strap),
+                stopped,
+                nextRun,
+                nextRun.copy(acquisition = strap),
+                stopped.copy(acquisition = strap),
+                stopped,
+            )
+        )
+    }
 }

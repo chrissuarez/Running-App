@@ -138,7 +138,7 @@ class RunJournalTest {
 
         // An ordinary line, so the writer is still held when the wait below is taken: a decisive
         // one would have waited the occupier out on its own and left nothing to time out on.
-        journal.write(RunJournalEvent.RUN_STOPPED)
+        journal.write(RunJournalEvent.RUN_PAUSED)
         // Returns, and returns on time: a teardown must not be held up by a journal it cannot get
         // written, and must not be brought down by one either.
         val waited = measureTimeMillis { journal.flushBlocking(timeoutMs = 50L) }
@@ -147,23 +147,58 @@ class RunJournalTest {
         busy.join()
     }
 
+    /**
+     * The inferences this journal licences a reader to draw from a line that is *not* there.
+     *
+     * Nothing else in [RunJournalEvent] is read this way. Every other line is read forwards, and
+     * one of those lost with the process leaves a gap; one of these lost with the process makes the
+     * journal state the opposite of what happened (#309, #310).
+     */
+    private val readByTheirAbsence = mapOf(
+        RunJournalEvent.SERVICE_DESTROYED to
+            "a service-created with no service-destroyed above it: the process died",
+        RunJournalEvent.RUN_ROW_CREATED to
+            "a Run with no run-row-created: its row never landed",
+        RunJournalEvent.RUN_STOPPED to
+            "a run-started with no run-stopped after it: the Run died still recording",
+        RunJournalEvent.RUN_FINALIZED to
+            "a stop with no run-finalized after it: the totals never reached the row",
+        RunJournalEvent.DEMOTED to
+            "a destroy with a live Run and no demoted above it: the system took the service",
+    )
+
+    @Test
+    fun `the events that wait are exactly the ones the journal is read backwards from`() {
+        assertEquals(
+            "either the journal draws a conclusion from a missing line it does not wait for, or " +
+                "it waits for a line it draws no conclusion from: " +
+                readByTheirAbsence.values.joinToString("; "),
+            readByTheirAbsence.keys,
+            RunJournalEvent.values().filter { it.absenceIsEvidence }.toSet(),
+        )
+    }
+
     @Test
     fun `an event read by its absence is on disk by the time write returns`() {
-        val journal = journal()
-        journal.write(RunJournalEvent.SERVICE_CREATED)
-        runBlocking { journal.flush() }
+        readByTheirAbsence.forEach { (event, inference) ->
+            val directory = folder.newFolder(event.token)
+            val journal = RunJournal(directory, now = { clock }, zone = { ZoneId.of("Europe/London") })
+            journal.write(RunJournalEvent.SERVICE_CREATED)
+            runBlocking { journal.flush() }
 
-        // The writer taken up the way an archive copy takes it, so a queued line would still be
-        // queued here: the shape in which a reclaimed process loses one (#309, #310).
-        val busy = journal.occupy(forMillis = 300L)
+            // The writer taken up the way an archive copy takes it, so a queued line would still be
+            // queued here: the shape in which a reclaimed process loses one.
+            val busy = journal.occupy(forMillis = 200L)
 
-        journal.write(RunJournalEvent.RUN_FINALIZED, runRowId = 41)
+            journal.write(event, runRowId = 41)
 
-        assertTrue(
-            "run-finalized was still only queued when write returned",
-            File(folder.root, RunJournal.CURRENT_FILE_NAME).readText().contains("run-finalized")
-        )
-        busy.join()
+            assertTrue(
+                "${event.token} was still only queued when write returned, so a reader could read " +
+                    "$inference — of a Run that did nothing of the sort",
+                File(directory, RunJournal.CURRENT_FILE_NAME).readText().contains(event.token)
+            )
+            busy.join()
+        }
     }
 
     @Test
@@ -192,13 +227,13 @@ class RunJournalTest {
         val busy = journal.occupy(forMillis = 300L)
 
         // One writer thread, in the order the writes were asked for: waiting for the decisive line
-        // has already landed everything queued in front of it, which is what keeps the set of
-        // events that wait down to three.
-        journal.write(RunJournalEvent.RUN_STOPPED, runRowId = 41)
+        // has already landed everything queued in front of it, which is what lets a line nobody
+        // reasons about the absence of stay out of the waiting set and still reach disk.
+        journal.write(RunJournalEvent.RUN_PAUSED, runRowId = 41)
         journal.write(RunJournalEvent.RUN_FINALIZED, runRowId = 41)
 
         assertEquals(
-            listOf("service-created", "run-stopped", "run-finalized"),
+            listOf("service-created", "run-paused", "run-finalized"),
             File(folder.root, RunJournal.CURRENT_FILE_NAME).readLines().map { it.substringAfterLast(' ') }
         )
         busy.join()
