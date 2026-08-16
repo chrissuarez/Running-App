@@ -2,7 +2,12 @@ package com.example.runningapp.diagnostics
 
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.OutputStream
 import java.time.ZoneId
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
+import kotlin.system.measureTimeMillis
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -102,5 +107,61 @@ class RunJournalTest {
     @Test
     fun `a journal never written to offers the archive nothing`() {
         assertEquals(emptyList<String>(), runBlocking { journal().fileNames() })
+    }
+
+    @Test
+    fun `a teardown line is on disk by the time the blocking wait returns`() {
+        val journal = journal()
+        journal.write(RunJournalEvent.SERVICE_CREATED)
+        runBlocking { journal.flush() }
+
+        // The writer taken up the way an archive copy takes it, so the destroyed line below is
+        // queued rather than written: the shape in which a reclaimed process loses it (#310).
+        val busy = journal.occupy(forMillis = 300L)
+
+        journal.write(RunJournalEvent.SERVICE_DESTROYED)
+        journal.flushBlocking()
+
+        assertTrue(
+            File(folder.root, RunJournal.CURRENT_FILE_NAME).readText().contains("service-destroyed")
+        )
+        busy.join()
+    }
+
+    @Test
+    fun `a blocking wait that runs out of time gives up rather than throwing`() {
+        val journal = journal()
+        journal.write(RunJournalEvent.SERVICE_CREATED)
+        runBlocking { journal.flush() }
+
+        val busy = journal.occupy(forMillis = 1000L)
+
+        journal.write(RunJournalEvent.SERVICE_DESTROYED)
+        // Returns, and returns on time: a teardown must not be held up by a journal it cannot get
+        // written, and must not be brought down by one either.
+        val waited = measureTimeMillis { journal.flushBlocking(timeoutMs = 50L) }
+        assertTrue("waited ${waited}ms", waited < 500L)
+
+        busy.join()
+    }
+
+    /**
+     * Hold the journal's one writer thread for [forMillis], from a thread of the test's own.
+     *
+     * Through [RunJournal.copyTo] because that is a real occupier — it is what the archive does —
+     * and because the writer is private, which is the point: a caller cannot queue-jump it.
+     */
+    private fun RunJournal.occupy(forMillis: Long): Thread {
+        val holding = CountDownLatch(1)
+        val slow = object : OutputStream() {
+            override fun write(b: Int) = Unit
+            override fun write(b: ByteArray, off: Int, len: Int) {
+                holding.countDown()
+                Thread.sleep(forMillis)
+            }
+        }
+        val thread = thread { runBlocking { copyTo(RunJournal.CURRENT_FILE_NAME, slow) } }
+        assertTrue("the writer was never taken up", holding.await(5, TimeUnit.SECONDS))
+        return thread
     }
 }
