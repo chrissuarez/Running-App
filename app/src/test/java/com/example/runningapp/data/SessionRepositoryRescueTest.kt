@@ -336,23 +336,30 @@ class SessionRepositoryRescueTest {
         }
 
     @Test
-    fun `a booking that throws still leaves the Run finished`() = runTest {
-        val repository = SessionRepository(
-            sessionDao = sessionDao,
-            sampleDao = sampleDao,
-            trackPointDao = trackPointDao,
-            achievementDao = achievementDao,
-            settingsRepository = settingsRepository,
-            bookAfterRunWork = { throw IllegalStateException("WorkManager not initialised") },
-        )
-        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
-        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 22))
-        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+    fun `a booking that throws still leaves the Run finished, and the snapshot is taken here`() =
+        runTest {
+            // A durable handoff that never happened leaves the rescued Run with no snapshot behind
+            // it at all, which is the Run a Clear storage loses. The in-process copy is the
+            // second-best answer and is owed whenever the booking did not come back.
+            var refreshed = 0
+            val repository = SessionRepository(
+                sessionDao = sessionDao,
+                sampleDao = sampleDao,
+                trackPointDao = trackPointDao,
+                achievementDao = achievementDao,
+                settingsRepository = settingsRepository,
+                refreshHistoryBackup = { refreshed++ },
+                bookAfterRunWork = { throw IllegalStateException("WorkManager not initialised") },
+            )
+            whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+            whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 22))
+            whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
 
-        assertTrue(repository.rescueRunLostToTeardown(67L))
+            assertTrue(repository.rescueRunLostToTeardown(67L))
 
-        verify(sessionDao).updateSession(any())
-    }
+            verify(sessionDao).updateSession(any())
+            assertEquals(1, refreshed)
+        }
 
     @Test
     fun `a Run that had already been finished is left exactly as it was finished`() = runTest {
