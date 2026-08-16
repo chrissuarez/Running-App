@@ -2054,6 +2054,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             RunJournalEvent.SERVICE_DESTROYED,
             "status=${_hrState.value.sessionStatus} promoted=${promotion.isPromoted} bound=$isActivityBound"
         )
+        // Waited out here, before any of the teardown below, because a destroy is often followed
+        // straight away by the process being reclaimed — and a line still queued behind a slow
+        // append is a line that dies with it. Bounded, and it gives up rather than throwing, so the
+        // wait can never be what ends the app (#310).
+        runJournal.flushBlocking()
 
         // 0. Anything that opens a GATT from here on closes it itself; the sweep below is the
         // last one there will be. Set before the join, so a connect that outlasts it sees this.

@@ -5,6 +5,7 @@ import java.io.File
 import java.io.OutputStream
 import java.time.ZoneId
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 
@@ -118,6 +119,36 @@ class RunJournal(
     /** Wait for everything asked for so far to be on disk. For tests and for the phone checklist. */
     suspend fun flush() = withContext(dispatcher) { }
 
+    /**
+     * The same wait as [flush], from a caller that cannot suspend, and never for longer than
+     * [timeoutMs].
+     *
+     * For teardown, and for nothing else — every other call site stays non-blocking. `onDestroy()`
+     * runs on main and returns into a process Android may reclaim immediately afterwards, so a
+     * service-destroyed line still queued behind a slow append or an archive copy dies with the
+     * process. That line is the whole of #310: the one that says a Run's recording ended because the
+     * system took the service, which is what #309 could not be told.
+     *
+     * Both waits work the same way — a do-nothing task behind everything already queued on the one
+     * writer thread, which cannot run until every write asked for before it has.
+     *
+     * It gives up rather than throwing, on the rule [write] already keeps: a journal that cannot be
+     * written is not worth taking the app down for. Least of all here, where taking the app down
+     * means an ANR on the teardown of a service that was going away anyway.
+     */
+    fun flushBlocking(timeoutMs: Long = TEARDOWN_WAIT_MS) {
+        try {
+            writer.submit { }.get(timeoutMs, TimeUnit.MILLISECONDS)
+        } catch (e: InterruptedException) {
+            // Someone wants this thread more than the journal does. Say so and hand it back, or the
+            // next thing on it inherits a swallowed interrupt and stalls for reasons of our making.
+            Thread.currentThread().interrupt()
+            Log.w("RunJournal", "Interrupted waiting for the journal to reach disk", e)
+        } catch (e: Exception) {
+            Log.w("RunJournal", "Journal did not reach disk within ${timeoutMs}ms", e)
+        }
+    }
+
     companion object {
 
         const val CURRENT_FILE_NAME = "run-journal.txt"
@@ -129,5 +160,15 @@ class RunJournal(
         const val DIRECTORY_NAME = "diagnostics"
 
         private const val MAX_BYTES = 128L * 1024L
+
+        /**
+         * How long a teardown will hold its thread waiting for the journal.
+         *
+         * Android allows about ten seconds on main before it calls the app hung, and a service being
+         * destroyed has the rest of its own teardown to do inside that. Two seconds is far more than
+         * an append of a few hundred bytes needs even behind an archive copy, and far short of the
+         * budget it is spending.
+         */
+        private const val TEARDOWN_WAIT_MS = 2_000L
     }
 }
