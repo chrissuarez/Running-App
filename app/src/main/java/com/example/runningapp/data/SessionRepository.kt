@@ -2565,6 +2565,53 @@ class SessionRepository(
     }
 
     /**
+     * The Run that has just finished, carrying the weather it was run in — fetched here and now
+     * where the after-run work has not got to it yet (#79, #83).
+     *
+     * That fetch is ordinarily [AfterRunRoutine]'s, but the routine books the whole Downloads
+     * snapshot ahead of it and the settle path this sits on waits for neither: on an outdoor finish
+     * the coach is usually asked while the fetch is still in flight, and a Run is asked about
+     * exactly once and never again ([RunnerSession.stageSettled]) — so a debrief sent a moment too
+     * early is a debrief that never mentions the headwind, and no later pass repairs it.
+     * [retryMissingWeather] mends the row at the next launch, which is a fact for the run detail
+     * page and comes far too late for the coach. So the fetch is pulled forward to here rather than
+     * the settlement being made to wait on the worker: the settlement is what puts the runner's
+     * next Workout on screen, and holding it behind a backup and an HTTP call would make every
+     * outdoor finish wait on the weather.
+     *
+     * The just-finished Run alone. The two older Runs beside it in the prompt are settled history,
+     * and weather missing from one of those is weather nobody could fetch rather than weather still
+     * on its way.
+     *
+     * No fetch at all — and the Run handed straight back — for a treadmill Run, for a Run with no
+     * fix to place, and for one whose weather is already stored: the same three conditions
+     * [AfterRunRoutine] skips on, so whichever of the two arrives second simply finds the work done.
+     *
+     * [fetchAndSaveWeather] never throws, so an unreachable service leaves the field null and the
+     * debrief goes out without it, exactly as it does with no fetch made at all.
+     */
+    private suspend fun weatheredIfTheFetchIsStillOwed(finalized: RunnerSession?): RunnerSession? {
+        if (finalized == null || weatherClient == null) return finalized
+        if (finalized.isTreadmill() || finalized.weatherTempC != null) return finalized
+        val latitude = finalized.startLatitude ?: return finalized
+        val longitude = finalized.startLongitude ?: return finalized
+
+        fetchAndSaveWeather(finalized.id, latitude, longitude, finalized.startTime)
+
+        // Read back from the row the fetch wrote, and take the five weather columns from it and
+        // nothing else: everything else about this Run stays as it stood when it ended, which is
+        // the whole of what [getAiTrainingContext] passes it in for.
+        val stored = sessionDao.getSessionById(finalized.id) ?: return finalized
+        return finalized.copy(
+            weatherTempC = stored.weatherTempC,
+            weatherFeelsLikeC = stored.weatherFeelsLikeC,
+            weatherHumidityPercent = stored.weatherHumidityPercent,
+            weatherWindSpeedKmh = stored.weatherWindSpeedKmh,
+            weatherConditionCode = stored.weatherConditionCode
+        )
+    }
+
+    /**
      * What the coach is told, for a judgement about [stageId].
      *
      * [asFinalized] is the Run just finished, as its row stood when `finalizeRun` wrote it — passed
@@ -2572,6 +2619,9 @@ class SessionRepository(
      * three. A stated distance can land between the finalize and this read (the sheet asking for it
      * is on screen the whole time), and a Run must be judged on what it was when it ended: see
      * [evaluateAndAdjustPlan]. Null everywhere the context is asked for outside a finish.
+     *
+     * The one thing about it that is not taken as it stood is the weather, which can still be on
+     * its way when a Run is finished outdoors — see [weatheredIfTheFetchIsStillOwed].
      */
     suspend fun getAiTrainingContext(
         stageId: String,
@@ -2610,8 +2660,9 @@ class SessionRepository(
         // the read above can have caught mid-write, and it stands in for one of these rows — it is
         // never another Run. Resolved once and read from twice below, so what the coach is shown and
         // what may graduate the Stage cannot describe different Runs (#275, #287).
+        val finalizedRun = weatheredIfTheFetchIsStillOwed(asFinalized)
         val recentSessions = storedRecentRuns.map { stored ->
-            if (stored.id == asFinalized?.id) asFinalized else stored
+            if (stored.id == finalizedRun?.id) finalizedRun else stored
         }
         val recentRuns = recentSessions.map { session ->
             // The label the coach sees for a past run: whether it followed a Workout at all.

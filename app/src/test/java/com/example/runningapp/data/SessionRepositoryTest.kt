@@ -6628,6 +6628,180 @@ class SessionRepositoryTest {
             assertNull(recentRun.note)
         }
 
+    // --- The weather of the Run the coach is being asked about (#79, #83) ---
+
+    /** An outdoor Run with a fix to place it, and nothing fetched for it yet. */
+    private fun anOutdoorRun(id: Long, latitude: Double = 51.5) =
+        aTreadmillRun(id = id, seconds = 1_500).copy(
+            runMode = "outdoor",
+            startTime = DAY_MILLIS_2026_01_05,
+            startLatitude = latitude,
+            startLongitude = -0.12
+        )
+
+    private val fetchedSnapshot = WeatherSnapshot(
+        temperatureC = 3.6,
+        feelsLikeC = -0.4,
+        humidityPercent = 88,
+        windSpeedKmh = 29.5,
+        conditionCode = 65
+    )
+
+    /** What [fetchedSnapshot] looks like once it is on the row it was fetched for. */
+    private fun RunnerSession.withFetchedWeather() = copy(
+        weatherTempC = fetchedSnapshot.temperatureC,
+        weatherFeelsLikeC = fetchedSnapshot.feelsLikeC,
+        weatherHumidityPercent = fetchedSnapshot.humidityPercent,
+        weatherWindSpeedKmh = fetchedSnapshot.windSpeedKmh,
+        weatherConditionCode = fetchedSnapshot.conditionCode
+    )
+
+    /** A weather service that says what it was asked, and what it answered. */
+    private class RecordingWeatherClient(
+        private val snapshot: WeatherSnapshot?,
+        private val unreachable: Boolean = false
+    ) : WeatherClient {
+        val asked = mutableListOf<Triple<Double, Double, Long>>()
+
+        override suspend fun fetchWeather(
+            latitude: Double,
+            longitude: Double,
+            atEpochMillis: Long
+        ): WeatherSnapshot? {
+            asked += Triple(latitude, longitude, atEpochMillis)
+            if (unreachable) throw IllegalStateException("no network")
+            return snapshot
+        }
+    }
+
+    private fun repositoryFetchingWeather(client: WeatherClient) = SessionRepository(
+        sessionDao = mockDao,
+        settingsRepository = mockSettingsRepo,
+        weatherClient = client
+    )
+
+    @Test
+    fun `the weather of the Run just finished is fetched before the coach is asked about it`() =
+        runTest {
+            // The after-run worker books the whole Downloads snapshot ahead of its fetch, so on an
+            // outdoor finish the settle path gets to the coach first — and a Run is asked about
+            // once and never again, so a debrief sent while the fetch is in flight is a debrief
+            // that never mentions the headwind (#79, #83).
+            val asFinalized = anOutdoorRun(id = 8)
+            whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(asFinalized))
+            whenever(mockDao.getSessionById(8L)).thenReturn(asFinalized.withFetchedWeather())
+            val client = RecordingWeatherClient(fetchedSnapshot)
+
+            val recentRun = repositoryFetchingWeather(client)
+                .getAiTrainingContext("sub_30_bridge", asFinalized = asFinalized)
+                .recentRuns
+                .single()
+
+            assertEquals(listOf(Triple(51.5, -0.12, DAY_MILLIS_2026_01_05)), client.asked)
+            verify(mockDao).updateWeather(
+                sessionId = 8L,
+                tempC = 3.6,
+                feelsLikeC = -0.4,
+                humidityPercent = 88,
+                windSpeedKmh = 29.5,
+                conditionCode = 65
+            )
+            assertEquals(
+                "Heavy rain, 4°C, feels like 0°C, 88% humidity, 30 km/h wind",
+                recentRun.weather
+            )
+        }
+
+    @Test
+    fun `a Run whose weather is already stored is not fetched a second time`() = runTest {
+        val asFinalized = anOutdoorRun(id = 8).withFetchedWeather()
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(asFinalized))
+        val client = RecordingWeatherClient(fetchedSnapshot)
+
+        val recentRun = repositoryFetchingWeather(client)
+            .getAiTrainingContext("sub_30_bridge", asFinalized = asFinalized)
+            .recentRuns
+            .single()
+
+        assertEquals(emptyList<Triple<Double, Double, Long>>(), client.asked)
+        assertEquals(
+            "Heavy rain, 4°C, feels like 0°C, 88% humidity, 30 km/h wind",
+            recentRun.weather
+        )
+    }
+
+    @Test
+    fun `a Run with no weather to fetch asks for none`() = runTest {
+        // A treadmill Run was run in no weather at all, and an outdoor Run that never got a fix
+        // cannot be placed — both are silence rather than a fetch worth making.
+        val treadmill = aTreadmillRun(id = 8, seconds = 1_500)
+        val unplaced = treadmill.copy(runMode = "outdoor")
+        val client = RecordingWeatherClient(fetchedSnapshot)
+        val repo = repositoryFetchingWeather(client)
+
+        for (finalized in listOf(treadmill, unplaced)) {
+            whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(finalized))
+
+            val recentRun = repo
+                .getAiTrainingContext("sub_30_bridge", asFinalized = finalized)
+                .recentRuns
+                .single()
+
+            assertNull(recentRun.weather)
+        }
+        assertEquals(emptyList<Triple<Double, Double, Long>>(), client.asked)
+    }
+
+    @Test
+    fun `a weather service that cannot be reached still lets the debrief go out`() = runTest {
+        // Offline degrades exactly as it always has: the field stays empty and the coach is asked
+        // anyway. A run out of signal must not cost the runner their debrief.
+        val asFinalized = anOutdoorRun(id = 8)
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(asFinalized))
+        whenever(mockDao.getSessionById(8L)).thenReturn(asFinalized)
+        val client = RecordingWeatherClient(snapshot = null, unreachable = true)
+
+        val context = repositoryFetchingWeather(client)
+            .getAiTrainingContext("sub_30_bridge", asFinalized = asFinalized)
+
+        assertEquals(1, client.asked.size)
+        assertNull(context.recentRuns.single().weather)
+    }
+
+    @Test
+    fun `weather missing from the Runs before this one is missing for good`() = runTest {
+        // Those are settled history: nothing is still on its way for them, and the launch retry is
+        // what mends a row nobody could fetch. Only the Run that has just finished is fetched here.
+        val asFinalized = anOutdoorRun(id = 8).withFetchedWeather()
+        val older = anOutdoorRun(id = 7, latitude = 55.9)
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(asFinalized, older))
+        val client = RecordingWeatherClient(fetchedSnapshot)
+
+        val recentRuns = repositoryFetchingWeather(client)
+            .getAiTrainingContext("sub_30_bridge", asFinalized = asFinalized)
+            .recentRuns
+
+        assertEquals(emptyList<Triple<Double, Double, Long>>(), client.asked)
+        assertNull(recentRuns.last().weather)
+    }
+
+    @Test
+    fun `a context asked for outside a finish fetches nothing`() = runTest {
+        // The Progress screen and every other reader: there is no Run just finished, so there is
+        // nothing still on its way.
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any()))
+            .thenReturn(listOf(anOutdoorRun(id = 8)))
+        val client = RecordingWeatherClient(fetchedSnapshot)
+
+        val recentRun = repositoryFetchingWeather(client)
+            .getAiTrainingContext("sub_30_bridge")
+            .recentRuns
+            .single()
+
+        assertEquals(emptyList<Triple<Double, Double, Long>>(), client.asked)
+        assertNull(recentRun.weather)
+    }
+
     /** Wednesday of the week beginning Monday 5 January 2026, in the zone these tests read. */
     private val goalsToday = LocalDate.of(2026, 1, 7)
 
