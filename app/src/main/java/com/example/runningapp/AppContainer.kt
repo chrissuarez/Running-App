@@ -309,6 +309,24 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Stores the runner's answer to a Run's finish sheet and closes the gate behind it, off any
+     * screen's lifetime (#297).
+     *
+     * On the container's own scope because the sheet's exit *removes the sheet* — the composition
+     * that raised it is gone by the time the writes land, so a launch on its scope is cancelled by
+     * the runner leaving the app, or by the Activity being destroyed the instant after Save. That
+     * cancellation would leave the gate naming this Run: the finish has already declined it, the
+     * launch pass has already run for this process, and nothing else would settle the Run until the
+     * process was killed.
+     *
+     * Not `once`, unlike everything above: this is the answer to one sheet, and there is one sheet
+     * per Run.
+     */
+    fun answerFinishSheet(sessionId: Long, writes: suspend () -> Unit) {
+        applicationScope.launch { sessionRepository.finishSheetAnswered(sessionId, writes = writes) }
+    }
+
+    /**
      * Lives as long as the process, and deliberately never cancelled — the container itself is a
      * process-wide singleton, so there is no shorter lifetime to bind to. SupervisorJob so one
      * failed background pass cannot take the others down with it.
