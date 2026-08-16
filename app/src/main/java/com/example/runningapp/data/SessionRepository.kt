@@ -261,8 +261,14 @@ data class AiGoal(
     /** The word after the numbers — "km", "hours", "runs". */
     val unit: String
 ) {
-    /** The Goal on one line, as the prompt writes it: "This week 24 of 40 km". */
-    internal fun forPrompt(): String = "$period $done of $target $unit"
+    /**
+     * The Goal on one line, as the prompt writes it: "This week — Distance: 24 of 40 km".
+     *
+     * The metric is named as well as its unit, because the two are not the same fact and the spec
+     * asks for both: "runs" is a unit that happens to name its metric, while "hours" is the unit of
+     * a Goal about Time and reads on its own as a Goal about hours of something unsaid.
+     */
+    internal fun forPrompt(): String = "$period — $metric: $done of $target $unit"
 }
 
 data class AiTrainingContext(
@@ -2607,13 +2613,7 @@ class SessionRepository(
                 // column null when it is walked past, but the edit path writes a runner's cleared
                 // note through (#80), so the emptiness can arrive either way and is answered once.
                 note = session.sessionNote?.takeIf { it.isNotBlank() },
-                weather = weatherSummaryOf(
-                    tempC = session.weatherTempC,
-                    feelsLikeC = session.weatherFeelsLikeC,
-                    humidityPercent = session.weatherHumidityPercent,
-                    windSpeedKmh = session.weatherWindSpeedKmh,
-                    conditionCode = session.weatherConditionCode
-                )
+                weather = session.weatherSummary()
             )
         }
 

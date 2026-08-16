@@ -43,7 +43,6 @@ import com.example.runningapp.training.GoalPeriod
 import com.example.runningapp.training.GoalProgress
 import com.example.runningapp.training.goalAmountText
 import kotlin.math.floor
-import kotlin.math.roundToInt
 
 /**
  * What a goal has typed into it, as a target — null when it is not one (#82).

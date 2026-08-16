@@ -688,7 +688,11 @@ class AiCoachClientTest {
             )
         )
 
-        assertTrue(prompt.contains("This week 24 of 40 km; This year 88 of 150 runs."))
+        assertTrue(
+            prompt.contains(
+                "This week — Distance: 24 of 40 km; This year — Runs: 88 of 150 runs."
+            )
+        )
     }
 
     @Test
@@ -708,7 +712,11 @@ class AiCoachClientTest {
         // set on the Progress screen and never through the coach.
         val prompt = buildEvaluationPrompt(oneRunWalkSession)
 
-        assertFalse(prompt.contains("goal", ignoreCase = true))
+        // The block's own two sentences, rather than the bare word "goal" anywhere in the prompt:
+        // a future line about goal pace would fail that, and the failure would read as a real
+        // finding about this block.
+        assertFalse(prompt.contains("The runner's own goals and where they stand"))
+        assertFalse(prompt.contains("those goals are the runner's own standing targets"))
     }
 
     /**
