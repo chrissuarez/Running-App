@@ -64,6 +64,8 @@ import java.time.Clock
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.floor
@@ -80,12 +82,6 @@ import kotlin.math.roundToInt
  * cut fine.
  */
 private const val MAX_SESSION_IDS_PER_QUERY = 500
-
-/**
- * No finish sheet is on screen (#297). Not a row id: Room hands out ids from 1 up, so nothing can
- * ever be mistaken for this.
- */
-private const val NO_FINISH_SHEET = -1L
 
 /**
  * How many banked seconds a heart rate has to have been held at to count as one this runner has
@@ -2624,21 +2620,28 @@ class SessionRepository(
     }
 
     /**
-     * The Run whose "How did that feel?" sheet is on screen, or [NO_FINISH_SHEET] when none is
-     * (#297).
+     * Every Run whose word from the "How did that feel?" sheet is still coming (#297).
      *
-     * One Run, because one Run finishes at a time and the sheet is the finish of it. In memory and
-     * deliberately not stored: it says what is happening in *this* process, and a process that dies
-     * takes the sheet down with it — after which nothing is still coming and the launch pass is
-     * right to settle. Persisting it would turn a sheet the runner never saw again into a Stage
-     * question held open for ever.
+     * **A Run leaves this set only when its own word is settled**, and until it does, no settlement
+     * carrying no word may judge it. A *set* and not one slot, because more than one Run can be
+     * owing its word at once: the sheet is taken off screen the moment the runner answers it, and
+     * the answer's writes and settlement run on afterwards on a process-wide scope, while STOP has
+     * already re-armed START. A runner who saves run 1 and immediately starts and stops run 2 has
+     * two Runs waiting, and a single slot would let run 2 overwrite run 1's — after which a
+     * wordless settlement reaching run 1 would judge it off the `isWalk` still on its row and could
+     * graduate a Stage on a walk, which cannot be taken back. One id per Run owing a word is a rule
+     * that has no smaller-than-it case left.
      *
-     * A row id rather than a nullable one boxed into an `AtomicReference`, because that class
-     * compares by *identity*: two boxed copies of the same id are two objects, so a
-     * compare-and-set on one would silently fail to clear the other and hold the Stage open for
-     * ever. Here the comparison is on the number.
+     * In memory and deliberately not stored: it says what is happening in *this* process, and a
+     * process that dies takes its sheets down with it — after which nothing is still coming and the
+     * launch pass is right to settle. Persisting it would turn a sheet the runner never saw again
+     * into a Stage question held open for ever.
+     *
+     * Concurrent, because it is added to from the STOP that raises a sheet and read and cleared from
+     * the settlements, which are several coroutines.
      */
-    private val finishSheetOpenFor = AtomicLong(NO_FINISH_SHEET)
+    private val awaitingTheRunnersWord: MutableSet<Long> =
+        Collections.newSetFromMap(ConcurrentHashMap<Long, Boolean>())
 
     /**
      * The finish sheet has been put on screen for a Run (#297) — called as STOP is pressed, before
@@ -2650,7 +2653,7 @@ class SessionRepository(
      * only ever find it already here.
      */
     fun finishSheetOpened(sessionId: Long) {
-        finishSheetOpenFor.set(sessionId)
+        awaitingTheRunnersWord.add(sessionId)
     }
 
     /**
@@ -2677,7 +2680,7 @@ class SessionRepository(
      * closed whether or not the writes land.
      *
      * **The gate is opened and the word is settled as one step, under [settling].** That is the
-     * whole shape of this function and the rule [finishSheetOpenFor] exists to keep: the gate says
+     * whole shape of this function and the rule [awaitingTheRunnersWord] exists to keep: the gate says
      * "a word about this Run is still coming", so it may not read as open until the settlement
      * carrying that word owns the lock. Opening it first and settling after left a gap — the wait
      * below genuinely suspends — and the finish's own settlement, which carries no word, could take
@@ -2699,7 +2702,7 @@ class SessionRepository(
     ) {
         val finalized = awaitFinalized(sessionId, finalizeWaitStepMillis)
         val settled = settling.withLock {
-            finishSheetOpenFor.compareAndSet(sessionId, NO_FINISH_SHEET)
+            awaitingTheRunnersWord.remove(sessionId)
             finalized != null && settleUnderSettling(sessionId, zone, markedAsWalk)
         }
         // Outside the lock, for the reason [settleStageForRun] gives: the snapshot copies the whole
@@ -2735,7 +2738,7 @@ class SessionRepository(
      * — **a step that fails must not skip the steps after it**. The answer does as much of itself as
      * it can: an effort that throws must still let the Walk mark be attempted, and neither may cost
      * the Run its close, because a throw on the way to [finishSheetClosed] would leave
-     * [finishSheetOpenFor] naming this Run for the life of the process — the finish has already been
+     * [awaitingTheRunnersWord] holding this Run for the life of the process — the finish has already been
      * and gone, and the launch pass runs once, so nothing left would ever settle it. Settling on
      * what did land is the smaller loss than never settling at all.
      *
@@ -2910,7 +2913,7 @@ class SessionRepository(
         zone: ZoneId,
         markedAsWalk: Boolean? = null,
     ): Boolean = settling.withLock {
-        if (finishSheetOpenFor.get() == sessionId) {
+        if (sessionId in awaitingTheRunnersWord) {
             Log.d("StageRule", "Run $sessionId still has its finish sheet open; the Stage waits (#297)")
             return@withLock false
         }
