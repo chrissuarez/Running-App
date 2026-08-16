@@ -2977,6 +2977,36 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a settlement reaching the Run while the sheet's word is on its way judges nothing`() = runTest {
+        // The gate says a word about this Run is still coming, so it may not read as open until the
+        // settlement carrying that word owns the lock (#297). Opened first and settled after, the
+        // sheet's wait for the finalize is a window the finish's own settlement can arrive in — and
+        // it carries no word, so it judges the Run off the `isWalk = false` on the row and graduates
+        // a Stage that cannot be taken back. The mark here is one that could not be stored, which is
+        // exactly when the row and the runner disagree.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        assertFalse("the row carries no mark, because the mark's write failed", asItEnded.isWalk)
+        // Still being written when the sheet goes, finished a step later — so the sheet waits.
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(endTime = 0L), asItEnded)
+
+        repo.finishSheetOpened(7L)
+        val sheet = launch { repo.finishSheetClosed(7L, markedAsWalk = true, finalizeWaitStepMillis = 1L) }
+        // The sheet is now inside its wait, its word not yet settled.
+        runCurrent()
+        // And the service finalizer reaches the same Run, carrying no word. It runs to the end
+        // without the clock moving, so the sheet cannot resume underneath it.
+        launch { repo.settleStageForRun(7L) }
+        runCurrent()
+
+        sheet.join()
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+        verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
+        verify(mockDao, times(1)).setStageSettled(7L)
+    }
+
+    @Test
     fun `the answer's writes land before the Stage is settled`() = runTest {
         // The order is the ticket: a Walk ticked into the sheet has to be in the row before the rule
         // reads it (#297), so the door that closes the gate is the same one that stores the answer.
