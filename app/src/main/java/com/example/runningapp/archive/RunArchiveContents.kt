@@ -9,6 +9,7 @@ import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.SessionDao
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.isFinished
+import com.example.runningapp.diagnostics.RunJournal
 import com.example.runningapp.export.GpxWriter
 import com.example.runningapp.export.RunGpxTrack
 import java.io.File
@@ -29,7 +30,8 @@ class RunArchiveContents(
     private val sessionDao: SessionDao,
     private val intervalStatDao: RunWalkIntervalStatDao,
     private val sessionRepository: SessionRepository,
-    private val settingsRepository: SettingsRepository
+    private val settingsRepository: SettingsRepository,
+    private val runJournal: RunJournal
 ) {
 
     private val appContext = context.applicationContext
@@ -38,8 +40,24 @@ class RunArchiveContents(
         // Read once and used by both halves, so the GPX files and the JSON describe the same set of
         // runs even if one finishes while the archive is being assembled.
         val runs = sessionDao.getAllSessions()
-        return runEntries(runs) + jsonEntry(createdAtEpochMillis, runs) + databaseEntry()
+        return runEntries(runs) + jsonEntry(createdAtEpochMillis, runs) + databaseEntry() +
+            journalEntries()
     }
+
+    /**
+     * The Run Journal, carried so a lost Run can still be diagnosed from a backup (#310) — the
+     * phone's own copy rolls, and a runner who noticed nothing for a month has only this.
+     *
+     * Oldest file first, so `cat`-ing the folder reads forwards. Whatever exists at the moment the
+     * archive is assembled: a phone that has never recorded one contributes no entries rather than
+     * an empty file.
+     */
+    private suspend fun journalEntries(): List<ArchiveEntry> =
+        runJournal.fileNames().map { name ->
+            ArchiveEntry("${ArchiveZip.DIAGNOSTICS_DIRECTORY}/$name") { out ->
+                runJournal.copyTo(name, out)
+            }
+        }
 
     /**
      * One GPX per run that has a route, built the same way the Share button builds it (#84) — so a

@@ -345,6 +345,20 @@ The state of running in Android's foreground — persistent notification and wak
 lock together. Earned by a live Run or an in-flight Acquisition.
 _Avoid_: foreground state (Promotion is the whole of it, not the Android flag)
 
+**Run Journal**:
+The app's own record on disk of the events that decide whether a Run is
+recording — the Run starting, pausing, resuming, stopping and being finalized;
+the Promotion being taken, refused or handed back; the service coming up and
+going down; the Strap arriving, leaving or being given up on. One plain-text
+line each, wall clock first, naming the Run it happened to. It exists because
+Android's log buffer holds about two hours and a Run plus the walk home is
+longer, so the minute that would name a cause has rolled off before anyone
+looks (#309). Bounded and rolled, carried in the archive, and written on a
+thread that outlives the service — a line recording a teardown must not be
+cancelled by the teardown it records. Nothing reads it back to make a decision:
+it is for a person or an agent to read over `adb` (#310).
+_Avoid_: log, logging, telemetry, audit trail
+
 **Simulation**:
 A developer mode that feeds fake heart rate in place of a Strap, so the app can
 be exercised without hardware.

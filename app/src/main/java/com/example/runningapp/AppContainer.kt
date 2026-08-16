@@ -14,6 +14,7 @@ import com.example.runningapp.data.DatabaseBackupManager
 import com.example.runningapp.data.OpenMeteoWeatherClient
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.WeatherClient
+import com.example.runningapp.diagnostics.RunJournal
 import com.example.runningapp.export.FileProviderGpxFileStore
 import com.example.runningapp.export.GpxFileStore
 import com.example.runningapp.restore.PendingRestore
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 class AppContainer(context: Context) {
@@ -49,6 +51,17 @@ class AppContainer(context: Context) {
 
     val coachPrescriptionRepository: CoachPrescriptionRepository by lazy {
         CoachPrescriptionRepository(appContext)
+    }
+
+    /**
+     * The Run Journal (#310) — what the phone will still be able to say about a lost Run tomorrow.
+     *
+     * Process-wide rather than the service's own, and deliberately: the file is appended to across
+     * every service the process raises, and a journal rebuilt with each one would have two writers
+     * on the same file the moment a service outlived its own teardown.
+     */
+    val runJournal: RunJournal by lazy {
+        RunJournal(File(appContext.filesDir, RunJournal.DIRECTORY_NAME))
     }
 
     val database: AppDatabase by lazy {
@@ -173,7 +186,8 @@ class AppContainer(context: Context) {
             sessionDao = database.sessionDao(),
             intervalStatDao = database.runWalkIntervalStatDao(),
             sessionRepository = sessionRepository,
-            settingsRepository = settingsRepository
+            settingsRepository = settingsRepository,
+            runJournal = runJournal
         )
         Archiver(
             folder = {
