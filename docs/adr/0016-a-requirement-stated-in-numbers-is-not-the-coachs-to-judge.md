@@ -56,7 +56,12 @@ and a graduation cannot be taken back. That was
 So the Run is put to the Plan when the finish sheet resolves — Save or dismissed, both being an
 answer. Two cases have no sheet to wait for and are settled without one: a Run stopped from the
 notification, which opens no sheet at all, and a Run whose sheet died with the process or was never
-answered, which the next launch settles. A `stageSettled` column on the Run carries that debt across
+answered, which the next launch settles. A sheet the runner simply walks away from is left waiting
+rather than closed for them: the alternative — treating *leaving the app* as an answer — settles
+sooner but takes the sheet with it, so a phone call landing in the second after STOP would cost the
+runner their effort, their note and, on a treadmill, the only prompt that ever asks how far they
+went. A stage message arriving late is the smaller loss. A `stageSettled` column on the Run carries
+that debt across
 a process boundary, exactly as `recordsScored` carries the record book's; every Run recorded before
 the column existed arrives already settled, because a launch that walked all of history putting each
 Run to the rule is the very pass the rule refuses to make.
