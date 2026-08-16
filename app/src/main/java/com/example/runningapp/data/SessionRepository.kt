@@ -184,6 +184,10 @@ data class AiRecentRun(
      * Quoted back to the coach as the runner's words and fenced as such in the prompt. A note is
      * the one field here whose text a person chooses freely, and the coach's answer moves the
      * stored plan — so it is read as how the Run went, never as something addressed to the coach.
+     *
+     * Bounded, and always built by [noteForCoach]: what the runner typed is stored whole and the
+     * run detail page shows all of it, but the copy sent to the coach is cut at
+     * [MAX_COACH_NOTE_CHARS] with an ellipsis on the end.
      */
     val note: String? = null,
     /**
@@ -195,6 +199,45 @@ data class AiRecentRun(
      */
     val weather: String? = null
 )
+
+/**
+ * How much of a runner's note the coach is sent (#83).
+ *
+ * Six hundred characters is around a hundred words — several sentences longer than anything anybody
+ * writes about a single Run, so in practice no real note is touched by this at all. Nothing stops a
+ * runner pasting far more than that: the note field takes whatever is typed into it and the column
+ * holds it, and three of those go into one request alongside the whole of the rest of the training
+ * context. A bound is here because the failure without one is silent — an oversized request is
+ * refused by the model, `evaluateProgress` catches that like any other API failure, and the runner
+ * gets no debrief and no plan adjustment with nothing on screen to say why. Losing the tail of an
+ * essay is the smaller loss.
+ */
+const val MAX_COACH_NOTE_CHARS = 600
+
+/**
+ * A stored note as the coach is sent it — the whole of it where it fits, and its first
+ * [MAX_COACH_NOTE_CHARS] characters where it does not.
+ *
+ * Cut here, at the prompt, and never at the write: what the runner typed is theirs and the run
+ * detail page still shows every word of it. This is the one place [AiRecentRun.note] is built, so a
+ * second reader of the column cannot send an unbounded one.
+ *
+ * A cut note ends in an ellipsis, so the coach can tell it was cut. Without the mark the model reads
+ * a sentence that stops mid-word as the runner's whole thought, and a note trailing off at "the last
+ * mile felt" would be answered as if that were all they had to say.
+ *
+ * Null for a note nobody wrote, blank included: the finish sheet leaves the column null when it is
+ * walked past, but the edit path writes a runner's cleared note through (#80), so the emptiness can
+ * arrive either way and is answered once, here.
+ */
+fun noteForCoach(stored: String?): String? {
+    val written = stored?.takeIf { it.isNotBlank() } ?: return null
+    return if (written.length <= MAX_COACH_NOTE_CHARS) {
+        written
+    } else {
+        written.take(MAX_COACH_NOTE_CHARS) + "…"
+    }
+}
 
 /**
  * One week of Effort Score as the coach is told it (#66, #247).
@@ -2609,10 +2652,10 @@ class SessionRepository(
                 // the sheet asking for it is on screen while this read happens, so the Run is
                 // described by what it was when it ended and never by what was typed since.
                 perceivedEffort = session.perceivedEffort,
-                // Blank is nothing written, not something written. The finish sheet leaves the
-                // column null when it is walked past, but the edit path writes a runner's cleared
-                // note through (#80), so the emptiness can arrive either way and is answered once.
-                note = session.sessionNote?.takeIf { it.isNotBlank() },
+                // Blank is nothing written and a pasted essay is cut with an ellipsis on it, both
+                // stated once in [noteForCoach] rather than here — the stored note stays whole, and
+                // only the copy the coach is handed is bounded.
+                note = noteForCoach(session.sessionNote),
                 weather = session.weatherSummary()
             )
         }

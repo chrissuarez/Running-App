@@ -6573,6 +6573,44 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a note short enough to send reaches the coach untouched`() {
+        val written = "Legs like lead the whole way, but the last mile came back to me."
+
+        assertEquals(written, noteForCoach(written))
+    }
+
+    @Test
+    fun `a note exactly as long as the coach is sent is not marked as cut`() {
+        val written = "a".repeat(MAX_COACH_NOTE_CHARS)
+
+        assertEquals(written, noteForCoach(written))
+    }
+
+    @Test
+    fun `a note too long to send is cut, and says it was cut`() {
+        // One character over is enough: the bound is where the cut starts, not where it is worth
+        // making.
+        val written = "a".repeat(MAX_COACH_NOTE_CHARS) + "b"
+
+        assertEquals("a".repeat(MAX_COACH_NOTE_CHARS) + "…", noteForCoach(written))
+    }
+
+    @Test
+    fun `a pasted essay reaches the coach bounded, not whole`() = runTest {
+        // The runner's own row keeps every word — only the copy handed to the coach is bounded, or
+        // a long enough note would push the request past the model's limit and the whole debrief
+        // and plan adjustment would be lost with nothing on screen to say why (#83).
+        val essay = "I ran and ran. ".repeat(500)
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any()))
+            .thenReturn(listOf(aTreadmillRun(id = 9, seconds = 1_500).copy(sessionNote = essay)))
+
+        val note = repository.getAiTrainingContext("sub_30_bridge").recentRuns.single().note
+
+        assertEquals(MAX_COACH_NOTE_CHARS + 1, note?.length)
+        assertEquals(essay.take(MAX_COACH_NOTE_CHARS) + "…", note)
+    }
+
+    @Test
     fun `a note typed while the Run is being judged cannot join its own Run's evaluation`() =
         runTest {
             // The same rule as the stated distance (#231): the sheet is on screen while this read
