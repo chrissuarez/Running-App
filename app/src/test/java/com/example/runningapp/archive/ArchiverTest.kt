@@ -82,7 +82,7 @@ class ArchiverTest {
         contents = contents,
         onArchived = onArchived,
         now = { julyMorning },
-        zoneId = london
+        zoneId = { london }
     )
 
     @Test

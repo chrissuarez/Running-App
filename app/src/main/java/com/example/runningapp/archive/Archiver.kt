@@ -72,7 +72,12 @@ class Archiver(
     /** Records when a backup last succeeded. Called only after one did. */
     private val onArchived: suspend (atEpochMillis: Long) -> Unit,
     private val now: () -> Long,
-    private val zoneId: ZoneId = ZoneId.systemDefault()
+    /**
+     * The zone the archive's name is dated in — asked at each backup, never held (#299). One
+     * archiver is made when the app starts and lives as long as it does, so a zone captured here
+     * would name a file after the day of somewhere the runner has since left.
+     */
+    private val zoneId: () -> ZoneId = ZoneId::systemDefault
 ) {
 
     /**
@@ -98,8 +103,11 @@ class Archiver(
         } ?: return ArchiveOutcome.NoFolderChosen
 
         val at = now()
-        val finishedName = ArchiveNames.archiveName(at, zoneId)
-        val inProgressName = ArchiveNames.inProgressName(at, zoneId)
+        // One reading of the zone for one archive: the part-file is renamed to the finished name at
+        // the end, so two readings could date the two halves of one backup to different days.
+        val here = zoneId()
+        val finishedName = ArchiveNames.archiveName(at, here)
+        val inProgressName = ArchiveNames.inProgressName(at, here)
 
         // Read once, before anything is written: the sweep below needs it, and so does the question
         // of whether this second's archive is already there. Null means the folder would not say —
