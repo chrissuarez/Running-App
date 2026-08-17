@@ -16,8 +16,8 @@ import com.example.runningapp.data.OpenMeteoWeatherClient
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.WeatherClient
 import com.example.runningapp.diagnostics.RunJournal
-import com.example.runningapp.export.FileProviderGpxFileStore
-import com.example.runningapp.export.GpxFileStore
+import com.example.runningapp.export.ExportFileStore
+import com.example.runningapp.export.FileProviderExportFileStore
 import com.example.runningapp.restore.PendingRestore
 import com.example.runningapp.restore.migrationHrProfile
 import com.example.runningapp.routes.RouteImporter
@@ -135,8 +135,8 @@ class AppContainer(context: Context) {
         OpenMeteoWeatherClient()
     }
 
-    val gpxFileStore: GpxFileStore by lazy {
-        FileProviderGpxFileStore(appContext)
+    val exportFileStore: ExportFileStore by lazy {
+        FileProviderExportFileStore(appContext)
     }
 
     /**

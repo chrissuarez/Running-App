@@ -7,9 +7,14 @@ import androidx.lifecycle.viewModelScope
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.isFinished
-import com.example.runningapp.export.GpxFileStore
-import com.example.runningapp.export.GpxShareFile
+import com.example.runningapp.analysis.RunAnalysis
+import com.example.runningapp.export.ExportFileStore
+import com.example.runningapp.export.ExportFormat
+import com.example.runningapp.export.ExportShareFile
+import com.example.runningapp.export.FitWriter
 import com.example.runningapp.export.GpxWriter
+import com.example.runningapp.export.RunExportName
+import com.example.runningapp.export.RunFitActivity
 import com.example.runningapp.export.RunGpxTrack
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -24,8 +29,8 @@ class SessionDetailViewModel(
     private val sessionRepository: SessionRepository,
     // Null wherever no file target is wired (tests): sharing then reports itself unavailable rather
     // than failing silently.
-    private val gpxFileStore: GpxFileStore? = null,
-    /** Where a run is turned into XML — injectable so tests can hold that work on their own clock. */
+    private val exportFileStore: ExportFileStore? = null,
+    /** Where a run is turned into a file — injectable so tests can hold that work on their own clock. */
     private val assemblyDispatcher: CoroutineDispatcher = Dispatchers.Default
 ) : ViewModel() {
 
@@ -40,20 +45,20 @@ class SessionDetailViewModel(
     // Each result names the run that asked for it, because held state says only that *something*
     // finished: an export that lands after the runner has moved on would otherwise open a chooser —
     // or report a failure — over whatever run they are looking at now.
-    private val _gpxShareReady = MutableStateFlow<GpxShareFile?>(null)
-    val gpxShareReady = _gpxShareReady.asStateFlow()
+    private val _exportShareReady = MutableStateFlow<ExportShareFile?>(null)
+    val exportShareReady = _exportShareReady.asStateFlow()
 
-    private val _gpxShareFailed = MutableStateFlow<Long?>(null)
-    val gpxShareFailed = _gpxShareFailed.asStateFlow()
+    private val _exportShareFailed = MutableStateFlow<Long?>(null)
+    val exportShareFailed = _exportShareFailed.asStateFlow()
 
     /** The share sheet has been opened for the ready file; it is not offered again. */
-    fun gpxShareHandled() {
-        _gpxShareReady.value = null
+    fun exportShareHandled() {
+        _exportShareReady.value = null
     }
 
     /** The failure has been shown to the runner. */
-    fun gpxShareFailureShown() {
-        _gpxShareFailed.value = null
+    fun exportShareFailureShown() {
+        _exportShareFailed.value = null
     }
 
     fun deleteSession(sessionId: Long) {
@@ -116,54 +121,77 @@ class SessionDetailViewModel(
     }
 
     /**
-     * Exports a run as GPX and announces the file on [gpxShareReady] (#84). Anything that leaves the
-     * runner with nothing to share — no GPS track, no writable file — reports on [gpxShareFailed] so
-     * the screen can say so, because a share sheet that never opens looks like a broken button.
+     * Exports a run and announces the file on [exportShareReady] (#84, #218). Anything that leaves
+     * the runner with nothing to share — nothing recorded, no writable file — reports on
+     * [exportShareFailed] so the screen can say so, because a share sheet that never opens looks
+     * like a broken button.
+     *
+     * The two formats differ in what they need of a run. GPX needs a GPS track: a trackpoint without
+     * a position is not a legal one, so a run with no fixes has nothing to write. FIT needs only that
+     * something was recorded — a treadmill Run's heart-rate trace is a file in its own right. The
+     * refusal is checked here and not only where the button is offered: the reads below are separate
+     * one-shots, so exporting a run still being recorded would stitch together a file the runner
+     * never ran.
      */
-    fun shareGpx(sessionId: Long) {
+    fun shareRun(sessionId: Long, format: ExportFormat) {
         viewModelScope.launch {
-            val store = gpxFileStore
+            val store = exportFileStore
             if (store == null) {
-                _gpxShareFailed.value = sessionId
+                _exportShareFailed.value = sessionId
                 return@launch
             }
             val session = sessionRepository.getSession(sessionId)
-            // Track points come through the same #38 accuracy gate as the map, so the file matches
-            // the route the runner was shown.
-            val trackPoints = session?.let { sessionRepository.getTrackPointsForMap(sessionId) }.orEmpty()
-            // Checked again here, not just where the button is offered: the reads below are separate
-            // one-shots, so exporting a run still being recorded would stitch together a file the
-            // runner never ran.
-            if (session == null || !session.isFinished() || trackPoints.isEmpty()) {
-                _gpxShareFailed.value = sessionId
+            if (session == null || !session.isFinished()) {
+                _exportShareFailed.value = sessionId
                 return@launch
             }
+            // Track points come through the same #38 accuracy gate as the map, so the file matches
+            // the route the runner was shown.
+            val trackPoints = sessionRepository.getTrackPointsForMap(sessionId)
             val hrSamples = sessionRepository.getHrSamples(sessionId)
-            // Off the main thread: an hour's run is thousands of points, each formatted into XML,
-            // and the runner tapped Share expecting the sheet to open, not the screen to stall.
-            val (track, contents) = withContext(assemblyDispatcher) {
-                val built = RunGpxTrack.build(
-                    session = session,
-                    trackPoints = trackPoints,
-                    hrSamples = hrSamples
-                )
-                built to GpxWriter.write(built)
+            if (trackPoints.isEmpty() && (format == ExportFormat.GPX || hrSamples.isEmpty())) {
+                _exportShareFailed.value = sessionId
+                return@launch
             }
-            val fileName = RunGpxTrack.fileName(session)
+            // Off the main thread: an hour's run is thousands of points, and the runner tapped Share
+            // expecting the sheet to open, not the screen to stall. FIT costs a walk of the track on
+            // top of the encoding, because its laps are the run's own splits.
+            //
+            // The name is decided beside the bytes rather than in a second `when` on the same
+            // format: they are one decision — what file this is — and split in two they could
+            // disagree, which is a `.gpx` full of FIT.
+            val fileName = RunExportName.fileName(session, format.extension)
+            val contents = withContext(assemblyDispatcher) {
+                when (format) {
+                    ExportFormat.GPX ->
+                        GpxWriter.write(RunGpxTrack.build(session, trackPoints, hrSamples))
+                            .toByteArray(Charsets.UTF_8)
+
+                    ExportFormat.FIT -> FitWriter.write(
+                        RunFitActivity.build(
+                            session = session,
+                            trackPoints = trackPoints,
+                            hrSamples = hrSamples,
+                            analysis = RunAnalysis.of(session, hrSamples, trackPoints),
+                        )
+                    )
+                }
+            }
             val uri = try {
                 store.write(fileName, contents)
             } catch (e: Exception) {
-                Log.e("GpxExport", "Failed to write GPX for sessionId=$sessionId", e)
+                Log.e("RunExport", "Failed to write ${format.extension} for sessionId=$sessionId", e)
                 null
             }
             if (uri == null) {
-                _gpxShareFailed.value = sessionId
+                _exportShareFailed.value = sessionId
             } else {
-                _gpxShareReady.value = GpxShareFile(
+                _exportShareReady.value = ExportShareFile(
                     sessionId = sessionId,
                     uri = uri,
                     fileName = fileName,
-                    runName = track.name
+                    runName = RunExportName.runName(session),
+                    format = format
                 )
             }
         }
@@ -172,12 +200,12 @@ class SessionDetailViewModel(
 
 class SessionDetailViewModelFactory(
     private val sessionRepository: SessionRepository,
-    private val gpxFileStore: GpxFileStore? = null
+    private val exportFileStore: ExportFileStore? = null
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(SessionDetailViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return SessionDetailViewModel(sessionRepository, gpxFileStore) as T
+            return SessionDetailViewModel(sessionRepository, exportFileStore) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

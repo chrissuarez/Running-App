@@ -102,6 +102,21 @@ dependencies {
     // Location
     implementation("com.google.android.gms:play-services-location:21.1.0")
 
+    // FIT export (#218). The official Garmin SDK, published to Maven Central by Garmin themselves
+    // (`com.garmin:fit`, "The Official Garmin FIT SDK", scm github.com/garmin/fit-java-sdk) — the
+    // CRCs, the definition-message layout and the field scaling are not worth reimplementing.
+    //
+    // Licence: the FIT Protocol License Agreement, which grants a royalty-free licence "to use the
+    // FIT protocol in any software created by Licensee". Two of its terms bind this code rather than
+    // this build file: §2h forbids deviating from the FIT protocol, and §3 requires interoperability
+    // be maintained — which is why the export is written through the SDK's own encoder and read back
+    // by its own decoder in test rather than hand-rolled. §2g forbids safety-critical use; a
+    // heart-rate diary is not one.
+    //
+    // Plain Java 8 with no java.time or java.nio.file anywhere in it, so it needs no desugaring on
+    // minSdk 30.
+    implementation("com.garmin:fit:21.176.0")
+
     // Charts (#63). Pinned at 1.13.1 and not to be moved in either direction.
     //
     // Up: 1.14 pulls Compose BOM 2024.02, i.e. a Compose *runtime* of 1.6.1, and the Compose

@@ -8,10 +8,15 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-/** Where a generated GPX file goes so the share sheet can read it. */
-interface GpxFileStore {
+/**
+ * Where a generated export goes so the share sheet can read it.
+ *
+ * Bytes rather than text since #218: GPX is XML and FIT is binary, and the one thing both need from
+ * this seam is a file somewhere a chooser can reach.
+ */
+interface ExportFileStore {
     /** The shareable Uri of the written file, or null if the file could not be made shareable. */
-    suspend fun write(fileName: String, contents: String): Uri?
+    suspend fun write(fileName: String, contents: ByteArray): Uri?
 }
 
 /**
@@ -19,24 +24,24 @@ interface GpxFileStore {
  * whichever app the runner picks in the share sheet (#84). The cache is the right home: the file
  * exists only to be handed on, and Android is free to reclaim it afterwards.
  */
-class FileProviderGpxFileStore(context: Context) : GpxFileStore {
+class FileProviderExportFileStore(context: Context) : ExportFileStore {
 
     private val appContext = context.applicationContext
 
-    override suspend fun write(fileName: String, contents: String): Uri = withContext(Dispatchers.IO) {
+    override suspend fun write(fileName: String, contents: ByteArray): Uri = withContext(Dispatchers.IO) {
         val directory = File(appContext.cacheDir, SHARE_DIRECTORY).apply { mkdirs() }
         // Re-sharing the same run overwrites its own file, and nothing else is swept up: the
         // receiving app reads the Uri when it gets round to it — Gmail attaches on send, Drive
         // uploads in the background — so clearing out an earlier export could break a share still in
         // flight. These are a few KB each, in a cache Android is free to reclaim.
         val file = File(directory, fileName)
-        file.writeText(contents)
+        file.writeBytes(contents)
         FileProvider.getUriForFile(appContext, "${BuildConfig.APPLICATION_ID}$AUTHORITY_SUFFIX", file)
     }
 
     companion object {
-        /** Must match the `gpx_share_paths.xml` cache-path. */
-        const val SHARE_DIRECTORY = "shared-gpx"
+        /** Must match the `export_share_paths.xml` cache-path. */
+        const val SHARE_DIRECTORY = "shared-exports"
 
         /**
          * Completes the provider authority declared in the manifest as `${applicationId}.fileprovider`

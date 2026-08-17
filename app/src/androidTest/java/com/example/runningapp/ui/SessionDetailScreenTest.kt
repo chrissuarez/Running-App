@@ -17,6 +17,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.export.ExportFormat
 import com.example.runningapp.ui.theme.RunningAppTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -97,8 +98,8 @@ class SessionDetailScreenTest {
     }
 
     @Test
-    fun sessionDetailScreen_offersShareForARunWithAGpsTrack() {
-        var sharedSessionId: Long? = null
+    fun sessionDetailScreen_offersBothFormatsForARunWithAGpsTrack() {
+        var shared: Pair<Long, ExportFormat>? = null
         composeRule.setContent {
             RunningAppTheme {
                 SessionDetailScreen(
@@ -107,18 +108,21 @@ class SessionDetailScreenTest {
                     intervalStats = emptyList(),
                     onDeleteSession = {},
                     onBack = {},
-                    canShareGpx = true,
-                    onShareGpx = { sharedSessionId = it }
+                    shareableFormats = listOf(ExportFormat.FIT, ExportFormat.GPX),
+                    onShareRun = { id, format -> shared = id to format }
                 )
             }
         }
 
-        composeRule.onNodeWithContentDescription("Share run as GPX").assertIsDisplayed().performClick()
-        assertEquals(1L, sharedSessionId)
+        composeRule.onNodeWithContentDescription("Share run").assertIsDisplayed().performClick()
+        // FIT first: it is the better file, and the one Garmin reads whole.
+        composeRule.onNodeWithText("GPX").assertIsDisplayed()
+        composeRule.onNodeWithText("Garmin (.fit)").assertIsDisplayed().performClick()
+        assertEquals(1L to ExportFormat.FIT, shared)
     }
 
     @Test
-    fun sessionDetailScreen_hidesShareForARunWithNoGpsTrack() {
+    fun sessionDetailScreen_offersOnlyFitForARunWithNoGpsTrack() {
         composeRule.setContent {
             RunningAppTheme {
                 SessionDetailScreen(
@@ -127,13 +131,33 @@ class SessionDetailScreenTest {
                     intervalStats = emptyList(),
                     onDeleteSession = {},
                     onBack = {},
-                    canShareGpx = false
+                    shareableFormats = listOf(ExportFormat.FIT)
+                )
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("Share run").performClick()
+        composeRule.onNodeWithText("Garmin (.fit)").assertIsDisplayed()
+        composeRule.onAllNodesWithText("GPX").assertCountEquals(0)
+    }
+
+    @Test
+    fun sessionDetailScreen_hidesShareForARunThatCanBeNeitherFile() {
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = plainSession(),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = {},
+                    shareableFormats = emptyList()
                 )
             }
         }
 
         composeRule.onNodeWithContentDescription("Delete run").assertIsDisplayed()
-        composeRule.onAllNodesWithContentDescription("Share run as GPX").assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("Share run").assertCountEquals(0)
     }
 
     // --- Saying afterwards how a Run felt (#80) ------------------------------------------------

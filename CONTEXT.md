@@ -14,7 +14,10 @@ without being stopped — the system taking the service out from under it while 
 was still recording — and that is not a way for a Run to disappear: it is
 finished there and then from the seconds it had already written down, and the
 runner is told it happened (#309).
-_Avoid_: session, activity
+_Avoid_: session, activity — except inside the FIT Export, where `session` and
+`activity` are the format's own names for its messages, exactly as `lap` is (see
+**Split**). `FitActivity`, `RunFitActivity`, `SessionMesg` and `ActivityMesg` name
+what is in the file; everything on this side of that boundary is still a Run.
 
 **Plan**:
 The whole schedule a runner is following: an ordered list of Stages, fixed in
@@ -126,8 +129,13 @@ _Avoid_: HRR, working heart rate, Karvonen
 
 **Split**:
 One completed kilometre of a Run, and the pace it was covered at. Measured by
-distance, unlike an Interval, which is measured by time.
-_Avoid_: lap, mile
+distance, unlike an Interval, which is measured by time. A Split also knows the
+stretch of the clock it covers and the moving time its pace was quoted against,
+because the Export writes those down as a lap and only the walk that cut the
+Split knows where the kilometre was crossed (#218).
+_Avoid_: lap, mile — except inside the FIT Export, where `lap` is the format's own
+word for its message and using any other would be a name that matches nothing in
+the file (`FitLap`, `LapMesg`).
 
 **Break**:
 Any stretch of a Run the recording does not cover — a Pause or an Outage.
@@ -188,6 +196,20 @@ not be confused even in code (`TrackPoint` belongs to a Run). "Course" is fine, 
 the line itself as against the whole record of it. The `Routes` object under
 `navigation/` is the app's list of screen addresses and is a different word that happens to be
 spelled the same.
+
+**Export**:
+A finished Run written out as a file for somewhere else to read (#84, #218). Two
+formats, and the runner picks at the moment they share. **FIT** states the Run: its
+own distance, its own Duration and Moving time, its own Splits as laps, and one
+moment per second anything was recorded for — so a Run with no GPS at all is a whole
+file, and nothing is re-derived
+([ADR 0017](docs/adr/0017-an-export-states-the-run-it-does-not-imply-it.md)). **GPX**
+implies it: places and times only, and it needs a position for every moment, so a
+treadmill Run has nothing to put in one. FIT is offered first for both reasons. An
+Export is a copy handed on, never a record: it is written into a cache the phone may
+reclaim, and nothing in the app reads one back.
+_Avoid_: backup — that is the monthly Archive (#85), which is the whole database and
+is a record; and import, which is how a Route arrives (#54) and goes the other way.
 
 **Effort Score**:
 What a Run cost the runner, as one number: every second weighted by the Zone it was spent in — 1
@@ -292,7 +314,7 @@ The calendar day the runner would say they ran, and the exact opposite of **Toda
 captured, never observed. A Run writes down how far east of UTC its runner's clock
 was the moment START was pressed, and every reader that places the Run on a day —
 the weekly bars, the Progress curve, the Goals, the Stage's Test clock, the day a
-finished Plan is recorded on, the GPX name, the date on its own page — reads that
+finished Plan is recorded on, the exported file's name, the date on its own page — reads that
 rather than re-reading the start moment in whichever zone the phone is in now. A
 Run near midnight otherwise changes the day it happened on the moment the runner
 flies, and for a Plan Completion, whose day is recorded once and can never be

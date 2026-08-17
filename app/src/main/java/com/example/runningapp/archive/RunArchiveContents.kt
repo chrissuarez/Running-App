@@ -11,6 +11,7 @@ import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.diagnostics.RunJournal
 import com.example.runningapp.export.GpxWriter
+import com.example.runningapp.export.RunExportName
 import com.example.runningapp.export.RunGpxTrack
 import java.io.File
 import java.io.OutputStream
@@ -66,7 +67,7 @@ class RunArchiveContents(
     private suspend fun runEntries(runs: List<RunnerSession>): List<ArchiveEntry> =
         runsWorthAGpx(runs, sessionRepository.getSessionIdsWithMappableTrack())
             .map { run ->
-                ArchiveEntry("${ArchiveZip.ACTIVITIES_DIRECTORY}/${RunGpxTrack.fileName(run)}") { out ->
+                ArchiveEntry("${ArchiveZip.ACTIVITIES_DIRECTORY}/${RunExportName.fileName(run, GpxWriter.FILE_EXTENSION)}") { out ->
                     out.write(gpx(run).toByteArray(Charsets.UTF_8))
                 }
             }

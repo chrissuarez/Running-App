@@ -513,6 +513,68 @@ class SplitsTest {
         assertNull(analysis.elevationGainMeters)
     }
 
+    // -- The clock a split covers, which only the FIT export reads (#218) ---------------------
+
+    @Test
+    fun `splits cover the run's clock end to end with no gap between them`() {
+        val run = aRun()
+        val splits = splitsOfRun(run, noSamples, script { running(3.0, seconds = 1000) })
+
+        assertEquals(run.startTime, splits.first().startTimeMillis)
+        splits.zipWithNext { earlier, later ->
+            // Butted up against each other: a lap that started after the one before it ended would
+            // leave seconds of the run belonging to no lap at all.
+            assertEquals(earlier.endTimeMillis, later.startTimeMillis)
+        }
+        splits.forEach { assertTrue(it.endTimeMillis > it.startTimeMillis) }
+        assertEquals(run.startTime + 1_000 * 1_000L, splits.last().endTimeMillis)
+    }
+
+    @Test
+    fun `a split's moving time is the time its pace was quoted against`() {
+        val splits = splitsOfRun(aRun(), noSamples, script { running(2.0, seconds = 1000) })
+
+        splits.forEach { split ->
+            // The same number the pace column is worked out from, so the file and the table agree.
+            val impliedMinutes = split.paceMinPerKm * (split.distanceMeters / SPLIT_METERS)
+            assertEquals(impliedMinutes, split.movingMillis / 60_000.0, 0.01)
+        }
+    }
+
+    @Test
+    fun `a split that ended in a pause holds the pause outside its moving time`() {
+        val splits = splitsOfRun(
+            aRun(durationSeconds = 700),
+            noSamples,
+            script {
+                running(2.0, seconds = 500)
+                pauseAndMoveOn(meters = 0.0, seconds = 100)
+                running(2.0, seconds = 100)
+            }
+        )
+
+        val first = splits.first()
+        // The wall clock ran across the pause; the moving clock did not.
+        assertEquals(600_000L, first.endTimeMillis - first.startTimeMillis)
+        assertEquals(500_000L, first.movingMillis)
+    }
+
+    @Test
+    fun `a kilometre crossed inside one long leg is cut at the moment it was crossed`() {
+        // Fixes 100 s and 300 m apart: the first kilometre falls a third of the way into the fourth
+        // leg, and both laps either side of it must still have a clock to have been run on.
+        val splits = splitsOfRun(
+            aRun(durationSeconds = 700),
+            noSamples,
+            script { sparse(meters = 300.0, seconds = 100, fixes = 7) }
+        )
+
+        assertTrue(splits.size >= 2)
+        splits.forEach { assertTrue("a lap ran for no time at all", it.endTimeMillis > it.startTimeMillis) }
+        // 1000 m at 3 m/s is 333 s in, taken proportionally through the leg that crossed it.
+        assertEquals(333_000.0, (splits[0].endTimeMillis - splits[0].startTimeMillis).toDouble(), 1_000.0)
+    }
+
     // -- Asking the way the page asks --------------------------------------------------------
 
     /**

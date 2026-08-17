@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the directory run exports are written to (#84, #218) is exposed, not the whole cache. -->
+<paths>
+    <cache-path name="shared-exports" path="shared-exports/" />
+    <!--
+      The name this directory had before #218, when GPX was the only export. Kept exposed, not
+      written to: an app the runner shared to reads the Uri when it gets round to it — Gmail on send,
+      Drive in the background — so a share started before the upgrade and finished after it would
+      otherwise be handed a path the provider refuses. Nothing new lands here, so it empties itself
+      as the cache is reclaimed.
+    -->
+    <cache-path name="shared-gpx" path="shared-gpx/" />
+</paths>

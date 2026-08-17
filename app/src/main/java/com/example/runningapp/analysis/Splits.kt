@@ -5,6 +5,7 @@ import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.MeasuredTrack
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
+import com.example.runningapp.data.heartRatesByWallSecond
 import com.example.runningapp.data.measureTrack
 import com.example.runningapp.data.withinTheRunsClock
 import com.example.runningapp.run.RunMode
@@ -56,6 +57,33 @@ data class Split(
     val elevationGainMeters: Double?,
     /** This split's pace as a fraction of the slowest split's — the width of its bar. */
     val relativePace: Double,
+    /**
+     * When on the wall clock this split began, and when it ended (#218).
+     *
+     * The splits table needs neither and never shows them; a FIT lap does, because a lap is a
+     * stretch of a run in time and a reader lays them end to end. They are here rather than worked
+     * out again by the exporter because only this walk knows where a kilometre was crossed —
+     * re-deriving them from pace and distance would let the file's laps and the page's table drift
+     * apart, which is the one thing the run's own splits are being exported to avoid.
+     *
+     * Butted up against each other: one split ends exactly where the next begins, so the laps cover
+     * the run's recorded stretch with nothing falling between them. Where a kilometre was crossed
+     * part-way through a leg the boundary is taken through the leg in proportion, the same as its
+     * distance and its seconds are — so a sparse backfilled track whose leg spans several kilometres
+     * still gives every lap a clock to have been run on.
+     */
+    val startTimeMillis: Long,
+    val endTimeMillis: Long,
+    /**
+     * The part of this split's clock the runner was moving for — the number [paceMinPerKm] is
+     * quoted against, in full precision (#218).
+     *
+     * A FIT lap carries both clocks: `total_elapsed_time` is the wall clock above, and
+     * `total_timer_time` is this. Kept separate because a pause or a rest sits inside the first and
+     * outside the second, which is the whole reason the app's own pace disagrees with a re-derived
+     * one.
+     */
+    val movingMillis: Long,
 )
 
 /**
@@ -97,7 +125,7 @@ internal fun groundOf(
     val measured = measureTrack(track).withinTheRunsClock(run.durationSeconds)
     if (measured.legs.isEmpty()) return nothing
     val elevation = elevationOf(measured)
-    val bpmByWallSecond = samples.byWallSecond(run)
+    val bpmByWallSecond = heartRatesByWallSecond(run, samples)
     return RunGround(
         splits = measured.splitAtKilometres(bpmByWallSecond, elevation).scaledToTheSlowest(),
         // The whole run in one pass rather than the sum of the splits' gains, and not meant to match
@@ -134,6 +162,10 @@ private fun MeasuredTrack.splitAtKilometres(
     var startIndex = 0
     var splitMeters = 0.0
     var splitMillis = 0L
+    // Where this split began on the wall clock (#218). A moment rather than a fix, because a
+    // kilometre boundary is allowed to fall inside a leg and the split either side of one has to
+    // start when the runner crossed it, not at the next fix after.
+    var splitStartMillis = points.first().timestampMillis
 
     legs.forEachIndexed { i, leg ->
         var legMeters = leg.meters
@@ -143,17 +175,27 @@ private fun MeasuredTrack.splitAtKilometres(
         while (legMeters > 0 && splitMeters + legMeters >= SPLIT_METERS) {
             val neededMeters = SPLIT_METERS - splitMeters
             val neededMillis = (legMillis * (neededMeters / legMeters)).toLong()
+            // The leg's own wall clock divided at the same fraction of its ground: a leg is walked
+            // at one speed by every other measurement here, so its boundary moment is taken the same
+            // way. `leg.millis` rather than `leg.movingMillis` — the wall clock runs across a rest
+            // that the moving clock does not, and a lap boundary is a moment, not a duration.
+            val consumedMeters = leg.meters - legMeters + neededMeters
+            val boundaryMillis = points[i].timestampMillis +
+                if (leg.meters > 0) (leg.millis * (consumedMeters / leg.meters)).toLong() else 0L
             splits += RawSplit(
                 distanceMeters = SPLIT_METERS,
                 movingMillis = splitMillis + neededMillis,
                 isPartial = false,
                 averageBpm = bpmByWallSecond.averageOver(points, startIndex, i + 1, isFirstSplit = splits.isEmpty()),
                 elevationGainMeters = elevation?.gainMetersBetween(startIndex, i + 1),
+                startTimeMillis = splitStartMillis,
+                endTimeMillis = boundaryMillis,
             )
             legMeters -= neededMeters
             legMillis -= neededMillis
             splitMeters = 0.0
             splitMillis = 0L
+            splitStartMillis = boundaryMillis
             // The next split starts at the fix the boundary was crossed on. The part of this leg
             // that spilled past the marker keeps its distance and its seconds, but its heart rates
             // and its climb belong to the split the fix was recorded in — they cannot be halved.
@@ -173,6 +215,8 @@ private fun MeasuredTrack.splitAtKilometres(
             isPartial = !finishedOnTheKilometre,
             averageBpm = bpmByWallSecond.averageOver(points, startIndex, points.lastIndex, isFirstSplit = splits.isEmpty()),
             elevationGainMeters = elevation?.gainMetersBetween(startIndex, points.lastIndex),
+            startTimeMillis = splitStartMillis,
+            endTimeMillis = points.last().timestampMillis,
         )
     }
     return splits
@@ -185,6 +229,8 @@ private data class RawSplit(
     val isPartial: Boolean,
     val averageBpm: Int?,
     val elevationGainMeters: Double?,
+    val startTimeMillis: Long,
+    val endTimeMillis: Long,
 ) {
     /** Minutes per kilometre, or 0.0 when this split has no moving seconds to have run them in. */
     val paceMinPerKm: Double
@@ -213,27 +259,12 @@ private fun List<RawSplit>.scaledToTheSlowest(): List<Split> {
             averageBpm = split.averageBpm,
             elevationGainMeters = split.elevationGainMeters,
             relativePace = if (slowest > 0.0) split.paceMinPerKm / slowest else 0.0,
+            startTimeMillis = split.startTimeMillis,
+            endTimeMillis = split.endTimeMillis,
+            movingMillis = split.movingMillis,
         )
     }
 }
-
-/**
- * The run's heart rates on the wall clock, the only axis they share with the track.
- *
- * A sample's `elapsedSeconds` counts *running* seconds, so it stands still through a pause while the
- * track's timestamps do not; rows written before v16 have no stamp of their own and elapsed seconds
- * stand in, landing late by the length of any pause before them. That is the same bounded compromise
- * the GPX export makes ([com.example.runningapp.export.RunGpxTrack]) and for the same reason: it
- * fades out with the old rows, and a per-split heart rate carrying it is worth more than none.
- *
- * The raw reading, not the smoothed one — the smoothed number is a coaching aid, and averaging an
- * average would only flatten the split into something it wasn't.
- */
-private fun List<HrSample>.byWallSecond(run: RunnerSession): Map<Long, Int> =
-    filter { it.rawBpm > 0 }.associate { sample ->
-        val atMillis = sample.timestampMillis ?: (run.startTime + sample.elapsedSeconds * 1000)
-        atMillis / 1000 to sample.rawBpm
-    }
 
 /**
  * The average heart rate recorded between two fixes of the track, or null where none was.

@@ -2,32 +2,20 @@ package com.example.runningapp.export
 
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunnerSession
-import com.example.runningapp.ranAt
+import com.example.runningapp.data.heartRatesByWallSecond
 import com.example.runningapp.data.TrackPoint
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 
 /**
  * Turns what the app recorded — a session, its GPS track and its heart-rate samples — into the
  * [GpxTrack] the writer serialises (#84).
  *
- * Pure, so the two things that can quietly go wrong (which heart rate lands on which point, and how
- * a run is named) are pinned by unit tests rather than discovered on a phone.
+ * Pure, so the thing that can quietly go wrong — where the route is allowed to be joined up — is
+ * pinned by unit tests rather than discovered on a phone. What a Run is called is
+ * [RunExportName]'s, and which heart rate lands on which moment is [heartRatesByWallSecond]'s; both
+ * are shared with the FIT export so the two files cannot disagree about one Run.
  */
 object RunGpxTrack {
-
-    /**
-     * How far a heart-rate sample may sit from a track point and still describe it. Samples are
-     * written once a second but only while the strap reports a beat, so short drop-outs leave gaps;
-     * five seconds bridges a gap without inventing a reading for a real disconnection.
-     *
-     * Measured from the point, not across the gap: a point is described by any real reading taken
-     * within five seconds of it, on either side. A ten-second drop-out is therefore covered from
-     * both ends and a longer one is not covered in the middle, which is the intent — no point ever
-     * carries a heart rate more than five seconds removed from a beat the strap actually reported.
-     */
-    private const val HR_MATCH_TOLERANCE_SECONDS = 5L
 
     /**
      * How long the route may go unrecorded before it counts as broken rather than sparse. Fixes
@@ -41,41 +29,19 @@ object RunGpxTrack {
      */
     private const val ROUTE_BREAK_SECONDS = 20L
 
-    private val NAME_FORMAT: DateTimeFormatter =
-        DateTimeFormatter.ofPattern("dd MMM yyyy, HH:mm", Locale.UK)
-
-    private val FILE_NAME_FORMAT: DateTimeFormatter =
-        DateTimeFormatter.ofPattern("yyyy-MM-dd-HHmm", Locale.UK)
-
     fun build(
         session: RunnerSession,
         trackPoints: List<TrackPoint>,
         hrSamples: List<HrSample>,
         zoneId: ZoneId = ZoneId.systemDefault()
     ): GpxTrack {
-        // Both streams are put on the wall clock, the only axis they share: a track point is stamped
-        // with the time of its GPS fix, while a sample's elapsedSeconds counts running seconds and
-        // stands still through a pause.
-        //
-        // Rows written before v16 have no stamp of their own, and elapsed seconds stand in for one.
-        // On a run that paused, the two axes have come apart by the length of the pause, so those
-        // readings land late by up to that much — and only after the pause, since before it the two
-        // agree. That is accepted deliberately: every run in the history this shipped against is a
-        // legacy one, most of them paused, and a heart-rate graph carrying a known bounded offset is
-        // worth more to a runner than no graph at all. Runs recorded from v16 on carry the wall
-        // clock themselves and are exact, so this fades with the old rows rather than living on.
-        val bpmByWallSecond = hrSamples.associate { sample ->
-            val atMillis = sample.timestampMillis ?: (session.startTime + sample.elapsedSeconds * 1000)
-            // The raw reading, not the smoothed one: `<hr>` means the heart rate measured at that
-            // point, and every reader does its own smoothing for display. The smoothed number is a
-            // coaching aid — averaging twice would only flatten the run into something it wasn't.
-            atMillis / 1000 to sample.rawBpm
-        }
+        // Both streams on the wall clock, the only axis they share — see [heartRatesByWallSecond].
+        val bpmByWallSecond = heartRatesByWallSecond(session, hrSamples)
         // Split first, then describe: where the run stopped is a fact about the recording, and only
         // the stored points still carry it.
         val stretches = trackPoints.sortedBy { it.timestampMillis }.splitWhereTheRunStopped()
         return GpxTrack(
-            name = runName(session, zoneId),
+            name = RunExportName.runName(session, zoneId),
             startTimeMillis = session.startTime,
             segments = stretches.map { stretch ->
                 GpxTrackSegment(
@@ -92,25 +58,6 @@ object RunGpxTrack {
             }
         )
     }
-
-    /**
-     * Named for the evening the runner ran, read off the Run's own stamp (#304). [zoneId] is only
-     * the fallback for a Run recorded before v32 — see [RunnerSession.ranAt].
-     */
-    fun runName(session: RunnerSession, zoneId: ZoneId = ZoneId.systemDefault()): String =
-        "Run " + NAME_FORMAT.format(session.ranAt(zoneId))
-
-    /**
-     * Lower-case and hyphenated: it becomes a real file name in Drive, on a laptop, in an email.
-     *
-     * The run's own id closes the name off: exports share one cache directory and a later write to
-     * the same name overwrites the earlier file, which would hand a share still in flight the wrong
-     * run. Two runs can share a local date and minute — back-to-back intervals, or the hour a clock
-     * change repeats — but never an id.
-     */
-    fun fileName(session: RunnerSession, zoneId: ZoneId = ZoneId.systemDefault()): String =
-        "run-" + FILE_NAME_FORMAT.format(session.ranAt(zoneId)) +
-            "-" + session.id + "." + GpxWriter.FILE_EXTENSION
 
     /**
      * Breaks the route wherever the run stopped, so a reader has nothing to draw across it.
@@ -142,15 +89,5 @@ object RunGpxTrack {
             }
         }
         return stretches
-    }
-
-    private fun Map<Long, Int>.nearestBpm(atSecond: Long): Int? {
-        for (offset in 0..HR_MATCH_TOLERANCE_SECONDS) {
-            // Earlier before later on a tie: the reading already taken describes the runner better
-            // than one that has not happened yet.
-            get(atSecond - offset)?.let { return it }
-            get(atSecond + offset)?.let { return it }
-        }
-        return null
     }
 }
