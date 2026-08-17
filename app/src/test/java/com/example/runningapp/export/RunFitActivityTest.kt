@@ -110,6 +110,20 @@ class RunFitActivityTest {
     }
 
     @Test
+    fun `a Pause held before the first fix landed runs from the Run's own start`() {
+        // PauseMark puts that Pause on the opening fix, which every reader walking consecutive pairs
+        // steps over. Nothing precedes it, so its near side is the Run's start.
+        val opening = point(45).copy(startsAfterPause = true)
+        val trackPoints = listOf(opening, point(46), point(47))
+
+        val activity = build(outdoorRun(), trackPoints, samples())
+
+        val pause = activity.pauses.single()
+        assertEquals(startTime, pause.startTimeMillis)
+        assertEquals(startTime + 45_000, pause.endTimeMillis)
+    }
+
+    @Test
     fun `a gap nobody declared is an Outage, and does not stop the timer`() {
         // An Outage is a leg the Run counted — its seconds are Moving time and its line is distance.
         // A timer stopped for one would contradict the Moving time this same file states.

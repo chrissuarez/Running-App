@@ -51,7 +51,7 @@ object RunFitActivity {
             distanceMeters = distanceMeters,
             sport = sportOf(session),
             records = records,
-            pauses = pausesOf(trackPoints),
+            pauses = pausesOf(session, trackPoints),
             laps = lapsOf(
                 splits = analysis.splits,
                 wholeRun = FitLap(
@@ -117,15 +117,25 @@ object RunFitActivity {
      * The Run's Pauses, each one the stretch between the last fix before it and the fix that resumed.
      *
      * Read off [TrackPoint.startsAfterPause], which is the only place a Pause is written down, and
-     * nowhere else. A long gap between fixes is deliberately not treated as one: that is how an
-     * Outage looks too, and an Outage is seconds the Run counted, so stopping the timer for one would
-     * contradict the Moving time the same file states. A Pause on a Run saved before the app wrote
+     * nowhere else — including on the opening fix, where a Pause held before any fix landed is
+     * recorded and where a walk over consecutive pairs would never look.
+     *
+     * A long gap between fixes is deliberately not treated as one: that is how an Outage looks too,
+     * and an Outage is seconds the Run counted, so stopping the timer for one would contradict the
+     * Moving time the same file states. A Pause on a Run saved before the app wrote
      * the boundary down therefore goes unmarked here — the session's Duration and Moving time still
      * say how long its Pauses were between them, which is all that was ever recorded about it.
      */
-    private fun pausesOf(trackPoints: List<TrackPoint>): List<FitPause> =
-        trackPoints.sortedBy { it.timestampMillis }
-            .zipWithNext()
+    private fun pausesOf(session: RunnerSession, trackPoints: List<TrackPoint>): List<FitPause> {
+        val ordered = trackPoints.sortedBy { it.timestampMillis }
+        // A Pause held before the first fix landed is marked on that fix, which every reader that
+        // walks consecutive pairs steps over ([PauseMark]). Its near side is the Run's own start,
+        // because nothing else preceded it, and refusing to credit that wait as running is the whole
+        // point of the mark.
+        val beforeTheFirstFix = ordered.firstOrNull()
+            ?.takeIf { it.startsAfterPause && it.timestampMillis > session.startTime }
+            ?.let { FitPause(startTimeMillis = session.startTime, endTimeMillis = it.timestampMillis) }
+        val within = ordered.zipWithNext()
             .filter { (_, resumed) -> resumed.startsAfterPause }
             .map { (before, resumed) ->
                 FitPause(
@@ -133,6 +143,8 @@ object RunFitActivity {
                     endTimeMillis = resumed.timestampMillis,
                 )
             }
+        return listOfNotNull(beforeTheFirstFix) + within
+    }
 
     /**
      * The run's kilometres as FIT laps, or the whole run as one lap where there are none to use.
