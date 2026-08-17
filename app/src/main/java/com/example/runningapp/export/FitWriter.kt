@@ -337,8 +337,17 @@ object FitWriter {
         FitSport.WALK -> Sport.WALKING
     }
 
+    /**
+     * What the app knows about the ground a Run was run on, which is only ever whether it moved.
+     *
+     * An outdoor Run is `GENERIC`, not `ROAD`. The app records no surface: a trail, a track and a
+     * street are one Run Mode to it, and `ROAD` would be a claim off no page — the thing an omitted
+     * field avoids and a filled-in one cannot
+     * ([ADR 0017](docs/adr/0017-an-export-states-the-run-it-does-not-imply-it.md)). `TREADMILL` is
+     * different: the runner told the app that, so the file may say it too.
+     */
     private fun FitSport.fitSubSport(): SubSport = when (this) {
-        FitSport.RUN -> SubSport.ROAD
+        FitSport.RUN -> SubSport.GENERIC
         FitSport.TREADMILL_RUN -> SubSport.TREADMILL
         FitSport.WALK -> SubSport.GENERIC
     }

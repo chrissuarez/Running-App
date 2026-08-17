@@ -68,7 +68,8 @@ class FitWriterTest {
         val session = decode(FitWriter.write(run)).filterIsInstance<SessionMesg>().single()
 
         assertEquals(Sport.RUNNING, session.sport)
-        assertEquals(SubSport.ROAD, session.subSport)
+        // GENERIC, not ROAD: the app records no surface, so a road is a claim it cannot make.
+        assertEquals(SubSport.GENERIC, session.subSport)
         // The whole point of the export: the app's own Duration and Moving time, and its own 2400 m —
         // none of which a reader would arrive at from the four fixes below. FIT's three clocks each
         // get the number that answers them: no Pause here, so the wall clock and the timer agree,
