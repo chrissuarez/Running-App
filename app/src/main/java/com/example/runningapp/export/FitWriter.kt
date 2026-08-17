@@ -94,16 +94,26 @@ enum class FitSport {
  * from the raw fixes when it is given a GPX file, so its numbers and the app's disagree — including
  * the app's rest window, which Garmin knows nothing about.
  *
- * **The two clocks.** The app keeps two — the run's own Duration, and the Moving time inside it —
- * and FIT has three. They are mapped so that both of the app's numbers survive the trip: the run's
- * Duration is written as `total_elapsed_time`, and its Moving time as both `total_timer_time` and
- * `total_moving_time`. A reader then shows the same two numbers the summary screen does.
+ * **The clocks.** The app keeps two — the run's own Duration, and the Moving time inside it — and FIT
+ * has three, which are a question each rather than three names for one number:
  *
- * A lap states its own wall-clock window as its elapsed time, which on a run that paused is longer
- * than the share of Duration it holds — so the laps do not add up to the session's elapsed time on
- * such a run. That is deliberate: a lap really did span that stretch of the clock, and the session
- * really did run for its Duration. The number both agree on is the moving time, which is the one a
- * pace is quoted against.
+ *  - `total_elapsed_time` — the wall clock, start to finish, Pauses and all. The app shows no such
+ *    number, and it is the one FIT's own timer events already state by where they fall, so it is
+ *    written as measured: [endTimeMillis] less [startTimeMillis].
+ *  - `total_timer_time` — the time the timer was running, which is the wall clock less the Pauses
+ *    that stopped it. That is exactly the Run's Duration ([elapsedMillis]).
+ *  - `total_moving_time` — the clock a pace is quoted against ([movingMillis]), which a rest window
+ *    sits outside as well as a Pause.
+ *
+ * So both of the app's numbers survive the trip — its Duration as the timer, its Moving time as the
+ * moving clock — and the file agrees with itself: the stretches its timer events leave running add up
+ * to the timer time it states. Writing the Moving time as the timer time instead, as this once did,
+ * left a file whose own events said the timer had run for longer than its summary claimed, and a
+ * reader that checks is entitled to believe the events.
+ *
+ * The laps answer the same three questions over their own windows, so they add up: their wall clocks
+ * total the session's elapsed time, their timer times its timer time, and their moving times its
+ * moving time.
  */
 data class FitActivity(
     val startTimeMillis: Long,
@@ -254,8 +264,11 @@ object FitWriter {
         sport = activity.sport.fitSport()
         // The last lap of a run ends because the run did; the ones before it end on a kilometre.
         lapTrigger = if (index == activity.laps.lastIndex) LapTrigger.SESSION_END else LapTrigger.DISTANCE
-        totalElapsedTime = seconds(lap.endTimeMillis - lap.startTimeMillis)
-        totalTimerTime = seconds(lap.movingMillis)
+        val wallClockMillis = lap.endTimeMillis - lap.startTimeMillis
+        totalElapsedTime = seconds(wallClockMillis)
+        // The lap's share of the Run's own Duration: its wall clock, less the Pauses inside it. The
+        // laps then add up to the session's timer time, as the timer events say they must.
+        totalTimerTime = seconds(wallClockMillis - pausedMillisWithin(lap, activity.pauses))
         totalDistance = lap.distanceMeters.toFloat()
         // Stated, not left to be worked out from the two above: this is the pace the app's own
         // splits table shows, and a reader dividing distance by the wrong clock would print a
@@ -270,6 +283,18 @@ object FitWriter {
         lap.ascentMeters?.let { totalAscent = it.roundToInt() }
     }
 
+    /**
+     * How much of [lap] a Pause held, so the lap can state the share of the Run's Duration it covers.
+     *
+     * Clipped to the lap rather than counted whole: a Pause that straddles a kilometre boundary
+     * belongs to both laps, each for the part of it that fell inside.
+     */
+    private fun pausedMillisWithin(lap: FitLap, pauses: List<FitPause>): Long = pauses.sumOf { pause ->
+        val from = maxOf(pause.startTimeMillis, lap.startTimeMillis)
+        val to = minOf(pause.endTimeMillis, lap.endTimeMillis)
+        maxOf(0L, to - from)
+    }
+
     private fun session(activity: FitActivity) = SessionMesg().apply {
         messageIndex = 0
         timestamp = fitTime(activity.endTimeMillis)
@@ -281,8 +306,9 @@ object FitWriter {
         trigger = SessionTrigger.ACTIVITY_END
         firstLapIndex = 0
         numLaps = activity.laps.size
-        totalElapsedTime = seconds(activity.elapsedMillis)
-        totalTimerTime = seconds(activity.movingMillis)
+        // FIT's three clocks, each given the number that actually answers it — see [FitActivity].
+        totalElapsedTime = seconds(activity.endTimeMillis - activity.startTimeMillis)
+        totalTimerTime = seconds(activity.elapsedMillis)
         totalDistance = activity.distanceMeters.toFloat()
         totalMovingTime = seconds(activity.movingMillis)
         averageSpeed(activity.distanceMeters, activity.movingMillis)?.let { avgSpeed = it }
@@ -297,7 +323,7 @@ object FitWriter {
 
     private fun activity(activity: FitActivity) = ActivityMesg().apply {
         timestamp = fitTime(activity.endTimeMillis)
-        totalTimerTime = seconds(activity.movingMillis)
+        totalTimerTime = seconds(activity.elapsedMillis)
         numSessions = 1
         // Manual: the runner started and stopped this recording themselves. The alternative says the
         // watch decided where one sport ended and the next began, which never happened here.
