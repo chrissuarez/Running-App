@@ -70,12 +70,11 @@ class FitWriterTest {
         assertEquals(Sport.RUNNING, session.sport)
         // GENERIC, not ROAD: the app records no surface, so a road is a claim it cannot make.
         assertEquals(SubSport.GENERIC, session.subSport)
-        // The whole point of the export: the app's own Duration and Moving time, and its own 2400 m —
-        // none of which a reader would arrive at from the four fixes below. FIT's three clocks each
-        // get the number that answers them: no Pause here, so the wall clock and the timer agree,
-        // and the 60 s of rest inside the run is what the moving clock leaves out.
+        // The whole point of the export: 600 s of Duration, 540 s moving, and the app's own 2400 m —
+        // none of which a reader would arrive at from the four fixes below. Garmin shows
+        // `total_timer_time` as an activity's and a lap's "Time", so the Moving time goes there.
         assertEquals(600.0f, session.totalElapsedTime, 0.001f)
-        assertEquals(600.0f, session.totalTimerTime, 0.001f)
+        assertEquals(540.0f, session.totalTimerTime, 0.001f)
         assertEquals(540.0f, session.totalMovingTime, 0.001f)
         assertEquals(2400.0f, session.totalDistance, 0.01f)
         assertEquals(2400.0f / 540.0f, session.avgSpeed!!, 0.001f)
@@ -92,10 +91,10 @@ class FitWriterTest {
         assertEquals(2, laps.size)
         assertEquals(listOf(0, 1), laps.map { it.messageIndex })
         assertEquals(listOf(1000.0f, 1400.0f), laps.map { it.totalDistance })
-        // The rest inside the first lap sits outside its moving clock, and no Pause stopped its
-        // timer, so its wall clock and its timer agree.
+        // A lap's wall clock holds its rest; its timer time is the moving time the app quotes the
+        // split's pace against, which is the number Garmin prints in the lap list's Time column.
         assertEquals(300.0f, laps[0].totalElapsedTime, 0.001f)
-        assertEquals(300.0f, laps[0].totalTimerTime, 0.001f)
+        assertEquals(240.0f, laps[0].totalTimerTime, 0.001f)
         assertEquals(240.0f, laps[0].totalMovingTime, 0.001f)
         // A kilometre ends the first; the run itself ends the last.
         assertEquals(LapTrigger.DISTANCE, laps[0].lapTrigger)
@@ -134,27 +133,18 @@ class FitWriterTest {
     }
 
     @Test
-    fun `what the timer events leave running is the timer time the file states`() {
-        // The file has to agree with itself: a reader that adds up the stretches between the events
-        // must land on the summary's own timer time, or it is entitled to believe the events instead.
-        val paused = pausedRun()
+    fun `a lap states the split's own time, because that is the number Garmin prints`() {
+        // Measured against Garmin Connect on 2026-08-17 with the Aug 16 Run: Garmin reads
+        // `total_timer_time` as the "Time" of the activity and of every lap, and recomputes moving
+        // time itself whatever `total_moving_time` says. So the app's split times survive the trip
+        // only by being the timer time — see [FitActivity].
+        val laps = decode(FitWriter.write(pausedRun())).filterIsInstance<LapMesg>()
+        val session = decode(FitWriter.write(pausedRun())).filterIsInstance<SessionMesg>().single()
 
-        val messages = decode(FitWriter.write(paused))
-        val events = messages.filterIsInstance<EventMesg>().map { it.timestamp.date.time }
-        val session = messages.filterIsInstance<SessionMesg>().single()
-        val laps = messages.filterIsInstance<LapMesg>()
-
-        // START..STOP plus START..STOP_ALL, which is the wall clock less the 60 s Pause.
-        val running = (events[1] - events[0]) + (events[3] - events[2])
-        assertEquals(running / 1000.0f, session.totalTimerTime, 0.001f)
-        // 11 minutes on the wall, 10 on the timer, 9 moving.
-        assertEquals(660.0f, session.totalElapsedTime, 0.001f)
-        assertEquals(600.0f, session.totalTimerTime, 0.001f)
-        assertEquals(540.0f, session.totalMovingTime, 0.001f)
-        // And the laps add up to the same three numbers.
-        assertEquals(session.totalElapsedTime, laps.map { it.totalElapsedTime }.sum(), 0.001f)
+        assertEquals(pausedRun().laps.map { it.movingMillis / 1000.0f }, laps.map { it.totalTimerTime })
         assertEquals(session.totalTimerTime, laps.map { it.totalTimerTime }.sum(), 0.001f)
-        assertEquals(session.totalMovingTime, laps.map { it.totalMovingTime }.sum(), 0.001f)
+        // And the Run's Duration is what Garmin labels Elapsed Time.
+        assertEquals(600.0f, session.totalElapsedTime, 0.001f)
     }
 
     @Test
