@@ -58,6 +58,11 @@ object RunFitActivity {
                     endTimeMillis = endTimeMillis,
                     movingMillis = movingMillis,
                     distanceMeters = distanceMeters,
+                    // This lap spans the whole run, so the summary's own heart rate and climb are
+                    // this lap's too. Leaving them out would make a reader work out again what the
+                    // Run already states one line below.
+                    averageBpm = session.avgBpm.takeIf { it > 0 },
+                    ascentMeters = analysis.elevationGainMeters,
                 ),
             ),
             averageBpm = session.avgBpm.takeIf { it > 0 },
