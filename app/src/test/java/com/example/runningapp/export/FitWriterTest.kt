@@ -69,10 +69,12 @@ class FitWriterTest {
 
         assertEquals(Sport.RUNNING, session.sport)
         assertEquals(SubSport.ROAD, session.subSport)
-        // The whole point of the export: 600 s on the wall clock, 540 s moving, and the app's own
-        // 2400 m — none of which a reader would arrive at from the four fixes below.
+        // The whole point of the export: the app's own Duration and Moving time, and its own 2400 m —
+        // none of which a reader would arrive at from the four fixes below. FIT's three clocks each
+        // get the number that answers them: no Pause here, so the wall clock and the timer agree,
+        // and the 60 s of rest inside the run is what the moving clock leaves out.
         assertEquals(600.0f, session.totalElapsedTime, 0.001f)
-        assertEquals(540.0f, session.totalTimerTime, 0.001f)
+        assertEquals(600.0f, session.totalTimerTime, 0.001f)
         assertEquals(540.0f, session.totalMovingTime, 0.001f)
         assertEquals(2400.0f, session.totalDistance, 0.01f)
         assertEquals(2400.0f / 540.0f, session.avgSpeed!!, 0.001f)
@@ -89,9 +91,11 @@ class FitWriterTest {
         assertEquals(2, laps.size)
         assertEquals(listOf(0, 1), laps.map { it.messageIndex })
         assertEquals(listOf(1000.0f, 1400.0f), laps.map { it.totalDistance })
-        // The pause sits inside the first lap's wall clock and outside its moving clock.
+        // The rest inside the first lap sits outside its moving clock, and no Pause stopped its
+        // timer, so its wall clock and its timer agree.
         assertEquals(300.0f, laps[0].totalElapsedTime, 0.001f)
-        assertEquals(240.0f, laps[0].totalTimerTime, 0.001f)
+        assertEquals(300.0f, laps[0].totalTimerTime, 0.001f)
+        assertEquals(240.0f, laps[0].totalMovingTime, 0.001f)
         // A kilometre ends the first; the run itself ends the last.
         assertEquals(LapTrigger.DISTANCE, laps[0].lapTrigger)
         assertEquals(LapTrigger.SESSION_END, laps[1].lapTrigger)
@@ -129,17 +133,34 @@ class FitWriterTest {
     }
 
     @Test
+    fun `what the timer events leave running is the timer time the file states`() {
+        // The file has to agree with itself: a reader that adds up the stretches between the events
+        // must land on the summary's own timer time, or it is entitled to believe the events instead.
+        val paused = pausedRun()
+
+        val messages = decode(FitWriter.write(paused))
+        val events = messages.filterIsInstance<EventMesg>().map { it.timestamp.date.time }
+        val session = messages.filterIsInstance<SessionMesg>().single()
+        val laps = messages.filterIsInstance<LapMesg>()
+
+        // START..STOP plus START..STOP_ALL, which is the wall clock less the 60 s Pause.
+        val running = (events[1] - events[0]) + (events[3] - events[2])
+        assertEquals(running / 1000.0f, session.totalTimerTime, 0.001f)
+        // 11 minutes on the wall, 10 on the timer, 9 moving.
+        assertEquals(660.0f, session.totalElapsedTime, 0.001f)
+        assertEquals(600.0f, session.totalTimerTime, 0.001f)
+        assertEquals(540.0f, session.totalMovingTime, 0.001f)
+        // And the laps add up to the same three numbers.
+        assertEquals(session.totalElapsedTime, laps.map { it.totalElapsedTime }.sum(), 0.001f)
+        assertEquals(session.totalTimerTime, laps.map { it.totalTimerTime }.sum(), 0.001f)
+        assertEquals(session.totalMovingTime, laps.map { it.totalMovingTime }.sum(), 0.001f)
+    }
+
+    @Test
     fun `a Pause stops the timer where it happened and starts it again on the resume`() {
         // Without these a reader has only the run's two totals to tell it a Pause happened at all,
         // and joins the fix before it to the fix after as ground covered in time that counted.
-        val paused = scriptedRun().copy(
-            pauses = listOf(
-                FitPause(
-                    startTimeMillis = startMillis + 240_000,
-                    endTimeMillis = startMillis + 300_000,
-                ),
-            ),
-        )
+        val paused = pausedRun()
 
         val messages = decode(FitWriter.write(paused))
         val events = messages.filterIsInstance<EventMesg>()
@@ -156,14 +177,7 @@ class FitWriterTest {
     fun `a Pause leaves the file in one time order`() {
         // The stop is stamped on the last fix before the Pause, which is already written by then: a
         // merge that appended the events instead would stamp it before records that precede it.
-        val paused = scriptedRun().copy(
-            pauses = listOf(
-                FitPause(
-                    startTimeMillis = startMillis + 240_000,
-                    endTimeMillis = startMillis + 300_000,
-                ),
-            ),
-        )
+        val paused = pausedRun()
 
         val stamps = decode(FitWriter.write(paused)).mapNotNull { message ->
             when (message) {
@@ -256,6 +270,30 @@ class FitWriterTest {
      * were moving. Deliberately too sparse for a reader to arrive at those numbers on its own, so
      * every assertion about the summary is an assertion that the file *stated* it.
      */
+    /**
+     * The same run with a 60 s Pause in it, and a clock that accounts for it: 11 minutes on the wall,
+     * 10 of them on the timer, 9 of them moving. A Pause bolted onto [scriptedRun] without stretching
+     * its wall clock would be a run whose own three numbers disagree, which is not a run this export
+     * can be asked about.
+     */
+    private fun pausedRun(): FitActivity {
+        val scripted = scriptedRun()
+        return scripted.copy(
+            endTimeMillis = startMillis + 660_000,
+            pauses = listOf(
+                FitPause(startTimeMillis = startMillis + 240_000, endTimeMillis = startMillis + 300_000),
+            ),
+            laps = listOf(
+                // The Pause falls inside the first lap, so that lap's timer is 60 s short of its wall clock.
+                scripted.laps[0].copy(endTimeMillis = startMillis + 360_000),
+                scripted.laps[1].copy(
+                    startTimeMillis = startMillis + 360_000,
+                    endTimeMillis = startMillis + 660_000,
+                ),
+            ),
+        )
+    }
+
     private fun scriptedRun(sport: FitSport = FitSport.RUN) = FitActivity(
         startTimeMillis = startMillis,
         endTimeMillis = startMillis + 600_000,

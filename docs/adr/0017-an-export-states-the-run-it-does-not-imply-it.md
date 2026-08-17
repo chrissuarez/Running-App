@@ -39,11 +39,17 @@ is still lossy; the choice between them is the runner's, at the moment they shar
 
 ## What follows
 
-- **A number in the file is a number off the page.** Where the app has two clocks and FIT has three,
-  the mapping is chosen so that both of the app's survive: the Run's Duration is written as elapsed
-  time, and its Moving time as the timer. A field that cannot be filled from the page is left out
-  rather than filled with a plausible derivation — an omitted field is a reader falling back to its
-  own arithmetic, which is honest; a wrong one is the app lying quietly.
+- **A number in the file is a number off the page.** A field that cannot be filled from the page is
+  left out rather than filled with a plausible derivation — an omitted field is a reader falling back
+  to its own arithmetic, which is honest; a wrong one is the app lying quietly.
+- **The file agrees with itself, not only with the page.** The app has two clocks and FIT has three,
+  and the three are a question each rather than three names for one number: the wall clock start to
+  finish, the time the timer was running, and the time that was moving. So the Run's Duration is the
+  timer time, its Moving time is the moving time, and the wall clock is written as measured. Stating
+  the Moving time as the timer time instead — which this first did — left a file whose own timer
+  events said the timer had run for longer than its summary claimed. A reader that checks one number
+  against another is entitled to believe the events, and then none of the app's numbers survive. A
+  statement that contradicts another statement in the same file is not a statement.
 - **A lap comes from the splits walk, not from the exporter.** `Split` carries the wall-clock window
   it covers and the moving time its pace was quoted against, because only that walk knows where a
   kilometre was crossed. An exporter that re-derived them would let the file and the table drift, and
