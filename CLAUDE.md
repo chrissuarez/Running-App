@@ -15,7 +15,9 @@ Default vocabulary — the five canonical roles (`needs-triage`, `needs-info`, `
 ### Codex review loop
 
 `/codex-loop [PR]` drives a PR through Codex review until it is clean or the findings have become
-tickets. See `.claude/skills/codex-loop/SKILL.md`.
+tickets. It is a global skill (`~/.claude/skills/codex-loop/`), shared across projects. It reads the
+repo from `gh repo view`; the unit-test command it runs here is `./gradlew testDebugUnitTest`, and
+connected Android tests must stay unrun — they uninstall the app and wipe Chris's run history.
 
 ### Domain docs
 
