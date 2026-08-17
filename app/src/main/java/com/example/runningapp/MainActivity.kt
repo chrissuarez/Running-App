@@ -62,7 +62,9 @@ import kotlinx.coroutines.launch
 import com.example.runningapp.archive.MonthlyArchiveWorker
 import com.example.runningapp.archive.SafArchiveFolder
 import com.example.runningapp.data.SessionRepository
-import com.example.runningapp.export.gpxShareChooser
+import com.example.runningapp.data.isFinished
+import com.example.runningapp.export.ExportFormat
+import com.example.runningapp.export.exportShareChooser
 import com.example.runningapp.navigation.Routes
 import com.example.runningapp.ui.FeelFeedbackSheet
 import com.example.runningapp.ui.BackupViewModel
@@ -352,7 +354,7 @@ class MainActivity : ComponentActivity() {
                         factory = HistoryViewModelFactory(sessionRepository)
                     )
                     val sessionDetailViewModel: SessionDetailViewModel = viewModel(
-                        factory = SessionDetailViewModelFactory(sessionRepository, appContainer.gpxFileStore)
+                        factory = SessionDetailViewModelFactory(sessionRepository, appContainer.exportFileStore)
                     )
                     val backupViewModel: BackupViewModel = viewModel(
                         factory = BackupViewModelFactory(
@@ -430,8 +432,8 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    val gpxShareReady by sessionDetailViewModel.gpxShareReady.collectAsState()
-                    val gpxShareFailed by sessionDetailViewModel.gpxShareFailed.collectAsState()
+                    val exportShareReady by sessionDetailViewModel.exportShareReady.collectAsState()
+                    val exportShareFailed by sessionDetailViewModel.exportShareFailed.collectAsState()
                     val selectedSessionIds by historyViewModel.selectedSessionIds.collectAsState()
                     // Through the view model rather than straight off the DAO: a History row is the
                     // run plus what it won and where it went (#51), and only the view model has
@@ -776,7 +778,7 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
-                            // Share is only offered for runs that actually recorded a route (#84).
+                            // A run that recorded a route — the only kind GPX can describe (#84).
                             val hasTrack by produceState(initialValue = false, key1 = sessionId) {
                                 sessionId?.let { id ->
                                     sessionRepository.hasTrackFlow(id).collect { value = it }
@@ -815,10 +817,21 @@ class MainActivity : ComponentActivity() {
                             // they went there to do. Keyed on the file, so one that arrived while
                             // this screen was being recreated still opens as soon as it is
                             // listening again.
-                            LaunchedEffect(gpxShareReady, sessionId) {
-                                gpxShareReady?.takeIf { it.sessionId == sessionId }?.let { file ->
-                                    startActivity(gpxShareChooser(file))
-                                    sessionDetailViewModel.gpxShareHandled()
+                            LaunchedEffect(exportShareReady, sessionId) {
+                                exportShareReady?.takeIf { it.sessionId == sessionId }?.let { file ->
+                                    startActivity(exportShareChooser(file))
+                                    sessionDetailViewModel.exportShareHandled()
+                                }
+                            }
+
+                            // What this run can be written as (#218). FIT needs only that something
+                            // was recorded, so a treadmill Run with a strap on it gets one; GPX
+                            // needs fixes to hang its trackpoints on, so that same Run gets none.
+                            val shareableFormats = remember(hasTrack, sessionSamples, selectedSession) {
+                                buildList {
+                                    val finished = selectedSession?.isFinished() == true
+                                    if (finished && (hasTrack || sessionSamples.isNotEmpty())) add(ExportFormat.FIT)
+                                    if (hasTrack) add(ExportFormat.GPX)
                                 }
                             }
 
@@ -847,10 +860,10 @@ class MainActivity : ComponentActivity() {
                                 onStateBestEffort = { id, type, seconds ->
                                     sessionDetailViewModel.stateBestEffort(id, type, seconds)
                                 },
-                                canShareGpx = hasTrack,
-                                onShareGpx = { id -> sessionDetailViewModel.shareGpx(id) },
-                                shareFailed = gpxShareFailed != null && gpxShareFailed == sessionId,
-                                onShareFailureShown = { sessionDetailViewModel.gpxShareFailureShown() }
+                                shareableFormats = shareableFormats,
+                                onShareRun = { id, format -> sessionDetailViewModel.shareRun(id, format) },
+                                shareFailed = exportShareFailed != null && exportShareFailed == sessionId,
+                                onShareFailureShown = { sessionDetailViewModel.exportShareFailureShown() }
                             )
                         }
                         composable(Routes.TRAINING_PLAN) {

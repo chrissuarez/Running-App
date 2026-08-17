@@ -73,7 +73,13 @@ A robust Android application designed to track heart rate (HR) during runs and p
 - **History & Data**:
     - All sessions and high-resolution HR samples are saved locally to a Room database.
     - View past workout summaries including Avg BPM, Max BPM, and **Time in Zones breakdown**.
-    - **Share a run** as a GPX file (track, timestamps, per-point heart rate) from its detail page.
+    - **Share a run** from its detail page, as either file:
+        - **Garmin (.fit)** — the run's own summary (distance, duration, moving time, heart rates,
+          climb), its own kilometre splits as laps, and a moment per second of the run. A run with no
+          GPS at all — a treadmill run, or one that lost the sky — is still a whole file, with its
+          heart-rate trace intact. This is the one Garmin Connect reads without re-deriving anything.
+        - **GPX** — track, timestamps and per-point heart rate. The portable option, for everything
+          that isn't Garmin. A run with no GPS track can't be one, so it isn't offered.
     - **Personal records**: Gold/silver/bronze at seven records — fastest 1 km, mile, 5 km, 10 km and
       half marathon, plus longest run and longest time. The distances are contested as a *best
       effort*: the quickest continuous stretch anywhere inside the run, walk breaks included. A run's

@@ -34,6 +34,7 @@ import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.data.StatedBestEffort
 import com.example.runningapp.data.isTreadmill
 import com.example.runningapp.data.TrackPoint
+import com.example.runningapp.export.ExportFormat
 import com.example.runningapp.data.computeRunWalkIntervalAnalytics
 import com.example.runningapp.data.celsiusText
 import com.example.runningapp.data.kmhText
@@ -78,10 +79,12 @@ fun SessionDetailScreen(
     // every Run that could not hold one, which is what keeps the card off an outdoor page.
     statedBestEfforts: List<StatedBestEffort> = emptyList(),
     onStateBestEffort: ((Long, RecordType, Int?) -> Unit)? = null,
-    // A run with no recorded GPS track — a treadmill run, or history from before #37 — has nothing to
-    // put in a GPX file, so Share is left off the bar entirely rather than offered greyed out (#84).
-    canShareGpx: Boolean = false,
-    onShareGpx: (Long) -> Unit = {},
+    // Which files this run can be written as (#84, #218). A run with no recorded GPS track — a
+    // treadmill run, or history from before #37 — has nothing to put in a GPX file, but its
+    // heart-rate trace is a whole FIT file, so the two are offered separately. A run that can be
+    // neither leaves Share off the bar entirely rather than offering it greyed out.
+    shareableFormats: List<ExportFormat> = emptyList(),
+    onShareRun: (Long, ExportFormat) -> Unit = { _, _ -> },
     shareFailed: Boolean = false,
     onShareFailureShown: () -> Unit = {}
 ) {
@@ -93,7 +96,7 @@ fun SessionDetailScreen(
 
     LaunchedEffect(shareFailed) {
         if (shareFailed) {
-            snackbarHostState.showSnackbar("Couldn't create the GPX file for this run")
+            snackbarHostState.showSnackbar("Couldn't create the file for this run")
             onShareFailureShown()
         }
     }
@@ -136,9 +139,25 @@ fun SessionDetailScreen(
                     }
                 },
                 actions = {
-                    if (session != null && canShareGpx) {
-                        IconButton(onClick = { onShareGpx(session.id) }) {
-                            Icon(Icons.Default.Share, contentDescription = "Share run as GPX")
+                    if (session != null && shareableFormats.isNotEmpty()) {
+                        // A menu rather than one button, because the two files are for two different
+                        // places: FIT is the one Garmin reads whole, GPX the one everything else
+                        // takes. FIT is listed first for that reason — it is the better file, and it
+                        // is the only one some runs have.
+                        var showFormats by remember { mutableStateOf(false) }
+                        IconButton(onClick = { showFormats = true }) {
+                            Icon(Icons.Default.Share, contentDescription = "Share run")
+                        }
+                        DropdownMenu(expanded = showFormats, onDismissRequest = { showFormats = false }) {
+                            shareableFormats.forEach { format ->
+                                DropdownMenuItem(
+                                    text = { Text(format.label) },
+                                    onClick = {
+                                        showFormats = false
+                                        onShareRun(session.id, format)
+                                    }
+                                )
+                            }
                         }
                     }
                     IconButton(

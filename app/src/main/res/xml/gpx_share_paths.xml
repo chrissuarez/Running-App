@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Only the directory GPX exports are written to (#84) is exposed, not the whole cache. -->
-<paths>
-    <cache-path name="shared-gpx" path="shared-gpx/" />
-</paths>
