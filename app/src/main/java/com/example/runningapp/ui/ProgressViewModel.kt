@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.runningapp.SettingsRepository
+import com.example.runningapp.repeatedOn
 import com.example.runningapp.suggestedMaxHr
 import com.example.runningapp.data.GoalDao
 import com.example.runningapp.data.GoalRow
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -121,6 +123,19 @@ class ProgressViewModel(
      */
     private val zone: () -> ZoneId = ZoneId::systemDefault,
     /**
+     * The phone changing zone, which is what makes the charts below re-read [zone] (#320).
+     *
+     * Every chart on this screen is a `map` over a database flow, so on its own it only redraws when
+     * history changes — a screen left open across a zone change would keep bucketing Runs into the
+     * days and weeks of the zone it opened in until some Run moved. This is the nudge that redraws
+     * them, combined in through [repeatedOn] and stated once in `ZoneChanges.kt`.
+     *
+     * Required rather than defaulted to [emptyFlow]: that default would be a silent opt-out, and a
+     * screen built later without it would quietly be back to the bug this closed. A caller with no
+     * zone changes to offer has to say so out loud.
+     */
+    zoneChanges: Flow<Unit>,
+    /**
      * What day it is, asked each time the curve is built rather than fixed at construction.
      *
      * A screen left open across midnight keeps yesterday's last day until something moves — a Score
@@ -159,6 +174,7 @@ class ProgressViewModel(
      * the screen is a curve that is ready when it arrives.
      */
     private val curve: StateFlow<List<ProgressDay>> = sessionRepository.scoredRunsFlow()
+        .repeatedOn(zoneChanges)
         .map { runs -> progressCurve(runs, through = today(), zone = zone()) }
         .flowOn(curveDispatcher)
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
@@ -172,12 +188,22 @@ class ProgressViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
+     * [volumeRuns], offered again on every zone change (#320) — what the two readers below build on.
+     *
+     * Downstream of the shared state rather than upstream of it, and that is the whole point: a
+     * `StateFlow` drops a value equal to the one it holds, so the same history offered again above
+     * would go no further. The nudge has to be added after the sharing, where the map that reads the
+     * zone can see it.
+     */
+    private val volumeRunsRepeatedOnZoneChange: Flow<List<VolumeRun>> = volumeRuns.repeatedOn(zoneChanges)
+
+    /**
      * Every week of training from the runner's first Run to today, built and windowed exactly as the
      * curve above is — whole on one side of the range picker, filtered on the other. Switching
      * between distance, time and Effort is then a re-read of weeks already totalled rather than
      * three rollups kept in step.
      */
-    private val weeks: StateFlow<VolumeToDate> = volumeRuns
+    private val weeks: StateFlow<VolumeToDate> = volumeRunsRepeatedOnZoneChange
         .map { runs ->
             val through = today()
             VolumeToDate(through, weeklyVolumeOf(runs, through = through, zone = zone()))
@@ -193,7 +219,7 @@ class ProgressViewModel(
      * new read rather than by anything remembering to correct a stored total.
      */
     private val goals: Flow<List<GoalProgress>> =
-        combine(goalDao.getAllGoalsFlow(), volumeRuns) { rows, runs ->
+        combine(goalDao.getAllGoalsFlow(), volumeRunsRepeatedOnZoneChange) { rows, runs ->
             goalProgressOf(rows.map { it.toGoal() }, runs, on = today(), zone = zone())
         }.flowOn(curveDispatcher)
 
@@ -367,11 +393,19 @@ class ProgressViewModelFactory(
     private val settingsRepository: SettingsRepository,
     private val stateHeartRates: (Int?, Int?) -> Unit,
     private val goalDao: GoalDao,
+    /** The phone changing zone — see [ProgressViewModel]'s own parameter of the same name (#320). */
+    private val zoneChanges: Flow<Unit>,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(ProgressViewModel::class.java)) {
-            return ProgressViewModel(sessionRepository, settingsRepository, stateHeartRates, goalDao) as T
+            return ProgressViewModel(
+                sessionRepository,
+                settingsRepository,
+                stateHeartRates,
+                goalDao,
+                zoneChanges = zoneChanges,
+            ) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

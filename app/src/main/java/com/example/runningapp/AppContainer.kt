@@ -25,6 +25,7 @@ import com.mapbox.common.MapboxOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -145,6 +146,15 @@ class AppContainer(context: Context) {
     val routeImporter: RouteImporter by lazy {
         RouteImporter(appContext.contentResolver, database.routeDao())
     }
+
+    /**
+     * The phone changing zone, for every reader of Today to be woken by (#320) — see
+     * [systemZoneChanges], which is where the rule and the reasoning live.
+     *
+     * One stream for the whole process, so there is one receiver however many screens are reading
+     * it, and lazy so an app that never opens a reader never registers it.
+     */
+    val zoneChanges: SharedFlow<Unit> by lazy { systemZoneChanges(appContext, applicationScope) }
 
     val sessionRepository: SessionRepository by lazy {
         SessionRepository(

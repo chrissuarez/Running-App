@@ -3567,6 +3567,90 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a zone change wakes the card without waiting for the old zone's midnight`() = runTest {
+        // The same flight as above, and this time nothing about history moves at all: the runner
+        // lands in Auckland with the card in front of them, and the sleep to midnight is still aimed
+        // at London's, hours away. The broadcast is the only thing that can answer them where they
+        // are (#320).
+        val london = ZoneId.of("Europe/London")
+        val auckland = ZoneId.of("Pacific/Auckland")
+        val now = LocalDate.of(2026, 8, 15).atTime(20, 0).atZone(london).toInstant()
+        val lastTest = LocalDate.of(2026, 7, 26).atTime(9, 0).atZone(london).toInstant()
+        val clock = Clock.fixed(now, ZoneOffset.UTC)
+        var here = london
+        val zoneChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+        val repo = dueFlow(testRuns = listOf(aTestRun(lastTest.toEpochMilli())))
+
+        val answers = mutableListOf<Boolean>()
+        val collecting = launch {
+            repo.testDueFlow(planTests, { here }, clock, zoneChanges).toList(answers)
+        }
+        runCurrent()
+        assertEquals(listOf(false), answers)
+
+        here = auckland
+        assertTrue(zoneChanges.tryEmit(Unit))
+        runCurrent()
+        assertEquals(listOf(false, true), answers)
+
+        collecting.cancel()
+    }
+
+    /**
+     * A clock that moves with the test scheduler, and that honours [withZone] — which the fixed
+     * clocks above do not, because they only ever answer in one zone.
+     */
+    private class AdvancingClock(
+        private val startedAt: Instant,
+        private val elapsedMillis: () -> Long,
+        private val zone: ZoneId = ZoneOffset.UTC,
+    ) : Clock() {
+        override fun instant(): Instant = startedAt.plusMillis(elapsedMillis())
+        override fun getZone(): ZoneId = zone
+        override fun withZone(overridden: ZoneId): Clock =
+            AdvancingClock(startedAt, elapsedMillis, overridden)
+    }
+
+    @Test
+    fun `the sleep to midnight is re-aimed at the zone the runner landed in`() = runTest {
+        // Eleven at night UTC: the sleep already running is aimed one hour out. The runner then lands
+        // two hours east, where it is already one in the morning and the next midnight is 23 hours
+        // away. The old sleep must be thrown away, not just added to — a sleep that survived would
+        // wake the card at a midnight the runner is no longer living in (#320).
+        val utc = ZoneOffset.UTC
+        val twoHoursEast = ZoneOffset.ofHours(2)
+        val startedAt = LocalDate.of(2026, 8, 14).atTime(23, 0).atZone(utc).toInstant()
+        val clock = AdvancingClock(startedAt, elapsedMillis = { testScheduler.currentTime })
+        var here: ZoneId = utc
+        val zoneChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+        val repo = dueFlow(testRuns = listOf(aTestRun(startedAt.minus(20, ChronoUnit.DAYS).toEpochMilli())))
+
+        val answers = mutableListOf<Boolean>()
+        val collecting = launch {
+            repo.testDueFlow(planTests, { here }, clock, zoneChanges).toList(answers)
+        }
+        runCurrent()
+        assertEquals(1, answers.size)
+
+        here = twoHoursEast
+        assertTrue(zoneChanges.tryEmit(Unit))
+        runCurrent()
+        assertEquals(2, answers.size)
+
+        // Past UTC's midnight. The sleep aimed at it is gone, so nothing wakes here.
+        advanceTimeBy(ONE_HOUR_MILLIS + 1)
+        runCurrent()
+        assertEquals(2, answers.size)
+
+        // And past the midnight the runner is actually living in, 23 hours out from the start.
+        advanceTimeBy(22 * ONE_HOUR_MILLIS)
+        runCurrent()
+        assertEquals(3, answers.size)
+
+        collecting.cancel()
+    }
+
+    @Test
     fun `a fatigued runner is held, however long it has been`() = runTest {
         // A week of hard Runs finishing yesterday, which is what leaves Form below −10 — the same
         // read the Progress screen and the coach make.

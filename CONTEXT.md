@@ -280,7 +280,11 @@ it answers, rather than holding the one it started with — and the same for the
 clock a sleep to midnight is aimed at. It is the one input to a rule that moves
 on its own, in two ways at once: midnight arrives, and the runner can fly. A
 zone taken once and held for the life of a screen answers a runner where they
-took off from, a calendar day out (#299).
+took off from, a calendar day out (#299). Because it moves on its own, both of its
+movements are inputs a reader is woken by and not readings a reader remembers to
+take: the turn of the day, and the phone changing zone (`ZoneChanges.kt`). A
+reader built only over database flows would otherwise hold its answer until some
+Run moved, which on a flight is hours (#320).
 _Avoid_: the device timezone, the current date
 
 **The day a Run happened**:

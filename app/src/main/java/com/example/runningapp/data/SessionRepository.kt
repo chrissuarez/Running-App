@@ -9,6 +9,7 @@ import com.example.runningapp.COACH_PRESCRIPTION_MAX_AGE_DAYS
 import com.example.runningapp.CoachWriteScope
 import com.example.runningapp.DebriefAuthor
 import com.example.runningapp.isFreshAt
+import com.example.runningapp.startingNow
 import com.example.runningapp.HrZone
 import com.example.runningapp.RunType
 import com.example.runningapp.SettingsRepository
@@ -52,12 +53,15 @@ import com.example.runningapp.analysis.bestEffortsOf
 import com.example.runningapp.recording.SessionRecorder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -897,18 +901,27 @@ class SessionRepository(
      * another zone with this card in front of them is answered where they are and not where they
      * took off from. Which is why [clock] is a plain clock and not one bound to a zone — the zone
      * comes from [zone] every time, and nowhere else.
+     *
+     * [zoneChanges] is what makes that answer arrive when the runner moves rather than when history
+     * does — see [systemZoneChanges]. It reaches the rule through [dayTurns], because a zone change
+     * and a midnight are the same thing to this flow: the day under the answer has moved.
+     *
+     * Defaulted, unlike the screens', and on the same terms as [zone] and [clock] beside it: a caller
+     * that offers none is a caller with no phone to hear the broadcast from, which is every test
+     * here. The one caller with a phone passes it.
      */
     fun testDueFlow(
         planTests: List<PlanTest>,
         zone: () -> ZoneId = ZoneId::systemDefault,
         clock: Clock = Clock.systemUTC(),
+        zoneChanges: Flow<Unit> = emptyFlow(),
     ): Flow<Boolean> {
         if (planTests.isEmpty()) return flowOf(false)
         val testsById = planTests.associateBy { it.workout.id }
         return combine(
             sessionDao.getCompletedRunsOfWorkouts(testsById.keys.toList()),
             scoredRunsFlow(),
-            dayTurns(zone, clock),
+            dayTurns(zone, clock, zoneChanges),
         ) { testRuns, scoredRuns, _ ->
             // Read here, at the answer, rather than carried down from the turn of the day that
             // woke it: every emission is answered in the zone the phone is in as it is answered.
@@ -973,18 +986,32 @@ class SessionRepository(
      *
      * Midnight is worked out in [zone]'s answer each time round, so the sleep is aimed at the
      * runner's own midnight through a timezone change or the end of summer time.
+     *
+     * But a sleep already running cannot re-aim itself, and that is what [zoneChanges] is for
+     * (#320). A runner who flies west has a sleep aimed at a midnight hours later than the one they
+     * are now living in, so each nudge throws that sleep away and starts the loop over: it nudges
+     * whoever is listening at once, in the new zone, and then aims a fresh sleep at the new
+     * midnight. `flatMapLatest` rather than a race inside the sleep, so there is no moment in the
+     * loop where a change can land unheard.
      */
-    private fun dayTurns(zone: () -> ZoneId, clock: Clock): Flow<Unit> = flow {
-        while (true) {
-            emit(Unit)
-            // Read after the answer has been given, so the sleep is aimed from where the runner is
-            // now rather than from where they were when the last one was set.
-            val here = zone()
-            val nextMidnight = LocalDate.now(clock.withZone(here))
-                .plusDays(1).atStartOfDay(here).toInstant().toEpochMilli()
-            // Never negative and never zero: a clock that has jumped past the next midnight would
-            // otherwise spin this loop, and the day is re-read at the top anyway.
-            delay((nextMidnight - clock.millis()).coerceAtLeast(1L))
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun dayTurns(
+        zone: () -> ZoneId,
+        clock: Clock,
+        zoneChanges: Flow<Unit>,
+    ): Flow<Unit> = zoneChanges.startingNow().flatMapLatest {
+        flow {
+            while (true) {
+                emit(Unit)
+                // Read after the answer has been given, so the sleep is aimed from where the runner
+                // is now rather than from where they were when the last one was set.
+                val here = zone()
+                val nextMidnight = LocalDate.now(clock.withZone(here))
+                    .plusDays(1).atStartOfDay(here).toInstant().toEpochMilli()
+                // Never negative and never zero: a clock that has jumped past the next midnight
+                // would otherwise spin this loop, and the day is re-read at the top anyway.
+                delay((nextMidnight - clock.millis()).coerceAtLeast(1L))
+            }
         }
     }
 

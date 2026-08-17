@@ -56,6 +56,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.launch
 import com.example.runningapp.archive.MonthlyArchiveWorker
 import com.example.runningapp.archive.SafArchiveFolder
@@ -460,6 +462,7 @@ class MainActivity : ComponentActivity() {
                                 userSettings = userSettings,
                                 coachPrescriptions = coachPrescriptions,
                                 sessionRepository = sessionRepository,
+                                zoneChanges = appContainer.zoneChanges,
                                 onRequestPermissions = { checkAndRequestPermissions() },
                                 onStartRun = { skipPlan, runMode, pickedWorkoutId ->
                                     // An Outdoor run without location permission would silently
@@ -914,6 +917,9 @@ class MainActivity : ComponentActivity() {
                                     // Max HR stated here queues behind anything stated there (#172).
                                     appContainer::stateHeartRates,
                                     appContainer.database.goalDao(),
+                                    // So the charts redraw when the runner changes zone and not
+                                    // only when history moves (#320).
+                                    appContainer.zoneChanges,
                                 )
                             )
                             val progressState by progressViewModel.state.collectAsState()
@@ -1072,6 +1078,13 @@ fun MainScreen(
     userSettings: UserSettings,
     coachPrescriptions: CoachPrescriptions,
     sessionRepository: SessionRepository,
+    /**
+     * The phone changing zone, so the Today card's "Test due" answer arrives when the runner lands
+     * rather than at the midnight of the zone they took off from (#320).
+     *
+     * Required, not defaulted to [emptyFlow]: see the same parameter on `ProgressViewModel`.
+     */
+    zoneChanges: Flow<Unit>,
     paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
     onStartRun: (Boolean, String, String?) -> Unit,
@@ -1148,7 +1161,10 @@ fun MainScreen(
     var testDue by remember(sessionRepository, planTests) { mutableStateOf(false) }
     LaunchedEffect(sessionRepository, planTests, screenIsResumed) {
         if (!screenIsResumed) return@LaunchedEffect
-        sessionRepository.testDueFlow(planTests).collect { testDue = it }
+        // The zone goes in as a stream, not as a reading: the day this answer is about moves when the
+        // runner flies, and the sleep to midnight already running cannot re-aim itself (#320).
+        sessionRepository.testDueFlow(planTests, zoneChanges = zoneChanges)
+            .collect { testDue = it }
     }
     // No testing-mode check: turning testing mode on erases the debrief, and the coach is refused
     // the write while it stays on, so there is nothing left to filter out on read (#113).
