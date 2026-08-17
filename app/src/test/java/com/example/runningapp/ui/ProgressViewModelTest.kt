@@ -19,6 +19,7 @@ import java.time.LocalTime
 import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -50,6 +51,12 @@ class ProgressViewModelTest {
 
     /** Where the runner is now — a var, because the phone's zone is theirs to change (#299). */
     private var here: ZoneId = zone
+
+    /**
+     * The phone saying its zone has changed (#320) — the only thing that tells this screen to look
+     * at [here] again. Buffered by one so a test can state a change without a collector standing by.
+     */
+    private val zoneChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     private val today: LocalDate = LocalDate.of(2026, 8, 5)
 
     private val scoredRuns = MutableStateFlow<List<ScoredRunProjection>>(emptyList())
@@ -158,12 +165,62 @@ class ProgressViewModelTest {
             advanceUntilIdle()
             assertEquals(LocalDate.of(2026, 8, 4), viewModel.state.value.curve.first().date)
 
+            // Nothing about history moves: the zone change is the whole input, and before #320 it
+            // was not one — the curve stayed on the 4th until some Run happened to be re-read.
             here = ZoneId.of("Pacific/Auckland")
-            // A second read of the same history — the Score is only there to make the read happen.
-            scoredRuns.value = listOf(lateOnThe4th.copy(effortScore = 81))
+            assertTrue(zoneChanges.tryEmit(Unit))
             advanceUntilIdle()
 
             assertEquals(LocalDate.of(2026, 8, 5), viewModel.state.value.curve.first().date)
+        }
+
+    @Test
+    fun `a zone change moves the weekly bars and the goals with the curve`() =
+        runTest(dispatcher) {
+            // Sunday night in London, which is already Monday in Auckland: the Run is the last day
+            // of one training week where the runner took off and the first day of the next where
+            // they land, and a weekly Goal is chased over that same boundary (#320).
+            val sundayNight = LocalDate.of(2026, 8, 2).atTime(LocalTime.of(23, 30))
+                .atZone(zone).toInstant().toEpochMilli()
+            runVolumes.value = listOf(
+                RunVolumeProjection(
+                    startTime = sundayNight,
+                    distanceKm = 10.0,
+                    durationSeconds = 3_600,
+                    movingTimeSeconds = null,
+                    effortScore = null,
+                )
+            )
+            goalRows.value = listOf(
+                GoalRow(
+                    id = 1,
+                    period = GoalPeriod.WEEK,
+                    metric = GoalMetric.DISTANCE,
+                    target = 40.0,
+                    createdAtMillis = setAt,
+                )
+            )
+            val viewModel = viewModel()
+            advanceUntilIdle()
+            // Read in London the Run belongs to the week before the one the runner is in, so the
+            // Goal — which is only ever about this week — stands at nothing.
+            assertEquals(
+                LocalDate.of(2026, 7, 27),
+                viewModel.state.value.weeks.single { it.distanceKm > 0.0 }.startingOn,
+            )
+            assertEquals(0.0, viewModel.state.value.goals.single().done, 0.001)
+
+            here = ZoneId.of("Pacific/Auckland")
+            assertTrue(zoneChanges.tryEmit(Unit))
+            advanceUntilIdle()
+
+            // Read in Auckland the same Run falls on the Monday, which is this week — both readers
+            // moved, off one nudge and no change to history at all.
+            assertEquals(
+                LocalDate.of(2026, 8, 3),
+                viewModel.state.value.weeks.single { it.distanceKm > 0.0 }.startingOn,
+            )
+            assertEquals(10.0, viewModel.state.value.goals.single().done, 0.001)
         }
 
     @Test
@@ -479,6 +536,7 @@ class ProgressViewModelTest {
         settingsRepository = settingsRepository,
         stateHeartRates = { maxHr, restingHr -> stated += maxHr to restingHr },
         goalDao = goalDao,
+        zoneChanges = zoneChanges,
         zone = { here },
         today = { today },
         now = { setAt },
