@@ -95,6 +95,31 @@ class RunFitActivityTest {
         assertEquals(activity.ascentMeters, lap.ascentMeters)
     }
 
+    // -- Where the Run's clock stopped -----------------------------------------------------------
+
+    @Test
+    fun `a Pause is the stretch between the last fix before it and the fix that resumed`() {
+        val resumed = point(60).copy(startsAfterPause = true)
+        val trackPoints = listOf(point(0), point(10), resumed, point(61))
+
+        val activity = build(outdoorRun(), trackPoints, samples())
+
+        val pause = activity.pauses.single()
+        assertEquals(startTime + 10_000, pause.startTimeMillis)
+        assertEquals(startTime + 60_000, pause.endTimeMillis)
+    }
+
+    @Test
+    fun `a gap nobody declared is an Outage, and does not stop the timer`() {
+        // An Outage is a leg the Run counted — its seconds are Moving time and its line is distance.
+        // A timer stopped for one would contradict the Moving time this same file states.
+        val trackPoints = listOf(point(0), point(10), point(600), point(601))
+
+        val activity = build(outdoorRun(), trackPoints, samples())
+
+        assertTrue(activity.pauses.isEmpty())
+    }
+
     // -- What FIT carries and GPX cannot ---------------------------------------------------------
 
     @Test

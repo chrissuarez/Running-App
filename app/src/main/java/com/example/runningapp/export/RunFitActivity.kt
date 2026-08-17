@@ -51,6 +51,7 @@ object RunFitActivity {
             distanceMeters = distanceMeters,
             sport = sportOf(session),
             records = records,
+            pauses = pausesOf(trackPoints),
             laps = lapsOf(
                 splits = analysis.splits,
                 wholeRun = FitLap(
@@ -111,6 +112,27 @@ object RunFitActivity {
             .map { (second, bpm) -> FitRecord(timeMillis = second * 1000, heartRateBpm = bpm) }
         return (fixes + strapOnly).sortedBy { it.timeMillis }
     }
+
+    /**
+     * The Run's Pauses, each one the stretch between the last fix before it and the fix that resumed.
+     *
+     * Read off [TrackPoint.startsAfterPause], which is the only place a Pause is written down, and
+     * nowhere else. A long gap between fixes is deliberately not treated as one: that is how an
+     * Outage looks too, and an Outage is seconds the Run counted, so stopping the timer for one would
+     * contradict the Moving time the same file states. A Pause on a Run saved before the app wrote
+     * the boundary down therefore goes unmarked here — the session's Duration and Moving time still
+     * say how long its Pauses were between them, which is all that was ever recorded about it.
+     */
+    private fun pausesOf(trackPoints: List<TrackPoint>): List<FitPause> =
+        trackPoints.sortedBy { it.timestampMillis }
+            .zipWithNext()
+            .filter { (_, resumed) -> resumed.startsAfterPause }
+            .map { (before, resumed) ->
+                FitPause(
+                    startTimeMillis = before.timestampMillis,
+                    endTimeMillis = resumed.timestampMillis,
+                )
+            }
 
     /**
      * The run's kilometres as FIT laps, or the whole run as one lap where there are none to use.

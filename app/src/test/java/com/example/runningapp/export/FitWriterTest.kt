@@ -128,6 +128,66 @@ class FitWriterTest {
         assertTrue(messages.indexOf(events.last()) > messages.indexOfLast { it is RecordMesg })
     }
 
+    @Test
+    fun `a Pause stops the timer where it happened and starts it again on the resume`() {
+        // Without these a reader has only the run's two totals to tell it a Pause happened at all,
+        // and joins the fix before it to the fix after as ground covered in time that counted.
+        val paused = scriptedRun().copy(
+            pauses = listOf(
+                FitPause(
+                    startTimeMillis = startMillis + 240_000,
+                    endTimeMillis = startMillis + 300_000,
+                ),
+            ),
+        )
+
+        val messages = decode(FitWriter.write(paused))
+        val events = messages.filterIsInstance<EventMesg>()
+
+        assertEquals(
+            listOf(EventType.START, EventType.STOP, EventType.START, EventType.STOP_ALL),
+            events.map { it.eventType },
+        )
+        assertEquals((startMillis + 240_000) / 1000, events[1].timestamp.date.time / 1000)
+        assertEquals((startMillis + 300_000) / 1000, events[2].timestamp.date.time / 1000)
+    }
+
+    @Test
+    fun `a Pause leaves the file in one time order`() {
+        // The stop is stamped on the last fix before the Pause, which is already written by then: a
+        // merge that appended the events instead would stamp it before records that precede it.
+        val paused = scriptedRun().copy(
+            pauses = listOf(
+                FitPause(
+                    startTimeMillis = startMillis + 240_000,
+                    endTimeMillis = startMillis + 300_000,
+                ),
+            ),
+        )
+
+        val stamps = decode(FitWriter.write(paused)).mapNotNull { message ->
+            when (message) {
+                is EventMesg -> message.timestamp.timestamp
+                is RecordMesg -> message.timestamp.timestamp
+                else -> null
+            }
+        }
+
+        assertEquals(stamps.sorted(), stamps)
+        // The resume's own fix is inside the running timer, not outside it.
+        val messages = decode(FitWriter.write(paused))
+        val resumed = messages.filterIsInstance<EventMesg>()[2]
+        val resumeFix = messages.filterIsInstance<RecordMesg>()
+            .first { it.timestamp.date.time / 1000 == (startMillis + 300_000) / 1000 }
+        assertTrue(messages.indexOf(resumed) < messages.indexOf(resumeFix))
+    }
+
+    @Test
+    fun `a run with no Pauses is written exactly as it was before they could be stated`() {
+        // The golden file is a pause-free run, so the merge must not reorder anything on one.
+        assertArrayEquals(FitWriter.write(scriptedRun()), FitWriter.write(scriptedRun().copy(pauses = emptyList())))
+    }
+
     // -- The run FIT can carry and GPX cannot ---------------------------------------------------
 
     @Test
