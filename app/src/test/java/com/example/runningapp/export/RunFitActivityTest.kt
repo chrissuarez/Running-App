@@ -80,6 +80,21 @@ class RunFitActivityTest {
         assertEquals(FitSport.TREADMILL_RUN, activity.sport)
     }
 
+    @Test
+    fun `the one lap of a whole run states the run's own heart rate and climb`() {
+        // The lap covers exactly the span the summary does, so it states the same two numbers. A
+        // lap left blank beside a summary that has them is the deriving this export exists to end.
+        val treadmill = outdoorRun(distanceKm = 5.0, durationSeconds = 1800, movingTimeSeconds = null)
+            .copy(runMode = "treadmill")
+
+        val activity = build(treadmill, emptyList(), samples())
+
+        val lap = activity.laps.single()
+        assertEquals(activity.averageBpm, lap.averageBpm)
+        assertEquals(130, lap.averageBpm)
+        assertEquals(activity.ascentMeters, lap.ascentMeters)
+    }
+
     // -- What FIT carries and GPX cannot ---------------------------------------------------------
 
     @Test
