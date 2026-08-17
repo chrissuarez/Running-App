@@ -13,6 +13,7 @@ import com.garmin.fit.Fit
 import com.garmin.fit.LapMesg
 import com.garmin.fit.LapTrigger
 import com.garmin.fit.Manufacturer
+import com.garmin.fit.Mesg
 import com.garmin.fit.RecordMesg
 import com.garmin.fit.SessionMesg
 import com.garmin.fit.SessionTrigger
@@ -56,6 +57,22 @@ data class FitLap(
     val ascentMeters: Double? = null,
 )
 
+/**
+ * A Pause inside a run: the stretch between the last fix before it and the fix that resumed.
+ *
+ * Only a Pause belongs here, never an Outage. A Pause stopped the Run's clock and covered no ground,
+ * so the timer stopped with it; an Outage is a leg the Run counted — its seconds are Moving time and
+ * its straight line is distance ([ADR 0012](docs/adr/0012-an-outage-is-a-leg-like-any-other.md)) —
+ * so a timer that stopped for one would contradict the Moving time stated a few lines below it.
+ *
+ * This is why the rule here is not [RunGpxTrack]'s, which breaks its route at both kinds. That asks
+ * a different question — where a reader must draw no line — and both kinds of Break answer it.
+ */
+data class FitPause(
+    val startTimeMillis: Long,
+    val endTimeMillis: Long,
+)
+
 /** What the app calls this run, in the terms FIT has for it. */
 enum class FitSport {
     /** An outdoor run. */
@@ -97,6 +114,8 @@ data class FitActivity(
     val sport: FitSport,
     val records: List<FitRecord>,
     val laps: List<FitLap>,
+    /** The Run's Pauses, so the file states where its clock stopped and not only for how long. */
+    val pauses: List<FitPause> = emptyList(),
     val averageBpm: Int? = null,
     val maxBpm: Int? = null,
     val ascentMeters: Double? = null,
@@ -154,9 +173,7 @@ object FitWriter {
         // the session. A summary written before the records it summarises is a file a reader has to
         // buffer the whole of before it can believe anything.
         encoder.write(fileId(activity))
-        encoder.write(timerEvent(activity.startTimeMillis, EventType.START))
-        activity.records.forEach { encoder.write(record(it)) }
-        encoder.write(timerEvent(activity.endTimeMillis, EventType.STOP_ALL))
+        timeline(activity).forEach { encoder.write(it) }
         activity.laps.forEachIndexed { index, lap -> encoder.write(lap(lap, index, activity)) }
         encoder.write(session(activity))
         encoder.write(activity(activity))
@@ -174,6 +191,39 @@ object FitWriter {
         // reads this stamp when it decides whether it has seen an activity before.
         timeCreated = fitTime(activity.startTimeMillis)
     }
+
+    /**
+     * Every moment of the run in one time order: its records, and the timer starting and stopping
+     * around them.
+     *
+     * The two streams are merged rather than written one after the other because a Pause has records
+     * inside it — the strap keeps reporting while the runner stands still — and a `stop` stamped
+     * before records that are already written is a file out of time order, which a reader is
+     * entitled to distrust.
+     *
+     * Where a moment and an event share a timestamp the order is settled by [rank]: a `start` opens
+     * the second it names, a `stop` closes it. So the fix that resumed a run is inside the running
+     * timer, and the last fix before a Pause is inside the timer that was still running when it
+     * arrived.
+     */
+    private fun timeline(activity: FitActivity): List<Mesg> {
+        val moments = mutableListOf<Moment>()
+        moments += Moment(activity.startTimeMillis, STARTS, timerEvent(activity.startTimeMillis, EventType.START))
+        activity.pauses.forEach { pause ->
+            moments += Moment(pause.startTimeMillis, STOPS, timerEvent(pause.startTimeMillis, EventType.STOP))
+            moments += Moment(pause.endTimeMillis, STARTS, timerEvent(pause.endTimeMillis, EventType.START))
+        }
+        moments += Moment(activity.endTimeMillis, STOPS, timerEvent(activity.endTimeMillis, EventType.STOP_ALL))
+        activity.records.forEach { moments += Moment(it.timeMillis, RECORDS, record(it)) }
+        return moments.sortedWith(compareBy({ it.atMillis }, { it.rank })).map { it.message }
+    }
+
+    /** One thing the file says at one moment, and what settles its place among the rest — see [timeline]. */
+    private class Moment(val atMillis: Long, val rank: Int, val message: Mesg)
+
+    private const val STARTS = 0
+    private const val RECORDS = 1
+    private const val STOPS = 2
 
     /**
      * The timer starting and stopping. A FIT activity is required to bracket its records with these,
