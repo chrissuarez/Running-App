@@ -71,6 +71,18 @@ const val MIN_MAX_HR = 100
 const val MAX_MAX_HR = 230
 
 /**
+ * The fastest beat this app will believe a Strap, and so the bound on what may be recorded as a
+ * heart rate at all (#326).
+ *
+ * Above [MAX_MAX_HR], because that is the highest maximum a runner may *state* and a real heart can
+ * pass its owner's stated maximum. Below 255, because FIT's `heart_rate` is a single byte whose 255
+ * means "no heart rate" — so a beat the app keeps always survives the Export as itself instead of
+ * arriving there as that marker, which is the disagreement between a Run and its Export that
+ * [ADR 0017](docs/adr/0017-an-export-states-the-run-it-does-not-imply-it.md) exists to stop.
+ */
+const val HIGHEST_BELIEVABLE_BPM = 250
+
+/**
  * The range a resting heart rate may be *typed* in: elite (low 30s) through untrained (high 90s).
  * Wide enough that no real runner is refused, narrow enough that a misread pulse is.
  */
