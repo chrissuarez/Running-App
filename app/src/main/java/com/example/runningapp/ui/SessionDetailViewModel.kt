@@ -122,9 +122,9 @@ class SessionDetailViewModel(
 
     /**
      * Exports a run and announces the file on [exportShareReady] (#84, #218). Anything that leaves
-     * the runner with nothing to share — a run that is not finished, no writable file — reports on
-     * [exportShareFailed] so the screen can say so, because a share sheet that never opens looks
-     * like a broken button.
+     * the runner with nothing to share — a Run that is gone or not yet finished, a format this Run
+     * cannot be written as, no writable file — reports on [exportShareFailed] so the screen can say
+     * so, because a share sheet that never opens looks like a broken button.
      *
      * The two formats differ in what they need of a run. GPX needs a GPS track: a trackpoint without
      * a position is not a legal one, so a run with no fixes has nothing to write. FIT needs nothing
@@ -150,7 +150,7 @@ class SessionDetailViewModel(
             // the route the runner was shown.
             val trackPoints = sessionRepository.getTrackPointsForMap(sessionId)
             val hrSamples = sessionRepository.getHrSamples(sessionId)
-            if (trackPoints.isEmpty() && format == ExportFormat.GPX) {
+            if (format == ExportFormat.GPX && trackPoints.isEmpty()) {
                 _exportShareFailed.value = sessionId
                 return@launch
             }

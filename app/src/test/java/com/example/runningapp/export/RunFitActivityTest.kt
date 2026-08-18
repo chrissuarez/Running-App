@@ -95,6 +95,26 @@ class RunFitActivityTest {
         assertEquals(activity.ascentMeters, lap.ascentMeters)
     }
 
+    @Test
+    fun `a Run with neither Strap nor GPS is one lap, no moments, and its own summary`() {
+        // The treadmill Run started without the strap on (#329). Nothing was recorded, so there is
+        // nothing to put in a record and no split to cut — and the summary the runner stated is
+        // still the whole of what the file has to say.
+        val strapless = outdoorRun(distanceKm = 5.0, durationSeconds = 1800, movingTimeSeconds = null)
+            .copy(runMode = "treadmill", avgBpm = 0, maxBpm = 0)
+
+        val activity = build(strapless, emptyList(), emptyList())
+
+        assertTrue(activity.records.isEmpty())
+        assertEquals(1, activity.laps.size)
+        assertEquals(5000.0, activity.laps.single().distanceMeters, 0.001)
+        assertEquals(1_800_000L, activity.elapsedMillis)
+        assertEquals(5000.0, activity.distanceMeters, 0.001)
+        // A heart rate nobody measured is left out rather than written as a zero.
+        assertNull(activity.averageBpm)
+        assertNull(activity.maxBpm)
+    }
+
     // -- Where the Run's clock stopped -----------------------------------------------------------
 
     @Test
