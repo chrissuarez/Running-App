@@ -150,12 +150,14 @@ class SessionDetailViewModel(
             // the route the runner was shown.
             val trackPoints = sessionRepository.getTrackPointsForMap(sessionId)
             val hrSamples = sessionRepository.getHrSamples(sessionId)
-            // Where this Run's clock stopped, which only the recorder could have written down (#328).
-            val recordedPauses = sessionRepository.getPauses(sessionId)
             if (format == ExportFormat.GPX && trackPoints.isEmpty()) {
                 _exportShareFailed.value = sessionId
                 return@launch
             }
+            // Where this Run's clock stopped, which only the recorder could have written down (#328).
+            // Read below the refusal and only for the format that states them: GPX has no way to.
+            val recordedPauses =
+                if (format == ExportFormat.FIT) sessionRepository.getPauses(sessionId) else emptyList()
             // Off the main thread: an hour's run is thousands of points, and the runner tapped Share
             // expecting the sheet to open, not the screen to stall. FIT costs a walk of the track on
             // top of the encoding, because its laps are the run's own splits.

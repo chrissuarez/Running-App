@@ -254,7 +254,13 @@ object FitWriter {
         moments += Moment(activity.startTimeMillis, STARTS, timerEvent(activity.startTimeMillis, EventType.START))
         activity.pauses.forEach { pause ->
             moments += Moment(pause.startTimeMillis, STOPS, timerEvent(pause.startTimeMillis, EventType.STOP))
-            moments += Moment(pause.endTimeMillis, STARTS, timerEvent(pause.endTimeMillis, EventType.START))
+            // A Pause the runner never came back from — the STOP of a Run stopped while paused —
+            // ends where the activity does, and the file's own `stop_all` is what closes it. Starting
+            // the timer there would be a running stretch of no length at all, which says the runner
+            // set off again at the instant they finished.
+            if (pause.endTimeMillis < activity.endTimeMillis) {
+                moments += Moment(pause.endTimeMillis, STARTS, timerEvent(pause.endTimeMillis, EventType.START))
+            }
         }
         moments += Moment(activity.endTimeMillis, STOPS, timerEvent(activity.endTimeMillis, EventType.STOP_ALL))
         activity.records.forEach { moments += Moment(it.timeMillis, RECORDS, record(it)) }
