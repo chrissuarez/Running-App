@@ -47,12 +47,16 @@ data class FitRecord(
  * or a rest sits inside; [movingMillis] is the clock the app quotes the lap's pace against, which
  * they sit outside. A reader that has both shows the app's own pace rather than one it worked out
  * for itself.
+ *
+ * [distanceMeters] is null where the run it came off has no distance to share out — see
+ * [FitActivity.distanceMeters]. Only a whole-run lap is ever without one: a split is a kilometre
+ * the recorder banked, so a Run with no distance has no splits to cut (#330).
  */
 data class FitLap(
     val startTimeMillis: Long,
     val endTimeMillis: Long,
     val movingMillis: Long,
-    val distanceMeters: Double,
+    val distanceMeters: Double?,
     val averageBpm: Int? = null,
     val ascentMeters: Double? = null,
 )
@@ -134,7 +138,18 @@ data class FitActivity(
     val endTimeMillis: Long,
     val elapsedMillis: Long,
     val movingMillis: Long,
-    val distanceMeters: Double,
+    /**
+     * How far the Run went, or null where nothing says: a treadmill Run whose console figure the
+     * runner never typed in (#330).
+     *
+     * Null rather than a zero, because the two are different claims and only one of them is true.
+     * A zero states that the Run covered no ground; leaving the field out states nothing, and a
+     * reader falls back to its own arithmetic — the honest of the two, and the one
+     * [ADR 0017](docs/adr/0017-an-export-states-the-run-it-does-not-imply-it.md) asks for. The
+     * average speed goes with it: a speed is this distance over the moving clock, so a distance
+     * nobody stated has no speed to state either.
+     */
+    val distanceMeters: Double?,
     val sport: FitSport,
     val records: List<FitRecord>,
     val laps: List<FitLap>,
@@ -280,7 +295,7 @@ object FitWriter {
         lapTrigger = if (index == activity.laps.lastIndex) LapTrigger.SESSION_END else LapTrigger.DISTANCE
         totalElapsedTime = seconds(lap.endTimeMillis - lap.startTimeMillis)
         totalTimerTime = seconds(lap.movingMillis)
-        totalDistance = lap.distanceMeters.toFloat()
+        lap.distanceMeters?.let { totalDistance = it.toFloat() }
         // Stated, not left to be worked out from the two above: this is the pace the app's own
         // splits table shows, and a reader dividing distance by the wrong clock would print a
         // different one beside the same lap.
@@ -307,7 +322,7 @@ object FitWriter {
         numLaps = activity.laps.size
         totalElapsedTime = seconds(activity.elapsedMillis)
         totalTimerTime = seconds(activity.movingMillis)
-        totalDistance = activity.distanceMeters.toFloat()
+        activity.distanceMeters?.let { totalDistance = it.toFloat() }
         totalMovingTime = seconds(activity.movingMillis)
         averageSpeed(activity.distanceMeters, activity.movingMillis)?.let { avgSpeed = it }
         activity.averageBpm?.let { avgHeartRate = it.toShort() }
@@ -354,11 +369,13 @@ object FitWriter {
      * Metres per second over the moving clock — the same clock the pace on the run's own page is
      * quoted against, so a reader showing speed and a runner reading pace see one run.
      *
-     * Null where there is no moving time to have covered the ground in, rather than a division by
-     * zero written into the file as an infinity.
+     * Null where there is no distance to have covered — nobody stated one (#330) — and null where
+     * there is no moving time to have covered it in, rather than a division by zero written into the
+     * file as an infinity.
      */
-    private fun averageSpeed(distanceMeters: Double, movingMillis: Long): Float? =
-        if (movingMillis <= 0L) null else (distanceMeters / (movingMillis / 1000.0)).toFloat()
+    private fun averageSpeed(distanceMeters: Double?, movingMillis: Long): Float? =
+        if (distanceMeters == null || movingMillis <= 0L) null
+        else (distanceMeters / (movingMillis / 1000.0)).toFloat()
 
     private fun seconds(millis: Long): Float = millis / 1000.0f
 

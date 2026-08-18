@@ -294,6 +294,52 @@ class FitWriterTest {
         messages.filterIsInstance<LapMesg>().forEach { assertNull(it.avgSpeed) }
     }
 
+    @Test
+    fun `a run nobody stated a distance for states neither distance nor speed`() {
+        // A treadmill Run whose console figure was never typed in (#330). A zero here would read as
+        // "it went nowhere"; left out, a reader falls back to its own arithmetic, which is honest
+        // (ADR 0017). Everything the Run does know — its clock, its heart rates — is still stated.
+        val noDistance = FitActivity(
+            startTimeMillis = startMillis,
+            endTimeMillis = startMillis + 1_800_000,
+            elapsedMillis = 1_800_000,
+            movingMillis = 1_800_000,
+            distanceMeters = null,
+            sport = FitSport.TREADMILL_RUN,
+            records = (0..4).map { FitRecord(timeMillis = startMillis + it * 60_000L, heartRateBpm = 130 + it) },
+            laps = listOf(
+                FitLap(
+                    startTimeMillis = startMillis,
+                    endTimeMillis = startMillis + 1_800_000,
+                    movingMillis = 1_800_000,
+                    distanceMeters = null,
+                    averageBpm = 132,
+                )
+            ),
+            averageBpm = 132,
+            maxBpm = 134,
+        )
+
+        val bytes = FitWriter.write(noDistance)
+        assertTrue("the CRCs do not check out", Decode().checkFileIntegrity(ByteArrayInputStream(bytes)))
+        val messages = decode(bytes)
+
+        val session = messages.filterIsInstance<SessionMesg>().single()
+        assertNull(session.totalDistance)
+        assertNull(session.avgSpeed)
+        val lap = messages.filterIsInstance<LapMesg>().single()
+        assertNull(lap.totalDistance)
+        assertNull(lap.avgSpeed)
+        // The Run is still all there.
+        assertEquals(1800.0f, session.totalElapsedTime, 0.001f)
+        assertEquals(1800.0f, session.totalTimerTime, 0.001f)
+        assertEquals(132, session.avgHeartRate!!.toInt())
+        assertEquals(
+            listOf(130, 131, 132, 133, 134),
+            messages.filterIsInstance<RecordMesg>().map { it.heartRate!!.toInt() },
+        )
+    }
+
     // -- The run every test above is written against ---------------------------------------------
 
     /**
