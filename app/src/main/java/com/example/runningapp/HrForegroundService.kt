@@ -2052,20 +2052,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     private fun handleHeartRate(data: ByteArray) {
         if (isSimulationEnabled) return // Mission 3: Ignore real data during simulation
-        if (data.isEmpty()) return
-        val flag = data[0].toInt()
-        val is16Bit = (flag and 0x01) != 0
-        var bpm = 0
-        if (is16Bit) {
-             if (data.size >= 3) {
-                 bpm = ((data[2].toInt() and 0xFF) shl 8) + (data[1].toInt() and 0xFF)
-             }
-        } else {
-             if (data.size >= 2) {
-                 bpm = data[1].toInt() and 0xFF
-             }
-        }
-        
+        // Whether this packet holds a heart rate at all is [bpmFromHeartRateMeasurement]'s to say,
+        // once, here. A packet that holds none is dropped where it lands, so nothing downstream —
+        // the live number, the Run's tally, the Export — has to know what a heart rate can be
+        // (#326).
+        val bpm = bpmFromHeartRateMeasurement(data) ?: return
+
         val timestamp = System.currentTimeMillis()
         lastHrTimestamp = timestamp // Track for session engine age
 
