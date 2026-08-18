@@ -2053,10 +2053,23 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun handleHeartRate(data: ByteArray) {
         if (isSimulationEnabled) return // Mission 3: Ignore real data during simulation
         // Whether this packet holds a heart rate at all is [bpmFromHeartRateMeasurement]'s to say,
-        // once, here. A packet that holds none is dropped where it lands, so nothing downstream —
-        // the live number, the Run's tally, the Export — has to know what a heart rate can be
-        // (#326).
-        val bpm = bpmFromHeartRateMeasurement(data) ?: return
+        // once, here, so nothing downstream — the live number, the Run's tally, the Export — has to
+        // know what a heart rate can be (#326).
+        //
+        // A packet holding none leaves the Run with no reading rather than merely unpublished. The
+        // Strap is still connected and still talking, so nothing else would ever say the last beat
+        // is stale, and every following second would bank that beat again as if it were current.
+        // "Lost" is the app's existing word for exactly this — the reading is gone, the seconds
+        // bank as no-data, and the window does not average across the gap. The moment is not aged
+        // either: nothing was read, so the last reading is as old as it was.
+        val bpm = bpmFromHeartRateMeasurement(data)
+        if (bpm == null) {
+            _hrState.update { it.copy(bpm = 0) }
+            postRunEvent(
+                RunEvent.HeartRateLost(_hrState.value.connectionStatus, System.currentTimeMillis()),
+            )
+            return
+        }
 
         val timestamp = System.currentTimeMillis()
         lastHrTimestamp = timestamp // Track for session engine age
