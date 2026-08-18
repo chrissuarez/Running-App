@@ -106,15 +106,28 @@ class SessionDetailViewModelExportTest {
     // -- What a run must have before it can be written at all --------------------------------------
 
     @Test
-    fun `a run with nothing recorded reports a failed share and never writes a file`() = runTest(dispatcher) {
-        val store = RecordingExportFileStore()
-        val viewModel = SessionDetailViewModel(repository(), store, dispatcher)
+    fun `a run with neither Strap nor GPS is still a FIT file stating what the runner said`() = runTest(dispatcher) {
+        // The treadmill Run started without the strap on (#329): no track, no samples, and still a
+        // Duration and a Stated Distance. This is the case the FIT export exists for, so it is the
+        // one case that must not be refused.
+        val store = RecordingExportFileStore(uriToReturn = mock<Uri>())
+        val viewModel = SessionDetailViewModel(
+            repository(session = session().copy(distanceKm = 5.0)),
+            store,
+            dispatcher
+        )
 
         viewModel.shareRun(7L, ExportFormat.FIT)
         advanceUntilIdle()
 
-        assertEquals(7L, viewModel.exportShareFailed.value)
-        assertEquals(0, store.calls)
+        assertEquals(1, store.calls)
+        assertNull(viewModel.exportShareFailed.value)
+        assertTrue("file name was ${store.fileName}", store.fileName!!.endsWith(".fit"))
+        val messages = decode(store.contents!!)
+        assertTrue(messages.filterIsInstance<RecordMesg>().isEmpty())
+        val fitSession = messages.filterIsInstance<SessionMesg>().single()
+        assertEquals(60.0f, fitSession.totalElapsedTime, 0.001f)
+        assertEquals(5000.0f, fitSession.totalDistance, 0.01f)
     }
 
     @Test

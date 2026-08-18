@@ -202,7 +202,8 @@ A finished Run written out as a file for somewhere else to read (#84, #218). Two
 formats, and the runner picks at the moment they share. **FIT** states the Run: its
 own distance, its own Duration and Moving time, its own Splits as laps, and one
 moment per second anything was recorded for — so a Run with no GPS at all is a whole
-file, and nothing is re-derived
+file, and so is one with neither Strap nor GPS, which states its summary and holds no
+moments at all (#329); nothing is re-derived
 ([ADR 0017](docs/adr/0017-an-export-states-the-run-it-does-not-imply-it.md)). **GPX**
 implies it: places and times only, and it needs a position for every moment, so a
 treadmill Run has nothing to put in one. FIT is offered first for both reasons. An

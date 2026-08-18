@@ -122,16 +122,17 @@ class SessionDetailViewModel(
 
     /**
      * Exports a run and announces the file on [exportShareReady] (#84, #218). Anything that leaves
-     * the runner with nothing to share — nothing recorded, no writable file — reports on
+     * the runner with nothing to share — a run that is not finished, no writable file — reports on
      * [exportShareFailed] so the screen can say so, because a share sheet that never opens looks
      * like a broken button.
      *
      * The two formats differ in what they need of a run. GPX needs a GPS track: a trackpoint without
-     * a position is not a legal one, so a run with no fixes has nothing to write. FIT needs only that
-     * something was recorded — a treadmill Run's heart-rate trace is a file in its own right. The
-     * refusal is checked here and not only where the button is offered: the reads below are separate
-     * one-shots, so exporting a run still being recorded would stitch together a file the runner
-     * never ran.
+     * a position is not a legal one, so a run with no fixes has nothing to write. FIT needs nothing
+     * recorded at all — a Run with neither Strap nor GPS still has a Duration, a Stated Distance and
+     * an Effort, and a `session` stating them with no `record` messages under it is a legal file and
+     * the case this export was added for (#329). The refusal is checked here and not only where the
+     * button is offered: the reads below are separate one-shots, so exporting a run still being
+     * recorded would stitch together a file the runner never ran.
      */
     fun shareRun(sessionId: Long, format: ExportFormat) {
         viewModelScope.launch {
@@ -149,7 +150,7 @@ class SessionDetailViewModel(
             // the route the runner was shown.
             val trackPoints = sessionRepository.getTrackPointsForMap(sessionId)
             val hrSamples = sessionRepository.getHrSamples(sessionId)
-            if (trackPoints.isEmpty() && (format == ExportFormat.GPX || hrSamples.isEmpty())) {
+            if (trackPoints.isEmpty() && format == ExportFormat.GPX) {
                 _exportShareFailed.value = sessionId
                 return@launch
             }
