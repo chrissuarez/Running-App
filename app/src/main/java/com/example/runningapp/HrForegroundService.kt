@@ -2050,6 +2050,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    /**
+     * A packet from the Strap, on the Run's own thread — [onSessionThreadIfCurrent] put it there,
+     * and it is the only way in. So both answers below are dispatched directly rather than posted,
+     * exactly as the simulated Strap does: a post would go to the back of this thread's queue,
+     * behind a pulse already waiting there, and that pulse would bank its second against a reading
+     * this packet has already overtaken.
+     */
     private fun handleHeartRate(data: ByteArray) {
         if (isSimulationEnabled) return // Mission 3: Ignore real data during simulation
         // Whether this packet holds a heart rate at all is [bpmFromHeartRateMeasurement]'s to say,
@@ -2065,7 +2072,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val bpm = bpmFromHeartRateMeasurement(data)
         if (bpm == null) {
             _hrState.update { it.copy(bpm = 0) }
-            postRunEvent(
+            dispatchRunEvent(
                 RunEvent.HeartRateLost(_hrState.value.connectionStatus, System.currentTimeMillis()),
             )
             return
@@ -2078,7 +2085,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // The reading itself is the Strap's to publish; what it means is the Run's. Every packet
         // goes to the Run, whether or not one is live — the Run's own guards decide whether the
         // coach so much as looks at it.
-        postRunEvent(RunEvent.HeartRateSampled(bpm, _hrState.value.connectionStatus, timestamp))
+        dispatchRunEvent(RunEvent.HeartRateSampled(bpm, _hrState.value.connectionStatus, timestamp))
     }
 
     private fun updateSimulationData() {
