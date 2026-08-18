@@ -327,6 +327,20 @@ class RunFitActivityTest {
         assertNotNull(activity.records.first().latitude)
     }
 
+    @Test
+    fun `a Pause the Run never came back from reaches the end of the file`() {
+        // A Run stopped while paused writes its last Pause as ending at the stop. A record stamped
+        // after that stop widens the file's own clock past it, and a Pause that then ends inside the
+        // file would say the runner set off again — see [FitWriter.timeline].
+        val run = outdoorRun(durationSeconds = 600)
+        val late = sample(atSecond = 603, rawBpm = 120)
+        val terminal = pauseRow(from = 570, to = 600)
+
+        val activity = build(run, emptyList(), listOf(late), listOf(terminal))
+
+        assertEquals(activity.endTimeMillis, activity.pauses.single().endTimeMillis)
+    }
+
     // -- The run these tests are written against --------------------------------------------------
 
     private fun build(

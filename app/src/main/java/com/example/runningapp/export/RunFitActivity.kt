@@ -53,7 +53,8 @@ object RunFitActivity {
             distanceMeters = distanceMeters,
             sport = sportOf(session),
             records = records,
-            pauses = pausesOf(session, trackPoints, recordedPauses),
+            pauses = pausesOf(session, trackPoints, recordedPauses)
+                .heldToTheEndOf(session, endTimeMillis),
             laps = lapsOf(
                 splits = analysis.splits,
                 wholeRun = FitLap(
@@ -187,6 +188,29 @@ object RunFitActivity {
             }
         return listOfNotNull(beforeTheFirstFix) + within
     }
+
+    /**
+     * A Pause the Run never came back from ends where the file ends (#328).
+     *
+     * Such a Pause is written down as ending at the Run's own stop, but the file's envelope can
+     * reach past that stop to hold a record stamped after it. Left as it is, the far side of the
+     * Pause would then sit inside the envelope, and [FitWriter] — which reads exactly that to tell a
+     * Pause the runner came back from apart from one they did not — would start the timer again at
+     * the stop and leave a running stretch the runner never ran.
+     *
+     * Only a Pause reaching the Run's own stop is moved, and it is moved to the envelope's end
+     * rather than being dropped, so the Run still states that it finished paused.
+     */
+    private fun List<FitPause>.heldToTheEndOf(session: RunnerSession, endTimeMillis: Long): List<FitPause> =
+        map { pause ->
+            if (session.endTime > 0 && pause.endTimeMillis >= session.endTime &&
+                pause.endTimeMillis < endTimeMillis
+            ) {
+                pause.copy(endTimeMillis = endTimeMillis)
+            } else {
+                pause
+            }
+        }
 
     /**
      * The run's kilometres as FIT laps, or the whole run as one lap where there are none to use.
