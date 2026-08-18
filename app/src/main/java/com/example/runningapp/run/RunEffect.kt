@@ -70,6 +70,18 @@ data class HrSampleReading(
 )
 
 /**
+ * One Pause the Run took, as it is to be saved (#328).
+ *
+ * Both instants are wall clock and both are the Run's own: the moment its clock stopped and the
+ * moment it started again. Produced when the Pause *ends*, which is the first moment the far side
+ * of it is known — a resume, or the Run finishing while still paused.
+ */
+data class PauseTaken(
+    val startedAtMillis: Long,
+    val endedAtMillis: Long,
+)
+
+/**
  * Something for the service to do on the Run's behalf.
  *
  * Effects are values, returned in the order they are to be performed. The Run never speaks,
@@ -136,6 +148,18 @@ sealed interface RunEffect {
     data class SaveHrSample(
         val runRowId: Long,
         val sample: HrSampleReading,
+    ) : RunEffect
+
+    /**
+     * Write one finished Pause against the Run's row.
+     *
+     * Emitted as each Pause ends rather than as a list at the finish, so a Run whose process is
+     * killed keeps the Pauses it had already come back from — and, like every other write, it is
+     * held until the row id arrives rather than dropped.
+     */
+    data class SavePause(
+        val runRowId: Long,
+        val pause: PauseTaken,
     ) : RunEffect
 
     /**

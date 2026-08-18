@@ -187,6 +187,16 @@ data class RunState(
     val phaseCarryMillis: Long = 0,
 
     /**
+     * When the Run's clock stopped, while it is stopped — null whenever the Run is not paused.
+     *
+     * The near side of the Pause being taken, held until its far side is known. A Pause is written
+     * down as it *ends* ([RunEffect.SavePause]), and the only thing that remembers where it began is
+     * this: [secondsPaused] counts how long the Run has been paused in total and cannot say when any
+     * one of them started.
+     */
+    val pausedAtMillis: Long? = null,
+
+    /**
      * Work produced before the row id arrived, in the order it was produced.
      *
      * Internal bookkeeping rather than anything the screen reads. It exists so that the early
@@ -312,6 +322,14 @@ sealed interface PendingRowWork {
      */
     data class SaveHrSample(val sample: HrSampleReading) : PendingRowWork {
         override fun toEffect(runRowId: Long): RunEffect = RunEffect.SaveHrSample(runRowId, sample)
+    }
+
+    /**
+     * A Pause that ended before the id arrived — the runner pausing and resuming inside the first
+     * moments of a Run, which is short but is a Pause like any other.
+     */
+    data class SavePause(val pause: PauseTaken) : PendingRowWork {
+        override fun toEffect(runRowId: Long): RunEffect = RunEffect.SavePause(runRowId, pause)
     }
 }
 
