@@ -150,6 +150,8 @@ class SessionDetailViewModel(
             // the route the runner was shown.
             val trackPoints = sessionRepository.getTrackPointsForMap(sessionId)
             val hrSamples = sessionRepository.getHrSamples(sessionId)
+            // Where this Run's clock stopped, which only the recorder could have written down (#328).
+            val recordedPauses = sessionRepository.getPauses(sessionId)
             if (format == ExportFormat.GPX && trackPoints.isEmpty()) {
                 _exportShareFailed.value = sessionId
                 return@launch
@@ -173,6 +175,7 @@ class SessionDetailViewModel(
                             session = session,
                             trackPoints = trackPoints,
                             hrSamples = hrSamples,
+                            recordedPauses = recordedPauses,
                             analysis = RunAnalysis.of(session, hrSamples, trackPoints),
                         )
                     )

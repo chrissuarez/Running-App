@@ -162,6 +162,7 @@ class AppContainer(context: Context) {
             sampleDao = database.sampleDao(),
             trackPointDao = database.trackPointDao(),
             intervalStatDao = database.runWalkIntervalStatDao(),
+            runPauseDao = database.runPauseDao(),
             achievementDao = database.achievementDao(),
             statedBestEffortDao = database.statedBestEffortDao(),
             // Read for one thing only: telling the coach where the runner stands against their own

@@ -336,6 +336,45 @@ data class RunWalkIntervalStat(
     val avgRecoverySecondsAfterTriggerInInterval: Double? = null
 )
 
+/**
+ * One Pause of one Run: when the Run's clock stopped, and when it started again (#328).
+ *
+ * A Pause is the one thing about a Run that the recording could not hold. GPS is torn down for the
+ * length of one, so the only mark it left was a bit on the fix that resumed the Run
+ * ([TrackPoint.startsAfterPause]) — and a Run with no GPS has no such fix. A treadmill Run's Pauses
+ * were written down nowhere, so an Export could state how long they had been in total and never
+ * where any of them fell.
+ *
+ * Both instants are wall clock, and they are the Run's own boundaries rather than the fixes nearest
+ * to them: they are taken where the rulebook stopped and restarted the clock. The row is written as
+ * the Pause ends, because that is the moment its far side is known.
+ *
+ * This is a second record of something the track also carries for an outdoor Run, which
+ * [ADR 0018](docs/adr/0018-a-pause-is-written-down.md) is where the cost of it is argued. Nothing that
+ * reads the *shape* of a Run reads these rows: a Break is still read off the track (ADR 0010), and
+ * these say only where the Run's clock stopped.
+ */
+@Entity(
+    tableName = "run_pauses",
+    foreignKeys = [
+        ForeignKey(
+            entity = RunnerSession::class,
+            parentColumns = ["id"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [Index("sessionId")]
+)
+data class RunPause(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sessionId: Long,
+    /** When the Run's clock stopped. */
+    val startTimeMillis: Long,
+    /** When it started again — a resume, or the Run's own finish for a Run stopped while paused. */
+    val endTimeMillis: Long,
+)
+
 data class MaxSessionLoad30dProjection(
     val maxDistanceKm: Double?,
     val maxDurationSeconds: Long?
@@ -1044,6 +1083,16 @@ interface RunWalkIntervalStatDao {
     suspend fun getAllIntervalStats(): List<RunWalkIntervalStat>
 }
 
+@Dao
+interface RunPauseDao {
+    @Insert
+    suspend fun insertPause(pause: RunPause): Long
+
+    /** Every Pause of one Run, in the order the Run took them (#328). */
+    @Query("SELECT * FROM run_pauses WHERE sessionId = :sessionId ORDER BY startTimeMillis ASC")
+    suspend fun getPausesForSession(sessionId: Long): List<RunPause>
+}
+
 @Database(
     entities = [
         RunnerSession::class,
@@ -1053,9 +1102,10 @@ interface RunWalkIntervalStatDao {
         Achievement::class,
         Route::class,
         GoalRow::class,
-        StatedBestEffort::class
+        StatedBestEffort::class,
+        RunPause::class
     ],
-    version = 32,
+    version = 33,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1067,6 +1117,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun routeDao(): RouteDao
     abstract fun goalDao(): GoalDao
     abstract fun statedBestEffortDao(): StatedBestEffortDao
+    abstract fun runPauseDao(): RunPauseDao
 
     companion object {
         @Volatile
@@ -1152,7 +1203,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_28_29,
     MIGRATION_29_30,
     MIGRATION_30_31,
-    MIGRATION_31_32
+    MIGRATION_31_32,
+    MIGRATION_32_33
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2016,3 +2068,34 @@ val MIGRATION_31_32 = object : Migration(31, 32) {
         }
     }
 }
+
+/**
+ * Room for the Pauses of a Run (#328): [RunPause].
+ *
+ * Empty for every Run already in history, and nothing could fill it. A Pause left one mark and only
+ * on an outdoor Run — the bit on the fix that resumed it — and the instants that mark stands between
+ * are the fixes either side, not the Run's own boundaries. Backfilling from it would write down
+ * approximations as though they had been measured, and would still leave every treadmill Run empty,
+ * which is the case this table exists for. Those Runs keep being read the only way they can be: an
+ * Export falls back to the mark on the track, and a Run with neither states how long its Pauses were
+ * between its two clocks, as it always has.
+ */
+val MIGRATION_32_33 = object : Migration(32, 33) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `run_pauses` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `sessionId` INTEGER NOT NULL,
+                `startTimeMillis` INTEGER NOT NULL,
+                `endTimeMillis` INTEGER NOT NULL,
+                FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_run_pauses_sessionId` ON `run_pauses` (`sessionId`)"
+        )
+    }
+}
+

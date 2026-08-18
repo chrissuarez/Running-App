@@ -736,8 +736,32 @@ object Run {
             },
             runningRemainderMillis = if (leaving == RunLifecycle.RUNNING) leftoverMillis else 0,
             pausedRemainderMillis = if (leaving == RunLifecycle.PAUSED) leftoverMillis else 0,
+            // The near side of a Pause is remembered here and nowhere else — see [closeAnyPause].
+            pausedAtMillis = if (to == RunLifecycle.PAUSED) nowMillis else null,
         )
-        return RunOutcome(changed, settled.effects + effects(changed))
+        val recorded =
+            if (leaving == RunLifecycle.PAUSED) closeAnyPause(current, changed, nowMillis)
+            else RunOutcome(changed)
+        return RunOutcome(recorded.state, settled.effects + recorded.effects + effects(recorded.state))
+    }
+
+    /**
+     * Write down the Pause that has just ended (#328).
+     *
+     * A Pause is saved as it ends, because that is the first moment both its sides are known — and
+     * every way out of a Pause comes through here or through [finish]. [paused] is the state that
+     * held the Pause's near side; [ended] is what the Run has become.
+     *
+     * Silent where no Pause was open, which is most Runs at the moment they STOP: [finish] asks
+     * every Run on its way out rather than asking first whether it was paused, so there is one place
+     * a Pause is closed and no second rule to keep in step with it.
+     */
+    private fun closeAnyPause(paused: RunState, ended: RunState, nowMillis: Long): RunOutcome {
+        val startedAtMillis = paused.pausedAtMillis ?: return RunOutcome(ended)
+        return emitOrHold(
+            ended.copy(pausedAtMillis = null),
+            PendingRowWork.SavePause(PauseTaken(startedAtMillis, nowMillis)),
+        )
     }
 
     /**
@@ -871,7 +895,10 @@ object Run {
         // A Run stopped mid-Interval still banks it, and it is banked before the Run's own totals
         // so the two arrive in the order they happened.
         val saved = saveRunInterval(state)
-        val current = saved.state
+        // A Run stopped while paused ends its Pause here, at the STOP, rather than leaving it open:
+        // the runner never came back, so the far side of it is the end of the Run (#328).
+        val closed = closeAnyPause(saved.state, saved.state, nowMillis)
+        val current = closed.state
         val totals = RunTotals(
             durationSeconds = current.secondsRunning,
             pausedSeconds = current.secondsPaused,
@@ -889,7 +916,8 @@ object Run {
             if (current.runRowId != null) RunLifecycle.STOPPED else RunLifecycle.STOPPING
         return RunOutcome(
             finalized.state.copy(lifecycle = stopped),
-            saved.effects + RunEffect.StopGps + RunEffect.ReleaseStrap + finalized.effects,
+            saved.effects + closed.effects + RunEffect.StopGps + RunEffect.ReleaseStrap +
+                finalized.effects,
         )
     }
 

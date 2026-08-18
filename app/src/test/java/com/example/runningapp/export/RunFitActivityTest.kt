@@ -2,6 +2,7 @@ package com.example.runningapp.export
 
 import com.example.runningapp.analysis.RunAnalysis
 import com.example.runningapp.data.HrSample
+import com.example.runningapp.data.RunPause
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointSource
@@ -53,7 +54,7 @@ class RunFitActivityTest {
         val run = outdoorRun(distanceKm = 2.4, durationSeconds = 1200, movingTimeSeconds = 1200)
         val analysis = RunAnalysis.of(run, samples(), evenTrack(seconds = 1200, speedMps = 2.0))
 
-        val activity = RunFitActivity.build(run, evenTrack(seconds = 1200, speedMps = 2.0), samples(), analysis)
+        val activity = RunFitActivity.build(run, evenTrack(seconds = 1200, speedMps = 2.0), samples(), emptyList(), analysis)
 
         assertEquals(analysis.splits.size, activity.laps.size)
         activity.laps.forEachIndexed { index, lap ->
@@ -144,6 +145,62 @@ class RunFitActivityTest {
     }
 
     @Test
+    fun `a Pause on a Run with no GPS is stated, because the recorder wrote it down`() {
+        // The case nothing could state before #328: a treadmill Run records no fix, so there was no
+        // fix for the Pause's mark to sit on and the file could only imply the Pause from the gap
+        // between the Run's two clocks.
+        val treadmill = outdoorRun(durationSeconds = 1800, movingTimeSeconds = null)
+            .copy(runMode = "treadmill")
+        val recorded = listOf(pauseRow(from = 600, to = 690))
+
+        val activity = build(treadmill, emptyList(), samples(), recorded)
+
+        val pause = activity.pauses.single()
+        assertEquals(startTime + 600_000, pause.startTimeMillis)
+        assertEquals(startTime + 690_000, pause.endTimeMillis)
+    }
+
+    @Test
+    fun `the Pauses the recorder wrote down are the Run's, not the ones its track implies`() {
+        // Both records describe the same Pause. The rows hold the instants the Run's own clock
+        // stopped and started; the mark holds the fixes either side, which are narrower. Stating
+        // both would be one Pause claimed twice, so the recorded one is the Run's answer.
+        val resumed = point(60).copy(startsAfterPause = true)
+        val trackPoints = listOf(point(0), point(10), resumed, point(61))
+        val recorded = listOf(pauseRow(from = 8, to = 59))
+
+        val activity = build(outdoorRun(), trackPoints, samples(), recorded)
+
+        val pause = activity.pauses.single()
+        assertEquals(startTime + 8_000, pause.startTimeMillis)
+        assertEquals(startTime + 59_000, pause.endTimeMillis)
+    }
+
+    @Test
+    fun `a Run recorded before Pauses were written down still states the mark on its track`() {
+        // Every Run in history. It has no rows and can never have any, so the mark is all it has —
+        // and it is read exactly as it was before the rows existed.
+        val resumed = point(60).copy(startsAfterPause = true)
+        val trackPoints = listOf(point(0), point(10), resumed, point(61))
+
+        val activity = build(outdoorRun(), trackPoints, samples(), recordedPauses = emptyList())
+
+        assertEquals(startTime + 10_000, activity.pauses.single().startTimeMillis)
+    }
+
+    @Test
+    fun `the Pauses are stated in the order the Run took them`() {
+        val recorded = listOf(pauseRow(from = 400, to = 430), pauseRow(from = 100, to = 130))
+
+        val activity = build(outdoorRun(), emptyList(), samples(), recorded)
+
+        assertEquals(
+            listOf(startTime + 100_000, startTime + 400_000),
+            activity.pauses.map { it.startTimeMillis },
+        )
+    }
+
+    @Test
     fun `a gap nobody declared is an Outage, and does not stop the timer`() {
         // An Outage is a leg the Run counted — its seconds are Moving time and its line is distance.
         // A timer stopped for one would contradict the Moving time this same file states.
@@ -218,7 +275,7 @@ class RunFitActivityTest {
         val run = outdoorRun(distanceKm = 2.4, durationSeconds = 1200, movingTimeSeconds = 1200)
         val track = evenTrack(seconds = 1200, speedMps = 2.0)
 
-        val activity = RunFitActivity.build(run, track, samples(), RunAnalysis.of(run, samples(), track))
+        val activity = RunFitActivity.build(run, track, samples(), emptyList(), RunAnalysis.of(run, samples(), track))
 
         assertEquals(2400.0, activity.distanceMeters!!, 0.001)
     }
@@ -272,8 +329,24 @@ class RunFitActivityTest {
 
     // -- The run these tests are written against --------------------------------------------------
 
-    private fun build(run: RunnerSession, trackPoints: List<TrackPoint>, hrSamples: List<HrSample>) =
-        RunFitActivity.build(run, trackPoints, hrSamples, RunAnalysis.of(run, hrSamples, trackPoints))
+    private fun build(
+        run: RunnerSession,
+        trackPoints: List<TrackPoint>,
+        hrSamples: List<HrSample>,
+        recordedPauses: List<RunPause> = emptyList(),
+    ) = RunFitActivity.build(
+        run,
+        trackPoints,
+        hrSamples,
+        recordedPauses,
+        RunAnalysis.of(run, hrSamples, trackPoints),
+    )
+
+    private fun pauseRow(from: Long, to: Long) = RunPause(
+        sessionId = 1L,
+        startTimeMillis = startTime + from * 1000,
+        endTimeMillis = startTime + to * 1000,
+    )
 
     private fun outdoorRun(
         distanceKm: Double = 2.4,

@@ -76,6 +76,7 @@ import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.AfterRunWorker
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.HrSample
+import com.example.runningapp.data.RunPause
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.TrackPoint
@@ -665,6 +666,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             is RunEffect.FinalizeRun -> finalizeRun(effect)
             is RunEffect.SaveHrSample -> saveHrSample(effect)
             is RunEffect.SaveIntervalStat -> saveIntervalStat(effect)
+            is RunEffect.SavePause -> savePause(effect)
             is RunEffect.Speak -> speakCue(effect)
             is RunEffect.WithdrawCue -> withdrawCue(effect.tag)
             is RunEffect.Notify -> updateNotification(effect.text)
@@ -743,6 +745,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             paceMinPerKm = _hrState.value.paceMinPerKm,
         )
         recorderWriteScope.launch { database.sampleDao().insertSample(sample) }
+    }
+
+    /** Write down one Pause of this Run, so an Export can state where its clock stopped (#328). */
+    private fun savePause(effect: RunEffect.SavePause) {
+        val row = RunPause(
+            sessionId = effect.runRowId,
+            startTimeMillis = effect.pause.startedAtMillis,
+            endTimeMillis = effect.pause.endedAtMillis,
+        )
+        recorderWriteScope.launch { database.runPauseDao().insertPause(row) }
     }
 
     private fun saveIntervalStat(effect: RunEffect.SaveIntervalStat) {

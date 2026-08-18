@@ -62,7 +62,11 @@ data class FitLap(
 )
 
 /**
- * A Pause inside a run: the stretch between the last fix before it and the fix that resumed.
+ * A Pause inside a run: the stretch its clock was stopped for.
+ *
+ * Where the recorder wrote the Pause down those are the Run's own instants; on a Run recorded before
+ * it did, they are the last fix before the Pause and the fix that resumed the Run, which is as close
+ * as that Run can get. Which of the two a file carries is [RunFitActivity]'s to decide.
  *
  * Only a Pause belongs here, never an Outage. A Pause stopped the Run's clock and covered no ground,
  * so the timer stopped with it; an Outage is a leg the Run counted — its seconds are Moving time and

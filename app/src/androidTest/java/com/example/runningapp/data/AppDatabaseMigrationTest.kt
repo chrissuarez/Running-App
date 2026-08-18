@@ -795,6 +795,32 @@ class AppDatabaseMigrationTest {
         assertEquals(9000L, run.endTime)
     }
 
+    @Test
+    fun migrate32To33_makesRoomForPausesAndBackfillsNone_becauseHistoryNeverWroteThemDown() {
+        val rawDb = openLegacyDatabase()
+        createTrackPointsTable(rawDb)
+        insertLegacySession(rawDb, id = 1)
+        rawDb.execSQL("UPDATE sessions SET endTime = 9000, durationSeconds = 2259 WHERE id = 1")
+        rawDb.version = 12
+        rawDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(*appDatabaseMigrations { HrProfile(190) })
+            .build()
+        val pauses = runBlockingGet { migratedDb.runPauseDao().getPausesForSession(1) }
+        val run = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
+        migratedDb.close()
+
+        // Empty, and nothing could have filled it (#328). A Pause left one mark, on an outdoor Run
+        // only, and the instants that mark stands between are the fixes either side rather than the
+        // Run's own boundaries. Backfilling from it would write approximations down as measurements,
+        // and would still leave every treadmill Run empty — the case the table exists for.
+        assertEquals(emptyList<RunPause>(), pauses)
+        // The Run itself is untouched: the migration adds a table and nothing else.
+        assertEquals(2259L, run.durationSeconds)
+        assertEquals(9000L, run.endTime)
+    }
+
     /**
      * Builds the sessions/hr_samples/run_walk_interval_stats tables as they stood at v11 and v12
      * (identical across those two versions), leaving the file's version unset for the caller.

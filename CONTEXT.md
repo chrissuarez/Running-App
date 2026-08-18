@@ -149,7 +149,10 @@ _Avoid_: dropout (a Strap drops out; a recording breaks), blackout
 **Pause**:
 A Break the Run wrote down — held down by the runner or reached automatically.
 The Run's clock stops, GPS is torn down, and the runner was not running, so a
-Pause carries no ground at all and no seconds the Run counted.
+Pause carries no ground at all and no seconds the Run counted. The recorder
+writes one down as it ends, with the instants the Run's clock stopped and
+started, so a Run with no GPS has its Pauses too
+([ADR 0018](docs/adr/0018-a-pause-is-written-down.md)).
 _Avoid_: stoppage, rest stop
 
 **Outage**:

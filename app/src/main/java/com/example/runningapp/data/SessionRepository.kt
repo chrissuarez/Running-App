@@ -501,6 +501,7 @@ class SessionRepository(
     private val sampleDao: SampleDao? = null,
     private val trackPointDao: TrackPointDao? = null,
     private val intervalStatDao: RunWalkIntervalStatDao? = null,
+    private val runPauseDao: RunPauseDao? = null,
     // Null wherever records are not wired (tests, and the archive's read-only container): a run then
     // finishes without being scored rather than failing to finish.
     private val achievementDao: AchievementDao? = null,
@@ -1937,6 +1938,16 @@ class SessionRepository(
     /** What one Run has been told it holds, in the shape the record book ranks (#282). */
     private suspend fun statedEffortsOf(sessionId: Long): Map<RecordType, Double> =
         statedBestEffortDao?.getForSession(sessionId).orEmpty().byType()
+
+    /**
+     * One-shot read of a Run's Pauses, in the order it took them (#328).
+     *
+     * Empty for a Run recorded before they were written down, which is not the same claim as a Run
+     * that took none — see [com.example.runningapp.export.RunFitActivity], which is the one reader
+     * of these and where that difference is decided.
+     */
+    suspend fun getPauses(sessionId: Long): List<RunPause> =
+        runPauseDao?.getPausesForSession(sessionId).orEmpty()
 
     /** One-shot read of a run's heart-rate samples, ordered by elapsed second. */
     suspend fun getHrSamples(sessionId: Long): List<HrSample> =

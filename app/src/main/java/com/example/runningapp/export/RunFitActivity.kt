@@ -3,6 +3,7 @@ package com.example.runningapp.export
 import com.example.runningapp.analysis.RunAnalysis
 import com.example.runningapp.analysis.Split
 import com.example.runningapp.data.HrSample
+import com.example.runningapp.data.RunPause
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.heartRatesByWallSecond
@@ -29,6 +30,7 @@ object RunFitActivity {
         session: RunnerSession,
         trackPoints: List<TrackPoint>,
         hrSamples: List<HrSample>,
+        recordedPauses: List<RunPause>,
         analysis: RunAnalysis,
     ): FitActivity {
         // Both streams on the wall clock, the only axis they share — see [heartRatesByWallSecond].
@@ -51,7 +53,7 @@ object RunFitActivity {
             distanceMeters = distanceMeters,
             sport = sportOf(session),
             records = records,
-            pauses = pausesOf(session, trackPoints),
+            pauses = pausesOf(session, trackPoints, recordedPauses),
             laps = lapsOf(
                 splits = analysis.splits,
                 wholeRun = FitLap(
@@ -129,19 +131,42 @@ object RunFitActivity {
     }
 
     /**
-     * The Run's Pauses, each one the stretch between the last fix before it and the fix that resumed.
+     * The Run's Pauses: where its clock stopped, and not only how long it stopped for.
      *
-     * Read off [TrackPoint.startsAfterPause], which is the only place a Pause is written down, and
-     * nowhere else — including on the opening fix, where a Pause held before any fix landed is
-     * recorded and where a walk over consecutive pairs would never look.
+     * Two sources, in this order, because two kinds of Run exist and only one of them has the better
+     * of them:
      *
-     * A long gap between fixes is deliberately not treated as one: that is how an Outage looks too,
-     * and an Outage is seconds the Run counted, so stopping the timer for one would contradict the
-     * Moving time the same file states. A Pause on a Run saved before the app wrote
-     * the boundary down therefore goes unmarked here — the session's Duration and Moving time still
-     * say how long its Pauses were between them, which is all that was ever recorded about it.
+     *  - **The Pauses the recorder wrote down** ([RunPause], #328). The Run's own boundaries, taken
+     *    at the instants its clock stopped and started, and recorded whether or not the Run had GPS
+     *    — which is the whole reason they exist. A treadmill Pause is written nowhere else at all:
+     *    GPS is torn down for a Pause, so the mark below needs a fix to sit on and a Run with no
+     *    fixes never gets one.
+     *  - **The mark on the track** ([TrackPoint.startsAfterPause]), for a Run recorded before those
+     *    rows existed. Each Pause is the stretch between the last fix before it and the fix that
+     *    resumed the Run, which is narrower than the Pause really was — the far side of it is
+     *    whenever the next fix landed. Read including on the opening fix, where a Pause held before
+     *    any fix landed is recorded and where a walk over consecutive pairs would never look.
+     *
+     * The order is deliberate and not a merge. On a Run that has both, they describe the same Pauses
+     * to different precisions, and stating each of them twice is exactly the disagreement this export
+     * exists to end ([ADR 0018](docs/adr/0018-a-pause-is-written-down.md)).
+     *
+     * A long gap between fixes is deliberately not treated as a Pause under either rule: that is how
+     * an Outage looks too, and an Outage is seconds the Run counted, so stopping the timer for one
+     * would contradict the Moving time the same file states. A Pause on a Run with neither a row nor
+     * a mark therefore goes unstated here — the session's Duration and Moving time still say how long
+     * its Pauses were between them, which is all that was ever recorded about it.
      */
-    private fun pausesOf(session: RunnerSession, trackPoints: List<TrackPoint>): List<FitPause> {
+    private fun pausesOf(
+        session: RunnerSession,
+        trackPoints: List<TrackPoint>,
+        recordedPauses: List<RunPause>,
+    ): List<FitPause> {
+        if (recordedPauses.isNotEmpty()) {
+            return recordedPauses
+                .sortedBy { it.startTimeMillis }
+                .map { FitPause(startTimeMillis = it.startTimeMillis, endTimeMillis = it.endTimeMillis) }
+        }
         val ordered = trackPoints.sortedBy { it.timestampMillis }
         // A Pause held before the first fix landed is marked on that fix, which every reader that
         // walks consecutive pairs steps over ([PauseMark]). Its near side is the Run's own start,

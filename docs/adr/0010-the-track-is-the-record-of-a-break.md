@@ -81,6 +81,11 @@ have no way to say which was right.
 
 One record, read consistently, is worth more than a better-shaped record read twice.
 
+*Overturned for one question by [ADR 0018](0018-a-pause-is-written-down.md): the evidence above
+exists only on a Run that recorded fixes, and a Run with no GPS has no fix for the mark to sit on, so
+its Pauses were written down nowhere at all. The recorder now writes a row per Pause. Everything that
+reads the **shape** of a Run still reads the track, and this section still governs it.*
+
 ## Consequences
 
 - **A Run rescued by the interrupted-run pass measures the same as one finished live.** It did not
