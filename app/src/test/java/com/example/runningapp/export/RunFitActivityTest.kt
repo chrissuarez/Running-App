@@ -33,7 +33,7 @@ class RunFitActivityTest {
 
         assertEquals(600_000L, activity.elapsedMillis)
         assertEquals(540_000L, activity.movingMillis)
-        assertEquals(2400.0, activity.distanceMeters, 0.001)
+        assertEquals(2400.0, activity.distanceMeters!!, 0.001)
         assertEquals(130, activity.averageBpm)
         assertEquals(150, activity.maxBpm)
         assertEquals(FitSport.RUN, activity.sport)
@@ -58,7 +58,7 @@ class RunFitActivityTest {
         assertEquals(analysis.splits.size, activity.laps.size)
         activity.laps.forEachIndexed { index, lap ->
             val split = analysis.splits[index]
-            assertEquals(split.distanceMeters, lap.distanceMeters, 0.001)
+            assertEquals(split.distanceMeters, lap.distanceMeters!!, 0.001)
             assertEquals(split.movingMillis, lap.movingMillis)
             assertEquals(split.startTimeMillis, lap.startTimeMillis)
             assertEquals(split.endTimeMillis, lap.endTimeMillis)
@@ -75,7 +75,7 @@ class RunFitActivityTest {
         val activity = build(treadmill, emptyList(), samples())
 
         assertEquals(1, activity.laps.size)
-        assertEquals(5000.0, activity.laps.single().distanceMeters, 0.001)
+        assertEquals(5000.0, activity.laps.single().distanceMeters!!, 0.001)
         assertEquals(1_800_000L, activity.laps.single().movingMillis)
         assertEquals(FitSport.TREADMILL_RUN, activity.sport)
     }
@@ -107,9 +107,9 @@ class RunFitActivityTest {
 
         assertTrue(activity.records.isEmpty())
         assertEquals(1, activity.laps.size)
-        assertEquals(5000.0, activity.laps.single().distanceMeters, 0.001)
+        assertEquals(5000.0, activity.laps.single().distanceMeters!!, 0.001)
         assertEquals(1_800_000L, activity.elapsedMillis)
-        assertEquals(5000.0, activity.distanceMeters, 0.001)
+        assertEquals(5000.0, activity.distanceMeters!!, 0.001)
         // A heart rate nobody measured is left out rather than written as a zero.
         assertNull(activity.averageBpm)
         assertNull(activity.maxBpm)
@@ -220,7 +220,24 @@ class RunFitActivityTest {
 
         val activity = RunFitActivity.build(run, track, samples(), RunAnalysis.of(run, samples(), track))
 
-        assertEquals(2400.0, activity.distanceMeters, 0.001)
+        assertEquals(2400.0, activity.distanceMeters!!, 0.001)
+    }
+
+    @Test
+    fun `a treadmill Run nobody stated a distance for says nothing about distance`() {
+        // The runner never typed the console's number, which is why the Run's page offers to add
+        // one. A stated zero would turn "nobody said how far" into "it went nowhere" — a claim off
+        // no page, which ADR 0017 leaves out rather than fills in (#330).
+        val unstated = outdoorRun(distanceKm = 0.0, durationSeconds = 1800, movingTimeSeconds = null)
+            .copy(runMode = "treadmill")
+
+        val activity = build(unstated, emptyList(), samples())
+
+        assertNull(activity.distanceMeters)
+        assertNull(activity.laps.single().distanceMeters)
+        // Everything the Run does know is still stated.
+        assertEquals(1_800_000L, activity.elapsedMillis)
+        assertEquals(130, activity.averageBpm)
     }
 
     // -- What the run is called ------------------------------------------------------------------

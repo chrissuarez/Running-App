@@ -35,7 +35,7 @@ object RunFitActivity {
         val records = recordsOf(trackPoints, heartRatesByWallSecond(session, hrSamples))
         val elapsedMillis = session.durationSeconds * 1000L
         val movingMillis = session.paceClockSeconds * 1000L
-        val distanceMeters = session.distanceKm * 1000.0
+        val distanceMeters = distanceMetersOf(session)
         // Wide enough to hold every record: a fix stamped a moment before the run's own start would
         // otherwise sit outside the file's own timer, which a reader is entitled to distrust.
         val startTimeMillis = minOf(session.startTime, records.firstOrNull()?.timeMillis ?: session.startTime)
@@ -71,6 +71,21 @@ object RunFitActivity {
             ascentMeters = analysis.elevationGainMeters,
         )
     }
+
+    /**
+     * How far the Run went, or null where nothing ever said (#330).
+     *
+     * Why null rather than a zero is [FitActivity.distanceMeters]'s to say. What is decided here is
+     * that a `0.0` in the column is nobody having said: `distanceKm` is non-null, a Stated Distance
+     * must be a positive number (#231), and withdrawing one writes the zero back.
+     *
+     * A Run that genuinely covered no measurable ground is therefore exported as one nobody
+     * measured, which is the one place the two readings part. That is the reading the rest of the
+     * app already takes — its own page shows no distance for such a Run either — and a flag to tell
+     * them apart here would be a distinction nothing else in the app makes.
+     */
+    private fun distanceMetersOf(session: RunnerSession): Double? =
+        session.distanceKm.takeIf { it > 0.0 }?.times(1000.0)
 
     /** This Run's `.fit` file name. */
     fun fileName(session: RunnerSession, zoneId: ZoneId = ZoneId.systemDefault()): String =
