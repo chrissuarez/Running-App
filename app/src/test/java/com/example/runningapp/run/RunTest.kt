@@ -1154,6 +1154,23 @@ class RunTotalsTest {
     }
 
     @Test
+    fun `a lost reading is not banked again, however long the Strap stays quiet`() {
+        // The rule the Strap's own parse leans on (#326): a packet the app will not believe leaves
+        // the Run with no reading at all, so the seconds that follow bank as no-data rather than
+        // recording the last good beat over and over as if it were still being measured.
+        val driver = Driver()
+        driver.start()
+        driver.advanceWith(5, IN_TARGET)
+        driver.heartRateLost()
+
+        val quiet = driver.advance(10)
+
+        assertEquals(0, quiet.count<RunEffect.SaveHrSample>())
+        val finalize = driver.stop().only<RunEffect.FinalizeRun>()
+        assertEquals(10L, finalize.totals.noDataSeconds)
+    }
+
+    @Test
     fun `the cool-down's final second writes an HR sample when a reading stands`() {
         val driver = Driver()
         driver.start()
