@@ -233,6 +233,46 @@ class FitWriterTest {
     }
 
     @Test
+    fun `a run with nothing recorded at all is still a file that states it`() {
+        // No Strap and no usable GPS — the treadmill Run started without the strap on (#329). All
+        // that is left is what the runner said: how long it took, and how far they went.
+        val summaryOnly = FitActivity(
+            startTimeMillis = startMillis,
+            endTimeMillis = startMillis + 1_800_000,
+            elapsedMillis = 1_800_000,
+            movingMillis = 1_800_000,
+            distanceMeters = 5000.0,
+            sport = FitSport.TREADMILL_RUN,
+            records = emptyList(),
+            laps = listOf(
+                FitLap(
+                    startTimeMillis = startMillis,
+                    endTimeMillis = startMillis + 1_800_000,
+                    movingMillis = 1_800_000,
+                    distanceMeters = 5000.0,
+                )
+            ),
+        )
+
+        val bytes = FitWriter.write(summaryOnly)
+        assertTrue("the CRCs do not check out", Decode().checkFileIntegrity(ByteArrayInputStream(bytes)))
+        val messages = decode(bytes)
+
+        // Nothing between the timer starting and stopping, and that is a legal FIT activity: the
+        // records were never the file's claim, the session is.
+        assertTrue(messages.filterIsInstance<RecordMesg>().isEmpty())
+        val timerEvents = messages.filterIsInstance<EventMesg>()
+        assertEquals(listOf(EventType.START, EventType.STOP_ALL), timerEvents.map { it.eventType })
+
+        val session = messages.filterIsInstance<SessionMesg>().single()
+        assertEquals(1800.0f, session.totalElapsedTime, 0.001f)
+        assertEquals(5000.0f, session.totalDistance, 0.01f)
+        assertEquals(SubSport.TREADMILL, session.subSport)
+        assertEquals(1, messages.filterIsInstance<LapMesg>().size)
+        assertEquals(1, messages.filterIsInstance<ActivityMesg>().single().numSessions)
+    }
+
+    @Test
     fun `a Run the runner called a walk is written as a walk`() {
         val session = decode(FitWriter.write(scriptedRun(sport = FitSport.WALK)))
             .filterIsInstance<SessionMesg>()

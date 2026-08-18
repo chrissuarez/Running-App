@@ -824,13 +824,14 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
-                            // What this run can be written as (#218). FIT needs only that something
-                            // was recorded, so a treadmill Run with a strap on it gets one; GPX
-                            // needs fixes to hang its trackpoints on, so that same Run gets none.
-                            val shareableFormats = remember(hasTrack, sessionSamples, selectedSession) {
+                            // What this run can be written as (#218). FIT needs nothing of the run
+                            // but that it finished: a Run with neither Strap nor GPS still states a
+                            // Duration and a Stated Distance, and a file saying so is the case this
+                            // export was added for (#329). GPX needs fixes to hang its trackpoints
+                            // on, so that same Run gets none.
+                            val shareableFormats = remember(hasTrack, selectedSession) {
                                 buildList {
-                                    val finished = selectedSession?.isFinished() == true
-                                    if (finished && (hasTrack || sessionSamples.isNotEmpty())) add(ExportFormat.FIT)
+                                    if (selectedSession?.isFinished() == true) add(ExportFormat.FIT)
                                     if (hasTrack) add(ExportFormat.GPX)
                                 }
                             }
