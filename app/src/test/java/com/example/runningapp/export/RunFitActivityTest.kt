@@ -54,7 +54,7 @@ class RunFitActivityTest {
         val run = outdoorRun(distanceKm = 2.4, durationSeconds = 1200, movingTimeSeconds = 1200)
         val analysis = RunAnalysis.of(run, samples(), evenTrack(seconds = 1200, speedMps = 2.0))
 
-        val activity = RunFitActivity.build(run, evenTrack(seconds = 1200, speedMps = 2.0), samples(), emptyList(), analysis)
+        val activity = build(run, evenTrack(seconds = 1200, speedMps = 2.0), samples())
 
         assertEquals(analysis.splits.size, activity.laps.size)
         activity.laps.forEachIndexed { index, lap ->
@@ -275,7 +275,7 @@ class RunFitActivityTest {
         val run = outdoorRun(distanceKm = 2.4, durationSeconds = 1200, movingTimeSeconds = 1200)
         val track = evenTrack(seconds = 1200, speedMps = 2.0)
 
-        val activity = RunFitActivity.build(run, track, samples(), emptyList(), RunAnalysis.of(run, samples(), track))
+        val activity = build(run, track, samples())
 
         assertEquals(2400.0, activity.distanceMeters!!, 0.001)
     }

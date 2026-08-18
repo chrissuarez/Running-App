@@ -67,6 +67,13 @@ way to say which was right.* Three rules answer it, and they are the whole of th
   back; leaving it open would lose it.
 - **An auto-pause (#39) is recorded too.** The Run's clock stops for a standstill exactly as it does
   for the button, so the file has the same reason to say where.
+- **The choice of source is per Run, not per Pause.** A Run that has any rows is answered from its
+  rows alone, and the marks on its track are not consulted — including in the narrow case where a
+  row's write did not survive a process death but the fix carrying its mark did, which exports that
+  Run one Pause short. Reaching for the marks to fill such a gap is the merge this design refuses:
+  the two records describe the same Pauses to different precisions, so a merge would state some of
+  them twice, and no rule could say which of a near-identical pair was the duplicate.
+
 - **A Pause is lost if the process dies inside it**, because a Pause is written down when it ends.
   The alternative — writing the near side on the way in and patching the far side on the way out —
   buys a row for a Run that is being rescued rather than exported, and pays for it with a half-row

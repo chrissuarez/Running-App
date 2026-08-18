@@ -147,9 +147,11 @@ object RunFitActivity {
      *    whenever the next fix landed. Read including on the opening fix, where a Pause held before
      *    any fix landed is recorded and where a walk over consecutive pairs would never look.
      *
-     * The order is deliberate and not a merge. On a Run that has both, they describe the same Pauses
-     * to different precisions, and stating each of them twice is exactly the disagreement this export
-     * exists to end ([ADR 0018](docs/adr/0018-a-pause-is-written-down.md)).
+     * The order is deliberate, it is a choice per Run rather than per Pause, and it is not a merge.
+     * On a Run that has both, the two describe the same Pauses to different precisions, so a merge
+     * would state some of them twice — the disagreement this export exists to end — and nothing could
+     * say which of a near-identical pair was the duplicate
+     * ([ADR 0018](docs/adr/0018-a-pause-is-written-down.md)).
      *
      * A long gap between fixes is deliberately not treated as a Pause under either rule: that is how
      * an Outage looks too, and an Outage is seconds the Run counted, so stopping the timer for one

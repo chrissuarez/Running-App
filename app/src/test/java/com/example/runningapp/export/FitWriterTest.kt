@@ -165,6 +165,30 @@ class FitWriterTest {
     }
 
     @Test
+    fun `a Pause the runner never came back from is closed by the file's own stop`() {
+        // A Run stopped while paused ends its Pause at the STOP (#328). Starting the timer there and
+        // stopping it in the same breath would say the runner set off again at the instant they
+        // finished; the activity's own stop_all is what closes a Pause that reaches the end.
+        val neverResumed = pausedRun().let { paused ->
+            paused.copy(
+                pauses = listOf(
+                    FitPause(
+                        startTimeMillis = startMillis + 240_000,
+                        endTimeMillis = paused.endTimeMillis,
+                    ),
+                ),
+            )
+        }
+
+        val events = decode(FitWriter.write(neverResumed)).filterIsInstance<EventMesg>()
+
+        assertEquals(
+            listOf(EventType.START, EventType.STOP, EventType.STOP_ALL),
+            events.map { it.eventType },
+        )
+    }
+
+    @Test
     fun `a Pause leaves the file in one time order`() {
         // The stop is stamped on the last fix before the Pause, which is already written by then: a
         // merge that appended the events instead would stamp it before records that precede it.
