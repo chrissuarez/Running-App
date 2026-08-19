@@ -131,13 +131,13 @@ fun segmentTraversalsIn(ground: List<MapFix>, track: List<SegmentTrackFix>): Lis
             from++
             continue
         }
-        val to = matcher.leavesTheEndGateAfter(from)
-        if (to == null) {
+        val over = matcher.goesOverItFrom(from)
+        if (over == null) {
             from++
             continue
         }
-        matcher.traversalBetween(from, to)?.let { traversals += it }
-        from = to
+        matcher.traversalOf(over)?.let { traversals += it }
+        from = over.leftAt
     }
     return traversals
 }
@@ -178,16 +178,21 @@ private class Matcher(
             nearestPointOnTheLine(fixes[at], alongLow = 0.0, alongHigh = length).along <= EPSILON_METERS
 
     /**
-     * The fix the Run comes out of the end gate on, having kept every rule from [from] onwards — or
-     * null, which is the answer for most of a Run and every Run that only went near.
+     * The Run going over the whole Segment, having kept every rule from [from] onwards — or null,
+     * which is the answer for most of a Run and every Run that only went near one end of it.
      */
-    fun leavesTheEndGateAfter(from: Int): Int? {
+    fun goesOverItFrom(from: Int): WentOver? {
         // How far up the Segment the Run has got. Never allowed to jump further than the ground the
         // Run itself covered, which is what makes a shortcut unable to appear on the far side of the
         // stretch rather than something to be detected afterwards.
         var along = 0.0
         var strayedAtMillis: Long? = null
         var strayedAtAlong = 0.0
+        // The last fix with none of the Segment behind it yet. The start gate is crossed on the leg
+        // that leaves this fix, which is not the same as the leg that leaves [from]: a Run picked up
+        // twenty metres short of the gate arrives at it two fixes later, and timing from the first
+        // of them would hand the effort seconds the runner spent outside it.
+        var enteredAfter = from
 
         for (at in from + 1 until fixes.size) {
             if (track[at].followsABreak) return null
@@ -201,14 +206,20 @@ private class Matcher(
 
             when {
                 // Out of the far end: the effort stands or falls here.
-                nearest.along >= length - EPSILON_METERS ->
-                    return if (fixes[at].metersTo(end) <= SEGMENT_GATE_METERS) at else null
+                nearest.along >= length - EPSILON_METERS -> return if (
+                    fixes[at].metersTo(end) <= SEGMENT_GATE_METERS
+                ) {
+                    WentOver(enteredAfter = enteredAfter, leftAt = at)
+                } else {
+                    null
+                }
 
                 // Not into it yet — still milling about at the start gate, which is allowed as long
                 // as it is still the start gate they are milling about at.
                 nearest.along <= EPSILON_METERS -> {
                     if (fixes[at].metersTo(start) > SEGMENT_GATE_METERS) return null
                     strayedAtMillis = null
+                    enteredAfter = at
                 }
 
                 nearest.offset > SEGMENT_CORRIDOR_METERS -> {
@@ -236,9 +247,9 @@ private class Matcher(
      * and on a three-hundred-metre Segment that is the difference between a PR and not. Null for a
      * crossing pair that leaves no time between them, which two fixes stamped the same moment would.
      */
-    fun traversalBetween(from: Int, to: Int): SegmentTraversal? {
-        val startedAt = crossingMillis(from, from + 1, start)
-        val finishedAt = crossingMillis(to - 1, to, end)
+    fun traversalOf(over: WentOver): SegmentTraversal? {
+        val startedAt = crossingMillis(over.enteredAfter, over.enteredAfter + 1, start)
+        val finishedAt = crossingMillis(over.leftAt - 1, over.leftAt, end)
         return if (finishedAt > startedAt) SegmentTraversal(startedAt, finishedAt) else null
     }
 
@@ -280,6 +291,9 @@ private class Matcher(
         return best
     }
 }
+
+/** A Run over the whole Segment: the fix it set off from, and the fix it came out on. */
+private data class WentOver(val enteredAfter: Int, val leftAt: Int)
 
 /** A point of the Segment's line: how far along it is, and how far the Run was off it there. */
 private data class OnTheLine(val along: Double, val offset: Double)
