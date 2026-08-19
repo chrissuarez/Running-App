@@ -46,8 +46,8 @@ the dated sections below this one are older and are kept as history.
   stretch anywhere inside a run; the other two, longest run and longest time, rank whole runs. Your
   existing history was scored once at launch, and deleting a medal-holder promotes what was behind it.
 - **Export and backup.** Share a run as **.FIT** — the one Garmin Connect reads without re-deriving
-  anything — or as GPX. Separately, a monthly **archive** writes the whole database plus a GPX per
-  run to a folder you pick once, and can be restored from.
+  anything — or as GPX. Separately, a monthly **archive** writes the whole database, plus a GPX for
+  each finished run that has a usable track, to a folder you pick once, and can be restored from.
 - **A richer run page.** The route drawn on a map, coloured by heart-rate zone, with a fullscreen
   view; drag across the chart and a dot follows you along the route. History rows carry route
   thumbnails and the medals the run took.
@@ -179,9 +179,10 @@ the dated sections below this one are older and are kept as history.
       of the truth, and the alternative is freezing numbers we know to be wrong.
     - **Share a run** from its detail page, as either file:
         - **Garmin (.fit)** — the run's own summary (distance, duration, moving time, heart rates,
-          climb), its own kilometre splits as laps, and a moment per second of the run. A run with no
-          GPS at all — a treadmill run, or one that lost the sky — is still a whole file, with its
-          heart-rate trace intact. This is the one Garmin Connect reads without re-deriving anything.
+          climb), its own kilometre splits as laps, and a moment for every second that recorded a GPS
+          fix or a heart rate — so a second that recorded neither has none. A run with no GPS at all
+          — a treadmill run, or one that lost the sky — is still a whole file, with its heart-rate
+          trace intact. This is the one Garmin Connect reads without re-deriving anything.
         - **GPX** — track, timestamps and per-point heart rate. The portable option, for everything
           that isn't Garmin. A run with no GPS track can't be one, so it isn't offered.
     - **Personal records**: Gold/silver/bronze at seven records — fastest 1 km, mile, 5 km, 10 km and
@@ -193,10 +194,13 @@ the dated sections below this one are older and are kept as history.
       and no stated distance contests the longest time only. Every run you have already recorded is scored once in the background at
       launch, so the book starts out complete; deleting a medal-holder promotes the next-best
       efforts behind it.
-    - **Full archive**: Settings → Backup writes one ZIP — a GPX per run, an `archive.json` of
-      everything GPX can't carry, and a snapshot of the database — to a folder you pick once
-      (choose a Drive-synced one for offsite backup). Automatic monthly, keeping the last 3, plus a
-      **Back up now** button and the last-backup time.
+    - **Full archive**: Settings → Backup writes one ZIP — a GPX for each finished run that has a
+      usable track, an `archive.json` of everything GPX can't carry, and a snapshot of the database —
+      to a folder you pick once (choose a Drive-synced one for offsite backup). Automatic monthly,
+      keeping the last 3, plus a **Back up now** button and the last-backup time. **Every run is in
+      the archive** either way: a treadmill run, one still being recorded, or one whose fixes were
+      all too vague to trust is carried by the database snapshot and `archive.json` rather than by a
+      GPX, because a GPX of a run that went nowhere would be an empty file with a name on it.
     - **Restore**: pick an archive and the app opens the database from it before swapping it in, so a
       file that cannot be read is refused rather than leaving you with nothing. History restored from
       an older file is re-banded on the Max HR it was actually recorded under, not today's.
