@@ -2,6 +2,7 @@ package com.example.runningapp.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,7 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Button
@@ -38,6 +41,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.analysis.RunAnalysis
 import com.example.runningapp.data.HrSample
@@ -52,6 +56,22 @@ import kotlin.math.roundToInt
 
 /** A floor, so the map is still a map on a small phone at a large text size. */
 private val MapMinHeight = 140.dp
+
+/** Between the map and the first control, and part of the sum below, so it is named once. */
+private val MapToControlsGap = 16.dp
+
+/**
+ * The tallest the controls under the map may be before they start scrolling inside themselves.
+ *
+ * The map is what gives room up, down to its floor — that is the whole layout (see
+ * [SegmentCreateScreen]). But a landscape phone at a large text size can be too short to hold the
+ * slider, the two marks, the summary, the name field and the Save button at *any* map size, and a
+ * Column that runs out of room measures its last children at nothing at all: the Save button goes
+ * silently missing rather than overflowing where anyone could see it. So past that point the floor
+ * gives way too, and half the screen is the most the picture may keep.
+ */
+internal fun segmentControlsMaxHeight(available: Dp): Dp =
+    (available - MapToControlsGap - MapMinHeight).coerceAtLeast(available / 2)
 
 /**
  * Cutting a Segment out of a Run the runner already did (#69).
@@ -117,98 +137,121 @@ fun SegmentCreateScreen(
             )
         },
     ) { padding ->
-        // Never scrolls. The map takes whatever room the controls leave rather than a fixed height,
-        // so at 1.3x text on a 320dp screen the Save button is still on the phone — it shrinks the
-        // picture rather than pushing the thing the runner came here to press off the bottom (#63).
-        // It also keeps a scrolling column from ever sitting over a map, which is where a vertical
-        // drag gets stolen by the map instead of scrolling the page.
-        Column(
+        // The page itself never scrolls. The map takes whatever room the controls leave rather than
+        // a fixed height, so at 1.3x text on a 320dp screen the Save button is still on the phone —
+        // it shrinks the picture rather than pushing the thing the runner came here to press off
+        // the bottom (#63). It also keeps a scrolling page from ever sitting over a map, which is
+        // where a vertical drag gets stolen by the map instead of scrolling the page.
+        //
+        // The controls carry a ceiling ([segmentControlsMaxHeight]) and scroll within it, for the
+        // screens too short to hold them at any map size at all. That scroll is theirs alone: the
+        // map is outside it, so there is still no drag over the map for the map to take.
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .padding(RunningUiTokens.PagePadding),
         ) {
-            Card(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                Box(modifier = Modifier.fillMaxWidth().heightIn(min = MapMinHeight)) {
-                    SegmentMapSurface(
-                        segment = (cut as? SegmentCut.Cut)?.fixes.orEmpty(),
-                        runBehind = runBehind,
-                        // Pannable and zoomable: on a ten-kilometre run a three-hundred-metre mark
-                        // is a few pixels, and a runner who cannot zoom in cannot see where their
-                        // own handle landed. Safe here because this column never scrolls, so there
-                        // is no drag for the map to steal.
-                        interactive = true,
-                        modifier = Modifier.fillMaxSize(),
-                    )
+            val controlsMaxHeight = segmentControlsMaxHeight(maxHeight)
+            Column(modifier = Modifier.fillMaxSize()) {
+                Card(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    // The map's floor is kept by the sum above rather than by a minimum here: a
+                    // minimum inside a weighted child is only ever coerced away by the exact height
+                    // the weight hands down, so it would read as a promise and keep none of it.
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        SegmentMapSurface(
+                            segment = (cut as? SegmentCut.Cut)?.fixes.orEmpty(),
+                            runBehind = runBehind,
+                            // Pannable and zoomable: on a ten-kilometre run a
+                            // three-hundred-metre mark is a few pixels, and a runner who
+                            // cannot zoom in cannot see where their own handle landed. Safe
+                            // here because no scroll ever passes over the map.
+                            interactive = true,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 }
-            }
-            Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(MapToControlsGap))
 
-            // One slider with two handles rather than two sliders, because the pair is one choice:
-            // a runner moving the end of a hill is comparing it against where the start is, and the
-            // two have to be readable against one another on one line of ground.
-            RangeSlider(
-                value = startMark.toFloat()..endMark.toFloat(),
-                onValueChange = { range ->
-                    startMark = range.start.roundToInt()
-                    endMark = range.endInclusive.roundToInt()
-                },
-                valueRange = 0f..trackMap.route.lastIndex.toFloat(),
-                // A step per recorded fix, so a handle can only ever come to rest on a place the
-                // Run wrote down. Steps count the gaps between the stops, so this is one fewer.
-                steps = (trackMap.route.size - 2).coerceAtLeast(0),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .semantics { contentDescription = "Start and end of the segment along the run" },
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    text = "Start " + segmentMarkLabel(trackMap.route[startMark].distanceMeters),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    text = "End " + segmentMarkLabel(trackMap.route[endMark].distanceMeters),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(modifier = Modifier.height(12.dp))
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = controlsMaxHeight)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    // One slider with two handles rather than two sliders, because the pair is
+                    // one choice: a runner moving the end of a hill is comparing it against where
+                    // the start is, and the two have to be readable against one another on one
+                    // line of ground.
+                    RangeSlider(
+                        value = startMark.toFloat()..endMark.toFloat(),
+                        onValueChange = { range ->
+                            startMark = range.start.roundToInt()
+                            endMark = range.endInclusive.roundToInt()
+                        },
+                        valueRange = 0f..trackMap.route.lastIndex.toFloat(),
+                        // A step per recorded fix, so a handle can only ever come to rest on
+                        // a place the Run wrote down. Steps count the gaps between the stops,
+                        // so this is one fewer.
+                        steps = (trackMap.route.size - 2).coerceAtLeast(0),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics {
+                                contentDescription = "Start and end of the segment along the run"
+                            },
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text(
+                            text = "Start " +
+                                segmentMarkLabel(trackMap.route[startMark].distanceMeters),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = "End " +
+                                segmentMarkLabel(trackMap.route[endMark].distanceMeters),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
 
-            Text(
-                text = segmentCutSummary(cut),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = if (cut is SegmentCut.Cut) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (cut is SegmentCut.Cut) {
-                    MaterialTheme.colorScheme.onSurface
-                } else {
-                    MaterialTheme.colorScheme.error
-                },
-            )
-            Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = segmentCutSummary(cut),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight =
+                            if (cut is SegmentCut.Cut) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (cut is SegmentCut.Cut) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
 
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                label = { Text("Name") },
-                placeholder = { Text("Cemetery Hill") },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        singleLine = true,
+                        label = { Text("Name") },
+                        placeholder = { Text("Cemetery Hill") },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
 
-            Button(
-                onClick = { onSave(cut, name) },
-                enabled = canSave,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = RunningUiTokens.MinTouchTarget),
-            ) {
-                Text("Save segment")
+                    Button(
+                        onClick = { onSave(cut, name) },
+                        enabled = canSave,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = RunningUiTokens.MinTouchTarget),
+                    ) {
+                        Text("Save segment")
+                    }
+                }
             }
         }
     }
