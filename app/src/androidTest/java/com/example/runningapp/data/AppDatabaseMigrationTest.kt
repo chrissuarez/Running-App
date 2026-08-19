@@ -821,6 +821,66 @@ class AppDatabaseMigrationTest {
         assertEquals(9000L, run.endTime)
     }
 
+    @Test
+    fun migrate33To34_makesRoomForSegmentsAndBackfillsNone_becauseNobodyHasNamedOneYet() {
+        val rawDb = openLegacyDatabase()
+        createTrackPointsTable(rawDb)
+        insertLegacySession(rawDb, id = 1)
+        rawDb.execSQL("UPDATE sessions SET endTime = 9000, durationSeconds = 2259 WHERE id = 1")
+        rawDb.version = 12
+        rawDb.close()
+
+        val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(*appDatabaseMigrations { HrProfile(190) })
+            .build()
+        val segments = runBlockingGet { migratedDb.segmentDao().getAllSegmentsFlow().first() }
+        val run = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
+        migratedDb.close()
+
+        // Empty, and nothing could have filled it (#69). A Segment is the runner saying "this
+        // stretch matters to me", and no pass over history could work out which stretches those
+        // are — the whole of what makes one is a decision nobody has made yet.
+        assertEquals(emptyList<Segment>(), segments)
+        // The Run itself is untouched: the migration adds a table and nothing else.
+        assertEquals(2259L, run.durationSeconds)
+        assertEquals(9000L, run.endTime)
+    }
+
+    /**
+     * A Segment outlives the Run it was traced from (#69): its geometry is its own, so deleting
+     * that Run forgets where it came from and keeps the place.
+     */
+    @Test
+    fun deletingTheRunASegmentCameFrom_keepsTheSegmentAndForgetsOnlyItsProvenance() {
+        val rawDb = openLegacyDatabase()
+        createTrackPointsTable(rawDb)
+        insertLegacySession(rawDb, id = 1)
+        rawDb.version = 12
+        rawDb.close()
+
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .addMigrations(*appDatabaseMigrations { HrProfile(190) })
+            .build()
+        runBlockingGet {
+            db.segmentDao().insertSegment(
+                Segment(
+                    name = "Cemetery Hill",
+                    polyline = "51.5000000,-0.1000000 51.5001000,-0.1000000",
+                    distanceMeters = 410.0,
+                    sourceSessionId = 1,
+                    createdAtMillis = 1_700_000_000_000L,
+                )
+            )
+        }
+        runBlockingGet { db.sessionDao().deleteSessionById(1) }
+        val kept = runBlockingGet { db.segmentDao().getAllSegmentsFlow().first() }.single()
+        db.close()
+
+        assertEquals("Cemetery Hill", kept.name)
+        assertEquals(410.0, kept.distanceMeters, 0.0)
+        assertNull(kept.sourceSessionId)
+    }
+
     /**
      * Builds the sessions/hr_samples/run_walk_interval_stats tables as they stood at v11 and v12
      * (identical across those two versions), leaving the file's version unset for the caller.

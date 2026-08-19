@@ -86,7 +86,11 @@ fun SessionDetailScreen(
     shareableFormats: List<ExportFormat> = emptyList(),
     onShareRun: (Long, ExportFormat) -> Unit = { _, _ -> },
     shareFailed: Boolean = false,
-    onShareFailureShown: () -> Unit = {}
+    onShareFailureShown: () -> Unit = {},
+    // Cutting a named stretch of ground out of this Run's track (#69). Null on every Run that has
+    // no track to cut one from — a treadmill Run, and history from before #37 — which is what keeps
+    // the button off a page with no map above it.
+    onCreateSegment: ((Long) -> Unit)? = null
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
     // Kept across a rotation or a process death, so a runner who turned the phone sideways to look
@@ -200,6 +204,21 @@ fun SessionDetailScreen(
                         onOpenFullScreen = { showFullScreenMap = true },
                         scrubber = scrubber,
                     )
+                    // Under the map rather than in the bar, because it is about the map: the
+                    // runner is looking at where they went, and this is the way to keep a piece of
+                    // it. Only where there is a map to cut from — a Segment is a slice of a
+                    // recorded track, and there is nothing to slice without one (#69).
+                    if (onCreateSegment != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = { onCreateSegment(session.id) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = RunningUiTokens.MinTouchTarget)
+                        ) {
+                            Text("New segment from this run")
+                        }
+                    }
                     Spacer(modifier = Modifier.height(24.dp))
                     RunChartSection(analysis = analysis, scrubber = scrubber)
                     Spacer(modifier = Modifier.height(24.dp))

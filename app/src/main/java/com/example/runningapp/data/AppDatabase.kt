@@ -1103,9 +1103,10 @@ interface RunPauseDao {
         Route::class,
         GoalRow::class,
         StatedBestEffort::class,
-        RunPause::class
+        RunPause::class,
+        Segment::class
     ],
-    version = 33,
+    version = 34,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1118,6 +1119,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun goalDao(): GoalDao
     abstract fun statedBestEffortDao(): StatedBestEffortDao
     abstract fun runPauseDao(): RunPauseDao
+    abstract fun segmentDao(): SegmentDao
 
     companion object {
         @Volatile
@@ -1204,7 +1206,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_29_30,
     MIGRATION_30_31,
     MIGRATION_31_32,
-    MIGRATION_32_33
+    MIGRATION_32_33,
+    MIGRATION_33_34
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2095,6 +2098,37 @@ val MIGRATION_32_33 = object : Migration(32, 33) {
         )
         database.execSQL(
             "CREATE INDEX IF NOT EXISTS `index_run_pauses_sessionId` ON `run_pauses` (`sessionId`)"
+        )
+    }
+}
+
+/**
+ * The table of named places the runner keeps (#69).
+ *
+ * Empty on arrival and nothing could fill it. A Segment is the runner saying "this stretch is a
+ * thing to me", and no pass over history could work out which stretches those are — the whole of
+ * what makes one is a decision nobody has made yet.
+ *
+ * `sourceSessionId` is nullable and set null rather than cascaded, which is the point of the row:
+ * see [Segment]. Deleting the Run a place was traced from forgets where it came from, not the place.
+ */
+val MIGRATION_33_34 = object : Migration(33, 34) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `segments` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `name` TEXT NOT NULL,
+                `polyline` TEXT NOT NULL,
+                `distanceMeters` REAL NOT NULL,
+                `sourceSessionId` INTEGER,
+                `createdAtMillis` INTEGER NOT NULL,
+                FOREIGN KEY(`sourceSessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_segments_sourceSessionId` ON `segments` (`sourceSessionId`)"
         )
     }
 }
