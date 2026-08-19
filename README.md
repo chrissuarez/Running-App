@@ -3,7 +3,9 @@
 An Android running app built around a chest strap: it tracks your heart rate and coaches you out
 loud during the run, then keeps the run afterwards — your training plan and its stages, an AI coach
 that prescribes the next long run, your training load, your records, your routes and your segments.
-Everything lives on the phone in a Room database, with a monthly archive you can restore from.
+Everything lives on the phone — your runs and their heart-rate traces in a Room database, your
+settings and your plan in DataStore, the Run Journal as a plain text file — with a monthly archive
+that carries all three and can be restored from.
 
 ## 🆕 What's new (April – August 2026)
 
@@ -24,8 +26,9 @@ the dated sections below this one are older and are kept as history.
   Fatigue the same over 7, and Form is the difference — how fresh you are today. Plus a weekly
   volume chart you can flip between distance, time and Effort, a Goals card, and a Max HR card that
   offers to recompute your zones when a run beats the number you are training on.
-- **Effort Score on every run.** What a run cost you, as one number: every second weighted by the
-  zone it was spent in, never off an average, so a run/walk session scores its running as running.
+- **Effort Score on every run that wore a strap.** What a run cost you, as one number: every second
+  weighted by the zone it was spent in, never off an average, so a run/walk session scores its
+  running as running. A run that recorded no heart rate has no score rather than a zero.
   Your whole history was scored in the background so the numbers start out complete. A week holding
   a run that wore no strap says it is only partly measured, rather than reading as a lighter week.
 - **Segments.** Name a stretch of ground — "Cemetery Hill" — cut out of a run you actually ran, and
@@ -38,9 +41,10 @@ the dated sections below this one are older and are kept as history.
   in full but pays only a quarter of the fatigue — and it takes no records and graduates no Stage.
 - **Treadmill runs count.** Type in the distance the console showed and it counts like any other:
   your pace, your weekly volume, what the coach sees, and the longest-run record.
-- **Personal records and medals.** Gold, silver and bronze at seven records, contested as the
-  quickest continuous stretch anywhere inside a run. Your existing history was scored once at
-  launch, and deleting a medal-holder promotes what was behind it.
+- **Personal records and medals.** Gold, silver and bronze at seven records. The five at fixed
+  distances — 1 km, mile, 5 km, 10 km, half marathon — are contested as the quickest continuous
+  stretch anywhere inside a run; the other two, longest run and longest time, rank whole runs. Your
+  existing history was scored once at launch, and deleting a medal-holder promotes what was behind it.
 - **Export and backup.** Share a run as **.FIT** — the one Garmin Connect reads without re-deriving
   anything — or as GPX. Separately, a monthly **archive** writes the whole database plus a GPX per
   run to a folder you pick once, and can be restored from.
