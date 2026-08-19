@@ -116,7 +116,7 @@ fun SegmentDetailScreen(
                 Box(modifier = Modifier.fillMaxWidth().heightIn(min = MapMinHeight)) {
                     SegmentMapSurface(
                         segment = ground,
-                        context = emptyList(),
+                        runBehind = emptyList(),
                         interactive = true,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -128,44 +128,25 @@ fun SegmentDetailScreen(
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = segmentSourceLabel(segment),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            segmentSourceLabel(segment)?.let { source ->
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = source,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 
     if (renaming && segment != null) {
-        var name by rememberSaveable(segment.id) { mutableStateOf(segment.name) }
-        AlertDialog(
-            onDismissRequest = { renaming = false },
-            title = { Text("Rename segment") },
-            text = {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    singleLine = true,
-                    label = { Text("Name") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = {
-                        onRename(segment, name)
-                        renaming = false
-                    }),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        RenameSegmentDialog(
+            segment = segment,
+            onDismiss = { renaming = false },
+            onRename = { name ->
+                onRename(segment, name)
+                renaming = false
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onRename(segment, name)
-                        renaming = false
-                    },
-                    enabled = name.isNotBlank(),
-                ) { Text("Save") }
-            },
-            dismissButton = { TextButton(onClick = { renaming = false }) { Text("Cancel") } },
         )
     }
 

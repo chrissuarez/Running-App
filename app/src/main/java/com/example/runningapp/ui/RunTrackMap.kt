@@ -19,7 +19,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,24 +31,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.analysis.TrackMap
-import com.example.runningapp.map.SunriseSunsetCalculator
 import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.ui.workout.zoneChartColor
-import com.mapbox.geojson.Point
-import com.mapbox.geojson.MultiPoint
-import com.mapbox.maps.EdgeInsets
-import com.mapbox.maps.extension.compose.MapboxMap
 import com.mapbox.maps.extension.compose.MapboxMapComposable
-import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
 import com.mapbox.maps.extension.compose.annotation.generated.CircleAnnotation
 import com.mapbox.maps.extension.compose.annotation.generated.PolylineAnnotation
-import com.mapbox.maps.extension.compose.rememberMapState
-import com.mapbox.maps.extension.compose.style.standard.LightPresetValue
-import com.mapbox.maps.extension.compose.style.standard.MapboxStandardStyle
-import com.mapbox.maps.extension.compose.style.standard.rememberStandardStyleState
 import com.mapbox.maps.extension.style.layers.properties.generated.LineJoin
-import com.mapbox.maps.plugin.gestures.generated.GesturesSettings
-import com.mapbox.maps.plugin.viewport.data.OverviewViewportStateOptions
 
 private val PreviewHeight = 200.dp
 
@@ -81,17 +68,6 @@ private const val MarkerStrokeWidth = 2.5
  */
 private const val ScrubDotRadius = 9.0
 private const val ScrubDotStrokeWidth = 3.0
-
-/**
- * How much room is left around the route when the camera is framed on it, in pixels.
- *
- * Enough that the start and finish markers — drawn either side of the fix they mark — are not
- * clipped by the edge of the card.
- */
-private const val FramePaddingPixels = 48.0
-
-/** The frame is the Run's own shape; there is nothing to animate to on arrival. */
-private const val FrameImmediately = 0L
 
 /**
  * The Run's route at the top of its detail page (#47): auto-framed, coloured by the zone the
@@ -203,77 +179,17 @@ private fun TrackMapSurface(
     /** Where on the route the chart's scrubber is pointing, or null when nothing is (#48). */
     scrubbedFix: () -> MapFix? = { null },
 ) {
-    val isDaytime = remember(trackMap) {
-        SunriseSunsetCalculator.isDaytime(
-            latitude = trackMap.finish.latitude,
-            longitude = trackMap.finish.longitude,
-            epochMillis = System.currentTimeMillis()
-        )
-    }
-    val standardStyleState = rememberStandardStyleState()
-    SideEffect {
-        standardStyleState.configurationsState.lightPreset =
-            if (isDaytime) LightPresetValue.DAY else LightPresetValue.NIGHT
-    }
-
-    val mapState = rememberMapState {
-        // Pan and zoom in full screen and nothing at all in the preview. Tilt and rotation are off
-        // in both: a route read from an angle is a route read wrong, and there is no puck here whose
-        // heading the map would be following.
-        gesturesSettings = GesturesSettings {
-            scrollEnabled = interactive
-            pinchToZoomEnabled = interactive
-            doubleTapToZoomInEnabled = interactive
-            doubleTouchToZoomOutEnabled = interactive
-            quickZoomEnabled = interactive
-            rotateEnabled = false
-            pitchEnabled = false
-        }
-    }
-
-    val mapViewportState = rememberMapViewportState()
-    val framed = remember(trackMap) {
-        MultiPoint.fromLngLats(trackMap.framedFixes.map { it.asPoint() })
-    }
-    // Framed on the whole route rather than on a guessed zoom: Mapbox works out the camera that
-    // holds every fix inside the space this map has, which is the only way a 500 m loop and a half
-    // marathon both arrive filling the card.
-    //
-    // Through the viewport's overview state rather than by working the camera out once, because
-    // once is too early: the frame is asked for as this map enters composition, before it has been
-    // laid out and so before its size is known, and a route framed for the wrong size runs off the
-    // edge. The overview state holds the route in view until the runner pans away from it.
-    LaunchedEffect(framed, topInsetPixels) {
-        mapViewportState.transitionToOverviewState(
-            OverviewViewportStateOptions.Builder()
-                .geometry(framed)
-                .geometryPadding(
-                    EdgeInsets(
-                        FramePaddingPixels,
-                        FramePaddingPixels,
-                        FramePaddingPixels,
-                        FramePaddingPixels
-                    )
-                )
-                .padding(EdgeInsets(topInsetPixels, 0.0, 0.0, 0.0))
-                .animationDurationMs(FrameImmediately)
-                .build()
-        )
-    }
-
     val noHeartRateColor = MaterialTheme.colorScheme.primary
     val markerFill = MaterialTheme.colorScheme.onSurface
     val markerStroke = MaterialTheme.colorScheme.surface
     val scrubDotFill = MaterialTheme.colorScheme.primary
 
-    MapboxMap(
+    RouteMapSurface(
+        framedFixes = trackMap.framedFixes,
+        interactive = interactive,
         modifier = modifier,
-        // No scale bar on the preview: it lands across the top of a card two hundred pixels tall,
-        // over the route it is supposed to be helping read. The full-screen map has room for it.
-        scaleBar = { if (showScaleBar) ScaleBar() },
-        mapViewportState = mapViewportState,
-        mapState = mapState,
-        style = { MapboxStandardStyle(standardStyleState = standardStyleState) }
+        showScaleBar = showScaleBar,
+        topInsetPixels = topInsetPixels,
     ) {
         trackMap.stretches.forEach { stretch ->
             val zone = stretch.zone
@@ -325,5 +241,3 @@ private fun ScrubDot(scrubbedFix: () -> MapFix?, fill: Color, stroke: Color) {
         circleStrokeWidth = ScrubDotStrokeWidth
     }
 }
-
-private fun MapFix.asPoint(): Point = Point.fromLngLat(longitude, latitude)

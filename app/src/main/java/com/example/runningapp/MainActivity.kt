@@ -1056,28 +1056,20 @@ class MainActivity : ComponentActivity() {
                                     database.sampleDao().getSamplesForSession(id).collect { value = it }
                                 }
                             }
-                            // Through RunAnalysis rather than off the track directly, because the
-                            // breaks are what the cut is refused on and only the measurement knows
-                            // where they are (#69).
-                            val trackMap = remember(session, samples, track) {
-                                session?.let {
-                                    com.example.runningapp.analysis.RunAnalysis.of(it, samples, track).trackMap
-                                }
-                            }
-                            if (trackMap == null) {
-                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator()
-                                }
-                            } else {
-                                SegmentCreateScreen(
-                                    trackMap = trackMap,
-                                    onSave = { cut, name ->
-                                        sessionId?.let { segmentsViewModel.saveSegment(cut, name, it) }
-                                        navigateTo(Routes.SEGMENTS)
-                                    },
-                                    onBack = { navController.popBackStack() }
-                                )
-                            }
+                            SegmentCreateScreen(
+                                session = session,
+                                samples = samples,
+                                trackPoints = track,
+                                onSave = { cut, name ->
+                                    sessionId?.let { segmentsViewModel.saveSegment(cut, name, it) }
+                                    // On to the collection rather than back to the Run: the runner
+                                    // has just made a thing, and this is where it is. Cancelling
+                                    // goes back the way they came, which is the difference between
+                                    // having made one and not.
+                                    navigateTo(Routes.SEGMENTS)
+                                },
+                                onBack = { navController.popBackStack() }
+                            )
                         }
                         composable(Routes.MAP) {
                             FullScreenMapScreen(

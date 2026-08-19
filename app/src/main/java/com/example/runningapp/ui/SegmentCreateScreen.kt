@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -38,7 +39,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.example.runningapp.analysis.TrackMap
+import com.example.runningapp.analysis.RunAnalysis
+import com.example.runningapp.data.HrSample
+import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.segments.SegmentCut
 import com.example.runningapp.segments.defaultMarksFor
 import com.example.runningapp.segments.segmentCutOf
@@ -65,17 +69,32 @@ private val MapMinHeight = 140.dp
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SegmentCreateScreen(
-    trackMap: TrackMap,
+    session: RunnerSession?,
+    samples: List<HrSample>,
+    trackPoints: List<TrackPoint>,
     onSave: (SegmentCut, String) -> Unit,
     onBack: () -> Unit,
 ) {
-    val defaultMarks = remember(trackMap) { defaultMarksFor(trackMap) }
-    val context = remember(trackMap) { unbrokenStretchesOf(trackMap) }
+    // Worked out here rather than by whoever navigated in, the way a Run's own page works its
+    // analysis out ([SessionDetailScreen]): the breaks are what a cut is refused on, and only the
+    // measurement knows where they are. Once per set of recordings, because a long Run is thousands
+    // of fixes and dragging a handle recomposes this screen many times a second.
+    val trackMap = remember(session, samples, trackPoints) {
+        session?.let { RunAnalysis.of(it, samples, trackPoints).trackMap }
+    }
+    // An empty track means "not read yet" rather than "no track": this screen is only offered on a
+    // Run the app already knows has one, so a Run that could reach it always has fixes to come.
+    val stillReading = session == null || trackPoints.isEmpty()
+    val defaultMarks = remember(trackMap) { trackMap?.let(::defaultMarksFor) }
 
-    if (defaultMarks == null) {
-        NoStretchToCutScreen(onBack = onBack)
+    if (stillReading || trackMap == null || defaultMarks == null) {
+        // Inside a page of its own with a top bar, never a bare spinner: a Run whose track holds no
+        // unbroken stretch has nothing to cut and never will, and a screen with no way off it is
+        // indistinguishable from one that is still loading.
+        NothingToCutScreen(stillReading = stillReading, onBack = onBack)
         return
     }
+    val runBehind = remember(trackMap) { unbrokenStretchesOf(trackMap) }
 
     // Kept across a rotation, so a runner who turned the phone sideways to place a mark more
     // precisely has not lost the mark they had already placed.
@@ -113,8 +132,12 @@ fun SegmentCreateScreen(
                 Box(modifier = Modifier.fillMaxWidth().heightIn(min = MapMinHeight)) {
                     SegmentMapSurface(
                         segment = (cut as? SegmentCut.Cut)?.fixes.orEmpty(),
-                        context = context,
-                        interactive = false,
+                        runBehind = runBehind,
+                        // Pannable and zoomable: on a ten-kilometre run a three-hundred-metre mark
+                        // is a few pixels, and a runner who cannot zoom in cannot see where their
+                        // own handle landed. Safe here because this column never scrolls, so there
+                        // is no drag for the map to steal.
+                        interactive = true,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
@@ -192,15 +215,16 @@ fun SegmentCreateScreen(
 }
 
 /**
- * What a Run with nothing to cut gets: the reason, and the way back.
+ * What a Run with nothing to cut gets, and what one still being read gets: either way, a page with
+ * a way off it.
  *
- * Reachable even though the detail page only offers this on a Run with a track, because a track and
- * an *unbroken stretch of* a track are different things — a Run whose every leg spans a break has
- * one and not the other.
+ * The refusal is reachable even though a Run's page only offers this where it has a track, because
+ * a track and an *unbroken stretch of* a track are different things — a Run whose every leg spans a
+ * break has one and not the other.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NoStretchToCutScreen(onBack: () -> Unit) {
+private fun NothingToCutScreen(stillReading: Boolean, onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -220,11 +244,15 @@ private fun NoStretchToCutScreen(onBack: () -> Unit) {
                 .padding(RunningUiTokens.PagePadding),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = NO_STRETCH_TO_CUT_MESSAGE,
-                style = MaterialTheme.typography.bodyLarge,
-                textAlign = TextAlign.Center,
-            )
+            if (stillReading) {
+                CircularProgressIndicator()
+            } else {
+                Text(
+                    text = NO_STRETCH_TO_CUT_MESSAGE,
+                    style = MaterialTheme.typography.bodyLarge,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
     }
 }

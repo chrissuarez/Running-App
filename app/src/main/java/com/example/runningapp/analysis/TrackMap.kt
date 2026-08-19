@@ -46,7 +46,7 @@ data class TrackMap(
      * marks either side of a break must be refused, and the drawn stretches cannot answer that —
      * they are cut at every zone change too, and a colour change is not a gap in the recording.
      */
-    val brokenLegs: Set<Int> = emptySet(),
+    val brokenLegs: Set<Int>,
 ) {
     /**
      * Where the runner was after [distanceMeters] of the Run — how a finger on the chart becomes a

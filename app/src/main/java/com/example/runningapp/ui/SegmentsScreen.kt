@@ -223,8 +223,12 @@ fun DeleteSegmentDialog(segment: Segment, onDismiss: () -> Unit, onDelete: () ->
     )
 }
 
+/**
+ * Asked when a Segment is renamed, and shared by the collection and by a Segment's own page for the
+ * same reason [DeleteSegmentDialog] is: the two must not ask it differently.
+ */
 @Composable
-private fun RenameSegmentDialog(
+fun RenameSegmentDialog(
     segment: Segment,
     onDismiss: () -> Unit,
     onRename: (String) -> Unit,
