@@ -278,7 +278,10 @@ Every second of your session is recorded as an `HrSample`.
     - **DataStore**: User preferences and training settings.
 - **Maps**: Mapbox (route preview, fullscreen, segment cutting).
 - **Charts**: Vico (Compose charting).
-- **AI**: Google Gemini, for the coach's prescriptions and debriefs — opt-in, per-run and overall.
+- **AI**: Google Gemini, for the coach's prescriptions and debriefs. Sharing is **on by default**
+  and is turned off in Settings. Each run records whether it was on at the moment you pressed
+  START, and that stored answer — not today's setting — is what decides whether that run can ever
+  be sent. There is no separate per-run switch.
 - **Background Work**: Android Foreground Service, plus WorkManager for the monthly archive.
 - **Protocol**: Bluetooth Low Energy (Standard Heart Rate Profile).
 - **Audio**: Android Text-to-Speech (TTS) with Audio Focus management.
