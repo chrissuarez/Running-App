@@ -7,6 +7,7 @@ import androidx.room.Index
 import androidx.room.Insert
 import androidx.room.PrimaryKey
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -87,4 +88,127 @@ interface SegmentDao {
 
     @Query("DELETE FROM segments WHERE id = :segmentId")
     suspend fun deleteSegment(segmentId: Long)
+}
+
+/**
+ * One time a Run went over a Segment (#70).
+ *
+ * The measurement, banked. It is not read off the Run on demand like a split or a climb is, because
+ * it is not a fact about the Run: it is a fact about the Run *and* a Segment, found by walking one
+ * against the other ([com.example.runningapp.segments.segmentTraversalsIn]), and a Segment's page
+ * would otherwise re-walk every track in history to draw one list.
+ *
+ * Deleted with either parent, and for different reasons. With the Run, like every other recording of
+ * one: the effort is a stretch of that Run's track, and history the runner has thrown away must not
+ * leave a time on a leaderboard. With the Segment, because the effort is a time *at* that Segment
+ * and means nothing without the ground it was run over — which is what makes deleting a Segment take
+ * its efforts with it rather than orphaning them.
+ *
+ * There is no elapsed column. The two crossings are the measurement and the elapsed time is their
+ * difference, so a column would be a second copy of one number, free to disagree with the first
+ * after a migration or a rescan; the queries subtract instead.
+ */
+@Entity(
+    tableName = "segment_efforts",
+    foreignKeys = [
+        ForeignKey(
+            entity = Segment::class,
+            parentColumns = ["id"],
+            childColumns = ["segmentId"],
+            onDelete = ForeignKey.CASCADE
+        ),
+        ForeignKey(
+            entity = RunnerSession::class,
+            parentColumns = ["id"],
+            childColumns = ["sessionId"],
+            onDelete = ForeignKey.CASCADE
+        )
+    ],
+    indices = [
+        Index("segmentId"),
+        Index("sessionId"),
+        // One Run cannot have crossed one Segment's start gate twice at the same instant, so this
+        // says what "already scanned" means in the schema itself rather than only in the pass that
+        // writes it (see [SegmentEffortDao.replaceEffortsOf]).
+        Index(value = ["segmentId", "sessionId", "startedAtMillis"], unique = true)
+    ]
+)
+data class SegmentEffort(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val segmentId: Long,
+    val sessionId: Long,
+    /** When the runner crossed the start gate — interpolated, not the nearest fix. */
+    val startedAtMillis: Long,
+    /** When they crossed the end gate, the same way. */
+    val finishedAtMillis: Long,
+)
+
+/**
+ * One effort as a Segment's page needs it: the time, and enough of its Run to date it (#70).
+ *
+ * The Run's own offset travels with the row because a date is the runner's date
+ * ([com.example.runningapp.ranOn], #304) — an effort run at midnight in Spain is not the previous
+ * day because the phone has come home since.
+ */
+data class SegmentEffortRow(
+    val effortId: Long,
+    val sessionId: Long,
+    val startedAtMillis: Long,
+    val elapsedMillis: Long,
+    val ranAtUtcOffsetSeconds: Int?,
+)
+
+@Dao
+interface SegmentEffortDao {
+
+    /**
+     * Every effort ever run at one Segment, newest first — the page's whole list, and the PR is the
+     * quickest row in it.
+     *
+     * One read rather than a list query and a separate "fastest" query, so the record at the top of
+     * the page and the list under it cannot be two different answers taken a moment apart.
+     */
+    @Query(
+        """
+        SELECT e.id AS effortId,
+               e.sessionId AS sessionId,
+               e.startedAtMillis AS startedAtMillis,
+               (e.finishedAtMillis - e.startedAtMillis) AS elapsedMillis,
+               s.ranAtUtcOffsetSeconds AS ranAtUtcOffsetSeconds
+        FROM segment_efforts e
+        JOIN sessions s ON s.id = e.sessionId
+        WHERE e.segmentId = :segmentId
+        ORDER BY e.startedAtMillis DESC
+        """
+    )
+    fun getEffortsFlow(segmentId: Long): Flow<List<SegmentEffortRow>>
+
+    @Query("DELETE FROM segment_efforts WHERE segmentId = :segmentId AND sessionId = :sessionId")
+    suspend fun deleteEffortsOf(segmentId: Long, sessionId: Long)
+
+    @Query("DELETE FROM segment_efforts WHERE sessionId = :sessionId")
+    suspend fun deleteEffortsOfRun(sessionId: Long)
+
+    @Insert
+    suspend fun insertEfforts(efforts: List<SegmentEffort>)
+
+    /**
+     * What one Run is worth at one Segment, written down — replacing whatever the last reading of
+     * the same pair said.
+     *
+     * This is what makes a rescan idempotent, and it is a replacement rather than an insert that
+     * skips what is already there because the two are not the same promise. Skipping would leave a
+     * Run holding efforts measured under an older rulebook forever; replacing means the answer in
+     * the database is always the answer the code gives today, and a Run whose efforts have gone
+     * (marked a Walk, its track corrected) loses them rather than keeping a time nothing would
+     * measure again.
+     *
+     * In one transaction, so a Segment's page can never be caught with a Run's efforts half deleted
+     * and a PR that belongs to nobody.
+     */
+    @Transaction
+    suspend fun replaceEffortsOf(segmentId: Long, sessionId: Long, efforts: List<SegmentEffort>) {
+        deleteEffortsOf(segmentId, sessionId)
+        if (efforts.isNotEmpty()) insertEfforts(efforts)
+    }
 }

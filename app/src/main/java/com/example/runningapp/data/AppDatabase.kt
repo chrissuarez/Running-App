@@ -1104,9 +1104,10 @@ interface RunPauseDao {
         GoalRow::class,
         StatedBestEffort::class,
         RunPause::class,
-        Segment::class
+        Segment::class,
+        SegmentEffort::class
     ],
-    version = 34,
+    version = 35,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1120,6 +1121,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun statedBestEffortDao(): StatedBestEffortDao
     abstract fun runPauseDao(): RunPauseDao
     abstract fun segmentDao(): SegmentDao
+    abstract fun segmentEffortDao(): SegmentEffortDao
 
     companion object {
         @Volatile
@@ -1207,7 +1209,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_30_31,
     MIGRATION_31_32,
     MIGRATION_32_33,
-    MIGRATION_33_34
+    MIGRATION_33_34,
+    MIGRATION_34_35
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2129,6 +2132,47 @@ val MIGRATION_33_34 = object : Migration(33, 34) {
         )
         database.execSQL(
             "CREATE INDEX IF NOT EXISTS `index_segments_sourceSessionId` ON `segments` (`sourceSessionId`)"
+        )
+    }
+}
+
+/**
+ * The table of times run at the runner's named places (#70).
+ *
+ * Empty on arrival, and unlike the Segments table above, something *can* fill it: creating a Segment
+ * walks all of history against it, and every Run that finishes afterwards is walked against every
+ * Segment ([com.example.runningapp.segments.SegmentTiming]). So a runner upgrading into this arrives
+ * at Segments they cut before it shipped with no efforts, and gets them the first time anything
+ * rescans — which is why the scan is a replacement rather than a top-up.
+ *
+ * Cascaded from both parents, which is the whole shape of the row: an effort is a time at a place,
+ * run on a Run, and it means nothing once either of those is gone. See [SegmentEffort].
+ */
+val MIGRATION_34_35 = object : Migration(34, 35) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `segment_efforts` (
+                `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                `segmentId` INTEGER NOT NULL,
+                `sessionId` INTEGER NOT NULL,
+                `startedAtMillis` INTEGER NOT NULL,
+                `finishedAtMillis` INTEGER NOT NULL,
+                FOREIGN KEY(`segmentId`) REFERENCES `segments`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_segment_efforts_segmentId` ON `segment_efforts` (`segmentId`)"
+        )
+        database.execSQL(
+            "CREATE INDEX IF NOT EXISTS `index_segment_efforts_sessionId` ON `segment_efforts` (`sessionId`)"
+        )
+        database.execSQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS " +
+                "`index_segment_efforts_segmentId_sessionId_startedAtMillis` " +
+                "ON `segment_efforts` (`segmentId`, `sessionId`, `startedAtMillis`)"
         )
     }
 }
