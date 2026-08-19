@@ -287,6 +287,29 @@ class SegmentMatchingTest {
     }
 
     @Test
+    fun `a stray that ends on the end gate answers for itself like any other`() {
+        // The end gate is not a way out of the corridor rules. A Run last seen off the line and next
+        // seen standing on the Segment's own last point has covered the ground between the two fixes
+        // unwitnessed, and it makes no difference to that whether the fix that comes back lands in
+        // the middle of the stretch or on the gate at the top of it.
+        fun strayingFrom(north: Double) =
+            walk(listOf(-50.0 to 0.0, 200.0 to 0.0, 200.0 to north), stepMeters = 5.0) +
+                listOf(230.0 to (north + 2.0)) +
+                listOf(200.0 to 200.0)
+
+        // Off the line twenty-five metres short of the top and back onto the gate four seconds
+        // later: inside both limits, so it is a blip and the effort stands.
+        assertEquals(1, segmentTraversalsIn(elbow, track(strayingFrom(175.0))).size)
+        // Fifty metres short, so fifty metres of the Segment went by while the Run was off it.
+        assertEquals(emptyList<SegmentTraversal>(), segmentTraversalsIn(elbow, track(strayingFrom(150.0))))
+        // The same twenty-five metres, at six seconds a fix: twelve seconds off the line.
+        assertEquals(
+            emptyList<SegmentTraversal>(),
+            segmentTraversalsIn(elbow, track(strayingFrom(175.0), stepMillis = 6_000L)),
+        )
+    }
+
+    @Test
     fun `a Run that starts inside the stretch is no effort`() {
         // The runner pressed Start half way up. They did not cross the bottom gate, so there is no
         // moment to time from and no time that could be compared with the efforts that did — the

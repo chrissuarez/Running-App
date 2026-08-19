@@ -204,6 +204,24 @@ private class Matcher(
                 alongHigh = along + covered + SEGMENT_ADVANCE_SLACK_METERS,
             )
 
+            // A fix outside the corridor opens a stray if one is not already open, and the stray is
+            // dated to the fix before it: the ground and the seconds it has to answer for are the
+            // whole of the leg that left the line, not the part of it after the leaving was noticed.
+            if (nearest.offset > SEGMENT_CORRIDOR_METERS && strayedAtMillis == null) {
+                strayedAtMillis = track[at - 1].timestampMillis
+                strayedAtAlong = along
+            }
+
+            // Then the one question, asked of every fix before anything at all is done with it: has
+            // an open stray stopped being a blip by the time this fix arrives? Here rather than
+            // inside the branches below, because a rule kept by each branch in turn is a rule the
+            // next branch anyone adds will not keep. That is exactly how a Run that wandered off the
+            // line at twenty metres and was next seen standing on the end gate a quarter of a minute
+            // later could bank the whole stretch as an effort: the branch that comes out of the far
+            // end answered to the gates and to nothing else, and the ground between the two fixes
+            // was ground nothing witnessed it on.
+            if (hasStoppedBeingABlip(strayedAtMillis, strayedAtAlong, at, nearest.along)) return null
+
             when {
                 // Out of the far end: the effort stands or falls here.
                 nearest.along >= length - EPSILON_METERS -> return if (
@@ -215,31 +233,22 @@ private class Matcher(
                 }
 
                 // Not into it yet — still milling about at the start gate, which is allowed as long
-                // as it is still the start gate they are milling about at.
+                // as it is still the start gate they are milling about at. Any stray still open here
+                // was short enough to be a blip, and the effort is starting again from this fix
+                // anyway, so it is forgotten.
                 nearest.along <= EPSILON_METERS -> {
                     if (fixes[at].metersTo(start) > SEGMENT_GATE_METERS) return null
                     strayedAtMillis = null
                     enteredAfter = at
                 }
 
-                nearest.offset > SEGMENT_CORRIDOR_METERS -> {
-                    if (strayedAtMillis == null) {
-                        strayedAtMillis = track[at - 1].timestampMillis
-                        strayedAtAlong = along
-                    }
-                    if (hasStoppedBeingABlip(strayedAtMillis, strayedAtAlong, at, nearest.along)) return null
-                }
+                // Still outside the corridor. The stray stays open, so the fix after this one has to
+                // answer for it too.
+                nearest.offset > SEGMENT_CORRIDOR_METERS -> Unit
 
-                // Back in the corridor. The fix that brings the Run back is the far end of the leg
-                // that was outside it, so it answers to both limits before the stray is forgotten:
-                // the ground it lands on is ground the Run was last seen off the line for. Without
-                // that, a Run could leave the corridor twenty metres up and rejoin a hundred metres
-                // up on one long leg, and the eighty metres nobody witnessed it on would be counted
-                // as the Segment's.
-                else -> {
-                    if (hasStoppedBeingABlip(strayedAtMillis, strayedAtAlong, at, nearest.along)) return null
-                    strayedAtMillis = null
-                }
+                // Back in the corridor, and the stray it came back from was inside both limits, so
+                // it was a blip and it is forgotten.
+                else -> strayedAtMillis = null
             }
 
             along = maxOf(along, nearest.along)
@@ -251,8 +260,11 @@ private class Matcher(
      * Whether a stray that left the corridor at [strayedAtMillis], [strayedAtAlong] up the Segment,
      * has stopped being a blip by the fix at [at], which sits [along] up it.
      *
-     * Both limits, asked in one place, because they are asked twice: of each fix outside the
-     * corridor, and of the fix that comes back into it. False when nothing has strayed.
+     * Both limits, in one place, asked of every fix: the ones still outside the corridor, the one
+     * that comes back into it, and the one that comes out of the far end of the Segment. The fix
+     * that ends a stray is the far end of a leg spent off the line, so the ground it lands on is
+     * ground the Run was last seen away from — which is why the limits are measured to it and not to
+     * the last fix known to be outside. False when nothing has strayed.
      */
     private fun hasStoppedBeingABlip(
         strayedAtMillis: Long?,
