@@ -120,7 +120,14 @@ fun unbrokenRangesOf(trackMap: TrackMap): List<IntRange> {
  * and the screen says so instead of opening with handles that do nothing.
  */
 fun defaultMarksFor(trackMap: TrackMap): IntRange? =
-    unbrokenRangesOf(trackMap).maxByOrNull { it.last - it.first }
+    unbrokenRangesOf(trackMap)
+        // Only stretches that would actually be kept. Asked of [segmentCutOf] rather than checked
+        // again here, so there is one answer to what may be cut and the screen cannot open on
+        // handles that are already as far apart as they go and still refused — a runner told to
+        // move a mark they cannot move reads the feature as broken rather than their standing
+        // still as the reason.
+        .filter { segmentCutOf(trackMap, it.first, it.last) is SegmentCut.Cut }
+        .maxByOrNull { it.last - it.first }
 
 /**
  * The Run's route as lines that may be drawn — one per stretch the recording covers without a break.
