@@ -51,6 +51,7 @@ import com.example.runningapp.analysis.recordBookOf
 import com.example.runningapp.analysis.standingsAfter
 import com.example.runningapp.analysis.bestEffortsOf
 import com.example.runningapp.segments.SegmentTiming
+import com.example.runningapp.segments.SegmentTimingStore
 import com.example.runningapp.recording.SessionRecorder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -1273,6 +1274,15 @@ class SessionRepository(
         } catch (e: Exception) {
             Log.w("InterruptedRun", "Rescued run $runRowId but could not score its records", e)
         }
+        try {
+            // And put to the Segments, for the same reason and on the same terms as the scoring
+            // above (#70): a rescued Run has just finished, however long ago it was run. Marked as
+            // timed by the same call and only once it has returned, so a failure here leaves the
+            // Run owing a walk for the launch pass to pay.
+            timeRunAgainstSegments(runRowId)
+        } catch (e: Exception) {
+            Log.w("InterruptedRun", "Rescued run $runRowId but could not time it against the segments", e)
+        }
         return true
     }
 
@@ -1340,20 +1350,6 @@ class SessionRepository(
     }
 
     /**
-     * Scores a finished run against the record book and banks whatever it won (#49).
-     *
-     * Returns the medals *this run* holds afterwards, which is what its own page shows — an empty
-     * list for an ordinary run, and for one that beat nothing.
-     *
-     * Called when a run finishes, and safe to call again: [standingsAfter] drops the run's own standing rows
-     * before ranking it, so a re-score cannot leave it racing itself. The read of the book, the
-     * ranking and the rewrite are one transaction, because a half-written book has a record with two
-     * golds in it and no way to tell which one is real.
-     *
-     * Scoring history recorded before this shipped is a job of its own (#50): it means measuring
-     * every stored track, and it has to happen once rather than every time a run finishes.
-     */
-    /**
      * Puts a newly cut Segment to every Run in history, so it is born with its efforts and its PR
      * (#70).
      *
@@ -1376,28 +1372,61 @@ class SessionRepository(
     }
 
     /**
+     * Pays whatever the Segments and the Runs owe each other, at launch (#70).
+     *
+     * What it finds is a Segment cut before efforts existed, or either side of a walk that a process
+     * being reclaimed cut short. On an ordinary launch it reads two empty lists and returns.
+     */
+    suspend fun payWhatSegmentTimingOwes() {
+        segmentTiming?.payWhatIsOwed()
+    }
+
+    /**
      * The one walk of Runs against Segments, over this repository's own DAOs.
      *
      * Lazy, and null wherever Segments are not wired, so nothing here opens a table the archive's
      * read-only container has no use for.
      */
     private val segmentTiming: SegmentTiming? by lazy {
-        val segments = segmentDao ?: return@lazy null
-        val efforts = segmentEffortDao ?: return@lazy null
-        SegmentTiming(
-            readSegments = { segments.getAllSegments() },
-            readSegment = { segments.getSegment(it) },
-            readRuns = { sessionDao.getAllSessions() },
-            readRun = { sessionDao.getSessionById(it) },
+        val segmentRows = segmentDao ?: return@lazy null
+        val effortRows = segmentEffortDao ?: return@lazy null
+        SegmentTiming(object : SegmentTimingStore {
+            override suspend fun segments() = segmentRows.getAllSegments()
+            override suspend fun segment(segmentId: Long) = segmentRows.getSegment(segmentId)
+            override suspend fun segmentsMissingHistory() = segmentRows.getSegmentsMissingHistory()
+            override suspend fun runs() = sessionDao.getAllSessions()
+            override suspend fun run(sessionId: Long) = sessionDao.getSessionById(sessionId)
+            override suspend fun runsMissingTiming() = sessionDao.getSessionIdsMissingSegmentTiming()
+
             // The same accuracy-gated fixes the map, the splits and the record book are built from,
             // so a wild fix the Run itself refused cannot put an effort on a Segment nobody ran.
-            readTrack = { getTrackPointsForMap(it) },
-            writeEfforts = { segmentId, sessionId, rows ->
-                efforts.replaceEffortsOf(segmentId, sessionId, rows)
-            },
-        )
+            override suspend fun track(sessionId: Long) = getTrackPointsForMap(sessionId)
+
+            override suspend fun replaceEfforts(
+                segmentId: Long,
+                sessionId: Long,
+                efforts: List<SegmentEffort>,
+            ) = effortRows.replaceEffortsOf(segmentId, sessionId, efforts)
+
+            override suspend fun markSegmentTimed(segmentId: Long) = segmentRows.setHistoryTimed(segmentId)
+            override suspend fun markRunTimed(sessionId: Long) = sessionDao.setSegmentsTimed(sessionId)
+        })
     }
 
+    /**
+     * Scores a finished run against the record book and banks whatever it won (#49).
+     *
+     * Returns the medals *this run* holds afterwards, which is what its own page shows — an empty
+     * list for an ordinary run, and for one that beat nothing.
+     *
+     * Called when a run finishes, and safe to call again: [standingsAfter] drops the run's own standing rows
+     * before ranking it, so a re-score cannot leave it racing itself. The read of the book, the
+     * ranking and the rewrite are one transaction, because a half-written book has a record with two
+     * golds in it and no way to tell which one is real.
+     *
+     * Scoring history recorded before this shipped is a job of its own (#50): it means measuring
+     * every stored track, and it has to happen once rather than every time a run finishes.
+     */
     suspend fun scoreRecords(sessionId: Long): List<Achievement> =
         scoreRecordsUnlessOvertaken(sessionId).orEmpty()
 

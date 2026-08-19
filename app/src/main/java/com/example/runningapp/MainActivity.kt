@@ -312,6 +312,7 @@ class MainActivity : ComponentActivity() {
         // Score stored, so history would read as unscored until each Run was run again (#62). This
         // is the launch that scores it, from the samples those Runs already kept.
         runningAppContainer().backfillEffortScoresOnce()
+        runningAppContainer().paySegmentTimingOnce()
 
         // Keeps the monthly full archive scheduled (#85). Called on every launch and cheap every
         // time: an existing schedule is left exactly where it is, so this only ever creates the job

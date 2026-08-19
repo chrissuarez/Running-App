@@ -12,6 +12,30 @@ import com.example.runningapp.data.measureTrack
 import com.example.runningapp.routes.RoutePolyline
 
 /**
+ * Everything the walk below reads and writes, in one place — the database as this pass needs it.
+ *
+ * An interface rather than a handful of lambdas because these ten operations are one thing: they are
+ * what "Segments and the Runs they are timed against" looks like from here, and a caller that could
+ * hand over nine of them would be a caller that could half-wire the pass. It is also the whole of
+ * what a test has to stand up, which is what keeps the ordering and the eligibility below checkable
+ * on a laptop.
+ */
+interface SegmentTimingStore {
+    suspend fun segments(): List<Segment>
+    suspend fun segment(segmentId: Long): Segment?
+    /** The Segments history has never been walked against — every debt, oldest first. */
+    suspend fun segmentsMissingHistory(): List<Segment>
+    suspend fun runs(): List<RunnerSession>
+    suspend fun run(sessionId: Long): RunnerSession?
+    /** The finished Runs nobody has walked against the Segments — every debt, oldest first. */
+    suspend fun runsMissingTiming(): List<Long>
+    suspend fun track(sessionId: Long): List<TrackPoint>
+    suspend fun replaceEfforts(segmentId: Long, sessionId: Long, efforts: List<SegmentEffort>)
+    suspend fun markSegmentTimed(segmentId: Long)
+    suspend fun markRunTimed(sessionId: Long)
+}
+
+/**
  * Putting Runs and Segments to each other, and writing down what comes of it (#70).
  *
  * Two occasions, one answer. A Segment is born with its whole history behind it — the runner has
@@ -22,34 +46,38 @@ import com.example.runningapp.routes.RoutePolyline
  * The body is here rather than in the repository so the order and the eligibility can be checked on
  * a laptop, the bargain [com.example.runningapp.data.AfterRunRoutine] makes.
  *
- * **A scan replaces rather than adds**, which is what makes it safe to run again: the same Run put
+ * **A walk replaces rather than adds**, which is what makes it safe to run again: the same Run put
  * to the same Segment twice leaves one set of efforts, and a Run that has stopped being eligible —
  * marked a Walk an hour later — has its efforts taken off it by the very same pass rather than by a
  * second door that could be forgotten.
+ *
+ * **Each side marks its own debt paid, and only once the walk has returned**
+ * ([Segment.historyTimed], [com.example.runningapp.data.RunnerSession.segmentsTimed]). Both walks
+ * run outside any screen and can be minutes long, so both can be lost to a process being reclaimed;
+ * a debt left standing costs one repeated walk at the next launch, and a debt marked early would
+ * cost the runner a Segment that quietly claims they have never run it.
  */
-class SegmentTiming(
-    private val readSegments: suspend () -> List<Segment>,
-    private val readSegment: suspend (Long) -> Segment?,
-    private val readRuns: suspend () -> List<RunnerSession>,
-    private val readRun: suspend (Long) -> RunnerSession?,
-    private val readTrack: suspend (Long) -> List<TrackPoint>,
-    private val writeEfforts: suspend (segmentId: Long, sessionId: Long, List<SegmentEffort>) -> Unit,
-) {
+class SegmentTiming(private val store: SegmentTimingStore) {
 
     /**
-     * Times a Segment against every Run in history — what a newly cut Segment is given at birth.
+     * Times a Segment against every Run in history — what a newly cut Segment is given at birth, and
+     * what one cut before any of this shipped is given at the next launch.
      *
      * Runs that can hold no effort are passed over rather than written as nothing. There is nothing
-     * of this Segment's to clear: it did not exist a moment ago.
+     * of this Segment's to clear: either it did not exist a moment ago, or nothing has ever been
+     * written for it.
      */
     suspend fun timeAgainstHistory(segmentId: Long) {
-        val segment = readSegment(segmentId) ?: return
-        val ground = groundOf(segment) ?: return
+        val segment = store.segment(segmentId) ?: return
+        val ground = groundOf(segment)
 
         var efforts = 0
-        readRuns().filter { it.mayHoldSegmentEfforts() }.forEach { run ->
-            efforts += time(segment.id, run, ground)
+        if (ground != null) {
+            store.runs().filter { it.mayHoldSegmentEfforts() }.forEach { run ->
+                efforts += time(segment.id, run, ground)
+            }
         }
+        store.markSegmentTimed(segment.id)
         Log.d(TAG, "Segment $segmentId has $efforts effort(s) in history")
     }
 
@@ -63,26 +91,44 @@ class SegmentTiming(
      * on. Unmarking comes back through it too, and measures them again.
      */
     suspend fun timeAgainstEverySegment(sessionId: Long) {
-        val run = readRun(sessionId) ?: return
-        val segments = readSegments()
-        if (segments.isEmpty()) return
+        val run = store.run(sessionId) ?: return
 
         var efforts = 0
-        segments.forEach { segment ->
+        store.segments().forEach { segment ->
             val ground = groundOf(segment) ?: return@forEach
             efforts += time(segment.id, run, ground)
         }
+        store.markRunTimed(run.id)
         Log.d(TAG, "Run $sessionId holds $efforts segment effort(s)")
+    }
+
+    /**
+     * Pays every debt either side is carrying — the launch pass (#70).
+     *
+     * Segments first, and that ordering is worth a line. A Segment's walk covers every Run there is,
+     * so paying those first leaves the Runs below with nothing left to find in the overwhelming case
+     * — a runner who has just upgraded owes a walk on every Segment they ever cut and on no Run at
+     * all. The other way round, a Run finished during a process that died would be walked against
+     * Segments that were about to walk it back.
+     */
+    suspend fun payWhatIsOwed() {
+        val segments = store.segmentsMissingHistory()
+        segments.forEach { timeAgainstHistory(it.id) }
+        val runs = store.runsMissingTiming()
+        runs.forEach { timeAgainstEverySegment(it) }
+        if (segments.isNotEmpty() || runs.isNotEmpty()) {
+            Log.d(TAG, "Timed ${segments.size} segment(s) against history and ${runs.size} run(s) against the segments")
+        }
     }
 
     /** One Run against one Segment, written down. Returns how many efforts it turned out to hold. */
     private suspend fun time(segmentId: Long, run: RunnerSession, ground: List<MapFix>): Int {
         val traversals = if (run.mayHoldSegmentEfforts()) {
-            segmentTraversalsIn(ground, segmentTrackOf(measureTrack(readTrack(run.id))))
+            segmentTraversalsIn(ground, segmentTrackOf(measureTrack(store.track(run.id))))
         } else {
             emptyList()
         }
-        writeEfforts(
+        store.replaceEfforts(
             segmentId,
             run.id,
             traversals.map {

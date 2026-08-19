@@ -108,6 +108,8 @@ fun segmentEffortsUi(
         compareBy<SegmentEffortRow> { it.elapsedMillis }.thenBy { it.startedAtMillis }
     )
     return efforts
+        // Sorted here as well as in the query behind it, so this says what the page shows rather
+        // than inheriting it from whichever reader happens to have supplied the rows.
         .sortedByDescending { it.startedAtMillis }
         .map { effort ->
             SegmentEffortUi(
@@ -123,9 +125,15 @@ fun segmentEffortsUi(
         }
 }
 
-/** The quickest time ever run at a Segment, or null where nobody has run it yet. */
-fun segmentRecordLabel(efforts: List<SegmentEffortRow>): String? =
-    efforts.minOfOrNull { it.elapsedMillis }?.let { formatDuration(it.roundedToSeconds()) }
+/**
+ * The quickest effort of a list [segmentEffortsUi] has already built, or null where nobody has run
+ * the Segment yet.
+ *
+ * Read off the built list rather than measured again off the rows, so the PR at the top of the page
+ * and the row marked PR further down are one answer to one question — asked twice, they would be two
+ * readings free to break the tie differently.
+ */
+fun segmentRecordOf(efforts: List<SegmentEffortUi>): SegmentEffortUi? = efforts.firstOrNull { it.isRecord }
 
 /**
  * How many times the runner has been over a Segment.
@@ -133,11 +141,7 @@ fun segmentRecordLabel(efforts: List<SegmentEffortRow>): String? =
  * The count is the other half of what a PR means. "4:32" on its own says nothing about whether it
  * was the best of two attempts or of fifty.
  */
-fun segmentEffortCountLabel(efforts: Int): String = when (efforts) {
-    0 -> "No efforts yet"
-    1 -> "1 effort"
-    else -> "$efforts efforts"
-}
+fun segmentEffortCountLabel(efforts: Int): String = if (efforts == 1) "1 effort" else "$efforts efforts"
 
 /** What the page says where nothing has ever been run over the ground. */
 const val NO_SEGMENT_EFFORTS_MESSAGE: String =

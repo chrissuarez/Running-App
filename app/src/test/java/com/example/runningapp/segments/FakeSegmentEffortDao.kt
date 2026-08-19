@@ -32,10 +32,6 @@ class FakeSegmentEffortDao : SegmentEffortDao {
         rows.value = rows.value.filterNot { it.segmentId == segmentId && it.sessionId == sessionId }
     }
 
-    override suspend fun deleteEffortsOfRun(sessionId: Long) {
-        rows.value = rows.value.filterNot { it.sessionId == sessionId }
-    }
-
     override suspend fun insertEfforts(efforts: List<SegmentEffort>) {
         rows.value = rows.value + efforts.map { it.copy(id = nextId++) }
     }
