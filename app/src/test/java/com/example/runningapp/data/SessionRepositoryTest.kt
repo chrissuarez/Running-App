@@ -859,6 +859,53 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `marking a Run a Walk owes the Segments a walk before the mark is written`() = runTest {
+        // The trap #70's mark sets for anything that changes what a Run is worth afterwards: a Run
+        // is walked against the Segments once and never revisited, so a mark stored while the Run
+        // still carries the paid flag is a Run the launch pass walks straight past for ever. The
+        // debt has to be standing from the moment the flag flips, not from after the re-timing.
+        whenever(mockDao.getSessionById(42L)).thenReturn(aTreadmillRun(id = 42, seconds = 1_800))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+        )
+
+        repositoryWithRecords.markAsWalk(42L, isWalk = true)
+
+        inOrder(mockDao) {
+            verify(mockDao).clearSegmentsTimed(42L)
+            verify(mockDao).setIsWalk(42L, true)
+        }
+    }
+
+    @Test
+    fun `a re-timing that fails leaves the Run owing the Segments a walk`() = runTest {
+        // The whole point of lifting it: the mark is handed back by the walk that finishes, so a
+        // walk that throws — as this one does before it reaches a single Segment — ends with the
+        // debt still standing and the next launch's pass to pay it.
+        whenever(mockDao.getSessionById(42L)).thenReturn(aTreadmillRun(id = 42, seconds = 1_800))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
+        val mockSegmentDao: SegmentDao = mock()
+        whenever(mockSegmentDao.getAllSegments()).thenThrow(IllegalStateException("no segments today"))
+        val repositoryWithSegments = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            segmentDao = mockSegmentDao,
+            segmentEffortDao = mock(),
+        )
+
+        repositoryWithSegments.markAsWalk(42L, isWalk = true)
+
+        // The runner's mark is stored either way — a Segment walk that fails must not cost it.
+        verify(mockDao).setIsWalk(42L, true)
+        verify(mockDao).clearSegmentsTimed(42L)
+        verify(mockDao, never()).setSegmentsTimed(42L)
+    }
+
+    @Test
     fun `a Walk keeps the Effort Score it measured`() = runTest {
         // The Score is what the heart did, and marking the Run does not touch it: what changes is
         // which curve reads how much of it.

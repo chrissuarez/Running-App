@@ -689,6 +689,21 @@ interface SessionDao {
     suspend fun setSegmentsTimed(sessionId: Long)
 
     /**
+     * Writes down that a Run owes the Segments a walk again (#70) — the sibling of
+     * [clearRecordsScored] below, and there for the same reason.
+     *
+     * A Run is marked timed once and never revisited, so the mark is a trap for anything that
+     * changes what the Run is worth to a leaderboard *after* it was set. Marking one a Walk is
+     * exactly that: the mark is stored, and a re-timing that is then killed or throws leaves a Walk
+     * holding times on Segments it no longer contests, or an unmarked Run holding none — and the
+     * launch pass, reading `segmentsTimed = 0`, would walk straight past it for ever. Lifted before
+     * the mark changes and handed back only by [setSegmentsTimed] once the whole walk has returned,
+     * so every way the work can end short leaves the debt standing for the next launch to pay.
+     */
+    @Query("UPDATE sessions SET segmentsTimed = 0 WHERE id = :sessionId")
+    suspend fun clearSegmentsTimed(sessionId: Long)
+
+    /**
      * Writes down that a Run owes the record book a scoring again (#282).
      *
      * A Run is marked scored once and never revisited, which is what makes the mark worth having —
