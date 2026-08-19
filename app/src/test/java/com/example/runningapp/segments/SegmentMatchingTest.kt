@@ -256,6 +256,23 @@ class SegmentMatchingTest {
     }
 
     @Test
+    fun `the forty metres is measured to the fix that comes back, not to the last one outside`() {
+        // One fix flung forty metres north of the line, and the next one back on it. The fix that
+        // returns is the far end of a leg spent off the Segment, so how much of the Segment went by
+        // on that leg is the question — a Run last seen off the line at sixty metres and next seen
+        // on it at a hundred and fifty ran ninety metres of ground nobody witnessed it on.
+        fun rejoiningAt(east: Double): List<Pair<Double, Double>> =
+            walk(listOf(-50.0 to 0.0, 60.0 to 0.0), stepMeters = 5.0) +
+                listOf(65.0 to 40.0) +
+                walk(listOf(east to 0.0, 200.0 to 0.0, 200.0 to 250.0), stepMeters = 5.0)
+
+        // Back on the line twenty-five metres further up: a blip, and the effort stands.
+        assertEquals(1, segmentTraversalsIn(elbow, track(rejoiningAt(85.0))).size)
+        // Ninety further up, and inside the ten seconds, so the ground is what turns it away.
+        assertEquals(emptyList<SegmentTraversal>(), segmentTraversalsIn(elbow, track(rejoiningAt(150.0))))
+    }
+
+    @Test
     fun `coming out of the far end thirty metres wide of it is not coming out of it`() {
         // A Run whose recording skips from just short of the top to well past it — the one way to
         // reach the end of the Segment without ever being at it.
