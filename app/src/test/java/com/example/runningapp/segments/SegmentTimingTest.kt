@@ -76,9 +76,18 @@ class SegmentTimingTest {
         /** What the runs table has become since the list above was read, when the two differ. */
         var runsNow: List<RunnerSession>? = null
 
+        /**
+         * Which row-read [runsNow] arrives at — zero for a change already made by the time the pass
+         * opens, one for the runner's word landing after the pass has taken its first look.
+         */
+        var runsChangeAtRead = 0
+        private var runReads = 0
+
         override suspend fun runs() = runs
-        override suspend fun run(sessionId: Long) =
-            (runsNow ?: runs).firstOrNull { it.id == sessionId }
+        override suspend fun run(sessionId: Long): RunnerSession? {
+            val table = if (runReads++ >= runsChangeAtRead) runsNow ?: runs else runs
+            return table.firstOrNull { it.id == sessionId }
+        }
         override suspend fun runsMissingTiming() =
             runs.filter { it.endTime > 0 && it.id !in runsTimed }.map { it.id }
 
@@ -183,6 +192,20 @@ class SegmentTimingTest {
         book.runsNow = listOf(aRun(1, isWalk = true))
 
         SegmentTiming(book).timeAgainstHistory(segment.id)
+
+        assertEquals(emptyList<SegmentEffort>(), book.all)
+    }
+
+    @Test
+    fun `a Run marked a Walk while it is being put to the Segments holds no efforts`() = runTest {
+        // The pass opened on a Run and found it still a Run; the runner said "that was a walk"
+        // before it reached the Segments, and every Segment after that must hear the new word.
+        val other = segment.copy(id = 9, name = "The same hill again")
+        val book = book(listOf(aRun(1)), segments = listOf(segment, other))
+        book.runsNow = listOf(aRun(1, isWalk = true))
+        book.runsChangeAtRead = 1
+
+        SegmentTiming(book).timeAgainstEverySegment(1)
 
         assertEquals(emptyList<SegmentEffort>(), book.all)
     }

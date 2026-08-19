@@ -67,12 +67,9 @@ class SegmentTiming(private val store: SegmentTimingStore) {
      * of this Segment's to clear: either it did not exist a moment ago, or nothing has ever been
      * written for it.
      *
-     * **Each Run is asked about again the moment before it is timed**, because this walk can be
-     * minutes long and the runner is free the whole time. Mark one of these Runs a Walk while the
-     * walk is under way and its own pass ([timeAgainstEverySegment]) takes the efforts off — and the
-     * list read at the top, which still remembers it as a Run, would put them straight back on with
-     * both sides' debts marked paid and no later launch left to mend it. The list says which Runs to
-     * visit; the row read here says what each one is.
+     * The list read at the top says which Runs to visit, and nothing more than that: what each one
+     * *is* comes from the row read at the moment of timing ([time]), because this walk can be minutes
+     * long and the runner is free the whole time.
      */
     suspend fun timeAgainstHistory(segmentId: Long) {
         val segment = store.segment(segmentId) ?: return
@@ -81,9 +78,7 @@ class SegmentTiming(private val store: SegmentTimingStore) {
         var efforts = 0
         if (ground != null) {
             store.runs().filter { it.mayHoldSegmentEfforts() }.forEach { listed ->
-                val run = store.run(listed.id) ?: return@forEach
-                if (!run.mayHoldSegmentEfforts()) return@forEach
-                efforts += time(segment.id, run, ground)
+                efforts += time(segment.id, listed.id, ground)
             }
         }
         store.markSegmentTimed(segment.id)
@@ -98,16 +93,20 @@ class SegmentTiming(private val store: SegmentTimingStore) {
      * the Walk case, and it is why this is the only door: a Run marked a Walk three weeks later
      * comes back through here and the very same pass takes its times off every leaderboard they are
      * on. Unmarking comes back through it too, and measures them again.
+     *
+     * The opening read only asks whether there is still a Run here at all. What it is — Run or Walk —
+     * is asked at each Segment in turn ([time]), because a runner with many Segments can change their
+     * word part-way down the list.
      */
     suspend fun timeAgainstEverySegment(sessionId: Long) {
-        val run = store.run(sessionId) ?: return
+        store.run(sessionId) ?: return
 
         var efforts = 0
         store.segments().forEach { segment ->
             val ground = groundOf(segment) ?: return@forEach
-            efforts += time(segment.id, run, ground)
+            efforts += time(segment.id, sessionId, ground)
         }
-        store.markRunTimed(run.id)
+        store.markRunTimed(sessionId)
         Log.d(TAG, "Run $sessionId holds $efforts segment effort(s)")
     }
 
@@ -130,20 +129,34 @@ class SegmentTiming(private val store: SegmentTimingStore) {
         }
     }
 
-    /** One Run against one Segment, written down. Returns how many efforts it turned out to hold. */
-    private suspend fun time(segmentId: Long, run: RunnerSession, ground: List<MapFix>): Int {
-        val traversals = if (run.mayHoldSegmentEfforts()) {
-            segmentTraversalsIn(ground, segmentTrackOf(measureTrack(store.track(run.id))))
+    /**
+     * One Run against one Segment, written down. Returns how many efforts it turned out to hold.
+     *
+     * **The Run is asked about by id and read afresh here**, immediately before its efforts are
+     * replaced, and neither walk above may hand a row down instead. Both walks run outside any screen
+     * and can be minutes long, and the runner is free the whole time: mark a Run a Walk mid-walk and
+     * its own pass ([timeAgainstEverySegment]) takes the efforts off, so a walk still working from
+     * the row as it was would put them straight back on and mark both sides' debts paid, leaving no
+     * later launch to mend it. Stating the rule at the one door both walks come through is what stops
+     * a third walk added later from reintroducing that.
+     *
+     * A Run that is gone, or that may hold no efforts, is written as nothing rather than skipped —
+     * that empty write is how a Walk's times come off the leaderboards it was on.
+     */
+    private suspend fun time(segmentId: Long, sessionId: Long, ground: List<MapFix>): Int {
+        val run = store.run(sessionId)
+        val traversals = if (run != null && run.mayHoldSegmentEfforts()) {
+            segmentTraversalsIn(ground, segmentTrackOf(measureTrack(store.track(sessionId))))
         } else {
             emptyList()
         }
         store.replaceEfforts(
             segmentId,
-            run.id,
+            sessionId,
             traversals.map {
                 SegmentEffort(
                     segmentId = segmentId,
-                    sessionId = run.id,
+                    sessionId = sessionId,
                     startedAtMillis = it.startedAtMillis,
                     finishedAtMillis = it.finishedAtMillis,
                 )
