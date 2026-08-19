@@ -73,8 +73,12 @@ class SegmentTimingTest {
         override suspend fun segments() = segments
         override suspend fun segment(segmentId: Long) = segments.firstOrNull { it.id == segmentId }
         override suspend fun segmentsMissingHistory() = segments.filterNot { it.id in segmentsTimed }
+        /** What the runs table has become since the list above was read, when the two differ. */
+        var runsNow: List<RunnerSession>? = null
+
         override suspend fun runs() = runs
-        override suspend fun run(sessionId: Long) = runs.firstOrNull { it.id == sessionId }
+        override suspend fun run(sessionId: Long) =
+            (runsNow ?: runs).firstOrNull { it.id == sessionId }
         override suspend fun runsMissingTiming() =
             runs.filter { it.endTime > 0 && it.id !in runsTimed }.map { it.id }
 
@@ -168,6 +172,27 @@ class SegmentTimingTest {
 
         book.runs = listOf(aRun(1, isWalk = true))
         SegmentTiming(book).timeAgainstEverySegment(1)
+
+        assertEquals(emptyList<SegmentEffort>(), book.all)
+    }
+
+    @Test
+    fun `a Run marked a Walk while history is being walked holds no efforts`() = runTest {
+        // The list of Runs was read before the runner said "that was a walk"; the row says so now.
+        val book = book(listOf(aRun(1)))
+        book.runsNow = listOf(aRun(1, isWalk = true))
+
+        SegmentTiming(book).timeAgainstHistory(segment.id)
+
+        assertEquals(emptyList<SegmentEffort>(), book.all)
+    }
+
+    @Test
+    fun `a Run deleted while history is being walked holds no efforts`() = runTest {
+        val book = book(listOf(aRun(1)))
+        book.runsNow = emptyList()
+
+        SegmentTiming(book).timeAgainstHistory(segment.id)
 
         assertEquals(emptyList<SegmentEffort>(), book.all)
     }
