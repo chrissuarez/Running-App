@@ -118,9 +118,16 @@ fun SegmentCreateScreen(
 
     // Kept across a rotation, so a runner who turned the phone sideways to place a mark more
     // precisely has not lost the mark they had already placed.
-    var startMark by rememberSaveable(trackMap) { mutableStateOf(defaultMarks.first) }
-    var endMark by rememberSaveable(trackMap) { mutableStateOf(defaultMarks.last) }
-    var name by rememberSaveable(trackMap) { mutableStateOf("") }
+    //
+    // Held against the Run rather than against the measurement of it. The recordings arrive on
+    // three flows and the heart rate is usually last, so the measurement is rebuilt underneath a
+    // screen the track alone has already made usable — and a mark placed or a name typed in that
+    // moment would be thrown away by samples that changed nothing a Segment is cut on. What a cut
+    // reads is the route and the breaks, and both of those came in with the track.
+    val runId = session?.id
+    var startMark by rememberSaveable(runId) { mutableStateOf(defaultMarks.first) }
+    var endMark by rememberSaveable(runId) { mutableStateOf(defaultMarks.last) }
+    var name by rememberSaveable(runId) { mutableStateOf("") }
 
     val cut = remember(trackMap, startMark, endMark) { segmentCutOf(trackMap, startMark, endMark) }
     val canSave = cut is SegmentCut.Cut && name.isNotBlank()
