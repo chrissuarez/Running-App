@@ -1068,7 +1068,15 @@ class MainActivity : ComponentActivity() {
                                     // having made one and not.
                                     navigateTo(Routes.SEGMENTS)
                                 },
-                                onBack = { navController.popBackStack() }
+                                // Explicitly back to the Run rather than off the back stack:
+                                // every move in this app replaces the graph rather than stacking
+                                // on it, so there is nothing behind this screen to pop to, and a
+                                // cancel that popped would leave the runner nowhere at all.
+                                onBack = {
+                                    navigateTo(
+                                        sessionId?.let { Routes.sessionDetail(it) } ?: Routes.MAIN
+                                    )
+                                }
                             )
                         }
                         composable(Routes.MAP) {
