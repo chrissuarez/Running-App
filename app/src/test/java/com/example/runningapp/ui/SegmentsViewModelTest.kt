@@ -2,6 +2,7 @@ package com.example.runningapp.ui
 
 import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.routes.RoutePolyline
+import com.example.runningapp.segments.FakeSegmentEffortDao
 import com.example.runningapp.segments.FakeSegmentDao
 import com.example.runningapp.segments.SegmentCut
 import kotlinx.coroutines.Dispatchers
@@ -29,7 +30,7 @@ class SegmentsViewModelTest {
     @After
     fun tearDown() = Dispatchers.resetMain()
 
-    private fun viewModel() = SegmentsViewModel(dao, now = { 1_700_000_000_000L })
+    private fun viewModel() = SegmentsViewModel(dao, FakeSegmentEffortDao(), now = { 1_700_000_000_000L })
 
     private val cut = SegmentCut.Cut(
         fixes = listOf(MapFix(51.5, -0.1), MapFix(51.50009, -0.1)),
