@@ -27,17 +27,19 @@ fun segmentDistanceLabel(distanceMeters: Double): String =
 fun segmentRowSubtitle(segment: Segment): String = segmentDistanceLabel(segment.distanceMeters)
 
 /**
- * Where a Segment came from, on its own page.
+ * What a Segment's page has to say about where it came from — which is nothing, unless the Run it
+ * was traced from is gone.
  *
- * Said in both directions, because the deleted case is the one a runner will wonder about: a place
- * whose Run is gone is still the place, and the page says so rather than leaving a blank where the
- * provenance used to be.
+ * Null in the ordinary case on purpose. "Traced from one of your runs" is true of every Segment
+ * there is, so printing it says nothing and costs the page a line. The deleted case is the one a
+ * runner will wonder about, because the row now points nowhere and the page should say the place
+ * itself is untouched.
  */
-fun segmentSourceLabel(segment: Segment): String =
+fun segmentSourceLabel(segment: Segment): String? =
     if (segment.sourceSessionId == null) {
         "Traced from a run you have since deleted. The segment itself is unaffected."
     } else {
-        "Traced from one of your runs."
+        null
     }
 
 /** How far into the Run a mark sits, for the line under the two handles. */

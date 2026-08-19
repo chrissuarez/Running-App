@@ -65,8 +65,35 @@ fun segmentCutOf(trackMap: TrackMap, markA: Int, markB: Int): SegmentCut {
 }
 
 /**
+ * The stretches of the Run the recording covers without a break, as ranges of index into
+ * [TrackMap.route].
+ *
+ * The one walk of the breaks, because everything a Segment is cut with has to agree about where
+ * they are: where the handles open ([defaultMarksFor]), what may be drawn behind them
+ * ([unbrokenStretchesOf]), and — through [segmentCutOf]'s own read of [TrackMap.brokenLegs] —
+ * whether the stretch between them may be kept at all.
+ *
+ * A range of one fix is left out: it is a place the runner was, but no ground to draw or to cut.
+ */
+fun unbrokenRangesOf(trackMap: TrackMap): List<IntRange> {
+    val route = trackMap.route
+    if (route.size < 2) return emptyList()
+
+    val ranges = mutableListOf<IntRange>()
+    var from = 0
+    for (leg in 0 until route.lastIndex) {
+        if (leg in trackMap.brokenLegs) {
+            if (leg > from) ranges += from..leg
+            from = leg + 1
+        }
+    }
+    if (route.lastIndex > from) ranges += from..route.lastIndex
+    return ranges
+}
+
+/**
  * Where the two marks sit when the screen opens: the longest stretch of the Run the recording covers
- * without a break, as indices into [TrackMap.route].
+ * without a break.
  *
  * The longest *unbroken* stretch rather than the whole Run, so the screen opens on something that
  * can actually be saved. A Run that paused halfway would otherwise greet the runner with a refusal
@@ -76,28 +103,8 @@ fun segmentCutOf(trackMap: TrackMap, markA: Int, markB: Int): SegmentCut {
  * Null where the Run holds no unbroken stretch at all — nothing there could ever become a Segment,
  * and the screen says so instead of opening with handles that do nothing.
  */
-fun defaultMarksFor(trackMap: TrackMap): IntRange? {
-    val route = trackMap.route
-    if (route.size < 2) return null
-
-    var best: IntRange? = null
-    var from = 0
-    for (leg in 0 until route.lastIndex) {
-        if (leg in trackMap.brokenLegs) {
-            if (leg > from) best = longerOf(best, from..leg)
-            from = leg + 1
-        }
-    }
-    if (route.lastIndex > from) best = longerOf(best, from..route.lastIndex)
-    return best
-}
-
-private fun longerOf(current: IntRange?, candidate: IntRange): IntRange =
-    if (current == null || candidate.last - candidate.first > current.last - current.first) {
-        candidate
-    } else {
-        current
-    }
+fun defaultMarksFor(trackMap: TrackMap): IntRange? =
+    unbrokenRangesOf(trackMap).maxByOrNull { it.last - it.first }
 
 /**
  * The Run's route as lines that may be drawn — one per stretch the recording covers without a break.
@@ -105,18 +112,7 @@ private fun longerOf(current: IntRange?, candidate: IntRange): IntRange =
  * The same cut [defaultMarksFor] and [segmentCutOf] make, handed to the map so the Run drawn behind
  * the runner's choice does not run across ground nothing witnessed either.
  */
-fun unbrokenStretchesOf(trackMap: TrackMap): List<List<MapFix>> {
-    val route = trackMap.route
-    if (route.size < 2) return emptyList()
-
-    val stretches = mutableListOf<List<MapFix>>()
-    var from = 0
-    for (leg in 0 until route.lastIndex) {
-        if (leg in trackMap.brokenLegs) {
-            if (leg > from) stretches += route.subList(from, leg + 1).map { it.fix }
-            from = leg + 1
-        }
+fun unbrokenStretchesOf(trackMap: TrackMap): List<List<MapFix>> =
+    unbrokenRangesOf(trackMap).map { range ->
+        trackMap.route.subList(range.first, range.last + 1).map { it.fix }
     }
-    if (route.lastIndex > from) stretches += route.subList(from, route.size).map { it.fix }
-    return stretches
-}

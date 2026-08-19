@@ -4,6 +4,7 @@ import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.data.Segment
 import com.example.runningapp.segments.SegmentCut
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -26,10 +27,16 @@ class SegmentModelsTest {
 
     @Test
     fun `a segment whose run is gone says so, and says the segment is fine`() {
-        val orphan = segment(sourceSessionId = null)
+        val orphan = segmentSourceLabel(segment(sourceSessionId = null))!!
 
-        assertTrue(segmentSourceLabel(orphan).contains("deleted"))
-        assertTrue(segmentSourceLabel(orphan).contains("unaffected"))
+        assertTrue(orphan.contains("deleted"))
+        assertTrue(orphan.contains("unaffected"))
+    }
+
+    @Test
+    fun `a segment whose run is still there says nothing about it`() {
+        // True of every Segment there is, so saying it costs a line and tells the runner nothing.
+        assertNull(segmentSourceLabel(segment(sourceSessionId = 12)))
     }
 
     @Test
