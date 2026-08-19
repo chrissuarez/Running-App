@@ -2213,6 +2213,14 @@ class SessionRepository(
      * [AiTrainingContext.requirementEvidenceRunIdsByTimestamp] leaves the Run out. A Stage already
      * graduated stays graduated.
      *
+     * **The Segment-timing mark is lifted before the mark changes**, for the reason the scoring mark
+     * is ([SessionDao.clearSegmentsTimed]): a Run is walked against the Segments once and never
+     * revisited, so a Run that changes what it is worth to a leaderboard while still carrying the
+     * mark is a Run the launch pass will walk straight past. Lifted first, every way the re-timing
+     * below can end short — the process reclaimed, the scope cancelled, the walk throwing — leaves
+     * the Run owing a walk that the next launch pays; the walk itself hands the mark back when it
+     * has finished replacing every effort.
+     *
      * Nothing changed writes nothing, so re-opening the dialog and pressing Save on the mark already
      * there costs neither a row update nor a walk of the record book.
      */
@@ -2223,6 +2231,11 @@ class SessionRepository(
     ) {
         val session = awaitFinalized(sessionId, finalizeWaitStepMillis) ?: return
         if (session.isWalk == isWalk) return
+
+        // Before the mark, not after it: from here to the walk below the Run is owed one, and every
+        // ending short of it leaves that debt standing rather than a leaderboard nobody goes back
+        // for. The cost of lifting it needlessly is one repeated walk at the next launch.
+        sessionDao.clearSegmentsTimed(sessionId)
 
         val write: suspend () -> Unit = { sessionDao.setIsWalk(sessionId, isWalk) }
         if (isWalk) {
@@ -2244,7 +2257,9 @@ class SessionRepository(
         //
         // Guarded, because the mark is already written and is the thing the runner asked for: a
         // Segment scan that fails must not take the app down behind a switch that has already
-        // flipped. The times it leaves standing are mended by the next scan of the same pair.
+        // flipped. The times it leaves standing are mended by the next scan of the same pair —
+        // which the debt lifted above is what guarantees, since the mark is handed back only by the
+        // walk that completes.
         try {
             timeRunAgainstSegments(sessionId)
         } catch (e: Exception) {
