@@ -227,16 +227,42 @@ private class Matcher(
                         strayedAtMillis = track[at - 1].timestampMillis
                         strayedAtAlong = along
                     }
-                    if (track[at].timestampMillis - strayedAtMillis > SEGMENT_BLIP_MILLIS) return null
-                    if (nearest.along - strayedAtAlong > SEGMENT_BLIP_METERS) return null
+                    if (hasStoppedBeingABlip(strayedAtMillis, strayedAtAlong, at, nearest.along)) return null
                 }
 
-                else -> strayedAtMillis = null
+                // Back in the corridor. The fix that brings the Run back is the far end of the leg
+                // that was outside it, so it answers to both limits before the stray is forgotten:
+                // the ground it lands on is ground the Run was last seen off the line for. Without
+                // that, a Run could leave the corridor twenty metres up and rejoin a hundred metres
+                // up on one long leg, and the eighty metres nobody witnessed it on would be counted
+                // as the Segment's.
+                else -> {
+                    if (hasStoppedBeingABlip(strayedAtMillis, strayedAtAlong, at, nearest.along)) return null
+                    strayedAtMillis = null
+                }
             }
 
             along = maxOf(along, nearest.along)
         }
         return null
+    }
+
+    /**
+     * Whether a stray that left the corridor at [strayedAtMillis], [strayedAtAlong] up the Segment,
+     * has stopped being a blip by the fix at [at], which sits [along] up it.
+     *
+     * Both limits, asked in one place, because they are asked twice: of each fix outside the
+     * corridor, and of the fix that comes back into it. False when nothing has strayed.
+     */
+    private fun hasStoppedBeingABlip(
+        strayedAtMillis: Long?,
+        strayedAtAlong: Double,
+        at: Int,
+        along: Double,
+    ): Boolean {
+        val strayedAt = strayedAtMillis ?: return false
+        return track[at].timestampMillis - strayedAt > SEGMENT_BLIP_MILLIS ||
+            along - strayedAtAlong > SEGMENT_BLIP_METERS
     }
 
     /**
