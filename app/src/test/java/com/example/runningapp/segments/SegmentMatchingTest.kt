@@ -202,6 +202,83 @@ class SegmentMatchingTest {
         assertEquals(2 * quick.elapsedMillis, slow.elapsedMillis)
     }
 
+    // --- Where each tolerance sits ---
+    //
+    // Every constant in the matcher is a boundary, and a boundary is only pinned by a pair of tracks
+    // either side of it. Each pair below is written so that widening the constant would let the
+    // refused one through, and narrowing it would turn the accepted one away.
+
+    @Test
+    fun `the corridor is twenty-five metres wide`() {
+        // A hundred metres of the elbow's first leg run on a line parallel to it, then back on.
+        fun parallelAt(offset: Double) = walk(
+            listOf(-50.0 to 0.0, 50.0 to offset, 150.0 to offset, 200.0 to 0.0, 200.0 to 250.0),
+            stepMeters = 5.0,
+        )
+
+        assertEquals(1, segmentTraversalsIn(elbow, track(parallelAt(24.0))).size)
+        assertEquals(emptyList<SegmentTraversal>(), segmentTraversalsIn(elbow, track(parallelAt(26.0))))
+    }
+
+    @Test
+    fun `a stray off the line may last ten seconds and no longer`() {
+        // Fixes two seconds apart, so each fix pushed off the line is two more seconds outside the
+        // corridor. Four of them is the ten seconds allowed; six is fourteen.
+        fun strayFor(fixes: Int): List<Pair<Double, Double>> {
+            val ran = ranTheElbow().toMutableList()
+            val from = ran.indexOfFirst { it.first >= 60.0 }
+            for (i in from until from + fixes) ran[i] = ran[i].first to 40.0
+            return ran
+        }
+
+        assertEquals(1, segmentTraversalsIn(elbow, track(strayFor(4))).size)
+        assertEquals(emptyList<SegmentTraversal>(), segmentTraversalsIn(elbow, track(strayFor(6))))
+    }
+
+    @Test
+    fun `a stray off the line may cover forty metres and no more`() {
+        // Fixes a second apart at six metres each — quick enough that the ten-second window is not
+        // what turns the longer of these away.
+        fun strayFor(fixes: Int): List<Pair<Double, Double>> {
+            val ran = walk(listOf(-60.0 to 0.0, 200.0 to 0.0, 200.0 to 250.0), stepMeters = 6.0).toMutableList()
+            val from = ran.indexOfFirst { it.first >= 60.0 }
+            for (i in from until from + fixes) ran[i] = ran[i].first to 40.0
+            return ran
+        }
+
+        // Five fixes: six seconds outside the corridor, thirty metres of the Segment covered.
+        assertEquals(1, segmentTraversalsIn(elbow, track(strayFor(5), stepMillis = 1_000L)).size)
+        // Eight: nine seconds, still inside the window, but forty-eight metres of Segment gone by.
+        assertEquals(
+            emptyList<SegmentTraversal>(),
+            segmentTraversalsIn(elbow, track(strayFor(8), stepMillis = 1_000L)),
+        )
+    }
+
+    @Test
+    fun `coming out of the far end thirty metres wide of it is not coming out of it`() {
+        // A Run whose recording skips from just short of the top to well past it — the one way to
+        // reach the end of the Segment without ever being at it.
+        fun leavingAt(east: Double, north: Double) =
+            walk(listOf(-50.0 to 0.0, 200.0 to 0.0, 200.0 to 190.0), stepMeters = 5.0) + (east to north)
+
+        assertEquals(1, segmentTraversalsIn(elbow, track(leavingAt(215.0, 215.0))).size)
+        assertEquals(
+            emptyList<SegmentTraversal>(),
+            segmentTraversalsIn(elbow, track(leavingAt(240.0, 230.0))),
+        )
+    }
+
+    @Test
+    fun `a Run that starts inside the stretch is no effort`() {
+        // The runner pressed Start half way up. They did not cross the bottom gate, so there is no
+        // moment to time from and no time that could be compared with the efforts that did — the
+        // same rule, at the other end, as a Run that stops inside it.
+        val startedHalfWayUp = walk(listOf(100.0 to 0.0, 200.0 to 0.0, 200.0 to 250.0), stepMeters = 5.0)
+
+        assertEquals(emptyList<SegmentTraversal>(), segmentTraversalsIn(elbow, track(startedHalfWayUp)))
+    }
+
     @Test
     fun `ground with fewer than two points is no stretch at all`() {
         assertEquals(emptyList<SegmentTraversal>(), segmentTraversalsIn(listOf(at(0.0, 0.0)), track(ranTheElbow())))

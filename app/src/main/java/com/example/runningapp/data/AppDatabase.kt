@@ -88,6 +88,28 @@ data class RunnerSession(
      */
     val recordsScored: Boolean = false,
     /**
+     * Whether this Run has been put to the runner's Segments (#70).
+     *
+     * False is a debt, exactly as [recordsScored]'s false is: it says nobody has walked this Run
+     * against the Segments yet, never that it crossed none of them. A Run is put to them the moment
+     * it finishes, and that can be missed the same way a scoring can — the process reclaimed after
+     * the row is stamped finished, or the walk itself throwing. The launch pass
+     * ([SessionRepository.payWhatSegmentTimingOwes]) finds every finished Run still carrying a false
+     * here and walks it.
+     *
+     * Written only once the walk has *returned*, for [recordsScored]'s reason: an ending in between
+     * costs one redundant re-walk at the next launch, which is safe because a walk replaces a pair's
+     * efforts rather than adding to them.
+     *
+     * **Every Run recorded before v35 arrives already timed**, which is not a claim that any of them
+     * has been. It is the other half of a pair of debts: a Segment carries one of its own
+     * ([Segment.historyTimed]), and every Segment that exists — including every one cut before this
+     * shipped — walks the whole of history itself. History is therefore covered from the Segment's
+     * side, and a column defaulting to a debt would have every Run in the runner's life walk every
+     * Segment a second time on the first launch after the upgrade.
+     */
+    val segmentsTimed: Boolean = false,
+    /**
      * The Max HR this Run's zone seconds are banded against, and beside it [bandedOnRestingHr] —
      * the Reserve the numbers on this row mean something against (#228). Written with the row at
      * START from [com.example.runningapp.run.RunConfig.hrProfile], the Reserve the Run is recorded
@@ -654,6 +676,17 @@ interface SessionDao {
     /** Marks one Run as measured against the book — written only after its scoring has landed. */
     @Query("UPDATE sessions SET recordsScored = 1 WHERE id = :sessionId")
     suspend fun setRecordsScored(sessionId: Long)
+
+    /**
+     * Finished Runs nobody has put to the Segments yet (#70) — read the same way, and for the same
+     * reasons, as [getSessionIdsMissingRecordScoring] above.
+     */
+    @Query("SELECT id FROM sessions WHERE segmentsTimed = 0 AND endTime > 0 ORDER BY startTime ASC")
+    suspend fun getSessionIdsMissingSegmentTiming(): List<Long>
+
+    /** Marks one Run as walked against the Segments — written only after that walk has landed. */
+    @Query("UPDATE sessions SET segmentsTimed = 1 WHERE id = :sessionId")
+    suspend fun setSegmentsTimed(sessionId: Long)
 
     /**
      * Writes down that a Run owes the record book a scoring again (#282).
@@ -2137,13 +2170,14 @@ val MIGRATION_33_34 = object : Migration(33, 34) {
 }
 
 /**
- * The table of times run at the runner's named places (#70).
+ * The table of times run at the runner's named places, and the two debts that keep it filled (#70).
  *
- * Empty on arrival, and unlike the Segments table above, something *can* fill it: creating a Segment
- * walks all of history against it, and every Run that finishes afterwards is walked against every
- * Segment ([com.example.runningapp.segments.SegmentTiming]). So a runner upgrading into this arrives
- * at Segments they cut before it shipped with no efforts, and gets them the first time anything
- * rescans — which is why the scan is a replacement rather than a top-up.
+ * Empty on arrival, and unlike the Segments table it hangs off, something *can* fill it: creating a
+ * Segment walks all of history against it, and every Run that finishes afterwards is walked against
+ * every Segment ([com.example.runningapp.segments.SegmentTiming]). A runner upgrading into this
+ * therefore arrives at Segments cut under v34 that nothing has ever been timed against, which is
+ * what `segments.historyTimed` is for: every one of them owes history a walk, and the launch pass
+ * pays it.
  *
  * Cascaded from both parents, which is the whole shape of the row: an effort is a time at a place,
  * run on a Run, and it means nothing once either of those is gone. See [SegmentEffort].
@@ -2174,5 +2208,14 @@ val MIGRATION_34_35 = object : Migration(34, 35) {
                 "`index_segment_efforts_segmentId_sessionId_startedAtMillis` " +
                 "ON `segment_efforts` (`segmentId`, `sessionId`, `startedAtMillis`)"
         )
+
+        // The two debts that keep the table filled across a process that dies, and the one asymmetry
+        // between them. Every Segment owes history a walk, including the ones cut under v34 before
+        // there was any such thing as an effort — that is what gets them their efforts at all. No
+        // Run owes anything, because those same Segment-side walks cover every Run there is, and a
+        // Run-side debt on all of history would walk the whole thing twice on one launch.
+        database.execSQL("ALTER TABLE `segments` ADD COLUMN `historyTimed` INTEGER NOT NULL DEFAULT 0")
+        database.execSQL("ALTER TABLE `sessions` ADD COLUMN `segmentsTimed` INTEGER NOT NULL DEFAULT 0")
+        database.execSQL("UPDATE `sessions` SET `segmentsTimed` = 1")
     }
 }

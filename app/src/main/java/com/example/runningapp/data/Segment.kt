@@ -61,6 +61,22 @@ data class Segment(
     /** The Run it was traced from, or null once that Run has been deleted. */
     val sourceSessionId: Long?,
     val createdAtMillis: Long,
+    /**
+     * Whether the whole of history has been walked against this Segment (#70).
+     *
+     * False is a debt, the same kind [com.example.runningapp.data.RunnerSession.recordsScored]'s
+     * false is: it says nobody has put the runner's Runs to this ground yet, never that none of them
+     * crossed it. A Segment walks history the moment it is cut, and that walk is minutes long and
+     * runs outside any screen — so it can be lost to a process being reclaimed half way through, and
+     * a Segment cut before this shipped never had one at all. The launch pass
+     * ([SessionRepository.payWhatSegmentTimingOwes]) finds every Segment still carrying a false here
+     * and walks it.
+     *
+     * Written only once the walk has *returned*, so an ending in between leaves the debt standing.
+     * A repeated walk costs arithmetic and nothing else: it replaces a pair's efforts rather than
+     * adding to them ([SegmentEffortDao.replaceEffortsOf]).
+     */
+    val historyTimed: Boolean = false,
 )
 
 @Dao
@@ -87,6 +103,19 @@ interface SegmentDao {
     /** One Segment, read once — what a newly cut Segment's history scan is measured against (#70). */
     @Query("SELECT * FROM segments WHERE id = :segmentId")
     suspend fun getSegment(segmentId: Long): Segment?
+
+    /**
+     * The Segments history has never been walked against (#70) — the launch pass's work list.
+     *
+     * Oldest first, so a runner who cut three of them in one sitting sees them fill in the order
+     * they cut them.
+     */
+    @Query("SELECT * FROM segments WHERE historyTimed = 0 ORDER BY createdAtMillis ASC, id ASC")
+    suspend fun getSegmentsMissingHistory(): List<Segment>
+
+    /** Marks one Segment as walked against history — written only after that walk has landed. */
+    @Query("UPDATE segments SET historyTimed = 1 WHERE id = :segmentId")
+    suspend fun setHistoryTimed(segmentId: Long)
 
     @Insert
     suspend fun insertSegment(segment: Segment): Long
@@ -193,9 +222,6 @@ interface SegmentEffortDao {
 
     @Query("DELETE FROM segment_efforts WHERE segmentId = :segmentId AND sessionId = :sessionId")
     suspend fun deleteEffortsOf(segmentId: Long, sessionId: Long)
-
-    @Query("DELETE FROM segment_efforts WHERE sessionId = :sessionId")
-    suspend fun deleteEffortsOfRun(sessionId: Long)
 
     @Insert
     suspend fun insertEfforts(efforts: List<SegmentEffort>)

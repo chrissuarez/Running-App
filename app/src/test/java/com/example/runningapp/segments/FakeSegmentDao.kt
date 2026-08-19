@@ -26,6 +26,13 @@ class FakeSegmentDao : SegmentDao {
 
     override suspend fun getSegment(segmentId: Long): Segment? = rows.value.firstOrNull { it.id == segmentId }
 
+    override suspend fun getSegmentsMissingHistory(): List<Segment> =
+        rows.value.filterNot { it.historyTimed }.sortedWith(compareBy({ it.createdAtMillis }, { it.id }))
+
+    override suspend fun setHistoryTimed(segmentId: Long) {
+        rows.value = rows.value.map { if (it.id == segmentId) it.copy(historyTimed = true) else it }
+    }
+
     override suspend fun insertSegment(segment: Segment): Long {
         val id = nextId++
         rows.value = rows.value + segment.copy(id = id)

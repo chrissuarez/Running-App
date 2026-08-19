@@ -349,6 +349,34 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Pays whatever the Segments and the Runs owe each other, once per process (#70).
+     *
+     * Two debts, and between them they are the whole reason a Segment can be trusted to know its own
+     * history: a Segment cut before efforts existed has never been walked against anything, and
+     * either side of a walk can be lost to a process being reclaimed half way through it. On an
+     * ordinary launch this reads two empty lists and returns.
+     *
+     * After the rescue pass in the list above and not waiting on it, as none of these do. A Run this
+     * pass ran past while it was still interrupted has no end time, so it is not on the list; the
+     * rescue finishes it and walks it against the Segments itself.
+     *
+     * On the container's own scope, for the same reason the moving-time backfill is — see above. It
+     * matters here as it does for the Effort backfill: each side is marked as it is paid, so a pass
+     * cancelled because the runner backed out of an Activity keeps everything it paid for, but would
+     * not be resumed for the life of the process.
+     */
+    fun paySegmentTimingOnce() {
+        if (!segmentTimingPaid.compareAndSet(false, true)) return
+        applicationScope.launch {
+            try {
+                sessionRepository.payWhatSegmentTimingOwes()
+            } catch (e: Exception) {
+                Log.w("Segments", "Could not pay what the segment timing owes; leaving it for next launch", e)
+            }
+        }
+    }
+
+    /**
      * Stores the runner's answer to a Run's finish sheet and closes the gate behind it, off any
      * screen's lifetime (#297).
      *
@@ -391,6 +419,7 @@ class AppContainer(context: Context) {
     private val effortScored = AtomicBoolean(false)
     private val missedRecordsScored = AtomicBoolean(false)
     private val missedStagesSettled = AtomicBoolean(false)
+    private val segmentTimingPaid = AtomicBoolean(false)
 
     /**
      * When this process began, as far as anything here is concerned — the container is built once,

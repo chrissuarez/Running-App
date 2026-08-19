@@ -55,35 +55,55 @@ class SegmentTimingTest {
             isWalk = isWalk,
         )
 
-    /** The efforts table, with the one behaviour that matters: a pair is replaced, never added to. */
-    private class Book {
+    /**
+     * The tables this pass reads and writes, in memory — with the two behaviours that matter: a
+     * pair's efforts are replaced rather than added to, and each side's debt is a row of its own.
+     */
+    private class Book(
+        val segments: List<Segment>,
+        var runs: List<RunnerSession>,
+        val tracks: Map<Long, List<TrackPoint>>,
+    ) : SegmentTimingStore {
         val rows = mutableMapOf<Pair<Long, Long>, List<SegmentEffort>>()
-        val write: suspend (Long, Long, List<SegmentEffort>) -> Unit = { segmentId, sessionId, efforts ->
+        val segmentsTimed = mutableSetOf<Long>()
+        val runsTimed = mutableSetOf<Long>()
+
+        val all: List<SegmentEffort> get() = rows.values.flatten()
+
+        override suspend fun segments() = segments
+        override suspend fun segment(segmentId: Long) = segments.firstOrNull { it.id == segmentId }
+        override suspend fun segmentsMissingHistory() = segments.filterNot { it.id in segmentsTimed }
+        override suspend fun runs() = runs
+        override suspend fun run(sessionId: Long) = runs.firstOrNull { it.id == sessionId }
+        override suspend fun runsMissingTiming() =
+            runs.filter { it.endTime > 0 && it.id !in runsTimed }.map { it.id }
+
+        override suspend fun track(sessionId: Long) = tracks[sessionId].orEmpty()
+
+        override suspend fun replaceEfforts(segmentId: Long, sessionId: Long, efforts: List<SegmentEffort>) {
             rows[segmentId to sessionId] = efforts
         }
-        val all: List<SegmentEffort> get() = rows.values.flatten()
+
+        override suspend fun markSegmentTimed(segmentId: Long) {
+            segmentsTimed += segmentId
+        }
+
+        override suspend fun markRunTimed(sessionId: Long) {
+            runsTimed += sessionId
+        }
     }
 
-    private fun timing(
-        book: Book,
+    private fun book(
         runs: List<RunnerSession>,
         segments: List<Segment> = listOf(segment),
         tracks: Map<Long, List<TrackPoint>> = runs.associate { it.id to ranIt(it.id) },
-    ) = SegmentTiming(
-        readSegments = { segments },
-        readSegment = { id -> segments.firstOrNull { it.id == id } },
-        readRuns = { runs },
-        readRun = { id -> runs.firstOrNull { it.id == id } },
-        readTrack = { id -> tracks[id].orEmpty() },
-        writeEfforts = book.write,
-    )
+    ) = Book(segments, runs, tracks)
 
     @Test
     fun `a new Segment is born with its history already measured`() = runTest {
-        val book = Book()
-        val runs = listOf(aRun(1), aRun(2), aRun(3))
+        val book = book(listOf(aRun(1), aRun(2), aRun(3)))
 
-        timing(book, runs).timeAgainstHistory(segment.id)
+        SegmentTiming(book).timeAgainstHistory(segment.id)
 
         assertEquals(3, book.all.size)
         assertEquals(setOf(1L, 2L, 3L), book.all.map { it.sessionId }.toSet())
@@ -92,83 +112,147 @@ class SegmentTimingTest {
 
     @Test
     fun `measuring the same history again leaves the same efforts`() = runTest {
-        val book = Book()
-        val timing = timing(book, listOf(aRun(1), aRun(2)))
+        val book = book(listOf(aRun(1), aRun(2)))
+        val timing = SegmentTiming(book)
 
         timing.timeAgainstHistory(segment.id)
-        val first = book.all
+        val first = book.all.map { it.startedAtMillis to it.finishedAtMillis }
         timing.timeAgainstHistory(segment.id)
 
         assertEquals(2, book.all.size)
-        assertEquals(first.map { it.startedAtMillis to it.finishedAtMillis }, book.all.map { it.startedAtMillis to it.finishedAtMillis })
+        assertEquals(first, book.all.map { it.startedAtMillis to it.finishedAtMillis })
     }
 
     @Test
     fun `a Walk holds no efforts`() = runTest {
-        val book = Book()
+        val book = book(listOf(aRun(1, isWalk = true)))
 
-        timing(book, listOf(aRun(1, isWalk = true))).timeAgainstHistory(segment.id)
+        SegmentTiming(book).timeAgainstHistory(segment.id)
 
         assertEquals(emptyList<SegmentEffort>(), book.all)
     }
 
     @Test
     fun `a treadmill Run holds no efforts`() = runTest {
-        val book = Book()
+        val book = book(listOf(aRun(1, runMode = "treadmill")))
 
-        timing(book, listOf(aRun(1, runMode = "treadmill"))).timeAgainstHistory(segment.id)
+        SegmentTiming(book).timeAgainstHistory(segment.id)
 
         assertEquals(emptyList<SegmentEffort>(), book.all)
     }
 
     @Test
     fun `a Run still being recorded holds no efforts`() = runTest {
-        val book = Book()
+        val book = book(listOf(aRun(1, finished = false)))
 
-        timing(book, listOf(aRun(1, finished = false))).timeAgainstHistory(segment.id)
+        SegmentTiming(book).timeAgainstHistory(segment.id)
 
         assertEquals(emptyList<SegmentEffort>(), book.all)
     }
 
     @Test
     fun `a Run that finishes is put to every Segment`() = runTest {
-        val book = Book()
         val other = segment.copy(id = 9, name = "The same hill again")
+        val book = book(listOf(aRun(1)), segments = listOf(segment, other))
 
-        timing(book, listOf(aRun(1)), segments = listOf(segment, other)).timeAgainstEverySegment(1)
+        SegmentTiming(book).timeAgainstEverySegment(1)
 
         assertEquals(setOf(7L, 9L), book.all.map { it.segmentId }.toSet())
     }
 
     @Test
     fun `marking a Run a Walk takes its efforts off every Segment`() = runTest {
-        val book = Book()
-        timing(book, listOf(aRun(1))).timeAgainstEverySegment(1)
+        val book = book(listOf(aRun(1)))
+        SegmentTiming(book).timeAgainstEverySegment(1)
         assertEquals(1, book.all.size)
 
-        timing(book, listOf(aRun(1, isWalk = true))).timeAgainstEverySegment(1)
+        book.runs = listOf(aRun(1, isWalk = true))
+        SegmentTiming(book).timeAgainstEverySegment(1)
 
         assertEquals(emptyList<SegmentEffort>(), book.all)
     }
 
     @Test
     fun `a Run that never went near a Segment writes nothing`() = runTest {
-        val book = Book()
-        val elsewhere = mapOf(1L to ranIt(1).map { it.copy(longitude = -0.2) })
+        val book = book(listOf(aRun(1)), tracks = mapOf(1L to ranIt(1).map { it.copy(longitude = -0.2) }))
 
-        timing(book, listOf(aRun(1)), tracks = elsewhere).timeAgainstHistory(segment.id)
+        SegmentTiming(book).timeAgainstHistory(segment.id)
 
         assertEquals(emptyList<SegmentEffort>(), book.all)
     }
 
     @Test
     fun `the effort is the time between the gates`() = runTest {
-        val book = Book()
+        val book = book(listOf(aRun(1)))
 
-        timing(book, listOf(aRun(1))).timeAgainstHistory(segment.id)
+        SegmentTiming(book).timeAgainstHistory(segment.id)
 
         val effort = book.all.single()
         // Ten metres a fix, four seconds a fix: a hundred metres is forty seconds.
         assertEquals(40_000L, effort.finishedAtMillis - effort.startedAtMillis)
+    }
+
+    // --- The debts either side carries, and the launch pass that pays them ---
+
+    @Test
+    fun `a Segment walked against history owes nothing afterwards`() = runTest {
+        val book = book(listOf(aRun(1)))
+
+        SegmentTiming(book).timeAgainstHistory(segment.id)
+
+        assertEquals(emptyList<Segment>(), book.segmentsMissingHistory())
+    }
+
+    @Test
+    fun `a Run walked against the Segments owes nothing afterwards`() = runTest {
+        val book = book(listOf(aRun(1)))
+
+        SegmentTiming(book).timeAgainstEverySegment(1)
+
+        assertEquals(emptyList<Long>(), book.runsMissingTiming())
+    }
+
+    @Test
+    fun `a Run with no Segments to be walked against still owes nothing`() = runTest {
+        val book = book(listOf(aRun(1)), segments = emptyList())
+
+        SegmentTiming(book).timeAgainstEverySegment(1)
+
+        assertEquals(emptyList<Long>(), book.runsMissingTiming())
+    }
+
+    @Test
+    fun `the launch pass measures a Segment cut before efforts existed`() = runTest {
+        val book = book(listOf(aRun(1)))
+
+        SegmentTiming(book).payWhatIsOwed()
+
+        assertEquals(1, book.all.size)
+        assertEquals(emptyList<Segment>(), book.segmentsMissingHistory())
+        assertEquals(emptyList<Long>(), book.runsMissingTiming())
+    }
+
+    @Test
+    fun `the launch pass measures a Run whose own walk was lost`() = runTest {
+        val book = book(listOf(aRun(1), aRun(2)))
+        // Segment 7 has already had its history walked; run 2 finished afterwards and its own walk
+        // never happened — the process was reclaimed between the two.
+        book.markSegmentTimed(segment.id)
+        book.markRunTimed(1)
+
+        SegmentTiming(book).payWhatIsOwed()
+
+        assertEquals(listOf(2L), book.all.map { it.sessionId })
+    }
+
+    @Test
+    fun `a launch with nothing owed writes nothing`() = runTest {
+        val book = book(listOf(aRun(1)))
+        book.markSegmentTimed(segment.id)
+        book.markRunTimed(1)
+
+        SegmentTiming(book).payWhatIsOwed()
+
+        assertEquals(emptyList<SegmentEffort>(), book.all)
     }
 }

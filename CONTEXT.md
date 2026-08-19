@@ -228,7 +228,11 @@ Track to put to the ground, and a **Walk** holds none — so marking a Run a Wal
 every Segment, and unmarking measures them again. Creating a Segment measures the whole of history
 against it, so it arrives with its efforts and its PR already on it; measuring the same Run against
 the same Segment again replaces what was there rather than adding to it, which is what makes any
-scan safe to run twice.
+scan safe to run twice. Both sides carry the debt until it is paid — a Segment that has never been
+walked against history and a finished Run that has never been walked against the Segments are each
+picked up at the next launch, which is how a Segment cut before efforts existed gets its own, and how
+a walk lost to a process being reclaimed is made good. The matching engine calls one a *traversal*
+until it is written down, because until then it is a finding about a track rather than a row.
 _Avoid_: Best Effort (a stretch of one Run at a record distance), attempt, lap, and the bare word
 "Effort", which is what the runner rates a Run out of ten.
 

@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.lazy.LazyColumn
@@ -47,15 +46,13 @@ import com.example.runningapp.data.SegmentEffortRow
 import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.ui.theme.RunningUiTokens
 
-/** A floor, so the map is still a map on a small phone at a large text size. */
-private val MapMinHeight = 160.dp
-
 /**
- * How tall the map is now the page scrolls.
+ * How tall the map is.
  *
- * Fixed rather than taking whatever room is left, because there is no longer a fixed amount of room
- * to take: under it is a list of every effort ever run here, which is two rows on a new Segment and
- * fifty on an old one.
+ * Fixed rather than taking whatever room the words leave, because there is no longer a fixed amount
+ * of room to take: under it is a list of every effort ever run here, which is two rows on a new
+ * Segment and fifty on an old one. Fixed also means it does not shrink to nothing as that list grows
+ * — a Segment is a piece of ground, and the page has to show the ground.
  */
 private val MapHeight = 220.dp
 
@@ -121,7 +118,7 @@ fun SegmentDetailScreen(
         val shown = remember(efforts, segment.distanceMeters) {
             segmentEffortsUi(efforts, segment.distanceMeters)
         }
-        val record = remember(efforts) { segmentRecordLabel(efforts) }
+        val record = remember(shown) { segmentRecordOf(shown) }
 
         LazyColumn(
             modifier = Modifier
@@ -136,7 +133,6 @@ fun SegmentDetailScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(MapHeight)
-                            .heightIn(min = MapMinHeight)
                     ) {
                         SegmentMapSurface(
                             segment = ground,
@@ -180,7 +176,7 @@ fun SegmentDetailScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Text(
-                                text = record,
+                                text = record.timeLabel,
                                 style = MaterialTheme.typography.headlineMedium,
                                 fontWeight = FontWeight.Bold,
                             )

@@ -137,13 +137,15 @@ class SegmentModelsTest {
             effort(2, day = 1, elapsedMillis = 92_400),
         )
 
-        assertEquals("01:32", segmentRecordLabel(efforts))
+        val record = segmentRecordOf(segmentEffortsUi(efforts, distanceMeters = 400.0, zone = london))
+
+        assertEquals(2L, record?.effortId)
+        assertEquals("01:32", record?.timeLabel)
     }
 
     @Test
     fun `a Segment nobody has run has no record and says so`() {
-        assertNull(segmentRecordLabel(emptyList()))
-        assertEquals("No efforts yet", segmentEffortCountLabel(0))
+        assertNull(segmentRecordOf(segmentEffortsUi(emptyList(), distanceMeters = 400.0, zone = london)))
         assertTrue(NO_SEGMENT_EFFORTS_MESSAGE.contains("not run this segment yet"))
     }
 
