@@ -6,6 +6,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import com.example.runningapp.analysis.MapFix
+import com.example.runningapp.segments.segmentCutOf
+import com.example.runningapp.segments.unbrokenStretchesOf
 import com.mapbox.maps.extension.compose.annotation.generated.CircleAnnotation
 import com.mapbox.maps.extension.compose.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.extension.style.layers.properties.generated.LineJoin
@@ -27,6 +29,22 @@ private const val MarkerRadius = 8.0
 private const val MarkerStrokeWidth = 3.0
 
 /**
+ * What the camera is framed on: the Run the choice is being cut out of, wherever there is one, and
+ * the choice itself only on a Segment's own page where there is not.
+ *
+ * The Run rather than the choice, because the choice moves and the Run does not. Framing on the
+ * stretch under the handles would hand the map a new shape to fit on every step of the slider, so a
+ * runner who zoomed in to place a mark precisely would be thrown back out to the whole route by the
+ * first pixel of the drag — aiming at a target that moves as they aim. Nothing is lost by it: a
+ * stretch is cut from one unbroken piece of the recording ([unbrokenStretchesOf] is what
+ * [segmentCutOf] cuts), so the Run already holds every fix the choice can ever be made of.
+ */
+internal fun segmentFramingFixes(
+    segment: List<MapFix>,
+    runBehind: List<List<MapFix>>,
+): List<MapFix> = if (runBehind.isEmpty()) segment else runBehind.flatten()
+
+/**
  * A stretch of ground on a map: the Segment being marked out or the one being looked at, with
  * whatever it was cut from drawn faintly behind it (#69).
  *
@@ -46,10 +64,7 @@ fun SegmentMapSurface(
     interactive: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    // Framed on everything drawn, so the camera holds still while a handle is dragged: framing on
-    // the choice alone would have the map lurch on every step of the slider, and the runner would
-    // be aiming at a target that moves as they aim.
-    val framedFixes = remember(segment, runBehind) { runBehind.flatten() + segment }
+    val framedFixes = remember(segment, runBehind) { segmentFramingFixes(segment, runBehind) }
     if (framedFixes.isEmpty()) {
         Box(modifier = modifier)
         return
