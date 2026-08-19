@@ -27,7 +27,16 @@ sealed interface SegmentCut {
         val distanceMeters: Double,
     ) : SegmentCut
 
-    /** Both marks on one fix, or a Run with no route: there is no ground between them. */
+    /**
+     * There is no ground between the two marks: both on one fix, a Run with no route, or a stretch
+     * the Run itself counted as nothing.
+     *
+     * The last of those is a runner who stood still. A leg between two fixes stamped the same
+     * moment carries no metres by construction ([com.example.runningapp.data.measureTrack]), so a
+     * mark either side of only those is two marks with a gap in the index and none on the ground.
+     * Kept, it would be a place with no length, and every reading ever taken against it would be a
+     * reading of nothing.
+     */
     data object TooShort : SegmentCut
 
     /**
@@ -58,9 +67,16 @@ fun segmentCutOf(trackMap: TrackMap, markA: Int, markB: Int): SegmentCut {
     if (from == to) return SegmentCut.TooShort
     if ((from until to).any { it in trackMap.brokenLegs }) return SegmentCut.SpansABreak
 
+    // Measured on the Run's own total rather than on the index: the two are not the same question.
+    // Indices apart say the recording wrote something down between the marks; metres apart say the
+    // runner went somewhere. A stretch that answers the first and not the second is a Segment with
+    // no length, which is [TooShort] whatever the handles look like.
+    val distanceMeters = route[to].distanceMeters - route[from].distanceMeters
+    if (distanceMeters <= 0.0) return SegmentCut.TooShort
+
     return SegmentCut.Cut(
         fixes = route.subList(from, to + 1).map { it.fix },
-        distanceMeters = route[to].distanceMeters - route[from].distanceMeters,
+        distanceMeters = distanceMeters,
     )
 }
 

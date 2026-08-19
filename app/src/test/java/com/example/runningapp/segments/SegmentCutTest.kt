@@ -65,6 +65,33 @@ class SegmentCutTest {
     }
 
     @Test
+    fun `a stretch the Run counted no ground across is no stretch at all`() {
+        // The runner stood still: four fixes arrived, and the Run's total never moved across them.
+        // measureTrack gives a leg between two fixes stamped the same moment no metres at all, so
+        // this is a recording that happens, not a hypothetical.
+        val standing = straightTrack(10).let { track ->
+            val route = track.route.mapIndexed { i, fix ->
+                if (i in 3..6) RouteFix(track.route[3].distanceMeters, fix.fix) else fix
+            }
+            track.copy(route = route)
+        }
+
+        assertEquals(SegmentCut.TooShort, segmentCutOf(standing, 3, 6))
+    }
+
+    @Test
+    fun `a stretch that reaches past standing still is kept`() {
+        val standing = straightTrack(10).let { track ->
+            val route = track.route.mapIndexed { i, fix ->
+                if (i in 3..6) RouteFix(track.route[3].distanceMeters, fix.fix) else fix
+            }
+            track.copy(route = route)
+        }
+
+        assertTrue(segmentCutOf(standing, 3, 7) is SegmentCut.Cut)
+    }
+
+    @Test
     fun `a stretch across a break in the recording is refused`() {
         // The Run paused, or lost signal, between fixes 3 and 4: nothing witnessed that ground.
         val track = straightTrack(10, brokenLegs = setOf(3))
