@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.runningapp.data.Segment
 import com.example.runningapp.data.SegmentDao
+import com.example.runningapp.data.SegmentEffortDao
 import com.example.runningapp.routes.RoutePoint
 import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.segments.SegmentCut
@@ -27,6 +28,17 @@ import kotlinx.coroutines.launch
  */
 class SegmentsViewModel(
     private val segmentDao: SegmentDao,
+    private val segmentEffortDao: SegmentEffortDao,
+    /**
+     * Told the id of a Segment the moment one is kept, so it can be put to every Run in history
+     * (#70) — a Segment is born with its efforts and its PR on it.
+     *
+     * Handed in rather than done here, and deliberately: the scan is minutes of work and this
+     * ViewModel dies with the Activity, while saving a Segment is the last thing the creation screen
+     * does before it is popped. It belongs to something that outlives both
+     * ([com.example.runningapp.AppContainer.timeSegmentAgainstHistory]).
+     */
+    private val onSegmentSaved: (Long) -> Unit = {},
     /** The clock a new Segment is stamped with. Injected so a test can pin the stamp. */
     private val now: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
@@ -36,6 +48,14 @@ class SegmentsViewModel(
 
     /** One Segment's own page, watched so a rename or a delete reaches it. */
     fun segment(segmentId: Long) = segmentDao.getSegmentFlow(segmentId)
+
+    /**
+     * Every time the runner has been over one Segment, watched rather than read once (#70).
+     *
+     * Watched because the list grows behind the page: a Segment cut a moment ago is still being put
+     * to history on a scope of its own, and the efforts land one Run at a time.
+     */
+    fun efforts(segmentId: Long) = segmentEffortDao.getEffortsFlow(segmentId)
 
     /** What to tell the runner about what just happened, in words — null when there is nothing. */
     private val _message = MutableStateFlow<String?>(null)
@@ -56,7 +76,7 @@ class SegmentsViewModel(
             cut.fixes.map { RoutePoint(it.latitude, it.longitude, elevationMeters = null) }
         )
         viewModelScope.launch {
-            segmentDao.insertSegment(
+            val segmentId = segmentDao.insertSegment(
                 Segment(
                     name = trimmed,
                     polyline = polyline,
@@ -66,6 +86,7 @@ class SegmentsViewModel(
                 )
             )
             _message.value = segmentSavedMessage(trimmed)
+            onSegmentSaved(segmentId)
         }
     }
 
@@ -93,11 +114,13 @@ class SegmentsViewModel(
 
 class SegmentsViewModelFactory(
     private val segmentDao: SegmentDao,
+    private val segmentEffortDao: SegmentEffortDao,
+    private val onSegmentSaved: (Long) -> Unit = {},
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(SegmentsViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return SegmentsViewModel(segmentDao) as T
+            return SegmentsViewModel(segmentDao, segmentEffortDao, onSegmentSaved) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

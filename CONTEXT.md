@@ -208,10 +208,29 @@ Track, never drawn freehand and never taken across a Break — a stretch marked 
 or of lost signal is refused rather than joined, because the straight line over one is ground nothing
 witnessed. That geometry is copied onto the Segment's own row rather than read back out of the Run,
 which is what lets it outlive it: deleting the Run it was traced from forgets where it came from and
-keeps the place. Carries no time and no effort yet — creating, browsing and curating only.
+keeps the place. Timed against every Run that crosses it — see **Segment Effort**.
 _Avoid_: PR segment, lap, split (a Split is a kilometre of one Run), and **track** for the same
 reason a Route avoids it. A GPX file's own `<trkseg>` is a "track segment" of that file's making and
 has nothing to do with this word.
+
+**Segment Effort**:
+One time a Run went over a Segment (#70) — a fact about a Run *and* a place, not about either alone,
+which is why it is banked rather than worked out on read. A Run holds one for every time it crossed
+the stretch, so a Run up the hill three times holds three. What counts as having crossed it is a gate
+at either end with a corridor between them: the runner has to pass within about thirty metres of the
+Segment's start, stay on its line — a GPS blip flung sideways for a second or two is forgiven, a
+shortcut that skips part of it is not — and come out within about thirty metres of its end, the same
+way round. The time is the wall clock between the two gate crossings, worked out between the fixes
+either side of each gate rather than at the nearest one. A Segment's **PR** is the quickest effort
+ever run at it, and a tie leaves it with the earlier one, as the record book does. Eligibility is the
+record book's: a Run still being recorded holds none, a treadmill Run holds none because it has no
+Track to put to the ground, and a **Walk** holds none — so marking a Run a Walk takes its efforts off
+every Segment, and unmarking measures them again. Creating a Segment measures the whole of history
+against it, so it arrives with its efforts and its PR already on it; measuring the same Run against
+the same Segment again replaces what was there rather than adding to it, which is what makes any
+scan safe to run twice.
+_Avoid_: Best Effort (a stretch of one Run at a record distance), attempt, lap, and the bare word
+"Effort", which is what the runner rates a Run out of ten.
 
 **Export**:
 A finished Run written out as a file for somewhere else to read (#84, #218). Two

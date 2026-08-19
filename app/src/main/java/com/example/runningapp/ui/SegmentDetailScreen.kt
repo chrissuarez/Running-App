@@ -1,5 +1,6 @@
 package com.example.runningapp.ui
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -8,6 +9,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -39,6 +43,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.data.Segment
+import com.example.runningapp.data.SegmentEffortRow
 import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.ui.theme.RunningUiTokens
 
@@ -46,18 +51,31 @@ import com.example.runningapp.ui.theme.RunningUiTokens
 private val MapMinHeight = 160.dp
 
 /**
- * One Segment's own page: its name, its ground, and how far that ground goes (#69).
+ * How tall the map is now the page scrolls.
  *
- * Minimal on purpose. There is no timing yet and nothing has ever been run against this stretch, so
- * a page with anything more on it would be promising a comparison the app cannot yet make.
+ * Fixed rather than taking whatever room is left, because there is no longer a fixed amount of room
+ * to take: under it is a list of every effort ever run here, which is two rows on a new Segment and
+ * fifty on an old one.
+ */
+private val MapHeight = 220.dp
+
+/**
+ * One Segment's own page: its ground, its PR, and every time the runner has been over it (#69, #70).
  *
- * The map is interactive here, unlike the preview on a Run's page: this *is* the page, so there is
- * nothing underneath it for a drag to be stolen from.
+ * The list is the point of the page. A Segment is a place the runner measures themselves against,
+ * and one time means nothing without the ones before it — "4:32" is a different fact depending on
+ * whether it is the best of two attempts or of fifty, which is why the count sits beside it.
+ *
+ * The map is no longer interactive, and the page scrolls instead. It was the other way round while
+ * there was nothing under the map (#69): a pannable map inside a scrolling column steals the drag
+ * that was meant to scroll the page, and between panning a map and reaching the efforts, reaching
+ * the efforts is what the runner came for.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SegmentDetailScreen(
     segment: Segment?,
+    efforts: List<SegmentEffortRow>,
     onRename: (Segment, String) -> Unit,
     onDelete: (Segment) -> Unit,
     onBack: () -> Unit,
@@ -100,41 +118,84 @@ fun SegmentDetailScreen(
         val ground = remember(segment.polyline) {
             RoutePolyline.decode(segment.polyline).map { MapFix(it.latitude, it.longitude) }
         }
+        val shown = remember(efforts, segment.distanceMeters) {
+            segmentEffortsUi(efforts, segment.distanceMeters)
+        }
+        val record = remember(efforts) { segmentRecordLabel(efforts) }
 
-        // Never scrolls, and the map takes whatever room the words leave rather than a fixed
-        // height. Two reasons, and they are the same reason: this map can be panned, and a
-        // pannable map inside a scrolling column steals the drag that was meant to scroll it —
-        // while a fixed-height one plus two lines of text at 1.3x is taller than a small phone,
-        // which is what would have made the column need to scroll (#63).
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .padding(RunningUiTokens.PagePadding),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Card(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                Box(modifier = Modifier.fillMaxWidth().heightIn(min = MapMinHeight)) {
-                    SegmentMapSurface(
-                        segment = ground,
-                        runBehind = emptyList(),
-                        interactive = true,
-                        modifier = Modifier.fillMaxSize(),
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(MapHeight)
+                            .heightIn(min = MapMinHeight)
+                    ) {
+                        SegmentMapSurface(
+                            segment = ground,
+                            runBehind = emptyList(),
+                            interactive = false,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+
+            item {
+                Text(
+                    text = segmentDistanceLabel(segment.distanceMeters),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                )
+                segmentSourceLabel(segment)?.let { source ->
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = source,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = segmentDistanceLabel(segment.distanceMeters),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold,
-            )
-            segmentSourceLabel(segment)?.let { source ->
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = source,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+
+            item {
+                if (record == null) {
+                    Text(
+                        text = NO_SEGMENT_EFFORTS_MESSAGE,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                text = "Personal record",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = record,
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            Text(
+                                text = segmentEffortCountLabel(shown.size),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+
+            items(shown, key = { it.effortId }) { effort ->
+                SegmentEffortRowUi(effort)
             }
         }
     }
@@ -158,6 +219,44 @@ fun SegmentDetailScreen(
                 deleting = false
                 onDelete(segment)
             },
+        )
+    }
+}
+
+/**
+ * One effort in the list: when it was run, how long it took, and how quick that was.
+ *
+ * The time is the column on its own at the end, because it is the number the runner is scanning the
+ * list for; the date and the pace read as one line under each other so the row survives a narrow
+ * phone at a large text size (#63).
+ */
+@Composable
+private fun SegmentEffortRowUi(effort: SegmentEffortUi) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = effort.dateLabel, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = effort.paceLabel,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (effort.isRecord) {
+            Text(
+                text = "PR",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(end = 8.dp),
+            )
+        }
+        Text(
+            text = effort.timeLabel,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
         )
     }
 }

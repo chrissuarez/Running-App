@@ -904,6 +904,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     Log.w(TAG, "Could not score run $runRowId against the record book", e)
                 }
 
+                // Put to every Segment the runner keeps, after the track-point inserts have landed
+                // and for the same reason the two above are: a Segment timed over half a Run is a
+                // PR nobody ran (#70). Its own attempt, on the same terms — the Run is saved, and a
+                // Segment that cannot be timed must not cost the runner the plan evaluation below.
+                // A Run left untimed here is timed by the next scan of the pair, which is whatever
+                // Segment the runner cuts next.
+                try {
+                    sessionRepository.timeRunAgainstSegments(runRowId)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not time run $runRowId against the segments", e)
+                }
+
                 Log.d(
                     TAG,
                     "Finalized DB Session: $runRowId. Evidence: duration=${updatedSession.durationSeconds} moving=$movingTime"

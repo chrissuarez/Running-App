@@ -22,6 +22,10 @@ class FakeSegmentDao : SegmentDao {
     override fun getSegmentFlow(segmentId: Long): Flow<Segment?> =
         rows.map { list -> list.firstOrNull { it.id == segmentId } }
 
+    override suspend fun getAllSegments(): List<Segment> = rows.value
+
+    override suspend fun getSegment(segmentId: Long): Segment? = rows.value.firstOrNull { it.id == segmentId }
+
     override suspend fun insertSegment(segment: Segment): Long {
         val id = nextId++
         rows.value = rows.value + segment.copy(id = id)

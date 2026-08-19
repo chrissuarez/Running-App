@@ -50,6 +50,7 @@ import com.example.runningapp.analysis.RunEfforts
 import com.example.runningapp.analysis.recordBookOf
 import com.example.runningapp.analysis.standingsAfter
 import com.example.runningapp.analysis.bestEffortsOf
+import com.example.runningapp.segments.SegmentTiming
 import com.example.runningapp.recording.SessionRecorder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -508,6 +509,15 @@ class SessionRepository(
     // Null on the same terms as the record book it feeds: a treadmill Run then simply holds no
     // stated Best Effort, which is what every Run held before #282 anyway.
     private val statedBestEffortDao: StatedBestEffortDao? = null,
+    /**
+     * The runner's named places and the times run at them (#70).
+     *
+     * Null on the same terms as the record book: wherever Segments are not wired — tests, and the
+     * archive's read-only container — a Run finishes without being put to any, which is what every
+     * Run did before this shipped.
+     */
+    private val segmentDao: SegmentDao? = null,
+    private val segmentEffortDao: SegmentEffortDao? = null,
     /**
      * The runner's own Goals, read so the coach can be told where they stand (#83).
      *
@@ -1343,6 +1353,51 @@ class SessionRepository(
      * Scoring history recorded before this shipped is a job of its own (#50): it means measuring
      * every stored track, and it has to happen once rather than every time a run finishes.
      */
+    /**
+     * Puts a newly cut Segment to every Run in history, so it is born with its efforts and its PR
+     * (#70).
+     *
+     * Minutes of GPS arithmetic on a long history, and the caller is expected to be somewhere that
+     * survives the screen the Segment was cut on ([com.example.runningapp.AppContainer]).
+     */
+    suspend fun timeSegmentAgainstHistory(segmentId: Long) {
+        segmentTiming?.timeAgainstHistory(segmentId)
+    }
+
+    /**
+     * Puts one Run to every Segment there is (#70) — what a Run gets when it finishes, and again
+     * whenever the runner's word about it changes ([markAsWalk]).
+     *
+     * Safe to call again: the pass replaces a pair's efforts rather than adding to them
+     * ([SegmentEffortDao.replaceEffortsOf]).
+     */
+    suspend fun timeRunAgainstSegments(sessionId: Long) {
+        segmentTiming?.timeAgainstEverySegment(sessionId)
+    }
+
+    /**
+     * The one walk of Runs against Segments, over this repository's own DAOs.
+     *
+     * Lazy, and null wherever Segments are not wired, so nothing here opens a table the archive's
+     * read-only container has no use for.
+     */
+    private val segmentTiming: SegmentTiming? by lazy {
+        val segments = segmentDao ?: return@lazy null
+        val efforts = segmentEffortDao ?: return@lazy null
+        SegmentTiming(
+            readSegments = { segments.getAllSegments() },
+            readSegment = { segments.getSegment(it) },
+            readRuns = { sessionDao.getAllSessions() },
+            readRun = { sessionDao.getSessionById(it) },
+            // The same accuracy-gated fixes the map, the splits and the record book are built from,
+            // so a wild fix the Run itself refused cannot put an effort on a Segment nobody ran.
+            readTrack = { getTrackPointsForMap(it) },
+            writeEfforts = { segmentId, sessionId, rows ->
+                efforts.replaceEffortsOf(segmentId, sessionId, rows)
+            },
+        )
+    }
+
     suspend fun scoreRecords(sessionId: Long): List<Achievement> =
         scoreRecordsUnlessOvertaken(sessionId).orEmpty()
 
@@ -2151,6 +2206,20 @@ class SessionRepository(
             writeAndScore("Walk", sessionId, write) {
                 "Run $sessionId is a Run again but could not be scored"
             }
+        }
+
+        // The Segments behind it are mended on the same terms as the record book, and by the same
+        // reasoning (#70): a Walk holds no effort at any Segment, so marking one takes its times off
+        // every leaderboard they are on, and unmarking measures them again. One call for both
+        // directions, because the pass replaces a Run's efforts rather than adding to them.
+        //
+        // Guarded, because the mark is already written and is the thing the runner asked for: a
+        // Segment scan that fails must not take the app down behind a switch that has already
+        // flipped. The times it leaves standing are mended by the next scan of the same pair.
+        try {
+            timeRunAgainstSegments(sessionId)
+        } catch (e: Exception) {
+            Log.w("Walk", "Could not re-time run $sessionId against the Segments", e)
         }
     }
 

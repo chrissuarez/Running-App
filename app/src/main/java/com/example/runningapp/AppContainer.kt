@@ -165,6 +165,9 @@ class AppContainer(context: Context) {
             runPauseDao = database.runPauseDao(),
             achievementDao = database.achievementDao(),
             statedBestEffortDao = database.statedBestEffortDao(),
+            // The runner's named places, and the times run at them (#70).
+            segmentDao = database.segmentDao(),
+            segmentEffortDao = database.segmentEffortDao(),
             // Read for one thing only: telling the coach where the runner stands against their own
             // targets (#83). Without it the coach is simply told nothing about goals.
             goalDao = database.goalDao(),
@@ -320,6 +323,29 @@ class AppContainer(context: Context) {
     fun backfillEffortScoresOnce() {
         if (!effortScored.compareAndSet(false, true)) return
         applicationScope.launch { sessionRepository.backfillEffortScores() }
+    }
+
+    /**
+     * Puts a newly cut Segment to every Run in history, so it arrives with its efforts and its PR
+     * already on it (#70).
+     *
+     * On the container's own scope for the reason the screen makes unavoidable: saving a Segment is
+     * the last thing the creation screen does before it is popped, so a scan launched from the
+     * screen — or from the ViewModel scoped to the Activity the runner then backs out of — would be
+     * cancelled by the very navigation that follows it, and the new Segment would sit there claiming
+     * the runner had never run it.
+     *
+     * Not `once`, unlike the launch passes: this is one Segment being born, and a runner can cut
+     * several.
+     */
+    fun timeSegmentAgainstHistory(segmentId: Long) {
+        applicationScope.launch {
+            try {
+                sessionRepository.timeSegmentAgainstHistory(segmentId)
+            } catch (e: Exception) {
+                Log.w("Segments", "Could not time segment $segmentId against history", e)
+            }
+        }
     }
 
     /**

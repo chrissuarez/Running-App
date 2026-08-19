@@ -423,7 +423,13 @@ class MainActivity : ComponentActivity() {
                     // launched from that screen's own scope would be cancelled by the very
                     // navigation that follows it.
                     val segmentsViewModel: SegmentsViewModel = viewModel(
-                        factory = SegmentsViewModelFactory(appContainer.database.segmentDao())
+                        factory = SegmentsViewModelFactory(
+                            segmentDao = appContainer.database.segmentDao(),
+                            segmentEffortDao = appContainer.database.segmentEffortDao(),
+                            // On the container's scope, not this one: the creation screen is popped
+                            // the instant a Segment is saved (#70).
+                            onSegmentSaved = { appContainer.timeSegmentAgainstHistory(it) },
+                        )
                     )
                     // "*/*", like the restore picker, and for the same reason: a `.gpx` in Downloads
                     // is announced as `application/octet-stream` as often as it is by its real type,
@@ -1014,8 +1020,18 @@ class MainActivity : ComponentActivity() {
                             ) {
                                 segmentId?.let { id -> segmentsViewModel.segment(id).collect { value = it } }
                             }
+                            // Watched too, and for a reason of its own: a Segment cut a moment ago
+                            // is still being put to history on the container's scope, so its
+                            // efforts land one Run at a time under an open page (#70).
+                            val efforts by produceState<List<com.example.runningapp.data.SegmentEffortRow>>(
+                                initialValue = emptyList(),
+                                key1 = segmentId
+                            ) {
+                                segmentId?.let { id -> segmentsViewModel.efforts(id).collect { value = it } }
+                            }
                             SegmentDetailScreen(
                                 segment = segment,
+                                efforts = efforts,
                                 onRename = { row, name -> segmentsViewModel.rename(row, name) },
                                 onDelete = { row ->
                                     segmentsViewModel.delete(row)

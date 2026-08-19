@@ -80,6 +80,14 @@ interface SegmentDao {
     @Query("SELECT * FROM segments WHERE id = :segmentId")
     fun getSegmentFlow(segmentId: Long): Flow<Segment?>
 
+    /** The whole collection, read once — what a Run that has just finished is put to (#70). */
+    @Query("SELECT * FROM segments")
+    suspend fun getAllSegments(): List<Segment>
+
+    /** One Segment, read once — what a newly cut Segment's history scan is measured against (#70). */
+    @Query("SELECT * FROM segments WHERE id = :segmentId")
+    suspend fun getSegment(segmentId: Long): Segment?
+
     @Insert
     suspend fun insertSegment(segment: Segment): Long
 
