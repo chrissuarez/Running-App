@@ -5,6 +5,7 @@ import com.example.runningapp.analysis.RouteFix
 import com.example.runningapp.analysis.TrackMap
 import com.example.runningapp.analysis.TrackStretch
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -125,6 +126,35 @@ class SegmentCutTest {
         )
 
         assertEquals(SegmentCut.TooShort, segmentCutOf(empty, 0, 0))
+    }
+
+    @Test
+    fun `a Run that never moved opens on nothing to cut`() {
+        // Every fix written down in the same place: unbroken, and no ground anywhere in it.
+        val fixes = (0 until 6).map { MapFix(51.5, -0.1) }
+        val standing = TrackMap(
+            stretches = listOf(TrackStretch(fixes, zone = null)),
+            start = fixes.first(),
+            finish = fixes.last(),
+            route = fixes.map { RouteFix(distanceMeters = 0.0, fix = it) },
+            brokenLegs = emptySet(),
+        )
+
+        assertNull(defaultMarksFor(standing))
+    }
+
+    @Test
+    fun `the marks skip a longer stretch that holds no ground`() {
+        // Fixes 0..5 are one place the runner stood in; 6..9 is ground they covered. A break at 5
+        // keeps the two apart, so the longer stretch by count is the one worth nothing.
+        val track = straightTrack(10, brokenLegs = setOf(5)).let { built ->
+            val route = built.route.mapIndexed { i, fix ->
+                if (i <= 5) RouteFix(0.0, fix.fix) else fix
+            }
+            built.copy(route = route)
+        }
+
+        assertEquals(6..9, defaultMarksFor(track))
     }
 
     @Test
