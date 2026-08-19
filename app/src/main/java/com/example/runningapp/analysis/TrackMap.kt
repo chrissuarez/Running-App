@@ -36,6 +36,17 @@ data class TrackMap(
      * break is still a place the runner was, and the scrubber has to be able to point at it.
      */
     val route: List<RouteFix>,
+    /**
+     * Which legs of [route] the recording does not cover: `i` is in here when the ground between
+     * `route[i]` and `route[i + 1]` was never witnessed — a Pause, or lost signal (#69).
+     *
+     * The same breaks the lines are already cut at, said again as an index rather than as an
+     * absence, because a reader that is not drawing has no gap to notice. What wants it is cutting
+     * a Segment out of the Run ([com.example.runningapp.segments.segmentCutOf]): a stretch a runner
+     * marks either side of a break must be refused, and the drawn stretches cannot answer that —
+     * they are cut at every zone change too, and a colour change is not a gap in the recording.
+     */
+    val brokenLegs: Set<Int> = emptySet(),
 ) {
     /**
      * Where the runner was after [distanceMeters] of the Run — how a finger on the chart becomes a
@@ -177,6 +188,7 @@ internal fun trackMapOf(
         start = points.first().asMapFix(),
         finish = points.last().asMapFix(),
         route = points.mapIndexed { i, point -> RouteFix(distanceAtFix[i], point.asMapFix()) },
+        brokenLegs = legs.indices.filterNot { legs[it].recorded }.toSet(),
     )
 }
 

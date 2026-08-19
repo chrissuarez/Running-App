@@ -72,6 +72,11 @@ import com.example.runningapp.ui.BackupViewModelFactory
 import com.example.runningapp.ui.RestoreUiState
 import com.example.runningapp.ui.RestoreViewModel
 import com.example.runningapp.ui.RestoreViewModelFactory
+import com.example.runningapp.ui.SegmentCreateScreen
+import com.example.runningapp.ui.SegmentDetailScreen
+import com.example.runningapp.ui.SegmentsScreen
+import com.example.runningapp.ui.SegmentsViewModel
+import com.example.runningapp.ui.SegmentsViewModelFactory
 import com.example.runningapp.ui.RoutesScreen
 import com.example.runningapp.ui.RoutesViewModel
 import com.example.runningapp.ui.RoutesViewModelFactory
@@ -413,6 +418,13 @@ class MainActivity : ComponentActivity() {
                             appContainer.routeImporter,
                         )
                     )
+                    // Scoped to the Activity rather than to a destination, because saving a
+                    // Segment is the last thing the creation screen does before it is popped: work
+                    // launched from that screen's own scope would be cancelled by the very
+                    // navigation that follows it.
+                    val segmentsViewModel: SegmentsViewModel = viewModel(
+                        factory = SegmentsViewModelFactory(appContainer.database.segmentDao())
+                    )
                     // "*/*", like the restore picker, and for the same reason: a `.gpx` in Downloads
                     // is announced as `application/octet-stream` as often as it is by its real type,
                     // and a filter that greys out the runner's own file is worse than a broad one.
@@ -568,6 +580,9 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onOpenRoutes = {
                                     navigateTo(Routes.ROUTE_LIBRARY)
+                                },
+                                onOpenSegments = {
+                                    navigateTo(Routes.SEGMENTS)
                                 },
                                 onOpenFullScreenMap = {
                                     navigateTo(Routes.MAP)
@@ -864,7 +879,15 @@ class MainActivity : ComponentActivity() {
                                 shareableFormats = shareableFormats,
                                 onShareRun = { id, format -> sessionDetailViewModel.shareRun(id, format) },
                                 shareFailed = exportShareFailed != null && exportShareFailed == sessionId,
-                                onShareFailureShown = { sessionDetailViewModel.exportShareFailureShown() }
+                                onShareFailureShown = { sessionDetailViewModel.exportShareFailureShown() },
+                                // Offered only where the recording holds a route, which is the same
+                                // gate GPX export is behind: there is nothing to cut a Segment out
+                                // of without one (#69).
+                                onCreateSegment = if (hasTrack) {
+                                    { id -> navigateTo(Routes.segmentCreate(id)) }
+                                } else {
+                                    null
+                                }
                             )
                         }
                         composable(Routes.TRAINING_PLAN) {
@@ -964,6 +987,97 @@ class MainActivity : ComponentActivity() {
                                 onMessageShown = { routesViewModel.messageShown() },
                                 onBack = { navigateTo(Routes.MAIN) }
                             )
+                        }
+                        composable(Routes.SEGMENTS) {
+                            val segments by segmentsViewModel.segments.collectAsState()
+                            val segmentMessage by segmentsViewModel.message.collectAsState()
+                            SegmentsScreen(
+                                segments = segments,
+                                message = segmentMessage,
+                                onOpen = { segment -> navigateTo(Routes.segmentDetail(segment.id)) },
+                                onRename = { segment, name -> segmentsViewModel.rename(segment, name) },
+                                onDelete = { segment -> segmentsViewModel.delete(segment) },
+                                onMessageShown = { segmentsViewModel.messageShown() },
+                                onBack = { navigateTo(Routes.MAIN) }
+                            )
+                        }
+                        composable(
+                            route = Routes.SEGMENT_DETAIL,
+                            arguments = listOf(navArgument(Routes.ARG_SEGMENT_ID) { type = NavType.LongType })
+                        ) { backStackEntry ->
+                            val segmentId = backStackEntry.arguments?.getLong(Routes.ARG_SEGMENT_ID)
+                            // Watched rather than read once, so a rename reaches the title and a
+                            // delete made here empties the page the same instant it empties the row.
+                            val segment by produceState<com.example.runningapp.data.Segment?>(
+                                initialValue = null,
+                                key1 = segmentId
+                            ) {
+                                segmentId?.let { id -> segmentsViewModel.segment(id).collect { value = it } }
+                            }
+                            SegmentDetailScreen(
+                                segment = segment,
+                                onRename = { row, name -> segmentsViewModel.rename(row, name) },
+                                onDelete = { row ->
+                                    segmentsViewModel.delete(row)
+                                    navigateTo(Routes.SEGMENTS)
+                                },
+                                onBack = { navigateTo(Routes.SEGMENTS) }
+                            )
+                        }
+                        composable(
+                            route = Routes.SEGMENT_CREATE,
+                            arguments = listOf(navArgument(Routes.ARG_SESSION_ID) { type = NavType.LongType })
+                        ) { backStackEntry ->
+                            val sessionId = backStackEntry.arguments?.getLong(Routes.ARG_SESSION_ID)
+                            val session by produceState<com.example.runningapp.data.RunnerSession?>(
+                                initialValue = null,
+                                key1 = sessionId
+                            ) {
+                                sessionId?.let { id ->
+                                    database.sessionDao().getSessionByIdFlow(id).collect { value = it }
+                                }
+                            }
+                            // The same accuracy-gated track the Run's own map is drawn from, so the
+                            // stretch the runner marks out is a slice of exactly the line they were
+                            // shown up there.
+                            val track by produceState<List<com.example.runningapp.data.TrackPoint>>(
+                                initialValue = emptyList(),
+                                key1 = sessionId
+                            ) {
+                                sessionId?.let { id ->
+                                    sessionRepository.getTrackPointsForMapFlow(id).collect { value = it }
+                                }
+                            }
+                            val samples by produceState<List<com.example.runningapp.data.HrSample>>(
+                                initialValue = emptyList(),
+                                key1 = sessionId
+                            ) {
+                                sessionId?.let { id ->
+                                    database.sampleDao().getSamplesForSession(id).collect { value = it }
+                                }
+                            }
+                            // Through RunAnalysis rather than off the track directly, because the
+                            // breaks are what the cut is refused on and only the measurement knows
+                            // where they are (#69).
+                            val trackMap = remember(session, samples, track) {
+                                session?.let {
+                                    com.example.runningapp.analysis.RunAnalysis.of(it, samples, track).trackMap
+                                }
+                            }
+                            if (trackMap == null) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator()
+                                }
+                            } else {
+                                SegmentCreateScreen(
+                                    trackMap = trackMap,
+                                    onSave = { cut, name ->
+                                        sessionId?.let { segmentsViewModel.saveSegment(cut, name, it) }
+                                        navigateTo(Routes.SEGMENTS)
+                                    },
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
                         }
                         composable(Routes.MAP) {
                             FullScreenMapScreen(
@@ -1113,6 +1227,7 @@ fun MainScreen(
     onOpenManageDevices: () -> Unit,
     onOpenTrainingPlan: () -> Unit,
     onOpenRoutes: () -> Unit,
+    onOpenSegments: () -> Unit,
     onOpenFullScreenMap: () -> Unit,
     onToggleSimulation: (Boolean, Boolean, String?) -> Unit,
     onRunModeChange: (String) -> Unit
@@ -1311,6 +1426,18 @@ fun MainScreen(
                             .heightIn(min = RunningUiTokens.MinTouchTarget)
                     ) {
                         Text("Open Routes")
+                    }
+                }
+                // Beside Routes and for the same reason it is not in the bottom bar: both are
+                // collections the runner curates between runs rather than during one (#63, #69).
+                item {
+                    OutlinedButton(
+                        onClick = onOpenSegments,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = RunningUiTokens.MinTouchTarget)
+                    ) {
+                        Text("Open Segments")
                     }
                 }
 

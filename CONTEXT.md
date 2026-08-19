@@ -200,6 +200,19 @@ the line itself as against the whole record of it. The `Routes` object under
 `navigation/` is the app's list of screen addresses and is a different word that happens to be
 spelled the same.
 
+**Segment**:
+A stretch of ground the runner has named — "Cemetery Hill" — cut out of one Run they actually ran
+(#69). Neither a Route nor a Run: a Route is a line somebody else drew and a Run is one outing, while
+a Segment is a _place_ the runner expects to cross again. Its geometry is a slice of a real recorded
+Track, never drawn freehand and never taken across a Break — a stretch marked either side of a Pause
+or of lost signal is refused rather than joined, because the straight line over one is ground nothing
+witnessed. That geometry is copied onto the Segment's own row rather than read back out of the Run,
+which is what lets it outlive it: deleting the Run it was traced from forgets where it came from and
+keeps the place. Carries no time and no effort yet — creating, browsing and curating only.
+_Avoid_: PR segment, lap, split (a Split is a kilometre of one Run), and **track** for the same
+reason a Route avoids it. A GPX file's own `<trkseg>` is a "track segment" of that file's making and
+has nothing to do with this word.
+
 **Export**:
 A finished Run written out as a file for somewhere else to read (#84, #218). Two
 formats, and the runner picks at the moment they share. **FIT** states the Run: its
