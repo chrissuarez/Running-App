@@ -66,6 +66,13 @@ class SegmentTiming(private val store: SegmentTimingStore) {
      * Runs that can hold no effort are passed over rather than written as nothing. There is nothing
      * of this Segment's to clear: either it did not exist a moment ago, or nothing has ever been
      * written for it.
+     *
+     * **Each Run is asked about again the moment before it is timed**, because this walk can be
+     * minutes long and the runner is free the whole time. Mark one of these Runs a Walk while the
+     * walk is under way and its own pass ([timeAgainstEverySegment]) takes the efforts off — and the
+     * list read at the top, which still remembers it as a Run, would put them straight back on with
+     * both sides' debts marked paid and no later launch left to mend it. The list says which Runs to
+     * visit; the row read here says what each one is.
      */
     suspend fun timeAgainstHistory(segmentId: Long) {
         val segment = store.segment(segmentId) ?: return
@@ -73,7 +80,9 @@ class SegmentTiming(private val store: SegmentTimingStore) {
 
         var efforts = 0
         if (ground != null) {
-            store.runs().filter { it.mayHoldSegmentEfforts() }.forEach { run ->
+            store.runs().filter { it.mayHoldSegmentEfforts() }.forEach { listed ->
+                val run = store.run(listed.id) ?: return@forEach
+                if (!run.mayHoldSegmentEfforts()) return@forEach
                 efforts += time(segment.id, run, ground)
             }
         }
