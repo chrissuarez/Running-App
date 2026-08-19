@@ -1,6 +1,58 @@
 # Running App - Heart Rate Monitor & Coach
 
-A robust Android application designed to track heart rate (HR) during runs and provide real-time audio coaching to keep you in your target heart rate zone.
+An Android running app built around a chest strap: it tracks your heart rate and coaches you out
+loud during the run, then keeps the run afterwards — your training plan and its stages, an AI coach
+that prescribes the next long run, your training load, your records, your routes and your segments.
+Everything lives on the phone in a Room database, with a monthly archive you can restore from.
+
+## 🆕 What's new (April – August 2026)
+
+The app grew from a heart-rate coach into a training log in this stretch. The big ones, by area —
+the dated sections below this one are older and are kept as history.
+
+- **A training plan that moves you through it.** The plan is an ordered list of Stages, and you are
+  in exactly one at a time. Every run writes down the Stage it was run under, so one Stage's work
+  can never graduate the next. Where a Stage asks for something in numbers — a 5K in a time — the
+  app measures it and decides it; where it asks for a judgement, the coach does. Finishing the last
+  Stage records a Plan Completion rather than leaving you parked on it.
+- **An AI coach that prescribes the next long run.** After a run it writes the intervals and target
+  zone for your next Long run, and only that — it prescribes work, it does not configure the app.
+  It is told your effort ratings, your notes, the weather, and where you stand against your Goals,
+  and it holds off when you are carrying too much fatigue. A prescription stands on the runs it was
+  shown, so deleting one of them takes it back.
+- **Progress screen: Fitness, Fatigue and Form.** Fitness is your Effort Scores over 42 days,
+  Fatigue the same over 7, and Form is the difference — how fresh you are today. Plus a weekly
+  volume chart you can flip between distance, time and Effort, a Goals card, and a Max HR card that
+  offers to recompute your zones when a run beats the number you are training on.
+- **Effort Score on every run.** What a run cost you, as one number: every second weighted by the
+  zone it was spent in, never off an average, so a run/walk session scores its running as running.
+  Your whole history was scored in the background so the numbers start out complete. A week holding
+  a run that wore no strap says it is only partly measured, rather than reading as a lighter week.
+- **Segments.** Name a stretch of ground — "Cemetery Hill" — cut out of a run you actually ran, and
+  every run that crosses it is timed against it, with the quickest marked PR. Creating one measures
+  the whole of your history against it, so it arrives with its efforts already on it.
+- **Routes.** A library of courses you keep, imported from GPX — from the picker, or by sharing a
+  `.gpx` to the app from anywhere else. A file that isn't one is refused with a reason.
+- **Your own words on a run.** Rate the effort out of ten and leave a note, on the sheet at the
+  finish or on the run's page for ever afterwards. Mark a run a **Walk** and it still builds fitness
+  in full but pays only a quarter of the fatigue — and it takes no records and graduates no Stage.
+- **Treadmill runs count.** Type in the distance the console showed and it counts like any other:
+  your pace, your weekly volume, what the coach sees, and the longest-run record.
+- **Personal records and medals.** Gold, silver and bronze at seven records, contested as the
+  quickest continuous stretch anywhere inside a run. Your existing history was scored once at
+  launch, and deleting a medal-holder promotes what was behind it.
+- **Export and backup.** Share a run as **.FIT** — the one Garmin Connect reads without re-deriving
+  anything — or as GPX. Separately, a monthly **archive** writes the whole database plus a GPX per
+  run to a folder you pick once, and can be restored from.
+- **A richer run page.** The route drawn on a map, coloured by heart-rate zone, with a fullscreen
+  view; drag across the chart and a dot follows you along the route. History rows carry route
+  thumbnails and the medals the run took.
+- **Voice cues that queue.** Every spoken cue goes through one ordered queue, so nothing is cut off
+  mid-sentence and nothing is dropped — including a "Halfway. Turn around." on an out-and-back.
+- **A Run Journal.** The app writes its own plain-text record of what decided whether a run was
+  recording — starts, pauses, the foreground promotion being taken or refused, the strap arriving or
+  leaving. Android's log holds about two hours; a run plus the walk home is longer, so the minute
+  that would name a cause had been rolling off before anyone could look.
 
 ## 🆕 New Features & Fixes (February 25 - March 7, 2026)
 
@@ -48,6 +100,42 @@ A robust Android application designed to track heart rate (HR) during runs and p
     - **Run/Walk Coach Mode**: Specialized mode for beginner training with interval transition cues ("Transition to walking", "Start running, interval 2 of 6") and wider recovery hysteresis. A high heart rate is advice — "Ease off slightly" — and never an instruction to walk; the walks are the ones the workout prescribed.
     - **Smart Persistence**: Avoids "jittery" alerts by requiring the heart rate to stay outside a zone for a configurable duration before triggering a cue.
     - **Hysteresis & Cooldown**: Prevents back-to-back voice cues with customizable cooldown periods.
+- **Training Plan & AI Coach**:
+    - **Stages**: The plan is a fixed, ordered list of blocks, and you are in exactly one at a time.
+      Every run writes down the Stage it was run under when you press START, so one Stage's work can
+      never graduate the next, and a run carrying no Stage answers nothing. Later Stages show a
+      padlock; the one you are in never does.
+    - **Graduating**: A Stage asks for something before it will let go of you. Where it is written in
+      numbers — a 5K in a time — the app measures it and decides it, and the coach is fenced out;
+      where it holds a judgement, such as "4 weeks of consistent Zone 2 training", the coach decides.
+      It is asked once you can no longer change what the run was, never at STOP, so a run you are
+      about to mark a Walk cannot graduate anything. Granted forwards only and never taken back.
+    - **Tests**: The one workout that exists to answer a Stage's requirement — a 5K flat out, no
+      warm-up or cool-down. The app says one is due three weeks after the last, and holds off while
+      your Form is low. It is a prompt, never a gate: it stays pickable either way.
+    - **Prescriptions**: After a run the AI coach writes the intervals and target zone for your next
+      **Long** run, and only that — it prescribes work, it does not configure the app. It is told
+      your effort ratings and notes, the weather, and where you stand against your Goals, and it
+      holds off prescribing more when you are carrying too much fatigue. A prescription stands on the
+      runs it was shown, so deleting one of them takes it back to the previous one.
+    - **Debrief**: The sentences shown after a run. One slot, two writers, and the card says which —
+      the coach explains its prescription, and the app writes its own for the things that are not the
+      coach's to judge, such as a Stage granted or a Test that missed its bar.
+- **Progress & Training Load**:
+    - **Fitness, Fatigue and Form**: Fitness is your Effort Scores averaged over 42 days, Fatigue the
+      same over 7, and Form is yesterday's Fitness less yesterday's Fatigue — how fresh you are this
+      morning, before today's run has cost anything. Above +10 is fresh, below −10 is fatigued.
+    - **Effort Score**: What a run cost you, as one number — every second weighted by the zone it was
+      spent in, and nothing below Zone 1. Never taken off a run's average heart rate, which is what
+      lets a run/walk session score its running as running. Runs finished before the score existed
+      were scored afterwards from the beats they kept, so history carries the same number.
+    - **Weekly volume**: A bar per week, flipped between distance, time and Effort. A week holding a
+      run that wore no strap is marked **partly measured** — its total is a floor, never a ceiling.
+    - **Goals**: A standing target you set yourself — distance, time or number of runs, per week,
+      month or year. Recurring, with no end date, and measured from your runs on read, so editing one
+      re-measures the period you are in. A goal is yours and not the plan's: it graduates no Stage.
+    - **Max HR card**: When a run's peak beats the maximum your zones are built on, the card says so
+      and offers to recompute them.
 - **Session Management**:
     - **Phases**: Supports **Warm-up**, **Main Workout**, and **Cool-down** phases.
     - **Run Modes**: Choose between **Treadmill** (HR only) and **Outdoor** (GPS tracking).
@@ -73,6 +161,18 @@ A robust Android application designed to track heart rate (HR) during runs and p
 - **History & Data**:
     - All sessions and high-resolution HR samples are saved locally to a Room database.
     - View past workout summaries including Avg BPM, Max BPM, and **Time in Zones breakdown**.
+    - **The run's own page**: its route drawn on a map and coloured by heart-rate zone, with a
+      fullscreen view; drag across the pace/HR/elevation chart and a dot follows you along the route.
+      History rows carry a route thumbnail and the medals the run took.
+    - **How it felt**: rate the effort out of ten and leave a note — on the sheet at the finish, or on
+      the run's own page for ever afterwards. Your words, kept alongside the run; they never change
+      what your heart rate says about it, and the coach is told them.
+    - **Mark a run a Walk**: one mark on a whole run, never inferred. A walk builds Fitness in full
+      but pays only a quarter of its score into Fatigue, because the fatigue that degrades form is
+      largely mechanical. It counts towards Goals and fills the weekly bars, but takes no record of
+      any kind, completes no prescribed workout and graduates no Stage. Marking one from three weeks
+      ago moves every Fitness, Fatigue and Form number from that day forward — they are a live read
+      of the truth, and the alternative is freezing numbers we know to be wrong.
     - **Share a run** from its detail page, as either file:
         - **Garmin (.fit)** — the run's own summary (distance, duration, moving time, heart rates,
           climb), its own kilometre splits as laps, and a moment per second of the run. A run with no
@@ -93,6 +193,15 @@ A robust Android application designed to track heart rate (HR) during runs and p
       everything GPX can't carry, and a snapshot of the database — to a folder you pick once
       (choose a Drive-synced one for offsite backup). Automatic monthly, keeping the last 3, plus a
       **Back up now** button and the last-backup time.
+    - **Restore**: pick an archive and the app opens the database from it before swapping it in, so a
+      file that cannot be read is refused rather than leaving you with nothing. History restored from
+      an older file is re-banded on the Max HR it was actually recorded under, not today's.
+    - **Run Journal**: the app's own plain-text record of what decided whether a run was recording —
+      the run starting, pausing and stopping, the foreground promotion being taken, refused or handed
+      back, the service coming and going, the strap arriving or being given up on. It exists because
+      Android's log buffer holds about two hours and a run plus the walk home is longer, so the
+      minute that would name a cause had rolled off before anyone looked. Bounded, rolled, and
+      carried in the archive; nothing in the app reads it back to make a decision.
 - **Routes**:
     - **Route library**: Home → Open Routes lists every course you keep, with its distance and its
       elevation gain. A file that carried no heights says so rather than showing 0 m.
@@ -103,6 +212,20 @@ A robust Android application designed to track heart rate (HR) during runs and p
     - Rename and delete. Deleting a route never touches a run: routes and history are unconnected.
     - A file that isn't a GPX, is damaged, or holds no route is refused with a message saying why,
       and nothing is saved.
+- **Segments**:
+    - **Cut one from a run you ran**: Name a stretch of ground — "Cemetery Hill" — marked out on a
+      past run's own track. Never drawn freehand, and never taken across a pause or lost signal,
+      because the straight line over one is ground nothing witnessed. The geometry is copied onto the
+      segment, so deleting the run it came from keeps the place.
+    - **Every crossing timed**: A run holds one effort for each time it went over the stretch. It
+      counts as a crossing if you pass within about thirty metres of the start, stay on the line — a
+      GPS blip flung sideways for a second is forgiven, a shortcut is not — and come out within about
+      thirty metres of the end. The time is the wall clock between the two gate crossings, worked out
+      between the fixes either side of each gate rather than at the nearest one.
+    - **Arrives with its history on it**: Creating a segment measures your whole history against it,
+      so its efforts and its PR are there the moment you save it.
+    - Marking a run a Walk takes its efforts off every segment; unmarking measures them again. A
+      treadmill run holds none, because there is no track to put to the ground.
 - **Device Management**:
     - Prioritizes manually selected BLE devices.
     - Robust background reconnection logic.
@@ -149,7 +272,10 @@ Every second of your session is recorded as an `HrSample`.
 - **Persistence**: 
     - **Room**: Structured workout data (Sessions & Samples).
     - **DataStore**: User preferences and training settings.
-- **Background Work**: Android Foreground Service.
+- **Maps**: Mapbox (route preview, fullscreen, segment cutting).
+- **Charts**: Vico (Compose charting).
+- **AI**: Google Gemini, for the coach's prescriptions and debriefs — opt-in, per-run and overall.
+- **Background Work**: Android Foreground Service, plus WorkManager for the monthly archive.
 - **Protocol**: Bluetooth Low Energy (Standard Heart Rate Profile).
 - **Audio**: Android Text-to-Speech (TTS) with Audio Focus management.
 
