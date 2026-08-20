@@ -90,7 +90,15 @@ fun SessionDetailScreen(
     // Cutting a named stretch of ground out of this Run's track (#69). Null on every Run that has
     // no track to cut one from — a treadmill Run, and history from before #37 — which is what keeps
     // the button off a page with no map above it.
-    onCreateSegment: ((Long) -> Unit)? = null
+    onCreateSegment: ((Long) -> Unit)? = null,
+    // The named ground this Run went over, and where it placed there (#71). Empty for a Run that
+    // crossed none, and for one whose Segments have not been walked against it yet — the card is
+    // simply absent until the pass lands, the same as the medals are.
+    segmentEfforts: List<RunSegmentEffortUi> = emptyList(),
+    // The way to a Segment's own page, which every row of that card is. Null rather than a no-op
+    // default on purpose, the way [onCreateSegment] is: a screen with nowhere to send the runner
+    // draws no card at all rather than rows that look tappable and do nothing.
+    onOpenSegment: ((Long) -> Unit)? = null
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
     // Kept across a rotation or a process death, so a runner who turned the phone sideways to look
@@ -284,6 +292,16 @@ fun SessionDetailScreen(
                     Text("Achievements", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
                     AchievementsCard(achievements = achievements)
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
+
+                // Right after the medals, because it is the same news in a smaller world: what this
+                // Run was worth measured against the runner's own history. Below rather than above,
+                // since the record book is about the whole Run and this is about pieces of it (#71).
+                if (segmentEfforts.isNotEmpty() && onOpenSegment != null) {
+                    Text("Segments", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    RunSegmentsCard(efforts = segmentEfforts, onOpenSegment = onOpenSegment)
                     Spacer(modifier = Modifier.height(24.dp))
                 }
 

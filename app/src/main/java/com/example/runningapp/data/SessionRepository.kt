@@ -2383,6 +2383,18 @@ class SessionRepository(
         statedBestEffortDao?.getForSessionFlow(sessionId) ?: flowOf(emptyList())
 
     /**
+     * The named ground one Run went over, with every rival effort at it (#71) — what the Run's
+     * Segments card is built from.
+     *
+     * Watched rather than read once, for the reason the medals are: a Run opened straight off the
+     * finish line is still being put to the Segments, and a Segment cut this morning is still
+     * walking history behind the page. Empty wherever Segments are not wired, which is the same
+     * thing a Run that crossed none shows.
+     */
+    fun segmentEffortsForRunFlow(sessionId: Long): Flow<List<RunSegmentEffortRow>> =
+        segmentEffortDao?.getEffortsForRunFlow(sessionId) ?: flowOf(emptyList())
+
+    /**
      * States the time a treadmill's console showed for one of the record distances, corrects one
      * already stated, or takes it back (#282).
      *

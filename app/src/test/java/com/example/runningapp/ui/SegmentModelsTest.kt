@@ -131,6 +131,24 @@ class SegmentModelsTest {
     }
 
     @Test
+    fun `two efforts run at the very same instant still settle on one record`() {
+        // The gate crossings are interpolated, so two Runs sharing a start instant to the
+        // millisecond is a freak rather than an impossibility — and a record that swapped between
+        // them from one read to the next would be a PR that flickers. Pinned here as well as for a
+        // Run's own card (#71), because both pages settle it with the one rule.
+        val sameInstant = listOf(
+            effort(2, day = 0, elapsedMillis = 92_000),
+            effort(1, day = 0, elapsedMillis = 92_000),
+        )
+
+        assertEquals(1L, segmentEffortsUi(sameInstant, distanceMeters = 400.0, zone = london).single { it.isRecord }.effortId)
+        assertEquals(
+            1L,
+            segmentEffortsUi(sameInstant.reversed(), distanceMeters = 400.0, zone = london).single { it.isRecord }.effortId,
+        )
+    }
+
+    @Test
     fun `the record is the quickest time ever run at the Segment`() {
         val efforts = listOf(
             effort(1, day = 0, elapsedMillis = 100_000),

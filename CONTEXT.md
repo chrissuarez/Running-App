@@ -233,8 +233,16 @@ walked against history and a finished Run that has never been walked against the
 picked up at the next launch, which is how a Segment cut before efforts existed gets its own, and how
 a walk lost to a process being reclaimed is made good. The matching engine calls one a *traversal*
 until it is written down, because until then it is a finding about a track rather than a row.
+An effort that stands in the quickest three ever run at its Segment holds a **Medal** there — the
+same three metals the record book hands out, and shown in the same discs — which is what a Run's own
+page says about the ground it went over (#71). It is a **Medal** and not an **Achievement**: an
+Achievement is a place at one of the seven **Records**, which are facts about whole Runs, and a
+Segment is not one of them. The places are worked out from the efforts on every read rather than
+banked, so throwing a Run away hands its places straight on to whoever was behind it and no ghost is
+left holding one.
 _Avoid_: Best Effort (a stretch of one Run at a record distance), attempt, lap, and the bare word
-"Effort", which is what the runner rates a Run out of ten.
+"Effort", which is what the runner rates a Run out of ten. A Segment Medal is not an **Achievement**
+and a Segment is not a **Record**.
 
 **Export**:
 A finished Run written out as a file for somewhere else to read (#84, #218). Two
@@ -401,7 +409,10 @@ to every other one.
 _Avoid_: award, badge
 
 **Medal**:
-Where an effort placed: gold, silver or bronze. There is no fourth place.
+Where an effort placed: gold, silver or bronze. There is no fourth place. Handed out at a **Record**,
+where it is banked as an **Achievement**, and at a **Segment**, where it is worked out on read from
+the **Segment Efforts** themselves (#71) — the same three metals in the same discs either way,
+because a place is a place and a runner should not have to learn two of them.
 _Avoid_: rank, position
 
 **Debrief**:
