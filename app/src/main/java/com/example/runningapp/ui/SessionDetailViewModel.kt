@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -85,6 +86,17 @@ class SessionDetailViewModel(
 
     /** What a treadmill Run has been told it holds, as its page watches it (#282). */
     fun statedBestEfforts(sessionId: Long) = sessionRepository.statedBestEffortsFlow(sessionId)
+
+    /**
+     * The Segments this Run went over and where each crossing placed (#71).
+     *
+     * The placing is worked out here rather than in SQL, off the rivals the same read carried, so
+     * the medal on this card and the PR on the Segment's own page are one rule applied once
+     * ([runSegmentEffortsUi]).
+     */
+    fun segmentEfforts(sessionId: Long) =
+        sessionRepository.segmentEffortsForRunFlow(sessionId)
+            .map { rows -> runSegmentEffortsUi(rows, sessionId) }
 
     /**
      * States the time the console showed for one of the record distances, corrects it, or takes it

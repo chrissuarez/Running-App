@@ -88,12 +88,16 @@ private fun AchievementRow(achievement: Achievement) {
  *
  * The number is on it because colour alone cannot be read by everyone who will look at this page,
  * and silver and bronze are not far apart on a small screen at arm's length after a run.
+ *
+ * Shared with the Run's Segments card (#71) rather than drawn again there: a medal for a hill and a
+ * medal for a 5 km are the same claim about the same runner, and two discs would sooner or later be
+ * two different golds on one page.
  */
 @Composable
-private fun MedalDisc(medal: Medal) {
+internal fun MedalDisc(medal: Medal) {
     Box(
         modifier = Modifier
-            .size(28.dp)
+            .size(RunningUiTokens.MedalDiscSize)
             .clip(CircleShape)
             .background(medal.face.color),
         contentAlignment = Alignment.Center
@@ -110,9 +114,9 @@ private fun MedalDisc(medal: Medal) {
 }
 
 /** How a medal is shown and how it is said: its metal, its place, and its name out loud. */
-private data class MedalFace(val color: Color, val place: Int, val spoken: String)
+internal data class MedalFace(val color: Color, val place: Int, val spoken: String)
 
-private val Medal.face: MedalFace
+internal val Medal.face: MedalFace
     get() = when (this) {
         Medal.GOLD -> MedalFace(Color(0xFFD4AF37), 1, "Gold")
         Medal.SILVER -> MedalFace(Color(0xFFB8BCC2), 2, "Silver")

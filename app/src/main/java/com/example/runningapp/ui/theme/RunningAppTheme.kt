@@ -16,6 +16,14 @@ object RunningUiTokens {
     val PagePadding = 16.dp
     val SectionSpacing = 12.dp
     val CardPadding = 14.dp
+    /**
+     * The medal disc on a Run's page, and the gap a row with no medal leaves in its place.
+     *
+     * One number rather than two literals, because the achievements card draws the disc and the
+     * Segments card draws the hole beside it: two figures free to disagree would step the names in
+     * and out down the page, which is exactly what the hole is there to prevent.
+     */
+    val MedalDiscSize = 28.dp
 }
 
 private val DaylightHighContrastColorScheme: ColorScheme = darkColorScheme(

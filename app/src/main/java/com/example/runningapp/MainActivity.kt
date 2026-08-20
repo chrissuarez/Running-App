@@ -824,6 +824,16 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            // The named ground this run went over, and where it placed there (#71).
+                            // Watched for the reason the medals are, and one more of its own: a
+                            // Segment cut this morning is still being walked against history on a
+                            // scope that outlives this page, and its efforts land one run at a time.
+                            val sessionSegmentEfforts by produceState<List<com.example.runningapp.ui.RunSegmentEffortUi>>(initialValue = emptyList(), key1 = sessionId) {
+                                sessionId?.let { id ->
+                                    sessionDetailViewModel.segmentEfforts(id).collect { value = it }
+                                }
+                            }
+
                             // What this run has been told it holds (#282), watched for the same
                             // reason the medals are: stating one re-scores, and the card and the
                             // book underneath it have to arrive at the new answer together.
@@ -894,7 +904,9 @@ class MainActivity : ComponentActivity() {
                                     { id -> navigateTo(Routes.segmentCreate(id)) }
                                 } else {
                                     null
-                                }
+                                },
+                                segmentEfforts = sessionSegmentEfforts,
+                                onOpenSegment = { id -> navigateTo(Routes.segmentDetail(id)) }
                             )
                         }
                         composable(Routes.TRAINING_PLAN) {

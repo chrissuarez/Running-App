@@ -1,5 +1,7 @@
 package com.example.runningapp.ui
 
+import com.example.runningapp.analysis.Medal
+import com.example.runningapp.data.RunSegmentEffortRow
 import com.example.runningapp.data.Segment
 import com.example.runningapp.data.SegmentEffortRow
 import com.example.runningapp.data.formatMinutesPerKm
@@ -105,7 +107,11 @@ fun segmentEffortsUi(
     zone: ZoneId = ZoneId.systemDefault(),
 ): List<SegmentEffortUi> {
     val record = efforts.minWithOrNull(
-        compareBy<SegmentEffortRow> { it.elapsedMillis }.thenBy { it.startedAtMillis }
+        quickestFirst(
+            elapsed = { it.elapsedMillis },
+            startedAt = { it.startedAtMillis },
+            effortId = { it.effortId },
+        )
     )
     return efforts
         // Sorted here as well as in the query behind it, so this says what the page shows rather
@@ -158,3 +164,83 @@ private fun segmentPaceLabel(elapsedMillis: Long, distanceMeters: Double): Strin
 private fun Long.roundedToSeconds(): Long = (this / 1000.0).roundToLong()
 
 private val EFFORT_DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.UK)
+
+
+// --- What a Run's own page says about the Segments it went over (#71) ---
+
+/**
+ * One Segment this Run crossed, as the Run's page prints it.
+ *
+ * [medal] is the effort's place in that Segment's all-time top three, or null outside it — the same
+ * three places, in the same metals, the achievements card hands out for the record book (#49). It is
+ * the reason the card is worth a runner's attention: a list of times they already knew they ran is
+ * not news, and "you have never been quicker up that hill" is.
+ */
+data class RunSegmentEffortUi(
+    val effortId: Long,
+    val segmentId: Long,
+    val segmentName: String,
+    val timeLabel: String,
+    val paceLabel: String,
+    val medal: Medal?,
+)
+
+/**
+ * What one Run is worth at the Segments it went over, placed against every other effort ever run
+ * at them (#71).
+ *
+ * [rows] is every effort at those Segments — this Run's and its rivals' — because a place cannot be
+ * worked out from one Run's own efforts. Only the Run's own come back out; the rest are what decided
+ * the medals.
+ *
+ * Listed in the order the runner went over the ground, so the card reads as the Run did rather than
+ * as a league table. The same Run crossing one Segment twice therefore gets a row each, and can hold
+ * two of the three places itself, which is exactly what happened out on the road.
+ *
+ * A tie leaves the place with the earlier effort, the rule the record book and a Segment's own page
+ * both keep ([segmentEffortsUi]): a place is the runner's until somebody actually beats it, and
+ * matching a time you already ran is not beating it.
+ */
+fun runSegmentEffortsUi(rows: List<RunSegmentEffortRow>, sessionId: Long): List<RunSegmentEffortUi> {
+    val order = quickestFirst<RunSegmentEffortRow>(
+        elapsed = { it.elapsedMillis },
+        startedAt = { it.startedAtMillis },
+        effortId = { it.effortId },
+    )
+    val placesBySegment = rows.groupBy { it.segmentId }
+        .mapValues { (_, atSegment) ->
+            atSegment.sortedWith(order).withIndex().associate { (place, row) -> row.effortId to place }
+        }
+    return rows
+        .filter { it.sessionId == sessionId }
+        .sortedBy { it.startedAtMillis }
+        .map { row ->
+            val place = placesBySegment[row.segmentId]?.get(row.effortId)
+            RunSegmentEffortUi(
+                effortId = row.effortId,
+                segmentId = row.segmentId,
+                segmentName = row.segmentName,
+                timeLabel = formatDuration(row.elapsedMillis.roundedToSeconds()),
+                paceLabel = segmentPaceLabel(row.elapsedMillis, row.distanceMeters),
+                // Off the enum itself, the way the record book decides how deep it goes
+                // ([com.example.runningapp.analysis.Medal]): a list of three written out here
+                // would be a second answer to "how many places are worth a medal".
+                medal = place?.let { Medal.entries.getOrNull(it) },
+            )
+        }
+}
+
+/**
+ * How efforts at one Segment are placed against each other — quickest first, and a tie kept by
+ * whoever ran it first.
+ *
+ * Written once and read by both pages that rank efforts, because a Segment's page calling one time
+ * the PR while the Run's page hands the medal to another would be the same question answered twice.
+ * The effort id is the last word so the order is total: two Runs *can* carry the same start instant,
+ * and an order that left them tied would place them differently on two reads of the same rows.
+ */
+private fun <T> quickestFirst(
+    elapsed: (T) -> Long,
+    startedAt: (T) -> Long,
+    effortId: (T) -> Long,
+): Comparator<T> = compareBy(elapsed).thenBy(startedAt).thenBy(effortId)

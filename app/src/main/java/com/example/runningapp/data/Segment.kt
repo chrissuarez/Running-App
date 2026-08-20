@@ -195,6 +195,28 @@ data class SegmentEffortRow(
     val ranAtUtcOffsetSeconds: Int?,
 )
 
+/**
+ * One effort at a Segment, carrying the Segment with it — what a *Run's* page reads (#71).
+ *
+ * A Segment's own page knows which ground it is looking at; a Run's page does not, so the name and
+ * the length travel on the row. The length is here because the card prints a pace, and a pace is
+ * the elapsed time against the ground it covered.
+ *
+ * These rows are every effort at the Segments the Run crossed, not only the Run's own. A medal is a
+ * claim about all of them — third place means three efforts were quicker — so the rivals have to
+ * arrive in the same read as the efforts they are ranked against, or the card could place a Run
+ * against a leaderboard that had already moved.
+ */
+data class RunSegmentEffortRow(
+    val effortId: Long,
+    val segmentId: Long,
+    val segmentName: String,
+    val distanceMeters: Double,
+    val sessionId: Long,
+    val startedAtMillis: Long,
+    val elapsedMillis: Long,
+)
+
 @Dao
 interface SegmentEffortDao {
 
@@ -219,6 +241,22 @@ interface SegmentEffortDao {
         """
     )
     fun getEffortsFlow(segmentId: Long): Flow<List<SegmentEffortRow>>
+
+    /**
+     * Everything a Run's Segments card needs, in one read (#71): every effort at every Segment this
+     * Run went over — the Run's own, and every rival they are placed against.
+     *
+     * Watched rather than read once, because the card is a leaderboard and a leaderboard moves
+     * under a page that is already open: a Segment cut minutes ago is still walking history on a
+     * scope of its own, and each Run it finds can push this one down a place.
+     *
+     * The rivals are fetched rather than counted in SQL on purpose. A place is decided by a rule
+     * about ties ([com.example.runningapp.ui.runSegmentEffortsUi]) that a Segment's own page already
+     * keeps; written a second time here in SQL it would be free to drift, and the two pages would
+     * then disagree about who holds the record.
+     */
+    @Query(RUN_SEGMENT_EFFORTS_SQL)
+    fun getEffortsForRunFlow(sessionId: Long): Flow<List<RunSegmentEffortRow>>
 
     @Query("DELETE FROM segment_efforts WHERE segmentId = :segmentId AND sessionId = :sessionId")
     suspend fun deleteEffortsOf(segmentId: Long, sessionId: Long)
@@ -246,3 +284,26 @@ interface SegmentEffortDao {
         if (efforts.isNotEmpty()) insertEfforts(efforts)
     }
 }
+
+
+/**
+ * The read behind [SegmentEffortDao.getEffortsForRunFlow], named so a test can put it to a real
+ * SQLite database rather than to a hand-written stand-in that agrees with it by luck.
+ *
+ * A `const` rather than a literal in the annotation for exactly that reason: the medal on a Run's
+ * page is decided by which rows this returns, and a test that retyped the SQL would go on passing
+ * after this one changed.
+ */
+const val RUN_SEGMENT_EFFORTS_SQL: String =
+    """
+        SELECT e.id AS effortId,
+               e.segmentId AS segmentId,
+               g.name AS segmentName,
+               g.distanceMeters AS distanceMeters,
+               e.sessionId AS sessionId,
+               e.startedAtMillis AS startedAtMillis,
+               (e.finishedAtMillis - e.startedAtMillis) AS elapsedMillis
+        FROM segment_efforts e
+        JOIN segments g ON g.id = e.segmentId
+        WHERE e.segmentId IN (SELECT segmentId FROM segment_efforts WHERE sessionId = :sessionId)
+    """
