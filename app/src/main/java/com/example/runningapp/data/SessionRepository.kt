@@ -1926,8 +1926,19 @@ class SessionRepository(
             // worth: re-measuring it whole is the only reading that can say a Record it used to
             // contest is one it no longer does.
             val rebanked = rebankEfforts(sessionIds)
-            repaired = repairRecordBook(losing, remeasured = sessionIds) && rebanked
-            if (losing.isNotEmpty()) refreshHistoryBackup?.invoke()
+            repaired = repairRecordBook(losing, remeasured = sessionIds) && rebanked.landed
+            // A second snapshot, because the one above was taken before either of these ran and is
+            // now behind whatever they wrote. Owed by the re-banking as much as by the mend (#75):
+            // a fourth-place Run marked a Walk moves no medal, so `losing` is empty and the book is
+            // never rebuilt — and its banked rows still went. Restored from a snapshot taken before
+            // that, the Walk would climb back into the Records top ten and its trend, which is the
+            // very thing this change took it out of.
+            //
+            // On what actually moved rather than on having got here at all, because the backup is a
+            // whole copy of history and every edit to a Run's feel or its note comes through this
+            // path. A re-measuring that came back with the same claims has left the snapshot as good
+            // as it was.
+            if (losing.isNotEmpty() || rebanked.movedRows) refreshHistoryBackup?.invoke()
         } finally {
             // Leaving is the same act in reverse, and under the same lock: step out of the count,
             // look around, and hand the mark back only if there is nobody left to speak for. Sampled
@@ -2027,7 +2038,7 @@ class SessionRepository(
      */
     /**
      * Re-takes what [sessionIds] are worth at every Record, replacing whatever was banked for them
-     * (#75). Returns whether it landed.
+     * (#75). Returns whether it landed and whether it moved anything — see [Rebanking].
      *
      * Its own attempt and its own transaction, like [repairRecordBook]: the Runs have already
      * changed by the time this runs, and a re-banking that cannot be written must not take a Walk
@@ -2041,8 +2052,12 @@ class SessionRepository(
      * Whole rather than at named Records, and that is the point of it: only a whole measure can say
      * that a Record the Run used to contest is one it no longer does.
      */
-    private suspend fun rebankEfforts(sessionIds: List<Long>): Boolean {
-        val dao = runEffortDao ?: return true
+    private suspend fun rebankEfforts(sessionIds: List<Long>): Rebanking {
+        val dao = runEffortDao ?: return Rebanking(landed = true, movedRows = false)
+        // Raised outside the `try` and never lowered, because a re-banking that threw on the third
+        // Run has still moved the first two: what is on disk is stale from the first row that
+        // differed, whether or not the rest of the work got there.
+        var movedRows = false
         return try {
             sessionIds.forEach { sessionId ->
                 val session = sessionDao.getSessionById(sessionId)
@@ -2052,17 +2067,37 @@ class SessionRepository(
                 val efforts = session
                     ?.let { effortsAt(it, RecordType.entries, statedEffortsOf(sessionId)) }
                     .orEmpty()
+                val rows = efforts.map { RunEffortRow(sessionId, it.type, it.value) }
                 inTransaction {
+                    // Read inside the same transaction that replaces them, so what is compared is
+                    // what is overwritten. Sets rather than lists: a re-measuring that came back
+                    // with the same claims in another order has moved nothing the runner or the
+                    // Records section could ever see.
+                    if (dao.getEffortsForSession(sessionId).toSet() != rows.toSet()) movedRows = true
                     dao.deleteEffortsForSession(sessionId)
-                    dao.putEfforts(efforts.map { RunEffortRow(sessionId, it.type, it.value) })
+                    dao.putEfforts(rows)
                 }
             }
-            true
+            Rebanking(landed = true, movedRows = movedRows)
         } catch (e: Exception) {
             Log.w("Records", "Could not re-bank what ${sessionIds.size} run(s) are worth", e)
-            false
+            Rebanking(landed = false, movedRows = movedRows)
         }
     }
+
+    /**
+     * What one pass of [rebankEfforts] did: whether it landed, and whether it changed anything (#75).
+     *
+     * Two answers rather than one because they are asked by different callers for different reasons.
+     * [landed] is the debt — a re-banking that could not be written leaves history owing a full
+     * reseed, exactly as a mend that could not be written does. [movedRows] is the snapshot on disk
+     * — the backup is a whole copy of history and taking one is not free, so it is refreshed when
+     * the rows behind the Records section actually moved and not on every change that reaches here.
+     *
+     * A pass can be both: one Run re-banked and the next one thrown on leaves rows moved and the
+     * debt owed at the same time.
+     */
+    private data class Rebanking(val landed: Boolean, val movedRows: Boolean)
 
     private suspend fun repairRecordBook(types: List<RecordType>, remeasured: List<Long>): Boolean {
         if (types.isEmpty()) return true
@@ -2086,12 +2121,19 @@ class SessionRepository(
      * Everything that *changes* the book is one commit, so the book is never half rewritten.
      *
      * A Run that finished while the measuring was going on has already scored itself, and its rows
-     * would be wiped by the rewrite — so the standing rows of any Run this pass did not measure an
-     * effort for are carried in as claims of their own. Their stored value is the effort they were
+     * would be wiped by the rewrite — so the standing rows of any Run this pass cannot have the last
+     * word on are carried in as claims of their own. Their stored value is the effort they were
      * awarded for, so they can be ranked beside the freshly measured ones without measuring again.
-     * "Did not measure an effort for" rather than "did not see": a Run still being recorded when
-     * history was read *is* in the list, and is worth nothing until it finishes — which is exactly
-     * the Run most likely to finish and score itself while this pass is still measuring.
+     *
+     * Which Runs those are is decided by what history looked like when it was read, not by what the
+     * measuring came back with. A Run still being recorded then *is* in the list and is worth
+     * nothing until it finishes — which is exactly the Run most likely to finish and score itself
+     * while this pass is still measuring — so its rows are kept. A Run that was already finished is
+     * answered for by this pass whatever it measured to, including nothing at all, and its standing
+     * rows go. That difference is the whole of it: a Run marked a Walk contests nothing, so it
+     * measures to nothing, and judging the carry-in on emptiness instead would conflate it with the
+     * Run nobody could measure yet and hand its old rows straight back. Its time would return to the
+     * Records section at every reseed and no repeated pass could ever shift it (#75).
      *
      * [remeasured] is the Runs this rebuild was called *for*, whose standing rows are therefore
      * never carried in — the whole point of the pass is to replace them. Without it a Run that now
@@ -2122,13 +2164,17 @@ class SessionRepository(
         // One Run at a time, because a track is thousands of points and the whole history's worth
         // of them at once is not something to hold in memory. Unfinished Runs are in this list and
         // measure to nothing, which is what [bestEffortsOf] says they are worth.
+        val history = sessionDao.getAllSessions()
         val measured = withContext(Dispatchers.Default) {
-            sessionDao.getAllSessions().map { session ->
+            history.map { session ->
                 RunEfforts(session.id, effortsAt(session, types, statedByRun[session.id].orEmpty()))
             }
         }
-        val measuredIds =
-            measured.filter { it.efforts.isNotEmpty() }.map { it.sessionId }.toSet() + remeasured
+        // The Runs this pass has the last word on: the ones history showed as finished when it was
+        // read, whether or not they turned out to be worth anything, plus the ones the rebuild was
+        // called for. Everything else — a Run still being recorded, a Run that appeared after the
+        // read — keeps whatever is standing for it. See the carry-in above.
+        val measuredIds = history.filter { it.isFinished() }.map { it.id }.toSet() + remeasured
 
         var written: List<Achievement>? = null
         inTransaction {
@@ -2160,7 +2206,8 @@ class SessionRepository(
             // The efforts behind the book, rewritten on exactly the terms the book is (#75): the
             // Runs this pass measured, plus what is banked for the Runs it did not — which is the
             // same carry-in, decided by the same [measuredIds], so a Run that finished mid-measure
-            // keeps the rows its own scoring wrote rather than being wiped by this one.
+            // keeps the rows its own scoring wrote rather than being wiped by this one, and a Run
+            // that was measured and found to be worth nothing loses the rows it used to hold.
             val carried = runEffortDao?.getEffortsOfTypes(types)
                 .orEmpty()
                 .filter { it.sessionId !in measuredIds }

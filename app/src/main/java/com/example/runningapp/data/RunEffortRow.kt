@@ -84,6 +84,17 @@ interface RunEffortDao {
     @Query("DELETE FROM run_efforts WHERE sessionId = :sessionId")
     suspend fun deleteEffortsForSession(sessionId: Long)
 
+    /**
+     * What one Run is worth right now, at every Record it holds a claim at.
+     *
+     * Read so a re-measuring can say whether it actually moved anything (#75). Re-banking is a wipe
+     * and a rewrite whatever it finds, so the rows alone cannot tell a caller apart from no change
+     * at all — and the caller that has to know is the one deciding whether the history backup on
+     * disk has gone stale.
+     */
+    @Query("SELECT * FROM run_efforts WHERE sessionId = :sessionId")
+    suspend fun getEffortsForSession(sessionId: Long): List<RunEffortRow>
+
     /** Clears every Run's claim at [types] — the rebuild's own wipe, before it writes them all back. */
     @Query("DELETE FROM run_efforts WHERE type IN (:types)")
     suspend fun deleteEffortsOfTypes(types: List<RecordType>)
