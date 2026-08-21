@@ -74,9 +74,34 @@ data class RecordSlotUi(
  * on, and [RECORDS_MEASURING_MESSAGE] for what the runner is told while it stands.
  */
 data class RecordsGridUi(
-    val slots: List<RecordSlotUi> = emptyList(),
+    /**
+     * The seven Records, or null, which is not the same thing as seven empty ones (#75).
+     *
+     * Null is "the efforts have not come back from Room yet", and it is the state the section opens
+     * in. The distinction has to be carried here because [recordSlots] always hands back all seven
+     * Records whether they have been contested or not: a list of seven slots is therefore a
+     * statement about the runner's history — that they have never run any of these — and a grid
+     * built before that history was read would make exactly that statement, wrongly, on every cold
+     * open of the Progress screen.
+     *
+     * The absence of the slots rather than a flag beside them, the same shape [RecordDetailUi.top]
+     * carries for the same reason: a flag saying "read yet" would be a second answer to a question
+     * the slots already answer, and two answers can disagree. [measuring] is a different fact again
+     * — there the read has answered and the answer is deliberately nothing, which is why the two
+     * appear together as an empty list and a raised flag.
+     */
+    val slots: List<RecordSlotUi>? = null,
     val measuring: Boolean = false,
 )
+
+/**
+ * The Records section the moment it is drawn, before Room has answered (#75).
+ *
+ * Named rather than written out at the call site for [recordDetailNotReadYet]'s reason: "not read
+ * back yet" is one thing and it should have one spelling, so that no screen and no seed has to
+ * decide for itself what an absent grid looks like.
+ */
+fun recordsGridNotReadYet(): RecordsGridUi = RecordsGridUi(slots = null)
 
 /**
  * What the Records section says while history is still being measured against the book (#75).

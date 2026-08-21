@@ -41,8 +41,17 @@ import org.mockito.kotlin.whenever
  * own for a second or two, and blanking the runner's records for a moment after every Run, for ever,
  * would be worse than the bug. What tells the two apart is that a wholesale fill is a fact the
  * database holds while one is under way, rather than a number of debts to be counted — an ordinary
- * Run's scoring never raises it. The last two tests here are what pin that down; see
- * [SessionRepository.recordsBeingMeasuredFlow] for the argument.
+ * Run's scoring never raises it. `one run waiting on its own scoring does not hide the records` is
+ * what pins that down; see [SessionRepository.recordsBeingMeasuredFlow] for the argument.
+ *
+ * **And a third state, which is neither of those (#75):** the efforts have not come back from Room
+ * at all yet. `record_fill` is one small row and answers at once, the efforts are a join over the
+ * whole of history and answer frames later, so there is always a moment on a cold open where
+ * nothing is being measured and nothing has been read. Handing a screen an empty history in that
+ * moment is a statement — seven slots reading "Not run yet", and an "you have never run this"
+ * message on a Record the runner just tapped a time on. The tests from
+ * `the grid says nothing at all until the efforts come back` down are what hold the three apart, and
+ * they stage exactly that order: the fill answers false first, and the efforts do not answer at all.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RecordsViewModelTest {
@@ -57,6 +66,16 @@ class RecordsViewModelTest {
     /** Whether a wholesale fill is outstanding — a var, because the pass that fills hands it back. */
     private val fillOwed = MutableStateFlow(false)
     private val efforts = MutableStateFlow(emptyList<RecordEffortRow>())
+
+    /**
+     * The effort join before it has answered — a stream that has emitted nothing at all (#75).
+     *
+     * A shared flow rather than a state, because that absence is the point: a `MutableStateFlow`
+     * always holds a value and so can only ever stage a table that has already answered, which is
+     * precisely the state this fault was hiding behind. Replay of one so that a collector arriving
+     * after the answer still sees it, as Room's own query does.
+     */
+    private val unansweredEfforts = MutableSharedFlow<List<RecordEffortRow>>(replay = 1)
     private val zoneChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     @Before
@@ -108,8 +127,8 @@ class RecordsViewModelTest {
         advanceUntilIdle()
 
         assertFalse(viewModel.grid.value.measuring)
-        assertEquals(RecordType.entries.size, viewModel.grid.value.slots.size)
-        val fiveK = viewModel.grid.value.slots.first { it.type == RecordType.FASTEST_5K }
+        assertEquals(RecordType.entries.size, viewModel.grid.value.slots?.size)
+        val fiveK = viewModel.grid.value.slots.orEmpty().first { it.type == RecordType.FASTEST_5K }
         assertEquals("25:00", fiveK.best?.valueLabel)
     }
 
@@ -129,7 +148,10 @@ class RecordsViewModelTest {
         // becomes the right answer as of now the moment that Run is scored. Hiding it here would
         // blank the runner's records after every Run they ever do.
         assertFalse(viewModel.grid.value.measuring)
-        assertEquals("25:00", viewModel.grid.value.slots.first { it.type == RecordType.FASTEST_5K }.best?.valueLabel)
+        assertEquals(
+            "25:00",
+            viewModel.grid.value.slots.orEmpty().first { it.type == RecordType.FASTEST_5K }.best?.valueLabel,
+        )
         assertFalse(viewModel.detail(RecordType.FASTEST_5K).first().measuring)
     }
 
@@ -160,11 +182,12 @@ class RecordsViewModelTest {
     }
 
     @Test
-    fun `every reading the view model hands over is an answer, never a page still opening`() =
+    fun `a reading taken while history is being measured is an answer, not a page still opening`() =
         runTest(dispatcher) {
-            // The null above belongs to the screen's opening frame alone. Anything this hands back
-            // has been read off the table, so an empty top ten from here is a real empty Record and
-            // the page is right to say so.
+            // The two bare pages told apart at the view model rather than only in the wording (#75).
+            // Being measured means the table *was* read and the answer is deliberately nothing, so
+            // what comes back is an empty top ten with the flag raised — never the null that means
+            // nothing has been asked yet, which is the state of the test below this one.
             fillOwed.value = true
             val viewModel = viewModel()
             watch(viewModel)
@@ -178,6 +201,84 @@ class RecordsViewModelTest {
             assertEquals(1, read.top?.size)
             assertEquals(null, recordDetailMessage(read))
         }
+
+    @Test
+    fun `the grid says nothing at all until the efforts come back`() = runTest(dispatcher) {
+        // The exact order a cold open of the Progress screen happens in (#75): `record_fill` is one
+        // small row and answers at once with "nothing owed", while the efforts are a join over the
+        // whole of history and land frames later. Before this was one fact, that gap was enough for
+        // the grid to be handed seven slots read off no rows at all — a runner with years of runs
+        // shown "Not run yet" seven times over, for as long as the join took.
+        fillOwed.value = false
+        whenever(runEffortDao.getRecordEffortsFlow()).thenReturn(unansweredEfforts)
+
+        val viewModel = viewModel()
+        watch(viewModel)
+        advanceUntilIdle()
+
+        // Not seven empty slots, and not a measuring section either — nothing has been asked yet,
+        // so the section is not drawn at all until there is something true to draw.
+        assertEquals(recordsGridNotReadYet(), viewModel.grid.value)
+        assertEquals(null, viewModel.grid.value.slots)
+        assertFalse(viewModel.grid.value.measuring)
+
+        // The same fact, said the same way, on the page behind a cell. The screen opens itself on
+        // [recordDetailNotReadYet]; what the view model hands it first must not undo that.
+        val opening = viewModel.detail(RecordType.FASTEST_5K).first()
+        assertEquals(recordDetailNotReadYet(RecordType.FASTEST_5K), opening)
+        assertEquals(null, opening.top)
+        assertEquals(null, recordDetailMessage(opening))
+        assertFalse(opening.measuring)
+    }
+
+    @Test
+    fun `a runner with no history is told so, but only once the efforts have answered`() =
+        runTest(dispatcher) {
+            // The other half of the rule, and the reason the unread state cannot simply be silence
+            // for ever: a genuinely empty table is a real answer and the runner is owed the words.
+            fillOwed.value = false
+            whenever(runEffortDao.getRecordEffortsFlow()).thenReturn(unansweredEfforts)
+
+            val viewModel = viewModel()
+            watch(viewModel)
+            advanceUntilIdle()
+            assertEquals(null, viewModel.grid.value.slots)
+
+            // Room answers, and the answer is "none".
+            unansweredEfforts.emit(emptyList())
+            advanceUntilIdle()
+
+            assertEquals(RecordType.entries.size, viewModel.grid.value.slots?.size)
+            assertTrue(viewModel.grid.value.slots.orEmpty().all { it.best == null })
+            val answered = viewModel.detail(RecordType.FASTEST_5K).first()
+            assertEquals(emptyList<RecordRankedEffortUi>(), answered.top)
+            assertEquals(recordEmptyMessage(RecordType.FASTEST_5K), recordDetailMessage(answered))
+        }
+
+    @Test
+    fun `a record that has been run is never called unrun on the way in`() = runTest(dispatcher) {
+        // The whole point, followed through: the runner taps a cell reading 25:00 and the page must
+        // go from silence to that time, without passing through "you have not covered 5 km in a run
+        // yet" on the way.
+        fillOwed.value = false
+        whenever(runEffortDao.getRecordEffortsFlow()).thenReturn(unansweredEfforts)
+
+        val viewModel = viewModel()
+        watch(viewModel)
+        val seen = mutableListOf<String?>()
+        backgroundScope.launch(dispatcher) {
+            viewModel.detail(RecordType.FASTEST_5K).collect { seen += recordDetailMessage(it) }
+        }
+        advanceUntilIdle()
+
+        unansweredEfforts.emit(listOf(effort(sessionId = 1L, seconds = 1_500.0)))
+        advanceUntilIdle()
+
+        // Every message the page was ever handed: silence, then silence again because there is a
+        // time to print. The empty-record sentence never appears.
+        assertEquals(listOf<String?>(null, null), seen)
+        assertEquals("25:00", viewModel.detail(RecordType.FASTEST_5K).first().top?.first()?.effort?.valueLabel)
+    }
 
     @Test
     fun `a history with nothing owed shows its records`() = runTest(dispatcher) {

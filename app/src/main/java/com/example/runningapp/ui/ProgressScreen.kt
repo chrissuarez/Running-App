@@ -118,7 +118,7 @@ fun ProgressScreen(
      * rows and the curves above them are arithmetic over history, so they arrive by different routes
      * and neither waits on the other.
      */
-    records: RecordsGridUi = RecordsGridUi(),
+    records: RecordsGridUi = recordsGridNotReadYet(),
     /** A Record opened from the grid, which goes to that Record's own page. */
     onOpenRecord: (RecordType) -> Unit = {},
     onBack: () -> Unit,
