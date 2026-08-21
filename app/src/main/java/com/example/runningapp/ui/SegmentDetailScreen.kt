@@ -8,7 +8,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardActions
@@ -37,6 +42,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -45,6 +53,19 @@ import com.example.runningapp.data.Segment
 import com.example.runningapp.data.SegmentEffortRow
 import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.ui.theme.RunningUiTokens
+import androidx.compose.foundation.shape.CircleShape
+import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
+import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
+import com.patrykandpatrick.vico.compose.chart.Chart
+import com.patrykandpatrick.vico.compose.chart.line.lineChart
+import com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec
+import com.patrykandpatrick.vico.compose.m3.style.m3ChartStyle
+import com.patrykandpatrick.vico.compose.style.ProvideChartStyle
+import com.patrykandpatrick.vico.core.axis.AxisItemPlacer
+import com.patrykandpatrick.vico.core.axis.AxisPosition
+import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
+import com.patrykandpatrick.vico.core.entry.ChartEntryModelProducer
+import com.patrykandpatrick.vico.core.entry.entryOf
 
 /**
  * How tall the map is.
@@ -75,6 +96,7 @@ fun SegmentDetailScreen(
     efforts: List<SegmentEffortRow>,
     onRename: (Segment, String) -> Unit,
     onDelete: (Segment) -> Unit,
+    onOpenRun: (Long) -> Unit,
     onBack: () -> Unit,
 ) {
     var renaming by rememberSaveable { mutableStateOf(false) }
@@ -119,6 +141,8 @@ fun SegmentDetailScreen(
             segmentEffortsUi(efforts, segment.distanceMeters)
         }
         val record = remember(shown) { segmentRecordOf(shown) }
+        val ranked = remember(shown) { segmentTopEfforts(shown) }
+        val trend = remember(shown) { segmentTrendPoints(shown) }
 
         LazyColumn(
             modifier = Modifier
@@ -190,8 +214,39 @@ fun SegmentDetailScreen(
                 }
             }
 
-            items(shown, key = { it.effortId }) { effort ->
-                SegmentEffortRowUi(effort)
+            if (trend.isNotEmpty()) {
+                item {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
+                            Text(
+                                text = SEGMENT_TREND_TITLE,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(
+                                text = SEGMENT_TREND_SUBTITLE,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            SegmentTrendChart(points = trend)
+                        }
+                    }
+                }
+            }
+
+            if (ranked.isNotEmpty()) {
+                item {
+                    Text(
+                        text = segmentTopTitle(shown.size),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            items(ranked, key = { it.effort.effortId }) { placed ->
+                SegmentRankedEffortRow(placed = placed, onOpen = { onOpenRun(placed.effort.sessionId) })
             }
         }
     }
@@ -220,18 +275,52 @@ fun SegmentDetailScreen(
 }
 
 /**
- * One effort in the list: when it was run, how long it took, and how quick that was.
+ * One effort in the ranked list: where it placed, when it was run, how quick it was, and the time.
  *
- * The time is the column on its own at the end, because it is the number the runner is scanning the
- * list for; the date and the pace read as one line under each other so the row survives a narrow
- * phone at a large text size (#63).
+ * The whole row is a door to the Run it was part of. A time on a hill is not the whole story of the
+ * morning the runner ran it, and the page they would go looking for it on is the Run's own.
+ *
+ * The place is a medal disc in the top three and the bare number below it — the same discs the
+ * record book and a Run's own page hand out (#71), because a place is a place. The time is the
+ * column on its own at the end, because it is the number the runner is scanning the list for; the
+ * date and the pace read as one line under each other so the row survives a narrow phone at a large
+ * text size (#63).
  */
 @Composable
-private fun SegmentEffortRowUi(effort: SegmentEffortUi) {
+private fun SegmentRankedEffortRow(placed: SegmentRankedEffortUi, onOpen: () -> Unit) {
+    val effort = placed.effort
+    val spokenPlace = placed.medal?.let { "${it.face.spoken}, " } ?: "Number ${placed.place}, "
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = RunningUiTokens.MinTouchTarget)
+            .clickable(onClick = onOpen)
+            .semantics {
+                contentDescription =
+                    "$spokenPlace${effort.dateLabel}, ${effort.timeLabel}, ${effort.paceLabel}"
+            },
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (placed.medal != null) {
+            MedalDisc(placed.medal)
+        } else {
+            // The same width the discs take, so the dates line up down the list instead of
+            // stepping in at fourth place.
+            Box(
+                modifier = Modifier
+                    .size(RunningUiTokens.MedalDiscSize)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "${placed.place}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(text = effort.dateLabel, style = MaterialTheme.typography.bodyLarge)
             Text(
@@ -240,15 +329,7 @@ private fun SegmentEffortRowUi(effort: SegmentEffortUi) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (effort.isRecord) {
-            Text(
-                text = "PR",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(end = 8.dp),
-            )
-        }
+        Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = effort.timeLabel,
             style = MaterialTheme.typography.titleMedium,
@@ -256,3 +337,65 @@ private fun SegmentEffortRowUi(effort: SegmentEffortUi) {
         )
     }
 }
+
+/**
+ * The times run at a Segment, over the calendar they were run on (#72).
+ *
+ * Drawn against the day rather than against the effort number, so the gaps between attempts are the
+ * gaps that really happened — see [segmentTrendPoints]. Styled as the Progress screen's charts are:
+ * the Material palette through [m3ChartStyle], three dates along the bottom, no vertical guidelines,
+ * and no scrolling, so the whole of the runner's history at this place is on screen at once.
+ */
+@Composable
+private fun SegmentTrendChart(points: List<SegmentTrendPoint>) {
+    // Handed to the producer as it is built rather than pushed into an empty one afterwards: a Vico
+    // chart measured against an empty model throws, and an effect runs a frame too late (#63).
+    val producer = remember(points) {
+        ChartEntryModelProducer(
+            points.map { entryOf(it.dayOffset.toFloat(), it.seconds.toFloat()) }
+        )
+    }
+
+    val firstDay = points.first().date
+    val dateLabels = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
+        firstDay.plusDays(value.toLong()).format(TrendDateFormat)
+    }
+    val timeLabels = AxisValueFormatter<AxisPosition.Vertical.Start> { value, _ ->
+        segmentTrendTimeLabel(value)
+    }
+    val spacing = segmentTrendLabelSpacing(points)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(TrendChartHeight)
+            .semantics { contentDescription = segmentTrendDescription(points).orEmpty() }
+    ) {
+        ProvideChartStyle(m3ChartStyle()) {
+            Chart(
+                chart = lineChart(),
+                chartModelProducer = producer,
+                startAxis = rememberStartAxis(valueFormatter = timeLabels),
+                bottomAxis = rememberBottomAxis(
+                    valueFormatter = dateLabels,
+                    itemPlacer = AxisItemPlacer.Horizontal.default(
+                        spacing = spacing,
+                        // The half-step in gives the first date the chart's edge to spread into;
+                        // labelled from the very first tick it is the axis's own edge that cuts it.
+                        offset = spacing / 2,
+                        addExtremeLabelPadding = true,
+                    ),
+                    guideline = null,
+                ),
+                chartScrollSpec = rememberChartScrollSpec(isScrollEnabled = false),
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
+/** How tall the trend chart is — the height the Progress screen's charts stand at. */
+private val TrendChartHeight = 200.dp
+
+private val TrendDateFormat: java.time.format.DateTimeFormatter =
+    java.time.format.DateTimeFormatter.ofPattern("d MMM yy", java.util.Locale.UK)

@@ -7,8 +7,10 @@ import com.example.runningapp.data.SegmentEffortRow
 import com.example.runningapp.data.formatMinutesPerKm
 import com.example.runningapp.ranOn
 import com.example.runningapp.segments.SegmentCut
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -84,9 +86,20 @@ data class SegmentEffortUi(
     val effortId: Long,
     val sessionId: Long,
     /** The day the runner ran it, in their own day rather than the phone's (#304). */
+    val date: LocalDate,
     val dateLabel: String,
     val timeLabel: String,
     val paceLabel: String,
+    /**
+     * What the effort took, kept beside the words it was printed as.
+     *
+     * The page ranks these efforts and charts them as well as listing them (#72), and every one of
+     * those readings has to settle a tie the same way. Carrying the numbers on the row the page
+     * already holds is what makes that one answer rather than three readings of the same rows taken
+     * a moment apart.
+     */
+    val elapsedMillis: Long,
+    val startedAtMillis: Long,
     /** Whether this is the quickest of them all — the one the page calls the PR. */
     val isRecord: Boolean,
 )
@@ -118,14 +131,16 @@ fun segmentEffortsUi(
         // than inheriting it from whichever reader happens to have supplied the rows.
         .sortedByDescending { it.startedAtMillis }
         .map { effort ->
+            val day = ranOn(effort.startedAtMillis, effort.ranAtUtcOffsetSeconds, zone)
             SegmentEffortUi(
                 effortId = effort.effortId,
                 sessionId = effort.sessionId,
-                dateLabel = EFFORT_DATE_FORMAT.format(
-                    ranOn(effort.startedAtMillis, effort.ranAtUtcOffsetSeconds, zone)
-                ),
+                date = day,
+                dateLabel = EFFORT_DATE_FORMAT.format(day),
                 timeLabel = formatDuration(effort.elapsedMillis.roundedToSeconds()),
                 paceLabel = segmentPaceLabel(effort.elapsedMillis, distanceMeters),
+                elapsedMillis = effort.elapsedMillis,
+                startedAtMillis = effort.startedAtMillis,
                 isRecord = effort.effortId == record?.effortId,
             )
         }
@@ -244,3 +259,166 @@ private fun <T> quickestFirst(
     startedAt: (T) -> Long,
     effortId: (T) -> Long,
 ): Comparator<T> = compareBy(elapsed).thenBy(startedAt).thenBy(effortId)
+
+
+// --- The full trophy view: the all-time top ten, and the trend behind it (#72) ---
+
+/** How deep the ranked list goes. */
+const val SEGMENT_TOP_COUNT: Int = 10
+
+/**
+ * One effort in the ranked list: where it placed, and the row the page already built for it.
+ *
+ * [medal] is the top three, in the same three metals a Run's own card and the record book hand out
+ * (see [runSegmentEffortsUi]) — a place is a place, and a runner should not have to learn two of
+ * them. Below third there is no metal, only the number.
+ */
+data class SegmentRankedEffortUi(
+    val place: Int,
+    val medal: Medal?,
+    val effort: SegmentEffortUi,
+)
+
+/**
+ * The quickest efforts ever run at a Segment, best first, cut at [limit].
+ *
+ * Ranked off the list [segmentEffortsUi] built rather than off the rows behind it, so the PR card at
+ * the top of the page and the gold disc in this list cannot disagree: they are one reading of one
+ * list. A tie keeps the earlier effort ahead, the rule the record book keeps — matching a time you
+ * already ran is not beating it.
+ */
+fun segmentTopEfforts(
+    efforts: List<SegmentEffortUi>,
+    limit: Int = SEGMENT_TOP_COUNT,
+): List<SegmentRankedEffortUi> = efforts
+    .sortedWith(
+        quickestFirst(
+            elapsed = { it.elapsedMillis },
+            startedAt = { it.startedAtMillis },
+            effortId = { it.effortId },
+        )
+    )
+    .take(limit)
+    .mapIndexed { index, effort ->
+        SegmentRankedEffortUi(
+            place = index + 1,
+            // Off the enum itself, the way the record book decides how deep the metals go
+            // ([com.example.runningapp.analysis.Medal]).
+            medal = Medal.entries.getOrNull(index),
+            effort = effort,
+        )
+    }
+
+/**
+ * What the ranked list is called, which depends on whether it is leaving anything out.
+ *
+ * A page holding every effort there has ever been must not call itself a top ten: that would tell
+ * the runner something was cut when nothing was, and send them hunting for a rest of the list that
+ * does not exist. Where efforts really are left out, the count says how many, because "top 10" out
+ * of eleven and out of two hundred are very different facts about the same ten times.
+ */
+fun segmentTopTitle(total: Int, limit: Int = SEGMENT_TOP_COUNT): String =
+    if (total <= limit) "Every effort, quickest first"
+    else "Top $limit of ${segmentEffortCountLabel(total)}"
+
+/** One day on the trend chart: when it was, how far into the chart it sits, and what it took. */
+data class SegmentTrendPoint(
+    val effortId: Long,
+    val date: LocalDate,
+    /** Days since the first point, which is the x the chart is drawn against. */
+    val dayOffset: Int,
+    val seconds: Long,
+    val dateLabel: String,
+    val timeLabel: String,
+)
+
+/**
+ * The trend of the times at a Segment, oldest first — one point per day, at that day's quickest.
+ *
+ * One point per day and not one per effort, because the x axis is the calendar: two efforts on one
+ * date have nowhere to sit apart on it, and the quickest is the time the runner would quote for that
+ * day anyway. Every effort is still in the list under the chart.
+ *
+ * Placed by the calendar rather than evenly, so a two-year gap is drawn as a two-year gap. Even
+ * spacing would make the chart's own claim — whether the runner is getting quicker across months and
+ * years — a lie about their own history.
+ *
+ * Empty where there is no trend to draw: fewer than two days with an effort on them. One point is
+ * not a line, and two points sharing a date is a vertical mark rather than a trend. The page shows
+ * the list on its own in both cases rather than an empty frame that reads as a chart that broke.
+ */
+fun segmentTrendPoints(efforts: List<SegmentEffortUi>): List<SegmentTrendPoint> {
+    val quickest = quickestFirst<SegmentEffortUi>(
+        elapsed = { it.elapsedMillis },
+        startedAt = { it.startedAtMillis },
+        effortId = { it.effortId },
+    )
+    val bestPerDay = efforts
+        .groupBy { it.date }
+        .mapValues { (_, onTheDay) -> onTheDay.sortedWith(quickest).first() }
+        .toSortedMap()
+    if (bestPerDay.size < 2) return emptyList()
+
+    val firstDay = bestPerDay.firstKey()
+    return bestPerDay.map { (date, effort) ->
+        SegmentTrendPoint(
+            effortId = effort.effortId,
+            date = date,
+            dayOffset = ChronoUnit.DAYS.between(firstDay, date).toInt(),
+            seconds = effort.elapsedMillis.roundedToSeconds(),
+            dateLabel = effort.dateLabel,
+            timeLabel = effort.timeLabel,
+        )
+    }
+}
+
+/**
+ * The whole number of days the chart's x axis steps in.
+ *
+ * Vico steps an axis by the greatest common divisor of the gaps between its x values rather than by
+ * one, so the label spacing has to be counted in those steps and not in points. Six efforts a
+ * fortnight apart are six ticks a fortnight wide, not seventy daily ones.
+ */
+fun segmentTrendStepDays(points: List<SegmentTrendPoint>): Int {
+    var step = 0
+    points.forEach { step = greatestCommonDivisor(step, it.dayOffset) }
+    return step.coerceAtLeast(1)
+}
+
+/**
+ * A label every so many ticks, aiming for three dates along the bottom whatever the span.
+ *
+ * Three and not more for the reason the Progress screen's charts settled on three: at four, a month
+ * name is cut short on a 320dp screen at 1.3× text (#63).
+ */
+fun segmentTrendLabelSpacing(points: List<SegmentTrendPoint>): Int {
+    if (points.isEmpty()) return 1
+    val ticks = (points.last().dayOffset / segmentTrendStepDays(points)) + 1
+    return (ticks / 3).coerceAtLeast(1)
+}
+
+/**
+ * What the trend chart is, said in one sentence for a runner who is being read the page.
+ *
+ * A chart is a picture, and a picture says nothing out loud. The two ends are what the chart is for
+ * — the stretch of calendar it covers, and whether the time at the end of it is quicker than the
+ * time at the start.
+ */
+fun segmentTrendDescription(points: List<SegmentTrendPoint>): String? {
+    if (points.isEmpty()) return null
+    val first = points.first()
+    val last = points.last()
+    return "Your time here from ${first.dateLabel} to ${last.dateLabel}: " +
+        "${first.timeLabel} then, ${last.timeLabel} most recently."
+}
+
+/** The seconds up the side of the chart, read back as the times they are. */
+fun segmentTrendTimeLabel(seconds: Float): String = formatDuration(seconds.roundToLong())
+
+/** What the runner is told the trend chart is for, under its heading. */
+const val SEGMENT_TREND_TITLE: String = "Your times here"
+
+/** Why the chart holds fewer points than the list below it does. */
+const val SEGMENT_TREND_SUBTITLE: String = "Your quickest time on each day you ran it."
+
+private tailrec fun greatestCommonDivisor(a: Int, b: Int): Int = if (b == 0) a else greatestCommonDivisor(b, a % b)
