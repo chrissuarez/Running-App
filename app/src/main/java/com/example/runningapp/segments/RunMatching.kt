@@ -127,6 +127,11 @@ fun runShapeOf(measured: MeasuredTrack): RunShape? {
 /**
  * Whether two Runs went over the same ground, the same way round, for the same distance.
  *
+ * "The same way round" is a claim about the ground, not about the runner's heading. A loop run
+ * backwards has its middle waypoints mirrored and is refused; an *out-and-back* run the other way
+ * round is not, and must not be — reversing an out-and-back retraces the very same line past the
+ * very same places, so the two Runs really are the same route and the runner would say so.
+ *
  * Symmetric, and every tolerance is taken against the shorter of the two, so a Run cannot match a
  * second one and be refused by it. That matters more than it looks: the group a page shows is every
  * Run that matches the one being looked at, and a rule that answered differently depending on which

@@ -30,6 +30,11 @@ import com.example.runningapp.ui.theme.RunningUiTokens
  * count is worth having: repetition on its own is a habit, and repetition with a pace line through
  * it is progress.
  *
+ * The count arrives before the chart can. A group whose Runs all fall on one day, or where only one
+ * of them ever measured a pace, is a real group with nothing to draw a line between
+ * ([bestEachDay]) — so the card says the number and leaves the chart out, rather than showing an
+ * empty frame that reads as a chart that broke.
+ *
  * The whole card is the door to the list, and it is held to the app's minimum touch height for the
  * reason every row on this page is — it is tapped after a run, with cold hands.
  */

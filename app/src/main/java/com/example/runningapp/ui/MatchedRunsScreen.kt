@@ -25,6 +25,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
@@ -73,6 +74,12 @@ fun MatchedRunsScreen(
             return@Scaffold
         }
 
+        // Sorted once per group rather than on every recomposition, the way the card remembers its
+        // trend: newest first here and oldest first on the chart is not a disagreement — a chart is
+        // a history and reads left to right, and a list is where a runner looks for what happened
+        // last.
+        val newestFirst = remember(matched.runs) { matched.runs.sortedByDescending { it.startTime } }
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -88,7 +95,7 @@ fun MatchedRunsScreen(
                 )
             }
 
-            items(matched.runs.sortedByDescending { it.startTime }, key = { it.sessionId }) { run ->
+            items(newestFirst, key = { it.sessionId }) { run ->
                 MatchedRunRow(run = run, onOpen = { onOpenRun(run.sessionId) })
             }
         }

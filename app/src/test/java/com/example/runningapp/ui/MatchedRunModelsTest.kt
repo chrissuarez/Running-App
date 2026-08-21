@@ -126,7 +126,7 @@ class MatchedRunModelsTest {
 
     @Test
     fun `the count says how many have gone this way`() {
-        assertEquals("1 run on this route", matchedRunCountLabel(1))
+        assertEquals("2 runs on this route", matchedRunCountLabel(2))
         assertEquals("14 runs on this route", matchedRunCountLabel(14))
     }
 

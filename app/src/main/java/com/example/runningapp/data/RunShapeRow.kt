@@ -93,22 +93,7 @@ interface RunShapeDao {
      * rows are small — five places and two numbers — so this is a handful of kilobytes for a
      * runner's whole life.
      */
-    @Query(
-        """
-        SELECT r.sessionId AS sessionId,
-               r.shape AS shape,
-               r.distanceMeters AS distanceMeters,
-               s.startTime AS startTime,
-               s.ranAtUtcOffsetSeconds AS ranAtUtcOffsetSeconds,
-               s.durationSeconds AS durationSeconds,
-               s.movingTimeSeconds AS movingTimeSeconds,
-               s.avgPaceMinPerKm AS avgPaceMinPerKm
-        FROM run_shapes r
-        JOIN sessions s ON s.id = r.sessionId
-        WHERE r.shape IS NOT NULL
-        ORDER BY s.startTime ASC
-        """
-    )
+    @Query(SHAPED_RUNS_SQL)
     fun getShapedRunsFlow(): Flow<List<RunShapeCandidate>>
 
     /** Writes what one Run's shape is now, over whatever the last reading of it said. */
@@ -126,9 +111,6 @@ interface RunShapeDao {
     @Query("DELETE FROM run_shapes WHERE sessionId = :sessionId")
     suspend fun forgetShape(sessionId: Long)
 }
-
-/** The shape a row holds, or null where the row says this Run holds none. */
-fun RunShapeRow.decoded(): RunShape? = decodeRunShape(shape, distanceMeters)
 
 /** The shape a candidate row holds, or null where what it holds is not a whole shape. */
 fun RunShapeCandidate.decoded(): RunShape? = decodeRunShape(shape, distanceMeters)
@@ -158,3 +140,29 @@ private fun decodeRunShape(polyline: String?, distanceMeters: Double): RunShape?
         distanceMeters = distanceMeters,
     )
 }
+
+/**
+ * The read behind [RunShapeDao.getShapedRunsFlow], named so a test can put it to a real SQLite
+ * database rather than to a hand-written stand-in that agrees with it by luck (#73).
+ *
+ * A `const` rather than a literal in the annotation for [RUN_SEGMENT_EFFORTS_SQL]'s reason: what a
+ * runner is told about their own repetition is decided by which rows this returns, and a test that
+ * retyped the SQL would go on passing after this one changed. The delete case is the sharper half —
+ * a Run leaving its group is a promise the *schema* keeps ([RunShapeRow]'s cascade), which no fake
+ * DAO can be asked about at all.
+ */
+const val SHAPED_RUNS_SQL: String =
+    """
+        SELECT r.sessionId AS sessionId,
+               r.shape AS shape,
+               r.distanceMeters AS distanceMeters,
+               s.startTime AS startTime,
+               s.ranAtUtcOffsetSeconds AS ranAtUtcOffsetSeconds,
+               s.durationSeconds AS durationSeconds,
+               s.movingTimeSeconds AS movingTimeSeconds,
+               s.avgPaceMinPerKm AS avgPaceMinPerKm
+        FROM run_shapes r
+        JOIN sessions s ON s.id = r.sessionId
+        WHERE r.shape IS NOT NULL
+        ORDER BY s.startTime ASC
+    """

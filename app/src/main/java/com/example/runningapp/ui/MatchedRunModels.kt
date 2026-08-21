@@ -108,9 +108,13 @@ fun matchedRunsUi(
  */
 fun matchedRunHeadline(position: Int): String = "Your ${ordinal(position)} run on this route"
 
-/** How many Runs have gone this way at all, under the headline. */
-fun matchedRunCountLabel(count: Int): String =
-    if (count == 1) "1 run on this route" else "$count runs on this route"
+/**
+ * How many Runs have gone this way at all, under the headline.
+ *
+ * Always plural, because a group is never one: a Run nobody has repeated has no group and no card
+ * ([matchedRunsUi]). A singular branch here would be a sentence nothing can print.
+ */
+fun matchedRunCountLabel(count: Int): String = "$count runs on this route"
 
 /** What the runner is told the card is, above the chart. */
 const val MATCHED_RUNS_TITLE: String = "Matched runs"
@@ -136,22 +140,20 @@ data class MatchedRunTrendPoint(
  * The pace of a group's Runs over the calendar they were run on, oldest first — one point per day,
  * at that day's quickest.
  *
- * The same three rules the Segment trend keeps ([segmentTrendPoints]), and for its reasons. One
- * point per day, because two Runs on one date have nowhere to sit apart on a calendar and the
- * quickest is the pace the runner would quote for that day. Placed by the calendar rather than
- * evenly, so a two-year gap is drawn as a two-year gap. Empty below two days, because one point is
- * not a line and two points sharing a date is a vertical mark rather than a trend.
+ * One point per day, and nothing at all below two days — the shared rule ([bestEachDay]), which the
+ * Segment trend keeps too. Placed by the calendar rather than evenly, so a two-year gap is drawn as
+ * a two-year gap.
  *
  * A Run with no pace is left out of the chart and stays in the list. It is not a slow Run; it is a
  * Run nothing measured a pace for, and plotting it as a zero would draw a cliff the runner never ran.
  */
 fun matchedRunTrendPoints(runs: List<MatchedRunUi>): List<MatchedRunTrendPoint> {
-    val bestPerDay = runs
-        .filter { it.paceMinPerKm != null }
-        .groupBy { it.date }
-        .mapValues { (_, onTheDay) -> onTheDay.minWithOrNull(quickestPaceFirst)!! }
-        .toSortedMap()
-    if (bestPerDay.size < 2) return emptyList()
+    val bestPerDay = bestEachDay(
+        runs.filter { it.paceMinPerKm != null },
+        day = { it.date },
+        better = quickestPaceFirst,
+    )
+    if (bestPerDay.isEmpty()) return emptyList()
 
     val firstDay = bestPerDay.firstKey()
     return bestPerDay.map { (date, run) ->
