@@ -39,15 +39,15 @@ fun RecordsCard(
     modifier: Modifier = Modifier,
 ) {
     val slots = grid.slots
-    // Nothing at all until the rows have been read, rather than seven empty slots: [recordSlots]
-    // always hands back all seven, so an empty list is the moment before the first read and not a
-    // runner with no records. A grid that filled in a beat later would read as a record lost.
+    // Nothing at all until the rows have been read, rather than seven empty slots: null is the
+    // moment before the first read and not a runner with no records ([RecordsGridUi.slots]). A grid
+    // that filled in a beat later would read as a record lost.
     //
     // Unless history is being measured (#75), which is the one case where an empty grid is a fact
     // worth printing rather than a moment to wait through: it lasts minutes, and a runner who came
     // to Progress in the middle of it needs to be told their records are on their way rather than
     // shown a page with the section missing.
-    if (slots.isEmpty() && !grid.measuring) return
+    if (slots.isNullOrEmpty() && !grid.measuring) return
     Card(modifier = modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -70,7 +70,7 @@ fun RecordsCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            slots.chunked(2).forEach { pair ->
+            slots.orEmpty().chunked(2).forEach { pair ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
