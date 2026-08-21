@@ -1050,6 +1050,9 @@ class MainActivity : ComponentActivity() {
                                     segmentsViewModel.delete(row)
                                     navigateTo(Routes.SEGMENTS)
                                 },
+                                // A time on a hill belongs to a morning, and the page that holds
+                                // the morning is the Run's own (#72).
+                                onOpenRun = { runId -> navigateTo(Routes.sessionDetail(runId)) },
                                 onBack = { navigateTo(Routes.SEGMENTS) }
                             )
                         }

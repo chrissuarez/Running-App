@@ -239,7 +239,10 @@ page says about the ground it went over (#71). It is a **Medal** and not an **Ac
 Achievement is a place at one of the seven **Records**, which are facts about whole Runs, and a
 Segment is not one of them. The places are worked out from the efforts on every read rather than
 banked, so throwing a Run away hands its places straight on to whoever was behind it and no ghost is
-left holding one.
+left holding one. A Segment's own page ranks its efforts quickest first and stops at ten, and draws
+the times behind them against the calendar they were run on (#72) — one point per day, at that day's
+quickest, because two efforts sharing a date have nowhere to sit apart on a calendar. A Segment run
+on fewer than two days has no trend to draw and is shown as a list alone.
 _Avoid_: Best Effort (a stretch of one Run at a record distance), attempt, lap, and the bare word
 "Effort", which is what the runner rates a Run out of ten. A Segment Medal is not an **Achievement**
 and a Segment is not a **Record**.
