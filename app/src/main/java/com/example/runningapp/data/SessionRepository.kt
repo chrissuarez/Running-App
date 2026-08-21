@@ -542,6 +542,16 @@ class SessionRepository(
      */
     private val runEffortDao: RunEffortDao? = null,
     /**
+     * Whether the whole of history is part-way through being measured against the book (#75) — see
+     * [RecordFillRow].
+     *
+     * Null on the same terms as the rows it speaks for: wherever records are not wired there is no
+     * fill to be part-way through, and the Records section is handed a history that is whole because
+     * it is empty. Read by exactly one screen and written by exactly the two passes that can pay a
+     * fill off.
+     */
+    private val recordFillDao: RecordFillDao? = null,
+    /**
      * The runner's own Goals, read so the coach can be told where they stand (#83).
      *
      * Null wherever goals are not wired — tests, and the archive's read-only container — and the
@@ -907,38 +917,53 @@ class SessionRepository(
      * Whether history is being measured against the record book wholesale right now — which is when
      * the Records section must not call anything it can see an all-time best (#75).
      *
-     * `run_efforts` is filled a Run at a time by the launch pass ([scoreMissedRecords]) and by the
-     * seeding pass ([seedRecordsFromHistory]), and both of those are minutes of work over a long
-     * history. The upgrade that added the table cleared every Run's scoring mark to raise exactly
-     * that work (`MIGRATION_36_37`), so the first launch after it has a table holding a slice of
-     * history — and a top ten read off a slice is a top ten with the wrong runs in it, handing
-     * display medals to Runs that do not really place. The record book itself is not in that
-     * position: it keeps its medals across the upgrade and is only re-confirmed. This is about the
-     * deeper rows underneath it.
+     * `run_efforts` is filled a Run at a time by the launch pass ([scoreMissedRecords]), and over a
+     * long history that is minutes of work. The upgrade that added the table cleared every Run's
+     * scoring mark to raise exactly that work (`MIGRATION_36_37`), so the first launch after it has
+     * a table holding a slice of history — and a top ten read off a slice is a top ten with the
+     * wrong runs in it, handing display medals to Runs that do not really place. The record book
+     * itself is not in that position: it keeps its medals across the upgrade and is only
+     * re-confirmed. This is about the deeper rows underneath it.
      *
-     * **More than one Run owing a scoring is the key, and one is not.** Every ordinary path raises
-     * this debt on a single Run and hands it back in the same breath: a Run finishing scores itself,
-     * and a Stated Distance or a stated Best Effort lifts that one Run's mark before it writes and
-     * gives it back after ([writeAndScore]). So the debt in normal use is at most one Run deep, for
-     * as long as one scoring takes — and covering the Records section up for a moment after every
-     * Run, for ever, would be a worse thing than the bug this closes. Only a wholesale reset raises
-     * it on many Runs at once: the two migrations that cleared the column across all of history
-     * (v21 to v22, and v36 to v37), and a restored archive, whose history arrives unseeded and is
-     * measured by the seeding pass in one go.
+     * **The fill is asked about, not counted.** How many Runs owe a scoring cannot answer this at
+     * any threshold: one debt is an ordinary Run finishing on a Tuesday, whose records must not be
+     * blanked for the seconds its own scoring takes, and one debt is also the entire migration
+     * backfill on a history with a single Run in it, where nothing the section could draw has been
+     * measured yet. Same count, opposite answers. So the fill is written down as its own fact where
+     * it starts and lowered where it finishes ([RecordFillRow]), and this reads that.
      *
-     * A history that is one Run short is also, deliberately, not hidden: what stands is then every
-     * claim but the newest, which is the right answer as of a moment ago and becomes the right
-     * answer as of now the moment that Run is scored. What cannot be shown is a *slice*.
+     * What follows from reading the fact rather than the debts is the part worth stating plainly:
+     * an ordinary Run awaiting its own scoring changes nothing here. What stands is then every claim
+     * but the newest, which was the right answer a moment ago and becomes the right answer as of now
+     * the moment that Run is scored. What can never be shown is a *slice*.
      *
-     * The one case this reads as measuring when nothing is being measured is a phone that was killed
-     * between two Runs finishing and their scorings landing, twice over, leaving two debts standing
-     * at the next launch — and the same launch's pass pays them off in the seconds it takes to
-     * measure two tracks, which is the truthful thing to have said in the meantime anyway.
+     * False wherever no record fill is wired, which is the same picture as a history nobody is
+     * measuring — because there is none.
      */
     fun recordsBeingMeasuredFlow(): Flow<Boolean> =
-        sessionDao.countSessionsMissingRecordScoringFlow()
-            .map { owed -> owed > 1 }
-            .distinctUntilChanged()
+        recordFillDao?.wholesaleFillOwedFlow()?.distinctUntilChanged() ?: flowOf(false)
+
+    /**
+     * Hands back the wholesale-fill debt, once the pass that was paying it has been through the
+     * whole of the work it found (#75).
+     *
+     * Asked before it is written, so a launch that was owed nothing does not wake the Records
+     * section with a write that changes no answer.
+     *
+     * **After the sweep, not after a perfect sweep.** A Run the pass could not measure — an
+     * unreadable track, a write that threw — keeps its own debt and is tried again at the next
+     * launch, and that is the right place for it. But the fill is a statement about the *table*,
+     * and once every owed Run has been offered to the book the table is as whole as this history
+     * can make it: one Run's claims missing from a top ten is a small, self-mending wrong, while a
+     * Records section hidden for ever behind a Run that will never measure is a permanent one. The
+     * runner would be left with a screen that says "still measuring your runs" until they delete
+     * the Run, with nothing on it to tell them why.
+     */
+    private suspend fun handBackTheWholesaleFill() {
+        val dao = recordFillDao ?: return
+        if (!dao.wholesaleFillOwed()) return
+        dao.put(RecordFillRow(wholesaleFillOwed = false))
+    }
 
     /**
      * Every scored Run in history, oldest first — what the Progress screen builds its curves from
@@ -1720,7 +1745,6 @@ class SessionRepository(
         val settings = settingsRepository ?: return
         if (!settings.userSettingsFlow.first().historyRecordsSeeded) return
         val sessionIds = sessionDao.getSessionIdsMissingRecordScoring()
-        if (sessionIds.isEmpty()) return
         var scored = 0
         sessionIds.forEach { sessionId ->
             try {
@@ -1730,7 +1754,18 @@ class SessionRepository(
                 Log.w("Records", "Could not score run $sessionId; leaving it for next launch", e)
             }
         }
-        Log.d("Records", "Scored $scored of ${sessionIds.size} run(s) the book had missed")
+        if (sessionIds.isNotEmpty()) {
+            Log.d("Records", "Scored $scored of ${sessionIds.size} run(s) the book had missed")
+        }
+        // This pass is the one that pays off a wholesale fill, so it is the one that hands the debt
+        // back — and only once it has been through every Run it found, which is why it no longer
+        // returns early on an empty list: a launch that finds nothing owing is a launch that has
+        // just finished the fill, or a launch after one where the migration un-scored nothing at
+        // all. Anything that cuts the loop short — the process reclaimed, the scope cancelled —
+        // leaves the fill standing for the next launch to finish, which is the whole reason the
+        // fact is in the database. See [handBackTheWholesaleFill] for why a Run that could not be
+        // measured does not hold it up.
+        handBackTheWholesaleFill()
     }
 
     /**
@@ -1806,6 +1841,13 @@ class SessionRepository(
                 // enough to exceed it.
                 runsOwedScoring.chunked(MAX_SESSION_IDS_PER_QUERY)
                     .forEach { sessionDao.setRecordsScoredForSessions(it) }
+                // And the wholesale fill with them (#75): this pass rewrote the whole of
+                // `run_efforts` in the transaction that just committed, so whatever fill was
+                // outstanding — the one the v36 to v37 migration raised, or one a restored archive
+                // arrived still owing — has been paid in full by a book built over all of history at
+                // once. On the declining paths above nothing is written and the fill stands, which is
+                // right: the table was left as it was, and as it was is what the debt describes.
+                handBackTheWholesaleFill()
             }
             Log.d("Records", "Seeded the record book from history: ${book.size} medal(s) awarded")
         } catch (e: Exception) {

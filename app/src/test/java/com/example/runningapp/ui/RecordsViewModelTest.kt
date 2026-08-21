@@ -2,6 +2,7 @@ package com.example.runningapp.ui
 
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.data.RecordEffortRow
+import com.example.runningapp.data.RecordFillDao
 import com.example.runningapp.data.RunEffortDao
 import com.example.runningapp.data.SessionDao
 import com.example.runningapp.data.SessionRepository
@@ -36,10 +37,12 @@ import org.mockito.kotlin.whenever
  * it would hand gold to whichever Run happened to be measured first and put runs in fourth place
  * that never placed at all. So the section says what it is doing until the table is whole.
  *
- * The other half of the rule is what the gate must *not* do: a Run finishing raises the same debt
- * on itself for as long as its own scoring takes, and blanking the runner's records for a moment
- * after every Run, for ever, would be worse than the bug. The last two tests here are what pin that
- * down — see [SessionRepository.recordsBeingMeasuredFlow] for the argument.
+ * The other half of the rule is what the gate must *not* do: a Run finishing owes a scoring of its
+ * own for a second or two, and blanking the runner's records for a moment after every Run, for ever,
+ * would be worse than the bug. What tells the two apart is that a wholesale fill is a fact the
+ * database holds while one is under way, rather than a number of debts to be counted — an ordinary
+ * Run's scoring never raises it. The last two tests here are what pin that down; see
+ * [SessionRepository.recordsBeingMeasuredFlow] for the argument.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RecordsViewModelTest {
@@ -49,16 +52,17 @@ class RecordsViewModelTest {
 
     private val sessionDao: SessionDao = mock()
     private val runEffortDao: RunEffortDao = mock()
+    private val recordFillDao: RecordFillDao = mock()
 
-    /** How many finished Runs are owed a scoring right now — a var, because a pass pays them off. */
-    private val owedScorings = MutableStateFlow(0)
+    /** Whether a wholesale fill is outstanding — a var, because the pass that fills hands it back. */
+    private val fillOwed = MutableStateFlow(false)
     private val efforts = MutableStateFlow(emptyList<RecordEffortRow>())
     private val zoneChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
-        whenever(sessionDao.countSessionsMissingRecordScoringFlow()).thenReturn(owedScorings)
+        whenever(recordFillDao.wholesaleFillOwedFlow()).thenReturn(fillOwed)
         whenever(runEffortDao.getRecordEffortsFlow()).thenReturn(efforts)
     }
 
@@ -69,7 +73,7 @@ class RecordsViewModelTest {
     fun `a history part-way through being measured shows no records at all`() = runTest(dispatcher) {
         // The picture the first launch after the upgrade paints: the pass has scored two runs of a
         // long history so far, and those two claims are all the table holds.
-        owedScorings.value = 40
+        fillOwed.value = true
         efforts.value = listOf(effort(sessionId = 1L, seconds = 1_800.0), effort(sessionId = 2L, seconds = 1_700.0))
 
         val viewModel = viewModel()
@@ -92,7 +96,7 @@ class RecordsViewModelTest {
 
     @Test
     fun `the records come back by themselves once the measuring finishes`() = runTest(dispatcher) {
-        owedScorings.value = 40
+        fillOwed.value = true
         val viewModel = viewModel()
         watch(viewModel)
         advanceUntilIdle()
@@ -100,7 +104,7 @@ class RecordsViewModelTest {
 
         // The launch pass works through the history and the table fills.
         efforts.value = listOf(effort(sessionId = 1L, seconds = 1_500.0), effort(sessionId = 2L, seconds = 1_700.0))
-        owedScorings.value = 0
+        fillOwed.value = false
         advanceUntilIdle()
 
         assertFalse(viewModel.grid.value.measuring)
@@ -112,8 +116,9 @@ class RecordsViewModelTest {
     @Test
     fun `one run waiting on its own scoring does not hide the records`() = runTest(dispatcher) {
         // What every ordinary Run looks like for the second or two between STOP and its scoring
-        // landing: one debt, and a table that is whole apart from that Run.
-        owedScorings.value = 1
+        // landing: that Run owes a scoring, and nothing has raised a wholesale fill — the table is
+        // whole apart from that one Run.
+        fillOwed.value = false
         efforts.value = listOf(effort(sessionId = 1L, seconds = 1_500.0))
 
         val viewModel = viewModel()
@@ -129,8 +134,54 @@ class RecordsViewModelTest {
     }
 
     @Test
+    fun `the page a record is opened on says nothing until the efforts come back`() {
+        // The frame between the tap and Room answering (#75). The runner has just tapped a cell
+        // reading "25:00", so the one thing this page must not say is that they have never run 5k.
+        val opening = recordDetailNotReadYet(RecordType.FASTEST_5K)
+        assertEquals(null, opening.top)
+        assertEquals(null, recordDetailMessage(opening))
+
+        // The same page once the read has answered, and answered "none": now the message is owed,
+        // because now it is true.
+        val answeredEmpty = RecordDetailUi(
+            type = RecordType.FASTEST_5K,
+            top = emptyList(),
+            trend = emptyList(),
+            effortCount = 0,
+        )
+        assertEquals(recordEmptyMessage(RecordType.FASTEST_5K), recordDetailMessage(answeredEmpty))
+
+        // And the third bare page: the read answered, deliberately with nothing, because history is
+        // still being measured against the book.
+        assertEquals(
+            RECORDS_MEASURING_MESSAGE,
+            recordDetailMessage(answeredEmpty.copy(measuring = true)),
+        )
+    }
+
+    @Test
+    fun `every reading the view model hands over is an answer, never a page still opening`() =
+        runTest(dispatcher) {
+            // The null above belongs to the screen's opening frame alone. Anything this hands back
+            // has been read off the table, so an empty top ten from here is a real empty Record and
+            // the page is right to say so.
+            fillOwed.value = true
+            val viewModel = viewModel()
+            watch(viewModel)
+            advanceUntilIdle()
+            assertEquals(emptyList<RecordRankedEffortUi>(), viewModel.detail(RecordType.FASTEST_5K).first().top)
+
+            fillOwed.value = false
+            efforts.value = listOf(effort(sessionId = 1L, seconds = 1_500.0))
+            advanceUntilIdle()
+            val read = viewModel.detail(RecordType.FASTEST_5K).first()
+            assertEquals(1, read.top?.size)
+            assertEquals(null, recordDetailMessage(read))
+        }
+
+    @Test
     fun `a history with nothing owed shows its records`() = runTest(dispatcher) {
-        owedScorings.value = 0
+        fillOwed.value = false
         efforts.value = listOf(effort(sessionId = 1L, seconds = 1_500.0))
 
         val viewModel = viewModel()
@@ -151,7 +202,11 @@ class RecordsViewModelTest {
     }
 
     private fun viewModel() = RecordsViewModel(
-        SessionRepository(sessionDao = sessionDao, runEffortDao = runEffortDao),
+        SessionRepository(
+            sessionDao = sessionDao,
+            runEffortDao = runEffortDao,
+            recordFillDao = recordFillDao,
+        ),
         zone = { zone },
         zoneChanges = zoneChanges,
         recordsDispatcher = dispatcher,

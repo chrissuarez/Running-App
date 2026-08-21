@@ -6802,6 +6802,190 @@ class SessionRepositoryTest {
         verify(mockDao).setRecordsScored(7L)
     }
 
+    // --- The wholesale fill of the banked claims, written down as its own fact (#75) -------------
+    //
+    // The v36 to v37 upgrade creates `run_efforts` empty and un-scores the whole of history, so the
+    // launch pass fills the table a Run at a time over the minutes that follow. Until it is through,
+    // what is banked is a slice — and a top ten off a slice hands gold to whichever Run was measured
+    // first. The Records section therefore has to know a fill is under way, and *counting* what is
+    // owed cannot tell it: one owed Run is an ordinary Tuesday's Run awaiting its own scoring, whose
+    // records must not be blanked, and one owed Run is also the entire upgrade backfill on a history
+    // with a single Run in it. The fill is written down where it starts and handed back where it
+    // finishes instead, and these are the two ends of that.
+
+    @Test
+    fun `a history part-way through a wholesale fill is being measured`() = runTest {
+        // The Codex case, and the reason a count was never enough: one finished Run, one owed
+        // scoring, and every claim the Records section could draw still unmeasured.
+        val mockRecordFillDao: RecordFillDao = mock()
+        whenever(mockRecordFillDao.wholesaleFillOwedFlow()).thenReturn(flowOf(true))
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(7L))
+
+        val measuring = SessionRepository(sessionDao = mockDao, recordFillDao = mockRecordFillDao)
+            .recordsBeingMeasuredFlow().first()
+
+        assertTrue(measuring)
+    }
+
+    @Test
+    fun `a Run awaiting its own scoring is not a wholesale fill`() = runTest {
+        // The same one owed scoring, raised the ordinary way — by a Run finishing. Blanking the
+        // runner's records for the seconds that takes, after every Run for ever, would be worse
+        // than the bug the gate exists to close.
+        val mockRecordFillDao: RecordFillDao = mock()
+        whenever(mockRecordFillDao.wholesaleFillOwedFlow()).thenReturn(flowOf(false))
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(7L))
+
+        val measuring = SessionRepository(sessionDao = mockDao, recordFillDao = mockRecordFillDao)
+            .recordsBeingMeasuredFlow().first()
+
+        assertFalse(measuring)
+    }
+
+    @Test
+    fun `an install with no record fill wired is measuring nothing`() = runTest {
+        assertFalse(SessionRepository(sessionDao = mockDao).recordsBeingMeasuredFlow().first())
+    }
+
+    @Test
+    fun `scoring a Run as it finishes never raises a fill`() = runTest {
+        // Nothing on the ordinary path may touch the fact: it is a statement about the whole table,
+        // and one Run being measured says nothing about the whole table.
+        val mockRecordFillDao: RecordFillDao = mock()
+        whenever(mockRecordFillDao.wholesaleFillOwed()).thenReturn(false)
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockDao.getSessionById(7L)).thenReturn(aTreadmillRun(id = 7, seconds = 1_800))
+
+        SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            recordFillDao = mockRecordFillDao,
+        ).scoreAndMarkRecords(7L)
+
+        verify(mockRecordFillDao, never()).put(any())
+    }
+
+    @Test
+    fun `the launch pass hands the fill back only once it has been through every owed Run`() =
+        runTest {
+            // The order is the whole guarantee. Anything that cuts the pass short — the process
+            // reclaimed, the phone off — has to leave the fill standing for the next launch to
+            // finish, and it does exactly when the hand-back is last.
+            val mockRecordFillDao: RecordFillDao = mock()
+            whenever(mockRecordFillDao.wholesaleFillOwed()).thenReturn(true)
+            val (repositoryWithRecords, _) =
+                repositoryWithUnseededHistory(seeded = true, recordFillDao = mockRecordFillDao)
+            whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(7L, 8L))
+            whenever(mockDao.getSessionById(7L)).thenReturn(aTreadmillRun(id = 7, seconds = 1_800))
+            whenever(mockDao.getSessionById(8L)).thenReturn(aTreadmillRun(id = 8, seconds = 600))
+
+            repositoryWithRecords.scoreMissedRecords()
+
+            inOrder(mockDao, mockRecordFillDao) {
+                verify(mockDao).setRecordsScored(7L)
+                verify(mockDao).setRecordsScored(8L)
+                verify(mockRecordFillDao).put(RecordFillRow(wholesaleFillOwed = false))
+            }
+        }
+
+    @Test
+    fun `a Run the launch pass cannot measure does not hide the records for ever`() = runTest {
+        // The Run keeps its own debt and is tried again at every launch, which is where that
+        // belongs. But the fill is a statement about the table, and holding it up behind one Run
+        // that may never measure would leave the runner reading "still measuring your runs" until
+        // they deleted it, with nothing on the screen to say why. One Run's claims missing from a
+        // top ten mends itself; a permanently hidden Records section does not.
+        val mockRecordFillDao: RecordFillDao = mock()
+        whenever(mockRecordFillDao.wholesaleFillOwed()).thenReturn(true)
+        val (repositoryWithRecords, _) =
+            repositoryWithUnseededHistory(seeded = true, recordFillDao = mockRecordFillDao)
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(7L))
+        whenever(mockDao.getSessionById(7L)).thenThrow(RuntimeException("unreadable row"))
+
+        repositoryWithRecords.scoreMissedRecords()
+
+        verify(mockDao, never()).setRecordsScored(7L)
+        verify(mockRecordFillDao).put(RecordFillRow(wholesaleFillOwed = false))
+    }
+
+    @Test
+    fun `a launch pass with nothing owing still hands back a fill that was standing`() = runTest {
+        // The upgrade raises the fill and the pass that pays it can be cut short at any point,
+        // including after its last Run was marked and before it wrote the hand-back. The next
+        // launch then finds nothing owing at all, and it is the one that has to close the fill.
+        val mockRecordFillDao: RecordFillDao = mock()
+        whenever(mockRecordFillDao.wholesaleFillOwed()).thenReturn(true)
+        val (repositoryWithRecords, _) =
+            repositoryWithUnseededHistory(seeded = true, recordFillDao = mockRecordFillDao)
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(emptyList())
+
+        repositoryWithRecords.scoreMissedRecords()
+
+        verify(mockRecordFillDao).put(RecordFillRow(wholesaleFillOwed = false))
+    }
+
+    @Test
+    fun `a launch that was owed no fill writes nothing at all`() = runTest {
+        // Every launch runs this pass. Writing the row anyway would wake the Records section on
+        // every one of them, for ever, to tell it what it already knew.
+        val mockRecordFillDao: RecordFillDao = mock()
+        whenever(mockRecordFillDao.wholesaleFillOwed()).thenReturn(false)
+        val (repositoryWithRecords, _) =
+            repositoryWithUnseededHistory(seeded = true, recordFillDao = mockRecordFillDao)
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(emptyList())
+
+        repositoryWithRecords.scoreMissedRecords()
+
+        verify(mockRecordFillDao, never()).put(any())
+    }
+
+    @Test
+    fun `nothing hands the fill back while history is still owed its seeding`() = runTest {
+        // This pass stands down entirely then — the seeding pass is about to measure all of history
+        // at once — so it is in no position to say the table is whole.
+        val mockRecordFillDao: RecordFillDao = mock()
+        whenever(mockRecordFillDao.wholesaleFillOwed()).thenReturn(true)
+        val (repositoryWithRecords, _) =
+            repositoryWithUnseededHistory(seeded = false, recordFillDao = mockRecordFillDao)
+
+        repositoryWithRecords.scoreMissedRecords()
+
+        verify(mockRecordFillDao, never()).put(any())
+    }
+
+    @Test
+    fun `seeding hands the fill back with the book it rebuilt`() = runTest {
+        // The other pass that pays a fill off — the one a restored archive sets going. It rewrites
+        // the whole table in the transaction that writes the book, so the moment that commits there
+        // is no slice left to hide.
+        val mockRecordFillDao: RecordFillDao = mock()
+        whenever(mockRecordFillDao.wholesaleFillOwed()).thenReturn(true)
+        whenever(mockDao.getAllSessions()).thenReturn(listOf(aTreadmillRun(id = 1, seconds = 600)))
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(1L))
+        val (repositoryWithRecords, _) = repositoryWithUnseededHistory(recordFillDao = mockRecordFillDao)
+
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        verify(mockRecordFillDao).put(RecordFillRow(wholesaleFillOwed = false))
+    }
+
+    @Test
+    fun `a seeding pass that declines its book leaves the fill standing`() = runTest {
+        val mockRecordFillDao: RecordFillDao = mock()
+        whenever(mockRecordFillDao.wholesaleFillOwed()).thenReturn(true)
+        whenever(mockDao.getAllSessions()).thenReturn(listOf(aTreadmillRun(id = 1, seconds = 600)))
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(1L))
+        val (repositoryWithRecords, mockAchievementDao) =
+            repositoryWithUnseededHistory(recordFillDao = mockRecordFillDao)
+        whenever(mockAchievementDao.insertAchievements(any())).thenThrow(RuntimeException("disk full"))
+
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        // The table was left exactly as it was, which is what the debt describes.
+        verify(mockRecordFillDao, never()).put(any())
+    }
+
     /** The record book as rows in memory, for the two passes that have to arrive at the same one. */
     private class BookInMemory : AchievementDao {
         private val rows = mutableListOf<Achievement>()
@@ -6841,7 +7025,8 @@ class SessionRepositoryTest {
     private suspend fun repositoryWithUnseededHistory(
         seeded: Boolean = false,
         trackPointDao: TrackPointDao? = null,
-        runEffortDao: RunEffortDao? = null
+        runEffortDao: RunEffortDao? = null,
+        recordFillDao: RecordFillDao? = null
     ): Pair<SessionRepository, AchievementDao> {
         val mockAchievementDao: AchievementDao = mock()
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
@@ -6852,6 +7037,7 @@ class SessionRepositoryTest {
             trackPointDao = trackPointDao,
             achievementDao = mockAchievementDao,
             runEffortDao = runEffortDao,
+            recordFillDao = recordFillDao,
             settingsRepository = mockSettingsRepo
         ) to mockAchievementDao
     }

@@ -69,7 +69,8 @@ fun RecordDetailScreen(
             )
         },
     ) { padding ->
-        if (detail.top.isEmpty()) {
+        val top = detail.top
+        if (top.isNullOrEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -77,17 +78,19 @@ fun RecordDetailScreen(
                     .padding(RunningUiTokens.PagePadding),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    // Two different empty pages, and telling them apart matters (#75): a Record
-                    // nobody has contested is told what would take it, but a Record whose claims
-                    // have not been read back yet must not be — a runner who has run this distance
-                    // a hundred times would be told they never had. While history is being
-                    // measured, the page says that instead.
-                    text = if (detail.measuring) RECORDS_MEASURING_MESSAGE
-                    else recordEmptyMessage(detail.type),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                // Three different bare pages, and telling them apart matters (#75) — see
+                // [recordDetailMessage], which is where the choosing lives. The third of them says
+                // nothing at all, which is why this is a message that can be absent rather than a
+                // string: a page whose rows have not come back from Room yet must stay silent until
+                // they do, rather than telling a runner who has covered this distance a hundred
+                // times that they never have.
+                recordDetailMessage(detail)?.let { message ->
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             return@Scaffold
         }
@@ -108,7 +111,7 @@ fun RecordDetailScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            text = detail.top.first().effort.valueLabel,
+                            text = top.first().effort.valueLabel,
                             style = MaterialTheme.typography.headlineMedium,
                             fontWeight = FontWeight.Bold,
                         )
@@ -157,7 +160,7 @@ fun RecordDetailScreen(
                 )
             }
 
-            items(detail.top, key = { it.effort.sessionId }) { placed ->
+            items(top, key = { it.effort.sessionId }) { placed ->
                 RecordRankedEffortRow(placed = placed, onOpen = { onOpenRun(placed.effort.sessionId) })
             }
         }
@@ -188,7 +191,21 @@ private fun RecordRankedEffortRow(placed: RecordRankedEffortUi, onOpen: () -> Un
 /** One Record's whole page, as the view model hands it over. */
 data class RecordDetailUi(
     val type: RecordType,
-    val top: List<RecordRankedEffortUi>,
+    /**
+     * The ranked efforts, best first — or null, which is not the same thing as none of them (#75).
+     *
+     * Null is "Room has not answered yet", and it is the state the page opens in: a screen is drawn
+     * the instant the runner taps a cell in the grid, and the first read of `run_efforts` lands a
+     * frame or several frames later on a long history. An empty list is Room's answer, and it means
+     * the runner really has never contested this Record.
+     *
+     * Kept as the absence of the rows themselves rather than as a second flag beside them, because
+     * a flag saying "read yet" would be a second answer to a question the rows already answer, and
+     * two answers can disagree. [measuring] is a different fact again: there the read *has*
+     * answered, and the answer is deliberately nothing because the answer it could give would be
+     * read off a table that is still filling.
+     */
+    val top: List<RecordRankedEffortUi>?,
     val trend: List<RecordTrendPoint>,
     /** How many Runs have ever contested it, which is what says whether the ten is the whole list. */
     val effortCount: Int,
@@ -202,3 +219,37 @@ data class RecordDetailUi(
      */
     val measuring: Boolean = false,
 )
+
+/**
+ * What a Record's page says when it has no ranked efforts to draw — or nothing at all (#75).
+ *
+ * Three states arrive here looking alike and the runner is owed a different thing by each:
+ *
+ * - the rows have not come back from Room yet ([RecordDetailUi.top] null), and the page must say
+ *   *nothing*. This is the frame or two right after the runner taps a populated cell in the grid,
+ *   and telling them "you have not covered 5 km" there would flatly contradict the number they just
+ *   tapped. Silence for a beat is a page still opening; a wrong sentence is a record lost.
+ * - history is being measured against the book wholesale ([RecordDetailUi.measuring]), which lasts
+ *   minutes and is worth saying out loud — the grid says the same thing in the same words.
+ * - the rows came back and there are none, which is a real empty Record and gets told what would
+ *   take it ([recordEmptyMessage]).
+ *
+ * A function rather than three branches inside the screen, so the choosing can be tested without
+ * drawing anything — it is a rule about truthfulness, not about layout.
+ */
+fun recordDetailMessage(detail: RecordDetailUi): String? = when {
+    detail.top == null -> null
+    detail.measuring -> RECORDS_MEASURING_MESSAGE
+    detail.top.isEmpty() -> recordEmptyMessage(detail.type)
+    else -> null
+}
+
+/**
+ * The page the moment it opens, before Room has answered (#75).
+ *
+ * Named rather than written out at the call site, so that "not read back yet" is one thing with one
+ * spelling: a caller left to build the initial value by hand is a caller one `emptyList()` away
+ * from the bug this closes.
+ */
+fun recordDetailNotReadYet(type: RecordType): RecordDetailUi =
+    RecordDetailUi(type = type, top = null, trend = emptyList(), effortCount = 0)
