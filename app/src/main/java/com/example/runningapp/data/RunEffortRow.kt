@@ -6,6 +6,7 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
+import androidx.room.PrimaryKey
 import androidx.room.Query
 import com.example.runningapp.analysis.RecordType
 import kotlinx.coroutines.flow.Flow
@@ -142,4 +143,118 @@ const val RECORD_EFFORTS_SQL: String =
         FROM run_efforts e
         JOIN sessions s ON s.id = e.sessionId
         ORDER BY s.startTime ASC
+    """
+
+/**
+ * Whether a **wholesale fill** of [RunEffortRow] is still outstanding — the one fact the Records
+ * section needs before it may call anything an all-time best (#75).
+ *
+ * `run_efforts` is filled a Run at a time by the launch pass
+ * ([SessionRepository.scoreMissedRecords]), and over a long history that is minutes of measuring.
+ * While it is going on the table holds a *slice* of history, and a top ten read off a slice is a
+ * top ten with the wrong Runs in it: whichever Run happened to be measured first takes gold, and
+ * Runs that never placed stand fourth. So the section has to know when a fill is under way.
+ *
+ * **Why this is a stored fact and not a count.** The obvious stand-in is "how many finished Runs
+ * still owe a scoring", and it cannot answer the question. One debt is an ordinary Run finishing on
+ * a Tuesday — whose records must *not* be blanked for the seconds its own scoring takes — and it is
+ * also the whole of the migration backfill on a history with one Run in it, where everything the
+ * section could draw is missing. Counting cannot tell those apart at any threshold, because they
+ * are the same count. What differs is not how much is owed but *what raised it*, so that is what is
+ * written down.
+ *
+ * **In the database rather than in settings**, for two reasons that both matter. A Room migration
+ * cannot write DataStore, and the migration that created `run_efforts` is the main thing that raises
+ * this. And a fill that is interrupted — the process reclaimed, the phone off mid-pass — must come
+ * back raised at the next launch, which is the same durability the table itself has: the fact and
+ * the rows it describes are then one file, restored together, backed up together, and never able to
+ * disagree about which of them is out of date.
+ *
+ * One row, at [SINGLE_ROW_ID]. No row at all is the answer a fresh install gives — Room builds this
+ * table empty and nothing has ever needed filling — and it reads as "nothing outstanding", which is
+ * the truth about a history that is measured as it is run.
+ */
+@Entity(tableName = "record_fill")
+data class RecordFillRow(
+    @PrimaryKey val id: Int = SINGLE_ROW_ID,
+    val wholesaleFillOwed: Boolean,
+) {
+    companion object {
+        /** The only id this table ever holds: the fact is about the table, not about any Run. */
+        const val SINGLE_ROW_ID: Int = 0
+    }
+}
+
+@Dao
+interface RecordFillDao {
+
+    /**
+     * Raises or lowers the wholesale-fill debt, over whatever was there before.
+     *
+     * Raised where a fill *starts* — the v36 to v37 migration, in SQL, before a line of Kotlin runs
+     * — and lowered where one finishes, which is the only pair of moments that can honestly speak
+     * for it. Never written from the screen that reads it.
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun put(row: RecordFillRow)
+
+    /**
+     * Whether a wholesale fill is outstanding right now, watched — what the Records section covers
+     * itself up with, and uncovers itself by when the pass finishes.
+     *
+     * `EXISTS` rather than a plain column read so the answer is a plain false on a database that has
+     * never held the row, instead of a null every caller would have to remember to fold down.
+     */
+    @Query(WHOLESALE_FILL_OWED_SQL)
+    fun wholesaleFillOwedFlow(): Flow<Boolean>
+
+    /**
+     * The same answer once, for the passes that pay the debt off: a pass that was never owed a fill
+     * has nothing to lower, and writing the row anyway would wake every reader of the flow above at
+     * every launch for the life of the app.
+     */
+    @Query(WHOLESALE_FILL_OWED_SQL)
+    suspend fun wholesaleFillOwed(): Boolean
+}
+
+/**
+ * The v36 to v37 migration's half of the wholesale-fill fact, named so a test can put the real
+ * statements to a real SQLite database (#75) — [RECORD_EFFORTS_SQL]'s reason exactly. What the
+ * migration raises here is what the Records section covers itself up with for the whole of the
+ * first launch after the upgrade, and a test that retyped the SQL would go on passing after this
+ * changed.
+ *
+ * The table is created with the shape Room builds from [RecordFillRow] on a fresh install, because
+ * Room checks the two against each other at every open and refuses the database if they differ.
+ */
+/**
+ * The read both halves of [RecordFillDao] answer with, named so the migration's own statements and
+ * the question the Records section asks of them can be put to a real SQLite database in one test
+ * (#75) — [RECORD_EFFORTS_SQL]'s reason.
+ */
+const val WHOLESALE_FILL_OWED_SQL: String =
+    "SELECT EXISTS(SELECT 1 FROM record_fill WHERE id = 0 AND wholesaleFillOwed = 1)"
+
+const val RECORD_FILL_TABLE_SQL: String =
+    """
+        CREATE TABLE IF NOT EXISTS `record_fill` (
+            `id` INTEGER NOT NULL,
+            `wholesaleFillOwed` INTEGER NOT NULL,
+            PRIMARY KEY(`id`)
+        )
+    """
+
+/**
+ * Writes down that the whole of history is owed a re-measuring against the record book — the debt
+ * the v36 to v37 migration raises in the same breath as it clears every Run's scoring mark (#75).
+ *
+ * **Only where there is something to measure.** A history with no finished Run in it owes no fill:
+ * the migration un-scores nothing, the launch pass finds nothing, and saying "still measuring your
+ * runs" over an empty Records section would be a sentence about work nobody is doing. `endTime > 0`
+ * is the same finished test the pass's own work list is read with, so the two agree by construction.
+ */
+const val RAISE_WHOLESALE_FILL_SQL: String =
+    """
+        INSERT OR REPLACE INTO `record_fill` (`id`, `wholesaleFillOwed`)
+        SELECT 0, 1 WHERE EXISTS (SELECT 1 FROM `sessions` WHERE `endTime` > 0)
     """

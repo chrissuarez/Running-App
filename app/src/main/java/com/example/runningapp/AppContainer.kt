@@ -173,6 +173,11 @@ class AppContainer(context: Context) {
             // Every Run's claim at every Record, banked beside the medals so the Records section
             // can show a top ten and a trend (#75).
             runEffortDao = database.runEffortDao(),
+            // Whether that banking is part-way through being rebuilt over the whole of history
+            // (#75) — raised by the migration that created the table, handed back by the pass that
+            // fills it, and read by the Records section so it never quotes an all-time best off a
+            // slice.
+            recordFillDao = database.recordFillDao(),
             // Read for one thing only: telling the coach where the runner stands against their own
             // targets (#83). Without it the coach is simply told nothing about goals.
             goalDao = database.goalDao(),

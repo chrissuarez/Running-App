@@ -678,25 +678,6 @@ interface SessionDao {
     suspend fun setRecordsScored(sessionId: Long)
 
     /**
-     * How many finished Runs are still owed a scoring, watched — what tells the Records section
-     * that what it is standing on is not the whole of history yet (#75).
-     *
-     * The same debt [getSessionIdsMissingRecordScoring] hands the launch pass its work list from,
-     * counted rather than listed and offered as a stream, because this one is read by a screen that
-     * has to stop saying "all-time best" the moment it stops being true and start again the moment
-     * it is.
-     *
-     * Counted the same way that list is read, `endTime > 0` included: a Run still being recorded
-     * owes nothing yet and will score itself when it finishes, so counting it would leave the
-     * Records section covered up for the length of every Run.
-     *
-     * Whether a given count means history is being re-measured is not decided here — that is
-     * [SessionRepository.recordsBeingMeasuredFlow], which is where the argument lives.
-     */
-    @Query("SELECT COUNT(*) FROM sessions WHERE recordsScored = 0 AND endTime > 0")
-    fun countSessionsMissingRecordScoringFlow(): Flow<Int>
-
-    /**
      * Finished Runs nobody has put to the Segments yet (#70) — read the same way, and for the same
      * reasons, as [getSessionIdsMissingRecordScoring] above.
      */
@@ -1194,7 +1175,8 @@ interface RunPauseDao {
         Segment::class,
         SegmentEffort::class,
         RunShapeRow::class,
-        RunEffortRow::class
+        RunEffortRow::class,
+        RecordFillRow::class
     ],
     version = 37,
     exportSchema = false
@@ -1213,6 +1195,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun segmentEffortDao(): SegmentEffortDao
     abstract fun runShapeDao(): RunShapeDao
     abstract fun runEffortDao(): RunEffortDao
+    abstract fun recordFillDao(): RecordFillDao
 
     companion object {
         @Volatile
@@ -2328,6 +2311,25 @@ val MIGRATION_35_36 = object : Migration(35, 36) {
  * A table left to fill itself would not do here, the way v36's `run_shapes` could. There, an absent
  * row is a Run nobody has measured; here, an absent row is also what a Walk and an unfinished Run
  * correctly hold, so emptiness could never be read as a debt.
+ *
+ * **And the fill itself is written down**, in `record_fill` beside the new table (see
+ * [RecordFillRow]). Clearing the marks is what makes the whole of history owe a re-measuring; the
+ * flag is that debt said out loud, so the Records section can cover itself up for exactly as long
+ * as `run_efforts` holds a slice rather than the whole. It has to be raised here, in SQL, because
+ * this is the moment the fill begins and a migration cannot reach DataStore to say so — and it has
+ * to be a durable fact rather than something counted afterwards, because a backfill of one Run and
+ * an ordinary Tuesday's Run awaiting its own scoring are the same count and must not be the same
+ * answer.
+ *
+ * [MIGRATION_21_22] cleared the same column across the same history and raises nothing, which is
+ * not an oversight: `run_efforts` did not exist at v22, so there was no fill to be part-way
+ * through, and every upgrade that passes through it also passes through here, where the debt is
+ * raised over the whole of history anyway. A restored archive is covered from the same direction —
+ * an archive older than v37 arrives through this migration and has the debt raised over its
+ * history, and one at v37 or later brings `record_fill` with it, so a backup taken mid-fill is
+ * restored still owing that fill. The seeding pass a restore sets off
+ * ([SessionRepository.seedRecordsFromHistory]) writes the whole table in one transaction and so
+ * never shows a slice of its own.
  */
 val MIGRATION_36_37 = object : Migration(36, 37) {
     override fun migrate(database: SupportSQLiteDatabase) {
@@ -2344,5 +2346,12 @@ val MIGRATION_36_37 = object : Migration(36, 37) {
         )
         database.execSQL("CREATE INDEX IF NOT EXISTS `index_run_efforts_type` ON `run_efforts` (`type`)")
         database.execSQL("UPDATE `sessions` SET `recordsScored` = 0")
+        // And the debt those cleared marks add up to, written down as the one fact it is
+        // ([RecordFillRow]): from here until the launch pass has been through the whole of history,
+        // `run_efforts` holds a slice of it, and the Records section must say so rather than call
+        // the first Run it measured an all-time best. Two statements and no per-Run work, so the
+        // migration stays as cheap as it was.
+        database.execSQL(RECORD_FILL_TABLE_SQL)
+        database.execSQL(RAISE_WHOLESALE_FILL_SQL)
     }
 }

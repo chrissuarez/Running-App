@@ -85,7 +85,7 @@ import com.example.runningapp.ui.HistoryViewModel
 import com.example.runningapp.ui.HistoryViewModelFactory
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.ui.RecordDetailScreen
-import com.example.runningapp.ui.RecordDetailUi
+import com.example.runningapp.ui.recordDetailNotReadYet
 import com.example.runningapp.ui.RecordsViewModel
 import com.example.runningapp.ui.RecordsViewModelFactory
 import com.example.runningapp.ui.ProgressScreen
@@ -1059,8 +1059,15 @@ class MainActivity : ComponentActivity() {
                                 // Watched, like the grid that led here: a Run finishing, a
                                 // treadmill time stated or a Run deleted moves this list while it
                                 // is open.
+                                // Opened as "nothing has come back yet" rather than as an empty
+                                // Record (#75): the page is drawn the instant the cell is tapped
+                                // and the first read of the efforts lands frames later, so an
+                                // initial value of no efforts would tell a runner who has covered
+                                // this distance a hundred times that they never had, right after
+                                // they tapped the number saying they had. See
+                                // [recordDetailNotReadYet].
                                 val detail by produceState(
-                                    initialValue = RecordDetailUi(type, emptyList(), emptyList(), 0),
+                                    initialValue = recordDetailNotReadYet(type),
                                     key1 = type
                                 ) {
                                     recordsViewModel.detail(type).collect { value = it }
