@@ -34,6 +34,10 @@ the dated sections below this one are older and are kept as history.
 - **Segments.** Name a stretch of ground — "Cemetery Hill" — cut out of a run you actually ran, and
   every run that crosses it is timed against it, with the quickest marked PR. Creating one measures
   the whole of your history against it, so it arrives with its efforts already on it.
+- **Matched runs.** Runs over the same ground recognise each other, with nothing to name and nothing
+  to save: a run's page says which run of that route it is — "your 14th run on this route" — and
+  charts your pace on it over the calendar. Your whole history is matched, so the count is right from
+  the day it arrives.
 - **Routes.** A library of courses you keep, imported from GPX — from the picker, or by sharing a
   `.gpx` to the app from anywhere else. A file that isn't one is refused with a reason.
 - **Your own words on a run.** Rate the effort out of ten and leave a note, on the sheet at the
@@ -234,6 +238,17 @@ the dated sections below this one are older and are kept as history.
       so its efforts and its PR are there the moment you save it.
     - Marking a run a Walk takes its efforts off every segment; unmarking measures them again. A
       treadmill run holds none, because there is no track to put to the ground.
+- **Matched runs**:
+    - **Recognised by shape, not by name**: Two runs are the same route when their starts and their
+      ends are within about a hundred metres of each other, their distances agree within a twentieth,
+      and the ground between was covered in the same order. A loop run the other way round is a
+      different route, and so is a longer run that merely starts and finishes in the same places.
+    - **Your whole history is matched**: Every run you have ever recorded is measured once in the
+      background, so the count on a run's page is right the day this arrives rather than a year later.
+    - **Nothing is stored about the group**: it is worked out each time a page is opened, so deleting
+      a run takes it straight out of every group it was in.
+    - A walk never joins a group, and neither does a treadmill run, which has no ground to have
+      covered. Marking a run a Walk takes it out; unmarking puts it back.
 - **Device Management**:
     - Prioritizes manually selected BLE devices.
     - Robust background reconnection logic.
