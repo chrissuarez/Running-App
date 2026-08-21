@@ -44,17 +44,27 @@ class RunShaping(private val store: RunShapeStore) {
      * this can be seconds of arithmetic on a long track and the runner is free the whole time, so
      * what the Run *is* has to be asked at the moment its shape is written rather than before it.
      *
+     * **And asked again after the measurement**, because "at the moment its shape is written" is the
+     * whole of the rule and one read before seconds of arithmetic does not keep it. A runner who
+     * marks a Walk while this is measuring flips the answer under it, and the write that followed
+     * would bank a shape for a Walk — or, unmarking, bank no shape for a Run. Either way the row now
+     * exists, so [payWhatIsOwed] never looks at that Run again and the mistake is permanent. Asked
+     * twice, the write is the answer the Run holds *now*; asked again if it moved, because the
+     * second answer is only worth writing if it is still true.
+     *
      * A Run that is gone is written as nothing at all — there is no row left to hang a shape on.
      */
     suspend fun shapeRun(sessionId: Long) {
-        val run = store.run(sessionId) ?: return
-        val shape = if (run.mayBeMatchedToOtherRuns()) {
-            runShapeOf(measureTrack(store.track(sessionId)))
-        } else {
-            null
+        while (true) {
+            val before = store.run(sessionId) ?: return
+            val eligible = before.mayBeMatchedToOtherRuns()
+            val shape = if (eligible) runShapeOf(measureTrack(store.track(sessionId))) else null
+            val after = store.run(sessionId) ?: return
+            if (after.mayBeMatchedToOtherRuns() != eligible) continue
+            store.putShape(sessionId, shape)
+            Log.d(TAG, "Run $sessionId " + (shape?.let { "covers %.0f m".format(it.distanceMeters) } ?: "holds no shape"))
+            return
         }
-        store.putShape(sessionId, shape)
-        Log.d(TAG, "Run $sessionId " + (shape?.let { "covers %.0f m".format(it.distanceMeters) } ?: "holds no shape"))
     }
 
     /**

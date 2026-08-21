@@ -24,7 +24,22 @@ class RunShapingTest {
         val shapes = mutableMapOf<Long, RunShape?>()
         var writes = 0
 
-        override suspend fun run(sessionId: Long) = runs[sessionId]
+        /**
+         * The runner acting between the two reads — runs once, after the first of them answers.
+         *
+         * That gap is the whole window the shaping has to defend: the first read decides whether a
+         * track is worth measuring, and the write that follows must not carry an answer the Run has
+         * stopped agreeing with.
+         */
+        var betweenTheReads: (() -> Unit)? = null
+
+        override suspend fun run(sessionId: Long): RunnerSession? {
+            val answer = runs[sessionId]
+            val interruption = betweenTheReads
+            betweenTheReads = null
+            interruption?.invoke()
+            return answer
+        }
 
         override suspend fun runsMissingShapes(): List<Long> =
             runs.values
@@ -158,6 +173,37 @@ class RunShapingTest {
         shaping.payWhatIsOwed()
 
         assertEquals(2, store.writes)
+    }
+
+    @Test
+    fun `a run marked a Walk while it was being measured is written as holding no shape`() = runTest {
+        aRunOver(1L)
+        store.betweenTheReads = { store.runs[1L] = store.runs.getValue(1L).copy(isWalk = true) }
+
+        shaping.shapeRun(1L)
+
+        assertTrue(1L in store.shapes)
+        assertNull(store.shapes.getValue(1L))
+    }
+
+    @Test
+    fun `a Walk unmarked while it was being passed over is measured after all`() = runTest {
+        aRunOver(1L, isWalk = true)
+        store.betweenTheReads = { store.runs[1L] = store.runs.getValue(1L).copy(isWalk = false) }
+
+        shaping.shapeRun(1L)
+
+        assertEquals(RUN_SHAPE_WAYPOINTS, store.shapes.getValue(1L)!!.waypoints.size)
+    }
+
+    @Test
+    fun `a run deleted while it was being measured is written as nothing at all`() = runTest {
+        aRunOver(1L)
+        store.betweenTheReads = { store.runs.remove(1L) }
+
+        shaping.shapeRun(1L)
+
+        assertEquals(0, store.writes)
     }
 
     @Test

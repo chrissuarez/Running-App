@@ -366,7 +366,11 @@ class MainActivity : ComponentActivity() {
                         factory = HistoryViewModelFactory(sessionRepository)
                     )
                     val sessionDetailViewModel: SessionDetailViewModel = viewModel(
-                        factory = SessionDetailViewModelFactory(sessionRepository, appContainer.exportFileStore)
+                        factory = SessionDetailViewModelFactory(
+                            sessionRepository,
+                            appContainer.exportFileStore,
+                            zoneChanges = appContainer.zoneChanges,
+                        )
                     )
                     val backupViewModel: BackupViewModel = viewModel(
                         factory = BackupViewModelFactory(
