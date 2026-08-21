@@ -380,6 +380,11 @@ fun segmentTrendPoints(efforts: List<SegmentEffortUi>): List<SegmentTrendPoint> 
  * Vico steps an axis by the greatest common divisor of the gaps between its x values rather than by
  * one, so the label spacing has to be counted in those steps and not in points. Six efforts a
  * fortnight apart are six ticks a fortnight wide, not seventy daily ones.
+ *
+ * The divisor and not the smallest gap: Vico's own `ChartEntryModel.xGcd` folds `gcdWith` over the
+ * absolute gaps between neighbouring x values (`calculateXGcd`, Vico 1.13.1). Irregular dates whose
+ * divisor is smaller than their closest pair therefore step finer than that pair, and this counts
+ * them the same way.
  */
 fun segmentTrendStepDays(points: List<SegmentTrendPoint>): Int {
     var step = 0
