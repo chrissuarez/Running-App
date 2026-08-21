@@ -689,6 +689,26 @@ interface SessionDao {
     suspend fun setSegmentsTimed(sessionId: Long)
 
     /**
+     * Finished Runs nobody has taken the shape of yet (#73) — the launch pass's work list.
+     *
+     * The debt is the absence of a row rather than a column on this one, which is what the two
+     * lists above use. A shape is a fact *about the Run alone*, so there is exactly one row per Run
+     * and its existence is the whole record that the Run has been measured — including for the Runs
+     * that hold no shape at all, whose row says so ([RunShapeRow.shape]). A column here would be a
+     * second copy of that, free to disagree with the table it describes.
+     *
+     * Oldest first, so a history being measured in one pass fills in the order it was run.
+     */
+    @Query(
+        """
+        SELECT id FROM sessions
+        WHERE endTime > 0 AND id NOT IN (SELECT sessionId FROM run_shapes)
+        ORDER BY startTime ASC
+        """
+    )
+    suspend fun getSessionIdsMissingRunShapes(): List<Long>
+
+    /**
      * Writes down that a Run owes the Segments a walk again (#70) — the sibling of
      * [clearRecordsScored] below, and there for the same reason.
      *
@@ -1153,9 +1173,10 @@ interface RunPauseDao {
         StatedBestEffort::class,
         RunPause::class,
         Segment::class,
-        SegmentEffort::class
+        SegmentEffort::class,
+        RunShapeRow::class
     ],
-    version = 35,
+    version = 36,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1170,6 +1191,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun runPauseDao(): RunPauseDao
     abstract fun segmentDao(): SegmentDao
     abstract fun segmentEffortDao(): SegmentEffortDao
+    abstract fun runShapeDao(): RunShapeDao
 
     companion object {
         @Volatile
@@ -1258,7 +1280,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_31_32,
     MIGRATION_32_33,
     MIGRATION_33_34,
-    MIGRATION_34_35
+    MIGRATION_34_35,
+    MIGRATION_35_36
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2232,5 +2255,28 @@ val MIGRATION_34_35 = object : Migration(34, 35) {
         database.execSQL("ALTER TABLE `segments` ADD COLUMN `historyTimed` INTEGER NOT NULL DEFAULT 0")
         database.execSQL("ALTER TABLE `sessions` ADD COLUMN `segmentsTimed` INTEGER NOT NULL DEFAULT 0")
         database.execSQL("UPDATE `sessions` SET `segmentsTimed` = 1")
+    }
+}
+
+/**
+ * The shapes Runs are matched to each other by (#73).
+ *
+ * No debt column beside it, unlike v35: the table's own emptiness is the debt. Every Run in history
+ * is therefore owed a shape on the first launch after this, which is the backfill the matching needs
+ * — a runner's fourteenth lap of the park must be able to say so on the day this ships, and nothing
+ * else could ever reach back over a history nobody was tagging as they ran it.
+ */
+val MIGRATION_35_36 = object : Migration(35, 36) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `run_shapes` (
+                `sessionId` INTEGER PRIMARY KEY NOT NULL,
+                `shape` TEXT,
+                `distanceMeters` REAL NOT NULL,
+                FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
     }
 }

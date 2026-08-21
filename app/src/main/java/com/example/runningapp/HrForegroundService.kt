@@ -916,6 +916,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     Log.w(TAG, "Could not time run $runRowId against the segments", e)
                 }
 
+                // And its own shape, so the next Run over the same ground recognises this one (#73).
+                // After the track-point inserts for the reason above, and guarded on the same terms:
+                // a Run left unshaped here is shaped by the launch pass, which the absence of its
+                // row is what guarantees.
+                try {
+                    sessionRepository.shapeRun(runRowId)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Could not take the shape of run $runRowId", e)
+                }
+
                 Log.d(
                     TAG,
                     "Finalized DB Session: $runRowId. Evidence: duration=${updatedSession.durationSeconds} moving=$movingTime"
