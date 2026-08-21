@@ -16,12 +16,15 @@ import com.example.runningapp.export.GpxWriter
 import com.example.runningapp.export.RunExportName
 import com.example.runningapp.export.RunFitActivity
 import com.example.runningapp.export.RunGpxTrack
+import com.example.runningapp.repeatedOn
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -32,7 +35,12 @@ class SessionDetailViewModel(
     // than failing silently.
     private val exportFileStore: ExportFileStore? = null,
     /** Where a run is turned into a file — injectable so tests can hold that work on their own clock. */
-    private val assemblyDispatcher: CoroutineDispatcher = Dispatchers.Default
+    private val assemblyDispatcher: CoroutineDispatcher = Dispatchers.Default,
+    /**
+     * Fires when the phone's time zone moves (#320). Empty wherever nothing supplies it (tests),
+     * which costs only the re-offer — every reader below still answers from the zone in force.
+     */
+    private val zoneChanges: Flow<Unit> = emptyFlow(),
 ) : ViewModel() {
 
     private val _deleteCompleted = MutableSharedFlow<Long>(extraBufferCapacity = 1)
@@ -104,9 +112,16 @@ class SessionDetailViewModel(
      * The grouping is worked out here rather than in SQL, off every shaped Run the same read
      * carried, because the geometry rule that decides it lives in one place
      * ([com.example.runningapp.segments.runsMatch]). Null where there is no group to show.
+     *
+     * [repeatedOn] because the dates below are read at the moment this map runs: a Run recorded
+     * before #304 carries no offset of its own, so its day is the *live* zone's answer, and the
+     * per-day trend groups on that day. Without the nudge a phone that flies while this screen is
+     * open goes on showing the zone it left until the database happens to change (#320).
      */
     fun matchedRuns(sessionId: Long) =
-        sessionRepository.shapedRunsFlow().map { shaped -> matchedRunsUi(shaped, sessionId) }
+        sessionRepository.shapedRunsFlow()
+            .repeatedOn(zoneChanges)
+            .map { shaped -> matchedRunsUi(shaped, sessionId) }
 
     /**
      * States the time the console showed for one of the record distances, corrects it, or takes it
@@ -228,12 +243,17 @@ class SessionDetailViewModel(
 
 class SessionDetailViewModelFactory(
     private val sessionRepository: SessionRepository,
-    private val exportFileStore: ExportFileStore? = null
+    private val exportFileStore: ExportFileStore? = null,
+    private val zoneChanges: Flow<Unit> = emptyFlow(),
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(SessionDetailViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return SessionDetailViewModel(sessionRepository, exportFileStore) as T
+            return SessionDetailViewModel(
+                sessionRepository,
+                exportFileStore,
+                zoneChanges = zoneChanges,
+            ) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }
