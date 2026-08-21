@@ -379,7 +379,7 @@
 
       <div class="e">
         <h3>The numbers</h3>
-        <p>Duration and <strong>moving time</strong> — the second excludes your pauses. Distance, average pace, elevation gain, average and maximum heart rate, effort score, walk breaks, and time in each of the five zones.</p>
+        <p>Duration and <strong>moving time</strong>. Duration is the run's clock, stopped for any pause. Moving time takes off the stretches where you were standing still whether or not the app paused — so if auto-pause is off, or you stopped too briefly for it to catch, the two differ and moving time is the smaller. Then distance, average pace, elevation gain, average and maximum heart rate, effort score, walk breaks, and time in each of the five zones.</p>
       </div>
 
       <div class="e">
@@ -430,6 +430,7 @@
         <h3>Effort Score — what one run cost you</h3>
         <p>Every second of a run weighted by the zone it was spent in, added up. Not taken off your average heart rate, which is the whole point: a run/walk session scores its running as running instead of being averaged into mush.</p>
         <p>A run that recorded no heart rate has <em>no score</em> rather than a zero — an unmeasured run is not a free one.</p>
+        <p class="note"><b>Idling is not training.</b> Seconds spent <em>below</em> Zone 1's bottom edge weigh nothing here, so a very easy warm-up can add Zone 1 time to the chart without moving the score. The chart and the score part company on purpose at that one point: the chart's Zone 1 sweeps up everything underneath it so no second vanishes from the picture, while the score refuses to pay for a heart rate that was barely working.</p>
       </div>
 
       <div class="e">
@@ -463,9 +464,11 @@
         <h3>Records</h3>
         <p>Gold, silver and bronze at seven records: fastest 1 km, mile, 5 km, 10 km and half marathon, plus longest run and longest time.</p>
         <p>The five distances are contested as a <strong>best effort</strong> — the quickest continuous stretch anywhere inside a run, walk breaks included — not as "a run that happened to be 5 km".</p>
-        <p>A treadmill run contests the longest run and the longest time on its stated distance alone, because a stated distance is a real distance.</p>
-        <p>It can contest the five fastest as well, but only because <em>you</em> say so. The distance you type in is a total, and a total cannot say how quick the best kilometre inside it was — so nothing is guessed from it. Instead the run's own page offers you the record distances that fit inside what you ran, and you type the time the console showed for each. A time entered that way is ranked against your measured efforts exactly like one of them.</p>
-        <p class="note"><b>One statement per distance, per run.</b> Typing a time again corrects the one that is there rather than adding a second claim. A run stated too short to hold any record distance is offered nothing, rather than being shown five chips it would have to refuse.</p>
+        <p><strong>Longest time</strong> is contested by every finished run that is not a walk, treadmill included, on its clock alone. It needs no distance at all, so a treadmill run you never typed a number into is still in those standings.</p>
+        <p><strong>Longest run</strong> needs a distance somebody stands behind: measured off a route, or stated off a console. A treadmill run with a stated distance contests it, because a stated distance is a real distance.</p>
+        <p>A treadmill run can contest the five fastest too, but only because <em>you</em> say so. The distance you type in is a total, and a total cannot say how quick the best kilometre inside it was — so nothing is ever guessed from it. Instead the run's own page lets you type the time the console showed for a given distance, and a time entered that way is ranked against your measured efforts exactly like one of them.</p>
+        <p class="note"><b>Which distances you are offered.</b> Leave the total blank and you are offered all five, because the two statements are independent and only a distance that is actually there can be too short. Type a total and you are offered the record distances that fit inside it — a run stated at 600 metres is offered nothing, rather than five chips it would have to refuse. Correcting a total downwards withdraws any claim it has just made impossible.</p>
+        <p class="note"><b>One statement per distance, per run.</b> Typing a time again corrects the one that is there rather than adding a second claim.</p>
         <div class="where"><b>Where</b> the run's page → Best efforts</div>
       </div>
 
@@ -660,7 +663,7 @@
     </div>
     <dl class="gloss">
       <dt>Moving time</dt>
-      <dd>Duration less your pauses. The clock that stops when you do.</dd>
+      <dd>How long you were actually going somewhere. <strong>Duration</strong> is the run's own clock, and it already stops for a pause. Moving time then takes off the sustained spells where the GPS shows you covering no ground at all — so it can be shorter than duration on a run with no pause in it, and it is never longer.</dd>
 
       <dt>Pause</dt>
       <dd>You stopped, by hand or because the app saw you standing still. Carries no distance and no time.</dd>
