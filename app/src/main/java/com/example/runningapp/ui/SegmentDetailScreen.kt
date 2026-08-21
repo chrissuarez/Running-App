@@ -60,6 +60,7 @@ import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
 import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
 import com.patrykandpatrick.vico.compose.chart.Chart
 import com.patrykandpatrick.vico.compose.chart.line.lineChart
+import com.patrykandpatrick.vico.compose.chart.line.lineSpec
 import com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec
 import com.patrykandpatrick.vico.compose.m3.style.m3ChartStyle
 import com.patrykandpatrick.vico.compose.style.ProvideChartStyle
@@ -408,7 +409,11 @@ private fun SegmentEffortRowUi(effort: SegmentEffortUi, onOpen: () -> Unit) {
  * Drawn against the day rather than against the effort number, so the gaps between attempts are the
  * gaps that really happened — see [segmentTrendPoints]. Styled as the Progress screen's charts are:
  * the Material palette through [m3ChartStyle], three dates along the bottom, no vertical guidelines,
- * and no scrolling, so the whole of the runner's history at this place is on screen at once.
+ * no shading under the line, and no scrolling, so the whole of the runner's history at this place is
+ * on screen at once.
+ *
+ * The dates carry their year, which the Progress screen's do not. That screen looks back a year at
+ * most; a Segment holds every effort ever run at it, so "24 Jul" alone would not say which July.
  */
 @Composable
 private fun SegmentTrendChart(points: List<SegmentTrendPoint>) {
@@ -436,7 +441,17 @@ private fun SegmentTrendChart(points: List<SegmentTrendPoint>) {
     ) {
         ProvideChartStyle(m3ChartStyle()) {
             Chart(
-                chart = lineChart(),
+                // The line alone, as on the Progress screen: Vico shades under a line by default,
+                // and a time trend that starts at zero would be four fifths shading and one fifth
+                // chart. `lineBackgroundShader = null` is that screen's own answer to it.
+                chart = lineChart(
+                    lines = listOf(
+                        lineSpec(
+                            lineColor = MaterialTheme.colorScheme.primary,
+                            lineBackgroundShader = null,
+                        )
+                    )
+                ),
                 chartModelProducer = producer,
                 startAxis = rememberStartAxis(valueFormatter = timeLabels),
                 bottomAxis = rememberBottomAxis(
