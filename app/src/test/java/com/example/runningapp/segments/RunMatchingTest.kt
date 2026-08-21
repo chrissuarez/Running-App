@@ -123,6 +123,13 @@ class RunMatchingTest {
     }
 
     @Test
+    fun `an out-and-back run the other way round is the same route`() {
+        // Not the loop case, and deliberately so: turning an out-and-back round retraces the same
+        // line past the same places, so it is the same route however the runner set off.
+        assertTrue(runsMatch(shapeOf(outAndBack), shapeOf(outAndBack.reversed())))
+    }
+
+    @Test
     fun `a longer run through the same start and end is not the same route`() {
         // Out to the main road and back, but round the block on the way — the same door out and the
         // same door in, and half a kilometre more of running.

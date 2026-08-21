@@ -336,18 +336,13 @@ data class SegmentTrendPoint(
 /**
  * The trend of the times at a Segment, oldest first — one point per day, at that day's quickest.
  *
- * One point per day and not one per effort, because the x axis is the calendar: two efforts on one
- * date have nowhere to sit apart on it, and the quickest is the time the runner would quote for that
- * day anyway. Every effort is still listed under the chart — in the ranked ten, and past ten in the
- * newest-first list under that ([SEGMENT_ALL_EFFORTS_TITLE]).
+ * One point per day and the rest of what that means is the shared rule ([bestEachDay]). Every effort
+ * is still listed under the chart — in the ranked ten, and past ten in the newest-first list under
+ * that ([SEGMENT_ALL_EFFORTS_TITLE]).
  *
  * Placed by the calendar rather than evenly, so a two-year gap is drawn as a two-year gap. Even
  * spacing would make the chart's own claim — whether the runner is getting quicker across months and
  * years — a lie about their own history.
- *
- * Empty where there is no trend to draw: fewer than two days with an effort on them. One point is
- * not a line, and two points sharing a date is a vertical mark rather than a trend. The page shows
- * the list on its own in both cases rather than an empty frame that reads as a chart that broke.
  */
 fun segmentTrendPoints(efforts: List<SegmentEffortUi>): List<SegmentTrendPoint> {
     val quickest = quickestFirst<SegmentEffortUi>(
@@ -355,11 +350,8 @@ fun segmentTrendPoints(efforts: List<SegmentEffortUi>): List<SegmentTrendPoint> 
         startedAt = { it.startedAtMillis },
         effortId = { it.effortId },
     )
-    val bestPerDay = efforts
-        .groupBy { it.date }
-        .mapValues { (_, onTheDay) -> onTheDay.sortedWith(quickest).first() }
-        .toSortedMap()
-    if (bestPerDay.size < 2) return emptyList()
+    val bestPerDay = bestEachDay(efforts, day = { it.date }, better = quickest)
+    if (bestPerDay.isEmpty()) return emptyList()
 
     val firstDay = bestPerDay.firstKey()
     return bestPerDay.map { (date, effort) ->

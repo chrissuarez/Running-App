@@ -1,13 +1,38 @@
 package com.example.runningapp.ui
 
+import java.time.LocalDate
+import java.util.SortedMap
+
 /**
- * How a chart drawn against the calendar steps and labels its bottom axis.
+ * What a history drawn against the calendar is made of: which points it holds, and how its bottom
+ * axis steps and labels them.
  *
  * Written once because two charts already ask it — the times at a Segment (#72) and the paces on a
  * matched route (#73) — and both are the same picture of the same kind of history. Vico's own rule
- * is what makes this arithmetic rather than a preference, so a second copy of it would be a second
- * chance to get Vico wrong.
+ * is what makes the axis arithmetic rather than a preference, so a second copy of it would be a
+ * second chance to get Vico wrong; and one point per day is a claim about what the chart *is*, which
+ * two charts must not answer differently.
  */
+
+/**
+ * The best of each day, oldest day first — or nothing at all, where there is no trend to draw.
+ *
+ * The rule both trend charts keep, in one place. **One point per day**, because the x axis is the
+ * calendar: two efforts on one date have nowhere to sit apart on it, and the best is the one the
+ * runner would quote for that day anyway. **Nothing below two days**, because one point is not a
+ * line and two points sharing a date is a vertical mark rather than a trend — the page shows its
+ * list alone in both cases rather than an empty frame that reads as a chart that broke.
+ *
+ * [better] is what "best" means to the chart asking, and it must break ties: an order that left two
+ * of a day's efforts tied would pick differently on two reads of the same rows.
+ */
+fun <T> bestEachDay(items: List<T>, day: (T) -> LocalDate, better: Comparator<T>): SortedMap<LocalDate, T> {
+    val best = items
+        .groupBy(day)
+        .mapValues { (_, onTheDay) -> onTheDay.minWith(better) }
+        .toSortedMap()
+    return if (best.size < 2) sortedMapOf() else best
+}
 
 /**
  * The whole number of days such a chart's x axis steps in.

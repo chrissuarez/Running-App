@@ -73,7 +73,6 @@ import com.example.runningapp.ui.RestoreUiState
 import com.example.runningapp.ui.RestoreViewModel
 import com.example.runningapp.ui.RestoreViewModelFactory
 import com.example.runningapp.ui.SegmentCreateScreen
-import com.example.runningapp.ui.MatchedRunsScreen
 import com.example.runningapp.ui.SegmentDetailScreen
 import com.example.runningapp.ui.SegmentsScreen
 import com.example.runningapp.ui.SegmentsViewModel
@@ -87,6 +86,7 @@ import com.example.runningapp.ui.HistoryViewModelFactory
 import com.example.runningapp.ui.ProgressScreen
 import com.example.runningapp.ui.ProgressViewModel
 import com.example.runningapp.ui.ProgressViewModelFactory
+import com.example.runningapp.ui.MatchedRunsScreen
 import com.example.runningapp.ui.SessionDetailScreen
 import com.example.runningapp.ui.SessionDetailViewModel
 import com.example.runningapp.ui.SessionDetailViewModelFactory
@@ -840,9 +840,6 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
-                            // What this run has been told it holds (#282), watched for the same
-                            // reason the medals are: stating one re-scores, and the card and the
-                            // book underneath it have to arrive at the new answer together.
                             // The other Runs over this same route (#73). Watched for the reason the
                             // Segments are, and one more of its own: the shapes of a whole history
                             // are still being taken on the first launch after this shipped, so the
@@ -853,6 +850,9 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            // What this run has been told it holds (#282), watched for the same
+                            // reason the medals are: stating one re-scores, and the card and the
+                            // book underneath it have to arrive at the new answer together.
                             val sessionStatedEfforts by produceState<List<com.example.runningapp.data.StatedBestEffort>>(initialValue = emptyList(), key1 = sessionId) {
                                 sessionId?.let { id ->
                                     sessionDetailViewModel.statedBestEfforts(id).collect { value = it }
@@ -1092,13 +1092,23 @@ class MainActivity : ComponentActivity() {
                                     sessionDetailViewModel.matchedRuns(id).collect { value = it }
                                 }
                             }
+                            val backToTheRun: () -> Unit = {
+                                sessionId?.let { navigateTo(Routes.sessionDetail(it)) }
+                                    ?: navigateTo(Routes.HISTORY)
+                            }
+                            // A group that was here and is gone closes the page, the way a deleted
+                            // Segment's does (#70): the Run this list belongs to has been thrown
+                            // away, or has left its own group, and a screen for a group nobody has
+                            // would otherwise sit there loading for ever. Only after it has been
+                            // seen once — before that, null is still "the shapes are being read".
+                            var groupWasHere by rememberSaveable(sessionId) { mutableStateOf(false) }
+                            LaunchedEffect(matched) {
+                                if (matched != null) groupWasHere = true else if (groupWasHere) backToTheRun()
+                            }
                             MatchedRunsScreen(
                                 matched = matched,
                                 onOpenRun = { runId -> navigateTo(Routes.sessionDetail(runId)) },
-                                onBack = {
-                                    sessionId?.let { navigateTo(Routes.sessionDetail(it)) }
-                                        ?: navigateTo(Routes.HISTORY)
-                                },
+                                onBack = backToTheRun,
                             )
                         }
                         composable(

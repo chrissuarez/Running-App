@@ -273,7 +273,9 @@ with their pace over the calendar under it, and the whole card opens the list of
 own language is the kept course of the library (#54), and nothing about a matched group is kept.
 Below two Runs there is no card at all.
 _Avoid_: route group, auto-route, saved route (nothing is saved), and **Route** as a name in code
-for any of this.
+for any of this. Writing a shape down with `RoutePolyline` is not a breach of that: it is the app's
+one encoding for a line, used by a Route, a Segment and a shape alike, and naming it twice would be
+the actual mistake.
 
 **Export**:
 A finished Run written out as a file for somewhere else to read (#84, #218). Two
