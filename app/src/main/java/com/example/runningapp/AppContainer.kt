@@ -170,6 +170,9 @@ class AppContainer(context: Context) {
             segmentEffortDao = database.segmentEffortDao(),
             // The shapes Runs recognise each other by (#73).
             runShapeDao = database.runShapeDao(),
+            // Every Run's claim at every Record, banked beside the medals so the Records section
+            // can show a top ten and a trend (#75).
+            runEffortDao = database.runEffortDao(),
             // Read for one thing only: telling the coach where the runner stands against their own
             // targets (#83). Without it the coach is simply told nothing about goals.
             goalDao = database.goalDao(),

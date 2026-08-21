@@ -171,7 +171,14 @@ fun bestEffortsOf(
  * that finishes it again, a re-score — leaves it holding one medal rather than racing itself.
  *
  * **Matching a standing record does not take it.** A tie leaves the earlier Run where it is, because
- * the record is that Run's until somebody actually beats it.
+ * the record is that Run's until somebody actually beats it — and *earlier* is said by session id,
+ * exactly as [recordBookOf] says it, rather than by whoever happened to be in the book already
+ * (#75). The two are the same on every ordinary history, because Runs are scored in the order they
+ * were run; they part company only where an older Run is scored after a newer one — a scoring the
+ * launch pass went back for, a treadmill time typed in today about a Run from last year — and there
+ * the incumbent rule would hand the record to the later Run while a rebuild of the very same history
+ * handed it to the earlier one. A book that depends on the order it was written in is a book two
+ * readers can disagree about, which is exactly what the top ten of a Record would show (#75).
  */
 fun standingsAfter(
     book: List<Achievement>,
@@ -183,8 +190,10 @@ fun standingsAfter(
             .filter { it.type == effort.type && it.sessionId != sessionId }
             .sortedBy { it.medal.ordinal }
             .map { it.sessionId to it.value }
-        // The challenger goes on the end, so a stable sort leaves it behind anything it only equals.
-        val ranked = (standing + (sessionId to effort.value)).sortedWith(betterFirst(effort.type))
+        // The tie broken by session id rather than by the stable sort's own order, so this arrives
+        // at the book [recordBookOf] would have built from the same history.
+        val ranked = (standing + (sessionId to effort.value))
+            .sortedWith(betterFirst(effort.type).thenBy { (holder, _) -> holder })
         placed(effort.type, ranked)
     }
 

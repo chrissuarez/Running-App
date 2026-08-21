@@ -36,6 +36,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.training.FormVerdict
 import com.example.runningapp.training.Goal
 import com.example.runningapp.training.GoalMetric
@@ -110,6 +111,16 @@ fun ProgressScreen(
     onGoalSet: (GoalPeriod, GoalMetric, Double) -> Unit = { _, _, _ -> },
     /** A goal removed from the manage view. */
     onGoalRemoved: (Goal) -> Unit = {},
+    /**
+     * The Records grid (#75) — every Record and the all-time best at each.
+     *
+     * Passed in rather than read here, and from a view model of its own: the records are watched
+     * rows and the curves above them are arithmetic over history, so they arrive by different routes
+     * and neither waits on the other.
+     */
+    records: List<RecordSlotUi> = emptyList(),
+    /** A Record opened from the grid, which goes to that Record's own page. */
+    onOpenRecord: (RecordType) -> Unit = {},
     onBack: () -> Unit,
 ) {
     // Whether the manage view is open. Screen state and not the view model's: it is a sheet the
@@ -158,6 +169,11 @@ fun ProgressScreen(
             // came to check, and they are set before there is any history to measure them against —
             // a runner with no Runs at all still has a target to state (#82).
             GoalsCard(goals = state.goals, onManage = { managingGoals = true })
+
+            // Under the goals and above the training numbers, and outside the empty/filled branch
+            // below for the goals' own reason: a Record is a thing to aim at before it is a thing
+            // that has been done, so the grid stands on a phone with no history at all (#75).
+            RecordsCard(slots = records, onOpenRecord = onOpenRecord)
 
             val today = state.today
             if (today == null && state.weeks.isEmpty()) {

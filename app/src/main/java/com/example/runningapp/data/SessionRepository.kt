@@ -532,6 +532,15 @@ class SessionRepository(
      */
     private val runShapeDao: RunShapeDao? = null,
     /**
+     * Every Run's claim at every Record, banked beside the medals (#75) — see [RunEffortRow].
+     *
+     * Null on the same terms as the record book it is written beside: wherever records are not
+     * wired, nothing is banked here either, and the Records section reads an empty history. Never
+     * written without the book being written in the same transaction, and never read to decide
+     * anything — this class only fills it.
+     */
+    private val runEffortDao: RunEffortDao? = null,
+    /**
      * The runner's own Goals, read so the coach can be told where they stand (#83).
      *
      * Null wherever goals are not wired — tests, and the archive's read-only container — and the
@@ -882,6 +891,16 @@ class SessionRepository(
 
     /** The runs the History list shows, newest first. */
     fun recentSessionsFlow(): Flow<List<RunnerSession>> = sessionDao.getLast20Sessions()
+
+    /**
+     * Every claim ever banked against a Record, oldest Run first — what the Records section of the
+     * Progress screen is drawn from (#75).
+     *
+     * Empty wherever records are not wired, which is the same picture a runner with no history sees:
+     * seven Records with nothing standing at any of them.
+     */
+    fun recordEffortsFlow(): Flow<List<RecordEffortRow>> =
+        runEffortDao?.getRecordEffortsFlow() ?: flowOf(emptyList())
 
     /**
      * Every scored Run in history, oldest first — what the Progress screen builds its curves from
@@ -1550,9 +1569,36 @@ class SessionRepository(
             val rewritten = standingsAfter(dao.getAllAchievements(), sessionId, efforts)
             dao.deleteAchievementsOfTypes(efforts.map { it.type })
             dao.insertAchievements(rewritten)
+            // The same efforts, banked whole, in the same commit that ranks them (#75). One
+            // transaction because they are one measuring: a book written without them would leave
+            // the Records section a top ten short of a Run it has already given a medal to, and
+            // nothing afterwards goes back for either.
+            bankEfforts(sessionId, efforts)
             earned = rewritten.filter { it.sessionId == sessionId }
         }
         return earned
+    }
+
+    /**
+     * Banks what one Run is worth at the Records it contested, over whatever the last measuring of
+     * it said (#75).
+     *
+     * Called only from inside the transaction that writes the record book, never on its own: these
+     * rows and the medals are one measuring, and a caller free to write one without the other is a
+     * caller free to make them disagree.
+     *
+     * A re-scoring replaces this Run's rows rather than joining them, which the row's own key does
+     * ([RunEffortRow] is keyed by the Run and the Record) — so scoring a Run twice leaves it holding
+     * one claim at each Record rather than racing itself, the same promise [standingsAfter] keeps
+     * for the medals.
+     *
+     * Only the Records the Run still contests are touched. A Record it has stopped contesting
+     * altogether — a stated time withdrawn, a Walk marked — is not this path's to clear and never
+     * was: those go through the rebuild, which wipes the Record whole and writes back only what
+     * still stands.
+     */
+    private suspend fun bankEfforts(sessionId: Long, efforts: List<BestEffort>) {
+        runEffortDao?.putEfforts(efforts.map { RunEffortRow(sessionId, it.type, it.value) })
     }
 
     /**
@@ -1866,7 +1912,21 @@ class SessionRepository(
             }
             refreshHistoryBackup?.invoke()
 
-            repaired = repairRecordBook(losing, remeasured = sessionIds)
+            // Every changed Run's banked claims re-taken, whether or not it held a medal (#75).
+            //
+            // The book above is mended only where a place moved, which is all it can be: beyond
+            // bronze it remembers nothing, so there is nothing there to go stale. The banked rows
+            // are the opposite — they hold every claim a Run ever made, and a Run that has stopped
+            // making one leaves a row nothing else would ever look at again. A Run marked a Walk
+            // that placed fourth at 5 km is exactly that: it loses no medal, so `losing` is empty
+            // and the rebuild does nothing, and its time would stand in that Record's top ten for
+            // ever.
+            //
+            // Asked of the Run rather than of the Records, because what changed is what the Run is
+            // worth: re-measuring it whole is the only reading that can say a Record it used to
+            // contest is one it no longer does.
+            val rebanked = rebankEfforts(sessionIds)
+            repaired = repairRecordBook(losing, remeasured = sessionIds) && rebanked
             if (losing.isNotEmpty()) refreshHistoryBackup?.invoke()
         } finally {
             // Leaving is the same act in reverse, and under the same lock: step out of the count,
@@ -1965,6 +2025,45 @@ class SessionRepository(
      * to work, with the run gone anyway. Returns whether it landed, so the caller can leave history
      * owing a full reseed when it did not.
      */
+    /**
+     * Re-takes what [sessionIds] are worth at every Record, replacing whatever was banked for them
+     * (#75). Returns whether it landed.
+     *
+     * Its own attempt and its own transaction, like [repairRecordBook]: the Runs have already
+     * changed by the time this runs, and a re-banking that cannot be written must not take a Walk
+     * mark down with it. Left undone it leaves the debt owed, which the next launch's seeding pass
+     * pays against a book and a set of rows nobody is moving.
+     *
+     * A Run that is *gone* re-banks to nothing and needs no help: its rows cascaded away with it
+     * ([RunEffortRow]), and it is not in history to be measured. The delete path therefore reaches
+     * here and finds nothing to do, which is the right answer rather than a special case.
+     *
+     * Whole rather than at named Records, and that is the point of it: only a whole measure can say
+     * that a Record the Run used to contest is one it no longer does.
+     */
+    private suspend fun rebankEfforts(sessionIds: List<Long>): Boolean {
+        val dao = runEffortDao ?: return true
+        return try {
+            sessionIds.forEach { sessionId ->
+                val session = sessionDao.getSessionById(sessionId)
+                // Measured outside the transaction below, which is the same split [rebuildRecords]
+                // makes: reading and measuring a track is real work, and the database's write lock
+                // is not the place to do it.
+                val efforts = session
+                    ?.let { effortsAt(it, RecordType.entries, statedEffortsOf(sessionId)) }
+                    .orEmpty()
+                inTransaction {
+                    dao.deleteEffortsForSession(sessionId)
+                    dao.putEfforts(efforts.map { RunEffortRow(sessionId, it.type, it.value) })
+                }
+            }
+            true
+        } catch (e: Exception) {
+            Log.w("Records", "Could not re-bank what ${sessionIds.size} run(s) are worth", e)
+            false
+        }
+    }
+
     private suspend fun repairRecordBook(types: List<RecordType>, remeasured: List<Long>): Boolean {
         if (types.isEmpty()) return true
         return try {
@@ -2058,6 +2157,19 @@ class SessionRepository(
             val book = recordBookOf(measured + unseen)
             dao.deleteAchievementsOfTypes(types)
             dao.insertAchievements(book)
+            // The efforts behind the book, rewritten on exactly the terms the book is (#75): the
+            // Runs this pass measured, plus what is banked for the Runs it did not — which is the
+            // same carry-in, decided by the same [measuredIds], so a Run that finished mid-measure
+            // keeps the rows its own scoring wrote rather than being wiped by this one.
+            val carried = runEffortDao?.getEffortsOfTypes(types)
+                .orEmpty()
+                .filter { it.sessionId !in measuredIds }
+            runEffortDao?.deleteEffortsOfTypes(types)
+            runEffortDao?.putEfforts(
+                measured.flatMap { run ->
+                    run.efforts.map { RunEffortRow(run.sessionId, it.type, it.value) }
+                } + carried
+            )
             written = book
         }
         return written
