@@ -197,11 +197,12 @@
       </div>
 
       <div class="e">
-        <h3>Your maximum heart rate, and the five zones</h3>
-        <p>Everything the app says about effort is built on one number: your maximum heart rate. The five zones are fixed slices of it.</p>
+        <h3>Your heart rates, and the five zones</h3>
+        <p>Everything the app says about effort is built on two numbers: your <strong>maximum</strong> heart rate, and your <strong>resting</strong> one. What the five zones slice is the gap between them — your <em>reserve</em>, the range your heart actually works across.</p>
+        <p>Resting is optional, and leaving it blank is a real answer rather than a gap: with nothing typed the reserve runs from zero, so the zones come out as plain percentages of your maximum and nothing in your history moves. Type one and every zone edge lifts, because a heart that idles at 55 is not working at all at 55.</p>
         <div class="tablewrap">
           <table>
-            <thead><tr><th>Zone</th><th>Of your max</th><th>What it is</th></tr></thead>
+            <thead><tr><th>Zone</th><th>Of your reserve</th><th>What it is</th></tr></thead>
             <tbody>
               <tr><td class="z z1">Z1 Endurance</td><td>50–60%</td><td class="say">Easy. Conversation pace.</td></tr>
               <tr><td class="z z2">Z2 Moderate</td><td>60–70%</td><td class="say">The default target. Where base fitness is built.</td></tr>
@@ -211,7 +212,8 @@
             </tbody>
           </table>
         </div>
-        <p class="note"><b>You don't have to guess forever.</b> If a run's peak heart rate beats the maximum your zones are built on, the Progress screen offers to rebuild them on the real number. See <a href="#progress">Progress</a>.</p>
+        <p class="note"><b>The two numbers hold each other apart.</b> They have to leave a usable gap, so each field refuses a number the other cannot live with, and tells you the range it will take. Clearing the resting field asks you first, because it puts your zones back onto your maximum alone.</p>
+        <p class="note"><b>You don't have to guess the maximum.</b> Until you have ever set one, the Progress screen offers you the highest heart rate it has recorded from you — or, if it has never recorded one, a rough figure from your age. See <a href="#progress">Progress</a>.</p>
         <div class="where"><b>Where</b> Home → Prefs</div>
       </div>
 
@@ -277,7 +279,8 @@
 
       <div class="e">
         <h3>The three phases</h3>
-        <p>Every session is <strong>Warm-up</strong>, then the <strong>Main</strong> workout, then <strong>Cool-down</strong>. You can skip straight to the cool-down when you have had enough.</p>
+        <p>A session the plan gave you runs <strong>Warm-up</strong>, then the <strong>Main</strong> workout, then <strong>Cool-down</strong>. You can skip straight to the cool-down when you have had enough.</p>
+        <p class="note"><b>Only where there is a workout to run.</b> The phases come from the session, so a run with no plan attached — you tapped <strong>Skip today</strong>, or there is nothing planned — has none of them. It is open-ended: it starts when you start and it runs until you stop it, with no change ever coming and nothing to skip to. A plan <a href="#plan">test</a> is the same, deliberately: a 5K flat out with no warm-up or cool-down wrapped round it.</p>
       </div>
 
       <div class="e">
@@ -452,7 +455,8 @@
 
       <div class="e">
         <h3>The Max HR card</h3>
-        <p>When a run's peak beats the maximum your zones are built on, this card says so and offers to rebuild them on the real number. It asks once. Say no and it stops asking.</p>
+        <p>Until you have ever set a maximum, this card asks you to confirm one, so your zones are not left sitting on a placeholder. It offers the highest heart rate the app has recorded from you; if it has never recorded one, it asks your age and offers a rough figure from that. Saying yes works your past runs out again to match.</p>
+        <p class="note"><b>It asks once, then never again.</b> Set a maximum — here or in Prefs — or put the card away, and it is gone for good. It does not come back later because a run went higher than your setting: a peak above your maximum is yours to act on, by typing the new number into Prefs yourself.</p>
       </div>
 
       <div class="e">
@@ -632,7 +636,7 @@
       <div class="e">
         <h3>Restore</h3>
         <p>Pick an archive and the app opens the database <em>inside</em> it before swapping anything, so a file it cannot read is refused rather than leaving you with nothing.</p>
-        <p>History restored from an older file is re-banded on the maximum heart rate it was actually recorded under, not today's.</p>
+        <p>History restored from an older file is re-banded on the heart rates it was actually recorded under — the maximum and the resting one in force then, not today's.</p>
       </div>
 
       <div class="e">
