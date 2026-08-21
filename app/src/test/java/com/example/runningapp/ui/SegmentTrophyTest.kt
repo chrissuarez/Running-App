@@ -5,6 +5,7 @@ import com.example.runningapp.data.SegmentEffortRow
 import java.time.LocalDate
 import java.time.ZoneId
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -235,6 +236,25 @@ class SegmentTrophyTest {
         assertTrue(spoken.contains("24 Jun 2024"))
         assertTrue(spoken.contains("01:40"))
         assertTrue(spoken.contains("01:32"))
+    }
+
+    @Test
+    fun `the last thing said is the latest day's quickest, not its last attempt`() {
+        val spoken = segmentTrendDescription(
+            segmentTrendPoints(
+                shown(
+                    row(1, day = 0, elapsedMillis = 100_000),
+                    row(2, day = 21, elapsedMillis = 92_000, hourOfDay = 7),
+                    row(3, day = 21, elapsedMillis = 110_000, hourOfDay = 9),
+                )
+            )
+        )!!
+
+        // The chart's last point is the 01:32 the runner set that morning, not the 01:50 they ran
+        // after it. Reading the later, slower attempt out would name a time the chart never drew.
+        assertTrue(spoken.contains("01:32"))
+        assertFalse(spoken.contains("01:50"))
+        assertFalse(spoken.contains("most recently"))
     }
 
     @Test
