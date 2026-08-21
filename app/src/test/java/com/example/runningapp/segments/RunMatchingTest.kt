@@ -213,4 +213,55 @@ class RunMatchingTest {
     fun `a run with no track holds no shape`() {
         assertNull(runShapeOf(measureTrack(emptyList())))
     }
+
+    // -- The date line ------------------------------------------------------------------------
+
+    /**
+     * A Run along the equator over ±180°, its fixes at these metres east of the line.
+     *
+     * Written in raw longitude rather than through [at], because the origin the rest of these tests
+     * are scripted around is in London and this rule is only reachable at the antimeridian.
+     */
+    private fun overTheDateLine(offsetsInMeters: List<Double>): List<TrackPoint> {
+        val metersPerDegreeLongitudeAtTheEquator = 111_320.0
+        return offsetsInMeters.mapIndexed { i, meters ->
+            TrackPoint(
+                sessionId = 1L,
+                latitude = 0.0,
+                longitude = theShortWayRound(180.0 + meters / metersPerDegreeLongitudeAtTheEquator),
+                timestampMillis = 1_000_000L + i * 60_000L,
+                source = "GPS",
+            )
+        }
+    }
+
+    /** Fixes every [stepMeters] from 1200 m west of the line to 1500 m east of it. */
+    private fun alongTheDateLine(stepMeters: Double): List<Double> =
+        generateSequence(-1200.0) { it + stepMeters }.takeWhile { it <= 1500.0 }.toList()
+
+    @Test
+    fun `a run over the date line keeps its waypoints on the ground it covered`() {
+        // Coarse fixes on purpose: one leg spans the line whole, and a waypoint falls inside it.
+        // Subtracted raw that leg is nearly a whole turn wide, and the waypoint interpolated along
+        // it lands tens of degrees from where the runner was.
+        val shape = runShapeOf(measureTrack(overTheDateLine(alongTheDateLine(stepMeters = 900.0))))!!
+
+        shape.waypoints.forEach { waypoint ->
+            assertTrue(
+                "waypoint at ${waypoint.longitude} is not on the date line",
+                kotlin.math.abs(waypoint.longitude) > 179.0,
+            )
+        }
+    }
+
+    @Test
+    fun `the same ground over the date line matches however coarsely it was recorded`() {
+        // Identical ground recorded twice. The close recording has fixes either side of the line;
+        // the coarse one steps over it whole. A Run must not be refused for the way the phone
+        // happened to sample it.
+        val closelyRecorded = runShapeOf(measureTrack(overTheDateLine(alongTheDateLine(10.0))))!!
+        val coarselyRecorded = runShapeOf(measureTrack(overTheDateLine(alongTheDateLine(900.0))))!!
+
+        assertTrue(runsMatch(closelyRecorded, coarselyRecorded))
+    }
 }
