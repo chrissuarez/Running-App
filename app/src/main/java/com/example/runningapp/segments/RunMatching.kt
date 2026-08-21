@@ -161,7 +161,15 @@ fun runsMatch(one: RunShape, other: RunShape): Boolean {
  */
 fun RunnerSession.mayBeMatchedToOtherRuns(): Boolean = mayHoldSegmentEfforts()
 
-/** Where the Run was when it had covered [target] metres, interpolated along the leg it fell on. */
+/**
+ * Where the Run was when it had covered [target] metres, interpolated along the leg it fell on.
+ *
+ * Longitude is interpolated across [theShortWayRound] and wrapped back, because a leg that steps
+ * over ±180° subtracts to nearly a whole turn: taken raw, the waypoint lands near Greenwich, half a
+ * planet from the ground the runner covered. A second recording of the same route with a fix
+ * *on* the date line would not take that leg at all, so the two runs would disagree about identical
+ * ground and [runsMatch] would refuse them.
+ */
 private fun fixAt(
     points: List<TrackPoint>,
     along: DoubleArray,
@@ -177,7 +185,9 @@ private fun fixAt(
         val to = points[leg + 1]
         return MapFix(
             latitude = from.latitude + (to.latitude - from.latitude) * fraction,
-            longitude = from.longitude + (to.longitude - from.longitude) * fraction,
+            longitude = theShortWayRound(
+                from.longitude + theShortWayRound(to.longitude - from.longitude) * fraction
+            ),
         )
     }
     return MapFix(points.last().latitude, points.last().longitude)

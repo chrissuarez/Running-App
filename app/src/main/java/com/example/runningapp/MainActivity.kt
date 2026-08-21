@@ -1088,35 +1088,34 @@ class MainActivity : ComponentActivity() {
                             // Watched, like the card that led here: the group is worked out on read
                             // from the shapes, so a Run finishing or being deleted while this list
                             // is open takes a line off it or adds one (#73).
-                            val matched by produceState<com.example.runningapp.ui.MatchedRunsUi?>(
+                            // Held as "has the read answered yet, and with what" rather than as a
+                            // group that may be null, because those are two different nulls and the
+                            // page owes a different thing to each: a spinner while the shapes are
+                            // being read, and a way out once they have been read and there is no
+                            // group. A flag saying "a group has been seen" cannot tell them apart —
+                            // a group gone before the first emission never sets it, so the page
+                            // would sit there loading for ever.
+                            val answered by produceState<Answered<com.example.runningapp.ui.MatchedRunsUi?>?>(
                                 initialValue = null,
                                 key1 = sessionId
                             ) {
                                 sessionId?.let { id ->
-                                    sessionDetailViewModel.matchedRuns(id).collect { value = it }
+                                    sessionDetailViewModel.matchedRuns(id).collect { value = Answered(it) }
                                 }
                             }
                             val backToTheRun: () -> Unit = {
                                 sessionId?.let { navigateTo(Routes.sessionDetail(it)) }
                                     ?: navigateTo(Routes.HISTORY)
                             }
-                            // A group that was here and is gone closes the page, the way a deleted
-                            // Segment's does (#70): the Run this list belongs to has been thrown
-                            // away, or has left its own group, and a screen for a group nobody has
-                            // would otherwise sit there loading for ever. Only after it has been
-                            // seen once — before that, null is still "the shapes are being read".
-                            //
-                            // `remember`, deliberately not `rememberSaveable`: this flag says only
-                            // "the read above has handed back a group", so it must live and die
-                            // with that read. Saved across a rotation it would come back true over
-                            // a `produceState` starting again at null, and close a page whose group
-                            // is still there — the very state it exists to tell apart.
-                            var groupWasHere by remember(sessionId) { mutableStateOf(false) }
-                            LaunchedEffect(matched) {
-                                if (matched != null) groupWasHere = true else if (groupWasHere) backToTheRun()
+                            // A group the read has answered "none" to closes the page, the way a
+                            // deleted Segment's does (#70): the Run this list belongs to has been
+                            // thrown away, or has left its own group, and a screen for a group
+                            // nobody has has nothing to show.
+                            LaunchedEffect(answered) {
+                                if (answered != null && answered?.value == null) backToTheRun()
                             }
                             MatchedRunsScreen(
-                                matched = matched,
+                                matched = answered?.value,
                                 onOpenRun = { runId -> navigateTo(Routes.sessionDetail(runId)) },
                                 onBack = backToTheRun,
                             )
@@ -2445,3 +2444,13 @@ fun DeviceListItem(device: ScannedStrap, onClick: () -> Unit) {
     }
 }
 
+
+/**
+ * One answer from a watched read, so "not yet" and "nothing" are not the same value (#73).
+ *
+ * A `produceState` over a flow starts at a value nobody has read, and a flow whose answer is "there
+ * is none" hands back the same null. A screen owes a different thing to each — a spinner to the
+ * first, a way out to the second — so what it holds is the *answer*, and the absence of one is the
+ * absence of this wrapper rather than a null inside it.
+ */
+private class Answered<T>(val value: T)

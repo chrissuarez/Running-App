@@ -363,6 +363,22 @@ private data class Point(val east: Double, val north: Double) {
 }
 
 /**
+ * A difference of longitude, signed and taken **the short way round** — so ground on the date line
+ * is not read as half a planet wide.
+ *
+ * Two fixes a stride apart either side of ±180° subtract to 359.99°, and every reader of a
+ * difference of longitude has to say which way round it meant. This is where the app says it: the
+ * projection a Segment's gate is measured in ([LocalFrame]), and the interpolation a Run's
+ * waypoints are taken by ([runShapeOf], #73).
+ */
+fun theShortWayRound(degrees: Double): Double {
+    var short = degrees
+    while (short > 180.0) short -= 360.0
+    while (short < -180.0) short += 360.0
+    return short
+}
+
+/**
  * Metres east and north of one origin, so the matching is done in flat geometry.
  *
  * A Segment is hundreds of metres of one street. Over that, the ground is flat to well inside a
@@ -399,12 +415,8 @@ private class LocalFrame(origin: MapFix) {
     )
 
     /** Signed, and the short way round, so a Segment on the date line is not half a planet wide. */
-    private fun degreesOfLongitudeFromOrigin(longitude: Double): Double {
-        var degrees = longitude - originLongitude
-        while (degrees > 180.0) degrees -= 360.0
-        while (degrees < -180.0) degrees += 360.0
-        return degrees
-    }
+    private fun degreesOfLongitudeFromOrigin(longitude: Double): Double =
+        theShortWayRound(longitude - originLongitude)
 
     private companion object {
         // The same ellipsoid [com.example.runningapp.recording.geodesicDistanceMeters] measures on.
