@@ -98,7 +98,14 @@ fun SessionDetailScreen(
     // The way to a Segment's own page, which every row of that card is. Null rather than a no-op
     // default on purpose, the way [onCreateSegment] is: a screen with nowhere to send the runner
     // draws no card at all rather than rows that look tappable and do nothing.
-    onOpenSegment: ((Long) -> Unit)? = null
+    onOpenSegment: ((Long) -> Unit)? = null,
+    // The other Runs over this same route, and where this one stands among them (#73). Null for a
+    // Run nobody has repeated, for one that holds no route at all, and until the shapes have been
+    // read — the card is simply absent, the same as the medals and the Segments are.
+    matchedRuns: MatchedRunsUi? = null,
+    // The way to the list of them, which the whole card is. Null rather than a no-op for
+    // [onOpenSegment]'s reason.
+    onOpenMatchedRuns: (() -> Unit)? = null
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
     // Kept across a rotation or a process death, so a runner who turned the phone sideways to look
@@ -302,6 +309,16 @@ fun SessionDetailScreen(
                     Text("Segments", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.height(8.dp))
                     RunSegmentsCard(efforts = segmentEfforts, onOpenSegment = onOpenSegment)
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
+
+                // Under the Segments and above the splits, because it is the same news one size
+                // larger: a Segment is a place inside a Run, and this is the whole Run set against
+                // every other time the runner has been this way (#73).
+                if (matchedRuns != null && onOpenMatchedRuns != null) {
+                    Text(MATCHED_RUNS_TITLE, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    MatchedRunsCard(matched = matchedRuns, onOpenMatchedRuns = onOpenMatchedRuns)
                     Spacer(modifier = Modifier.height(24.dp))
                 }
 

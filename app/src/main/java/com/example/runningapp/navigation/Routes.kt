@@ -26,7 +26,15 @@ object Routes {
      */
     const val SEGMENT_CREATE = "segment_create/{$ARG_SESSION_ID}"
 
+    /**
+     * Every Run over one route, addressed by the Run the runner opened it from (#73): a group is
+     * always somebody's group, so there is no such screen without a Run to match against.
+     */
+    const val MATCHED_RUNS = "matched_runs/{$ARG_SESSION_ID}"
+
     fun sessionDetail(sessionId: Long): String = "session_detail/$sessionId"
+
+    fun matchedRuns(sessionId: Long): String = "matched_runs/$sessionId"
 
     fun segmentDetail(segmentId: Long): String = "segment_detail/$segmentId"
 

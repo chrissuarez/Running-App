@@ -99,6 +99,16 @@ class SessionDetailViewModel(
             .map { rows -> runSegmentEffortsUi(rows, sessionId) }
 
     /**
+     * The other Runs over the same route as this one (#73), and where this one stands among them.
+     *
+     * The grouping is worked out here rather than in SQL, off every shaped Run the same read
+     * carried, because the geometry rule that decides it lives in one place
+     * ([com.example.runningapp.segments.runsMatch]). Null where there is no group to show.
+     */
+    fun matchedRuns(sessionId: Long) =
+        sessionRepository.shapedRunsFlow().map { shaped -> matchedRunsUi(shaped, sessionId) }
+
+    /**
      * States the time the console showed for one of the record distances, corrects it, or takes it
      * back (#282).
      *

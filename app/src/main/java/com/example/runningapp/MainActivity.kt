@@ -73,6 +73,7 @@ import com.example.runningapp.ui.RestoreUiState
 import com.example.runningapp.ui.RestoreViewModel
 import com.example.runningapp.ui.RestoreViewModelFactory
 import com.example.runningapp.ui.SegmentCreateScreen
+import com.example.runningapp.ui.MatchedRunsScreen
 import com.example.runningapp.ui.SegmentDetailScreen
 import com.example.runningapp.ui.SegmentsScreen
 import com.example.runningapp.ui.SegmentsViewModel
@@ -313,6 +314,11 @@ class MainActivity : ComponentActivity() {
         // is the launch that scores it, from the samples those Runs already kept.
         runningAppContainer().backfillEffortScoresOnce()
         runningAppContainer().paySegmentTimingOnce()
+
+        // Every Run recorded before matched runs shipped has a track and no shape taken off it, so
+        // nothing would recognise the route the runner has run fifty times until they ran it again.
+        // This is the launch that measures them (#73).
+        runningAppContainer().takeRunShapesOnce()
 
         // Keeps the monthly full archive scheduled (#85). Called on every launch and cheap every
         // time: an existing schedule is left exactly where it is, so this only ever creates the job
@@ -837,6 +843,16 @@ class MainActivity : ComponentActivity() {
                             // What this run has been told it holds (#282), watched for the same
                             // reason the medals are: stating one re-scores, and the card and the
                             // book underneath it have to arrive at the new answer together.
+                            // The other Runs over this same route (#73). Watched for the reason the
+                            // Segments are, and one more of its own: the shapes of a whole history
+                            // are still being taken on the first launch after this shipped, so the
+                            // number on the card fills in as that pass lands.
+                            val sessionMatchedRuns by produceState<com.example.runningapp.ui.MatchedRunsUi?>(initialValue = null, key1 = sessionId) {
+                                sessionId?.let { id ->
+                                    sessionDetailViewModel.matchedRuns(id).collect { value = it }
+                                }
+                            }
+
                             val sessionStatedEfforts by produceState<List<com.example.runningapp.data.StatedBestEffort>>(initialValue = emptyList(), key1 = sessionId) {
                                 sessionId?.let { id ->
                                     sessionDetailViewModel.statedBestEfforts(id).collect { value = it }
@@ -906,7 +922,11 @@ class MainActivity : ComponentActivity() {
                                     null
                                 },
                                 segmentEfforts = sessionSegmentEfforts,
-                                onOpenSegment = { id -> navigateTo(Routes.segmentDetail(id)) }
+                                onOpenSegment = { id -> navigateTo(Routes.segmentDetail(id)) },
+                                matchedRuns = sessionMatchedRuns,
+                                onOpenMatchedRuns = sessionId?.let { id ->
+                                    { navigateTo(Routes.matchedRuns(id)) }
+                                }
                             )
                         }
                         composable(Routes.TRAINING_PLAN) {
@@ -1054,6 +1074,31 @@ class MainActivity : ComponentActivity() {
                                 // the morning is the Run's own (#72).
                                 onOpenRun = { runId -> navigateTo(Routes.sessionDetail(runId)) },
                                 onBack = { navigateTo(Routes.SEGMENTS) }
+                            )
+                        }
+                        composable(
+                            route = Routes.MATCHED_RUNS,
+                            arguments = listOf(navArgument(Routes.ARG_SESSION_ID) { type = NavType.LongType })
+                        ) { backStackEntry ->
+                            val sessionId = backStackEntry.arguments?.getLong(Routes.ARG_SESSION_ID)
+                            // Watched, like the card that led here: the group is worked out on read
+                            // from the shapes, so a Run finishing or being deleted while this list
+                            // is open takes a line off it or adds one (#73).
+                            val matched by produceState<com.example.runningapp.ui.MatchedRunsUi?>(
+                                initialValue = null,
+                                key1 = sessionId
+                            ) {
+                                sessionId?.let { id ->
+                                    sessionDetailViewModel.matchedRuns(id).collect { value = it }
+                                }
+                            }
+                            MatchedRunsScreen(
+                                matched = matched,
+                                onOpenRun = { runId -> navigateTo(Routes.sessionDetail(runId)) },
+                                onBack = {
+                                    sessionId?.let { navigateTo(Routes.sessionDetail(it)) }
+                                        ?: navigateTo(Routes.HISTORY)
+                                },
                             )
                         }
                         composable(
