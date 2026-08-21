@@ -19,6 +19,24 @@ tickets. It is a global skill (`~/.claude/skills/codex-loop/`), shared across pr
 repo from `gh repo view`; the unit-test command it runs here is `./gradlew testDebugUnitTest`, and
 connected Android tests must stay unrun — they uninstall the app and wipe Chris's run history.
 
+### The user handbook — update it with every shipped feature
+
+`docs/guide/index.html` is the plain-English handbook: what every feature does and where in the app
+to find it. It is written for Chris, who is not a developer — no ticket numbers, no class names, no
+implementation detail.
+
+**Whenever a user-visible feature ships (merged and phone-tested), update it in the same sitting:**
+
+1. Edit `docs/guide/index.html` — add or amend the entry in the chapter it belongs to, refresh the
+   "Newest thing" box at the top, and move both date stamps (masthead kicker + footer).
+2. Republish to the **same URL** so Chris's bookmark keeps working:
+   `Artifact` with `file_path: docs/guide/index.html` and
+   `url: https://claude.ai/code/artifact/5e644405-c86f-4fe6-a798-711c224d5902`.
+3. Commit the file with the feature's own work where possible.
+
+A change nobody can see from the app — refactors, test-only work, internal tickets — does not belong
+in it. If a chapter is missing for the feature, add one and add its jump link.
+
 ### Domain docs
 
 Single-context: one `CONTEXT.md` and `docs/adr/` at the repo root (created lazily by `/domain-modeling`). See `docs/agents/domain.md`.
