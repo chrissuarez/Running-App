@@ -1,0 +1,697 @@
+<title>Running App Handbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+
+<style>
+  :root{
+    --bg:#F2F1EE; --panel:#FFFFFF; --sunk:#E7E5E0; --raise:#FBFAF8;
+    --ink:#1B1A17; --ink-2:#55524B; --ink-3:#847F75;
+    --line:#DFDCD5; --line-2:#C9C5BC;
+    --accent:#B45B0A; --accent-ink:#8E4707; --accent-soft:#FAE9D5;
+    --z1:#4E7FA8; --z2:#3F8F6B; --z3:#B08A17; --z4:#C06A25; --z5:#B03F35;
+    --shadow:0 1px 2px rgba(27,26,23,.06), 0 8px 24px rgba(27,26,23,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#131311; --panel:#1C1C19; --sunk:#101010; --raise:#232320;
+      --ink:#F0EEE9; --ink-2:#A9A49A; --ink-3:#78736A;
+      --line:#2C2C28; --line-2:#3B3B35;
+      --accent:#F0A340; --accent-ink:#F7C489; --accent-soft:#33240E;
+      --z1:#7FAAD0; --z2:#63BC91; --z3:#D9B443; --z4:#E8944F; --z5:#E0685C;
+      --shadow:0 1px 2px rgba(0,0,0,.5), 0 10px 30px rgba(0,0,0,.32);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#131311; --panel:#1C1C19; --sunk:#101010; --raise:#232320;
+    --ink:#F0EEE9; --ink-2:#A9A49A; --ink-3:#78736A;
+    --line:#2C2C28; --line-2:#3B3B35;
+    --accent:#F0A340; --accent-ink:#F7C489; --accent-soft:#33240E;
+    --z1:#7FAAD0; --z2:#63BC91; --z3:#D9B443; --z4:#E8944F; --z5:#E0685C;
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 10px 30px rgba(0,0,0,.32);
+  }
+
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth; scroll-padding-top:88px;}
+  @media (prefers-reduced-motion:reduce){ html{scroll-behavior:auto;} }
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Source Serif 4",Georgia,"Times New Roman",serif;
+    font-size:17px; line-height:1.62; -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,h4{font-family:"Barlow Semi Condensed",system-ui,-apple-system,"Segoe UI",sans-serif; text-wrap:balance; margin:0;}
+  .mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;}
+
+  /* ---- top bar ---- */
+  .bar{
+    position:sticky; top:0; z-index:20; background:var(--bg);
+    border-bottom:1px solid var(--line);
+  }
+  .bar-in{max-width:1040px; margin:0 auto; padding:10px 20px; display:flex; align-items:center; gap:16px;}
+  .bar .mark{
+    font-family:"Barlow Semi Condensed",sans-serif; font-weight:700; font-size:17px;
+    letter-spacing:.02em; white-space:nowrap; color:var(--ink);
+  }
+  .bar .mark span{color:var(--accent);}
+  nav.jump{display:flex; gap:4px; overflow-x:auto; scrollbar-width:none; -webkit-overflow-scrolling:touch;}
+  nav.jump::-webkit-scrollbar{display:none;}
+  nav.jump a{
+    font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--ink-2); text-decoration:none; padding:6px 9px; border-radius:6px; white-space:nowrap;
+  }
+  nav.jump a:hover{background:var(--sunk); color:var(--ink);}
+  nav.jump a:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
+
+  .wrap{max-width:1040px; margin:0 auto; padding:0 20px 96px;}
+
+  /* ---- masthead ---- */
+  header.mast{padding:56px 0 40px; display:flex; flex-direction:column; gap:20px; max-width:70ch;}
+  .kicker{
+    font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.18em;
+    text-transform:uppercase; color:var(--accent);
+  }
+  header.mast h1{font-size:clamp(38px,7vw,64px); font-weight:700; line-height:.98; letter-spacing:-.015em;}
+  header.mast .lede{font-size:19px; color:var(--ink-2); margin:0;}
+
+  .whatsnew{
+    background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--accent);
+    border-radius:8px; padding:18px 20px; display:flex; flex-direction:column; gap:8px; box-shadow:var(--shadow);
+  }
+  .whatsnew .h{
+    font-family:"IBM Plex Mono",monospace; font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent);
+  }
+  .whatsnew p{margin:0; font-size:16px; color:var(--ink-2);}
+  .whatsnew strong{color:var(--ink);}
+
+  /* ---- chapters ---- */
+  section.ch{padding:52px 0 8px; border-top:1px solid var(--line);}
+  .ch-head{display:grid; grid-template-columns:1fr; gap:10px; max-width:72ch; margin-bottom:30px;}
+  .ch-head h2{font-size:clamp(27px,4.2vw,36px); font-weight:700; letter-spacing:-.01em; line-height:1.05;}
+  .ch-head .sub{margin:0; color:var(--ink-2); font-size:17px;}
+
+  .entries{display:flex; flex-direction:column; gap:30px; max-width:72ch;}
+  .e h3{font-size:21px; font-weight:600; letter-spacing:-.005em; margin-bottom:6px;}
+  .e p{margin:0 0 10px; color:var(--ink-2);}
+  .e p:last-child{margin-bottom:0;}
+  .e strong{color:var(--ink); font-weight:600;}
+  .e em{color:var(--ink); font-style:italic;}
+
+  .where{
+    display:inline-flex; align-items:baseline; gap:8px; margin-top:4px;
+    font-family:"IBM Plex Mono",monospace; font-size:12.5px; color:var(--ink-2);
+    background:var(--sunk); border-radius:6px; padding:5px 10px;
+  }
+  .where b{color:var(--accent); font-weight:600; letter-spacing:.08em; text-transform:uppercase; font-size:10.5px;}
+
+  .note{
+    border-left:2px solid var(--line-2); padding:2px 0 2px 16px; margin:12px 0 0;
+    color:var(--ink-3); font-size:15.5px;
+  }
+  .note b{color:var(--ink-2);}
+
+  ul.plain{margin:10px 0 0; padding-left:20px; color:var(--ink-2);}
+  ul.plain li{margin-bottom:6px;}
+  ul.plain li::marker{color:var(--ink-3);}
+
+  /* ---- zone table ---- */
+  .tablewrap{overflow-x:auto; margin-top:14px; border:1px solid var(--line); border-radius:8px; background:var(--panel);}
+  table{border-collapse:collapse; width:100%; font-family:"IBM Plex Mono",monospace; font-size:13.5px; font-variant-numeric:tabular-nums;}
+  th,td{text-align:left; padding:10px 14px; border-bottom:1px solid var(--line); white-space:nowrap;}
+  th{font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-3); font-weight:600;}
+  tr:last-child td{border-bottom:none;}
+  td.z{font-weight:600;}
+  .z1{color:var(--z1);} .z2{color:var(--z2);} .z3{color:var(--z3);} .z4{color:var(--z4);} .z5{color:var(--z5);}
+  td.say{font-family:"Source Serif 4",serif; font-size:14.5px; color:var(--ink-2); white-space:normal;}
+
+  /* ---- glossary ---- */
+  dl.gloss{display:grid; grid-template-columns:minmax(150px,auto) 1fr; gap:0; margin:0; max-width:80ch;
+    border-top:1px solid var(--line);}
+  dl.gloss dt{
+    font-family:"IBM Plex Mono",monospace; font-size:13px; font-weight:600; color:var(--ink);
+    padding:14px 18px 14px 0; border-bottom:1px solid var(--line);
+  }
+  dl.gloss dd{margin:0; padding:14px 0; border-bottom:1px solid var(--line); color:var(--ink-2); font-size:16px;}
+  @media (max-width:640px){
+    dl.gloss{grid-template-columns:1fr;}
+    dl.gloss dt{padding-bottom:2px; border-bottom:none;}
+    dl.gloss dd{padding-top:2px;}
+  }
+
+  footer.foot{
+    margin-top:56px; border-top:1px solid var(--line); padding-top:24px;
+    color:var(--ink-3); font-size:15px; max-width:72ch;
+    display:flex; flex-direction:column; gap:10px;
+  }
+  footer.foot code{
+    font-family:"IBM Plex Mono",monospace; font-size:13px;
+    background:var(--sunk); padding:2px 6px; border-radius:4px; color:var(--ink-2);
+  }
+  a{color:var(--accent-ink);}
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) a{color:var(--accent-ink);} }
+</style>
+
+<div class="bar">
+  <div class="bar-in">
+    <div class="mark">Running<span>App</span></div>
+    <nav class="jump">
+      <a href="#setup">Setup</a>
+      <a href="#before">Before a run</a>
+      <a href="#during">During</a>
+      <a href="#after">After</a>
+      <a href="#runpage">The run's page</a>
+      <a href="#progress">Progress</a>
+      <a href="#plan">Plan &amp; coach</a>
+      <a href="#racing">Racing yourself</a>
+      <a href="#routes">Routes</a>
+      <a href="#data">Your data</a>
+      <a href="#words">The app's words</a>
+    </nav>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <header class="mast">
+    <div class="kicker">Handbook · updated 21 August 2026</div>
+    <h1>Everything the app does, and where to find it.</h1>
+    <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
+    <div class="whatsnew">
+      <div class="h">Newest thing</div>
+      <p><strong>Matched runs.</strong> Runs over the same ground now recognise each other, with nothing for you to name or save. A run's page tells you which run of that route it is — <em>your 4th run on this route</em> — charts your pace on it over time, and lists the others so you can jump between them. Your whole history was measured the first time you opened the app after the update, so the count was right on day one.</p>
+    </div>
+  </header>
+
+  <!-- ============ SETUP ============ -->
+  <section class="ch" id="setup">
+    <div class="ch-head">
+      <h2>Setting up, once</h2>
+      <p class="sub">Four things to get right at the start. After this the app mostly looks after itself.</p>
+    </div>
+    <div class="entries">
+
+      <div class="e">
+        <h3>Your heart-rate strap</h3>
+        <p>The app talks to any standard Bluetooth chest strap — Polar, Garmin, Wahoo. Tap <strong>Scan</strong>, pick yours, and it is remembered. If you have more than one saved, the one marked <strong>Active</strong> is preferred.</p>
+        <p>Before a run the app hunts for the strap on its own. If it cannot find it, it gives up after about two and a half minutes and says so rather than searching forever. If the strap drops out mid-run, the run keeps going and the app keeps trying to get it back.</p>
+        <div class="where"><b>Where</b> Home → Devices</div>
+      </div>
+
+      <div class="e">
+        <h3>Your maximum heart rate, and the five zones</h3>
+        <p>Everything the app says about effort is built on one number: your maximum heart rate. The five zones are fixed slices of it.</p>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Zone</th><th>Of your max</th><th>What it is</th></tr></thead>
+            <tbody>
+              <tr><td class="z z1">Z1 Endurance</td><td>50–60%</td><td class="say">Easy. Conversation pace.</td></tr>
+              <tr><td class="z z2">Z2 Moderate</td><td>60–70%</td><td class="say">The default target. Where base fitness is built.</td></tr>
+              <tr><td class="z z3">Z3 Tempo</td><td>70–80%</td><td class="say">Comfortably hard.</td></tr>
+              <tr><td class="z z4">Z4 Threshold</td><td>80–90%</td><td class="say">Hard. Sustainable for a while, not long.</td></tr>
+              <tr><td class="z z5">Z5 Anaerobic</td><td>90%+</td><td class="say">Flat out.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note"><b>You don't have to guess forever.</b> If a run's peak heart rate beats the maximum your zones are built on, the Progress screen offers to rebuild them on the real number. See <a href="#progress">Progress</a>.</p>
+        <div class="where"><b>Where</b> Home → Prefs</div>
+      </div>
+
+      <div class="e">
+        <h3>Permissions</h3>
+        <p>Bluetooth to reach the strap, Location for outdoor runs and for Bluetooth scanning, and Notifications so the run can keep recording with the screen off.</p>
+        <p class="note"><b>Worth knowing.</b> Taking a permission away while a run is going stops the run. Grant them once and leave them.</p>
+      </div>
+
+      <div class="e">
+        <h3>Where to keep your backups</h3>
+        <p>Pick a folder once — a Google Drive folder is the sensible choice, because then the backup lives somewhere other than the phone. The app writes a full archive there every month and keeps the last three. See <a href="#data">Your data</a>.</p>
+        <div class="where"><b>Where</b> Home → Prefs → Backup</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ BEFORE ============ -->
+  <section class="ch" id="before">
+    <div class="ch-head">
+      <h2>Before a run</h2>
+      <p class="sub">The home screen's job is one decision: what are you doing today, and are you ready to start.</p>
+    </div>
+    <div class="entries">
+
+      <div class="e">
+        <h3>Today's run</h3>
+        <p>The home screen shows the stage of the plan you are in, the session it suggests for today, and the other sessions you could pick instead — usually a <strong>Long</strong>, an <strong>Easy</strong> and a <strong>Quality</strong> one. Each says roughly how long it will take.</p>
+        <p>If the AI coach has written you a Long run, that is the one shown, with its intervals and its target zone already filled in.</p>
+        <div class="where"><b>Where</b> Home</div>
+      </div>
+
+      <div class="e">
+        <h3>Treadmill or Outdoor</h3>
+        <p><strong>Outdoor</strong> records GPS as well as heart rate, so you get distance, pace, a map and splits. <strong>Treadmill</strong> records heart rate only — there is no GPS indoors worth having — and you type the distance in afterwards from the console.</p>
+        <div class="where"><b>Where</b> Home → the two buttons above START</div>
+      </div>
+
+      <div class="e">
+        <h3>Coach modes</h3>
+        <p><strong>Run/Walk</strong> is the beginner mode: the workout is a set of run and walk intervals, and the app calls the changes out loud. <strong>Continuous</strong> is a straight run in a target zone.</p>
+        <p>In Run/Walk, a high heart rate is only ever <em>advice</em> — "ease off slightly". The walks are the ones the workout prescribed, and the app will not order you to walk.</p>
+      </div>
+
+      <div class="e">
+        <h3>Simulate mode</h3>
+        <p>Runs the whole app on invented heart-rate data, so the screens and the coaching can be tried without strapping anything on. It records a real run in your history, so delete it afterwards.</p>
+        <p class="note"><b>What it can't do.</b> There is no GPS in simulate mode — no distance, no map, no splits.</p>
+        <div class="where"><b>Where</b> Home → Prefs</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ DURING ============ -->
+  <section class="ch" id="during">
+    <div class="ch-head">
+      <h2>During the run</h2>
+      <p class="sub">The screen can be off and the phone in your pocket. Recording continues, and the app talks to you.</p>
+    </div>
+    <div class="entries">
+
+      <div class="e">
+        <h3>The three phases</h3>
+        <p>Every session is <strong>Warm-up</strong>, then the <strong>Main</strong> workout, then <strong>Cool-down</strong>. You can skip straight to the cool-down when you have had enough.</p>
+      </div>
+
+      <div class="e">
+        <h3>What the screen shows</h3>
+        <p>Top: the phase you are in and the countdown to the next change. Middle: your heart rate and whether it is below, in, or above the target zone. Bottom: elapsed time, distance and pace. Structured workouts also get a timeline strip with a marker where you are, and a chip saying <em>why</em> the last thing happened — a planned change, heart rate too high, heart rate recovered, strap lost.</p>
+      </div>
+
+      <div class="e">
+        <h3>When the app speaks, and when it doesn't</h3>
+        <ul class="plain">
+          <li><strong>The first 8 minutes are silent.</strong> Your heart rate is still climbing and nagging about it would be wrong.</li>
+          <li><strong>Except for safety.</strong> If you go 15 beats above your target, the silence breaks immediately.</li>
+          <li><strong>It waits before complaining.</strong> Your heart rate must stay out of the zone for a set time before a cue fires, so a blip is ignored.</li>
+          <li><strong>It won't nag.</strong> There is a cooldown between cues.</li>
+          <li><strong>Cardiac drift is recognised.</strong> After 20 minutes, a heart rate that has crept up while your effort stayed the same gets "heart rate drifting up, keep effort steady" rather than "ease off".</li>
+          <li><strong>Every kilometre is called out.</strong></li>
+          <li><strong>"Halfway. Turn around."</strong> once, on an outdoor run following a plan, at half the run's total moving time — so an out-and-back gets you home. Switch it off in Prefs.</li>
+        </ul>
+      </div>
+
+      <div class="e">
+        <h3>One queue, so nothing is cut off</h3>
+        <p>Every spoken cue goes into a single ordered queue and they play one at a time, back to back. Navigation goes first, then instructions such as an interval change, then coaching, then information such as a split. Nothing is ever cut off mid-sentence and nothing is silently dropped — and when you press stop, the app stops talking.</p>
+      </div>
+
+      <div class="e">
+        <h3>Pausing</h3>
+        <p>Pause and resume by hand, or let the app do it: standing still on an outdoor run auto-pauses, and moving again resumes. Paused time is not counted as moving time, and a pause carries no distance.</p>
+        <p class="note"><b>If the signal drops</b> rather than you stopping, that is different — see <em>Outage</em> in <a href="#words">the app's words</a>.</p>
+      </div>
+
+      <div class="e">
+        <h3>If something goes wrong</h3>
+        <p>Android sometimes takes a recording away from an app in the background. When that happens the app now notices, finishes the run from the seconds already written down, and puts a notification on screen with a sound telling you the run stopped recording. It sends you to your history to look rather than promising the run was saved.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ AFTER ============ -->
+  <section class="ch" id="after">
+    <div class="ch-head">
+      <h2>The moment you stop</h2>
+      <p class="sub">A sheet comes up. Everything on it can also be changed later, from the run's own page, for ever.</p>
+    </div>
+    <div class="entries">
+
+      <div class="e">
+        <h3>How it felt</h3>
+        <p>Rate the effort out of ten and leave a note. These are <em>your words about your run</em>. They never change what your heart rate says about it, and they never graduate you through the plan — but the coach is shown them.</p>
+      </div>
+
+      <div class="e">
+        <h3>The distance, if it was a treadmill run</h3>
+        <p>Type in the number the console showed. It then counts like any other distance: your pace, your weekly totals, what the coach sees, and the longest-run record. A run nobody typed a distance for shows a dash, not <span class="mono">0.00 km</span>.</p>
+        <p class="note"><b>What a stated distance can't win.</b> The five fastest-distance records — 1 km, mile, 5 km, 10 km, half marathon — need a GPS track, because those are about the quickest stretch found <em>inside</em> a run.</p>
+      </div>
+
+      <div class="e">
+        <h3>"This was a walk"</h3>
+        <p>One mark on a whole run. The app never guesses it. A walk:</p>
+        <ul class="plain">
+          <li>builds <strong>fitness in full</strong>, and pays only a quarter of its score into <strong>fatigue</strong> — the fatigue that wrecks your form is largely pounding, and walking does not pound;</li>
+          <li>counts towards your goals and fills the weekly bars;</li>
+          <li>takes <strong>no record of any kind</strong>, completes no prescribed workout, and graduates no stage;</li>
+          <li>leaves every segment and every matched-run group it was in. Unmark it and it is measured back in.</li>
+        </ul>
+        <p class="note"><b>Marking an old run a walk changes the numbers since.</b> Fitness, fatigue and form from that day forward all move. They are a live read of the truth, and the alternative is leaving numbers up that we know are wrong.</p>
+      </div>
+
+      <div class="e">
+        <h3>What you are told afterwards</h3>
+        <p>One card, and it says who is talking. <strong>AI Coach Debrief</strong> is words that actually came back from the coach. <strong>Plan Update</strong> is the app's own arithmetic — a stage granted, a plan finished, a test missed. Older debriefs from before the app started signing them just say <strong>Run Debrief</strong>, because there is no honest way to work out afterwards which wrote it.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ RUN PAGE ============ -->
+  <section class="ch" id="runpage">
+    <div class="ch-head">
+      <h2>A run's own page</h2>
+      <p class="sub">Open any run from History. This is where everything about that one run lives, for as long as you keep it.</p>
+    </div>
+    <div class="entries">
+
+      <div class="e">
+        <h3>The map</h3>
+        <p>Your route, coloured by the heart-rate zone you were in. Tap for a fullscreen version.</p>
+      </div>
+
+      <div class="e">
+        <h3>The chart, and the dot</h3>
+        <p>Pace, heart rate and elevation over the run. Drag your finger across it and a dot moves along the route on the map above, so you can see exactly where the hill was.</p>
+      </div>
+
+      <div class="e">
+        <h3>The numbers</h3>
+        <p>Duration and <strong>moving time</strong> — the second excludes your pauses. Distance, average pace, elevation gain, average and maximum heart rate, effort score, walk breaks, and time in each of the five zones.</p>
+      </div>
+
+      <div class="e">
+        <h3>Splits</h3>
+        <p>A row per kilometre with its pace, its average heart rate and its climb, and a bar so the slow ones show up at a glance. The last part-kilometre gets its own row.</p>
+      </div>
+
+      <div class="e">
+        <h3>Medals</h3>
+        <p>Any records this run took. Nothing at all if it took none.</p>
+      </div>
+
+      <div class="e">
+        <h3>Segments crossed</h3>
+        <p>Every stretch you have marked that this run went over, with your time and where it placed. See <a href="#racing">Racing yourself</a>.</p>
+      </div>
+
+      <div class="e">
+        <h3>Matched runs</h3>
+        <p>Which run of this route it was — <em>your 4th run on this route</em> — a chart of your quickest pace on each day you ran it, and a tap through to the list of the others. See <a href="#racing">Racing yourself</a>.</p>
+      </div>
+
+      <div class="e">
+        <h3>Sharing the run as a file</h3>
+        <p><strong>Garmin (.fit)</strong> is the one to use for Garmin Connect and Strava. It <em>states</em> everything rather than leaving it to be worked out — its own distance, duration and moving time, its own splits as laps, and a moment for every second that recorded anything. A treadmill run with no GPS at all is still a whole file, with its heart-rate trace intact.</p>
+        <p><strong>GPX</strong> is the portable option for everything that isn't Garmin: track, times and heart rate per point. A run with no GPS track cannot be one, so it is not offered.</p>
+        <p class="note"><b>Garmin's phone app cannot take an activity in.</b> Opening a file with it offers to make the file a <em>course</em> instead. Upload the <span class="mono">.fit</span> on Garmin Connect's website.</p>
+        <div class="where"><b>Where</b> the share icon, top right</div>
+      </div>
+
+      <div class="e">
+        <h3>Deleting a run</h3>
+        <p>Gone, with its heart-rate trace, its GPS and its segment times. Anything that was standing on it is put right: a medal it held is passed back to whatever was behind it, and a coach's prescription that was reasoned from it is withdrawn.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ PROGRESS ============ -->
+  <section class="ch" id="progress">
+    <div class="ch-head">
+      <h2>Progress</h2>
+      <p class="sub">The screen that answers "am I actually getting fitter, and should I run hard today".</p>
+    </div>
+    <div class="entries">
+
+      <div class="e">
+        <h3>Effort Score — what one run cost you</h3>
+        <p>Every second of a run weighted by the zone it was spent in, added up. Not taken off your average heart rate, which is the whole point: a run/walk session scores its running as running instead of being averaged into mush.</p>
+        <p>A run that recorded no heart rate has <em>no score</em> rather than a zero — an unmeasured run is not a free one.</p>
+      </div>
+
+      <div class="e">
+        <h3>Fitness, Fatigue and Form</h3>
+        <ul class="plain">
+          <li><strong>Fitness</strong> — your effort scores averaged over 42 days. Slow to move. What you have built.</li>
+          <li><strong>Fatigue</strong> — the same over 7 days. Quick to move. What you are carrying.</li>
+          <li><strong>Form</strong> — yesterday's fitness less yesterday's fatigue. How fresh you are <em>this morning</em>, before today's run has cost anything. Above <span class="mono">+10</span> is fresh; below <span class="mono">−10</span> is fatigued.</li>
+        </ul>
+      </div>
+
+      <div class="e">
+        <h3>Weekly volume</h3>
+        <p>A bar per week, and you can flip the whole chart between distance, time and effort.</p>
+        <p class="note"><b>"Partly measured".</b> A week holding a run that wore no strap says so. Its total is a floor, never a ceiling — otherwise a week you ran hard without the strap would read as a light week.</p>
+      </div>
+
+      <div class="e">
+        <h3>Goals</h3>
+        <p>A target you set yourself: a distance, a time, or a number of runs, per week, month or year. It recurs with no end date, and it is measured from your runs each time you look — so editing a goal re-measures the period you are in rather than starting a new one.</p>
+        <p>A goal is <em>yours</em>, not the plan's. Hitting one graduates no stage, and being behind on one can never buy you a harder session from the coach.</p>
+      </div>
+
+      <div class="e">
+        <h3>The Max HR card</h3>
+        <p>When a run's peak beats the maximum your zones are built on, this card says so and offers to rebuild them on the real number. It asks once. Say no and it stops asking.</p>
+      </div>
+
+      <div class="e">
+        <h3>Records</h3>
+        <p>Gold, silver and bronze at seven records: fastest 1 km, mile, 5 km, 10 km and half marathon, plus longest run and longest time.</p>
+        <p>The five distances are contested as a <strong>best effort</strong> — the quickest continuous stretch anywhere inside a run, walk breaks included — not as "a run that happened to be 5 km".</p>
+        <p>A treadmill run contests the longest run and the longest time, because a stated distance is a real distance. It never contests the five fastest, which need a track to find a stretch inside.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ PLAN ============ -->
+  <section class="ch" id="plan">
+    <div class="ch-head">
+      <h2>The training plan, and the AI coach</h2>
+      <p class="sub">Two different things that share a screen. The plan is arithmetic. The coach is a language model, and it is fenced in hard.</p>
+    </div>
+    <div class="entries">
+
+      <div class="e">
+        <h3>Stages</h3>
+        <p>The plan is an ordered list of stages and you are in exactly one at a time. Later ones show a padlock; the one you are in never does.</p>
+        <p>Every run writes down the stage it was run under the moment you press START. That is what stops one stage's work graduating the next.</p>
+      </div>
+
+      <div class="e">
+        <h3>What graduates you</h3>
+        <p>A stage asks for something before it lets go of you.</p>
+        <p>Where the ask is written in <strong>numbers</strong> — "a 5K under 30 minutes" — the app measures it and decides it, and the coach is fenced out entirely. That means a treadmill 5K you typed off the console graduates you exactly like a measured one, and it works with AI sharing switched off.</p>
+        <p>Where the ask holds a <strong>judgement</strong> — "four weeks of consistent Zone 2 training" — the coach decides.</p>
+        <p class="note"><b>It is asked late, on purpose.</b> Never at STOP, but once you can no longer change what the run was — so a run you are about to mark a walk cannot graduate anything. Granted forwards only, and never taken back.</p>
+      </div>
+
+      <div class="e">
+        <h3>Tests</h3>
+        <p>The one workout that exists to answer a stage's requirement: a 5K flat out, no warm-up or cool-down wrapped round it. The app says one is due three weeks after the last, and holds off while your form is low.</p>
+        <p>It is a prompt, never a gate — the test stays pickable whether the app has asked for it or not.</p>
+      </div>
+
+      <div class="e">
+        <h3>An old run can clear the bar</h3>
+        <p>If a run you already did clears the stage's time, the app tells you so and names the run it is talking about, rather than promoting you in silence for something you did weeks ago.</p>
+      </div>
+
+      <div class="e">
+        <h3>Prescriptions</h3>
+        <p>After a run the coach writes the intervals and target zone for your next <strong>Long</strong> run, and only that. It prescribes work; it does not configure the app.</p>
+        <p>It is told your effort ratings, your notes, the weather you ran in, and where you stand against your goals — and it holds off asking for more when you are carrying too much fatigue.</p>
+        <p class="note"><b>A prescription stands on the runs it was shown.</b> Delete one of them and the prescription is withdrawn back to the previous one.</p>
+      </div>
+
+      <div class="e">
+        <h3>Finishing the plan</h3>
+        <p>Finishing the last stage records a <strong>plan completion</strong> — the day and the time you ran — rather than leaving you parked on the last stage forever printing a target you have already beaten. It survives a restore.</p>
+      </div>
+
+      <div class="e">
+        <h3>AI sharing</h3>
+        <p>Sharing is <strong>on by default</strong> and switched off in Prefs. Each run records whether it was on at the moment you pressed START, and <em>that</em> stored answer — not today's setting — decides whether that run can ever be sent. There is no separate per-run switch.</p>
+        <div class="where"><b>Where</b> Home → Prefs</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ RACING ============ -->
+  <section class="ch" id="racing">
+    <div class="ch-head">
+      <h2>Racing yourself</h2>
+      <p class="sub">Two ways to compare a run against your own past. One you set up; one happens on its own.</p>
+    </div>
+    <div class="entries">
+
+      <div class="e">
+        <h3>Segments — a stretch you named</h3>
+        <p>Mark out a stretch of ground on a past run's own track and name it: "Cemetery Hill", the last kilometre home. You drag the two ends along the line of a run you actually ran — it is never drawn freehand, and it refuses to be dragged across a pause or a lost signal, because the straight line over one of those is ground nothing witnessed.</p>
+        <p>The shape is <em>copied</em> onto the segment, so deleting the run you cut it from keeps the place.</p>
+        <div class="where"><b>Where</b> a run's page → New segment from this run · Home → Open Segments</div>
+      </div>
+
+      <div class="e">
+        <h3>What counts as having run it</h3>
+        <p>A gate at each end and a corridor between them. You have to pass within about thirty metres of the start, stay on the line, and come out within about thirty metres of the end. A GPS blip flung sideways for a second is forgiven; a shortcut that skips part of the stretch is not.</p>
+        <p>The time is the wall clock between the two gate crossings, worked out between the fixes either side of each gate rather than at the nearest one — on a short stretch that is the difference between a PR and not.</p>
+      </div>
+
+      <div class="e">
+        <h3>It arrives with your history already on it</h3>
+        <p>Creating a segment measures your whole history against it there and then, so it opens carrying your efforts and your best time instead of an empty page waiting for your next run. Every run that finishes afterwards is put to every segment by the very same pass, which is what stops the two ever disagreeing.</p>
+        <p>One segment's page gives you a trend of your quickest time on each day you ran it, and the ten fastest efforts with medals.</p>
+      </div>
+
+      <div class="e">
+        <h3>Matched runs — a route you never named</h3>
+        <p>Nothing to set up. When a run finishes the app takes the <strong>shape</strong> of it: where you started, where you finished, three points evenly spaced along the way, and how far you went. Two runs whose shapes agree are the same route.</p>
+        <p>Agreeing means: starts and ends within about a hundred metres of each other, distances within a twentieth of each other, and the ground between covered in the same order.</p>
+        <ul class="plain">
+          <li><strong>An out-and-back done the other way round still counts</strong> — it retraces the same line past the same places, so it really is the same route.</li>
+          <li><strong>A loop done backwards does not</strong> — the middle of it is mirrored, and that is a different route.</li>
+          <li><strong>A longer run that merely starts and finishes in the same places does not</strong> — the distances disagree.</li>
+        </ul>
+      </div>
+
+      <div class="e">
+        <h3>What the card shows</h3>
+        <p>Which run of that route this one was, how many there are, a chart of your quickest pace on each day you ran it, and a tap through to the list. If every run of a route happened on one day there is no chart, just the count — one day is not a trend.</p>
+      </div>
+
+      <div class="e">
+        <h3>Nothing is stored about the group</h3>
+        <p>The group is worked out fresh each time you open a page. That is why deleting a run needs no repair at all: it simply stops being in every group it was in, and the other runs' counts correct themselves.</p>
+        <p>A walk never joins a group, and neither does a treadmill run, which has no ground to have covered. Mark a run a walk and it leaves; unmark it and it comes back.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ ROUTES ============ -->
+  <section class="ch" id="routes">
+    <div class="ch-head">
+      <h2>Routes</h2>
+      <p class="sub">A library of courses you keep. Separate from your history — the two never touch.</p>
+    </div>
+    <div class="entries">
+
+      <div class="e">
+        <h3>The library</h3>
+        <p>Every course you keep, with its distance and its elevation gain. A file that carried no heights says so rather than showing <span class="mono">0 m</span>.</p>
+        <div class="where"><b>Where</b> Home → Open Routes</div>
+      </div>
+
+      <div class="e">
+        <h3>Getting a route in</h3>
+        <p>Either from the picker on the Routes screen, or by choosing this app from another app's share sheet on a <span class="mono">.gpx</span> file — a download, an email attachment, a Strava or Komoot export. Both land in the same place.</p>
+        <p>A route takes its name from inside the GPX, or from the filename if the file doesn't name itself. A file that isn't a GPX, is damaged, or holds no route is refused with a message saying why, and nothing is saved.</p>
+      </div>
+
+      <div class="e">
+        <h3>Rename and delete</h3>
+        <p>Deleting a route never touches a run.</p>
+      </div>
+
+      <div class="e">
+        <h3>Not built yet</h3>
+        <p>Following a route on the live map, distance remaining, and off-course voice alerts are still to come.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ DATA ============ -->
+  <section class="ch" id="data">
+    <div class="ch-head">
+      <h2>Your data</h2>
+      <p class="sub">Everything lives on the phone. This is the part that means it isn't only on the phone.</p>
+    </div>
+    <div class="entries">
+
+      <div class="e">
+        <h3>What is stored where</h3>
+        <ul class="plain">
+          <li>Your runs and their heart-rate traces and GPS — a database on the phone.</li>
+          <li>Your settings, your plan and your prescriptions — separate phone storage.</li>
+          <li>The Run Journal — a plain text file.</li>
+        </ul>
+        <p class="note"><b>The one rule that matters.</b> Your run history lives in one place only. Never uninstall the app to swap versions — install over the top instead.</p>
+      </div>
+
+      <div class="e">
+        <h3>The archive</h3>
+        <p>One ZIP holding a GPX for each finished run that has a usable track, a file of everything GPX cannot carry, and a snapshot of the whole database. Written to the folder you picked, automatically each month, keeping the last three — plus a <strong>Back up now</strong> button and the time of the last one.</p>
+        <p class="note"><b>Every run is in there either way.</b> A treadmill run, a run still being recorded, or one whose GPS was all too vague to trust rides in the database snapshot rather than as a GPX — because a GPX of a run that went nowhere would be an empty file with a name on it.</p>
+        <div class="where"><b>Where</b> Home → Prefs → Backup</div>
+      </div>
+
+      <div class="e">
+        <h3>Restore</h3>
+        <p>Pick an archive and the app opens the database <em>inside</em> it before swapping anything, so a file it cannot read is refused rather than leaving you with nothing.</p>
+        <p>History restored from an older file is re-banded on the maximum heart rate it was actually recorded under, not today's.</p>
+      </div>
+
+      <div class="e">
+        <h3>The Run Journal</h3>
+        <p>The app's own plain-text record of what decided whether a run was recording — the run starting, pausing and stopping, the recording being promoted, refused or handed back, the strap arriving or being given up on.</p>
+        <p>It exists because Android's own log holds about two hours, and a run plus the walk home is longer, so the minute that would name a cause had already rolled off before anyone could look. It is capped, it rolls, it rides in the archive, and nothing in the app reads it back to make a decision.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ WORDS ============ -->
+  <section class="ch" id="words">
+    <div class="ch-head">
+      <h2>The app's words</h2>
+      <p class="sub">Words that mean something exact here, and where they will trip you up if you assume.</p>
+    </div>
+    <dl class="gloss">
+      <dt>Moving time</dt>
+      <dd>Duration less your pauses. The clock that stops when you do.</dd>
+
+      <dt>Pause</dt>
+      <dd>You stopped, by hand or because the app saw you standing still. Carries no distance and no time.</dd>
+
+      <dt>Outage</dt>
+      <dd>The GPS signal dropped while you kept running. Different from a pause: the app carries the straight line across it, because you really did cover that ground.</dd>
+
+      <dt>Walk</dt>
+      <dd>A mark you put on a whole run. Full fitness, a quarter of the fatigue, no records, no graduation. Never guessed by the app.</dd>
+
+      <dt>Stated distance</dt>
+      <dd>The number you typed off a treadmill console. A real distance for pace, volume, the coach and the longest-run record — but not for the five fastest-distance records.</dd>
+
+      <dt>Best effort</dt>
+      <dd>The quickest continuous stretch of a given distance found anywhere <em>inside</em> a run — not a run that happened to be that long.</dd>
+
+      <dt>Effort Score</dt>
+      <dd>What one run cost you, as one number. Every second weighted by its zone.</dd>
+
+      <dt>Form</dt>
+      <dd>Fitness minus fatigue, as of yesterday. How fresh you are before today's run.</dd>
+
+      <dt>Stage</dt>
+      <dd>One block of the training plan. You are in exactly one at a time, and every run records which.</dd>
+
+      <dt>Prescription</dt>
+      <dd>The intervals and target zone the AI coach wrote for your next Long run. It stands on the runs it was shown.</dd>
+
+      <dt>Segment</dt>
+      <dd>A stretch of ground you marked and named. Every run that crosses it is timed.</dd>
+
+      <dt>Matched runs</dt>
+      <dd>Runs the app worked out are the same route, by shape alone. Nothing named, nothing saved.</dd>
+    </dl>
+  </section>
+
+  <footer class="foot">
+    <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
+    <p>Last updated <strong>21 August 2026</strong>, when matched runs went in. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+  </footer>
+
+</div>
