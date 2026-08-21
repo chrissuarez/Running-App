@@ -2311,15 +2311,30 @@ class SessionRepository(
         val session = awaitFinalized(sessionId, finalizeWaitStepMillis) ?: return
         if (session.isWalk == isWalk) return
 
-        // Before the mark, not after it: from here to the walk below the Run is owed one, and every
-        // ending short of it leaves that debt standing rather than a leaderboard nobody goes back
-        // for. The cost of lifting it needlessly is one repeated walk at the next launch.
-        sessionDao.clearSegmentsTimed(sessionId)
-        // And its shape, which is the same debt in the other table: a Walk covers no route, so
-        // marking one takes it out of every group it was in and unmarking puts it back (#73).
-        runShapeDao?.forgetShape(sessionId)
-
-        val write: suspend () -> Unit = { sessionDao.setIsWalk(sessionId, isWalk) }
+        // Every debt this mark raises, and the mark itself, in one transaction.
+        //
+        // The debts first: from here to the walks below the Run owes a Segment timing and a shape,
+        // and every ending short of them leaves those debts standing rather than a leaderboard
+        // nobody goes back for or a group holding a Walk. The cost of raising one needlessly is a
+        // repeated walk at the next launch. A Walk covers no route, so marking one takes the Run
+        // out of every group it was in and unmarking puts it back (#73).
+        //
+        // Committed *with* the mark rather than before it, because "before" is a window and a
+        // measurement already in flight can land in it. Both passes re-read the Run inside the
+        // transaction that writes, and abandon what they measured if it has moved
+        // ([com.example.runningapp.segments.RunShapeStore.putShapeUnlessTheRunMoved]) — but a write
+        // committing after the debt was raised and before the mark was reads the *old* answer,
+        // finds nothing moved, and puts back the very row that was just deleted. The row's
+        // existence is what tells the launch passes this Run has been dealt with, so nothing would
+        // ever revisit it. Atomic, there is no "in between" to land in: the measurement commits
+        // wholly before, and is deleted, or wholly after, and is abandoned.
+        val write: suspend () -> Unit = {
+            inTransaction {
+                sessionDao.clearSegmentsTimed(sessionId)
+                runShapeDao?.forgetShape(sessionId)
+                sessionDao.setIsWalk(sessionId, isWalk)
+            }
+        }
         if (isWalk) {
             // Every record this Run holds, mended from all of history — `mendOnly` is left null
             // because a Walk stops contesting all of them at once, so there is no narrower list to
