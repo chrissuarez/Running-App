@@ -1018,10 +1018,10 @@ class MainActivity : ComponentActivity() {
                                     appContainer.zoneChanges,
                                 )
                             )
-                            val recordSlots by recordsViewModel.slots.collectAsState()
+                            val recordsGrid by recordsViewModel.grid.collectAsState()
                             ProgressScreen(
                                 state = progressState,
-                                records = recordSlots,
+                                records = recordsGrid,
                                 onOpenRecord = { navigateTo(Routes.recordDetail(it)) },
                                 onRangeChosen = { progressViewModel.rangeChosen(it) },
                                 onMeasureChosen = { progressViewModel.measureChosen(it) },

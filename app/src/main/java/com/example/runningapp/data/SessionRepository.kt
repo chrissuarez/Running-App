@@ -65,6 +65,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -901,6 +902,43 @@ class SessionRepository(
      */
     fun recordEffortsFlow(): Flow<List<RecordEffortRow>> =
         runEffortDao?.getRecordEffortsFlow() ?: flowOf(emptyList())
+
+    /**
+     * Whether history is being measured against the record book wholesale right now — which is when
+     * the Records section must not call anything it can see an all-time best (#75).
+     *
+     * `run_efforts` is filled a Run at a time by the launch pass ([scoreMissedRecords]) and by the
+     * seeding pass ([seedRecordsFromHistory]), and both of those are minutes of work over a long
+     * history. The upgrade that added the table cleared every Run's scoring mark to raise exactly
+     * that work (`MIGRATION_36_37`), so the first launch after it has a table holding a slice of
+     * history — and a top ten read off a slice is a top ten with the wrong runs in it, handing
+     * display medals to Runs that do not really place. The record book itself is not in that
+     * position: it keeps its medals across the upgrade and is only re-confirmed. This is about the
+     * deeper rows underneath it.
+     *
+     * **More than one Run owing a scoring is the key, and one is not.** Every ordinary path raises
+     * this debt on a single Run and hands it back in the same breath: a Run finishing scores itself,
+     * and a Stated Distance or a stated Best Effort lifts that one Run's mark before it writes and
+     * gives it back after ([writeAndScore]). So the debt in normal use is at most one Run deep, for
+     * as long as one scoring takes — and covering the Records section up for a moment after every
+     * Run, for ever, would be a worse thing than the bug this closes. Only a wholesale reset raises
+     * it on many Runs at once: the two migrations that cleared the column across all of history
+     * (v21 to v22, and v36 to v37), and a restored archive, whose history arrives unseeded and is
+     * measured by the seeding pass in one go.
+     *
+     * A history that is one Run short is also, deliberately, not hidden: what stands is then every
+     * claim but the newest, which is the right answer as of a moment ago and becomes the right
+     * answer as of now the moment that Run is scored. What cannot be shown is a *slice*.
+     *
+     * The one case this reads as measuring when nothing is being measured is a phone that was killed
+     * between two Runs finishing and their scorings landing, twice over, leaving two debts standing
+     * at the next launch — and the same launch's pass pays them off in the seconds it takes to
+     * measure two tracks, which is the truthful thing to have said in the meantime anyway.
+     */
+    fun recordsBeingMeasuredFlow(): Flow<Boolean> =
+        sessionDao.countSessionsMissingRecordScoringFlow()
+            .map { owed -> owed > 1 }
+            .distinctUntilChanged()
 
     /**
      * Every scored Run in history, oldest first — what the Progress screen builds its curves from

@@ -62,6 +62,39 @@ data class RecordSlotUi(
 )
 
 /**
+ * The Records grid as the Progress screen is handed it (#75): the seven slots, and whether what
+ * they were read off is the whole of history yet.
+ *
+ * The two travel together rather than as two flows the screen collects side by side, because they
+ * are one answer: a grid drawn from a slice of history with the flag arriving a frame later is
+ * exactly the wrong picture this exists to prevent.
+ *
+ * [measuring] and a filled [slots] never come back together — see
+ * [com.example.runningapp.data.SessionRepository.recordsBeingMeasuredFlow] for what the flag keys
+ * on, and [RECORDS_MEASURING_MESSAGE] for what the runner is told while it stands.
+ */
+data class RecordsGridUi(
+    val slots: List<RecordSlotUi> = emptyList(),
+    val measuring: Boolean = false,
+)
+
+/**
+ * What the Records section says while history is still being measured against the book (#75).
+ *
+ * Said rather than left blank, and said the same way in the grid and on a Record's own page. The
+ * one launch after an upgrade that added the deeper rows has to re-measure every stored track
+ * before any of these numbers means "all time", which is minutes of work; a runner who opened
+ * Progress in the middle of it and found the section gone would think their records had been lost.
+ *
+ * No count and no bar. What is left to measure is a number of Runs, not a share of the wait, and a
+ * bar that could only guess would be a promise about a time nobody knows. This says what is
+ * happening and that it finishes on its own, which is the whole of what the runner can act on.
+ */
+const val RECORDS_MEASURING_MESSAGE: String =
+    "Still measuring your runs. Your records will be here once that finishes — it can take a " +
+        "few minutes, and it carries on in the background."
+
+/**
  * The whole Records grid: every Record, in the enum's own order, with the all-time best at each.
  *
  * Every Record whether it has been run or not, because the grid is the shape of what there is to
@@ -148,9 +181,25 @@ fun recordTopTitle(total: Int): String =
 fun recordEffortCountLabel(efforts: Int): String =
     if (efforts == 1) "1 effort" else "$efforts efforts"
 
-/** What a Record's own page says where nobody has ever contested it. */
+/**
+ * What a Record's own page says where nobody has ever contested it.
+ *
+ * The longest time is the one Record every finished run contests, because every run has a clock: an
+ * empty page there really does mean there are no finished runs yet, and it can say so.
+ *
+ * **The longest run cannot say the same** (#75). A distance has to be *measured* before it counts
+ * ([com.example.runningapp.analysis.bestEffortsOf]) — off a route the run recorded, or off a
+ * treadmill distance the runner typed in — so a run whose route was lost, or a treadmill run nobody
+ * has told how far it went, is a finished run that contests the longest time and not the longest
+ * distance. Telling that runner there are no finished runs yet would be plainly untrue and send
+ * them looking for runs the app is showing them elsewhere, so this page names what is missing —
+ * a measured distance — rather than guessing at why.
+ */
 fun recordEmptyMessage(type: RecordType): String = when (type) {
-    RecordType.LONGEST_DISTANCE, RecordType.LONGEST_DURATION ->
+    RecordType.LONGEST_DISTANCE ->
+        "No run with a measured distance yet. A run that recorded a route, or a treadmill run you " +
+            "have typed a distance into, takes this record."
+    RecordType.LONGEST_DURATION ->
         "No finished runs yet. Your first one takes this record."
     else ->
         "You have not covered ${type.label.removePrefix("Fastest ")} in a run yet. Every run you " +

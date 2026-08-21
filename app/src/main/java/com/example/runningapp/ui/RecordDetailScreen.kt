@@ -78,7 +78,13 @@ fun RecordDetailScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = recordEmptyMessage(detail.type),
+                    // Two different empty pages, and telling them apart matters (#75): a Record
+                    // nobody has contested is told what would take it, but a Record whose claims
+                    // have not been read back yet must not be — a runner who has run this distance
+                    // a hundred times would be told they never had. While history is being
+                    // measured, the page says that instead.
+                    text = if (detail.measuring) RECORDS_MEASURING_MESSAGE
+                    else recordEmptyMessage(detail.type),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -186,4 +192,13 @@ data class RecordDetailUi(
     val trend: List<RecordTrendPoint>,
     /** How many Runs have ever contested it, which is what says whether the ten is the whole list. */
     val effortCount: Int,
+    /**
+     * Whether history is still being measured against the book, in which case the three above are
+     * deliberately empty and the page says so instead (#75).
+     *
+     * Defaulted false, because every caller but the view model is a screen preview or a test that
+     * hands over the finished article — and a page built from real rows is by definition not one
+     * built from a table that is still filling.
+     */
+    val measuring: Boolean = false,
 )

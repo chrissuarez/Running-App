@@ -34,14 +34,20 @@ import com.example.runningapp.ui.theme.RunningUiTokens
  */
 @Composable
 fun RecordsCard(
-    slots: List<RecordSlotUi>,
+    grid: RecordsGridUi,
     onOpenRecord: (RecordType) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val slots = grid.slots
     // Nothing at all until the rows have been read, rather than seven empty slots: [recordSlots]
     // always hands back all seven, so an empty list is the moment before the first read and not a
     // runner with no records. A grid that filled in a beat later would read as a record lost.
-    if (slots.isEmpty()) return
+    //
+    // Unless history is being measured (#75), which is the one case where an empty grid is a fact
+    // worth printing rather than a moment to wait through: it lasts minutes, and a runner who came
+    // to Progress in the middle of it needs to be told their records are on their way rather than
+    // shown a page with the section missing.
+    if (slots.isEmpty() && !grid.measuring) return
     Card(modifier = modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
@@ -54,6 +60,16 @@ fun RecordsCard(
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            // The heading stays and the numbers do not: the section is where it always was, and it
+            // says what it is doing. No number is drawn from a table that is still filling, because
+            // a best read off a slice of history is not a best at all.
+            if (grid.measuring) {
+                Text(
+                    text = RECORDS_MEASURING_MESSAGE,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             slots.chunked(2).forEach { pair ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
