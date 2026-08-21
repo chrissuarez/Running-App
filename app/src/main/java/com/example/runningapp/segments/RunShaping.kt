@@ -16,8 +16,33 @@ interface RunShapeStore {
     /** The finished Runs nobody has taken the shape of — every debt, oldest first. */
     suspend fun runsMissingShapes(): List<Long>
     suspend fun track(sessionId: Long): List<TrackPoint>
-    suspend fun putShape(sessionId: Long, shape: RunShape?)
+
+    /**
+     * Writes one Run's shape down — **unless the Run stopped being the one it was measured from**.
+     *
+     * The check and the write are one operation because they have to be: a re-read on this side of
+     * the database only narrows the window, it does not close it. Implementations do the reading
+     * inside the same transaction as the write, the way a Run's scoring does
+     * ([com.example.runningapp.data.SessionRepository] and #210).
+     *
+     * Returns false where the write was abandoned, which leaves the Run owing a shape — the debt
+     * being the absence of a row, and the safe thing to be left holding.
+     */
+    suspend fun putShapeUnlessTheRunMoved(sessionId: Long, shape: RunShape?, measuredAs: RunnerSession): Boolean
 }
+
+/**
+ * Whether two readings of the same Run would have the same shape taken from them — everything the
+ * shaping decides by, and nothing else (#73).
+ *
+ * `contestsAs`'s rule and for its reason: a Run's feel, its note and its Effort Score can all be
+ * written while its track is being measured, and none of them can move a waypoint, so none of them
+ * is a reason to throw a measurement away. What is here is the three things
+ * [mayBeMatchedToOtherRuns] asks — a Run finishing, being marked a Walk, becoming a treadmill Run —
+ * because each of those changes the shape the Run should hold from a route to nothing, or back.
+ */
+fun RunnerSession.shapesAs(other: RunnerSession): Boolean =
+    endTime == other.endTime && isWalk == other.isWalk && runMode == other.runMode
 
 /**
  * Taking the shape of Runs, so they can recognise each other (#73).
@@ -44,27 +69,33 @@ class RunShaping(private val store: RunShapeStore) {
      * this can be seconds of arithmetic on a long track and the runner is free the whole time, so
      * what the Run *is* has to be asked at the moment its shape is written rather than before it.
      *
-     * **And asked again after the measurement**, because "at the moment its shape is written" is the
-     * whole of the rule and one read before seconds of arithmetic does not keep it. A runner who
-     * marks a Walk while this is measuring flips the answer under it, and the write that followed
-     * would bank a shape for a Walk — or, unmarking, bank no shape for a Run. Either way the row now
-     * exists, so [payWhatIsOwed] never looks at that Run again and the mistake is permanent. Asked
-     * twice, the write is the answer the Run holds *now*; asked again if it moved, because the
-     * second answer is only worth writing if it is still true.
+     * **And the write is abandoned where the Run moved under it**, because "at the moment its shape
+     * is written" is the whole of the rule and a read taken before seconds of arithmetic does not
+     * keep it. A runner who marks a Walk in that window flips the answer under the measurement, and
+     * the write that followed would bank a shape for a Walk — or, unmarking, bank no shape for a
+     * Run. Either way a row now exists, so [payWhatIsOwed] never looks at that Run again and the
+     * mistake is permanent. A second read on this side of the database only narrows that window, so
+     * the check travels *into* the write instead ([RunShapeStore.putShapeUnlessTheRunMoved]).
+     *
+     * Abandoning is safe and is the point: the Run is left owing a shape, and the mark that
+     * overtook it takes that shape itself — every door into this deletes the row before it changes
+     * what the Run is, and the launch pass sweeps up whatever is still owed. A shape banked from a
+     * Run nobody has is what could not be undone.
      *
      * A Run that is gone is written as nothing at all — there is no row left to hang a shape on.
      */
     suspend fun shapeRun(sessionId: Long) {
-        while (true) {
-            val before = store.run(sessionId) ?: return
-            val eligible = before.mayBeMatchedToOtherRuns()
-            val shape = if (eligible) runShapeOf(measureTrack(store.track(sessionId))) else null
-            val after = store.run(sessionId) ?: return
-            if (after.mayBeMatchedToOtherRuns() != eligible) continue
-            store.putShape(sessionId, shape)
-            Log.d(TAG, "Run $sessionId " + (shape?.let { "covers %.0f m".format(it.distanceMeters) } ?: "holds no shape"))
+        val run = store.run(sessionId) ?: return
+        val shape = if (run.mayBeMatchedToOtherRuns()) {
+            runShapeOf(measureTrack(store.track(sessionId)))
+        } else {
+            null
+        }
+        if (!store.putShapeUnlessTheRunMoved(sessionId, shape, measuredAs = run)) {
+            Log.d(TAG, "Run $sessionId changed while its shape was being taken; leaving it owing one")
             return
         }
+        Log.d(TAG, "Run $sessionId " + (shape?.let { "covers %.0f m".format(it.distanceMeters) } ?: "holds no shape"))
     }
 
     /**

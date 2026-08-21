@@ -55,6 +55,7 @@ import com.example.runningapp.segments.RunShapeStore
 import com.example.runningapp.segments.RunShaping
 import com.example.runningapp.segments.SegmentTiming
 import com.example.runningapp.segments.SegmentTimingStore
+import com.example.runningapp.segments.shapesAs
 import com.example.runningapp.recording.SessionRecorder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -1469,8 +1470,25 @@ class SessionRepository(
             // a wild fix the Run itself refused cannot bend a route out of the group it belongs to.
             override suspend fun track(sessionId: Long) = getTrackPointsForMap(sessionId)
 
-            override suspend fun putShape(sessionId: Long, shape: RunShape?) =
-                shapeRows.putShape(runShapeRowOf(sessionId, shape))
+            // Read again inside the transaction that writes, `scoreRecordsUnlessOvertaken`'s rule
+            // and for its reason (#210): the database takes one writer at a time, so either the
+            // mark that overtook this measurement has committed by then and this sees it, or it
+            // commits afterwards and its own re-shaping has the last word. Cheaper than a lock, and
+            // nothing is made to wait behind seconds of arithmetic.
+            override suspend fun putShapeUnlessTheRunMoved(
+                sessionId: Long,
+                shape: RunShape?,
+                measuredAs: RunnerSession,
+            ): Boolean {
+                var written = false
+                inTransaction {
+                    val now = sessionDao.getSessionById(sessionId) ?: return@inTransaction
+                    if (!now.shapesAs(measuredAs)) return@inTransaction
+                    shapeRows.putShape(runShapeRowOf(sessionId, shape))
+                    written = true
+                }
+                return written
+            }
         })
     }
 

@@ -5,6 +5,7 @@ import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.run.RunMode
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -49,9 +50,16 @@ class RunShapingTest {
 
         override suspend fun track(sessionId: Long) = tracks[sessionId].orEmpty()
 
-        override suspend fun putShape(sessionId: Long, shape: RunShape?) {
+        override suspend fun putShapeUnlessTheRunMoved(
+            sessionId: Long,
+            shape: RunShape?,
+            measuredAs: RunnerSession,
+        ): Boolean {
+            val now = runs[sessionId] ?: return false
+            if (!now.shapesAs(measuredAs)) return false
             shapes[sessionId] = shape
             writes++
+            return true
         }
     }
 
@@ -176,34 +184,65 @@ class RunShapingTest {
     }
 
     @Test
-    fun `a run marked a Walk while it was being measured is written as holding no shape`() = runTest {
+    fun `a run marked a Walk while its shape was being taken is left owing one`() = runTest {
         aRunOver(1L)
         store.betweenTheReads = { store.runs[1L] = store.runs.getValue(1L).copy(isWalk = true) }
 
         shaping.shapeRun(1L)
+
+        // Nothing written at all — a shape banked for a Walk could not be undone, because the row's
+        // existence is what tells the launch pass this Run has been dealt with.
+        assertEquals(0, store.writes)
+        assertFalse(1L in store.shapes)
+    }
+
+    @Test
+    fun `the debt the overtaken run is left owing is paid by the launch pass`() = runTest {
+        aRunOver(1L)
+        store.betweenTheReads = { store.runs[1L] = store.runs.getValue(1L).copy(isWalk = true) }
+        shaping.shapeRun(1L)
+
+        shaping.payWhatIsOwed()
 
         assertTrue(1L in store.shapes)
         assertNull(store.shapes.getValue(1L))
     }
 
     @Test
-    fun `a Walk unmarked while it was being passed over is measured after all`() = runTest {
+    fun `a Walk unmarked while it was being passed over is left owing a shape`() = runTest {
         aRunOver(1L, isWalk = true)
         store.betweenTheReads = { store.runs[1L] = store.runs.getValue(1L).copy(isWalk = false) }
 
         shaping.shapeRun(1L)
 
-        assertEquals(RUN_SHAPE_WAYPOINTS, store.shapes.getValue(1L)!!.waypoints.size)
+        // The mirror of the case above, and the same permanent mistake: a row saying "no shape"
+        // would take this Run out of every group it belongs to for good.
+        assertEquals(0, store.writes)
+        assertFalse(1L in store.shapes)
     }
 
     @Test
-    fun `a run deleted while it was being measured is written as nothing at all`() = runTest {
+    fun `a run deleted while its shape was being taken is written as nothing at all`() = runTest {
         aRunOver(1L)
         store.betweenTheReads = { store.runs.remove(1L) }
 
         shaping.shapeRun(1L)
 
         assertEquals(0, store.writes)
+    }
+
+    @Test
+    fun `a run whose feel changed while it was being measured still gets its shape`() = runTest {
+        aRunOver(1L)
+        // Everything the Effort backfill and the feel sheet may write mid-measurement. None of it
+        // can move a waypoint, so none of it is a reason to throw a measurement away.
+        store.betweenTheReads = {
+            store.runs[1L] = store.runs.getValue(1L).copy(effortScore = 42, perceivedEffort = 7)
+        }
+
+        shaping.shapeRun(1L)
+
+        assertEquals(RUN_SHAPE_WAYPOINTS, store.shapes.getValue(1L)!!.waypoints.size)
     }
 
     @Test
