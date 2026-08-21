@@ -729,6 +729,11 @@ class SessionRepositoryTest {
         whenever(mockRunEffortDao.getEffortsOfTypes(listOf(RecordType.LONGEST_DISTANCE))).thenReturn(
             listOf(RunEffortRow(sessionId = 77, type = RecordType.LONGEST_DISTANCE, value = 30_000.0))
         )
+        // What the changed Run had banked before the correction, which is what the re-measuring
+        // below replaces.
+        whenever(mockRunEffortDao.getEffortsForSession(2L)).thenReturn(
+            listOf(RunEffortRow(sessionId = 2, type = RecordType.LONGEST_DISTANCE, value = 12_000.0))
+        )
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
             achievementDao = mockAchievementDao,
@@ -746,6 +751,41 @@ class SessionRepositoryTest {
             listOf(1L to 9_000.0, 2L to 1_250.0, 77L to 30_000.0),
             banked.lastValue.map { it.sessionId to it.value },
         )
+    }
+
+    @Test
+    fun `a reseeding pass takes the claims of a Run it measured as worth nothing off the table`() = runTest {
+        // The Walk mark committed and the re-banking behind it did not, so the seeding mark is
+        // still down and this launch measures the whole of history again. A Walk contests nothing,
+        // so this pass measures it to nothing — which is the pass having the last word on it, not
+        // the pass failing to reach it, and its standing claim has to go.
+        val walk = aTreadmillRun(id = 5, seconds = 1_800).copy(isWalk = true)
+        whenever(mockDao.getAllSessions())
+            .thenReturn(listOf(aTreadmillRun(id = 1, seconds = 600), walk))
+        val mockRunEffortDao: RunEffortDao = mock()
+        whenever(mockRunEffortDao.getEffortsOfTypes(any())).thenReturn(
+            listOf(RunEffortRow(sessionId = 5, type = RecordType.LONGEST_DURATION, value = 1_800.0))
+        )
+        val (repositoryWithRecords, mockAchievementDao) = repositoryWithUnseededHistory(
+            runEffortDao = mockRunEffortDao
+        )
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(
+            listOf(Achievement(sessionId = 5, type = RecordType.LONGEST_DURATION, medal = Medal.GOLD, value = 1_800.0))
+        )
+
+        repositoryWithRecords.seedRecordsFromHistory()
+
+        // Neither the rows the Records section reads nor the book itself carries the Walk over:
+        // carried on emptiness, every reseed would hand it its old half hour straight back.
+        val banked = argumentCaptor<List<RunEffortRow>>()
+        verify(mockRunEffortDao).putEfforts(banked.capture())
+        assertEquals(
+            listOf(1L to 600.0),
+            banked.firstValue.map { it.sessionId to it.value },
+        )
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertEquals(listOf(1L to Medal.GOLD), book.firstValue.map { it.sessionId to it.medal })
     }
 
     @Test
@@ -907,6 +947,9 @@ class SessionRepositoryTest {
         val mockAchievementDao: AchievementDao = mock()
         whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
         val mockRunEffortDao: RunEffortDao = mock()
+        whenever(mockRunEffortDao.getEffortsForSession(42L)).thenReturn(
+            listOf(RunEffortRow(sessionId = 42, type = RecordType.LONGEST_DURATION, value = 1_800.0))
+        )
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
             achievementDao = mockAchievementDao,
@@ -918,6 +961,63 @@ class SessionRepositoryTest {
         verify(mockRunEffortDao).deleteEffortsForSession(42L)
         // A Walk is worth nothing at all, so nothing goes back in its place.
         verify(mockRunEffortDao).putEfforts(emptyList())
+    }
+
+    @Test
+    fun `a Walk mark that moves no medal still refreshes the backup, because its claims went`() = runTest {
+        // The snapshot on disk is what a restore brings back, so it has to be taken after the last
+        // thing that changed history — and for a fourth-place Run that is the re-banking, not the
+        // mend. No medal moves, so the book is never rebuilt; the only thing that changed is the
+        // claim this Run had banked at 30 minutes. Snapshotted before that and restored, the Walk
+        // would climb straight back into the Records top ten and its trend (#75).
+        val alsoRan = aTreadmillRun(id = 42, seconds = 1_800)
+        whenever(mockDao.getSessionById(42L)).thenReturn(alsoRan, alsoRan.copy(isWalk = true))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
+        val mockRunEffortDao: RunEffortDao = mock()
+        whenever(mockRunEffortDao.getEffortsForSession(42L)).thenReturn(
+            listOf(RunEffortRow(sessionId = 42, type = RecordType.LONGEST_DURATION, value = 1_800.0))
+        )
+        var refreshCount = 0
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            runEffortDao = mockRunEffortDao,
+            refreshHistoryBackup = { refreshCount++ },
+        )
+
+        repositoryWithRecords.markAsWalk(42L, isWalk = true)
+
+        // Twice: once the moment the mark itself is durable, and once more after the claim behind
+        // it went. The second is the one a restore depends on.
+        verify(mockRunEffortDao).putEfforts(emptyList())
+        assertEquals(2, refreshCount)
+    }
+
+    @Test
+    fun `a change that leaves the banked claims where they were takes no second snapshot`() = runTest {
+        // The other half of the rule, and the reason it is not simply "snapshot again always": the
+        // backup is a whole copy of history and every change to a Run comes through this path. A
+        // Run marked a Walk before history was ever scored has nothing banked to lose — the wipe and
+        // the rewrite both touch no rows — so the snapshot taken when the mark landed is still an
+        // accurate picture and buying a second copy of history would be paying for nothing (#75).
+        val alsoRan = aTreadmillRun(id = 42, seconds = 1_800)
+        whenever(mockDao.getSessionById(42L)).thenReturn(alsoRan, alsoRan.copy(isWalk = true))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
+        val mockRunEffortDao: RunEffortDao = mock()
+        whenever(mockRunEffortDao.getEffortsForSession(42L)).thenReturn(emptyList())
+        var refreshCount = 0
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            runEffortDao = mockRunEffortDao,
+            refreshHistoryBackup = { refreshCount++ },
+        )
+
+        repositoryWithRecords.markAsWalk(42L, isWalk = true)
+
+        assertEquals(1, refreshCount)
     }
 
     @Test
@@ -6693,7 +6793,8 @@ class SessionRepositoryTest {
     /** A repository whose history has never been scored, and the book it writes to. */
     private suspend fun repositoryWithUnseededHistory(
         seeded: Boolean = false,
-        trackPointDao: TrackPointDao? = null
+        trackPointDao: TrackPointDao? = null,
+        runEffortDao: RunEffortDao? = null
     ): Pair<SessionRepository, AchievementDao> {
         val mockAchievementDao: AchievementDao = mock()
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
@@ -6703,6 +6804,7 @@ class SessionRepositoryTest {
             sessionDao = mockDao,
             trackPointDao = trackPointDao,
             achievementDao = mockAchievementDao,
+            runEffortDao = runEffortDao,
             settingsRepository = mockSettingsRepo
         ) to mockAchievementDao
     }
