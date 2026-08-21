@@ -63,7 +63,6 @@ import com.patrykandpatrick.vico.compose.chart.line.lineChart
 import com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec
 import com.patrykandpatrick.vico.compose.m3.style.m3ChartStyle
 import com.patrykandpatrick.vico.compose.style.ProvideChartStyle
-import com.patrykandpatrick.vico.core.axis.AxisItemPlacer
 import com.patrykandpatrick.vico.core.axis.AxisPosition
 import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
 import com.patrykandpatrick.vico.core.entry.ChartEntryModelProducer
@@ -247,8 +246,27 @@ fun SegmentDetailScreen(
                 }
             }
 
-            items(ranked, key = { it.effort.effortId }) { placed ->
+            items(ranked, key = { "ranked-" + it.effort.effortId }) { placed ->
                 SegmentRankedEffortRow(placed = placed, onOpen = { onOpenRun(placed.effort.sessionId) })
+            }
+
+            // Past ten, the ranked list is no longer the whole of the runner's history at this
+            // place, so the whole of it goes back underneath. A page that stopped at ten would take
+            // runs off a runner for having done nothing but keep running — and the run they are
+            // most likely looking for is the one they did on Sunday, which is why this half is
+            // newest first.
+            if (shown.size > SEGMENT_TOP_COUNT) {
+                item {
+                    Text(
+                        text = SEGMENT_ALL_EFFORTS_TITLE,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                items(shown, key = { "all-" + it.effortId }) { effort ->
+                    SegmentEffortRowUi(effort = effort, onOpen = { onOpenRun(effort.sessionId) })
+                }
             }
         }
     }
@@ -341,6 +359,50 @@ private fun SegmentRankedEffortRow(placed: SegmentRankedEffortUi, onOpen: () -> 
 }
 
 /**
+ * One effort in the newest-first list: when it was run, how quick it was, and the time.
+ *
+ * Keeps the PR marker, because this half of the page carries no medals: a runner scrolling their
+ * recent efforts should still be able to see which of them is the one to beat.
+ */
+@Composable
+private fun SegmentEffortRowUi(effort: SegmentEffortUi, onOpen: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = RunningUiTokens.MinTouchTarget)
+            .clickable(onClick = onOpen)
+            .semantics {
+                contentDescription = (if (effort.isRecord) "Personal record, " else "") +
+                    "${effort.dateLabel}, ${effort.timeLabel}, ${effort.paceLabel}"
+            },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = effort.dateLabel, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                text = effort.paceLabel,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (effort.isRecord) {
+            Text(
+                text = "PR",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(end = 8.dp),
+            )
+        }
+        Text(
+            text = effort.timeLabel,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+/**
  * The times run at a Segment, over the calendar they were run on (#72).
  *
  * Drawn against the day rather than against the effort number, so the gaps between attempts are the
@@ -365,7 +427,6 @@ private fun SegmentTrendChart(points: List<SegmentTrendPoint>) {
     val timeLabels = AxisValueFormatter<AxisPosition.Vertical.Start> { value, _ ->
         segmentTrendTimeLabel(value)
     }
-    val spacing = segmentTrendLabelSpacing(points)
 
     Box(
         modifier = Modifier
@@ -380,13 +441,7 @@ private fun SegmentTrendChart(points: List<SegmentTrendPoint>) {
                 startAxis = rememberStartAxis(valueFormatter = timeLabels),
                 bottomAxis = rememberBottomAxis(
                     valueFormatter = dateLabels,
-                    itemPlacer = AxisItemPlacer.Horizontal.default(
-                        spacing = spacing,
-                        // The half-step in gives the first date the chart's edge to spread into;
-                        // labelled from the very first tick it is the axis's own edge that cuts it.
-                        offset = spacing / 2,
-                        addExtremeLabelPadding = true,
-                    ),
+                    itemPlacer = threeLabelPlacer(segmentTrendAxisTicks(points)),
                     guideline = null,
                 ),
                 chartScrollSpec = rememberChartScrollSpec(isScrollEnabled = false),
@@ -396,7 +451,7 @@ private fun SegmentTrendChart(points: List<SegmentTrendPoint>) {
     }
 }
 
-/** How tall the trend chart is — the height the Progress screen's charts stand at. */
-private val TrendChartHeight = 200.dp
+/** How tall the trend chart is — the height the Progress screen's own line chart stands at. */
+private val TrendChartHeight = 240.dp
 
 private val TrendDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yy", Locale.UK)

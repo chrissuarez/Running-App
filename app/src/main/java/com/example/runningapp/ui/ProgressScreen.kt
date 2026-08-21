@@ -298,14 +298,18 @@ fun <T> ChipPicker(
 /**
  * Three dates along the bottom of a chart, whatever the range.
  *
+ * [ticks] is how many positions the axis has to label, which is not always how many points were
+ * plotted: Vico steps an axis in whole units of the smallest gap between two x values, so a chart
+ * drawn against the calendar counts its ticks in those steps (see [segmentTrendAxisTicks]).
+ *
  * One label per entry is what Vico would otherwise attempt, and at a day apart there is no room for
  * "5 May" — every label came out as "5 …", a chart of days that never says which month it is in.
  * Three and not more because of the same 320dp-at-1.3× screen: at four the months went back to
  * being cut short there. The half-step offset gives the first date the chart's edge to spread into;
  * labelled from entry one it is the axis's own left edge that cuts it, and "5 Aug" arrived as "..".
  */
-private fun threeLabelPlacer(entries: Int): AxisItemPlacer.Horizontal {
-    val labelEvery = (entries / 3).coerceAtLeast(1)
+internal fun threeLabelPlacer(ticks: Int): AxisItemPlacer.Horizontal {
+    val labelEvery = (ticks / 3).coerceAtLeast(1)
     return AxisItemPlacer.Horizontal.default(
         spacing = labelEvery,
         offset = labelEvery / 2,
