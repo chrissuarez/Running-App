@@ -1021,6 +1021,53 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a Run re-stated while its claims were being re-taken keeps the newer banking`() = runTest {
+        // The window the re-banking measures in, which is minutes wide for a Run with a track (#75).
+        // A fourth-place stated 5K is withdrawn: no medal moves, so `losing` is empty and no rebuild
+        // will ever visit the Record again — the banked row is the only trace of the claim there is.
+        // The withdrawal commits, the re-banking starts measuring the Run without it, and the
+        // runner promptly states the time again. That statement takes the scoring path and banks
+        // the restored claim itself. The older re-banking landing afterwards out of the reading it
+        // took before would delete it and put back rows that no longer describe the Run, with
+        // nothing left to notice.
+        val run = aTreadmillRun(id = 42, seconds = 1_800).copy(distanceKm = 6.0)
+        whenever(mockDao.getSessionById(42L)).thenReturn(run)
+        val claim = StatedBestEffort(sessionId = 42, type = RecordType.FASTEST_5K, seconds = 1_380)
+        val statedDao: StatedBestEffortDao = mock()
+        // Three readings, in the order the code takes them: the claim as it stands when the
+        // withdrawal is asked for, nothing while the re-banking measures — and the claim again by
+        // the time the re-banking goes to write, because the runner re-stated it in between.
+        whenever(statedDao.getForSession(42L)).thenReturn(listOf(claim), emptyList(), listOf(claim))
+        val mockAchievementDao: AchievementDao = mock()
+        // Fourth place: the withdrawal takes no medal off, so nothing is mended.
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
+        val mockRunEffortDao: RunEffortDao = mock()
+        // The rows as the newer statement left them: the claim is banked again, at its old time.
+        whenever(mockRunEffortDao.getEffortsForSession(42L)).thenReturn(
+            listOf(RunEffortRow(sessionId = 42, type = RecordType.FASTEST_5K, value = 1_380.0))
+        )
+        var refreshCount = 0
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            runEffortDao = mockRunEffortDao,
+            statedBestEffortDao = statedDao,
+            refreshHistoryBackup = { refreshCount++ },
+        )
+
+        repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = null)
+
+        verify(statedDao).withdraw(42L, RecordType.FASTEST_5K)
+        // Abandoned whole: the rows the newer statement banked are left exactly where they are,
+        // rather than deleted and replaced by a measuring that is now out of date.
+        verify(mockRunEffortDao, never()).deleteEffortsForSession(42L)
+        verify(mockRunEffortDao, never()).putEfforts(any())
+        // And nothing was written, so nothing moved: no second copy of history is bought for a pass
+        // that declined to write.
+        assertEquals(1, refreshCount)
+    }
+
+    @Test
     fun `unmarking a Walk banks what the Run is worth again`() = runTest {
         val run = aTreadmillRun(id = 42, seconds = 1_800).copy(distanceKm = 5.0, isWalk = true)
         whenever(mockDao.getSessionById(42L)).thenReturn(run, run.copy(isWalk = false))

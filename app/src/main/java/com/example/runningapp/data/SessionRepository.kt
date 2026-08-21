@@ -2051,6 +2051,9 @@ class SessionRepository(
      *
      * Whole rather than at named Records, and that is the point of it: only a whole measure can say
      * that a Record the Run used to contest is one it no longer does.
+     *
+     * A Run that moved while it was being measured is left exactly as it stands, and leaves the debt
+     * owed — see the abandonment below.
      */
     private suspend fun rebankEfforts(sessionIds: List<Long>): Rebanking {
         val dao = runEffortDao ?: return Rebanking(landed = true, movedRows = false)
@@ -2058,17 +2061,51 @@ class SessionRepository(
         // Run has still moved the first two: what is on disk is stale from the first row that
         // differed, whether or not the rest of the work got there.
         var movedRows = false
+        // Raised by a Run that moved out from under the measuring, for the same reason [landed] is
+        // lowered by a throw: the rows this pass was going to write were never written, so the Run
+        // is still owed a re-banking and the debt has to outlive this call. Per pass rather than per
+        // Run, because the debt is paid by one reseed of the whole book either way.
+        var overtaken = false
         return try {
             sessionIds.forEach { sessionId ->
                 val session = sessionDao.getSessionById(sessionId)
                 // Measured outside the transaction below, which is the same split [rebuildRecords]
                 // makes: reading and measuring a track is real work, and the database's write lock
                 // is not the place to do it.
+                val stated = session?.let { statedEffortsOf(sessionId) }.orEmpty()
                 val efforts = session
-                    ?.let { effortsAt(it, RecordType.entries, statedEffortsOf(sessionId)) }
+                    ?.let { effortsAt(it, RecordType.entries, stated) }
                     .orEmpty()
                 val rows = efforts.map { RunEffortRow(sessionId, it.type, it.value) }
                 inTransaction {
+                    // The Run and what it has been told it holds are asked for again, inside the
+                    // transaction that replaces its rows, and the replacement is abandoned if either
+                    // has moved (#75). [scoreRecordsUnlessOvertaken]'s rule, against the same window
+                    // and for a sharper reason: a *second* edit landing after this pass measured the
+                    // Run scores itself and banks its own rows, and this one committing afterwards
+                    // out of a reading taken before it would delete them and put the older claims
+                    // back. Nothing later would find it. A withdrawn fourth-place claim re-stated in
+                    // that window is the whole of it: the effort held no medal, so `losing` is empty
+                    // and no rebuild ever visits the Record again.
+                    //
+                    // Inside, because the database takes one writer at a time — either the newer
+                    // edit has committed by now and this reads it, or it commits afterwards and its
+                    // own banking has the last word. Cheaper than a lock, and nothing is made to
+                    // wait behind a walk of a track.
+                    //
+                    // A Run that was already gone when it was measured is not overtaken by still
+                    // being gone: its rows went with it ([RunEffortRow]), and re-banking it to
+                    // nothing is the right answer. One reappearing would be a different Run at the
+                    // same id, which is nothing this reading can speak for either.
+                    val now = sessionDao.getSessionById(sessionId)
+                    val moved =
+                        if (session == null) now != null
+                        else now == null || !now.contestsAs(session) || statedEffortsOf(sessionId) != stated
+                    if (moved) {
+                        Log.d("Records", "Run $sessionId changed while what it is worth was being re-taken; leaving its claims")
+                        overtaken = true
+                        return@inTransaction
+                    }
                     // Read inside the same transaction that replaces them, so what is compared is
                     // what is overwritten. Sets rather than lists: a re-measuring that came back
                     // with the same claims in another order has moved nothing the runner or the
@@ -2078,7 +2115,7 @@ class SessionRepository(
                     dao.putEfforts(rows)
                 }
             }
-            Rebanking(landed = true, movedRows = movedRows)
+            Rebanking(landed = !overtaken, movedRows = movedRows)
         } catch (e: Exception) {
             Log.w("Records", "Could not re-bank what ${sessionIds.size} run(s) are worth", e)
             Rebanking(landed = false, movedRows = movedRows)
@@ -2090,7 +2127,9 @@ class SessionRepository(
      *
      * Two answers rather than one because they are asked by different callers for different reasons.
      * [landed] is the debt — a re-banking that could not be written leaves history owing a full
-     * reseed, exactly as a mend that could not be written does. [movedRows] is the snapshot on disk
+     * reseed, exactly as a mend that could not be written does. Owed by a re-banking that *declined*
+     * to be written too: a Run overtaken mid-measure is one whose rows this pass never replaced, and
+     * the newer scoring behind it is the one that owns them now. [movedRows] is the snapshot on disk
      * — the backup is a whole copy of history and taking one is not free, so it is refreshed when
      * the rows behind the Records section actually moved and not on every change that reaches here.
      *
