@@ -249,6 +249,32 @@ _Avoid_: Best Effort (a stretch of one Run at a record distance), attempt, lap, 
 "Effort", which is what the runner rates a Run out of ten. A Segment Medal is not an **Achievement**
 and a Segment is not a **Record**.
 
+**Matched Runs**:
+Runs that went over the same ground, recognising each other by their shape alone (#73). Nothing is
+named and nothing is saved: a Segment is a place the runner cut out and named, and a Route is a
+course somebody drew, but a group of Matched Runs is neither — it is a fact about two recordings,
+worked out from them and never declared. Two Runs match when their starts and their ends are within
+a hundred metres of each other, their totals within a twentieth, and the ground between them was
+covered in the same order — which is what makes a loop run the other way round a different route,
+and a longer Run through the same two ends a different route again.
+
+**A Run's shape** is what that is asked of: the Run reduced to five places evenly spaced by the
+ground it covered, banked once because taking it means reading a whole track, and taken again
+whenever the runner's word about the Run changes. A **Run Shape** is not a Route: it has no name,
+the runner never sees it, and it is only ever compared with another one. The group itself is never
+stored. It is worked out on every read, from the shapes, which is what makes deleting a Run take it
+straight out of every group and makes running the measurement twice cost arithmetic and nothing
+else. A Walk holds no shape, on the rules a Segment Effort keeps, and neither does a treadmill Run
+or a Run too short to hold a route.
+
+On screen the runner is told which run of the route this one is — "your 14th run on this route" —
+with their pace over the calendar under it, and the whole card opens the list of them. The word
+"route" is the runner's word here and is the honest one for what they see: a **Route** in this app's
+own language is the kept course of the library (#54), and nothing about a matched group is kept.
+Below two Runs there is no card at all.
+_Avoid_: route group, auto-route, saved route (nothing is saved), and **Route** as a name in code
+for any of this.
+
 **Export**:
 A finished Run written out as a file for somewhere else to read (#84, #218). Two
 formats, and the runner picks at the moment they share. **FIT** states the Run: its
