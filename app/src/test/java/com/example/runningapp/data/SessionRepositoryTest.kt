@@ -906,6 +906,48 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `the debts a Walk raises and the mark itself commit together`() = runTest {
+        // The window this closes (#73): a shape already being measured re-reads the Run inside the
+        // transaction that writes it, so it abandons what it measured if the Run moved. Landing
+        // between the debt and the mark it reads the *old* answer, finds nothing moved, and puts
+        // back the row that was just deleted — and a row's existence is what tells the launch pass
+        // this Run has been dealt with, so nothing revisits it. There must be no "in between".
+        val order = mutableListOf<String>()
+        whenever(mockDao.getSessionById(42L)).thenReturn(aTreadmillRun(id = 42, seconds = 1_800))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
+        val mockRunShapeDao: RunShapeDao = mock {
+            onBlocking { forgetShape(42L) }.doSuspendableAnswer { order += "forgetShape" }
+        }
+        whenever(mockDao.clearSegmentsTimed(42L)).doSuspendableAnswer { order += "clearSegmentsTimed" }
+        whenever(mockDao.setIsWalk(42L, true)).doSuspendableAnswer { order += "setIsWalk" }
+        val repositoryWithShapes = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            runShapeDao = mockRunShapeDao,
+            inTransaction = { block ->
+                order += "begin"
+                block()
+                order += "commit"
+            },
+        )
+
+        repositoryWithShapes.markAsWalk(42L, isWalk = true)
+
+        // Whatever else the mend opens around it — the record book's own read-and-remove is a
+        // transaction too, and this one nests inside it — no commit falls between the three.
+        val wanted = setOf("begin", "commit", "clearSegmentsTimed", "forgetShape", "setIsWalk")
+        val debtsAndMark = order.filter { it in wanted }
+        val firstWrite = debtsAndMark.indexOf("clearSegmentsTimed")
+        val begin = debtsAndMark.subList(0, firstWrite).lastIndexOf("begin")
+        val commit = debtsAndMark.indexOf("commit")
+        assertEquals(
+            listOf("begin", "clearSegmentsTimed", "forgetShape", "setIsWalk", "commit"),
+            debtsAndMark.subList(begin, commit + 1),
+        )
+    }
+
+    @Test
     fun `a Walk keeps the Effort Score it measured`() = runTest {
         // The Score is what the heart did, and marking the Run does not touch it: what changes is
         // which curve reads how much of it.
