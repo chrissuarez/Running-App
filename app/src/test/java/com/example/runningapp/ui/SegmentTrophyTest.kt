@@ -216,6 +216,23 @@ class SegmentTrophyTest {
     }
 
     @Test
+    fun `irregular dates step by their divisor, not by their closest pair`() {
+        val irregular = segmentTrendPoints(
+            shown(
+                row(1, day = 0, elapsedMillis = 100_000),
+                row(2, day = 3, elapsedMillis = 98_000),
+                row(3, day = 400, elapsedMillis = 96_000),
+            )
+        )
+
+        // Vico's own xGcd folds gcdWith over the gaps between neighbouring x values, so three days
+        // and four hundred step in ones — not in the three of the closest pair. Counting the ticks
+        // any other way hands [threeLabelPlacer] a number the chart does not have.
+        assertEquals(1, segmentTrendStepDays(irregular))
+        assertEquals(401, segmentTrendAxisTicks(irregular))
+    }
+
+    @Test
     fun `an axis with nothing to step by is never asked to divide by it`() {
         assertEquals(1, segmentTrendStepDays(emptyList()))
         assertEquals(1, segmentTrendAxisTicks(emptyList()))
