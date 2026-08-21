@@ -375,35 +375,15 @@ fun segmentTrendPoints(efforts: List<SegmentEffortUi>): List<SegmentTrendPoint> 
 }
 
 /**
- * The whole number of days the chart's x axis steps in.
- *
- * Vico steps an axis by the greatest common divisor of the gaps between its x values rather than by
- * one, so the label spacing has to be counted in those steps and not in points. Six efforts a
- * fortnight apart are six ticks a fortnight wide, not seventy daily ones.
- *
- * The divisor and not the smallest gap: Vico's own `ChartEntryModel.xGcd` folds `gcdWith` over the
- * absolute gaps between neighbouring x values (`calculateXGcd`, Vico 1.13.1). Irregular dates whose
- * divisor is smaller than their closest pair therefore step finer than that pair, and this counts
- * them the same way.
+ * The whole number of days this chart's x axis steps in — the shared rule ([trendStepDays]), asked
+ * of these points.
  */
-fun segmentTrendStepDays(points: List<SegmentTrendPoint>): Int {
-    var step = 0
-    points.forEach { step = greatestCommonDivisor(step, it.dayOffset) }
-    return step.coerceAtLeast(1)
-}
+fun segmentTrendStepDays(points: List<SegmentTrendPoint>): Int =
+    trendStepDays(points.map { it.dayOffset })
 
-/**
- * How many positions the chart's bottom axis has to label.
- *
- * Not the number of points: the axis steps in whole [segmentTrendStepDays], and a chart drawn
- * against the calendar has a tick at every step whether an effort landed on it or not. Handed to
- * [threeLabelPlacer], which is the Progress screen's own rule for how many of them get a date on
- * them — written once so the two charts cannot drift into labelling differently (#63).
- */
-fun segmentTrendAxisTicks(points: List<SegmentTrendPoint>): Int {
-    if (points.isEmpty()) return 1
-    return (points.last().dayOffset / segmentTrendStepDays(points)) + 1
-}
+/** How many positions this chart's bottom axis has to label — the shared rule ([trendAxisTicks]). */
+fun segmentTrendAxisTicks(points: List<SegmentTrendPoint>): Int =
+    trendAxisTicks(points.map { it.dayOffset })
 
 /**
  * What the trend chart is, said in one sentence for a runner who is being read the page.
@@ -435,5 +415,3 @@ const val SEGMENT_ALL_EFFORTS_TITLE: String = "Every effort, newest first"
 
 /** Why the chart holds fewer points than the list below it does. */
 const val SEGMENT_TREND_SUBTITLE: String = "Your quickest time on each day you ran it."
-
-private tailrec fun greatestCommonDivisor(a: Int, b: Int): Int = if (b == 0) a else greatestCommonDivisor(b, a % b)

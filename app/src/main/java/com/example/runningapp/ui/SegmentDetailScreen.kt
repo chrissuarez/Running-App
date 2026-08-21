@@ -49,25 +49,11 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
-import java.time.format.DateTimeFormatter
-import java.util.Locale
 import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.data.Segment
 import com.example.runningapp.data.SegmentEffortRow
 import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.ui.theme.RunningUiTokens
-import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
-import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
-import com.patrykandpatrick.vico.compose.chart.Chart
-import com.patrykandpatrick.vico.compose.chart.line.lineChart
-import com.patrykandpatrick.vico.compose.chart.line.lineSpec
-import com.patrykandpatrick.vico.compose.chart.scroll.rememberChartScrollSpec
-import com.patrykandpatrick.vico.compose.m3.style.m3ChartStyle
-import com.patrykandpatrick.vico.compose.style.ProvideChartStyle
-import com.patrykandpatrick.vico.core.axis.AxisPosition
-import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
-import com.patrykandpatrick.vico.core.entry.ChartEntryModelProducer
-import com.patrykandpatrick.vico.core.entry.entryOf
 
 /**
  * How tall the map is.
@@ -406,67 +392,15 @@ private fun SegmentEffortRowUi(effort: SegmentEffortUi, onOpen: () -> Unit) {
 /**
  * The times run at a Segment, over the calendar they were run on (#72).
  *
- * Drawn against the day rather than against the effort number, so the gaps between attempts are the
- * gaps that really happened — see [segmentTrendPoints]. Styled as the Progress screen's charts are:
- * the Material palette through [m3ChartStyle], three dates along the bottom, no vertical guidelines,
- * no shading under the line, and no scrolling, so the whole of the runner's history at this place is
- * on screen at once.
- *
- * The dates carry their year, which the Progress screen's do not. That screen looks back a year at
- * most; a Segment holds every effort ever run at it, so "24 Jul" alone would not say which July.
+ * The app's one trend chart ([TrendLineChart]), given this page's points: a Segment's efforts are a
+ * history drawn against the days they happened on, exactly as a matched route's paces are (#73).
  */
 @Composable
 private fun SegmentTrendChart(points: List<SegmentTrendPoint>) {
-    // Handed to the producer as it is built rather than pushed into an empty one afterwards: a Vico
-    // chart measured against an empty model throws, and an effect runs a frame too late (#63).
-    val producer = remember(points) {
-        ChartEntryModelProducer(
-            points.map { entryOf(it.dayOffset.toFloat(), it.seconds.toFloat()) }
-        )
-    }
-
-    val firstDay = points.first().date
-    val dateLabels = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
-        firstDay.plusDays(value.toLong()).format(TrendDateFormat)
-    }
-    val timeLabels = AxisValueFormatter<AxisPosition.Vertical.Start> { value, _ ->
-        segmentTrendTimeLabel(value)
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(TrendChartHeight)
-            .semantics { contentDescription = segmentTrendDescription(points).orEmpty() }
-    ) {
-        ProvideChartStyle(m3ChartStyle()) {
-            Chart(
-                // The line alone, as on the Progress screen: Vico shades under a line by default,
-                // and a time trend that starts at zero would be four fifths shading and one fifth
-                // chart. `lineBackgroundShader = null` is that screen's own answer to it.
-                chart = lineChart(
-                    lines = listOf(
-                        lineSpec(
-                            lineColor = MaterialTheme.colorScheme.primary,
-                            lineBackgroundShader = null,
-                        )
-                    )
-                ),
-                chartModelProducer = producer,
-                startAxis = rememberStartAxis(valueFormatter = timeLabels),
-                bottomAxis = rememberBottomAxis(
-                    valueFormatter = dateLabels,
-                    itemPlacer = threeLabelPlacer(segmentTrendAxisTicks(points)),
-                    guideline = null,
-                ),
-                chartScrollSpec = rememberChartScrollSpec(isScrollEnabled = false),
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
-    }
+    TrendLineChart(
+        points = points.map { TrendChartPoint(dayOffset = it.dayOffset, value = it.seconds.toFloat()) },
+        firstDay = points.first().date,
+        valueLabel = { segmentTrendTimeLabel(it) },
+        spoken = segmentTrendDescription(points).orEmpty(),
+    )
 }
-
-/** How tall the trend chart is — the height the Progress screen's own line chart stands at. */
-private val TrendChartHeight = 240.dp
-
-private val TrendDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yy", Locale.UK)
