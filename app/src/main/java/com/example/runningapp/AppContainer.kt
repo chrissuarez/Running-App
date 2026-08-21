@@ -168,6 +168,8 @@ class AppContainer(context: Context) {
             // The runner's named places, and the times run at them (#70).
             segmentDao = database.segmentDao(),
             segmentEffortDao = database.segmentEffortDao(),
+            // The shapes Runs recognise each other by (#73).
+            runShapeDao = database.runShapeDao(),
             // Read for one thing only: telling the coach where the runner stands against their own
             // targets (#83). Without it the coach is simply told nothing about goals.
             goalDao = database.goalDao(),
@@ -377,6 +379,29 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Takes the shape of every Run that has never had one, once per process (#73).
+     *
+     * On the first launch after this shipped that is the whole of the runner's history, which is the
+     * backfill the matching is worth having at all: a runner who has been round the same park for a
+     * year should be told so on the day it arrives, not a year later. Every launch afterwards reads
+     * an empty list and returns.
+     *
+     * On the container's own scope, for the reason the passes above are: each Run's row is written
+     * as it is measured, so a pass cancelled by the runner backing out of an Activity keeps
+     * everything it has already done and the next launch takes up the rest.
+     */
+    fun takeRunShapesOnce() {
+        if (!runShapesTaken.compareAndSet(false, true)) return
+        applicationScope.launch {
+            try {
+                sessionRepository.payWhatRunShapesOwe()
+            } catch (e: Exception) {
+                Log.w("MatchedRuns", "Could not take the run shapes owed; leaving them for next launch", e)
+            }
+        }
+    }
+
+    /**
      * Stores the runner's answer to a Run's finish sheet and closes the gate behind it, off any
      * screen's lifetime (#297).
      *
@@ -420,6 +445,7 @@ class AppContainer(context: Context) {
     private val missedRecordsScored = AtomicBoolean(false)
     private val missedStagesSettled = AtomicBoolean(false)
     private val segmentTimingPaid = AtomicBoolean(false)
+    private val runShapesTaken = AtomicBoolean(false)
 
     /**
      * When this process began, as far as anything here is concerned — the container is built once,

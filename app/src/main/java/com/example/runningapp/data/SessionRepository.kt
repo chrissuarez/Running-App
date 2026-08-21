@@ -50,6 +50,9 @@ import com.example.runningapp.analysis.RunEfforts
 import com.example.runningapp.analysis.recordBookOf
 import com.example.runningapp.analysis.standingsAfter
 import com.example.runningapp.analysis.bestEffortsOf
+import com.example.runningapp.segments.RunShape
+import com.example.runningapp.segments.RunShapeStore
+import com.example.runningapp.segments.RunShaping
 import com.example.runningapp.segments.SegmentTiming
 import com.example.runningapp.segments.SegmentTimingStore
 import com.example.runningapp.recording.SessionRecorder
@@ -519,6 +522,14 @@ class SessionRepository(
      */
     private val segmentDao: SegmentDao? = null,
     private val segmentEffortDao: SegmentEffortDao? = null,
+    /**
+     * The shapes Runs recognise each other by (#73).
+     *
+     * Null on the same terms as the Segments above: wherever it is not wired, a Run finishes without
+     * its shape being taken and no Run is ever matched to another, which is what every Run did
+     * before this shipped.
+     */
+    private val runShapeDao: RunShapeDao? = null,
     /**
      * The runner's own Goals, read so the coach can be told where they stand (#83).
      *
@@ -1283,6 +1294,13 @@ class SessionRepository(
         } catch (e: Exception) {
             Log.w("InterruptedRun", "Rescued run $runRowId but could not time it against the segments", e)
         }
+        try {
+            // And its shape taken, on the same terms again (#73). A failure here leaves the Run with
+            // no shape row, which is the debt itself, so the next launch pass takes it.
+            shapeRun(runRowId)
+        } catch (e: Exception) {
+            Log.w("InterruptedRun", "Rescued run $runRowId but could not take its shape", e)
+        }
         return true
     }
 
@@ -1410,6 +1428,49 @@ class SessionRepository(
 
             override suspend fun markSegmentTimed(segmentId: Long) = segmentRows.setHistoryTimed(segmentId)
             override suspend fun markRunTimed(sessionId: Long) = sessionDao.setSegmentsTimed(sessionId)
+        })
+    }
+
+    /**
+     * Takes one Run's shape, so it can be matched to the others (#73) — what a Run gets when it
+     * finishes, and again whenever the runner's word about it changes ([markAsWalk]).
+     *
+     * Safe to call again: a Run has one shape row and a second reading replaces the first.
+     */
+    suspend fun shapeRun(sessionId: Long) {
+        runShaping?.shapeRun(sessionId)
+    }
+
+    /**
+     * Takes the shape of every Run that has never had one, at launch (#73) — the whole of history on
+     * the first launch after this shipped, and nothing at all on every launch afterwards.
+     */
+    suspend fun payWhatRunShapesOwe() {
+        runShaping?.payWhatIsOwed()
+    }
+
+    /**
+     * Every Run that holds a shape, watched — the field a Run's page matches itself against (#73).
+     *
+     * Empty wherever shapes are not wired, which shows the same thing a runner with one Run sees:
+     * no matched runs.
+     */
+    fun shapedRunsFlow(): Flow<List<RunShapeCandidate>> =
+        runShapeDao?.getShapedRunsFlow() ?: flowOf(emptyList())
+
+    /** The one taking of Run shapes, over this repository's own DAOs. Null wherever it is not wired. */
+    private val runShaping: RunShaping? by lazy {
+        val shapeRows = runShapeDao ?: return@lazy null
+        RunShaping(object : RunShapeStore {
+            override suspend fun run(sessionId: Long) = sessionDao.getSessionById(sessionId)
+            override suspend fun runsMissingShapes() = sessionDao.getSessionIdsMissingRunShapes()
+
+            // The same accuracy-gated fixes the map, the splits and the Segments are built from, so
+            // a wild fix the Run itself refused cannot bend a route out of the group it belongs to.
+            override suspend fun track(sessionId: Long) = getTrackPointsForMap(sessionId)
+
+            override suspend fun putShape(sessionId: Long, shape: RunShape?) =
+                shapeRows.putShape(runShapeRowOf(sessionId, shape))
         })
     }
 
@@ -2236,6 +2297,9 @@ class SessionRepository(
         // ending short of it leaves that debt standing rather than a leaderboard nobody goes back
         // for. The cost of lifting it needlessly is one repeated walk at the next launch.
         sessionDao.clearSegmentsTimed(sessionId)
+        // And its shape, which is the same debt in the other table: a Walk covers no route, so
+        // marking one takes it out of every group it was in and unmarking puts it back (#73).
+        runShapeDao?.forgetShape(sessionId)
 
         val write: suspend () -> Unit = { sessionDao.setIsWalk(sessionId, isWalk) }
         if (isWalk) {
@@ -2264,6 +2328,15 @@ class SessionRepository(
             timeRunAgainstSegments(sessionId)
         } catch (e: Exception) {
             Log.w("Walk", "Could not re-time run $sessionId against the Segments", e)
+        }
+
+        // Its shape again, on the same terms and for the same reason (#73). Guarded like the walk
+        // above: the Run is out of its groups either way, and the shape it should hold now is taken
+        // by the launch pass, which the row deleted before the mark is what guarantees.
+        try {
+            shapeRun(sessionId)
+        } catch (e: Exception) {
+            Log.w("Walk", "Could not take the shape of run $sessionId again", e)
         }
     }
 
