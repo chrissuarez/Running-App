@@ -406,13 +406,17 @@ fun segmentTrendAxisTicks(points: List<SegmentTrendPoint>): Int {
  * A chart is a picture, and a picture says nothing out loud. The two ends are what the chart is for
  * — the stretch of calendar it covers, and whether the time at the end of it is quicker than the
  * time at the start.
+ *
+ * Both ends are a day's quickest rather than a day's last, because that is what the chart plots
+ * ([segmentTrendPoints]). Calling the last point the most recent time would name a slower later
+ * attempt on that day as the one being read out, which is not the time on the chart.
  */
 fun segmentTrendDescription(points: List<SegmentTrendPoint>): String? {
     if (points.isEmpty()) return null
     val first = points.first()
     val last = points.last()
-    return "Your time here from ${first.dateLabel} to ${last.dateLabel}: " +
-        "${first.timeLabel} then, ${last.timeLabel} most recently."
+    return "Your quickest here from ${first.dateLabel} to ${last.dateLabel}: " +
+        "${first.timeLabel} on the first day, ${last.timeLabel} on the latest."
 }
 
 /** The seconds up the side of the chart, read back as the times they are. */
