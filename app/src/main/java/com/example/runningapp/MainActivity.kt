@@ -1105,7 +1105,13 @@ class MainActivity : ComponentActivity() {
                             // away, or has left its own group, and a screen for a group nobody has
                             // would otherwise sit there loading for ever. Only after it has been
                             // seen once — before that, null is still "the shapes are being read".
-                            var groupWasHere by rememberSaveable(sessionId) { mutableStateOf(false) }
+                            //
+                            // `remember`, deliberately not `rememberSaveable`: this flag says only
+                            // "the read above has handed back a group", so it must live and die
+                            // with that read. Saved across a rotation it would come back true over
+                            // a `produceState` starting again at null, and close a page whose group
+                            // is still there — the very state it exists to tell apart.
+                            var groupWasHere by remember(sessionId) { mutableStateOf(false) }
                             LaunchedEffect(matched) {
                                 if (matched != null) groupWasHere = true else if (groupWasHere) backToTheRun()
                             }
