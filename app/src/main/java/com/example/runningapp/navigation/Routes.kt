@@ -1,5 +1,7 @@
 package com.example.runningapp.navigation
 
+import com.example.runningapp.analysis.RecordType
+
 object Routes {
     const val ARG_SESSION_ID = "sessionId"
     const val ARG_SEGMENT_ID = "segmentId"
@@ -32,6 +34,16 @@ object Routes {
      */
     const val MATCHED_RUNS = "matched_runs/{$ARG_SESSION_ID}"
 
+    /**
+     * One Record's own page (#75) — its all-time top ten and the trend behind it, addressed by the
+     * Record itself.
+     *
+     * The [com.example.runningapp.analysis.RecordType]'s own name, which is what the database
+     * already keys medals by, so the address and the rows are spelled the same thing.
+     */
+    const val ARG_RECORD_TYPE = "recordType"
+    const val RECORD_DETAIL = "record_detail/{$ARG_RECORD_TYPE}"
+
     fun sessionDetail(sessionId: Long): String = "session_detail/$sessionId"
 
     fun matchedRuns(sessionId: Long): String = "matched_runs/$sessionId"
@@ -39,4 +51,6 @@ object Routes {
     fun segmentDetail(segmentId: Long): String = "segment_detail/$segmentId"
 
     fun segmentCreate(sessionId: Long): String = "segment_create/$sessionId"
+
+    fun recordDetail(type: RecordType): String = "record_detail/${type.name}"
 }

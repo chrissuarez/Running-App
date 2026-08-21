@@ -432,7 +432,11 @@ is what the console calls it rather than what the app keeps
 **Record**:
 One of the seven things a Run can be the best at: the five distances, and the
 longest Run by ground covered and by the clock. The book keeps the all-time top
-three at each.
+three at each, as Medals. Every Run's claim at every Record it contested is kept
+as well, medal or none — the same measurement stored deeper, written by the same
+code in the same commit, never a second reading of the Run. That is what lets a
+Record's own page show the all-time top ten and chart how the runner's best has
+moved across the calendar (#75), neither of which a book three deep can answer.
 _Avoid_: PB, milestone, trophy
 
 **Achievement**:

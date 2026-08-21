@@ -83,6 +83,11 @@ import com.example.runningapp.ui.RoutesViewModelFactory
 import com.example.runningapp.ui.HistoryScreen
 import com.example.runningapp.ui.HistoryViewModel
 import com.example.runningapp.ui.HistoryViewModelFactory
+import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.ui.RecordDetailScreen
+import com.example.runningapp.ui.RecordDetailUi
+import com.example.runningapp.ui.RecordsViewModel
+import com.example.runningapp.ui.RecordsViewModelFactory
 import com.example.runningapp.ui.ProgressScreen
 import com.example.runningapp.ui.ProgressViewModel
 import com.example.runningapp.ui.ProgressViewModelFactory
@@ -1003,8 +1008,21 @@ class MainActivity : ComponentActivity() {
                                 )
                             )
                             val progressState by progressViewModel.state.collectAsState()
+                            // Its own view model, scoped to this screen like the curves': the
+                            // records are a watched query rather than arithmetic over history, so
+                            // the two arrive by different routes and neither waits on the other
+                            // (#75).
+                            val recordsViewModel: RecordsViewModel = viewModel(
+                                factory = RecordsViewModelFactory(
+                                    sessionRepository,
+                                    appContainer.zoneChanges,
+                                )
+                            )
+                            val recordSlots by recordsViewModel.slots.collectAsState()
                             ProgressScreen(
                                 state = progressState,
+                                records = recordSlots,
+                                onOpenRecord = { navigateTo(Routes.recordDetail(it)) },
                                 onRangeChosen = { progressViewModel.rangeChosen(it) },
                                 onMeasureChosen = { progressViewModel.measureChosen(it) },
                                 onMaxHrConfirmed = { progressViewModel.maxHrConfirmed(it) },
@@ -1015,6 +1033,44 @@ class MainActivity : ComponentActivity() {
                                 onGoalRemoved = { goal -> progressViewModel.goalRemoved(goal) },
                                 onBack = { navigateTo(Routes.MAIN) }
                             )
+                        }
+                        composable(
+                            route = Routes.RECORD_DETAIL,
+                            arguments = listOf(navArgument(Routes.ARG_RECORD_TYPE) { type = NavType.StringType })
+                        ) { backStackEntry ->
+                            // The Record the address names, or nothing at all where it names none:
+                            // a [RecordType] is persisted by name, so an address that no longer
+                            // matches one is an address written by an older app for a Record this
+                            // one does not have. Better to go back to the grid than to draw a page
+                            // for a Record nobody can name (#75).
+                            val recordType = backStackEntry.arguments
+                                ?.getString(Routes.ARG_RECORD_TYPE)
+                                ?.let { name -> RecordType.entries.firstOrNull { it.name == name } }
+                            val recordsViewModel: RecordsViewModel = viewModel(
+                                factory = RecordsViewModelFactory(
+                                    sessionRepository,
+                                    appContainer.zoneChanges,
+                                )
+                            )
+                            LaunchedEffect(recordType) {
+                                if (recordType == null) navigateTo(Routes.PROGRESS)
+                            }
+                            recordType?.let { type ->
+                                // Watched, like the grid that led here: a Run finishing, a
+                                // treadmill time stated or a Run deleted moves this list while it
+                                // is open.
+                                val detail by produceState(
+                                    initialValue = RecordDetailUi(type, emptyList(), emptyList(), 0),
+                                    key1 = type
+                                ) {
+                                    recordsViewModel.detail(type).collect { value = it }
+                                }
+                                RecordDetailScreen(
+                                    detail = detail,
+                                    onOpenRun = { navigateTo(Routes.sessionDetail(it)) },
+                                    onBack = { navigateTo(Routes.PROGRESS) },
+                                )
+                            }
                         }
                         composable(Routes.ROUTE_LIBRARY) {
                             val routes by routesViewModel.routes.collectAsState()

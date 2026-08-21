@@ -640,6 +640,114 @@ class SessionRepositoryTest {
         )
     }
 
+    // --- Banking every claim, not only the ones that placed (#75) ---
+    //
+    // The record book keeps three deep, and the Records section shows ten and charts every effort
+    // there has ever been. What makes that one measurement rather than two is that the rows below
+    // bronze are written by the very code that ranks the medals, in the same commit.
+
+    @Test
+    fun `scoring a run banks everything it was worth, not only what took a medal`() = runTest {
+        val run = aTreadmillRun(id = 42, seconds = 1_500)
+        whenever(mockDao.getSessionById(42L)).thenReturn(run, run.copy(distanceKm = 12.0))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        val mockRunEffortDao: RunEffortDao = mock()
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            runEffortDao = mockRunEffortDao,
+        )
+
+        repositoryWithRecords.stateDistance(42L, distanceKm = 12.0)
+
+        // The same two efforts the book was handed, at the same numbers: this is the book's own
+        // measuring stored deeper, not a second reading of the Run.
+        val banked = argumentCaptor<List<RunEffortRow>>()
+        verify(mockRunEffortDao).putEfforts(banked.capture())
+        assertEquals(
+            listOf(RecordType.LONGEST_DISTANCE to 12_000.0, RecordType.LONGEST_DURATION to 1_500.0),
+            banked.firstValue.map { it.type to it.value },
+        )
+        assertTrue(banked.firstValue.all { it.sessionId == 42L })
+    }
+
+    @Test
+    fun `a run that never placed is still banked, so the top ten can go deeper than the book`() = runTest {
+        val alsoRan = aTreadmillRun(id = 9, seconds = 60)
+        whenever(mockDao.getSessionById(9L)).thenReturn(alsoRan, alsoRan.copy(distanceKm = 0.5))
+        val mockAchievementDao: AchievementDao = mock()
+        // A book already three deep at both records, every place held by somebody quicker or longer.
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(
+            Medal.entries.flatMap { medal ->
+                listOf(
+                    Achievement(sessionId = medal.ordinal + 1L, type = RecordType.LONGEST_DISTANCE, medal = medal, value = 20_000.0 - medal.ordinal),
+                    Achievement(sessionId = medal.ordinal + 1L, type = RecordType.LONGEST_DURATION, medal = medal, value = 7_200.0 - medal.ordinal),
+                )
+            }
+        )
+        val mockRunEffortDao: RunEffortDao = mock()
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            runEffortDao = mockRunEffortDao,
+        )
+
+        repositoryWithRecords.stateDistance(9L, distanceKm = 0.5)
+
+        // Nothing of this Run reached the book — and all of it reached the rows the Records section
+        // reads, which is the whole point of them.
+        val book = argumentCaptor<List<Achievement>>()
+        verify(mockAchievementDao).insertAchievements(book.capture())
+        assertTrue(book.firstValue.none { it.sessionId == 9L })
+        val banked = argumentCaptor<List<RunEffortRow>>()
+        verify(mockRunEffortDao).putEfforts(banked.capture())
+        assertEquals(
+            listOf(RecordType.LONGEST_DISTANCE to 500.0, RecordType.LONGEST_DURATION to 60.0),
+            banked.firstValue.map { it.type to it.value },
+        )
+    }
+
+    @Test
+    fun `a rebuild rewrites the banked claims exactly as it rewrites the book`() = runTest {
+        val medalHolder = aTreadmillRun(id = 2, seconds = 1_500).copy(distanceKm = 12.0)
+        whenever(mockDao.getSessionById(2L)).thenReturn(medalHolder)
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L))).thenReturn(
+            listOf(Achievement(sessionId = 2, type = RecordType.LONGEST_DISTANCE, medal = Medal.GOLD, value = 12_000.0))
+        )
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        whenever(mockDao.getAllSessions()).thenReturn(
+            listOf(
+                aTreadmillRun(id = 1, seconds = 1_200).copy(distanceKm = 9.0),
+                medalHolder.copy(distanceKm = 1.25),
+            )
+        )
+        val mockRunEffortDao: RunEffortDao = mock()
+        // A Run this pass did not measure — it finished while the measuring was going on and scored
+        // itself. Its own claim has to survive the rewrite, exactly as its medal does.
+        whenever(mockRunEffortDao.getEffortsOfTypes(listOf(RecordType.LONGEST_DISTANCE))).thenReturn(
+            listOf(RunEffortRow(sessionId = 77, type = RecordType.LONGEST_DISTANCE, value = 30_000.0))
+        )
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            runEffortDao = mockRunEffortDao,
+        )
+
+        repositoryWithRecords.stateDistance(2L, distanceKm = 1.25)
+
+        verify(mockRunEffortDao).deleteEffortsOfTypes(listOf(RecordType.LONGEST_DISTANCE))
+        // Twice: the changed Run's own claims are re-taken whole first (see [rebankEfforts]), and
+        // the rebuild's rewrite of the Record follows it. The rebuild's is the last word.
+        val banked = argumentCaptor<List<RunEffortRow>>()
+        verify(mockRunEffortDao, times(2)).putEfforts(banked.capture())
+        assertEquals(
+            listOf(1L to 9_000.0, 2L to 1_250.0, 77L to 30_000.0),
+            banked.lastValue.map { it.sessionId to it.value },
+        )
+    }
+
     @Test
     fun `a distance corrected downward rebuilds the record it held, promoting the run behind it`() = runTest {
         val medalHolder = aTreadmillRun(id = 2, seconds = 1_500).copy(distanceKm = 12.0)
@@ -786,6 +894,52 @@ class SessionRepositoryTest {
         assertEquals(
             listOf(1L to 1_200.0),
             book.firstValue.map { it.sessionId to it.value },
+        )
+    }
+
+    @Test
+    fun `marking a Walk clears its banked claims even where it never held a medal`() = runTest {
+        // The case the record book cannot mend, because there is nothing in it to mend: a Run that
+        // placed fourth holds no medal, so `losing` is empty and the rebuild does nothing. Its
+        // banked claim is the only trace of it left, and a Walk must not stand in a top ten (#75).
+        val alsoRan = aTreadmillRun(id = 42, seconds = 1_800)
+        whenever(mockDao.getSessionById(42L)).thenReturn(alsoRan, alsoRan.copy(isWalk = true))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
+        val mockRunEffortDao: RunEffortDao = mock()
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            runEffortDao = mockRunEffortDao,
+        )
+
+        repositoryWithRecords.markAsWalk(42L, isWalk = true)
+
+        verify(mockRunEffortDao).deleteEffortsForSession(42L)
+        // A Walk is worth nothing at all, so nothing goes back in its place.
+        verify(mockRunEffortDao).putEfforts(emptyList())
+    }
+
+    @Test
+    fun `unmarking a Walk banks what the Run is worth again`() = runTest {
+        val run = aTreadmillRun(id = 42, seconds = 1_800).copy(distanceKm = 5.0, isWalk = true)
+        whenever(mockDao.getSessionById(42L)).thenReturn(run, run.copy(isWalk = false))
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        val mockRunEffortDao: RunEffortDao = mock()
+        val repositoryWithRecords = SessionRepository(
+            sessionDao = mockDao,
+            achievementDao = mockAchievementDao,
+            runEffortDao = mockRunEffortDao,
+        )
+
+        repositoryWithRecords.markAsWalk(42L, isWalk = false)
+
+        val banked = argumentCaptor<List<RunEffortRow>>()
+        verify(mockRunEffortDao).putEfforts(banked.capture())
+        assertEquals(
+            listOf(RecordType.LONGEST_DISTANCE to 5_000.0, RecordType.LONGEST_DURATION to 1_800.0),
+            banked.lastValue.map { it.type to it.value },
         )
     }
 

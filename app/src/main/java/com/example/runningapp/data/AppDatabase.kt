@@ -1174,9 +1174,10 @@ interface RunPauseDao {
         RunPause::class,
         Segment::class,
         SegmentEffort::class,
-        RunShapeRow::class
+        RunShapeRow::class,
+        RunEffortRow::class
     ],
-    version = 36,
+    version = 37,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1192,6 +1193,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun segmentDao(): SegmentDao
     abstract fun segmentEffortDao(): SegmentEffortDao
     abstract fun runShapeDao(): RunShapeDao
+    abstract fun runEffortDao(): RunEffortDao
 
     companion object {
         @Volatile
@@ -1281,7 +1283,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_32_33,
     MIGRATION_33_34,
     MIGRATION_34_35,
-    MIGRATION_35_36
+    MIGRATION_35_36,
+    MIGRATION_36_37
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2278,5 +2281,49 @@ val MIGRATION_35_36 = object : Migration(35, 36) {
             )
             """.trimIndent()
         )
+    }
+}
+
+
+/**
+ * Every Run's claim at every Record, banked rather than only the top three (#75).
+ *
+ * The Records section shows the all-time top ten at each Record and charts how the runner's times
+ * there have moved, and neither can be read off a book three deep. So the same measurement is stored
+ * deeper — see [RunEffortRow], which argues why that is one measurement stored twice and not two
+ * measurements.
+ *
+ * **Every finished Run is handed back its scoring**, which is what fills the new table for history.
+ * The debt column is the one #210 already put there ([RunnerSession.recordsScored]), and this is the
+ * second time a migration has cleared it wholesale — v21 to v22 was the first. Paying it means
+ * measuring every stored track again, which is minutes of background work at one launch, resumable a
+ * Run at a time.
+ *
+ * **The book comes out of that pass as it went in.** `standingsAfter` drops a Run's own rows before
+ * ranking it and puts the same effort back at the same number, so re-scoring a Run against a book it
+ * is already in changes nothing about the book — the pass exists to fill the rows underneath it. The
+ * one thing it does move is a tie the incremental path had settled the other way round from a
+ * rebuild, which it settles the same way for good (see
+ * [com.example.runningapp.analysis.standingsAfter]).
+ *
+ * A table left to fill itself would not do here, the way v36's `run_shapes` could. There, an absent
+ * row is a Run nobody has measured; here, an absent row is also what a Walk and an unfinished Run
+ * correctly hold, so emptiness could never be read as a debt.
+ */
+val MIGRATION_36_37 = object : Migration(36, 37) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `run_efforts` (
+                `sessionId` INTEGER NOT NULL,
+                `type` TEXT NOT NULL,
+                `value` REAL NOT NULL,
+                PRIMARY KEY(`sessionId`, `type`),
+                FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
+        database.execSQL("CREATE INDEX IF NOT EXISTS `index_run_efforts_type` ON `run_efforts` (`type`)")
+        database.execSQL("UPDATE `sessions` SET `recordsScored` = 0")
     }
 }

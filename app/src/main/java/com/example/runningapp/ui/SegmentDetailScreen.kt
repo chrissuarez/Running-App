@@ -282,67 +282,23 @@ fun SegmentDetailScreen(
 }
 
 /**
- * One effort in the ranked list: where it placed, when it was run, how quick it was, and the time.
- *
- * The whole row is a door to the Run it was part of. A time on a hill is not the whole story of the
- * morning the runner ran it, and the page they would go looking for it on is the Run's own.
- *
- * The place is a medal disc in the top three and the bare number below it — the same discs the
- * record book and a Run's own page hand out (#71), because a place is a place. The time is the
- * column on its own at the end, because it is the number the runner is scanning the list for; the
- * date and the pace read as one line under each other so the row survives a narrow phone at a large
- * text size (#63).
+ * One effort in the ranked list, drawn as every league table of the runner's efforts is
+ * ([RankedEffortRow]) — the same discs the record book and a Run's own page hand out (#71, #75),
+ * because a place is a place.
  */
 @Composable
 private fun SegmentRankedEffortRow(placed: SegmentRankedEffortUi, onOpen: () -> Unit) {
     val effort = placed.effort
-    val spokenPlace = placed.medal?.let { "${it.face.spoken}, " } ?: "Number ${placed.place}, "
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = RunningUiTokens.MinTouchTarget)
-            .clickable(onClick = onOpen)
-            .semantics {
-                contentDescription =
-                    "$spokenPlace${effort.dateLabel}, ${effort.timeLabel}, ${effort.paceLabel}"
-            },
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (placed.medal != null) {
-            MedalDisc(placed.medal)
-        } else {
-            // The same width the discs take, so the dates line up down the list instead of
-            // stepping in at fourth place.
-            Box(
-                modifier = Modifier
-                    .size(RunningUiTokens.MedalDiscSize)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "${placed.place}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = effort.dateLabel, style = MaterialTheme.typography.bodyLarge)
-            Text(
-                text = effort.paceLabel,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = effort.timeLabel,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-        )
-    }
+    RankedEffortRow(
+        place = placed.place,
+        medal = placed.medal,
+        primary = effort.dateLabel,
+        secondary = effort.paceLabel,
+        trailing = effort.timeLabel,
+        spoken = spokenPlace(placed.place, placed.medal) +
+            "${effort.dateLabel}, ${effort.timeLabel}, ${effort.paceLabel}",
+        onOpen = onOpen,
+    )
 }
 
 /**
