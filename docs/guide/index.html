@@ -291,11 +291,11 @@
       <div class="e">
         <h3>When the app speaks, and when it doesn't</h3>
         <ul class="plain">
-          <li><strong>The first 8 minutes are silent.</strong> Your heart rate is still climbing and nagging about it would be wrong.</li>
-          <li><strong>Except for safety.</strong> If you go 15 beats above your target, the silence breaks immediately.</li>
-          <li><strong>It waits before complaining.</strong> Your heart rate must stay out of the zone for a set time before a cue fires, so a blip is ignored.</li>
-          <li><strong>It won't nag.</strong> There is a cooldown between cues.</li>
-          <li><strong>Cardiac drift is recognised.</strong> After 20 minutes, a heart rate that has crept up while your effort stayed the same gets "heart rate drifting up, keep effort steady" rather than "ease off".</li>
+          <li><strong>It only speaks while you are meant to be running.</strong> The warm-up, every walk interval and the cool-down are silent, because you are deliberately not at your target in them. A run with no plan attached makes its own quiet start instead: <strong>the first five minutes</strong>, to settle into a pace before being asked for one.</li>
+          <li><strong>It waits before complaining.</strong> You must be out of your zone for <strong>30 seconds</strong> before it says anything, so a blip is ignored. The edge has a little give in it too, so a heart rate hovering on the line does not set it off.</li>
+          <li><strong>It won't nag.</strong> Stay out and it speaks again at <strong>one minute</strong>, and after that at most once every <strong>five minutes</strong>, however long you stay out. It never speaks faster than that.</li>
+          <li><strong>It closes the loop.</strong> Come back into your zone and it says so once — but only if it had actually told you off, so it never announces a return from somewhere you were never told you had gone.</li>
+          <li><strong>Cardiac drift is recognised.</strong> Your heart rate at ten minutes is remembered. After twenty minutes, a heart rate that has crept up only a little above that gets "heart rate drifting up, keep effort steady, or take a short walk break" rather than "ease off". Higher than a little is treated as real overexertion and gets the plain cue.</li>
           <li><strong>Every kilometre is called out.</strong></li>
           <li><strong>"Halfway. Turn around."</strong> once, on an outdoor run following a plan, at half the run's total moving time — so an out-and-back gets you home. Switch it off in Prefs.</li>
         </ul>
@@ -336,7 +336,7 @@
       <div class="e">
         <h3>The distance, if it was a treadmill run</h3>
         <p>Type in the number the console showed. It then counts like any other distance: your pace, your weekly totals, what the coach sees, and the longest-run record. A run nobody typed a distance for shows a dash, not <span class="mono">0.00 km</span>.</p>
-        <p class="note"><b>What a stated distance can't win.</b> The five fastest-distance records — 1 km, mile, 5 km, 10 km, half marathon — need a GPS track, because those are about the quickest stretch found <em>inside</em> a run.</p>
+        <p class="note"><b>A total is not a split.</b> The five fastest-distance records — 1 km, mile, 5 km, 10 km, half marathon — are about the quickest stretch found <em>inside</em> a run, and a total distance cannot say how quick any stretch inside it was. So none of them is ever guessed from what you typed. You can still claim them on a treadmill run by typing the console's own time for each — see <a href="#progress">Records</a>.</p>
       </div>
 
       <div class="e">
@@ -463,7 +463,10 @@
         <h3>Records</h3>
         <p>Gold, silver and bronze at seven records: fastest 1 km, mile, 5 km, 10 km and half marathon, plus longest run and longest time.</p>
         <p>The five distances are contested as a <strong>best effort</strong> — the quickest continuous stretch anywhere inside a run, walk breaks included — not as "a run that happened to be 5 km".</p>
-        <p>A treadmill run contests the longest run and the longest time, because a stated distance is a real distance. It never contests the five fastest, which need a track to find a stretch inside.</p>
+        <p>A treadmill run contests the longest run and the longest time on its stated distance alone, because a stated distance is a real distance.</p>
+        <p>It can contest the five fastest as well, but only because <em>you</em> say so. The distance you type in is a total, and a total cannot say how quick the best kilometre inside it was — so nothing is guessed from it. Instead the run's own page offers you the record distances that fit inside what you ran, and you type the time the console showed for each. A time entered that way is ranked against your measured efforts exactly like one of them.</p>
+        <p class="note"><b>One statement per distance, per run.</b> Typing a time again corrects the one that is there rather than adding a second claim. A run stated too short to hold any record distance is offered nothing, rather than being shown five chips it would have to refuse.</p>
+        <div class="where"><b>Where</b> the run's page → Best efforts</div>
       </div>
 
     </div>
@@ -552,7 +555,7 @@
 
       <div class="e">
         <h3>Matched runs — a route you never named</h3>
-        <p>Nothing to set up. When a run finishes the app takes the <strong>shape</strong> of it: where you started, where you finished, three points evenly spaced along the way, and how far you went. Two runs whose shapes agree are the same route.</p>
+        <p>Nothing to set up. When a run finishes the app takes the <strong>shape</strong> of it: where you started, where you finished, three points evenly spaced along the way, and how far you went. Two runs whose shapes agree are the same route. Anything under <strong>half a kilometre</strong> is left out — see below.</p>
         <p>Agreeing means: starts and ends within about a hundred metres of each other, distances within a twentieth of each other, and the ground between covered in the same order.</p>
         <ul class="plain">
           <li><strong>An out-and-back done the other way round still counts</strong> — it retraces the same line past the same places, so it really is the same route.</li>
@@ -570,6 +573,7 @@
         <h3>Nothing is stored about the group</h3>
         <p>The group is worked out fresh each time you open a page. That is why deleting a run needs no repair at all: it simply stops being in every group it was in, and the other runs' counts correct themselves.</p>
         <p>A walk never joins a group, and neither does a treadmill run, which has no ground to have covered. Mark a run a walk and it leaves; unmark it and it comes back.</p>
+        <p class="note"><b>Nor does anything under half a kilometre.</b> Too little ground to have a shape worth comparing — five points on 300 metres would match half the neighbourhood — so short repetitions over identical ground stay ungrouped by design.</p>
       </div>
 
     </div>
@@ -668,7 +672,10 @@
       <dd>A mark you put on a whole run. Full fitness, a quarter of the fatigue, no records, no graduation. Never guessed by the app.</dd>
 
       <dt>Stated distance</dt>
-      <dd>The number you typed off a treadmill console. A real distance for pace, volume, the coach and the longest-run record — but not for the five fastest-distance records.</dd>
+      <dd>The number you typed off a treadmill console. A real distance for pace, volume, the coach and the longest-run record. It never wins one of the five fastest-distance records, because a total cannot say how quick a stretch inside it was — those are claimed by typing the console's time for the stretch itself.</dd>
+
+      <dt>Stated best effort</dt>
+      <dd>A time you typed off a treadmill console for one record distance inside a run. Ranked against your measured efforts like one of them. One per distance, per run.</dd>
 
       <dt>Best effort</dt>
       <dd>The quickest continuous stretch of a given distance found anywhere <em>inside</em> a run — not a run that happened to be that long.</dd>
