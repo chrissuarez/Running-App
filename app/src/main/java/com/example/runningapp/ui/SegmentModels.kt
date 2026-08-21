@@ -280,17 +280,18 @@ data class SegmentRankedEffortUi(
 )
 
 /**
- * The quickest efforts ever run at a Segment, best first, cut at [limit].
+ * The quickest efforts ever run at a Segment, best first, cut at [SEGMENT_TOP_COUNT].
+ *
+ * The cut is to the top of the page and never to the runner's history: past ten, the page carries
+ * every effort again underneath, newest first ([SEGMENT_ALL_EFFORTS_TITLE]). A page that quietly
+ * stopped at ten would take runs off a runner who had done nothing but keep running.
  *
  * Ranked off the list [segmentEffortsUi] built rather than off the rows behind it, so the PR card at
  * the top of the page and the gold disc in this list cannot disagree: they are one reading of one
  * list. A tie keeps the earlier effort ahead, the rule the record book keeps — matching a time you
  * already ran is not beating it.
  */
-fun segmentTopEfforts(
-    efforts: List<SegmentEffortUi>,
-    limit: Int = SEGMENT_TOP_COUNT,
-): List<SegmentRankedEffortUi> = efforts
+fun segmentTopEfforts(efforts: List<SegmentEffortUi>): List<SegmentRankedEffortUi> = efforts
     .sortedWith(
         quickestFirst(
             elapsed = { it.elapsedMillis },
@@ -298,7 +299,7 @@ fun segmentTopEfforts(
             effortId = { it.effortId },
         )
     )
-    .take(limit)
+    .take(SEGMENT_TOP_COUNT)
     .mapIndexed { index, effort ->
         SegmentRankedEffortUi(
             place = index + 1,
@@ -317,9 +318,9 @@ fun segmentTopEfforts(
  * does not exist. Where efforts really are left out, the count says how many, because "top 10" out
  * of eleven and out of two hundred are very different facts about the same ten times.
  */
-fun segmentTopTitle(total: Int, limit: Int = SEGMENT_TOP_COUNT): String =
-    if (total <= limit) "Every effort, quickest first"
-    else "Top $limit of ${segmentEffortCountLabel(total)}"
+fun segmentTopTitle(total: Int): String =
+    if (total <= SEGMENT_TOP_COUNT) "Every effort, quickest first"
+    else "Top $SEGMENT_TOP_COUNT of ${segmentEffortCountLabel(total)}"
 
 /** One day on the trend chart: when it was, how far into the chart it sits, and what it took. */
 data class SegmentTrendPoint(
@@ -337,7 +338,8 @@ data class SegmentTrendPoint(
  *
  * One point per day and not one per effort, because the x axis is the calendar: two efforts on one
  * date have nowhere to sit apart on it, and the quickest is the time the runner would quote for that
- * day anyway. Every effort is still in the list under the chart.
+ * day anyway. Every effort is still listed under the chart — in the ranked ten, and past ten in the
+ * newest-first list under that ([SEGMENT_ALL_EFFORTS_TITLE]).
  *
  * Placed by the calendar rather than evenly, so a two-year gap is drawn as a two-year gap. Even
  * spacing would make the chart's own claim — whether the runner is getting quicker across months and
@@ -386,15 +388,16 @@ fun segmentTrendStepDays(points: List<SegmentTrendPoint>): Int {
 }
 
 /**
- * A label every so many ticks, aiming for three dates along the bottom whatever the span.
+ * How many positions the chart's bottom axis has to label.
  *
- * Three and not more for the reason the Progress screen's charts settled on three: at four, a month
- * name is cut short on a 320dp screen at 1.3× text (#63).
+ * Not the number of points: the axis steps in whole [segmentTrendStepDays], and a chart drawn
+ * against the calendar has a tick at every step whether an effort landed on it or not. Handed to
+ * [threeLabelPlacer], which is the Progress screen's own rule for how many of them get a date on
+ * them — written once so the two charts cannot drift into labelling differently (#63).
  */
-fun segmentTrendLabelSpacing(points: List<SegmentTrendPoint>): Int {
+fun segmentTrendAxisTicks(points: List<SegmentTrendPoint>): Int {
     if (points.isEmpty()) return 1
-    val ticks = (points.last().dayOffset / segmentTrendStepDays(points)) + 1
-    return (ticks / 3).coerceAtLeast(1)
+    return (points.last().dayOffset / segmentTrendStepDays(points)) + 1
 }
 
 /**
@@ -417,6 +420,9 @@ fun segmentTrendTimeLabel(seconds: Float): String = formatDuration(seconds.round
 
 /** What the runner is told the trend chart is for, under its heading. */
 const val SEGMENT_TREND_TITLE: String = "Your times here"
+
+/** What the rest of the efforts are called, where there are more of them than the ranked ten. */
+const val SEGMENT_ALL_EFFORTS_TITLE: String = "Every effort, newest first"
 
 /** Why the chart holds fewer points than the list below it does. */
 const val SEGMENT_TREND_SUBTITLE: String = "Your quickest time on each day you ran it."

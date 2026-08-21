@@ -104,6 +104,14 @@ class SegmentTrophyTest {
     }
 
     @Test
+    fun `past ten, the page still names the list that holds the rest`() {
+        // The ranked list cuts the top of the page, never the runner's history: the newest-first
+        // list underneath carries every effort again.
+        assertEquals("Every effort, newest first", SEGMENT_ALL_EFFORTS_TITLE)
+        assertEquals(10, SEGMENT_TOP_COUNT)
+    }
+
+    @Test
     fun `a list holding every effort does not call itself a top ten`() {
         // Nine efforts shown out of nine is not a top ten, and saying so would be the page telling
         // the runner something was left out when nothing was.
@@ -200,15 +208,16 @@ class SegmentTrophyTest {
             )
         )
 
-        // Six points a fortnight apart: the axis steps in fortnights, so a label every other one.
+        // Six points a fortnight apart: the axis steps in fortnights, so it has six ticks and not
+        // seventy — which is what [threeLabelPlacer] needs to be told to land three dates on it.
         assertEquals(14, segmentTrendStepDays(fortnightly))
-        assertEquals(2, segmentTrendLabelSpacing(fortnightly))
+        assertEquals(6, segmentTrendAxisTicks(fortnightly))
     }
 
     @Test
     fun `an axis with nothing to step by is never asked to divide by it`() {
         assertEquals(1, segmentTrendStepDays(emptyList()))
-        assertEquals(1, segmentTrendLabelSpacing(emptyList()))
+        assertEquals(1, segmentTrendAxisTicks(emptyList()))
     }
 
     @Test
