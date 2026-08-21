@@ -1,21 +1,22 @@
 package com.example.runningapp.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -48,12 +49,13 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.data.Segment
 import com.example.runningapp.data.SegmentEffortRow
 import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.ui.theme.RunningUiTokens
-import androidx.compose.foundation.shape.CircleShape
 import com.patrykandpatrick.vico.compose.axis.horizontal.rememberBottomAxis
 import com.patrykandpatrick.vico.compose.axis.vertical.rememberStartAxis
 import com.patrykandpatrick.vico.compose.chart.Chart
@@ -397,5 +399,4 @@ private fun SegmentTrendChart(points: List<SegmentTrendPoint>) {
 /** How tall the trend chart is — the height the Progress screen's charts stand at. */
 private val TrendChartHeight = 200.dp
 
-private val TrendDateFormat: java.time.format.DateTimeFormatter =
-    java.time.format.DateTimeFormatter.ofPattern("d MMM yy", java.util.Locale.UK)
+private val TrendDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yy", Locale.UK)
