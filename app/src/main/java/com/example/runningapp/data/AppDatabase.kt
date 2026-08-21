@@ -678,6 +678,25 @@ interface SessionDao {
     suspend fun setRecordsScored(sessionId: Long)
 
     /**
+     * How many finished Runs are still owed a scoring, watched — what tells the Records section
+     * that what it is standing on is not the whole of history yet (#75).
+     *
+     * The same debt [getSessionIdsMissingRecordScoring] hands the launch pass its work list from,
+     * counted rather than listed and offered as a stream, because this one is read by a screen that
+     * has to stop saying "all-time best" the moment it stops being true and start again the moment
+     * it is.
+     *
+     * Counted the same way that list is read, `endTime > 0` included: a Run still being recorded
+     * owes nothing yet and will score itself when it finishes, so counting it would leave the
+     * Records section covered up for the length of every Run.
+     *
+     * Whether a given count means history is being re-measured is not decided here — that is
+     * [SessionRepository.recordsBeingMeasuredFlow], which is where the argument lives.
+     */
+    @Query("SELECT COUNT(*) FROM sessions WHERE recordsScored = 0 AND endTime > 0")
+    fun countSessionsMissingRecordScoringFlow(): Flow<Int>
+
+    /**
      * Finished Runs nobody has put to the Segments yet (#70) — read the same way, and for the same
      * reasons, as [getSessionIdsMissingRecordScoring] above.
      */

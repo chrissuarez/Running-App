@@ -118,7 +118,7 @@ fun ProgressScreen(
      * rows and the curves above them are arithmetic over history, so they arrive by different routes
      * and neither waits on the other.
      */
-    records: List<RecordSlotUi> = emptyList(),
+    records: RecordsGridUi = RecordsGridUi(),
     /** A Record opened from the grid, which goes to that Record's own page. */
     onOpenRecord: (RecordType) -> Unit = {},
     onBack: () -> Unit,
@@ -173,7 +173,7 @@ fun ProgressScreen(
             // Under the goals and above the training numbers, and outside the empty/filled branch
             // below for the goals' own reason: a Record is a thing to aim at before it is a thing
             // that has been done, so the grid stands on a phone with no history at all (#75).
-            RecordsCard(slots = records, onOpenRecord = onOpenRecord)
+            RecordsCard(grid = records, onOpenRecord = onOpenRecord)
 
             val today = state.today
             if (today == null && state.weeks.isEmpty()) {

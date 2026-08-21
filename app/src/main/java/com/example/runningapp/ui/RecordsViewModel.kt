@@ -12,8 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -62,27 +62,54 @@ class RecordsViewModel(
         .repeatedOn(zoneChanges)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** The Records grid: every Record, best first at each. */
-    val slots: StateFlow<List<RecordSlotUi>> = efforts
-        .map { rows -> recordSlots(rows, zone()) }
+    /**
+     * Whether history is being measured against the book wholesale right now (#75).
+     *
+     * Watched alongside the claims themselves and folded into both readings below, so neither the
+     * grid nor a Record's page can print a number off a table that is still filling. The argument
+     * for what this keys on — and why it cannot fire in ordinary use, after every Run, for ever —
+     * is on [SessionRepository.recordsBeingMeasuredFlow].
+     */
+    private val measuring = sessionRepository.recordsBeingMeasuredFlow()
+
+    /**
+     * The Records grid: every Record, best first at each — or the fact that they are still being
+     * measured, and no numbers at all (#75).
+     *
+     * [combine] rather than two states the screen collects apart, so the slots and the flag are one
+     * answer: the moment the flag stands, what goes with it is an empty grid and not a grid read off
+     * the slice of history the table has reached. A partial top ten hands out medals to Runs that do
+     * not place, which is worse than a section that says what it is doing.
+     */
+    val grid: StateFlow<RecordsGridUi> = combine(efforts, measuring) { rows, stillMeasuring ->
+        if (stillMeasuring) RecordsGridUi(measuring = true)
+        else RecordsGridUi(slots = recordSlots(rows, zone()))
+    }
         .flowOn(recordsDispatcher)
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RecordsGridUi())
 
     /**
      * One Record's whole page, watched: a Run finishing, a treadmill time stated, a Run deleted or
      * marked a Walk all move what stands here while the page is open.
      */
-    fun detail(type: RecordType): Flow<RecordDetailUi> = efforts
-        .map { rows ->
+    fun detail(type: RecordType): Flow<RecordDetailUi> =
+        combine(efforts, measuring) { rows, stillMeasuring ->
             val zone = zone()
-            RecordDetailUi(
-                type = type,
-                top = recordTopEfforts(rows, type, zone),
-                trend = recordTrendPoints(rows, type, zone),
-                effortCount = rows.count { it.type == type },
-            )
+            // Nothing placed and nothing charted while history is still being measured, for the
+            // grid's reason: fourth place read off a slice of history is a place the runner never
+            // took, and this page is the one that prints places down to tenth (#75).
+            if (stillMeasuring) {
+                RecordDetailUi(type = type, top = emptyList(), trend = emptyList(), effortCount = 0, measuring = true)
+            } else {
+                RecordDetailUi(
+                    type = type,
+                    top = recordTopEfforts(rows, type, zone),
+                    trend = recordTrendPoints(rows, type, zone),
+                    effortCount = rows.count { it.type == type },
+                )
+            }
         }
-        .flowOn(recordsDispatcher)
+            .flowOn(recordsDispatcher)
 }
 
 class RecordsViewModelFactory(

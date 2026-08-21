@@ -1,12 +1,16 @@
 package com.example.runningapp.ui
 
 import com.example.runningapp.analysis.Medal
+import com.example.runningapp.analysis.bestEffortsOf
+import com.example.runningapp.analysis.aRun
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.data.RecordEffortRow
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -179,6 +183,31 @@ class RecordsModelsTest {
     fun `the list names what it is leaving out, and says so only when it is`() {
         assertEquals("Every effort, best first", recordTopTitle(RECORD_TOP_COUNT))
         assertEquals("Top 10 of 14 efforts", recordTopTitle(14))
+    }
+
+    // --- The empty page ---
+
+    @Test
+    fun `an empty longest run page does not deny that there are finished runs`() {
+        // A finished outdoor Run whose route is gone: the record book takes its clock and refuses
+        // its distance, so this runner has finished runs and an empty longest-run page at once.
+        val efforts = bestEffortsOf(aRun().copy(distanceKm = 5.0), track = emptyList())
+        assertNotNull(efforts.firstOrNull { it.type == RecordType.LONGEST_DURATION })
+        assertNull(efforts.firstOrNull { it.type == RecordType.LONGEST_DISTANCE })
+
+        val distance = recordEmptyMessage(RecordType.LONGEST_DISTANCE)
+
+        assertFalse(distance.contains("finished runs"))
+        assertEquals(
+            "No run with a measured distance yet. A run that recorded a route, or a treadmill run " +
+                "you have typed a distance into, takes this record.",
+            distance,
+        )
+        // The longest time keeps the sentence that is true of it: every finished run has a clock.
+        assertEquals(
+            "No finished runs yet. Your first one takes this record.",
+            recordEmptyMessage(RecordType.LONGEST_DURATION),
+        )
     }
 
     // --- The trend ---
