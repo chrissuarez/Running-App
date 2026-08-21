@@ -296,7 +296,7 @@
           <li><strong>It won't nag.</strong> Stay out and it speaks again at <strong>one minute</strong>, and after that at most once every <strong>five minutes</strong>, however long you stay out. It never speaks faster than that.</li>
           <li><strong>It closes the loop.</strong> Come back into your zone and it says so once — but only if it had actually told you off, so it never announces a return from somewhere you were never told you had gone.</li>
           <li><strong>Cardiac drift is recognised.</strong> Your heart rate at ten minutes is remembered. After twenty minutes, a heart rate that has crept up only a little above that gets "heart rate drifting up, keep effort steady, or take a short walk break" rather than "ease off". Higher than a little is treated as real overexertion and gets the plain cue.</li>
-          <li><strong>Every kilometre is called out.</strong></li>
+          <li><strong>Every kilometre is called out</strong> — on an outdoor run, and only while <strong>Split announcements</strong> is on in Prefs. A treadmill run has no measured ground to cross a kilometre of, so it gets none.</li>
           <li><strong>"Halfway. Turn around."</strong> once, on an outdoor run following a plan, at half the run's total moving time — so an out-and-back gets you home. Switch it off in Prefs.</li>
         </ul>
       </div>
@@ -492,7 +492,8 @@
       <div class="e">
         <h3>What graduates you</h3>
         <p>A stage asks for something before it lets go of you.</p>
-        <p>Where the ask is written in <strong>numbers</strong> — "a 5K under 30 minutes" — the app measures it and decides it, and the coach is fenced out entirely. That means a treadmill 5K you typed off the console graduates you exactly like a measured one, and it works with AI sharing switched off.</p>
+        <p>Where the ask is written in <strong>numbers</strong> — "a 5K under 30 minutes" — the app measures it and decides it, and the coach is fenced out entirely. It works with AI sharing switched off, and any run can answer it: an open run counts, because a parkrun is the truest 5K there is and a time is a time wherever it turned up.</p>
+        <p class="note"><b>On a treadmill, type the time, not just the distance.</b> A distance on the finish sheet is a total, and the app will not divide a total by a duration to invent a 5K time. So a treadmill run answers a timed requirement only once you have entered the console's own time for that distance under <strong>Best efforts</strong> on the run's page. Do that and it graduates you exactly like a measured one.</p>
         <p>Where the ask holds a <strong>judgement</strong> — "four weeks of consistent Zone 2 training" — the coach decides.</p>
         <p class="note"><b>It is asked late, on purpose.</b> Never at STOP, but once you can no longer change what the run was — so a run you are about to mark a walk cannot graduate anything. Granted forwards only, and never taken back.</p>
       </div>
@@ -510,7 +511,8 @@
 
       <div class="e">
         <h3>Prescriptions</h3>
-        <p>After a run the coach writes the intervals and target zone for your next <strong>Long</strong> run, and only that. It prescribes work; it does not configure the app.</p>
+        <p>After you finish a <strong>Long</strong> run — and only then — the coach writes the intervals and target zone for your next Long run, and only that. It prescribes work; it does not configure the app.</p>
+        <p class="note"><b>Nothing else wakes it.</b> An Easy run, a Quality run, a test, an open run or a run that skipped the plan all finish without a new prescription being written, so there is no update to wait for after one.</p>
         <p>It is told your effort ratings, your notes, the weather you ran in, and where you stand against your goals — and it holds off asking for more when you are carrying too much fatigue.</p>
         <p class="note"><b>A prescription stands on the runs it was shown.</b> Delete one of them and the prescription is withdrawn back to the previous one.</p>
       </div>
@@ -683,8 +685,11 @@
       <dt>Best effort</dt>
       <dd>The quickest continuous stretch of a given distance found anywhere <em>inside</em> a run — not a run that happened to be that long.</dd>
 
+      <dt>Zone</dt>
+      <dd>One of five fixed slices of your <em>reserve</em> — the gap between your maximum heart rate and your resting one. With no resting rate typed the reserve starts at zero, and the zones are plain percentages of your maximum.</dd>
+
       <dt>Effort Score</dt>
-      <dd>What one run cost you, as one number. Every second weighted by its zone.</dd>
+      <dd>What one run cost you, as one number. Every second weighted by its zone — except seconds below Zone 1's bottom edge, which weigh nothing even though the chart still shows them as Zone 1. Idling is not training.</dd>
 
       <dt>Form</dt>
       <dd>Fitness minus fatigue, as of yesterday. How fresh you are before today's run.</dd>
@@ -693,13 +698,13 @@
       <dd>One block of the training plan. You are in exactly one at a time, and every run records which.</dd>
 
       <dt>Prescription</dt>
-      <dd>The intervals and target zone the AI coach wrote for your next Long run. It stands on the runs it was shown.</dd>
+      <dd>The intervals and target zone the AI coach wrote for your next Long run. Written only after you finish a Long run, and it stands on the runs it was shown.</dd>
 
       <dt>Segment</dt>
       <dd>A stretch of ground you marked and named. Every run that crosses it is timed.</dd>
 
       <dt>Matched runs</dt>
-      <dd>Runs the app worked out are the same route, by shape alone. Nothing named, nothing saved.</dd>
+      <dd>Runs the app worked out are the same route, by shape alone. Nothing named, nothing saved. Runs under half a kilometre have no shape and join nothing.</dd>
     </dl>
   </section>
 
