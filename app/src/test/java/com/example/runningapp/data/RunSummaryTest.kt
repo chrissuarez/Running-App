@@ -137,8 +137,14 @@ class RunSummaryTest {
         session: RunnerSession?,
         shaped: Boolean = true,
         historyBeingMeasured: Boolean = false,
+        segmentWalkOwedSomewhere: Boolean = false,
+        shapeOwedSomewhere: Boolean = false,
     ) = SessionRepository(
-        sessionDao = mock<SessionDao> { on { getSessionByIdFlow(7) } doReturn flowOf(session) },
+        sessionDao = mock<SessionDao> {
+            on { getSessionByIdFlow(7) } doReturn flowOf(session)
+            on { anySegmentTimingOwedFlow() } doReturn flowOf(segmentWalkOwedSomewhere)
+            on { anyRunShapeOwedFlow() } doReturn flowOf(shapeOwedSomewhere)
+        },
         runShapeDao = mock<RunShapeDao> { on { isShapedFlow(7) } doReturn flowOf(shaped) },
         recordFillDao = mock<RecordFillDao> {
             on { wholesaleFillOwedFlow() } doReturn flowOf(historyBeingMeasured)
@@ -183,6 +189,31 @@ class RunSummaryTest {
     fun `a run is not settled while the whole of history is being re-measured`() = runTest {
         assertFalse(
             settled(measuredRun(), historyBeingMeasured = true).runSummaryFactsSettledFlow(7).first()
+        )
+    }
+
+    /**
+     * An upgrade hands a migrated Run the timed mark while the launch pass is still walking the rest
+     * of history, so this Run can look measured a whole minute before a Segment effort timed for
+     * another Run takes its medal away.
+     */
+    @Test
+    fun `a run is not settled while any other run still owes the segments a walk`() = runTest {
+        assertFalse(
+            settled(measuredRun(), segmentWalkOwedSomewhere = true)
+                .runSummaryFactsSettledFlow(7).first()
+        )
+    }
+
+    /**
+     * A Run's shape is taken the moment the pass reaches it, and the pass reaches the open Run
+     * first. Its group is every Run shaped like it, so the shapes still owed would move the count.
+     */
+    @Test
+    fun `a run is not settled while any other run is still owed a shape`() = runTest {
+        assertFalse(
+            settled(measuredRun(), shapeOwedSomewhere = true)
+                .runSummaryFactsSettledFlow(7).first()
         )
     }
 

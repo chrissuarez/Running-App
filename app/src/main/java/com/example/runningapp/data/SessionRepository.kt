@@ -2786,6 +2786,18 @@ class SessionRepository(
         runSummaryDao?.summaryFlow(sessionId) ?: flowOf(null)
 
     /**
+     * Whether this Run has already been written about, asked and answered (#76).
+     *
+     * A one-shot rather than the watched read above, and asked for one thing only: the page's watch
+     * says "nothing" from the moment it is set up until the store answers, so a Run that already
+     * holds words looks, for that moment, exactly like a Run that holds none. The words are meant to
+     * be written once and kept for ever, so the ask that would write them waits for this answer
+     * first rather than acting on that moment.
+     */
+    suspend fun runSummaryWritten(sessionId: Long): Boolean =
+        runSummaryDao?.summary(sessionId) != null
+
+    /**
      * The medals one Run holds, read once (#76).
      *
      * A one-shot rather than the watched read the card is drawn from, because it answers a different
@@ -2805,27 +2817,44 @@ class SessionRepository(
      * written in that window would say "no records" about a Run that took gold a second later, and
      * would go on saying it for the life of the Run.
      *
-     * So the three debts a Run carries are read as the one question they add up to: is there
-     * anything still to find out about this Run? [RunnerSession.recordsScored] and
+     * So every debt standing between this Run and a whole account of it is read as the one question
+     * they add up to: is there anything still to find out about this Run? [RunnerSession.recordsScored] and
      * [RunnerSession.segmentsTimed] are the marks those two passes hand back, and a Run's shape is
      * marked by the row existing at all ([RunShapeRow]).
      *
-     * The wholesale record fill is in here too, for a reason of its own: while the whole of history
-     * is being re-scored, a Run already through the pass can still be *demoted* by a Run the pass
-     * has not reached yet. Its own mark says the measuring of it is done; only the fill says the
-     * measuring of everything it is ranked against is (see [recordsBeingMeasuredFlow]).
+     * **Its own marks are only half of it.** Everything a summary says about a Run is a comparison
+     * with the rest of history, so a Run measured to the last metre can still have what it is worth
+     * changed by a Run nobody has measured yet — and the words are kept for ever. So what the whole
+     * of history still owes is read as well, and there are three debts of that kind:
+     *
+     * - the wholesale record fill, where a Run already through the pass can be *demoted* by a Run
+     *   the pass has not reached (see [recordsBeingMeasuredFlow]);
+     * - the Segment walk ([SessionDao.anySegmentTimingOwedFlow]), where an effort timed for another
+     *   Run takes the medal off this one — and an upgrade can hand this Run its mark while the rest
+     *   of history is still owed one;
+     * - the shapes ([SessionDao.anyRunShapeOwedFlow]), where a Run's group is every Run shaped like
+     *   it, so a shape taken later moves the count of times the route has been run.
+     *
+     * The launch passes that pay the last two run on their own, off any screen's lifetime
+     * ([com.example.runningapp.AppContainer.paySegmentTimingOnce],
+     * [com.example.runningapp.AppContainer.takeRunShapesOnce]), which is precisely why a page opened
+     * moments after an upgrade can find this Run marked and history not.
      */
     fun runSummaryFactsSettledFlow(sessionId: Long): Flow<Boolean> = combine(
         sessionDao.getSessionByIdFlow(sessionId),
         runShapeDao?.isShapedFlow(sessionId) ?: flowOf(true),
         recordsBeingMeasuredFlow(),
-    ) { session, shaped, historyBeingMeasured ->
+        sessionDao.anySegmentTimingOwedFlow(),
+        sessionDao.anyRunShapeOwedFlow(),
+    ) { session, shaped, historyBeingMeasured, segmentWalkOwed, shapesOwed ->
         session != null &&
             session.isFinished() &&
             session.recordsScored &&
             session.segmentsTimed &&
             shaped &&
-            !historyBeingMeasured
+            !historyBeingMeasured &&
+            !segmentWalkOwed &&
+            !shapesOwed
     }.distinctUntilChanged()
 
     /**

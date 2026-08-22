@@ -8,6 +8,7 @@ import com.example.runningapp.data.Achievement
 import com.example.runningapp.data.AchievementDao
 import com.example.runningapp.data.AiCoachClient
 import com.example.runningapp.data.RunSummaryDao
+import com.example.runningapp.data.RunSummaryRow
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.SessionDao
 import com.example.runningapp.data.SessionRepository
@@ -29,6 +30,7 @@ import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 
@@ -61,13 +63,16 @@ class SessionDetailViewModelRunSummaryTest {
     private fun viewModelOver(
         client: AiCoachClient,
         medals: List<Achievement> = emptyList(),
+        alreadyWritten: RunSummaryRow? = null,
     ) = SessionDetailViewModel(
         SessionRepository(
             sessionDao = mock<SessionDao> { onBlocking { getSessionById(7) } doReturn finishedRun },
             achievementDao = mock<AchievementDao> {
                 onBlocking { getAchievementsForSessions(listOf(7)) } doReturn medals
             },
-            runSummaryDao = mock<RunSummaryDao>(),
+            runSummaryDao = mock<RunSummaryDao> {
+                onBlocking { summary(7) } doReturn alreadyWritten
+            },
             settingsRepository = mock<SettingsRepository> {
                 on { userSettingsFlow } doReturn flowOf(UserSettings(aiDataSharingEnabled = true))
             },
@@ -156,6 +161,46 @@ class SessionDetailViewModelRunSummaryTest {
         viewModel.regenerateRunSummary(7)
         assertNull(viewModel.summaryFailed.value)
         assertEquals(7L, viewModel.summaryWriting.value)
+    }
+
+    /**
+     * The write-once promise, held against the moment the page cannot see past.
+     *
+     * The page's watch of the stored words begins as null, and a Run already written about holds
+     * that null until the store answers. If the ask trusted the page's null, opening a Run for the
+     * second time would send it away again and write new words over the kept ones — for ever, every
+     * time, on the runs the runner has read the most.
+     */
+    @Test
+    fun `a run that has already been written about is never sent again`() = runTest(dispatcher) {
+        val client = modelSaying("new words")
+        val viewModel = viewModelOver(
+            client,
+            alreadyWritten = RunSummaryRow(sessionId = 7, text = "kept words", writtenAtMillis = 1L),
+        )
+
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+
+        verify(client, never()).summariseRun(any())
+        assertNull(viewModel.summaryWriting.value)
+        assertNull(viewModel.summaryFailed.value)
+        assertNull(viewModel.summaryRefused.value)
+    }
+
+    /** The runner's own word still replaces what is there — that is what the button is for. */
+    @Test
+    fun `the runner can write over words that are already kept`() = runTest(dispatcher) {
+        val client = modelSaying("new words")
+        val viewModel = viewModelOver(
+            client,
+            alreadyWritten = RunSummaryRow(sessionId = 7, text = "kept words", writtenAtMillis = 1L),
+        )
+
+        viewModel.regenerateRunSummary(7)
+        advanceUntilIdle()
+
+        verify(client, times(1)).summariseRun(any())
     }
 
     @Test

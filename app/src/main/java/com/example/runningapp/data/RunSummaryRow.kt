@@ -66,6 +66,17 @@ interface RunSummaryDao {
     @Query("SELECT * FROM run_summaries WHERE sessionId = :sessionId")
     fun summaryFlow(sessionId: Long): Flow<RunSummaryRow?>
 
+    /**
+     * The words this Run holds, asked once and answered once.
+     *
+     * The watched read above cannot answer this question: it begins by saying "nothing", and
+     * "nothing yet" and "nothing ever" look the same from outside it. The ask that writes a summary
+     * has to tell those two apart before it spends a network call, so it asks here instead and waits
+     * for the answer.
+     */
+    @Query("SELECT * FROM run_summaries WHERE sessionId = :sessionId")
+    suspend fun summary(sessionId: Long): RunSummaryRow?
+
     /** Writes the words for a Run, over whatever was written for it before. */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun put(summary: RunSummaryRow)

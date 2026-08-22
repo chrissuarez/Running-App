@@ -899,16 +899,22 @@ class MainActivity : ComponentActivity() {
                             }
                             // The one ask this feature makes on its own, and the only place it is
                             // made: a Run nobody opens is never sent anywhere. Held until the facts
-                            // have settled and until nothing is already written — a page opened for
-                            // the second time costs nothing and reaches nothing.
+                            // have settled.
+                            //
+                            // Whether anything is written already is *not* asked here, and
+                            // deliberately: the watched row above begins as null, which is the same
+                            // null it would hold for a Run nobody has written about, so a page
+                            // opened for the second time cannot be told apart from a first open
+                            // until the store answers. The ask itself reads the store and waits for
+                            // that answer, so a second open still costs nothing and reaches nothing.
                             //
                             // What the model is told is gathered inside the ask rather than passed
-                            // in from here, and deliberately: the cards below are drawn from watched
-                            // reads that begin empty, and a prompt built off those could be built a
-                            // frame before the medals arrive.
-                            LaunchedEffect(sessionId, summaryFactsSettled, sessionSummaryRow) {
+                            // in from here, for the same kind of reason: the cards below are drawn
+                            // from watched reads that begin empty, and a prompt built off those
+                            // could be built a frame before the medals arrive.
+                            LaunchedEffect(sessionId, summaryFactsSettled) {
                                 val id = sessionId ?: return@LaunchedEffect
-                                if (!summaryFactsSettled || sessionSummaryRow != null) return@LaunchedEffect
+                                if (!summaryFactsSettled) return@LaunchedEffect
                                 sessionDetailViewModel.requestRunSummary(id)
                             }
                             val summaryUi = sessionId?.let { id ->
