@@ -39,8 +39,10 @@ data class RunSummaryFacts(
     val dateLabel: String,
     val durationLabel: String,
     /**
-     * The clock with the Breaks taken out, where it is known and differs from the whole of it.
-     * Null on a Run nothing measured a moving time for, and on one that never stopped.
+     * The clock with the time spent stopped taken out, where it is known and differs from the whole
+     * of it. Not every Break: an Outage the run carried on through is a leg the run counted
+     * (ADR 0012), so lost signal is moving time. Null on a Run nothing measured a moving time for,
+     * and on one that never stopped.
      */
     val movingTimeLabel: String? = null,
     /** How far it went — measured, or stated off a treadmill console. Null where there is none. */
@@ -188,7 +190,13 @@ fun buildRunSummaryPrompt(facts: RunSummaryFacts): String = buildString {
     appendLine("- Kind: ${facts.kind}")
     appendLine("- Date: ${facts.dateLabel}")
     appendLine("- Duration: ${facts.durationLabel}")
-    facts.movingTimeLabel?.let { appendLine("- Moving time, with pauses and lost signal taken out: $it") }
+    facts.movingTimeLabel?.let {
+        appendLine(
+            "- Moving time, the clock with the time they spent stopped taken out — pauses they " +
+                "marked, and standing still the run did not count. A stretch where the signal " +
+                "dropped but they kept running still counts as moving: $it"
+        )
+    }
     facts.distanceLabel?.let { appendLine("- Distance: $it") }
     facts.paceLabel?.let { appendLine("- Average pace: $it") }
     facts.avgBpm?.let { appendLine("- Average heart rate: $it bpm") }
