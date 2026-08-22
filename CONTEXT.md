@@ -466,6 +466,23 @@ _Avoid_: coach message as a name for the whole slot (only the coach's Debrief is
 the coach's; the preference key is still spelled `latest_coach_message`, from
 when the coach was its only writer), summary, feedback.
 
+**Run Summary**:
+The AI's few sentences about one Run, at the top of that Run's own page (#76). A plain-English read
+of what stood out — the pace and heart rate in context, the Effort Score, any Records or Segment
+medals it took, and how it went against the runner's usual on the same matched route. Written the
+first time the Run is opened and kept for ever afterwards, so a page opened again costs nothing and
+reaches nothing, and a Run nobody ever opens is never sent anywhere at all. What the model is told is
+a pure function of stored facts, and a fact that does not exist is left out rather than sent as an
+absence. It is written only once every debt the Run carries is paid — its record scoring, its Segment
+walk, its shape, and any wholesale re-measuring of history — because words kept for ever must not
+describe a Run that was still being measured. Sending it needs two yesses: the Run's own consent,
+stamped at START, and AI sharing still being on now. Never a **Debrief** and never a **Prescription**
+— it describes one Run and prescribes nothing, and it is shown on that Run's page rather than on the
+Today card. The runner can ask for it again, which replaces it; a Run whose summary could not be
+written holds none rather than an empty one, and the rest of its page is untouched.
+_Avoid_: AI insights, analysis, review, debrief (a Debrief is the sentences after a Run on the Today
+screen), and "recap" for the card's own title.
+
 **Prescription**:
 What the AI coach writes after a Run: the intervals and target zone for the next
 Workout of one Run Type, and nothing else. The coach holds one per Run Type —

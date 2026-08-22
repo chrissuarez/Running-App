@@ -181,6 +181,9 @@ class AppContainer(context: Context) {
             // Read for one thing only: telling the coach where the runner stands against their own
             // targets (#83). Without it the coach is simply told nothing about goals.
             goalDao = database.goalDao(),
+            // Where a Run's AI summary is kept once it has been written (#76). Without it a Run's
+            // page simply never offers one.
+            runSummaryDao = database.runSummaryDao(),
             settingsRepository = settingsRepository,
             coachPrescriptionRepository = coachPrescriptionRepository,
             aiCoachClient = aiCoachClient,

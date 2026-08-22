@@ -105,7 +105,15 @@ fun SessionDetailScreen(
     matchedRuns: MatchedRunsUi? = null,
     // The way to the list of them, which the whole card is. Null rather than a no-op for
     // [onOpenSegment]'s reason.
-    onOpenMatchedRuns: (() -> Unit)? = null
+    onOpenMatchedRuns: (() -> Unit)? = null,
+    // What the AI has written about this Run, and whether it is being written now (#76). Null on
+    // every Run that has nothing to say and nothing to try — one still being measured, one recorded
+    // while AI sharing was off, and one nobody has opened yet on a page where the summary is not
+    // wired at all. The card draws nothing for those rather than a frame with an apology in it.
+    runSummary: RunSummaryUi? = null,
+    // Asking for the words again — after a failure, or because the runner wants different ones.
+    // Null rather than a no-op for [onOpenSegment]'s reason.
+    onRegenerateRunSummary: (() -> Unit)? = null
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
     // Kept across a rotation or a process death, so a runner who turned the phone sideways to look
@@ -203,6 +211,20 @@ fun SessionDetailScreen(
                     .verticalScroll(rememberScrollState())
                     .padding(RunningUiTokens.PagePadding)
             ) {
+                // Above everything, including the map (#76). It is the page's opening sentence: a
+                // plain-English read of what stood out, put where a runner's eye lands before they
+                // start working through the numbers that back it up. It is also the one card on the
+                // page that is not a measurement, so it earns its place by being read first or not
+                // at all — buried under the map and the splits it would be a paragraph nobody
+                // reaches on a page they came to for their route.
+                //
+                // Drawing nothing is the ordinary case for most of history, and the card decides
+                // that itself ([RunSummaryCard]) — there is no spacer to leave behind.
+                if (runSummary != null && onRegenerateRunSummary != null) {
+                    RunSummaryCard(summary = runSummary, onRegenerate = onRegenerateRunSummary)
+                    if (runSummary.hasSomethingToSay) Spacer(modifier = Modifier.height(24.dp))
+                }
+
                 // The page's order (#43): route map, summary, achievements, splits, chart, then the
                 // coaching cards the app already had. A treadmill run, and any run whose recording
                 // holds no route, simply has no map — the page starts at the summary instead.

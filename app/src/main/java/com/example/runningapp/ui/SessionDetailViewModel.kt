@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.data.RunSummaryOutcome
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.analysis.RunAnalysis
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -68,6 +70,120 @@ class SessionDetailViewModel(
     /** The failure has been shown to the runner. */
     fun exportShareFailureShown() {
         _exportShareFailed.value = null
+    }
+
+    // --- The Run Summary (#76) ---
+    //
+    // Two pieces of state, both naming the Run they belong to for the reason the export results do:
+    // the writing outlives the screen that asked for it, and an answer landing after the runner has
+    // moved on must not put a spinner — or a failure — over whatever Run they are looking at now.
+    private val _summaryWriting = MutableStateFlow<Long?>(null)
+    val summaryWriting = _summaryWriting.asStateFlow()
+
+    private val _summaryFailed = MutableStateFlow<Long?>(null)
+    val summaryFailed = _summaryFailed.asStateFlow()
+
+    private val _summaryRefused = MutableStateFlow<Long?>(null)
+    val summaryRefused = _summaryRefused.asStateFlow()
+
+    /**
+     * The Runs this ViewModel has already asked about of its own accord.
+     *
+     * The first open of a Run's page asks for its summary without the runner doing anything, and the
+     * ask is made from a `LaunchedEffect` watching state the ask itself moves. Without a record of
+     * having tried, a Run whose summary cannot be written — a phone with no signal — would be asked
+     * about again the instant the failure cleared the spinner, and again, for as long as the page
+     * was open, at the price of a network call each time.
+     *
+     * Tried once per launch of the app, and after that it is the button or nothing. This ViewModel
+     * lives as long as the activity does, so coming back to the same Run in the same session does
+     * not ask again — deliberately: a runner who was underground when they first opened it has the
+     * button, and everybody else is spared a second attempt at something that just failed.
+     */
+    private val autoRequested = mutableSetOf<Long>()
+
+    /** What this Run holds now, as its page watches it. Null until something has been written. */
+    fun runSummary(sessionId: Long) = sessionRepository.runSummaryFlow(sessionId)
+
+    /**
+     * Whether everything the summary would describe has been measured (#76) — see
+     * [SessionRepository.runSummaryFactsSettledFlow]. The page asks for no summary until it says so.
+     */
+    fun runSummaryFactsSettled(sessionId: Long) =
+        sessionRepository.runSummaryFactsSettledFlow(sessionId)
+
+    /**
+     * Asks for this Run's summary, once, unless it has already been asked for since launch.
+     *
+     * Called by the page rather than by a finished Run, which is the whole point of the feature: a
+     * Run nobody opens is never sent anywhere.
+     */
+    fun requestRunSummary(sessionId: Long) {
+        if (!autoRequested.add(sessionId)) return
+        askForRunSummary(sessionId)
+    }
+
+    /**
+     * Asks again, at the runner's word — after a failure, or because they want different words.
+     *
+     * Whatever is written now is replaced when the new words land, and left exactly as it is if they
+     * never do: a "write it again" that could empty the card would make the button a risk to press.
+     */
+    fun regenerateRunSummary(sessionId: Long) {
+        autoRequested.add(sessionId)
+        askForRunSummary(sessionId)
+    }
+
+    private fun askForRunSummary(sessionId: Long) {
+        if (_summaryWriting.value == sessionId) return
+        _summaryWriting.value = sessionId
+        _summaryFailed.value = null
+        _summaryRefused.value = null
+        viewModelScope.launch {
+            val outcome = try {
+                val prompt = runSummaryPrompt(sessionId)
+                if (prompt == null) RunSummaryOutcome.REFUSED
+                else sessionRepository.writeRunSummary(sessionId, prompt)
+            } catch (e: Exception) {
+                Log.e("RunSummary", "Failed to write a summary for sessionId=$sessionId", e)
+                RunSummaryOutcome.FAILED
+            }
+            _summaryWriting.value = null
+            when (outcome) {
+                RunSummaryOutcome.WRITTEN -> Unit
+                // Worth telling the runner about, because trying again is a thing that can work.
+                RunSummaryOutcome.FAILED -> _summaryFailed.value = sessionId
+                // Said rather than swallowed. A refusal is the app declining to ask — sharing
+                // switched off, a Run recorded under an opt-out — and a button that quietly does
+                // nothing when pressed is worse than one that says why it cannot.
+                RunSummaryOutcome.REFUSED -> _summaryRefused.value = sessionId
+            }
+        }
+    }
+
+    /**
+     * What the model will be told about this Run, gathered at the moment of asking (#76).
+     *
+     * **Read here rather than taken from the screen**, which is the whole reason this is not a
+     * parameter. The cards on the page are drawn from watched reads that begin empty and fill in a
+     * frame or two later; a prompt built out of those can be built while `achievements` is still the
+     * empty list it started as, and these words are written *once and kept*. The Run would be told
+     * for ever that it won nothing, on a page that shows the medal it won.
+     *
+     * So the facts are read fresh, one-shot, after the Run's debts are settled
+     * ([SessionRepository.runSummaryFactsSettledFlow]) — which is when there is nothing left to find
+     * out about it. Null where the Run itself is gone.
+     */
+    private suspend fun runSummaryPrompt(sessionId: Long): String? {
+        val session = sessionRepository.getSession(sessionId) ?: return null
+        return buildRunSummaryPrompt(
+            runSummaryFacts(
+                session = session,
+                achievements = sessionRepository.achievementsForRun(sessionId),
+                segmentEfforts = segmentEfforts(sessionId).first(),
+                matched = matchedRuns(sessionId).first(),
+            )
+        )
     }
 
     fun deleteSession(sessionId: Long) {

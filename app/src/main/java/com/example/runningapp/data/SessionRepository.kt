@@ -560,6 +560,14 @@ class SessionRepository(
      * and moves no curve, so there is no path here it could go wrong on.
      */
     private val goalDao: GoalDao? = null,
+    /**
+     * Where a Run's AI summary is kept once it has been written (#76) — see [RunSummaryRow].
+     *
+     * Null on the same terms as the record book: wherever it is not wired — tests, and the archive's
+     * read-only container — a Run's page simply never offers a summary, which is what every Run's
+     * page did before this shipped.
+     */
+    private val runSummaryDao: RunSummaryDao? = null,
     private val settingsRepository: SettingsRepository? = null,
     private val coachPrescriptionRepository: CoachPrescriptionRepository? = null,
     private val aiCoachClient: AiCoachClient? = null,
@@ -2765,6 +2773,105 @@ class SessionRepository(
     /** What a Run has been told it holds, as its own page watches it (#282). */
     fun statedBestEffortsFlow(sessionId: Long): Flow<List<StatedBestEffort>> =
         statedBestEffortDao?.getForSessionFlow(sessionId) ?: flowOf(emptyList())
+
+    // --- The Run Summary one Run has been given (#76) ---
+
+    /**
+     * The words written about one Run, watched. Null until something has written any.
+     *
+     * Empty wherever no summary store is wired, which reads as a Run nobody has written about —
+     * because there is nowhere it could have been written down.
+     */
+    fun runSummaryFlow(sessionId: Long): Flow<RunSummaryRow?> =
+        runSummaryDao?.summaryFlow(sessionId) ?: flowOf(null)
+
+    /**
+     * The medals one Run holds, read once (#76).
+     *
+     * A one-shot rather than the watched read the card is drawn from, because it answers a different
+     * question: the card asks "what does this Run hold now" for ever, and this asks "what does it
+     * hold at the instant these words are being written". Read after the Run's debts are paid
+     * ([runSummaryFactsSettledFlow]), so the answer is the whole of what it holds.
+     */
+    suspend fun achievementsForRun(sessionId: Long): List<Achievement> =
+        achievementDao?.getAchievementsForSessions(listOf(sessionId)) ?: emptyList()
+
+    /**
+     * Whether this Run has been measured against everything its summary would describe (#76).
+     *
+     * The summary is written once and kept for ever, so it must not be written out of a half-measured
+     * Run. A Run opened straight off the finish line is still being scored against the record book,
+     * still being walked against the Segments, and still having its shape taken — and a summary
+     * written in that window would say "no records" about a Run that took gold a second later, and
+     * would go on saying it for the life of the Run.
+     *
+     * So the three debts a Run carries are read as the one question they add up to: is there
+     * anything still to find out about this Run? [RunnerSession.recordsScored] and
+     * [RunnerSession.segmentsTimed] are the marks those two passes hand back, and a Run's shape is
+     * marked by the row existing at all ([RunShapeRow]).
+     *
+     * The wholesale record fill is in here too, for a reason of its own: while the whole of history
+     * is being re-scored, a Run already through the pass can still be *demoted* by a Run the pass
+     * has not reached yet. Its own mark says the measuring of it is done; only the fill says the
+     * measuring of everything it is ranked against is (see [recordsBeingMeasuredFlow]).
+     */
+    fun runSummaryFactsSettledFlow(sessionId: Long): Flow<Boolean> = combine(
+        sessionDao.getSessionByIdFlow(sessionId),
+        runShapeDao?.isShapedFlow(sessionId) ?: flowOf(true),
+        recordsBeingMeasuredFlow(),
+    ) { session, shaped, historyBeingMeasured ->
+        session != null &&
+            session.isFinished() &&
+            session.recordsScored &&
+            session.segmentsTimed &&
+            shaped &&
+            !historyBeingMeasured
+    }.distinctUntilChanged()
+
+    /**
+     * Asks the model for a Run's summary and keeps what it says (#76).
+     *
+     * The prompt is built by the caller and is a pure function of stored facts
+     * ([com.example.runningapp.ui.buildRunSummaryPrompt]); this is the half that consents, calls out,
+     * and writes down.
+     *
+     * **Consent is asked twice, and both answers have to be yes.** The Run carries the answer the
+     * runner gave when they pressed START ([RunnerSession.includeInAiTraining]), which is the rule
+     * the coach keeps — a Run recorded under an opt-out is never sent anywhere, whatever the switch
+     * says today. And the switch as it stands *now* is asked as well, which the coach has no need to
+     * do: the coach only ever speaks about the Run that has just finished, while this reaches back
+     * through a runner's whole history. A runner who turns sharing off and then browses their old
+     * Runs has said, in the plainest way there is, that they do not want their runs sent — and every
+     * old Run in the list was recorded while the switch was on.
+     *
+     * Testing mode counts as sharing being off, exactly as it does at START.
+     *
+     * A build with no model to ask is a refusal rather than a failure ([AiCoachClient.canBeAsked]):
+     * a retry button is worth offering only where trying again could work.
+     *
+     * Nothing is written unless the model said something ([AiCoachClient.summariseRun]), so a Run
+     * whose summary could not be got holds no summary rather than an empty one, and asking again is
+     * a fresh ask. Asking again when one is already written *replaces* it, which is what makes the
+     * runner's "write it again" mean what it says.
+     */
+    suspend fun writeRunSummary(sessionId: Long, prompt: String): RunSummaryOutcome {
+        val summaries = runSummaryDao ?: return RunSummaryOutcome.REFUSED
+        val client = aiCoachClient?.takeIf { it.canBeAsked } ?: return RunSummaryOutcome.REFUSED
+        val session = sessionDao.getSessionById(sessionId) ?: return RunSummaryOutcome.REFUSED
+        if (!session.isFinished() || !session.includeInAiTraining) return RunSummaryOutcome.REFUSED
+        val settings = settingsRepository?.userSettingsFlow?.first() ?: return RunSummaryOutcome.REFUSED
+        if (!settings.aiDataSharingEnabled || settings.testingModeEnabled) return RunSummaryOutcome.REFUSED
+
+        val text = client.summariseRun(prompt) ?: return RunSummaryOutcome.FAILED
+        summaries.put(
+            RunSummaryRow(
+                sessionId = sessionId,
+                text = text,
+                writtenAtMillis = System.currentTimeMillis(),
+            )
+        )
+        return RunSummaryOutcome.WRITTEN
+    }
 
     /**
      * The named ground one Run went over, with every rival effort at it (#71) — what the Run's
