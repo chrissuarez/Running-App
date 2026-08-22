@@ -113,14 +113,28 @@ class SessionDetailViewModel(
         sessionRepository.runSummaryFactsSettledFlow(sessionId)
 
     /**
-     * Asks for this Run's summary, once, unless it has already been asked for since launch.
+     * Asks for this Run's summary, once, unless it has already been asked for since launch — and
+     * never where the Run has been written about already.
      *
      * Called by the page rather than by a finished Run, which is the whole point of the feature: a
      * Run nobody opens is never sent anywhere.
+     *
+     * **Whether anything is already written is checked here, not on the page.** The page watches the
+     * stored words, and that watch says "nothing" from the moment the page opens until the store
+     * answers — so a Run opened for the second time looks, for that moment, exactly like one nobody
+     * has ever opened. Asking on the strength of that moment would send a Run that already holds
+     * words and write new ones over them, which is the one thing this feature promises never to do.
+     * So the ask reads the store itself and waits for its answer before it reaches anywhere.
+     *
+     * The runner's own "write it again" goes to [regenerateRunSummary] instead, and is meant to
+     * replace what is there.
      */
     fun requestRunSummary(sessionId: Long) {
         if (!autoRequested.add(sessionId)) return
-        askForRunSummary(sessionId)
+        viewModelScope.launch {
+            if (sessionRepository.runSummaryWritten(sessionId)) return@launch
+            askForRunSummary(sessionId)
+        }
     }
 
     /**

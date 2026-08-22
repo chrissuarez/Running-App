@@ -689,6 +689,18 @@ interface SessionDao {
     suspend fun setSegmentsTimed(sessionId: Long)
 
     /**
+     * Whether any finished Run in history still owes the Segments a walk, watched (#76).
+     *
+     * The same list as [getSessionIdsMissingSegmentTiming], asked as a yes or no and watched rather
+     * than read once, because it is a question about the *rest* of history: a Segment effort timed
+     * for some other Run can take the medal off this one, and a Run Summary is written once and kept
+     * for ever. This Run's own mark says the walk of it is done; this says the walk of everything it
+     * is placed against is.
+     */
+    @Query("SELECT EXISTS(SELECT 1 FROM sessions WHERE segmentsTimed = 0 AND endTime > 0)")
+    fun anySegmentTimingOwedFlow(): Flow<Boolean>
+
+    /**
      * Finished Runs nobody has taken the shape of yet (#73) — the launch pass's work list.
      *
      * The debt is the absence of a row rather than a column on this one, which is what the two
@@ -707,6 +719,24 @@ interface SessionDao {
         """
     )
     suspend fun getSessionIdsMissingRunShapes(): List<Long>
+
+    /**
+     * Whether any finished Run in history is still owed a shape, watched (#76).
+     *
+     * The sibling of [anySegmentTimingOwedFlow] above and there for its reason. A Run's group is
+     * every Run shaped like it, so a shape taken for some other Run changes what this one's summary
+     * would say about how often the route has been run — and on the first launch after shaping
+     * shipped, the whole of history is owed one.
+     */
+    @Query(
+        """
+        SELECT EXISTS(
+            SELECT 1 FROM sessions
+            WHERE endTime > 0 AND id NOT IN (SELECT sessionId FROM run_shapes)
+        )
+        """
+    )
+    fun anyRunShapeOwedFlow(): Flow<Boolean>
 
     /**
      * Writes down that a Run owes the Segments a walk again (#70) — the sibling of
