@@ -172,12 +172,12 @@
 <div class="wrap">
 
   <header class="mast">
-    <div class="kicker">Handbook · updated 21 August 2026</div>
+    <div class="kicker">Handbook · updated 22 August 2026</div>
     <h1>Everything the app does, and where to find it.</h1>
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
-      <p><strong>Matched runs.</strong> Runs over the same ground now recognise each other, with nothing for you to name or save. A run's page tells you which run of that route it is — <em>your 4th run on this route</em> — charts your pace on it over time, and lists the others so you can jump between them. Your whole history was measured the first time you opened the app after the update, so the count was right on day one.</p>
+      <p><strong>The Records section.</strong> Your records now have a place of their own on the Progress screen: all seven at once, each showing your best and the day you did it, and the ones nobody has run yet shown as empty rather than hidden. Tap any of them for its own page — your top ten at that record, every row a door to the run that set it, and a chart of your best at it over the months. The first time you open the app after this update it re-measures your whole history to fill the deeper standings in; while it does, the section says so instead of showing you a half-counted answer.</p>
     </div>
   </header>
 
@@ -461,7 +461,17 @@
       </div>
 
       <div class="e">
-        <h3>Records</h3>
+        <h3>The Records section</h3>
+        <p>All seven records on one card: your best at each, and the day you set it. A record nobody has run yet shows an empty dash and <em>Not run yet</em> rather than being left off — so the card always tells you what there is to go at.</p>
+        <p>Tap a record and you get its own page: the <strong>all-time best</strong> at the top, then your <strong>top ten</strong> efforts at that record, each row naming the day and the pace and opening the run that set it. Below that, a chart of your best on each day you contested it, so you can see whether you are getting quicker at that distance rather than just quicker overall.</p>
+        <p>The standings go ten deep even though the medals only go three deep, and they hold <em>every</em> run's effort rather than only the good ones — that is what the chart is drawn from. A line through your ten best days would not be a trend.</p>
+        <p class="note"><b>Nothing needs mending.</b> Delete a run and its efforts go with it, and whoever was eleventh is tenth the next time you look. Mark a run a walk and it stops contesting everything at once, medals included. Correct a stated distance and the run is measured again from scratch.</p>
+        <p class="note"><b>"Still measuring your runs".</b> Straight after the update the app works back through your whole history to fill the deeper standings. While that is happening the section says what it is doing rather than showing a top ten drawn from half your runs — a partial table would hand out places you never took. It clears itself when the work is done, and it takes a moment, not an evening. If it is interrupted it picks the job back up the next time you open the app.</p>
+        <div class="where"><b>Where</b> Progress → Records</div>
+      </div>
+
+      <div class="e">
+        <h3>What the seven records mean</h3>
         <p>Gold, silver and bronze at seven records: fastest 1 km, mile, 5 km, 10 km and half marathon, plus longest run and longest time.</p>
         <p>The five distances are contested as a <strong>best effort</strong> — the quickest continuous stretch anywhere inside a run, walk breaks included — not as "a run that happened to be 5 km".</p>
         <p><strong>Longest time</strong> is contested by every finished run that is not a walk, treadmill included, on its clock alone. It needs no distance at all, so a treadmill run you never typed a number into is still in those standings.</p>
@@ -685,6 +695,9 @@
       <dt>Best effort</dt>
       <dd>The quickest continuous stretch of a given distance found anywhere <em>inside</em> a run — not a run that happened to be that long.</dd>
 
+      <dt>Standings</dt>
+      <dd>The top ten at one record, on that record's own page. Deeper than the medals, which stop at three. Built from <em>every</em> run's effort at that distance, not only the ten best — that is what the trend chart is drawn from.</dd>
+
       <dt>Zone</dt>
       <dd>One of five fixed slices of your <em>reserve</em> — the gap between your maximum heart rate and your resting one. With no resting rate typed the reserve starts at zero, and the zones are plain percentages of your maximum.</dd>
 
@@ -710,7 +723,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>21 August 2026</strong>, when matched runs went in. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>22 August 2026</strong>, when the Records section went in. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
