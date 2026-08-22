@@ -2809,6 +2809,43 @@ class SessionRepository(
         achievementDao?.getAchievementsForSessions(listOf(sessionId)) ?: emptyList()
 
     /**
+     * Whether anything about this history is still being measured (#76).
+     *
+     * One question with one answer, because every debt behind it has the same consequence: while
+     * any of them stands, what a Run is *worth* can still change. Everything a Run Summary says is
+     * a comparison with the rest of history — the medals it holds, the place it took, how often the
+     * route has been run — so a Run measured to the last metre can still be demoted by a Run nobody
+     * has measured yet. The summary is written once and kept for ever, so that demotion would
+     * arrive after the words describing the old answer had been fixed in place.
+     *
+     * The debts, and the pass behind each:
+     *
+     * - the wholesale record fill ([recordsBeingMeasuredFlow]), raised by the upgrade that added
+     *   `run_efforts` and paid by the launch scoring pass ([scoreMissedRecords]);
+     * - the per-run record scoring ([SessionDao.anyRecordScoringOwedFlow]), the same pass seen a Run
+     *   at a time — a process that died mid-pass leaves finished Runs owing a scoring with no
+     *   wholesale fill outstanding at all, and the rest of that pass rewrites the standings;
+     * - the Segment walk ([SessionDao.anySegmentTimingOwedFlow]), paid by
+     *   [com.example.runningapp.AppContainer.paySegmentTimingOnce], where an effort timed for
+     *   another Run takes a medal off this one;
+     * - the shapes ([SessionDao.anyRunShapeOwedFlow]), paid by
+     *   [com.example.runningapp.AppContainer.takeRunShapesOnce], where a Run's group is every Run
+     *   shaped like it, so a shape taken later moves the count of times the route has been run.
+     *
+     * All four passes run on their own, off any screen's lifetime, which is why a page opened
+     * moments after an upgrade can find its own Run marked and history not. A debt of this kind
+     * added later belongs here, in this list, rather than in another arm of a gate somewhere.
+     */
+    fun historyBeingMeasuredFlow(): Flow<Boolean> = combine(
+        recordsBeingMeasuredFlow(),
+        sessionDao.anyRecordScoringOwedFlow(),
+        sessionDao.anySegmentTimingOwedFlow(),
+        sessionDao.anyRunShapeOwedFlow(),
+    ) { fillOwed, scoringOwed, segmentWalkOwed, shapesOwed ->
+        fillOwed || scoringOwed || segmentWalkOwed || shapesOwed
+    }.distinctUntilChanged()
+
+    /**
      * Whether this Run has been measured against everything its summary would describe (#76).
      *
      * The summary is written once and kept for ever, so it must not be written out of a half-measured
@@ -2817,44 +2854,37 @@ class SessionRepository(
      * written in that window would say "no records" about a Run that took gold a second later, and
      * would go on saying it for the life of the Run.
      *
-     * So every debt standing between this Run and a whole account of it is read as the one question
-     * they add up to: is there anything still to find out about this Run? [RunnerSession.recordsScored] and
-     * [RunnerSession.segmentsTimed] are the marks those two passes hand back, and a Run's shape is
-     * marked by the row existing at all ([RunShapeRow]).
-     *
-     * **Its own marks are only half of it.** Everything a summary says about a Run is a comparison
-     * with the rest of history, so a Run measured to the last metre can still have what it is worth
-     * changed by a Run nobody has measured yet — and the words are kept for ever. So what the whole
-     * of history still owes is read as well, and there are three debts of that kind:
-     *
-     * - the wholesale record fill, where a Run already through the pass can be *demoted* by a Run
-     *   the pass has not reached (see [recordsBeingMeasuredFlow]);
-     * - the Segment walk ([SessionDao.anySegmentTimingOwedFlow]), where an effort timed for another
-     *   Run takes the medal off this one — and an upgrade can hand this Run its mark while the rest
-     *   of history is still owed one;
-     * - the shapes ([SessionDao.anyRunShapeOwedFlow]), where a Run's group is every Run shaped like
-     *   it, so a shape taken later moves the count of times the route has been run.
-     *
-     * The launch passes that pay the last two run on their own, off any screen's lifetime
-     * ([com.example.runningapp.AppContainer.paySegmentTimingOnce],
-     * [com.example.runningapp.AppContainer.takeRunShapesOnce]), which is precisely why a page opened
-     * moments after an upgrade can find this Run marked and history not.
+     * Two things have to be true, and that is the whole rule: **its own marks say the measuring of
+     * *it* is done, and [historyBeingMeasuredFlow] says the measuring of everything it is ranked
+     * against is.** Its own marks are what the passes hand back to the Run
+     * ([RunnerSession.recordsScored], [RunnerSession.segmentsTimed]) plus its shape, which is marked
+     * by the row existing at all ([RunShapeRow]). The other half is one read on purpose: every
+     * history-wide debt is named in that one place, so a debt discovered later is added there and is
+     * honoured here without this gate changing at all.
      */
     fun runSummaryFactsSettledFlow(sessionId: Long): Flow<Boolean> = combine(
+        runOwnMeasuringDoneFlow(sessionId),
+        historyBeingMeasuredFlow(),
+    ) { itsOwnMeasuringDone, historyStillBeingMeasured ->
+        itsOwnMeasuringDone && !historyStillBeingMeasured
+    }.distinctUntilChanged()
+
+    /**
+     * Whether every pass has handed this one Run back its mark (#76) — the Run's half of
+     * [runSummaryFactsSettledFlow].
+     *
+     * A Run that is gone, or still being recorded, is never done: there is nothing to measure yet,
+     * and nothing to describe.
+     */
+    private fun runOwnMeasuringDoneFlow(sessionId: Long): Flow<Boolean> = combine(
         sessionDao.getSessionByIdFlow(sessionId),
         runShapeDao?.isShapedFlow(sessionId) ?: flowOf(true),
-        recordsBeingMeasuredFlow(),
-        sessionDao.anySegmentTimingOwedFlow(),
-        sessionDao.anyRunShapeOwedFlow(),
-    ) { session, shaped, historyBeingMeasured, segmentWalkOwed, shapesOwed ->
+    ) { session, shaped ->
         session != null &&
             session.isFinished() &&
             session.recordsScored &&
             session.segmentsTimed &&
-            shaped &&
-            !historyBeingMeasured &&
-            !segmentWalkOwed &&
-            !shapesOwed
+            shaped
     }.distinctUntilChanged()
 
     /**

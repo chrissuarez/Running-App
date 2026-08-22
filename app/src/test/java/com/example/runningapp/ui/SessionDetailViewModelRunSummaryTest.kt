@@ -14,6 +14,8 @@ import com.example.runningapp.data.SessionDao
 import com.example.runningapp.data.SessionRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -22,7 +24,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -58,15 +60,41 @@ class SessionDetailViewModelRunSummaryTest {
         startTime = 1_786_514_400_000L,
         endTime = 1_786_514_400_000L + 1_650_000,
         durationSeconds = 1_650,
+        // Measured against the book and walked against the Segments: a Run whose facts have
+        // settled, which is the state every ask below is allowed to happen in.
+        recordsScored = true,
+        segmentsTimed = true,
     )
+
+    /** The second Run, for the case where two of them are in play at once. */
+    private val otherFinishedRun = finishedRun.copy(id = 9)
+
+    /**
+     * A store holding both Runs, finished and fully measured.
+     *
+     * [shapesOwed] is the one debt left loose, because it is the cheapest way to hold a Run's facts
+     * unsettled: it is history's debt rather than the Run's, so the Run itself can be whole while
+     * there is still something to find out about what it is worth.
+     */
+    private fun sessionDaoOverBothRuns(shapesOwed: Flow<Boolean> = flowOf(false)) =
+        mock<SessionDao> {
+            onBlocking { getSessionById(7) } doReturn finishedRun
+            onBlocking { getSessionById(9) } doReturn otherFinishedRun
+            on { getSessionByIdFlow(7) } doReturn flowOf(finishedRun)
+            on { getSessionByIdFlow(9) } doReturn flowOf(otherFinishedRun)
+            on { anyRecordScoringOwedFlow() } doReturn flowOf(false)
+            on { anySegmentTimingOwedFlow() } doReturn flowOf(false)
+            on { anyRunShapeOwedFlow() } doReturn shapesOwed
+        }
 
     private fun viewModelOver(
         client: AiCoachClient,
         medals: List<Achievement> = emptyList(),
         alreadyWritten: RunSummaryRow? = null,
+        shapesOwed: Flow<Boolean> = flowOf(false),
     ) = SessionDetailViewModel(
         SessionRepository(
-            sessionDao = mock<SessionDao> { onBlocking { getSessionById(7) } doReturn finishedRun },
+            sessionDao = sessionDaoOverBothRuns(shapesOwed),
             achievementDao = mock<AchievementDao> {
                 onBlocking { getAchievementsForSessions(listOf(7)) } doReturn medals
             },
@@ -129,8 +157,8 @@ class SessionDetailViewModelRunSummaryTest {
         viewModel.requestRunSummary(7)
         advanceUntilIdle()
 
-        assertEquals(7L, viewModel.summaryFailed.value)
-        assertNull(viewModel.summaryWriting.value)
+        assertEquals(setOf(7L), viewModel.summaryFailed.value)
+        assertTrue(viewModel.summaryWriting.value.isEmpty())
 
         viewModel.requestRunSummary(7)
         advanceUntilIdle()
@@ -156,11 +184,11 @@ class SessionDetailViewModelRunSummaryTest {
 
         viewModel.requestRunSummary(7)
         advanceUntilIdle()
-        assertEquals(7L, viewModel.summaryFailed.value)
+        assertEquals(setOf(7L), viewModel.summaryFailed.value)
 
         viewModel.regenerateRunSummary(7)
-        assertNull(viewModel.summaryFailed.value)
-        assertEquals(7L, viewModel.summaryWriting.value)
+        assertTrue(viewModel.summaryFailed.value.isEmpty())
+        assertEquals(setOf(7L), viewModel.summaryWriting.value)
     }
 
     /**
@@ -183,9 +211,9 @@ class SessionDetailViewModelRunSummaryTest {
         advanceUntilIdle()
 
         verify(client, never()).summariseRun(any())
-        assertNull(viewModel.summaryWriting.value)
-        assertNull(viewModel.summaryFailed.value)
-        assertNull(viewModel.summaryRefused.value)
+        assertTrue(viewModel.summaryWriting.value.isEmpty())
+        assertTrue(viewModel.summaryFailed.value.isEmpty())
+        assertTrue(viewModel.summaryRefused.value.isEmpty())
     }
 
     /** The runner's own word still replaces what is there — that is what the button is for. */
@@ -209,7 +237,7 @@ class SessionDetailViewModelRunSummaryTest {
         val client = modelSaying("words")
         val viewModel = SessionDetailViewModel(
             SessionRepository(
-                sessionDao = mock<SessionDao> { onBlocking { getSessionById(7) } doReturn finishedRun },
+                sessionDao = sessionDaoOverBothRuns(),
                 runSummaryDao = mock<RunSummaryDao>(),
                 settingsRepository = mock<SettingsRepository> {
                     on { userSettingsFlow } doReturn flowOf(UserSettings(aiDataSharingEnabled = false))
@@ -221,9 +249,69 @@ class SessionDetailViewModelRunSummaryTest {
         viewModel.requestRunSummary(7)
         advanceUntilIdle()
 
-        assertNull(viewModel.summaryFailed.value)
-        assertNull(viewModel.summaryWriting.value)
+        assertTrue(viewModel.summaryFailed.value.isEmpty())
+        assertTrue(viewModel.summaryWriting.value.isEmpty())
         // Said rather than swallowed: the runner pressing the button must not watch nothing happen.
-        assertEquals(7L, viewModel.summaryRefused.value)
+        assertEquals(setOf(7L), viewModel.summaryRefused.value)
+    }
+
+    /**
+     * Finding A (#76): "write it again" is held to the settled-facts rule the first ask is.
+     *
+     * The words it writes are kept exactly as long as the first ones, so an ask made while history
+     * still owes a shape — a launch pass working through old Runs — would freeze "no records, run
+     * once" onto a Run that is about to be told otherwise. The card does not offer the button
+     * before then; this is the sliver between the offer and the press, where the spinner is up and
+     * the ask simply waits.
+     */
+    @Test
+    fun `the runner's own ask waits for the facts to settle`() = runTest(dispatcher) {
+        val shapesOwed = MutableStateFlow(true)
+        val client = modelSaying("words")
+        val viewModel = viewModelOver(client, shapesOwed = shapesOwed)
+
+        viewModel.regenerateRunSummary(7)
+        advanceUntilIdle()
+
+        verify(client, never()).summariseRun(any())
+        // Waiting, not refusing: the runner is looking at a card that says it is working on it.
+        assertEquals(setOf(7L), viewModel.summaryWriting.value)
+
+        shapesOwed.value = false
+        advanceUntilIdle()
+
+        verify(client, times(1)).summariseRun(any())
+        assertTrue(viewModel.summaryWriting.value.isEmpty())
+    }
+
+    /** And the button is not there to press until then, which is the half the runner can see. */
+    @Test
+    fun `the button is not offered while the run is still being measured`() {
+        val stillMeasuring = RunSummaryUi(text = "words", isWriting = false, failed = false, factsSettled = false)
+        assertFalse(stillMeasuring.canAskAgain)
+        assertTrue(stillMeasuring.copy(factsSettled = true).canAskAgain)
+    }
+
+    /**
+     * Finding B (#76): one Run's failure does not rub out another's.
+     *
+     * This ViewModel lives as long as the activity, so a runner underground with two Runs open in
+     * turn holds two failures at once. Kept as a single id, the second would erase the first —
+     * and going back to the first would show no failure, no button, and no fresh ask, because the
+     * once-per-launch guard remembers it perfectly well. That Run would be stuck until the app was
+     * restarted.
+     */
+    @Test
+    fun `a failure on one run leaves another run's failure standing`() = runTest(dispatcher) {
+        val client = modelSaying(null)
+        val viewModel = viewModelOver(client)
+
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+        viewModel.requestRunSummary(9)
+        advanceUntilIdle()
+
+        assertEquals(setOf(7L, 9L), viewModel.summaryFailed.value)
+        assertTrue(viewModel.summaryWriting.value.isEmpty())
     }
 }

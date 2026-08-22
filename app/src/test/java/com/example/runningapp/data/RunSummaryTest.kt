@@ -137,11 +137,13 @@ class RunSummaryTest {
         session: RunnerSession?,
         shaped: Boolean = true,
         historyBeingMeasured: Boolean = false,
+        recordScoringOwedSomewhere: Boolean = false,
         segmentWalkOwedSomewhere: Boolean = false,
         shapeOwedSomewhere: Boolean = false,
     ) = SessionRepository(
         sessionDao = mock<SessionDao> {
             on { getSessionByIdFlow(7) } doReturn flowOf(session)
+            on { anyRecordScoringOwedFlow() } doReturn flowOf(recordScoringOwedSomewhere)
             on { anySegmentTimingOwedFlow() } doReturn flowOf(segmentWalkOwedSomewhere)
             on { anyRunShapeOwedFlow() } doReturn flowOf(shapeOwedSomewhere)
         },
@@ -189,6 +191,19 @@ class RunSummaryTest {
     fun `a run is not settled while the whole of history is being re-measured`() = runTest {
         assertFalse(
             settled(measuredRun(), historyBeingMeasured = true).runSummaryFactsSettledFlow(7).first()
+        )
+    }
+
+    /**
+     * A process that died part-way through the launch scoring pass leaves finished Runs owing a
+     * scoring with no wholesale fill outstanding at all — so this Run can hold every one of its own
+     * marks while the rest of that pass is still rewriting the standings around it.
+     */
+    @Test
+    fun `a run is not settled while any other run still owes the record book a scoring`() = runTest {
+        assertFalse(
+            settled(measuredRun(), recordScoringOwedSomewhere = true)
+                .runSummaryFactsSettledFlow(7).first()
         )
     }
 

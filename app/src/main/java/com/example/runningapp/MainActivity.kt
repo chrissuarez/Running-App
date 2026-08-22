@@ -920,9 +920,12 @@ class MainActivity : ComponentActivity() {
                             val summaryUi = sessionId?.let { id ->
                                 RunSummaryUi(
                                     text = sessionSummaryRow?.text,
-                                    isWriting = summaryWriting == id,
-                                    failed = summaryFailed == id,
-                                    refused = summaryRefused == id,
+                                    isWriting = id in summaryWriting,
+                                    failed = id in summaryFailed,
+                                    refused = id in summaryRefused,
+                                    // The same gate the ask above is behind, because "write it
+                                    // again" writes words that are kept just as long (#76).
+                                    factsSettled = summaryFactsSettled,
                                 )
                             }
 
