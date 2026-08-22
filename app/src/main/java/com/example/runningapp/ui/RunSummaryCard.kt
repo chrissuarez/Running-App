@@ -54,6 +54,14 @@ data class RunSummaryUi(
      * that are already written: the first ask cannot have happened without it.
      */
     val factsSettled: Boolean = true,
+    /**
+     * Whether the settings as they stand right now would let this Run be written about at all
+     * (#76) — AI sharing on and Testing mode off.
+     *
+     * True wherever nothing supplies it, which is the honest default: a card that cannot see the
+     * switch must not hide a working button for ever.
+     */
+    val sharingAllowed: Boolean = true,
 ) {
     /**
      * Whether there is a card here at all.
@@ -83,8 +91,16 @@ data class RunSummaryUi(
      * permanent wrong the first ask waits to avoid, reached by a button. Not offered rather than
      * offered-and-ignored: a button that does nothing for ten seconds reads as broken, while one
      * that appears a moment later reads as a page still filling in.
+     *
+     * And never while the sharing switch is off ([sharingAllowed]), which [refused] does not cover
+     * on its own. A refusal is the answer to an ask that was made — and a Run whose words are
+     * already written is never asked about again, so switching sharing off afterwards leaves it
+     * with words, no refusal, and a button whose only possible outcome is being turned down. Press
+     * it and the card would show the old words with "no summary for this run" underneath them,
+     * which reads as the app contradicting itself. The switch has to be part of the gate because
+     * this is the case where no ask is made at all.
      */
-    val canAskAgain: Boolean get() = !isWriting && !refused && factsSettled
+    val canAskAgain: Boolean get() = !isWriting && !refused && factsSettled && sharingAllowed
 }
 
 /** What the card is titled. */

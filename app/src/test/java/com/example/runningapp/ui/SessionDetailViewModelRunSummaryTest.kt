@@ -294,6 +294,61 @@ class SessionDetailViewModelRunSummaryTest {
     }
 
     /**
+     * Finding D (#76): words already written plus sharing switched off offers nothing to press.
+     *
+     * This is the case no refusal covers. A Run written about while sharing was on is never asked
+     * about again — the ask reads the store and returns — so switching sharing off afterwards
+     * leaves it with its words, no refusal, and a button whose only possible outcome is being
+     * turned down. Pressing it would put "no summary for this run" under the summary that is
+     * plainly there.
+     */
+    @Test
+    fun `words already written are not offered a re-ask once sharing is switched off`() {
+        val writtenThenSwitchedOff = RunSummaryUi(
+            text = "You were quick today.",
+            isWriting = false,
+            failed = false,
+            sharingAllowed = false,
+        )
+
+        assertFalse(writtenThenSwitchedOff.canAskAgain)
+        // And there is still a card, showing the words: switching the switch takes away the offer,
+        // not the runner's summary.
+        assertTrue(writtenThenSwitchedOff.hasSomethingToSay)
+        assertFalse(writtenThenSwitchedOff.refused)
+
+        // Switch back on, button back.
+        assertTrue(writtenThenSwitchedOff.copy(sharingAllowed = true).canAskAgain)
+    }
+
+    /**
+     * And the switch the card is told about is the switch itself, watched (#76).
+     *
+     * The setting can move while the Run's page is open. Read once at construction it would go on
+     * offering a button the repository would only refuse; the ViewModel therefore holds the live
+     * answer, and defaults to offering the button where nothing supplies the setting at all.
+     */
+    @Test
+    fun `the card is told the live sharing setting, and told yes where nothing supplies one`() =
+        runTest(dispatcher) {
+            val sharingOn = MutableStateFlow(true)
+            val viewModel = viewModelWatching(sharingOn, modelSaying("words"))
+            advanceUntilIdle()
+            assertTrue(viewModel.summariesAllowed.value)
+
+            sharingOn.value = false
+            advanceUntilIdle()
+            assertFalse(viewModel.summariesAllowed.value)
+
+            sharingOn.value = true
+            advanceUntilIdle()
+            assertTrue(viewModel.summariesAllowed.value)
+
+            // Nothing supplying the setting must not hide the button for ever.
+            assertTrue(viewModelOver(modelSaying("words")).summariesAllowed.value)
+        }
+
+    /**
      * Finding B (#76): one Run's failure does not rub out another's.
      *
      * This ViewModel lives as long as the activity, so a runner underground with two Runs open in

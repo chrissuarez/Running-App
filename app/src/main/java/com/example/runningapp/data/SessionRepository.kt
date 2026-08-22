@@ -2916,6 +2916,12 @@ class SessionRepository(
      * whose summary could not be got holds no summary rather than an empty one, and asking again is
      * a fresh ask. Asking again when one is already written *replaces* it, which is what makes the
      * runner's "write it again" mean what it says.
+     *
+     * A summary that is stored refreshes the history backup, and only then — a refusal or a failure
+     * wrote nothing, and a snapshot for no change is a copy of the whole database for nothing. These
+     * words were paid for and are kept for ever, so a Clear-storage restore from a stale snapshot
+     * would cost the runner a second paid ask — or the summary altogether, if sharing has been
+     * turned off since it was written and asking again would now be refused.
      */
     suspend fun writeRunSummary(sessionId: Long, prompt: String): RunSummaryOutcome {
         val summaries = runSummaryDao ?: return RunSummaryOutcome.REFUSED
@@ -2933,6 +2939,7 @@ class SessionRepository(
                 writtenAtMillis = System.currentTimeMillis(),
             )
         )
+        refreshHistoryBackup?.invoke()
         return RunSummaryOutcome.WRITTEN
     }
 

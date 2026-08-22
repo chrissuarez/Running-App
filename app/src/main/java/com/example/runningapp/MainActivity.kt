@@ -484,6 +484,11 @@ class MainActivity : ComponentActivity() {
                     val summaryWriting by sessionDetailViewModel.summaryWriting.collectAsState()
                     val summaryFailed by sessionDetailViewModel.summaryFailed.collectAsState()
                     val summaryRefused by sessionDetailViewModel.summaryRefused.collectAsState()
+                    // Whether the switch would let any Run be written about right now. Not the same
+                    // question as "was this Run refused": a Run written about before sharing was
+                    // switched off is never asked again, so it holds no refusal — only this says
+                    // that its "write it again" could now do nothing but be turned down (#76).
+                    val summariesAllowed by sessionDetailViewModel.summariesAllowed.collectAsState()
                     val selectedSessionIds by historyViewModel.selectedSessionIds.collectAsState()
                     // Through the view model rather than straight off the DAO: a History row is the
                     // run plus what it won and where it went (#51), and only the view model has
@@ -934,6 +939,7 @@ class MainActivity : ComponentActivity() {
                                     // The same gate the ask above is behind, because "write it
                                     // again" writes words that are kept just as long (#76).
                                     factsSettled = summaryFactsSettled,
+                                    sharingAllowed = summariesAllowed,
                                 )
                             }
 
