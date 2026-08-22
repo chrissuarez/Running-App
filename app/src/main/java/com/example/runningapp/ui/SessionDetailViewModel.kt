@@ -49,7 +49,8 @@ class SessionDetailViewModel(
      * AI sharing on and Testing mode off.
      *
      * Null wherever nothing supplies it (tests): there is then nothing to watch and nothing is
-     * watched, which costs only the recovery in [summariesAllowedAgain].
+     * watched, which costs only the recovery in [summariesAllowedAgain] — and leaves
+     * [summariesAllowed] at its permissive default, so an un-wired build still offers the button.
      */
     private val aiSummariesAllowed: Flow<Boolean>? = null,
 ) : ViewModel() {
@@ -104,6 +105,23 @@ class SessionDetailViewModel(
 
     private val _summaryRefused = MutableStateFlow<Set<Long>>(emptySet())
     val summaryRefused = _summaryRefused.asStateFlow()
+
+    private val _summariesAllowed = MutableStateFlow(true)
+
+    /**
+     * Whether the settings as they stand right now would let any Run be written about (#76) — AI
+     * sharing on and Testing mode off.
+     *
+     * **Told to the card as well as acted on here, because a refusal is not the only way the app
+     * says no.** A refusal is the answer to an ask that was actually made; a Run whose words are
+     * already written is never asked about again, so switching sharing off afterwards leaves it
+     * with no refusal to show and a "write it again" button that can now only be turned down. The
+     * card needs the switch itself to know that, not the record of an ask nobody made.
+     *
+     * True wherever nothing supplies the setting (tests, un-wired construction), which is the
+     * honest default: an app that cannot see the switch must not hide a working button for ever.
+     */
+    val summariesAllowed = _summariesAllowed.asStateFlow()
 
     /**
      * The Runs this ViewModel has already asked about of its own accord.
@@ -168,6 +186,7 @@ class SessionDetailViewModel(
                 allowed.collect { allowedNow ->
                     val turnedBackOn = allowedNow && allowedBefore == false
                     allowedBefore = allowedNow
+                    _summariesAllowed.value = allowedNow
                     if (turnedBackOn) summariesAllowedAgain()
                 }
             }

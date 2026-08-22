@@ -47,6 +47,7 @@ class RunSummaryTest {
         session: RunnerSession? = finishedRun(),
         settings: UserSettings = UserSettings(aiDataSharingEnabled = true, testingModeEnabled = false),
         modelSays: String? = "You were quick today.",
+        refreshHistoryBackup: (suspend () -> Unit)? = null,
     ) = SessionRepository(
         sessionDao = mock<SessionDao> { onBlocking { getSessionById(7) } doReturn session },
         runSummaryDao = summaries,
@@ -54,6 +55,7 @@ class RunSummaryTest {
             on { userSettingsFlow } doReturn flowOf(settings)
         },
         aiCoachClient = modelSaying(modelSays),
+        refreshHistoryBackup = refreshHistoryBackup,
     )
 
     // --- Consent ---
@@ -129,6 +131,44 @@ class RunSummaryTest {
         val stillRunning = RunnerSession(id = 7, startTime = 1_786_514_400_000L, endTime = 0)
 
         assertEquals(RunSummaryOutcome.REFUSED, repository(session = stillRunning).writeRunSummary(7, "a prompt"))
+    }
+
+    // --- The backup: paid-for words the snapshot must not be missing ---
+
+    @Test
+    fun `a stored summary refreshes the history backup`() = runTest {
+        var snapshots = 0
+
+        val outcome = repository(refreshHistoryBackup = { snapshots++ }).writeRunSummary(7, "a prompt")
+
+        assertEquals(RunSummaryOutcome.WRITTEN, outcome)
+        assertEquals(1, snapshots)
+    }
+
+    @Test
+    fun `a refusal takes no snapshot`() = runTest {
+        var snapshots = 0
+
+        val outcome = repository(
+            settings = UserSettings(aiDataSharingEnabled = false),
+            refreshHistoryBackup = { snapshots++ },
+        ).writeRunSummary(7, "a prompt")
+
+        assertEquals(RunSummaryOutcome.REFUSED, outcome)
+        assertEquals(0, snapshots)
+    }
+
+    @Test
+    fun `a model that said nothing takes no snapshot`() = runTest {
+        var snapshots = 0
+
+        val outcome = repository(
+            modelSays = null,
+            refreshHistoryBackup = { snapshots++ },
+        ).writeRunSummary(7, "a prompt")
+
+        assertEquals(RunSummaryOutcome.FAILED, outcome)
+        assertEquals(0, snapshots)
     }
 
     // --- Settledness: a summary is written once, so it must not describe a half-measured Run ---
