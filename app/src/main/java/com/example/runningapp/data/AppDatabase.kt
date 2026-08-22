@@ -678,6 +678,18 @@ interface SessionDao {
     suspend fun setRecordsScored(sessionId: Long)
 
     /**
+     * Whether any finished Run in history still owes the record book a scoring, watched (#76).
+     *
+     * The same list as [getSessionIdsMissingRecordScoring], asked as a yes or no and watched rather
+     * than read once, because it is a question about the *rest* of history: a claim scored for some
+     * other Run can push this one off a top ten, and a Run Summary is written once and kept for
+     * ever. This Run's own mark says the scoring of it is done; this says the scoring of everything
+     * it is ranked against is.
+     */
+    @Query("SELECT EXISTS(SELECT 1 FROM sessions WHERE recordsScored = 0 AND endTime > 0)")
+    fun anyRecordScoringOwedFlow(): Flow<Boolean>
+
+    /**
      * Finished Runs nobody has put to the Segments yet (#70) — read the same way, and for the same
      * reasons, as [getSessionIdsMissingRecordScoring] above.
      */

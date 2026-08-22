@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -74,16 +75,26 @@ class SessionDetailViewModel(
 
     // --- The Run Summary (#76) ---
     //
-    // Two pieces of state, both naming the Run they belong to for the reason the export results do:
-    // the writing outlives the screen that asked for it, and an answer landing after the runner has
-    // moved on must not put a spinner — or a failure — over whatever Run they are looking at now.
-    private val _summaryWriting = MutableStateFlow<Long?>(null)
+    // Three pieces of state, each naming the Runs it is true of for the reason the export results
+    // name theirs: the writing outlives the screen that asked for it, and an answer landing after
+    // the runner has moved on must not put a spinner — or a failure — over whatever Run they are
+    // looking at now.
+    //
+    // **A set of Runs rather than one Run, because more than one can be true at once.** This
+    // ViewModel lives as long as the activity does, so a runner who opens Run A on a phone with no
+    // signal, watches it fail, and walks on to Run B is holding two answers at the same time. Kept
+    // as a single id, B's failure would rub out A's: coming back to A would show neither the
+    // failure nor the button to try again, while [autoRequested] — which does still remember A —
+    // would refuse to ask of its own accord. A would have no way back to a summary short of
+    // restarting the app. Two asks in flight at once would trample each other's spinners the same
+    // way.
+    private val _summaryWriting = MutableStateFlow<Set<Long>>(emptySet())
     val summaryWriting = _summaryWriting.asStateFlow()
 
-    private val _summaryFailed = MutableStateFlow<Long?>(null)
+    private val _summaryFailed = MutableStateFlow<Set<Long>>(emptySet())
     val summaryFailed = _summaryFailed.asStateFlow()
 
-    private val _summaryRefused = MutableStateFlow<Long?>(null)
+    private val _summaryRefused = MutableStateFlow<Set<Long>>(emptySet())
     val summaryRefused = _summaryRefused.asStateFlow()
 
     /**
@@ -142,6 +153,16 @@ class SessionDetailViewModel(
      *
      * Whatever is written now is replaced when the new words land, and left exactly as it is if they
      * never do: a "write it again" that could empty the card would make the button a risk to press.
+     *
+     * **It replaces the words, so it is held to the same settled-facts rule as the first ask
+     * (#76).** The new words are kept for ever exactly as the first ones were, so writing them out
+     * of a Run whose medals or route comparisons are still being worked out would be the same
+     * permanent wrong — reached, this time, by a button the runner pressed on purpose. The card
+     * does not offer the button until the facts have settled ([RunSummaryUi.factsSettled]), which
+     * is the honest half of the answer: a button that is there and quietly does nothing for ten
+     * seconds reads as a broken button, while one that has not appeared yet reads as a page still
+     * filling in. The wait below is only for the sliver between the offer and the press — a launch
+     * pass can start owing history a measurement while the runner's thumb is on its way down.
      */
     fun regenerateRunSummary(sessionId: Long) {
         autoRequested.add(sessionId)
@@ -149,12 +170,17 @@ class SessionDetailViewModel(
     }
 
     private fun askForRunSummary(sessionId: Long) {
-        if (_summaryWriting.value == sessionId) return
-        _summaryWriting.value = sessionId
-        _summaryFailed.value = null
-        _summaryRefused.value = null
+        if (sessionId in _summaryWriting.value) return
+        _summaryWriting.update { it + sessionId }
+        _summaryFailed.update { it - sessionId }
+        _summaryRefused.update { it - sessionId }
         viewModelScope.launch {
             val outcome = try {
+                // Nothing is sent until there is nothing left to find out about this Run — the one
+                // rule both ways in share it, because both write words that are kept for ever. The
+                // spinner is already up while this waits, which is the truth: the app is working on
+                // it.
+                sessionRepository.runSummaryFactsSettledFlow(sessionId).first { it }
                 val prompt = runSummaryPrompt(sessionId)
                 if (prompt == null) RunSummaryOutcome.REFUSED
                 else sessionRepository.writeRunSummary(sessionId, prompt)
@@ -162,15 +188,15 @@ class SessionDetailViewModel(
                 Log.e("RunSummary", "Failed to write a summary for sessionId=$sessionId", e)
                 RunSummaryOutcome.FAILED
             }
-            _summaryWriting.value = null
+            _summaryWriting.update { it - sessionId }
             when (outcome) {
                 RunSummaryOutcome.WRITTEN -> Unit
                 // Worth telling the runner about, because trying again is a thing that can work.
-                RunSummaryOutcome.FAILED -> _summaryFailed.value = sessionId
+                RunSummaryOutcome.FAILED -> _summaryFailed.update { it + sessionId }
                 // Said rather than swallowed. A refusal is the app declining to ask — sharing
                 // switched off, a Run recorded under an opt-out — and a button that quietly does
                 // nothing when pressed is worse than one that says why it cannot.
-                RunSummaryOutcome.REFUSED -> _summaryRefused.value = sessionId
+                RunSummaryOutcome.REFUSED -> _summaryRefused.update { it + sessionId }
             }
         }
     }

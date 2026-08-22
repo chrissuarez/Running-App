@@ -47,6 +47,13 @@ data class RunSummaryUi(
     val failed: Boolean,
     /** Whether the app declined to ask at all — AI sharing off, or a Run recorded under an opt-out. */
     val refused: Boolean = false,
+    /**
+     * Whether everything the words would describe has been measured yet (#76).
+     *
+     * True wherever nothing supplies it, which is the honest default for a card built from words
+     * that are already written: the first ask cannot have happened without it.
+     */
+    val factsSettled: Boolean = true,
 ) {
     /**
      * Whether there is a card here at all.
@@ -63,8 +70,15 @@ data class RunSummaryUi(
      * Never while an ask is in flight, and never after a refusal: the app is not asking because it
      * may not, and a button that can only refuse again is worse than no button. A failure is the
      * opposite — trying again is exactly the thing that might work.
+     *
+     * And never before the Run's facts have settled (#76). The new words replace the old ones and
+     * are then kept for ever, so a re-ask made while the medals or the route comparisons are still
+     * being worked out would freeze a half-measured account of the Run in place — the same
+     * permanent wrong the first ask waits to avoid, reached by a button. Not offered rather than
+     * offered-and-ignored: a button that does nothing for ten seconds reads as broken, while one
+     * that appears a moment later reads as a page still filling in.
      */
-    val canAskAgain: Boolean get() = !isWriting && !refused
+    val canAskAgain: Boolean get() = !isWriting && !refused && factsSettled
 }
 
 /** What the card is titled. */
