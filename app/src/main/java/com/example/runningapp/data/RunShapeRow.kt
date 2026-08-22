@@ -96,6 +96,18 @@ interface RunShapeDao {
     @Query(SHAPED_RUNS_SQL)
     fun getShapedRunsFlow(): Flow<List<RunShapeCandidate>>
 
+    /**
+     * Whether one Run has been measured for a shape yet, watched.
+     *
+     * The row existing is the whole of the answer, as it is for the debt pass: a null [shape] on a
+     * present row is a Run that has been measured and holds none — a treadmill Run, a Walk, one too
+     * short to hold a route — and is just as measured as one that came back with five waypoints.
+     * Asked by the Run Summary (#76), which must not describe a Run whose group has not been worked
+     * out yet.
+     */
+    @Query("SELECT EXISTS(SELECT 1 FROM run_shapes WHERE sessionId = :sessionId)")
+    fun isShapedFlow(sessionId: Long): Flow<Boolean>
+
     /** Writes what one Run's shape is now, over whatever the last reading of it said. */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putShape(shape: RunShapeRow)

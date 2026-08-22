@@ -1176,9 +1176,10 @@ interface RunPauseDao {
         SegmentEffort::class,
         RunShapeRow::class,
         RunEffortRow::class,
-        RecordFillRow::class
+        RecordFillRow::class,
+        RunSummaryRow::class
     ],
-    version = 37,
+    version = 38,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1196,6 +1197,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun runShapeDao(): RunShapeDao
     abstract fun runEffortDao(): RunEffortDao
     abstract fun recordFillDao(): RecordFillDao
+    abstract fun runSummaryDao(): RunSummaryDao
 
     companion object {
         @Volatile
@@ -1286,7 +1288,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_33_34,
     MIGRATION_34_35,
     MIGRATION_35_36,
-    MIGRATION_36_37
+    MIGRATION_36_37,
+    MIGRATION_37_38
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2353,5 +2356,29 @@ val MIGRATION_36_37 = object : Migration(36, 37) {
         // migration stays as cheap as it was.
         database.execSQL(RECORD_FILL_TABLE_SQL)
         database.execSQL(RAISE_WHOLESALE_FILL_SQL)
+    }
+}
+
+/**
+ * Where a Run's AI summary is kept (#76) — see [RunSummaryRow].
+ *
+ * A table and nothing else. There is no backfill and no debt to raise, which is what separates this
+ * from [MIGRATION_36_37] next door: a summary is written the first time its Run is *opened*, so an
+ * empty table is the correct and complete description of a history nobody has browsed yet. Filling
+ * it for history would be exactly the thing the feature refuses to do — send every Run the runner
+ * has ever done to a model, most of which they will never look at again.
+ */
+val MIGRATION_37_38 = object : Migration(37, 38) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS `run_summaries` (
+                `sessionId` INTEGER PRIMARY KEY NOT NULL,
+                `text` TEXT NOT NULL,
+                `writtenAtMillis` INTEGER NOT NULL,
+                FOREIGN KEY(`sessionId`) REFERENCES `sessions`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+            )
+            """.trimIndent()
+        )
     }
 }

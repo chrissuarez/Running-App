@@ -92,6 +92,8 @@ import com.example.runningapp.ui.ProgressScreen
 import com.example.runningapp.ui.ProgressViewModel
 import com.example.runningapp.ui.ProgressViewModelFactory
 import com.example.runningapp.ui.MatchedRunsScreen
+import com.example.runningapp.data.RunSummaryRow
+import com.example.runningapp.ui.RunSummaryUi
 import com.example.runningapp.ui.SessionDetailScreen
 import com.example.runningapp.ui.SessionDetailViewModel
 import com.example.runningapp.ui.SessionDetailViewModelFactory
@@ -468,6 +470,12 @@ class MainActivity : ComponentActivity() {
 
                     val exportShareReady by sessionDetailViewModel.exportShareReady.collectAsState()
                     val exportShareFailed by sessionDetailViewModel.exportShareFailed.collectAsState()
+                    // Which Run's summary is being written, and which one's ask came back with
+                    // nothing (#76). Named by Run for the reason the export results are: an answer
+                    // landing after the runner has moved on must not put a spinner over another Run.
+                    val summaryWriting by sessionDetailViewModel.summaryWriting.collectAsState()
+                    val summaryFailed by sessionDetailViewModel.summaryFailed.collectAsState()
+                    val summaryRefused by sessionDetailViewModel.summaryRefused.collectAsState()
                     val selectedSessionIds by historyViewModel.selectedSessionIds.collectAsState()
                     // Through the view model rather than straight off the DAO: a History row is the
                     // run plus what it won and where it went (#51), and only the view model has
@@ -868,6 +876,50 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            // --- The Run Summary (#76) ---
+                            //
+                            // Watched, because the page is open while the words are being written:
+                            // the card is a spinner, the model answers, the row lands, and the card
+                            // fills in without the runner touching anything.
+                            val sessionSummaryRow by produceState<RunSummaryRow?>(initialValue = null, key1 = sessionId) {
+                                sessionId?.let { id ->
+                                    sessionDetailViewModel.runSummary(id).collect { value = it }
+                                }
+                            }
+                            // Whether everything the summary would describe has been measured yet.
+                            // A Run opened straight off the finish line is still being scored, still
+                            // being walked against the Segments and still having its shape taken —
+                            // and these words are written once and kept, so writing them out of a
+                            // half-measured Run would say "no records" about a Run that took gold a
+                            // second later, for ever.
+                            val summaryFactsSettled by produceState(initialValue = false, key1 = sessionId) {
+                                sessionId?.let { id ->
+                                    sessionDetailViewModel.runSummaryFactsSettled(id).collect { value = it }
+                                }
+                            }
+                            // The one ask this feature makes on its own, and the only place it is
+                            // made: a Run nobody opens is never sent anywhere. Held until the facts
+                            // have settled and until nothing is already written — a page opened for
+                            // the second time costs nothing and reaches nothing.
+                            //
+                            // What the model is told is gathered inside the ask rather than passed
+                            // in from here, and deliberately: the cards below are drawn from watched
+                            // reads that begin empty, and a prompt built off those could be built a
+                            // frame before the medals arrive.
+                            LaunchedEffect(sessionId, summaryFactsSettled, sessionSummaryRow) {
+                                val id = sessionId ?: return@LaunchedEffect
+                                if (!summaryFactsSettled || sessionSummaryRow != null) return@LaunchedEffect
+                                sessionDetailViewModel.requestRunSummary(id)
+                            }
+                            val summaryUi = sessionId?.let { id ->
+                                RunSummaryUi(
+                                    text = sessionSummaryRow?.text,
+                                    isWriting = summaryWriting == id,
+                                    failed = summaryFailed == id,
+                                    refused = summaryRefused == id,
+                                )
+                            }
+
                             // Inside this destination, and gated on the run that asked: an export is
                             // slow enough that the runner can be somewhere else by the time it
                             // lands, and a chooser opening over another screen interrupts whatever
@@ -935,6 +987,10 @@ class MainActivity : ComponentActivity() {
                                 matchedRuns = sessionMatchedRuns,
                                 onOpenMatchedRuns = sessionId?.let { id ->
                                     { navigateTo(Routes.matchedRuns(id)) }
+                                },
+                                runSummary = summaryUi,
+                                onRegenerateRunSummary = sessionId?.let { id ->
+                                    { sessionDetailViewModel.regenerateRunSummary(id) }
                                 }
                             )
                         }

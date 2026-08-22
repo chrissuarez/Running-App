@@ -106,6 +106,15 @@ class AiCoachClient {
     )
 
     /**
+     * Whether there is a model here to ask at all.
+     *
+     * A build with no key is not a build that is offline — trying and failing would tell a runner to
+     * check their signal about something no signal can fix. Asked before anything optional is
+     * attempted, so "we cannot ask" and "we asked and got nothing" stay two different answers (#76).
+     */
+    val canBeAsked: Boolean get() = apiKey.isNotBlank()
+
+    /**
      * What the coach wants run next, or null when it could not be asked.
      *
      * Null rather than a stand-in response: the fallback this replaces prescribed 60s/30s × 6 —
@@ -134,6 +143,34 @@ class AiCoachClient {
             gson.fromJson(cleanJson, AiCoachResponse::class.java)
         } catch (e: Exception) {
             Log.e("AiCoach", "Failed to evaluate progress with Gemini", e)
+            null
+        }
+    }
+
+    /**
+     * The words for one Run's summary card, or null when they could not be got (#76).
+     *
+     * The prompt is handed in already built ([com.example.runningapp.ui.buildRunSummaryPrompt]), so
+     * nothing about *what the model is told* lives behind the network — that is the whole of the
+     * bargain that lets the interesting half be tested without an API key.
+     *
+     * Null for every way of coming back with nothing: no signal, a refusal, a reply that is only
+     * whitespace. Null is not stored, so a Run whose summary could not be written is a Run with no
+     * summary rather than a Run holding an empty one — the card then offers the runner the retry,
+     * and the next launch asks again.
+     *
+     * A build with no key is refused before the call rather than thrown out of it
+     * ([canBeAsked] — checked by the caller, and again here so no path reaches the network without
+     * one). Throwing would land in a caller's catch and be reported as a failure the runner could
+     * retry, which is a button that can only fail.
+     */
+    suspend fun summariseRun(prompt: String): String? {
+        if (!canBeAsked) return null
+
+        return try {
+            model.generateContent(prompt).text?.trim()?.takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            Log.e("AiCoach", "Failed to write a run summary with Gemini", e)
             null
         }
     }
