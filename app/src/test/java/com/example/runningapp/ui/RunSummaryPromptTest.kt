@@ -268,6 +268,24 @@ class RunSummaryPromptTest {
         ).forEach { assertTrue("missing: $it", prompt.contains(it)) }
     }
 
+    /**
+     * The model explains the pace off this line, so the line has to be true. An Outage is a Break
+     * the run carried on through and its seconds are counted as moving (ADR 0012) — a prompt saying
+     * lost signal was taken out would have the model explain a real number from a false premise.
+     */
+    @Test
+    fun `moving time is not described as having lost signal taken out`() {
+        val prompt = buildRunSummaryPrompt(
+            runSummaryFacts(run(movingTimeSeconds = 1_560), zone = london)
+        )
+
+        val movingLine = prompt.lines().single { it.startsWith("- Moving time") }
+        assertFalse(movingLine.contains("lost signal taken out"))
+        assertTrue(movingLine.contains("the time they spent stopped taken out"))
+        assertTrue(movingLine.contains("still counts as moving"))
+        assertTrue(movingLine.endsWith("26:00"))
+    }
+
     @Test
     fun `the prompt fences the summary off from prescribing anything`() {
         val prompt = buildRunSummaryPrompt(runSummaryFacts(run(), zone = london))
