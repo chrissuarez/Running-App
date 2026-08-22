@@ -44,6 +44,14 @@ class SessionDetailViewModel(
      * which costs only the re-offer — every reader below still answers from the zone in force.
      */
     private val zoneChanges: Flow<Unit> = emptyFlow(),
+    /**
+     * Whether the settings as they stand right now allow a Run to be written about at all (#76) —
+     * AI sharing on and Testing mode off.
+     *
+     * Null wherever nothing supplies it (tests): there is then nothing to watch and nothing is
+     * watched, which costs only the recovery in [summariesAllowedAgain].
+     */
+    private val aiSummariesAllowed: Flow<Boolean>? = null,
 ) : ViewModel() {
 
     private val _deleteCompleted = MutableSharedFlow<Long>(extraBufferCapacity = 1)
@@ -110,8 +118,61 @@ class SessionDetailViewModel(
      * lives as long as the activity does, so coming back to the same Run in the same session does
      * not ask again — deliberately: a runner who was underground when they first opened it has the
      * button, and everybody else is spared a second attempt at something that just failed.
+     *
+     * A refusal the runner has just made obsolete is the one thing that takes a Run back out of
+     * here — see [summariesAllowedAgain].
      */
     private val autoRequested = mutableSetOf<Long>()
+
+    /**
+     * The runner has turned AI sharing back on (or Testing mode off), so every refusal standing is
+     * asked over again (#76).
+     *
+     * A refusal is the app declining to ask, and it can be declining for reasons of two very
+     * different lifetimes: for ever, because this Run was recorded under an opt-out or this build
+     * has no model to ask; or only for as long as a switch in Settings stays where it is. Held
+     * together, the second kind behaves like the first — a runner who opens a Run with sharing off,
+     * reads the line explaining why, switches sharing on and comes straight back is looking at the
+     * same refusal and no button, with nothing short of restarting the app to get past it.
+     *
+     * **So the refusals are re-evaluated when the setting moves rather than sorted into kinds
+     * here.** Which refusals are permanent is the repository's rule and belongs nowhere else
+     * ([SessionRepository.writeRunSummary]); a copy of it in this class would be a second rule to
+     * keep in step with the first. Re-asking costs a permanently-refused Run nothing that matters —
+     * the repository declines again before anything leaves the phone, and a Run recorded under an
+     * opt-out ends up exactly where it was, refused and with no button. Only the Runs the switch
+     * was refusing come back with words.
+     *
+     * Clearing [autoRequested] here is not a hole in the anti-retry-storm guard: that guard is for
+     * *failures*, which repeat because the thing that caused them has not changed. A switch the
+     * runner has just moved is precisely a thing that has changed.
+     *
+     * The re-ask itself is left to the page opening, as the first ask is: a Run nobody is looking at
+     * is not sent anywhere just because a switch moved.
+     */
+    private fun summariesAllowedAgain() {
+        val refused = _summaryRefused.value
+        if (refused.isEmpty()) return
+        autoRequested -= refused
+        _summaryRefused.update { it - refused }
+    }
+
+    // Watched from here rather than from the constructor, because it can reach back into the state
+    // above: a switch that is already moving as this ViewModel is built would otherwise be answered
+    // by fields that do not exist yet.
+    init {
+        val allowed = aiSummariesAllowed
+        if (allowed != null) {
+            viewModelScope.launch {
+                var allowedBefore: Boolean? = null
+                allowed.collect { allowedNow ->
+                    val turnedBackOn = allowedNow && allowedBefore == false
+                    allowedBefore = allowedNow
+                    if (turnedBackOn) summariesAllowedAgain()
+                }
+            }
+        }
+    }
 
     /** What this Run holds now, as its page watches it. Null until something has been written. */
     fun runSummary(sessionId: Long) = sessionRepository.runSummaryFlow(sessionId)
@@ -401,6 +462,7 @@ class SessionDetailViewModelFactory(
     private val sessionRepository: SessionRepository,
     private val exportFileStore: ExportFileStore? = null,
     private val zoneChanges: Flow<Unit> = emptyFlow(),
+    private val aiSummariesAllowed: Flow<Boolean>? = null,
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(SessionDetailViewModel::class.java)) {
@@ -409,6 +471,7 @@ class SessionDetailViewModelFactory(
                 sessionRepository,
                 exportFileStore,
                 zoneChanges = zoneChanges,
+                aiSummariesAllowed = aiSummariesAllowed,
             ) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")

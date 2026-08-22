@@ -57,7 +57,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import com.example.runningapp.archive.MonthlyArchiveWorker
 import com.example.runningapp.archive.SafArchiveFolder
@@ -377,6 +379,12 @@ class MainActivity : ComponentActivity() {
                             sessionRepository,
                             appContainer.exportFileStore,
                             zoneChanges = appContainer.zoneChanges,
+                            // Watched, not read once: a refusal that was only ever the switch's
+                            // doing must stop being a refusal the moment the runner moves the
+                            // switch back (#76).
+                            aiSummariesAllowed = settingsRepository.userSettingsFlow
+                                .map { it.aiDataSharingEnabled && !it.testingModeEnabled }
+                                .distinctUntilChanged(),
                         )
                     )
                     val backupViewModel: BackupViewModel = viewModel(

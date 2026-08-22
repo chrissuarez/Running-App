@@ -139,6 +139,7 @@ class RunSummaryTest {
         historyBeingMeasured: Boolean = false,
         recordScoringOwedSomewhere: Boolean = false,
         segmentWalkOwedSomewhere: Boolean = false,
+        segmentHistoryWalkOwedSomewhere: Boolean = false,
         shapeOwedSomewhere: Boolean = false,
     ) = SessionRepository(
         sessionDao = mock<SessionDao> {
@@ -146,6 +147,9 @@ class RunSummaryTest {
             on { anyRecordScoringOwedFlow() } doReturn flowOf(recordScoringOwedSomewhere)
             on { anySegmentTimingOwedFlow() } doReturn flowOf(segmentWalkOwedSomewhere)
             on { anyRunShapeOwedFlow() } doReturn flowOf(shapeOwedSomewhere)
+        },
+        segmentDao = mock<SegmentDao> {
+            on { anySegmentHistoryWalkOwedFlow() } doReturn flowOf(segmentHistoryWalkOwedSomewhere)
         },
         runShapeDao = mock<RunShapeDao> { on { isShapedFlow(7) } doReturn flowOf(shaped) },
         recordFillDao = mock<RecordFillDao> {
@@ -216,6 +220,21 @@ class RunSummaryTest {
     fun `a run is not settled while any other run still owes the segments a walk`() = runTest {
         assertFalse(
             settled(measuredRun(), segmentWalkOwedSomewhere = true)
+                .runSummaryFactsSettledFlow(7).first()
+        )
+    }
+
+    /**
+     * The same launch pass seen from the other end. A Segment cut before it was walked — one an
+     * upgrade left owing, or one whose minutes-long walk a dying process cut short — holds no
+     * efforts at all, so every Run in history can carry its own timed mark while the ground itself
+     * has never been measured. The walk that follows can hand this Run efforts and medals it did
+     * not hold when the words were written.
+     */
+    @Test
+    fun `a run is not settled while any segment still owes history a walk`() = runTest {
+        assertFalse(
+            settled(measuredRun(), segmentHistoryWalkOwedSomewhere = true)
                 .runSummaryFactsSettledFlow(7).first()
         )
     }
