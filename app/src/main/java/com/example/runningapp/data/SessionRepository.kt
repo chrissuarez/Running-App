@@ -2828,11 +2828,14 @@ class SessionRepository(
      * - the Segment walk ([SessionDao.anySegmentTimingOwedFlow]), paid by
      *   [com.example.runningapp.AppContainer.paySegmentTimingOnce], where an effort timed for
      *   another Run takes a medal off this one;
+     * - the Segment's own walk of history ([SegmentDao.anySegmentHistoryWalkOwedFlow]), paid by the
+     *   same pass from the other end, where a Segment nobody has walked yet holds no efforts at all
+     *   — so this Run can be handed efforts and medals it did not have when the walk reaches it;
      * - the shapes ([SessionDao.anyRunShapeOwedFlow]), paid by
      *   [com.example.runningapp.AppContainer.takeRunShapesOnce], where a Run's group is every Run
      *   shaped like it, so a shape taken later moves the count of times the route has been run.
      *
-     * All four passes run on their own, off any screen's lifetime, which is why a page opened
+     * All of these passes run on their own, off any screen's lifetime, which is why a page opened
      * moments after an upgrade can find its own Run marked and history not. A debt of this kind
      * added later belongs here, in this list, rather than in another arm of a gate somewhere.
      */
@@ -2840,9 +2843,10 @@ class SessionRepository(
         recordsBeingMeasuredFlow(),
         sessionDao.anyRecordScoringOwedFlow(),
         sessionDao.anySegmentTimingOwedFlow(),
+        segmentDao?.anySegmentHistoryWalkOwedFlow() ?: flowOf(false),
         sessionDao.anyRunShapeOwedFlow(),
-    ) { fillOwed, scoringOwed, segmentWalkOwed, shapesOwed ->
-        fillOwed || scoringOwed || segmentWalkOwed || shapesOwed
+    ) { fillOwed, scoringOwed, segmentWalkOwed, segmentHistoryWalkOwed, shapesOwed ->
+        fillOwed || scoringOwed || segmentWalkOwed || segmentHistoryWalkOwed || shapesOwed
     }.distinctUntilChanged()
 
     /**

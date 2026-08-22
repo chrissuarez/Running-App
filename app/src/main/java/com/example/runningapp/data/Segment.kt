@@ -113,6 +113,25 @@ interface SegmentDao {
     @Query("SELECT * FROM segments WHERE historyTimed = 0 ORDER BY createdAtMillis ASC, id ASC")
     suspend fun getSegmentsMissingHistory(): List<Segment>
 
+    /**
+     * Whether any Segment is still owed its walk of history, watched (#76).
+     *
+     * The same list as [getSegmentsMissingHistory], asked as a yes or no and watched rather than
+     * read once, because it is a question about the *rest* of history rather than about one Run. A
+     * Segment that has never been walked holds no efforts at all, so a Run can carry every mark of
+     * its own — timed, scored, shaped — and still be handed efforts and medals minutes later, when
+     * the walk finally reaches it. A Run Summary is written once and kept for ever, so it must not
+     * be written in that window.
+     *
+     * This is the Segment side of [SessionDao.anySegmentTimingOwedFlow]: that one asks whether any
+     * Run still owes the Segments a walk, and this asks whether any Segment still owes history one.
+     * Both debts are paid by the same launch pass
+     * ([com.example.runningapp.segments.SegmentTiming.payWhatIsOwed]), and either standing alone can
+     * change what a Run is worth.
+     */
+    @Query("SELECT EXISTS(SELECT 1 FROM segments WHERE historyTimed = 0)")
+    fun anySegmentHistoryWalkOwedFlow(): Flow<Boolean>
+
     /** Marks one Segment as walked against history — written only after that walk has landed. */
     @Query("UPDATE segments SET historyTimed = 1 WHERE id = :segmentId")
     suspend fun setHistoryTimed(segmentId: Long)

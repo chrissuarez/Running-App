@@ -29,6 +29,9 @@ class FakeSegmentDao : SegmentDao {
     override suspend fun getSegmentsMissingHistory(): List<Segment> =
         rows.value.filterNot { it.historyTimed }.sortedWith(compareBy({ it.createdAtMillis }, { it.id }))
 
+    override fun anySegmentHistoryWalkOwedFlow(): Flow<Boolean> =
+        rows.map { list -> list.any { !it.historyTimed } }
+
     override suspend fun setHistoryTimed(segmentId: Long) {
         rows.value = rows.value.map { if (it.id == segmentId) it.copy(historyTimed = true) else it }
     }

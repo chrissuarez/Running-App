@@ -17,6 +17,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -313,5 +314,103 @@ class SessionDetailViewModelRunSummaryTest {
 
         assertEquals(setOf(7L, 9L), viewModel.summaryFailed.value)
         assertTrue(viewModel.summaryWriting.value.isEmpty())
+    }
+
+    /**
+     * A viewModel over one Run whose settings can move under it, and which is told when they do.
+     *
+     * [sharingOn] is the same switch twice over: it is what the repository reads when it decides
+     * whether to ask, and what this ViewModel watches so a refusal it caused stops standing once it
+     * is moved back — the two must be one switch, or the test proves nothing about the app.
+     */
+    private fun viewModelWatching(
+        sharingOn: MutableStateFlow<Boolean>,
+        client: AiCoachClient,
+        session: RunnerSession = finishedRun,
+    ) = SessionDetailViewModel(
+        SessionRepository(
+            sessionDao = mock<SessionDao> {
+                onBlocking { getSessionById(7) } doReturn session
+                on { getSessionByIdFlow(7) } doReturn flowOf(session)
+                on { anyRecordScoringOwedFlow() } doReturn flowOf(false)
+                on { anySegmentTimingOwedFlow() } doReturn flowOf(false)
+                on { anyRunShapeOwedFlow() } doReturn flowOf(false)
+            },
+            achievementDao = mock<AchievementDao> {
+                onBlocking { getAchievementsForSessions(listOf(7)) } doReturn emptyList()
+            },
+            runSummaryDao = mock<RunSummaryDao>(),
+            settingsRepository = mock<SettingsRepository> {
+                on { userSettingsFlow } doReturn sharingOn.map { UserSettings(aiDataSharingEnabled = it) }
+            },
+            aiCoachClient = client,
+        ),
+        aiSummariesAllowed = sharingOn,
+    )
+
+    /**
+     * Finding C (#76): a refusal the runner has just made obsolete does not outlive the switch.
+     *
+     * Sharing off, open the Run, read the line saying why. Turn sharing on in Settings and come
+     * back to the same Run — the same activity, so the same ViewModel, which remembers both the
+     * refusal and the fact that it has already asked. Held on to, those two together would hide the
+     * line's replacement *and* the button for as long as the app stayed running.
+     */
+    @Test
+    fun `turning sharing back on lets a refused run be asked about again`() = runTest(dispatcher) {
+        val sharingOn = MutableStateFlow(false)
+        val client = modelSaying("You were quick today.")
+        val viewModel = viewModelWatching(sharingOn, client)
+
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+        assertEquals(setOf(7L), viewModel.summaryRefused.value)
+        verify(client, never()).summariseRun(any())
+
+        sharingOn.value = true
+        advanceUntilIdle()
+        // The refusal is no longer true, so it is no longer said: the card is back to the quiet
+        // nothing it shows for a Run that has not been written about yet.
+        assertTrue(viewModel.summaryRefused.value.isEmpty())
+
+        // Coming back to the Run — the page's own ask, exactly as on a first open.
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+
+        verify(client, times(1)).summariseRun(any())
+        assertTrue(viewModel.summaryRefused.value.isEmpty())
+        assertTrue(viewModel.summaryFailed.value.isEmpty())
+    }
+
+    /**
+     * And the consent given at START is not undone by a switch moved afterwards.
+     *
+     * A Run recorded while sharing was off is stamped as one that is never sent, whatever the
+     * switch says today. Turning sharing on gets it re-asked — which is the cheap half of leaving
+     * the rule with the repository — and it is refused again, having reached nothing.
+     */
+    @Test
+    fun `a run recorded under an opt-out is still refused after sharing comes back`() = runTest(dispatcher) {
+        val sharingOn = MutableStateFlow(false)
+        val client = modelSaying("words")
+        val viewModel = viewModelWatching(
+            sharingOn,
+            client,
+            session = finishedRun.copy(includeInAiTraining = false),
+        )
+
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+        assertEquals(setOf(7L), viewModel.summaryRefused.value)
+
+        sharingOn.value = true
+        advanceUntilIdle()
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+
+        // Refused again, and nothing about this Run ever left the phone.
+        assertEquals(setOf(7L), viewModel.summaryRefused.value)
+        assertTrue(viewModel.summaryFailed.value.isEmpty())
+        verify(client, never()).summariseRun(any())
     }
 }

@@ -71,6 +71,12 @@ data class RunSummaryUi(
      * may not, and a button that can only refuse again is worse than no button. A failure is the
      * opposite — trying again is exactly the thing that might work.
      *
+     * That holds for as long as the refusal does, which is not always for ever: a refusal that was
+     * only the AI sharing switch's doing stops being one the moment the runner moves the switch
+     * back, and the Run is asked about again on its next open
+     * ([SessionDetailViewModel] re-evaluates it). This card is told the answer rather than working
+     * out which kind of refusal it is looking at.
+     *
      * And never before the Run's facts have settled (#76). The new words replace the old ones and
      * are then kept for ever, so a re-ask made while the medals or the route comparisons are still
      * being worked out would freeze a half-measured account of the Run in place — the same
