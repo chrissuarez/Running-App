@@ -37,6 +37,29 @@ class RunAsRouteTest {
         startsAfterPause = startsAfterPause,
     )
 
+    /**
+     * The same fix, but on the date line and on the equator, where a degree of longitude is a full
+     * degree of latitude wide and east is simply east.
+     *
+     * Everything either side of 180° is written down as a number of the opposite sign, which is the
+     * whole point of running a course through here.
+     */
+    private fun datelineFix(northMeters: Double, eastMeters: Double, secondsIn: Long) = TrackPoint(
+        sessionId = 1,
+        latitude = northMeters / metersPerDegree,
+        longitude = datelineLongitude(eastMeters),
+        altitudeMeters = null,
+        timestampMillis = 1_700_000_000_000L + secondsIn * 1_000L,
+        source = TrackPointSource.GPS,
+        startsAfterPause = false,
+    )
+
+    /** Longitude this many metres east of 180°, written the way a fix would write it. */
+    private fun datelineLongitude(eastMeters: Double): Double {
+        val raw = 180.0 + eastMeters / metersPerDegree
+        return if (raw > 180.0) raw - 360.0 else raw
+    }
+
     @Test
     fun `the course is walked in the order the run recorded it`() {
         val outOfOrder = listOf(
@@ -222,5 +245,49 @@ class RunAsRouteTest {
 
         assertTrue(routeDistanceMeters(course.line) > 500.0)
         assertTrue(courseSpanMeters(course.line) < 40.0)
+    }
+
+    /**
+     * The same ten minutes standing still, on the one line where a stride is written down as most of
+     * the way round the world: 180° east and 180° west are the same place, so fixes wandering a few
+     * metres either side of it are recorded with opposite signs and their numbers are 360 apart.
+     *
+     * Nothing about the ground has changed, so nothing about the answer may either. A scatter is a
+     * scatter on the date line too, and if its extent were read off the raw numbers it would be a
+     * course reaching halfway round the planet and would be kept.
+     */
+    @Test
+    fun `standing still on the date line still reaches nowhere`() {
+        val jitter = (0..199).map { step ->
+            datelineFix(
+                northMeters = if (step % 2 == 0) 8.0 else -8.0,
+                eastMeters = if (step % 4 < 2) 6.0 else -6.0,
+                secondsIn = step.toLong(),
+            )
+        }
+
+        val course = runAsCourse(jitter)
+
+        assertTrue(routeDistanceMeters(course.line) > 500.0)
+        assertTrue(courseSpanMeters(course.line) < 40.0)
+    }
+
+    /**
+     * A real course run over the date line: a quarter of a kilometre east, then a turn north. The
+     * thinning lays the fixes out on a flat sheet before it decides which of them the shape needs,
+     * and the sheet must be the ground the runner covered — a run laid out with a 40,000 km leap in
+     * the middle of it bends everywhere and would be kept whole.
+     */
+    @Test
+    fun `a course over the date line keeps the shape it would have anywhere else`() {
+        val cornered = (0..25).map { datelineFix(0.0, -250.0 + it * 20.0, it.toLong()) } +
+            (1..10).map { datelineFix(it * 20.0, 250.0, 25L + it) }
+
+        val points = runAsCourse(cornered).line
+
+        assertEquals(3, points.size)
+        // The middle one is the corner, 250 m the far side of the line from where the run started.
+        assertEquals(datelineLongitude(250.0), points[1].longitude, 0.000001)
+        assertEquals(0.0, points[1].latitude, 0.000001)
     }
 }

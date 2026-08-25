@@ -106,3 +106,30 @@ fun geodesicDistanceMeters(
     // Location.distanceTo() returns a float; round-trip through Float to match its precision exactly.
     return (b * bigA * (sigma - deltaSigma)).toFloat().toDouble()
 }
+
+/**
+ * How far east of [referenceLongitude] a fix at [longitude] sits, in degrees, going the shorter way
+ * round.
+ *
+ * Longitude is the one coordinate that runs out. It climbs to 180° and then, without the ground
+ * changing at all, starts again at -180°, so two fixes a stride apart either side of that line are
+ * written down 359.9998° apart. Anything that measures east-west by subtracting one longitude from
+ * another — the width of a scatter, the sideways place of a fix on a flat sheet — reads that stride
+ * as most of the way round the world unless it is asked the question this answers: not "what is the
+ * difference between these two numbers" but "which way, and how far, would you walk".
+ *
+ * The answer is wrapped into (-180°, +180°]: west of the reference is negative, east is positive,
+ * and the far side of the planet is called east. That last is arbitrary and never matters, because
+ * the only things asking are measuring one Run's worth of ground, which is a few kilometres of it.
+ *
+ * A companion to [METERS_PER_DEGREE] and used with it: multiply this by that and by the cosine of
+ * the latitude to get metres east.
+ */
+fun degreesEastOf(referenceLongitude: Double, longitude: Double): Double {
+    val difference = (longitude - referenceLongitude) % 360.0
+    return when {
+        difference > 180.0 -> difference - 360.0
+        difference <= -180.0 -> difference + 360.0
+        else -> difference
+    }
+}
