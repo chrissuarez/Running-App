@@ -79,6 +79,7 @@ import com.example.runningapp.ui.SegmentDetailScreen
 import com.example.runningapp.ui.SegmentsScreen
 import com.example.runningapp.ui.SegmentsViewModel
 import com.example.runningapp.ui.SegmentsViewModelFactory
+import com.example.runningapp.routes.RunRouteSaver
 import com.example.runningapp.ui.RoutesScreen
 import com.example.runningapp.ui.RoutesViewModel
 import com.example.runningapp.ui.RoutesViewModelFactory
@@ -378,6 +379,9 @@ class MainActivity : ComponentActivity() {
                         factory = SessionDetailViewModelFactory(
                             sessionRepository,
                             appContainer.exportFileStore,
+                            // The same library the Routes screen imports into (#55): a course kept
+                            // off a Run is a Route like any other, and lands in the one list.
+                            runRouteSaver = RunRouteSaver(appContainer.database.routeDao()),
                             zoneChanges = appContainer.zoneChanges,
                             // Watched, not read once: a refusal that was only ever the switch's
                             // doing must stop being a refusal the moment the runner moves the
@@ -478,6 +482,8 @@ class MainActivity : ComponentActivity() {
 
                     val exportShareReady by sessionDetailViewModel.exportShareReady.collectAsState()
                     val exportShareFailed by sessionDetailViewModel.exportShareFailed.collectAsState()
+                    // What became of a Run kept as a course (#55), named by Run for the same reason.
+                    val saveAsRouteMessage by sessionDetailViewModel.saveAsRouteMessage.collectAsState()
                     // Which Run's summary is being written, and which one's ask came back with
                     // nothing (#76). Named by Run for the reason the export results are: an answer
                     // landing after the runner has moved on must not put a spinner over another Run.
@@ -1004,6 +1010,18 @@ class MainActivity : ComponentActivity() {
                                     { id -> navigateTo(Routes.segmentCreate(id)) }
                                 } else {
                                     null
+                                },
+                                // Behind the same gate, for the same reason: there is no course to
+                                // keep without a recorded track (#55).
+                                onSaveAsRoute = if (hasTrack) {
+                                    { id -> sessionDetailViewModel.saveAsRoute(id) }
+                                } else {
+                                    null
+                                },
+                                saveAsRouteMessage = saveAsRouteMessage
+                                    ?.takeIf { it.sessionId == sessionId }?.text,
+                                onSaveAsRouteMessageShown = {
+                                    sessionDetailViewModel.saveAsRouteMessageShown()
                                 },
                                 segmentEfforts = sessionSegmentEfforts,
                                 onOpenSegment = { id -> navigateTo(Routes.segmentDetail(id)) },

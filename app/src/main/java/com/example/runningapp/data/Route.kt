@@ -11,6 +11,16 @@ import kotlinx.coroutines.flow.Flow
 object RouteSource {
     /** Read out of a GPX file the runner picked or opened with this app (#54). */
     const val IMPORTED = "imported"
+
+    /**
+     * Traced off a Run the runner had already been for (#55).
+     *
+     * A Route all the same, and not a link back to that Run: the line was copied onto this row and
+     * the Run is free to be deleted, which is the same bargain a Segment makes with the Run it was
+     * cut from. Recorded because where a course came from is the one thing about it that can never
+     * be worked out afterwards.
+     */
+    const val FROM_RUN = "from_run"
 }
 
 /**

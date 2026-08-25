@@ -17,6 +17,8 @@ import com.example.runningapp.export.GpxWriter
 import com.example.runningapp.export.RunExportName
 import com.example.runningapp.export.RunFitActivity
 import com.example.runningapp.export.RunGpxTrack
+import com.example.runningapp.routes.RunRouteOutcome
+import com.example.runningapp.routes.RunRouteSaver
 import com.example.runningapp.repeatedOn
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +55,11 @@ class SessionDetailViewModel(
      * [summariesAllowed] at its permissive default, so an un-wired build still offers the button.
      */
     private val aiSummariesAllowed: Flow<Boolean>? = null,
+    /**
+     * Where a Run's ground is kept as a course (#55). Null wherever the library is not wired
+     * (tests): the button is then not offered, the same as it is not offered on a Run with no track.
+     */
+    private val runRouteSaver: RunRouteSaver? = null,
 ) : ViewModel() {
 
     private val _deleteCompleted = MutableSharedFlow<Long>(extraBufferCapacity = 1)
@@ -80,6 +87,46 @@ class SessionDetailViewModel(
     /** The failure has been shown to the runner. */
     fun exportShareFailureShown() {
         _exportShareFailed.value = null
+    }
+
+    // --- Keeping a Run's ground as a Route (#55) ---
+
+    private val _saveAsRouteMessage = MutableStateFlow<SaveAsRouteMessage?>(null)
+    val saveAsRouteMessage = _saveAsRouteMessage.asStateFlow()
+
+    /** The words have been shown to the runner. */
+    fun saveAsRouteMessageShown() {
+        _saveAsRouteMessage.value = null
+    }
+
+    /**
+     * Keeps the ground this Run went over as a course in the library (#55).
+     *
+     * The track is read here rather than taken from the screen, for the reason the export reads its
+     * own: what the page is drawing is a watched read that begins empty, and a course saved off that
+     * a frame too early would be a course saved off nothing. It comes through the same #38 accuracy
+     * gate as the map above the button, so the runner keeps the line they were shown.
+     *
+     * Whether anything was kept, and what it is called, is [RunRouteSaver]'s to say — including the
+     * two answers that write nothing, which the runner is told about in words all the same.
+     */
+    fun saveAsRoute(sessionId: Long) {
+        val saver = runRouteSaver ?: return
+        viewModelScope.launch {
+            val session = sessionRepository.getSession(sessionId)
+            if (session == null) {
+                _saveAsRouteMessage.value =
+                    SaveAsRouteMessage(sessionId, runHasNoRouteToSaveMessage())
+                return@launch
+            }
+            val trackPoints = sessionRepository.getTrackPointsForMap(sessionId)
+            val words = when (val outcome = saver.save(session, trackPoints)) {
+                is RunRouteOutcome.Saved -> runSavedAsRouteMessage(outcome.name)
+                is RunRouteOutcome.AlreadySaved -> runAlreadySavedAsRouteMessage(outcome.name)
+                RunRouteOutcome.NoGround -> runHasNoRouteToSaveMessage()
+            }
+            _saveAsRouteMessage.value = SaveAsRouteMessage(sessionId, words)
+        }
     }
 
     // --- The Run Summary (#76) ---
@@ -477,11 +524,21 @@ class SessionDetailViewModel(
     }
 }
 
+/**
+ * What to tell the runner about the course they asked to keep, and which Run asked (#55).
+ *
+ * Named with its Run for the reason an export result is: this ViewModel lives as long as the
+ * activity, and an answer landing after the runner has walked on to another Run must not put words
+ * about this one over the page they are looking at now.
+ */
+data class SaveAsRouteMessage(val sessionId: Long, val text: String)
+
 class SessionDetailViewModelFactory(
     private val sessionRepository: SessionRepository,
     private val exportFileStore: ExportFileStore? = null,
     private val zoneChanges: Flow<Unit> = emptyFlow(),
     private val aiSummariesAllowed: Flow<Boolean>? = null,
+    private val runRouteSaver: RunRouteSaver? = null,
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(SessionDetailViewModel::class.java)) {
@@ -491,6 +548,7 @@ class SessionDetailViewModelFactory(
                 exportFileStore,
                 zoneChanges = zoneChanges,
                 aiSummariesAllowed = aiSummariesAllowed,
+                runRouteSaver = runRouteSaver,
             ) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
