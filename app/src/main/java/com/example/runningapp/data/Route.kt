@@ -171,6 +171,21 @@ interface RouteDao {
     @Query("SELECT * FROM routes WHERE id = :routeId")
     suspend fun getRoute(routeId: Long): Route?
 
+    /**
+     * One Route as it stands, and as it stands again every time the table moves under it.
+     *
+     * Watched rather than read for one reader: the map of a Run that is still going
+     * ([com.example.runningapp.data.SessionRepository.routeLineForRunFlow]). The library stays the
+     * runner's to edit while they are out on a course, so the row can be deleted mid-Run — and the
+     * promise made where deleting is offered is that it costs the Run nothing. A reading taken once
+     * cannot keep that promise: the Run's own row never changes, so nothing would ask again, and the
+     * map would go on drawing a course the library no longer holds.
+     *
+     * Null is the row not being there, which is the answer that matters here.
+     */
+    @Query("SELECT * FROM routes WHERE id = :routeId")
+    fun getRouteFlow(routeId: Long): Flow<Route?>
+
     @Query("UPDATE routes SET name = :name WHERE id = :routeId")
     suspend fun renameRoute(routeId: Long, name: String)
 

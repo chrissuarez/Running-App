@@ -2435,17 +2435,26 @@ class SessionRepository(
      * rather than a failure. A Route is a plan the runner keeps and may throw away, and throwing one
      * away costs a Run nothing (ADR 0014) — so the Run carries on, drawing where it is actually
      * going, with nothing left to draw the plan from.
+     *
+     * Which is why the Route is *watched* and not read. The library stays editable while the runner
+     * is out on a course, and a Route deleted mid-Run moves nothing on the Run's own row — so a
+     * reading taken once would never be asked for again, and the map would go on drawing a course
+     * the library no longer holds. The promise made where deleting is offered has to be kept by the
+     * screen that was relying on it.
      */
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun routeLineForRunFlow(sessionId: Long): Flow<List<RoutePoint>> {
         val dao = routeDao ?: return flowOf(emptyList())
         return sessionDao.getSessionByIdFlow(sessionId)
             .map { it?.ranAlongRoute()?.routeId }
             .distinctUntilChanged()
-            .map { routeId ->
-                // Read once per course rather than watched: a Route's line is written when the row
-                // is created and nothing ever edits it — a rename and a re-measure touch the name
-                // and the numbers beside it, never the line.
-                routeId?.let { dao.getRoute(it) }?.let { RoutePolyline.decode(it.polyline) }.orEmpty()
+            .flatMapLatest { routeId ->
+                if (routeId == null) {
+                    flowOf(emptyList())
+                } else {
+                    dao.getRouteFlow(routeId)
+                        .map { route -> route?.let { RoutePolyline.decode(it.polyline) }.orEmpty() }
+                }
             }
     }
 

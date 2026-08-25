@@ -42,6 +42,10 @@ class FakeRouteDao : RouteDao {
 
     override suspend fun getRoute(routeId: Long): Route? = rows.value.firstOrNull { it.id == routeId }
 
+    /** One row, and again every time the table moves — a delete included, which is the point. */
+    override fun getRouteFlow(routeId: Long): Flow<Route?> =
+        rows.map { table -> table.firstOrNull { it.id == routeId } }
+
     override suspend fun findRouteByPolyline(polyline: String): Route? {
         val asItStandsNow = rows.value.filter { it.polyline == polyline }.minByOrNull { it.id }
         if (findDelayMillis > 0L) delay(findDelayMillis)
