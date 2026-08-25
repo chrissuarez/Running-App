@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import android.util.Log
 import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteDao
+import com.example.runningapp.data.RouteKeeping
 import com.example.runningapp.data.RouteSource
 import java.io.IOException
 
@@ -85,32 +86,34 @@ class RouteImporter(
             is GpxReadOutcome.Read -> outcome
         }
 
-        // The line is the course's identity, so this is asked before a name is worked out and
-        // before anything is inserted: an already-kept course is answered with the row the runner
-        // already has, under whatever they have since called it.
-        val polyline = RoutePolyline.encode(read.points)
-        val distanceMeters = routeDistanceMeters(read.points)
-        val elevationGainMeters = routeElevationGainMeters(read.points)
-        routeDao.findRouteByPolyline(polyline)?.let { kept ->
-            val measuresTheSame = distanceMeters == kept.distanceMeters &&
-                elevationGainMeters == kept.elevationGainMeters
-            if (measuresTheSame) return RouteImportOutcome.AlreadySaved(name = kept.name)
-            routeDao.remeasureRoute(kept.id, distanceMeters, elevationGainMeters)
-            return RouteImportOutcome.Remeasured(name = kept.name)
-        }
-
+        // The name is worked out here, before the library is asked anything, even though a file that
+        // turns out to be a course already kept will not use it. Asking the provider what the file
+        // is called is talk to another app, and it cannot happen with the table's decision held open
+        // — so the choice is to ask for a name that is sometimes thrown away, or to ask and write in
+        // two goes and let a tap on "Save as route" slip between them. The first costs a cheap local
+        // query on the rare occasion someone imports a file they already have; the second costs the
+        // runner a second row of the same course, and nothing in the table would tell the two apart.
         val name = routeName(fileSuggested = read.name, fileNamed = displayNameOf(uri))
-        val id = routeDao.insertRoute(
+
+        // The line is the course's identity, and the library decides in one go what to do with it:
+        // keep it, leave the row already holding it alone, or write this file's better numbers onto
+        // that row. Whatever comes back names the row the runner has, under whatever they call it.
+        val kept = routeDao.keepRoute(
             Route(
                 name = name,
-                distanceMeters = distanceMeters,
-                elevationGainMeters = elevationGainMeters,
-                polyline = polyline,
+                distanceMeters = routeDistanceMeters(read.points),
+                elevationGainMeters = routeElevationGainMeters(read.points),
+                polyline = RoutePolyline.encode(read.points),
                 createdAtMillis = now(),
                 source = RouteSource.IMPORTED,
-            )
+            ),
+            remeasuring = true,
         )
-        return RouteImportOutcome.Imported(routeId = id, name = name)
+        return when (kept.keeping) {
+            RouteKeeping.KEPT -> RouteImportOutcome.Imported(routeId = kept.id, name = kept.name)
+            RouteKeeping.ALREADY_KEPT -> RouteImportOutcome.AlreadySaved(name = kept.name)
+            RouteKeeping.REMEASURED -> RouteImportOutcome.Remeasured(name = kept.name)
+        }
     }
 
     /**

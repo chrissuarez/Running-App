@@ -60,8 +60,24 @@ data class Route(
     val source: String,
 )
 
+/** What keeping a course came to: the three things that can become of one line offered to the table. */
+enum class RouteKeeping {
+    /** The library had nothing drawn along this line, so a new Route now holds it. */
+    KEPT,
+
+    /** The library already held this line, and nothing was written. */
+    ALREADY_KEPT,
+
+    /**
+     * The library already held this line, and the caller's numbers were written onto it.
+     *
+     * Only ever the answer to a caller that asked to re-measure — see [RouteDao.keepRoute].
+     */
+    REMEASURED,
+}
+
 /**
- * The Route the library holds for one line, and whether it was already holding it.
+ * The Route the library holds for one line, and what holding it cost.
  *
  * The answer [RouteDao.keepRoute] gives, and the reason it is one answer rather than two: the caller
  * has to be able to tell "kept" from "you already have this" without asking a second question, since
@@ -70,7 +86,7 @@ data class Route(
  * [name] is the kept row's name, which for a course already held is the runner's name for it and not
  * whatever the caller was about to call it.
  */
-data class KeptRoute(val id: Long, val name: String, val alreadyKept: Boolean)
+data class KeptRoute(val id: Long, val name: String, val keeping: RouteKeeping)
 
 @Dao
 interface RouteDao {
@@ -96,25 +112,44 @@ interface RouteDao {
 
     /**
      * Keeps [route], unless the library already holds a Route drawn along this very line, and says
-     * which of the two happened.
+     * which of the three things happened.
      *
-     * The looking and the writing are one operation because they are one decision. Two taps on
-     * "Save as route" are two coroutines, and asked separately they can both look before either
-     * writes: both find nothing, both write, and the library ends up holding the same course twice
-     * with nothing in the table to tell the copies apart. In one transaction the second tap cannot
-     * look until the first has finished writing, so it sees the row and is sent back to it.
+     * The one way into this table, and the reason it is one way rather than two. The looking and the
+     * writing are one operation because they are one decision. Two taps on "Save as route" are two
+     * coroutines, and asked separately they can both look before either writes: both find nothing,
+     * both write, and the library ends up holding the same course twice with nothing in the table to
+     * tell the copies apart. In one transaction the second tap cannot look until the first has
+     * finished writing, so it sees the row and is sent back to it.
+     *
+     * The same is true across the two writers, and that is why the GPX importer comes through here
+     * as well rather than keeping a lookup-then-insert of its own. A promise about the table that
+     * only one of its writers keeps is not a promise about the table: an import that had looked and
+     * found nothing could still be deciding while a tap on "Save as route" wrote the same line, and
+     * then write it again.
+     *
+     * [remeasuring] is the whole of the difference between the two callers, so it is a parameter
+     * rather than a second method. A GPX arriving for a course already kept may measure it better
+     * than the file before it did — that is the remedy ADR 0014 names for a banked distance or climb
+     * — so the importer asks for those numbers to be written on ([RouteKeeping.REMEASURED]). A Run
+     * has nothing to offer: measured twice by the same rules off the same fixes it can only ever say
+     * what it said the first time, so the saver asks for the row to be left exactly as it is.
      *
      * The column itself is left without a unique constraint on purpose. That would be the same
-     * promise made in a second place, and it would make the promise to the GPX importer too — which
-     * re-measures a line it already holds rather than refusing it, and would then be refused by the
-     * database instead ([com.example.runningapp.routes.RouteImporter]).
+     * promise made in a second place, and it would refuse the importer's re-measure outright rather
+     * than let it write ([com.example.runningapp.routes.RouteImporter]).
      */
     @Transaction
-    suspend fun keepRoute(route: Route): KeptRoute {
+    suspend fun keepRoute(route: Route, remeasuring: Boolean): KeptRoute {
         findRouteByPolyline(route.polyline)?.let { alreadyHeld ->
-            return KeptRoute(id = alreadyHeld.id, name = alreadyHeld.name, alreadyKept = true)
+            val measuresTheSame = route.distanceMeters == alreadyHeld.distanceMeters &&
+                route.elevationGainMeters == alreadyHeld.elevationGainMeters
+            if (!remeasuring || measuresTheSame) {
+                return KeptRoute(alreadyHeld.id, alreadyHeld.name, RouteKeeping.ALREADY_KEPT)
+            }
+            remeasureRoute(alreadyHeld.id, route.distanceMeters, route.elevationGainMeters)
+            return KeptRoute(alreadyHeld.id, alreadyHeld.name, RouteKeeping.REMEASURED)
         }
-        return KeptRoute(id = insertRoute(route), name = route.name, alreadyKept = false)
+        return KeptRoute(insertRoute(route), route.name, RouteKeeping.KEPT)
     }
 
     /**
@@ -122,6 +157,10 @@ interface RouteDao {
      *
      * The name is left alone: it is the runner's, not the file's. See ADR 0014 — a Route's numbers
      * are banked at import and re-importing is the only thing that revisits them.
+     *
+     * Reached through [keepRoute] rather than called on its own, because deciding that a line is
+     * already held and writing better numbers onto it are the same decision, and anything that comes
+     * between the two is a second row waiting to happen.
      */
     @Query(
         "UPDATE routes SET distanceMeters = :distanceMeters, " +

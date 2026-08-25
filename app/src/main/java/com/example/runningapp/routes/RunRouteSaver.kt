@@ -2,6 +2,7 @@ package com.example.runningapp.routes
 
 import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteDao
+import com.example.runningapp.data.RouteKeeping
 import com.example.runningapp.data.RouteSource
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
@@ -112,12 +113,16 @@ class RunRouteSaver(
                 polyline = polyline,
                 createdAtMillis = now(),
                 source = RouteSource.FROM_RUN,
-            )
+            ),
+            // A Run brings nothing new to a course already kept, so the row is left as it stands.
+            // An import can arrive carrying better heights than the file before it; a Run measured
+            // twice by the same rules off the same fixes can only ever repeat itself.
+            remeasuring = false,
         )
-        return if (kept.alreadyKept) {
-            RunRouteOutcome.AlreadySaved(name = kept.name)
-        } else {
+        return if (kept.keeping == RouteKeeping.KEPT) {
             RunRouteOutcome.Saved(routeId = kept.id, name = kept.name)
+        } else {
+            RunRouteOutcome.AlreadySaved(name = kept.name)
         }
     }
 }

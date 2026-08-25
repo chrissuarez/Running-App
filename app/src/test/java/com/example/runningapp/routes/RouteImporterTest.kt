@@ -4,6 +4,11 @@ import android.content.ContentResolver
 import android.database.Cursor
 import android.net.Uri
 import com.example.runningapp.data.RouteSource
+import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.data.TrackPoint
+import com.example.runningapp.data.TrackPointSource
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -19,6 +24,7 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import java.io.FileNotFoundException
 import java.io.InputStream
+import java.time.ZoneId
 
 class RouteImporterTest {
 
@@ -242,5 +248,77 @@ class RouteImporterTest {
         importerFor(nameless, fileNamedOnDisk = null).import(uri)
 
         assertEquals("Imported route", dao.stored.single().name)
+    }
+
+    /**
+     * A file arriving while the runner keeps the very same course off a Run — and the library holds
+     * one Route afterwards, not two.
+     *
+     * Two hands reach this table now: a picked GPX, and the "Save as route" button on a Run's page
+     * (#55). They are not the same tap and nothing on either screen stops them overlapping, because
+     * an import carries on after the runner has left the Routes screen — long enough to open the
+     * Run they were looking for and keep its ground while the file is still being decided about.
+     *
+     * Asked and then told, the import loses that race in the gap it leaves: it looks, finds nothing,
+     * goes off to ask the provider what the file is called, and by the time it writes, the button
+     * has already kept the line. Both rows draw the same course and nothing in the table tells them
+     * apart, so the runner is left to work out which of two identical Routes to delete. Only one way
+     * in can promise otherwise, which is why both come through [com.example.runningapp.data.RouteDao.keepRoute].
+     */
+    @Test
+    fun `a file and a run keeping the same course at once keep one route`() = runTest {
+        val london = ZoneId.of("Europe/London")
+        val run = RunnerSession(
+            id = 7,
+            startTime = 1_700_000_000_000L,
+            endTime = 1_700_000_600_000L,
+            durationSeconds = 600,
+            runMode = "outdoor",
+        )
+        val lap = listOf(0.0 to 0.0, 500.0 to 0.0, 500.0 to 500.0, 0.0 to 500.0)
+            .mapIndexed { i, (north, east) ->
+                TrackPoint(
+                    sessionId = 7,
+                    latitude = 51.5 + north / 111_320.0,
+                    longitude = -0.1 + east / (111_320.0 * 0.6225),
+                    timestampMillis = 1_700_000_000_000L + i * 60_000L,
+                    source = TrackPointSource.GPS,
+                )
+            }
+
+        // What line the Run comes down to is the saver's business and it thins the track to get
+        // there, so the file is written out of the line itself rather than out of the fixes: these
+        // two must be handing the library the same course, or the test is about nothing.
+        val rehearsal = FakeRouteDao()
+        RunRouteSaver(rehearsal, now = { 1_700_000_500_000L }).save(run, lap, london)
+        val theSameCourse = rehearsal.stored.single().polyline
+        val fileOfTheSameCourse = theSameCourse.split(' ').joinToString(
+            separator = "\n",
+            prefix = """<gpx version="1.1"><trk><trkseg>""",
+            postfix = "</trkseg></trk></gpx>",
+        ) { pair ->
+            val (latitude, longitude) = pair.split(',')
+            """<trkpt lat="$latitude" lon="$longitude"/>"""
+        }
+
+        // Long enough that each is still deciding when the other arrives.
+        dao.findDelayMillis = 50
+        val importer = importerFor(fileOfTheSameCourse)
+        val saver = RunRouteSaver(dao, now = { 1_700_000_500_000L })
+
+        val outcomes = listOf(
+            async { importer.import(uri) },
+            async { saver.save(run, lap, london) },
+        ).awaitAll()
+
+        // One row, and only one of the two was told it had kept it — the other was sent to the
+        // row that keeping it made. Which of them got there first is not this test's business.
+        val route = dao.stored.single()
+        assertEquals(theSameCourse, route.polyline)
+        assertEquals(
+            "one of them kept the course and the other was sent to it, but got $outcomes",
+            1,
+            outcomes.count { it is RouteImportOutcome.Imported || it is RunRouteOutcome.Saved },
+        )
     }
 }
