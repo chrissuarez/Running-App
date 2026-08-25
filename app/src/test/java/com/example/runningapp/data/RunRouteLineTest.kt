@@ -5,6 +5,8 @@ import com.example.runningapp.routes.RoutePoint
 import com.example.runningapp.routes.RoutePolyline
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -94,11 +96,36 @@ class RunRouteLineTest {
 
     /** Throwing a Route away costs a Run nothing (ADR 0014) — including this Run, mid-Run. */
     @Test
-    fun `a course deleted from the library leaves the run drawing its own trail alone`() = runTest {
+    fun `a course deleted before the map looks is not drawn`() = runTest {
         val routeId = keepRoute()
         val repository = repositoryWatching(MutableStateFlow(run(routeId)))
         routeDao.deleteRoute(routeId)
 
         assertTrue(repository.routeLineForRunFlow(1L).first().isEmpty())
+    }
+
+    /**
+     * The half that matters, and the half a one-shot read cannot do.
+     *
+     * The library stays the runner's to edit while they are out on the course, so the delete lands
+     * with the map already drawing. Nothing on the Run's own row moves when it does — the Run still
+     * names the course it set out on, as it always will — so unless the Route itself is being
+     * watched, nothing asks again and the map goes on drawing a course the library no longer holds.
+     */
+    @Test
+    fun `a course deleted while the map is drawing stops being drawn`() = runTest {
+        val routeId = keepRoute()
+        val repository = repositoryWatching(MutableStateFlow(run(routeId)))
+
+        val drawn = mutableListOf<List<RoutePoint>>()
+        val watching = launch { repository.routeLineForRunFlow(1L).collect { drawn += it } }
+        runCurrent()
+        assertEquals(line, drawn.last())
+
+        routeDao.deleteRoute(routeId)
+        runCurrent()
+
+        assertTrue("the blue line should have gone", drawn.last().isEmpty())
+        watching.cancel()
     }
 }
