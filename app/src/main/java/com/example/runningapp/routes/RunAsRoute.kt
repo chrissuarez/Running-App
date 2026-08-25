@@ -3,6 +3,7 @@ package com.example.runningapp.routes
 import com.example.runningapp.analysis.thinnedLineIndices
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.recording.METERS_PER_DEGREE
+import com.example.runningapp.recording.degreesEastOf
 import kotlin.math.cos
 
 /**
@@ -104,9 +105,15 @@ private fun List<RoutePoint>.thinnedToItsShape(): List<RoutePoint> {
     // north, so it is shrunk by the cosine of where the Run was — one Run covers too little ground
     // for that to have changed within it, and this is only ever asked how far a fix sits from a
     // line a few hundred metres long.
+    //
+    // Every fix is placed by how far east it is of the first one rather than by its own longitude,
+    // and that "how far east" is asked of [degreesEastOf] so that a Run over the date line is laid
+    // out on the sheet the way it was run rather than flung most of the way round the world.
     val cosLatitude = cos(Math.toRadians(first().latitude))
     val kept = thinnedLineIndices(
-        x = DoubleArray(size) { (this[it].longitude - first().longitude) * METERS_PER_DEGREE * cosLatitude },
+        x = DoubleArray(size) {
+            degreesEastOf(first().longitude, this[it].longitude) * METERS_PER_DEGREE * cosLatitude
+        },
         y = DoubleArray(size) { (this[it].latitude - first().latitude) * METERS_PER_DEGREE },
         detail = ROUTE_DETAIL_METERS,
     )
@@ -128,8 +135,13 @@ fun courseSpanMeters(points: List<RoutePoint>): Double {
     if (points.isEmpty()) return 0.0
     val northSouth = (points.maxOf { it.latitude } - points.minOf { it.latitude }) * METERS_PER_DEGREE
     // East-west in the same metres, by shrinking a degree of longitude to the width it has this far
-    // from the equator.
-    val eastWest = (points.maxOf { it.longitude } - points.minOf { it.longitude }) *
+    // from the equator. Measured as how far east or west of the first fix the rest of them lie
+    // ([degreesEastOf]) rather than by subtracting the smallest longitude from the largest: on the
+    // date line the smallest and the largest are neighbours on the ground, and a runner standing
+    // still with fixes landing either side of it would otherwise reach halfway round the world and
+    // be kept as a course.
+    val eastOfFirst = points.map { degreesEastOf(points.first().longitude, it.longitude) }
+    val eastWest = (eastOfFirst.max() - eastOfFirst.min()) *
         METERS_PER_DEGREE * cos(Math.toRadians(points.first().latitude))
     return maxOf(northSouth, eastWest)
 }
