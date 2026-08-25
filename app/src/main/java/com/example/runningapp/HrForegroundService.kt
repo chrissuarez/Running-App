@@ -60,6 +60,8 @@ import com.example.runningapp.run.AcquisitionState
 import com.example.runningapp.run.CueTag
 import com.example.runningapp.run.SCAN_UNAVAILABLE
 import com.example.runningapp.run.ScannedStrap
+import com.example.runningapp.run.PendingRowWork
+import com.example.runningapp.run.RunLostToTeardown
 import com.example.runningapp.run.runLostToTeardown
 import java.util.concurrent.ConcurrentHashMap
 import com.example.runningapp.run.IntervalKind
@@ -341,6 +343,37 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     // per-second pulse all reach it through [postRunEvent] and never directly.
     private var runState = RunState.IDLE
 
+    /**
+     * The row id the Run's insert produced, as the insert itself saw it (#314).
+     *
+     * The Run learns its id through [RunEvent.RunRowCreated] on the session inbox, and that is the
+     * only place the id belongs while there is a service to run it. This is for the one moment
+     * there is not: a teardown quits the inbox, so an insert that completes after it has nowhere to
+     * post to, and the row it made would be a row nobody in the process knows the number of.
+     *
+     * `@Volatile` rather than the thread discipline above, because there is no one thread to give
+     * it to: the insert coroutine writes it from IO, the session thread clears it as each Run's
+     * insert is dispatched, and the teardown reads it from main.
+     *
+     * Cleared as each Run's insert is dispatched, so it can only ever name the Run being recorded
+     * now. [RunEffect.CreateRunRow] is emitted once per Run, which is what makes that true.
+     */
+    @Volatile
+    private var insertedRunRowId: Long? = null
+
+    /**
+     * What the Run is holding for a row id it has not been given, as of its last event (#314).
+     *
+     * A copy of [RunState.pendingRowEffects], published out of [dispatchRunEvent] the way the
+     * Run's state is. The teardown needs it and the teardown is not on the session thread, so it
+     * cannot read [runState] itself: that field is guarded by the thread that owns it, and the
+     * teardown's join of that thread is bounded ([SESSION_THREAD_JOIN_TIMEOUT_MS]) — a join that
+     * times out is a read with nothing ordering it. `@Volatile` is that ordering, and what it
+     * promises is exactly right for the job: the held work of whichever event dispatched last.
+     */
+    @Volatile
+    private var heldRowWork: List<PendingRowWork> = emptyList()
+
     // Mission: Resilient Tracking Loop — now the Run's single inbox, kept off main so a busy UI
     // cannot stall the Run's clock.
     private var sessionHandlerThread: HandlerThread? = null
@@ -568,6 +601,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun dispatchRunEvent(event: RunEvent) {
         val outcome = Run.onEvent(runState, event)
         runState = outcome.state
+        // Published for the teardown alongside the state, and for the same reason the state is
+        // published: it is read from another thread (#314). A reference copy, not a walk.
+        heldRowWork = runState.pendingRowEffects
         publishRun(runState, event.nowMillis)
         // Between the publish and the effects: the journal describes what is now true, and it must
         // say so before an effect can act on it — a stop's own effects end in the demote, and a
@@ -701,6 +737,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * [Run]'s `finish`.
      */
     private fun createRunRow(effect: RunEffect.CreateRunRow) {
+        // This Run's insert has not landed yet, whatever the last Run's did (#314).
+        insertedRunRowId = null
         // Emitted once per Run and by nothing else, which makes it the one place the things a Run
         // needs zeroed but does not own can be zeroed: GPS's distance and pace, and the Strap's
         // last reading and the clock that ages it.
@@ -750,6 +788,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 )
             )
             Log.d(TAG, "Started DB Session: $runRowId (Mode: ${effect.runModeSettingValue})")
+            // Before the post, not after it: a teardown racing this must find the id whether or not
+            // there is still an inbox for the event to reach (#314).
+            insertedRunRowId = runRowId
             postRunEvent(RunEvent.RunRowCreated(runRowId, System.currentTimeMillis()))
         }
     }
@@ -2250,72 +2291,188 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * in. Row 9133 sat unfinished for two hours with the app used throughout, which is the whole of
      * the ticket's second complaint.
      *
-     * On [finalizationScope] and under [NonCancellable] for the same reason the Run's own finalize
-     * is: `serviceScope` is already cancelled by the time onDestroy gets here, and even were it not,
-     * a launch onto it that is not yet dequeued dies before its body ever runs.
+     * The waits the rescue needs before it can read a settled Run, and the scope it takes them on,
+     * are [settleAfterTeardown]'s — shared with the Run that had no row yet, because the two are
+     * waiting for the same thing.
+     */
+    private fun endRunLostToTeardown(runRowId: Long) {
+        Log.w(TAG, "Service destroyed with run $runRowId still recording; finishing it from its record")
+        notifyRunLostToTeardown(recordedSomething = true)
+        settleAfterTeardown("finish run $runRowId") {
+            if (sessionRepository.rescueRunLostToTeardown(runRowId)) {
+                // The answer to the `service-destroyed` line above, which named this Run as still
+                // recording: its totals reached its row after all. A reader who finds no such line
+                // knows the Run is still owed one, and that the launch pass is who owes it (#310).
+                runJournal.write(
+                    RunJournalEvent.RUN_FINALIZED,
+                    runRowId,
+                    "rescued after the service was destroyed"
+                )
+            }
+        }
+    }
+
+    /**
+     * What is done about a Run this service is torn down out from under before its row landed
+     * (#314).
      *
-     * Two waits before the rescue, and both are about reading a settled Run.
+     * The same loss as [endRunLostToTeardown] caught a moment earlier, and it needs a different
+     * answer because the Run's seconds are somewhere else. A Run with a row writes each second to
+     * the database as it happens; a Run still waiting on its id holds them instead, addressed to a
+     * row number that does not exist yet ([RunLostToTeardown.AwaitingItsRow]). Nothing on disk can
+     * be read back for such a Run, so the held work is handed over here and the ordinary rescue
+     * then reads what it wrote.
      *
-     * A finalize already in flight is waited out first. What this acts on is what the service knew
-     * when the destroy began, and a STOP is published from the session thread a moment after the
-     * Run itself has emitted its finalize — so a teardown landing in that window reads a Run that
-     * is still RUNNING and whose totals are on their way to the row. Those totals are the ones the
-     * Run banked as it ran and are better than any rebuilt from the record, so the rescue waits for
-     * them and then declines the row it finds already finished
+     * The insert is waited out rather than cancelled. It runs on [recorderWriteScope], which the
+     * teardown does not cancel and must not — that scope carries the tail writes of the very Run
+     * being settled — and by the time this could reach for it the row is usually committed already,
+     * so a cancel would be a race with two outcomes rather than a decision. Waiting has one: after
+     * the wait in [settleAfterTeardown] the insert has either landed and named itself in
+     * [insertedRunRowId], or it never will.
+     *
+     * What is then true of the Run decides the rest, and the outcomes are the ticket's complaints:
+     *
+     *  - The runner had stopped it. The held work includes the Run's own finalize
+     *    ([RunLostToTeardown.AwaitingItsRow.runnerStopped]); performing it is the whole of the job,
+     *    and nothing here rescues or discards behind it — those exist for a Run with no finish of
+     *    its own, and a second writer of the same row is what the #309 comment above forbids.
+     *  - The Run banked something. Its held seconds go to the row and the Run is put back from them
+     *    ([SessionRepository.rescueRunLostToTeardown]), exactly as a Run with a row of its own is.
+     *  - The Run banked nothing. The row is an empty `endTime = 0` row that no launch pass can ever
+     *    rebuild, created after the service that asked for it was gone, so it is taken away again
+     *    ([SessionRepository.discardRunThatRecordedNothing]).
+     *
+     * One window is left, and it is the one nothing in a dying process can close: if the drains
+     * give up ([SCOPE_DRAIN_PASSES]) or the process is reclaimed before the insert lands, the row
+     * appears with nobody left to settle it. That is the ticket's own empty row, surviving in the
+     * case where nothing was going to survive — and it is why the launch pass leaves such a row
+     * alone rather than finishing it as a Run of no seconds ([finishedFromRecord]).
+     *
+     * The held work is performed off the session thread, which nothing else in this file does. It
+     * is safe only because that thread is gone and these particular effects are builders: each maps
+     * one held piece to one row and launches it onto [recorderWriteScope] or [finalizationScope],
+     * both of which outlive the service by design. Nothing here touches [runState].
+     */
+    private fun endRunAwaitingItsRow(lost: RunLostToTeardown.AwaitingItsRow) {
+        Log.w(
+            TAG,
+            "Service destroyed with a run recording whose row had not landed; " +
+                "${lost.heldWork.size} held writes, runnerStopped=${lost.runnerStopped}"
+        )
+        // Said now, from what is held rather than from what the settling below makes of it: this
+        // call lands here and now, and a coroutine on a process about to be reclaimed may not. A
+        // Run the runner stopped is told nothing at all — it was not taken from them.
+        if (!lost.runnerStopped) notifyRunLostToTeardown(lost.hasSomethingToSave)
+        settleAfterTeardown("settle the run whose row had not landed") {
+            val runRowId = insertedRunRowId
+            if (runRowId == null) {
+                // The insert never came back. Nothing was written and there is nothing to take
+                // away; the absence of `run-row-created` is the whole of the story and the journal
+                // says that already.
+                Log.w(TAG, "The run's row never landed; nothing was recorded and nothing is left behind")
+                return@settleAfterTeardown
+            }
+            // The line the session inbox would have written had it still been there to hear the
+            // event. Written here so a reader is never left reasoning from an absence that is not
+            // true: the row does exist, it simply arrived after the service.
+            runJournal.write(
+                RunJournalEvent.RUN_ROW_CREATED,
+                runRowId,
+                "landed after the service was destroyed"
+            )
+            lost.heldWork.forEach { perform(it.toEffect(runRowId)) }
+            if (lost.runnerStopped) {
+                // The Run's own finalize is on its way to the row with the totals it banked as it
+                // ran. Nothing rebuilt from the record would be an improvement on those, and a
+                // rescue racing them would decide the row by whichever landed last.
+                Log.w(TAG, "Run $runRowId was stopped by the runner before its row landed; its own finalize has it")
+                return@settleAfterTeardown
+            }
+            // The held work has just been queued, and both answers below read the record it makes.
+            awaitRecorderWrites()
+            when {
+                sessionRepository.rescueRunLostToTeardown(runRowId) ->
+                    runJournal.write(
+                        RunJournalEvent.RUN_FINALIZED,
+                        runRowId,
+                        "rescued after the service was destroyed with its row still on its way"
+                    )
+                sessionRepository.discardRunThatRecordedNothing(runRowId) ->
+                    runJournal.write(
+                        RunJournalEvent.RUN_ROW_DISCARDED,
+                        runRowId,
+                        "the row landed after the service was destroyed and the Run had recorded nothing"
+                    )
+            }
+        }
+    }
+
+    /**
+     * The one way a Run the teardown took is settled, whatever settling it turns out to need.
+     *
+     * Written once because both settlings ([endRunLostToTeardown], [endRunAwaitingItsRow]) wait for
+     * exactly the same thing, and two copies of that wait would be two answers to when a Run is
+     * over. The waits and the scope are the whole of it; what to do once the Run is settled is the
+     * caller's.
+     *
+     * On [finalizationScope] and under [NonCancellable] because `serviceScope` is already cancelled
+     * by the time onDestroy gets here, and even were it not, a launch onto it that is not yet
+     * dequeued dies before its body ever runs.
+     *
+     * Two waits, and both are about reading a settled Run.
+     *
+     * A finalize already in flight is waited out first. What the teardown acts on is what the
+     * service knew when the destroy began, and a STOP is published from the session thread a moment
+     * after the Run itself has emitted its finalize — so a teardown landing in that window reads a
+     * Run that is still RUNNING and whose totals are on their way to the row. Those totals are the
+     * ones the Run banked as it ran and are better than any rebuilt from the record, so this waits
+     * for them and the rescue then declines the row it finds already finished
      * ([SessionRepository.rescueRunLostToTeardown]). Waiting is what makes that check decisive
      * rather than a read that a concurrent write can overtake. The scope is drained rather than
      * snapshotted and joined ([drainChildren]) — the wait is over when the scope is empty, not when
-     * the finalizes that happened to be running at the first look are done — and the rescue leaves
-     * its own job out, because a coroutine cannot wait for a set that includes itself.
+     * the finalizes that happened to be running at the first look are done — and this leaves its
+     * own job out, because a coroutine cannot wait for a set that includes itself.
      *
      * Then the Run's own tail writes ([awaitRecorderWrites]). A rescue reads the samples and fixes
      * back out of the database to rebuild the totals, so anything still queued would be a second
-     * the Run recorded and the rescue did not count.
+     * the Run recorded and the rescue did not count. It is the same wait the Run's row insert is
+     * caught by, which is what makes [insertedRunRowId] readable by the time a caller looks (#314).
      *
      * Where onDestroy calls this from is what makes both waits short: after the session inbox has
      * been quit and joined and after the location thread and `serviceScope` have gone, almost
      * nothing is left that could start another finalize or queue another sample. Called any
      * earlier, the publish-then-perform order of [dispatchRunEvent] means the very STOP whose
-     * RUNNING snapshot sent us here would routinely launch its finalize behind the rescue, and the
-     * row would end up holding whichever of the two wrote last. Called from where it is, that STOP
-     * is in [finalizationScope]'s children, is waited out, and the decline is the answer.
+     * RUNNING snapshot sent us here would routinely launch its finalize behind the settling, and
+     * the row would end up holding whichever of the two wrote last. Called from where it is, that
+     * STOP is in [finalizationScope]'s children, is waited out, and the decline is the answer.
      *
      * What the drains add is that neither wait depends on that quiescence being perfect, which it
      * is not: the session thread is joined with a timeout ([SESSION_THREAD_JOIN_TIMEOUT_MS]) and
      * the location looper is asked to quit safely and never joined, so a dispatch or a fix that was
      * already queued can still run and launch its write after the first look. A snapshot would miss
      * it; a drain looks again.
+     *
+     * @param what the job, named for the one log line that says it could not be done.
      */
-    private fun endRunLostToTeardown(runRowId: Long) {
-        Log.w(TAG, "Service destroyed with run $runRowId still recording; finishing it from its record")
-        notifyRunLostToTeardown()
+    private fun settleAfterTeardown(what: String, settle: suspend () -> Unit) {
         finalizationScope.launch {
             // This coroutine's own job, taken here and not inside the NonCancellable below, where
             // `coroutineContext.job` is NonCancellable's and not a child of the scope at all. It is
-            // what the drain leaves out: the rescue is one of the finalize scope's children, and a
-            // drain that joined itself would never return.
-            val rescue = coroutineContext.job
+            // what the drain leaves out: this settling is one of the finalize scope's children, and
+            // a drain that joined itself would never return.
+            val settling = coroutineContext.job
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                 try {
-                    if (!drainChildren(finalizationScope.coroutineContext.job, except = rescue)) {
+                    if (!drainChildren(finalizationScope.coroutineContext.job, except = settling)) {
                         Log.w(TAG, "Finalizes were still arriving after $SCOPE_DRAIN_PASSES passes; not waiting further")
                     }
                     awaitRecorderWrites()
-                    if (sessionRepository.rescueRunLostToTeardown(runRowId)) {
-                        // The answer to the `service-destroyed` line above, which named this Run as
-                        // still recording: its totals reached its row after all. A reader who finds
-                        // no such line knows the Run is still owed one, and that the launch pass is
-                        // who owes it (#310).
-                        runJournal.write(
-                            RunJournalEvent.RUN_FINALIZED,
-                            runRowId,
-                            "rescued after the service was destroyed"
-                        )
-                    }
+                    settle()
                 } catch (e: Exception) {
-                    // The Run keeps its `endTime = 0` and the launch pass has it. Nothing here is
+                    // Whatever is on disk stays as it is: an unfinished row is the launch pass's,
+                    // and an empty one is no worse than the teardown found it. Nothing here is
                     // worth taking a dying process down for.
-                    Log.w(TAG, "Could not finish run $runRowId after the teardown", e)
+                    Log.w(TAG, "Could not $what after the teardown", e)
                 }
             }
         }
@@ -2339,9 +2496,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * that recorded nothing at all is not put back ([finishedFromRecord]), and a runner told their
      * Run was saved would go looking through their history for something that was never there.
      */
-    private fun notifyRunLostToTeardown() {
-        val text = "The run wasn't stopped from the app. Whatever it recorded up to that moment is " +
-            "being saved — tap to check your history."
+    private fun notifyRunLostToTeardown(recordedSomething: Boolean) {
+        val text = if (recordedSomething) {
+            "The run wasn't stopped from the app. Whatever it recorded up to that moment is " +
+                "being saved — tap to check your history."
+        } else {
+            // The #314 case with an empty buffer: the service went down within the first moments of
+            // START, before the Run had banked a single second. There is nothing to save and
+            // nothing to look for, and the runner is better told to start again than sent hunting
+            // through their history for a Run that was never written down.
+            "The run stopped before it had recorded anything, so there is nothing to save. " +
+                "Start it again."
+        }
         val notification = NotificationCompat.Builder(this, LOST_RUN_CHANNEL_ID)
             .setContentTitle("Your run stopped recording")
             .setContentText(text)
@@ -2447,8 +2613,22 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // a STOP dispatching at that instant would launch its finalize after the rescue had looked,
         // and the two would write the same row with the totals going to whichever landed last —
         // the Run's own, banked as it ran, or the poorer ones the rescue rebuilds from the record.
-        runLostToTeardown(stateAtTeardown.sessionStatus, stateAtTeardown.activeDbSessionId)
-            ?.let { endRunLostToTeardown(it) }
+        //
+        // A Run whose insert had not come back is the same loss arriving a moment earlier, and it
+        // is settled here for the same reason (#314). What it was holding comes from [heldRowWork]
+        // rather than from [runState], which belongs to a thread this one has only bounded its wait
+        // for — see that field. It is read here rather than up beside the snapshot for the same
+        // reason everything else is: taken then, a STOP dispatching at that instant would still be
+        // adding to it.
+        when (val lost = runLostToTeardown(
+            stateAtTeardown.sessionStatus,
+            stateAtTeardown.activeDbSessionId,
+            heldRowWork,
+        )) {
+            is RunLostToTeardown.HasRow -> endRunLostToTeardown(lost.runRowId)
+            is RunLostToTeardown.AwaitingItsRow -> endRunAwaitingItsRow(lost)
+            null -> Unit
+        }
 
         // The one wake-lock release outside Promotion, and deliberately so: destruction can be
         // system-initiated, arriving without any demotion having happened. A wake lock must never
