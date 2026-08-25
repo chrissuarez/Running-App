@@ -37,6 +37,7 @@ object Run {
     fun onEvent(state: RunState, event: RunEvent): RunOutcome = when (event) {
         is RunEvent.Started -> started(state, event)
         is RunEvent.RunRowCreated -> rowCreated(state, event)
+        is RunEvent.HeldWorkTakenOver -> heldWorkTakenOver(state, event)
         is RunEvent.Tick -> tick(state, event)
         is RunEvent.HeartRateSampled -> heartRateSampled(state, event)
         is RunEvent.HeartRateLost -> RunOutcome(
@@ -105,7 +106,36 @@ object Run {
      *
      * A Run that was stopped while waiting finalizes here and starts nothing.
      */
-    private fun rowCreated(state: RunState, event: RunEvent.RunRowCreated): RunOutcome {
+    private fun rowCreated(state: RunState, event: RunEvent.RunRowCreated): RunOutcome =
+        adoptRow(state, event.runRowId, deliverHeldWork = true)
+
+    /**
+     * The row id came back, and another side of the app is already delivering what the Run held
+     * for it (#360).
+     *
+     * The same moment as [rowCreated] in every way but one: the buffer is let go rather than
+     * emitted, because the side that took it is emitting it and two deliveries would write the
+     * Run's every second down twice. The Run still takes its id and a stopped Run is still over —
+     * the row exists, and what it now says about the Run is being written by somebody.
+     *
+     * Nothing is started here. A teardown that took the buffer is the only sender of this
+     * ([RunEvent.HeldWorkTakenOver]), so there is no service left to stop anything it started.
+     */
+    private fun heldWorkTakenOver(state: RunState, event: RunEvent.HeldWorkTakenOver): RunOutcome =
+        adoptRow(state, event.runRowId, deliverHeldWork = false)
+
+    /**
+     * The Run takes the id its insert produced, whoever is delivering the work held for it.
+     *
+     * Written once so the two arrivals cannot come to differ about what having a row means: an id
+     * that has already landed is never replaced, a Run with no lifecycle left to it takes no id at
+     * all, and a Run that was stopped while waiting is over the moment the id exists. Only the
+     * buffer is the caller's to decide about.
+     *
+     * @param deliverHeldWork whether this side is the one handing the buffer over. False empties it
+     * without emitting it, which is how a Run learns another side already has it.
+     */
+    private fun adoptRow(state: RunState, runRowId: Long, deliverHeldWork: Boolean): RunOutcome {
         if (state.runRowId != null) return RunOutcome(state)
         if (state.lifecycle == RunLifecycle.IDLE || state.lifecycle == RunLifecycle.STOPPED) {
             return RunOutcome(state)
@@ -115,13 +145,16 @@ object Run {
         // Location runs only while the Run is running *and* has its row id. A Run paused inside the
         // row-creation window must not have GPS started for it when the id lands — the screen would
         // say paused while the route kept drawing. A resume is what starts it (#146).
-        if (state.lifecycle == RunLifecycle.RUNNING && state.config?.runMode == RunMode.OUTDOOR) {
+        if (deliverHeldWork &&
+            state.lifecycle == RunLifecycle.RUNNING &&
+            state.config?.runMode == RunMode.OUTDOOR
+        ) {
             effects += RunEffect.StartGps
         }
-        state.pendingRowEffects.forEach { effects += it.toEffect(event.runRowId) }
+        if (deliverHeldWork) state.pendingRowEffects.forEach { effects += it.toEffect(runRowId) }
         return RunOutcome(
             state.copy(
-                runRowId = event.runRowId,
+                runRowId = runRowId,
                 lifecycle = if (stopping) RunLifecycle.STOPPED else state.lifecycle,
                 pendingRowEffects = emptyList(),
             ),

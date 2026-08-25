@@ -28,6 +28,26 @@ sealed interface RunEvent {
         override val nowMillis: Long,
     ) : RunEvent
 
+    /**
+     * The row landed, and the Run's held work is already somebody else's to deliver (#360).
+     *
+     * The buffer a Run keeps for its id has two sides that can hand it over: this inbox, the moment
+     * [RunRowCreated] reaches it, and a service teardown, which must be able to — a teardown can
+     * arrive while the insert is still in flight and it quits this inbox behind it, so an id that
+     * arrives afterwards reaches nobody. Exactly one of the two may deliver, or the Run's every
+     * second is written down twice.
+     *
+     * So the side that is about to deliver takes the buffer first, atomically, and the side that
+     * did not is told so by this. It says the same thing [RunRowCreated] says — the row exists and
+     * here is its number — and asks for the one thing that is different: let the held work go
+     * without emitting it. It is only ever sent by a teardown that took the buffer, so the Run
+     * starts nothing on it either; there would be no service left to stop what it started.
+     */
+    data class HeldWorkTakenOver(
+        val runRowId: Long,
+        override val nowMillis: Long,
+    ) : RunEvent
+
     /** The per-second pulse. The Run reads the time on it, not the fact that it arrived. */
     data class Tick(override val nowMillis: Long) : RunEvent
 

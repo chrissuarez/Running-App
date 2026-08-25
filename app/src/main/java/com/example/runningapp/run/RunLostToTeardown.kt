@@ -54,15 +54,15 @@ import com.example.runningapp.isRecording
  * nothing, because the id it was waiting for arrived.
  */
 /**
- * @param sessionThreadFinished whether the thread that owns the Run has actually stopped, rather
- * than the teardown's bounded join of it having run out. A teardown that does not know cannot
- * deliver the Run's held work: see [RunLostToTeardown.AwaitingItsRow.mayBeSettledHere].
+ * @param heldWorkTakenHere whether this teardown took the Run's held work — the claim the session
+ * inbox takes too, won by exactly one of them (#360). A teardown that did not win it must not
+ * deliver: see [RunLostToTeardown.AwaitingItsRow.mayBeSettledHere].
  */
 fun runLostToTeardown(
     run: RunAtLastDispatch,
-    sessionThreadFinished: Boolean,
+    heldWorkTakenHere: Boolean,
 ): RunLostToTeardown? = when (val lost = runLostToTeardown(run.status, run.liveRunRowId, run.heldWork)) {
-    is RunLostToTeardown.AwaitingItsRow -> lost.copy(mayBeSettledHere = sessionThreadFinished)
+    is RunLostToTeardown.AwaitingItsRow -> lost.copy(mayBeSettledHere = heldWorkTakenHere)
     else -> lost
 }
 
@@ -167,35 +167,32 @@ sealed interface RunLostToTeardown {
     ) : RunLostToTeardown {
 
         /**
-         * Whether this teardown is the one that hands the Run's held work over, or must leave it to
-         * the thread whose work it is (#314).
+         * Whether this teardown is the one that hands the Run's held work over, or the session
+         * inbox got there first (#314, #360).
          *
-         * The two are the same rule the drain answers ([settlementOfRowAwaited]) one level up: a
-         * bounded wait that ran out is a teardown that does not know, and a teardown that does not
-         * know does nothing. Here the wait is the join of the session thread. That thread delivers
-         * the held work itself the moment the id reaches it, out of the same buffer — so a join
-         * that timed out while it was mid-dispatch, after its outcome was computed and before its
-         * state was published, leaves a teardown reading a buffer the thread is at that moment
-         * emptying. Both would then deliver it, and the Run would have every second it recorded
-         * written down twice, with the rescue rebuilding inflated totals from the duplicates.
+         * The buffer has two sides that can deliver it. The session thread delivers it the moment
+         * the id reaches it; a teardown has to be able to, because a teardown can arrive while the
+         * insert is still in flight and it quits that inbox behind it, so an id arriving afterwards
+         * reaches nobody. Exactly one of them may, or the Run has every second it recorded written
+         * down twice and the rescue rebuilds inflated totals from the duplicates.
          *
-         * So the teardown settles only what it knows nobody else is settling. Left to the thread,
-         * the work goes out when the id reaches it; nothing finalizes the Run behind it, so its row
-         * stays unfinished and the launch pass has it — the same residue as a drain that gave up.
+         * Which one is decided by a claim on the buffer, taken atomically by whichever side is
+         * about to deliver it and won by exactly one. This says the teardown won it. The loser
+         * always learns it lost: the session thread is told through
+         * [RunEvent.HeldWorkTakenOver] and lets its buffer go without emitting it, and a teardown
+         * reads it here and stands down.
          *
-         * What this cannot tell is *why* the join was lost. A thread still going may be mid-dispatch
-         * of the id, or may be doing something else entirely while the insert is still in flight —
-         * and in that second case the id never reaches it, because the inbox is quit behind it, so
-         * nobody delivers the buffer and the Run's seconds are lost with its row left empty. Telling
-         * those apart needs a claim on the buffer taken by whichever side is about to deliver it,
-         * which is a thing the Run has to be able to be told and so not this teardown's to add
-         * (#360). Standing down is the safer of the two: a lost buffer is the residue this file
-         * already describes, and a doubled one is a Run in history with totals nobody ran.
+         * This replaces #314's inference from the session thread's liveness, which could only see
+         * that its bounded join had run out and not *why*. A thread still going may have been
+         * mid-dispatch of the id, or doing something else entirely — and in that second case the
+         * id never reached it, so a teardown that stood down left nobody at all to deliver the
+         * buffer and the Run's seconds went with its empty row (#360).
          *
-         * A Run the runner stopped goes out by this same door and is left the same way, which is
-         * #361's residue surviving in #360's one case: nobody delivers the held finalize, the row
-         * stays empty and the runner is told nothing. Knowingly kept, because the alternative is
-         * the doubled Run above, and closing it is the claim #360 is for.
+         * When the teardown does stand down the residue is small and known: the session thread's
+         * delivery goes out, nothing finalizes the Run behind it, so its row stays unfinished and
+         * the launch pass has it — the same residue as a drain that gave up. A Run the runner
+         * stopped leaves by this door too, and there the session thread is delivering the Run's own
+         * finalize, so the row is finished by the Run's own totals.
          */
 
 
