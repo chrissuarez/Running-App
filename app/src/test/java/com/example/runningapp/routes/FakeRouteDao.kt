@@ -23,6 +23,11 @@ class FakeRouteDao : RouteDao {
      *
      * Nought by default. A real lookup takes time too; this is only the amount of it a test needs to
      * be able to point at.
+     *
+     * What it answers is the table as it stood when it looked, and the wait is the answer coming
+     * back — which is the whole of why looking and then writing is not safe. By the time a caller
+     * has its answer in hand the table has moved on, and a caller that goes off to ask another app
+     * what a file is called before writing has given it every chance to.
      */
     var findDelayMillis: Long = 0L
 
@@ -38,8 +43,9 @@ class FakeRouteDao : RouteDao {
     override suspend fun getRoute(routeId: Long): Route? = rows.value.firstOrNull { it.id == routeId }
 
     override suspend fun findRouteByPolyline(polyline: String): Route? {
+        val asItStandsNow = rows.value.filter { it.polyline == polyline }.minByOrNull { it.id }
         if (findDelayMillis > 0L) delay(findDelayMillis)
-        return rows.value.filter { it.polyline == polyline }.minByOrNull { it.id }
+        return asItStandsNow
     }
 
     /**
@@ -51,8 +57,8 @@ class FakeRouteDao : RouteDao {
      * the code under it: a caller that goes around this method, asking and then writing, gets the
      * doubled row it has earned.
      */
-    override suspend fun keepRoute(route: Route): KeptRoute =
-        transaction.withLock { super<RouteDao>.keepRoute(route) }
+    override suspend fun keepRoute(route: Route, remeasuring: Boolean): KeptRoute =
+        transaction.withLock { super<RouteDao>.keepRoute(route, remeasuring) }
 
     override suspend fun remeasureRoute(
         routeId: Long,
