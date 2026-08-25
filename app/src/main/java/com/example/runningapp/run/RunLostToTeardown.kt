@@ -29,8 +29,18 @@ import com.example.runningapp.isRecording
  * ([RunState.pendingRowEffects]). Only ever read for a Run with no row: a Run with one is holding
  * nothing, because the id it was waiting for arrived.
  */
-fun runLostToTeardown(run: RunAtLastDispatch): RunLostToTeardown? =
-    runLostToTeardown(run.status, run.liveRunRowId, run.heldWork)
+/**
+ * @param sessionThreadFinished whether the thread that owns the Run has actually stopped, rather
+ * than the teardown's bounded join of it having run out. A teardown that does not know cannot
+ * deliver the Run's held work: see [RunLostToTeardown.AwaitingItsRow.mayBeSettledHere].
+ */
+fun runLostToTeardown(
+    run: RunAtLastDispatch,
+    sessionThreadFinished: Boolean,
+): RunLostToTeardown? = when (val lost = runLostToTeardown(run.status, run.liveRunRowId, run.heldWork)) {
+    is RunLostToTeardown.AwaitingItsRow -> lost.copy(mayBeSettledHere = sessionThreadFinished)
+    else -> lost
+}
 
 /**
  * The three things a teardown reads of the Run, as one dispatch left them (#314).
@@ -116,7 +126,29 @@ sealed interface RunLostToTeardown {
      *
      * @param heldWork the Run's held work, in the order it was produced.
      */
-    data class AwaitingItsRow(val heldWork: List<PendingRowWork>) : RunLostToTeardown {
+    data class AwaitingItsRow(
+        val heldWork: List<PendingRowWork>,
+        val mayBeSettledHere: Boolean = true,
+    ) : RunLostToTeardown {
+
+        /**
+         * Whether this teardown is the one that hands the Run's held work over, or must leave it to
+         * the thread whose work it is (#314).
+         *
+         * The two are the same rule the drain answers ([settlementOfRowAwaited]) one level up: a
+         * bounded wait that ran out is a teardown that does not know, and a teardown that does not
+         * know does nothing. Here the wait is the join of the session thread. That thread delivers
+         * the held work itself the moment the id reaches it, out of the same buffer — so a join
+         * that timed out while it was mid-dispatch, after its outcome was computed and before its
+         * state was published, leaves a teardown reading a buffer the thread is at that moment
+         * emptying. Both would then deliver it, and the Run would have every second it recorded
+         * written down twice, with the rescue rebuilding inflated totals from the duplicates.
+         *
+         * So the teardown settles only what it knows nobody else is settling. Left to the thread,
+         * the work still goes out; nothing finalizes the Run behind it, so its row stays unfinished
+         * and the launch pass has it — the same residue as a drain that gave up.
+         */
+
 
         /**
          * A banked second of heart rate, and only that.

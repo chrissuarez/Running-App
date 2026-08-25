@@ -2376,7 +2376,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * alone rather than finishing it as a Run of no seconds ([finishedFromRecord]).
      *
      * The held work is performed off the session thread, which nothing else in this file does. It
-     * is safe only because that thread is gone and these particular effects are builders: each maps
+     * is safe only because that thread is *known* to be gone — a join that ran out is a thread that
+     * may be delivering this very buffer itself, and both delivering it would write every second
+     * the Run recorded down twice ([RunLostToTeardown.AwaitingItsRow.mayBeSettledHere]) — and
+     * because these particular effects are builders: each maps
      * one held piece to one row and launches it onto [recorderWriteScope] or [finalizationScope],
      * both of which outlive the service by design. Nothing here touches [runState].
      */
@@ -2386,6 +2389,16 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             "Service destroyed with a run recording whose row had not landed; " +
                 "${lost.heldWork.size} held writes, runnerStopped=${lost.runnerStopped}"
         )
+        if (!lost.mayBeSettledHere) {
+            // The session thread outlasted the join and is the one holding this Run's work, so it
+            // delivers it and this does not. Nothing will finalize the Run behind it, so the row
+            // stays unfinished and the launch pass has it — the same residue as a drain that gave
+            // up. The runner is told the #309 way, which is the honest answer here: what the buffer
+            // held is being written down, and what it amounts to is not this teardown's to say.
+            Log.w(TAG, "The session thread outlasted its join; leaving the run's held work to it")
+            if (!lost.runnerStopped) notifyRunLostToTeardown(recordedSomething = true)
+            return
+        }
         // Said now, from what is held rather than from what the settling below makes of it: this
         // call lands here and now, and a coroutine on a process about to be reclaimed may not. A
         // Run the runner stopped is told nothing at all — it was not taken from them.
@@ -2617,6 +2630,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         sessionHandler?.removeCallbacks(sessionTimerRunnable)
         sessionHandlerThread?.quit()
         sessionHandlerThread?.join(SESSION_THREAD_JOIN_TIMEOUT_MS)
+        // Whether that join ended because the thread stopped or because it ran out of time, taken
+        // before the handle is dropped. A teardown that settles a Run's held work while the thread
+        // that owns it is still going would deliver it twice (#314) — see
+        // [RunLostToTeardown.AwaitingItsRow.mayBeSettledHere].
+        val sessionThreadFinished = sessionHandlerThread?.isAlive != true
         sessionHandlerThread = null
         sessionHandler = null
 
@@ -2667,7 +2685,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // would still be changing what it says. The journal line above records the status the
         // destroy began in, which is what it claims to be; what is done about the Run is decided
         // from the last thing the Run actually said.
-        when (val lost = runLostToTeardown(runAtLastDispatch)) {
+        when (val lost = runLostToTeardown(runAtLastDispatch, sessionThreadFinished)) {
             is RunLostToTeardown.HasRow -> endRunLostToTeardown(lost.runRowId)
             is RunLostToTeardown.AwaitingItsRow -> endRunAwaitingItsRow(lost)
             null -> Unit
