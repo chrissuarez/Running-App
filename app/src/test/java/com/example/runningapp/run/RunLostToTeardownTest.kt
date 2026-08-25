@@ -369,7 +369,6 @@ class HeldWorkTakenOverTest {
 
         val effects = driver.on(RunEvent.HeldWorkTakenOver(9133L, driver.nowMillis))
 
-        assertEquals(0, effects.count { it is RunEffect.FinalizeRun })
         assertEquals(emptyList<RunEffect>(), effects)
         assertEquals(RunLifecycle.STOPPED, driver.state.lifecycle)
     }
