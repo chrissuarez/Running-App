@@ -13,7 +13,10 @@ clock, the Phase it is in, and everything counted so far. A Run can also end
 without being stopped — the system taking the service out from under it while it
 was still recording — and that is not a way for a Run to disappear: it is
 finished there and then from the seconds it had already written down, and the
-runner is told it happened (#309).
+runner is told it happened (#309). The one exception is a Run that never
+recorded a second, torn down in the instant between START and its row landing:
+there is nothing to finish it from and nothing to show, so its empty row is
+taken away rather than left on disk as a Run nobody can ever see (#314).
 _Avoid_: session, activity — except inside the FIT Export, where `session` and
 `activity` are the format's own names for its messages, exactly as `lap` is (see
 **Split**). `FitActivity`, `RunFitActivity`, `SessionMesg` and `ActivityMesg` name

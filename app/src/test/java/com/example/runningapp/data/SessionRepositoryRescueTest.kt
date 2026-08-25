@@ -7,6 +7,7 @@ import com.example.runningapp.tallyZoneSeconds
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.kotlin.any
@@ -32,6 +33,8 @@ class SessionRepositoryRescueTest {
     private val sessionDao: SessionDao = mock()
     private val sampleDao: SampleDao = mock()
     private val trackPointDao: TrackPointDao = mock()
+    private val intervalStatDao: RunWalkIntervalStatDao = mock()
+    private val runPauseDao: RunPauseDao = mock()
     // Wired, because scoring is a no-op without a book to write to — and this pass has to be shown
     // both marking a Run it scored and leaving one it could not (#210).
     private val achievementDao: AchievementDao = mock()
@@ -49,6 +52,8 @@ class SessionRepositoryRescueTest {
         sessionDao = sessionDao,
         sampleDao = sampleDao,
         trackPointDao = trackPointDao,
+        intervalStatDao = intervalStatDao,
+        runPauseDao = runPauseDao,
         achievementDao = achievementDao,
         settingsRepository = settingsRepository,
         refreshHistoryBackup = { backupsRefreshed++ },
@@ -324,6 +329,8 @@ class SessionRepositoryRescueTest {
                 sessionDao = sessionDao,
                 sampleDao = sampleDao,
                 trackPointDao = trackPointDao,
+                intervalStatDao = intervalStatDao,
+                runPauseDao = runPauseDao,
                 achievementDao = achievementDao,
                 settingsRepository = settingsRepository,
                 bookAfterRunWork = { order += "booked" },
@@ -346,6 +353,8 @@ class SessionRepositoryRescueTest {
                 sessionDao = sessionDao,
                 sampleDao = sampleDao,
                 trackPointDao = trackPointDao,
+                intervalStatDao = intervalStatDao,
+                runPauseDao = runPauseDao,
                 achievementDao = achievementDao,
                 settingsRepository = settingsRepository,
                 refreshHistoryBackup = { refreshed++ },
@@ -409,5 +418,91 @@ class SessionRepositoryRescueTest {
         repository.rescueInterruptedRuns(processStartedAt)
 
         verify(sessionDao).getInterruptedSessionIds(eq(processStartedAt))
+    }
+
+    @Test
+    fun `the empty row of a Run that never recorded a second is taken away again`() = runTest {
+        // #314: the insert landed after the teardown had gone, so what is on disk is a row with a
+        // start time and nothing else. Left alone it is an interrupted Run no launch pass can ever
+        // rebuild, so it is not left alone.
+        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(emptyList())
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+
+        assertTrue(repository.discardRunThatRecordedNothing(67L))
+
+        verify(sessionDao).deleteSessionById(67L)
+    }
+
+    @Test
+    fun `a Run that recorded a second is never taken away`() = runTest {
+        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 1))
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+
+        assertFalse(repository.discardRunThatRecordedNothing(67L))
+
+        verify(sessionDao, never()).deleteSessionById(any())
+    }
+
+    @Test
+    fun `a Run that is already finished is never taken away, however empty it looks`() = runTest {
+        // The finalize that beat the teardown there is the one case this must not act on: the row
+        // holds the Run's own totals, and totals are not evidence of samples.
+        whenever(sessionDao.getSessionById(67L))
+            .thenReturn(interruptedRun(67L).copy(endTime = startedAt + 60_000, durationSeconds = 60))
+
+        assertFalse(repository.discardRunThatRecordedNothing(67L))
+
+        verify(sessionDao, never()).deleteSessionById(any())
+    }
+
+    @Test
+    fun `a Run that banked only a Pause is still taken away`() = runTest {
+        // A Pause says where the clock stopped; it does not say a second was written down. With no
+        // sample and no fix the row can never be rebuilt, so the Pause goes with it — which the
+        // database does itself, every table that hangs off a Run being ON DELETE CASCADE.
+        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(emptyList())
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+        whenever(runPauseDao.getPausesForSession(67L)).thenReturn(
+            listOf(RunPause(sessionId = 67L, startTimeMillis = startedAt, endTimeMillis = startedAt + 300))
+        )
+
+        assertTrue(repository.discardRunThatRecordedNothing(67L))
+
+        verify(sessionDao).deleteSessionById(67L)
+    }
+
+    @Test
+    fun `a Run that recorded only a fix is never taken away`() = runTest {
+        // One fix minutes after START is one row, and it proves both that the Run was recording and
+        // how far into it that was — the same rule the rebuild reads it by.
+        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(emptyList())
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(
+            listOf(
+                TrackPoint(
+                    sessionId = 67L,
+                    latitude = 51.5,
+                    longitude = -0.1,
+                    timestampMillis = startedAt + 120_000,
+                    source = TrackPointSource.GPS,
+                )
+            )
+        )
+
+        assertFalse(repository.discardRunThatRecordedNothing(67L))
+
+        verify(sessionDao, never()).deleteSessionById(any())
+    }
+
+    @Test
+    fun `a row that is not there at all is nothing to take away`() = runTest {
+        whenever(sessionDao.getSessionById(67L)).thenReturn(null)
+
+        assertFalse(repository.discardRunThatRecordedNothing(67L))
+
+        verify(sessionDao, never()).deleteSessionById(any())
     }
 }

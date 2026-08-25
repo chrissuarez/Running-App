@@ -54,6 +54,16 @@ enum class RunJournalEvent(val token: String, val absenceIsEvidence: Boolean = f
      */
     RUN_ROW_CREATED("run-row-created", absenceIsEvidence = true),
 
+    /**
+     * The row of a Run that recorded nothing was taken away again (#314).
+     *
+     * Only ever a row that landed after its service was destroyed, with no sample, fix, Interval or
+     * Pause against it — a Run that was never going to be rebuildable and would otherwise have sat
+     * at `endTime = 0` for good. Written down because a deletion nobody can see is the one kind of
+     * change a journal has to say out loud.
+     */
+    RUN_ROW_DISCARDED("run-row-discarded"),
+
     RUN_PAUSED("run-paused"),
     RUN_RESUMED("run-resumed"),
 

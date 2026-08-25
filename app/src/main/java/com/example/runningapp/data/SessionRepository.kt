@@ -1299,6 +1299,62 @@ class SessionRepository(
     }
 
     /**
+     * Takes away the row of a Run that was torn down before it recorded a single second (#314).
+     *
+     * The Run's row is inserted asynchronously, and a teardown can arrive while that insert is
+     * still in flight. The insert is not cancelled — it runs on a scope that outlives the service,
+     * and by the time the teardown could reach for it the row is often already committed — so what
+     * the teardown does instead is wait for it and settle what it produced. A Run that had banked
+     * seconds has them written to that row and is rescued like any other
+     * ([rescueRunLostToTeardown]). A Run that had banked nothing has this.
+     *
+     * Left alone, such a row is a Run that cannot be rebuilt and cannot be finished: every query
+     * reads `endTime = 0` as "still recording" and steps around it, and the launch pass offers it
+     * to [finishedFromRecord], which refuses it for exactly the right reason — a Run with nothing
+     * in it is not a Run, and a recovery path must never be the thing that puts something into
+     * history. So it sits there for good, tried again at every launch. Taking it away is the other
+     * half of that same rule: a row that will never become a Run should not go on being one of the
+     * things the app is holding.
+     *
+     * Refuses on anything but that exact shape. A row with an end time is a Run somebody finished —
+     * a finalize that beat the teardown to it — and totals are not evidence of samples, so its
+     * emptiness elsewhere proves nothing. A row with a sample or a fix against it is a Run with a
+     * record, and deleting it would take the record with it.
+     *
+     * A sample and a fix are the whole of the test because they are the whole of what a rebuild
+     * reads: with neither, [finishedFromRecord] refuses the row, and it will refuse it at every
+     * launch from now until the phone is replaced. A banked Interval or a Pause does not change
+     * that. Those are bookkeeping about seconds — how the Workout was going, where the clock
+     * stopped — and neither says a second was ever written down, so a row holding only those is
+     * still a row that can never become a Run. They go with it, which the database does itself:
+     * every table that hangs off a Run is `ON DELETE CASCADE`.
+     *
+     * Deletes the row directly rather than through [deleteSession]. That door rolls back everything
+     * a Run in history stands under — the coach's provenance, the record book, the segments, the
+     * history snapshot — and this row has never been in history, has never been finished, has never
+     * been scored and has never been shown to the coach. There is nothing standing on it to roll
+     * back, and this runs inside a teardown of a process that may be about to end.
+     *
+     * @return whether a row was taken away, so the caller can say so in the Run Journal.
+     */
+    suspend fun discardRunThatRecordedNothing(runRowId: Long): Boolean {
+        try {
+            val session = sessionDao.getSessionById(runRowId) ?: return false
+            if (session.endTime != 0L) return false
+            if (sampleDao?.getSamplesForSessionOnce(runRowId).orEmpty().isNotEmpty()) return false
+            if (trackPointDao?.getTrackPointsForSessionOnce(runRowId).orEmpty().isNotEmpty()) return false
+            sessionDao.deleteSessionById(runRowId)
+        } catch (e: Exception) {
+            // The row stays exactly as it is, which is where it was before this was tried. Nothing
+            // here is worth taking a dying process down for.
+            Log.w("InterruptedRun", "Could not discard the empty row of run $runRowId", e)
+            return false
+        }
+        Log.w("InterruptedRun", "Discarded run $runRowId: its row landed after the service was destroyed and it had recorded nothing")
+        return true
+    }
+
+    /**
      * One Run put back from what it wrote down, and everything that hangs off a Run being finished.
      *
      * Never throws: a Run that cannot be rebuilt costs the caller nothing and stays interrupted for
