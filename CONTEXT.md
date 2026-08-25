@@ -16,7 +16,11 @@ finished there and then from the seconds it had already written down, and the
 runner is told it happened (#309). The one exception is a Run that never
 recorded a second, torn down in the instant between START and its row landing:
 there is nothing to finish it from and nothing to show, so its empty row is
-taken away rather than left on disk as a Run nobody can ever see (#314).
+taken away rather than left on disk as a Run nobody can ever see (#314). A Run
+the runner stopped inside that same instant is no loss at all — its own totals
+are banked and waiting only for the row number to address them to, so the
+teardown hands them over and the Run is in history with the totals it ran,
+told to nobody because nothing was taken from anybody (#361).
 _Avoid_: session, activity — except inside the FIT Export, where `session` and
 `activity` are the format's own names for its messages, exactly as `lap` is (see
 **Split**). `FitActivity`, `RunFitActivity`, `SessionMesg` and `ActivityMesg` name
