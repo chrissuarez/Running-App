@@ -28,11 +28,23 @@ import com.example.runningapp.isRecording
  * out: the Run the runner deliberately stopped leaves an empty `endTime = 0` row, tells them
  * nothing, and is offered to the launch pass at every launch for ever. So a STOPPING Run that is
  * still holding work is read here exactly as a recording Run with no row is — as one
- * [RunLostToTeardown.AwaitingItsRow] whose [RunLostToTeardown.AwaitingItsRow.runnerStopped] is
- * true, which is the branch that hands the buffer over and lets the Run's own finalize finish it.
+ * [RunLostToTeardown.AwaitingItsRow], which is the branch that hands the buffer over. The held
+ * finalize is what put the Run in STOPPING in the first place, so in practice
+ * [RunLostToTeardown.AwaitingItsRow.runnerStopped] comes out true and the Run's own totals finish
+ * its row.
  *
- * A STOPPING Run holding nothing is nothing to settle: its buffer has already been handed over by
- * the thread that owned it, which is the same event that ends STOPPING.
+ * The reading is nonetheless of the held work and not of that finalize, because what must never be
+ * dropped here is a held second. A buffer with anything in it is a Run with something to deliver,
+ * and if a Run could ever reach STOPPING without its finalize the answer would still be to deliver
+ * what it has — rebuilt totals and a runner who is told, rather than silence and a lost Run.
+ *
+ * The other two things asked of a STOPPING Run — no row id, and a buffer with something in it —
+ * are the shape such a Run always has rather than states it might be found in. STOPPING is not
+ * live, so its row id is published as null; and the event that empties the buffer is the arrival
+ * of the id, which ends STOPPING in the same outcome ([RunEvent.RunRowCreated]), so a STOPPING Run with an
+ * empty buffer is never published at all. They are asked because this is reached with three loose
+ * values and one narrow branch: a Run in any other shape is not the one described here, and a
+ * branch that fires on it would be settling something it has not read.
  *
  * @param status what the service last published of the Run.
  * @param liveRunRowId the row id of the Run it holds as live, null once a stop has cleared it and
@@ -179,6 +191,11 @@ sealed interface RunLostToTeardown {
          * which is a thing the Run has to be able to be told and so not this teardown's to add
          * (#360). Standing down is the safer of the two: a lost buffer is the residue this file
          * already describes, and a doubled one is a Run in history with totals nobody ran.
+         *
+         * A Run the runner stopped goes out by this same door and is left the same way, which is
+         * #361's residue surviving in #360's one case: nobody delivers the held finalize, the row
+         * stays empty and the runner is told nothing. Knowingly kept, because the alternative is
+         * the doubled Run above, and closing it is the claim #360 is for.
          */
 
 

@@ -86,8 +86,9 @@ class RunLostToTeardownTest {
 
     @Test
     fun `a stopped Run holding nothing has nothing for the teardown to settle`() {
-        // STOPPING with an empty buffer is a Run whose held work has already been handed over by
-        // the thread that owned it. There is nothing left to deliver, so there is nothing here.
+        // Not a moment the app can publish — the id that empties the buffer ends STOPPING in the
+        // same outcome — so this pins the branch rather than a state: with nothing held there is
+        // nothing to deliver, and the settling is for delivering.
         assertNull(runLostToTeardown(SessionStatus.STOPPING, null))
         assertNull(runLostToTeardown(SessionStatus.IDLE, null))
     }
@@ -105,9 +106,23 @@ class RunLostToTeardownTest {
     }
 
     @Test
+    fun `a stopped Run holding seconds but no finalize still has them delivered`() {
+        // Unreachable while a stop is the only way into STOPPING, and pinned anyway: the reading
+        // is of the held work, so a held second is delivered whatever else is or is not beside it.
+        // The Run is then put back and its runner told, which is the answer for a Run with no
+        // finish of its own — never silence.
+        val lost = runLostToTeardown(SessionStatus.STOPPING, null, listOf(heldSample(1)))
+                as RunLostToTeardown.AwaitingItsRow
+
+        assertFalse(lost.runnerStopped)
+        assertTrue(lost.hasSomethingToSave)
+    }
+
+    @Test
     fun `a stopped Run whose row landed is nothing for the teardown to do`() {
-        // The id arrived, the buffer went out with it and the Run finalized itself. STOPPING only
-        // outlives its row id in the reading, never in fact.
+        // Also not a moment the app can publish: STOPPING is not live, so its row id is published
+        // as null whatever the Run holds. Pinned because the branch takes three loose values, and
+        // a Run whose id has landed is not the Run it is written for.
         assertNull(runLostToTeardown(SessionStatus.STOPPING, 9133L, listOf(heldFinalize)))
     }
 
