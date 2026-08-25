@@ -91,6 +91,14 @@ fun SessionDetailScreen(
     // no track to cut one from — a treadmill Run, and history from before #37 — which is what keeps
     // the button off a page with no map above it.
     onCreateSegment: ((Long) -> Unit)? = null,
+    // Keeping the whole of this Run's ground as a course to run again (#55). Null on the same Runs
+    // [onCreateSegment] is null on, and for the same reason: there is no line to keep without a
+    // recorded track.
+    onSaveAsRoute: ((Long) -> Unit)? = null,
+    // What became of that — kept, already kept, or nothing to keep. Null when there is nothing to
+    // say, which is every moment but the one after the tap.
+    saveAsRouteMessage: String? = null,
+    onSaveAsRouteMessageShown: () -> Unit = {},
     // The named ground this Run went over, and where it placed there (#71). Empty for a Run that
     // crossed none, and for one whose Segments have not been walked against it yet — the card is
     // simply absent until the pass lands, the same as the medals are.
@@ -125,6 +133,15 @@ fun SessionDetailScreen(
         if (shareFailed) {
             snackbarHostState.showSnackbar("Couldn't create the file for this run")
             onShareFailureShown()
+        }
+    }
+
+    // Long, because two of the three answers are a refusal explaining what was and was not written,
+    // and this is the only place the runner is told (#55).
+    LaunchedEffect(saveAsRouteMessage) {
+        if (saveAsRouteMessage != null) {
+            snackbarHostState.showSnackbar(saveAsRouteMessage, duration = SnackbarDuration.Long)
+            onSaveAsRouteMessageShown()
         }
     }
 
@@ -254,6 +271,21 @@ fun SessionDetailScreen(
                                 .heightIn(min = RunningUiTokens.MinTouchTarget)
                         ) {
                             Text("New segment from this run")
+                        }
+                    }
+                    // Beside it, and under the map for the same reason: the runner is looking at
+                    // where they went, and this is the way to keep the whole of it rather than a
+                    // piece. A Segment is a place inside this Run; a Route is the round of it,
+                    // ready to be run again (#55).
+                    if (onSaveAsRoute != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = { onSaveAsRoute(session.id) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = RunningUiTokens.MinTouchTarget)
+                        ) {
+                            Text("Save as route")
                         }
                     }
                     Spacer(modifier = Modifier.height(24.dp))

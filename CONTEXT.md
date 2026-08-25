@@ -192,8 +192,10 @@ worked out once and banked rather than re-measured on read
 ([ADR 0014](docs/adr/0014-a-route-is-a-plan-not-a-recording.md)). A Route _is_ its line, so a file
 drawing a line already kept is that Route rather than a second one — it adds nothing, and where it
 measures the line differently it re-measures the Route the runner already has. Imported from a GPX
-file (#54), and later saved from a Run that has already been made. Deleting one costs no Run anything: nothing in the
-library points at history and nothing in history points back.
+file (#54), or traced off a Run the runner has already been for (#55) — the same course either way,
+thinned to its shape and joined across the Pauses, because a Route is where the line goes and not
+what happened on it. A course already kept is not kept twice, whichever door it comes in by. Deleting one costs no Run
+anything: nothing in the library points at history and nothing in history points back.
 _Avoid_: path, and **track** — a Track is what a Run recorded of where it went, and the two must
 not be confused even in code (`TrackPoint` belongs to a Run). "Course" is fine, and is the word for
 the line itself as against the whole record of it. The `Routes` object under

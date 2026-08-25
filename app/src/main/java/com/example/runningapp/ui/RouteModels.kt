@@ -63,6 +63,33 @@ fun routeAlreadySavedMessage(name: String): String =
     "That route is already in your routes, as “$name”. Nothing was added."
 
 /**
+ * What a Run's page says the moment the ground it went over is kept as a course (#55).
+ *
+ * Names the Route rather than the Run, because the name is the handle the runner has on it in the
+ * library, and the Route is the new thing they have.
+ */
+fun runSavedAsRouteMessage(name: String): String = "Saved this run to your routes as “$name”."
+
+/**
+ * What a Run's page says when the library already holds the course this Run went over.
+ *
+ * Names the kept Route for [routeAlreadySavedMessage]'s reason: a runner who saved this lap in the
+ * spring and renamed it is looking for that row, and the name is how they will find it.
+ */
+fun runAlreadySavedAsRouteMessage(name: String): String =
+    "That route is already in your routes, as “$name”. Nothing was added."
+
+/**
+ * What a Run's page says when there is no course in the Run to keep.
+ *
+ * The Run that stopped in its first seconds, and the one that recorded a standstill: enough fixes to
+ * draw a map from, not enough ground to follow. Says nothing was added, because a runner who has
+ * just been refused needs to know the library is exactly as it was.
+ */
+fun runHasNoRouteToSaveMessage(): String =
+    "This run didn’t cover enough ground to keep as a route. Nothing has been added to your routes."
+
+/**
  * What the screen says when a course already kept has been re-measured from the file just handed
  * over.
  *

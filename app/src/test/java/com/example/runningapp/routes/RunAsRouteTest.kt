@@ -1,0 +1,167 @@
+package com.example.runningapp.routes
+
+import com.example.runningapp.data.TrackPoint
+import com.example.runningapp.data.TrackPointSource
+import com.example.runningapp.recording.geodesicDistanceMeters
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * What a Run's recorded track becomes when it is kept as a course (#55).
+ *
+ * Every rule here is about the line that is written down and never re-measured, so each one is
+ * pinned in the JVM rather than found on a phone — the bargain [GpxRouteReader] makes on the way in.
+ */
+class RunAsRouteTest {
+
+    /** A degree of latitude is about this many metres, which is how the spacings below are chosen. */
+    private val metersPerDegree = 111_320.0
+
+    private fun fix(
+        northMeters: Double,
+        eastMeters: Double,
+        secondsIn: Long,
+        altitudeMeters: Double? = null,
+        startsAfterPause: Boolean = false,
+        source: String = TrackPointSource.GPS,
+    ) = TrackPoint(
+        sessionId = 1,
+        latitude = 51.5 + northMeters / metersPerDegree,
+        // A degree of longitude is shorter this far north; cos(51.5°) is about 0.6225.
+        longitude = -0.1 + eastMeters / (metersPerDegree * 0.6225),
+        altitudeMeters = altitudeMeters,
+        timestampMillis = 1_700_000_000_000L + secondsIn * 1_000L,
+        source = source,
+        startsAfterPause = startsAfterPause,
+    )
+
+    @Test
+    fun `the course is walked in the order the run recorded it`() {
+        val outOfOrder = listOf(
+            fix(northMeters = 200.0, eastMeters = 0.0, secondsIn = 60),
+            fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = 0),
+            fix(northMeters = 200.0, eastMeters = 200.0, secondsIn = 120),
+        )
+
+        val points = runAsRoutePoints(outOfOrder)
+
+        assertEquals(3, points.size)
+        assertEquals(51.5, points.first().latitude, 0.000001)
+        assertEquals(200.0, geodesicDistanceMeters(
+            points[0].latitude, points[0].longitude, points[1].latitude, points[1].longitude
+        ), 1.0)
+    }
+
+    @Test
+    fun `standing on one spot is one point, not a hundred`() {
+        val stoodStill = (0..99).map { fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = it.toLong()) }
+
+        assertEquals(1, runAsRoutePoints(stoodStill).size)
+    }
+
+    @Test
+    fun `a straight road is its two ends`() {
+        val straight = (0..50).map { fix(northMeters = it * 10.0, eastMeters = 0.0, secondsIn = it.toLong()) }
+
+        assertEquals(2, runAsRoutePoints(straight).size)
+    }
+
+    @Test
+    fun `the corner the run turned survives`() {
+        val turned = (0..20).map { fix(northMeters = it * 10.0, eastMeters = 0.0, secondsIn = it.toLong()) } +
+            (1..20).map { fix(northMeters = 200.0, eastMeters = it * 10.0, secondsIn = 20L + it) }
+
+        val points = runAsRoutePoints(turned)
+
+        assertEquals(3, points.size)
+        // The middle one is the corner itself, where the run stopped going north.
+        assertEquals(200.0, (points[1].latitude - 51.5) * metersPerDegree, 1.0)
+    }
+
+    @Test
+    fun `a wobble finer than the course's detail is not a bend`() {
+        val wobbled = listOf(
+            fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = 0),
+            fix(northMeters = 100.0, eastMeters = 1.0, secondsIn = 20),
+            fix(northMeters = 200.0, eastMeters = 0.0, secondsIn = 40),
+        )
+
+        assertEquals(2, runAsRoutePoints(wobbled).size)
+    }
+
+    @Test
+    fun `a step aside the course can show is kept`() {
+        val steppedAside = listOf(
+            fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = 0),
+            fix(northMeters = 100.0, eastMeters = 40.0, secondsIn = 20),
+            fix(northMeters = 200.0, eastMeters = 0.0, secondsIn = 40),
+        )
+
+        assertEquals(3, runAsRoutePoints(steppedAside).size)
+    }
+
+    @Test
+    fun `the heights the run recorded come with the course`() {
+        val overAHill = listOf(
+            fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = 0, altitudeMeters = 10.0),
+            fix(northMeters = 100.0, eastMeters = 40.0, secondsIn = 20, altitudeMeters = 40.0),
+            fix(northMeters = 200.0, eastMeters = 0.0, secondsIn = 40, altitudeMeters = 12.0),
+        )
+
+        assertEquals(listOf(10.0, 40.0, 12.0), runAsRoutePoints(overAHill).map { it.elevationMeters })
+    }
+
+    @Test
+    fun `a run with no heights in it carries none`() {
+        val flat = listOf(
+            fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = 0),
+            fix(northMeters = 200.0, eastMeters = 0.0, secondsIn = 40),
+        )
+
+        assertNull(routeElevationGainMeters(runAsRoutePoints(flat)))
+    }
+
+    /**
+     * A Route has no Breaks: the stretches a recording arrives in are joined, exactly as the
+     * segments of a GPX file are ([GpxRouteReader], ADR 0014). The runner is keeping the course they
+     * went round, not a record of where they stood still in the middle of it.
+     */
+    @Test
+    fun `a pause is joined rather than ending the course`() {
+        val paused = listOf(
+            fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = 0),
+            fix(northMeters = 200.0, eastMeters = 0.0, secondsIn = 40),
+            fix(northMeters = 200.0, eastMeters = 200.0, secondsIn = 400, startsAfterPause = true),
+            fix(northMeters = 400.0, eastMeters = 200.0, secondsIn = 440),
+        )
+
+        assertEquals(4, runAsRoutePoints(paused).size)
+    }
+
+    /**
+     * The runs from before the app recorded a track of its own, whose fixes were rescued from the
+     * heart-rate breadcrumbs and sit minutes rather than seconds apart (#37). Nothing here may
+     * mistake that sparseness for a straight road.
+     */
+    @Test
+    fun `a run backfilled from breadcrumbs still makes a usable course`() {
+        val breadcrumbs = listOf(
+            fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = 0, source = TrackPointSource.BACKFILL),
+            fix(northMeters = 500.0, eastMeters = 0.0, secondsIn = 180, source = TrackPointSource.BACKFILL),
+            fix(northMeters = 500.0, eastMeters = 500.0, secondsIn = 360, source = TrackPointSource.BACKFILL),
+            fix(northMeters = 0.0, eastMeters = 500.0, secondsIn = 540, source = TrackPointSource.BACKFILL),
+        )
+
+        val points = runAsRoutePoints(breadcrumbs)
+
+        assertEquals(4, points.size)
+        assertTrue(routeDistanceMeters(points) > 1_400.0)
+    }
+
+    @Test
+    fun `a run that recorded nothing is no course at all`() {
+        assertEquals(emptyList<RoutePoint>(), runAsRoutePoints(emptyList()))
+    }
+}
