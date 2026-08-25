@@ -114,3 +114,18 @@ sealed interface RunLostToTeardown {
         val runnerStopped: Boolean get() = heldWork.any { it is PendingRowWork.Finalize }
     }
 }
+
+/**
+ * Whether this outcome starts a Run, and so retires whatever the last Run's insert left behind
+ * (#314).
+ *
+ * Asked of the effects rather than of the state because a Run's row id is the answer to an effect:
+ * [RunEffect.CreateRunRow] is emitted once per Run and by nothing else, so the outcome that carries
+ * it is the exact moment the last Run's id stops naming the Run being recorded.
+ *
+ * It is a question about an outcome — not about an effect being performed — because that is when it
+ * has to be answered. The Run becomes observable to a teardown when its state is published, which
+ * is before any of its effects run, so an id retired at the insert is an id that is stale for the
+ * whole of the window in between.
+ */
+fun List<RunEffect>.beginARun(): Boolean = any { it is RunEffect.CreateRunRow }

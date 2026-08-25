@@ -132,3 +132,28 @@ class RunLostToTeardownTest {
         assertTrue(runLostToTeardown(SessionStatus.RUNNING, 9133L)!!.hasSomethingToSave)
     }
 }
+
+/**
+ * When the row id a teardown reads stops naming the last Run and starts naming this one (#314).
+ */
+internal class BeginARunTest {
+
+    private val started = RunEvent.Started(config(), RunControls(), 1_700_000_000_000L)
+
+    @Test
+    fun `the outcome that starts a Run retires the last Run's row id`() {
+        // The whole of the rule: the id is retired by the outcome that begins a Run, which is
+        // published before any of that outcome's effects are performed. Retired at the insert
+        // instead, it would still be the last Run's while this one was already observable.
+        assertTrue(Driver().on(started).beginARun())
+    }
+
+    @Test
+    fun `an outcome in the middle of a Run keeps the row id it has`() {
+        val driver = Driver()
+        driver.on(started)
+
+        assertFalse(driver.on(RunEvent.RunRowCreated(9133L, 1_700_000_001_000L)).beginARun())
+        assertFalse(driver.on(RunEvent.Tick(1_700_000_002_000L)).beginARun())
+    }
+}

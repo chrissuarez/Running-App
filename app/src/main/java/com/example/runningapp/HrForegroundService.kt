@@ -62,6 +62,7 @@ import com.example.runningapp.run.SCAN_UNAVAILABLE
 import com.example.runningapp.run.ScannedStrap
 import com.example.runningapp.run.PendingRowWork
 import com.example.runningapp.run.RunLostToTeardown
+import com.example.runningapp.run.beginARun
 import com.example.runningapp.run.runLostToTeardown
 import java.util.concurrent.ConcurrentHashMap
 import com.example.runningapp.run.IntervalKind
@@ -355,8 +356,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * it to: the insert coroutine writes it from IO, the session thread clears it as each Run's
      * insert is dispatched, and the teardown reads it from main.
      *
-     * Cleared as each Run's insert is dispatched, so it can only ever name the Run being recorded
-     * now. [RunEffect.CreateRunRow] is emitted once per Run, which is what makes that true.
+     * Cleared as each Run is started and before that Run is published, so it can only ever name
+     * the Run being recorded now ([beginARun]). [RunEffect.CreateRunRow] is emitted once per Run,
+     * which is what makes that true — and clearing it there rather than when the insert is
+     * dispatched is what makes it true for a teardown, which reads this only after reading a
+     * published state.
      */
     @Volatile
     private var insertedRunRowId: Long? = null
@@ -601,6 +605,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun dispatchRunEvent(event: RunEvent) {
         val outcome = Run.onEvent(runState, event)
         runState = outcome.state
+        // Retired here, with the state and before the publish, rather than when the insert is
+        // dispatched (#314). A Run becomes observable to a teardown at [publishRun], and its
+        // effects run after it, so an id cleared inside [createRunRow] would still be the last
+        // Run's for the whole of the window in between — long enough for a teardown whose join of
+        // this thread timed out ([SESSION_THREAD_JOIN_TIMEOUT_MS]) to read the new Run as awaiting
+        // its row and settle the old Run's row in its name.
+        if (outcome.effects.beginARun()) insertedRunRowId = null
         // Published for the teardown alongside the state, and for the same reason the state is
         // published: it is read from another thread (#314). A reference copy, not a walk.
         heldRowWork = runState.pendingRowEffects
@@ -737,8 +748,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * [Run]'s `finish`.
      */
     private fun createRunRow(effect: RunEffect.CreateRunRow) {
-        // This Run's insert has not landed yet, whatever the last Run's did (#314).
-        insertedRunRowId = null
         // Emitted once per Run and by nothing else, which makes it the one place the things a Run
         // needs zeroed but does not own can be zeroed: GPS's distance and pace, and the Strap's
         // last reading and the clock that ages it.
