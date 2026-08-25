@@ -28,8 +28,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.listSaver
 import com.example.runningapp.data.Route
+import com.example.runningapp.run.RunRoute
 import com.example.runningapp.ui.theme.RunningUiTokens
+
+/**
+ * How a pending route choice survives the process being rebuilt (#56).
+ *
+ * [RunRoute] is not `Parcelable` and is not going to be: it is the rulebook's word for a course a
+ * Run set out on, and making it carry an Android interface to suit one screen's saved state would
+ * put Android in the run module. Two values written down and read back is the whole of what saving
+ * it needs.
+ */
+val RunRouteSaver: Saver<RunRoute?, Any> = listSaver(
+    save = { route -> route?.let { listOf(it.routeId, it.reversed) } ?: emptyList() },
+    restore = { saved ->
+        if (saved.size != 2) null else RunRoute(saved[0] as Long, saved[1] as Boolean)
+    },
+)
 
 /**
  * The pre-run route picker (#56): which course this Run will follow, and which way round.
