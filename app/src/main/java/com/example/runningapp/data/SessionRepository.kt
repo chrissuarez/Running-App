@@ -1321,6 +1321,13 @@ class SessionRepository(
      * emptiness elsewhere proves nothing. A row with a sample or a fix against it is a Run with a
      * record, and deleting it would take the record with it.
      *
+     * Those refusals are the delete's own conditions rather than checks taken before it
+     * ([SessionDao.deleteSessionIfItRecordedNothing]), because the teardown's waits for the Run's
+     * writers are bounded and a bounded wait can end with a writer still going: a drain that gives
+     * up, or a fix from a looper asked to quit and never joined. A read and then a delete would be
+     * a decision about a row that can change in between, and the row it deleted would be a Run
+     * with its record inside it. As one statement there is no such in-between.
+     *
      * A sample and a fix are the whole of the test because they are the whole of what a rebuild
      * reads: with neither, [finishedFromRecord] refuses the row, and it will refuse it at every
      * launch from now until the phone is replaced. A banked Interval or a Pause does not change
@@ -1338,16 +1345,21 @@ class SessionRepository(
      * @return whether a row was taken away, so the caller can say so in the Run Journal.
      */
     suspend fun discardRunThatRecordedNothing(runRowId: Long): Boolean {
+        val discarded: Int
         try {
-            val session = sessionDao.getSessionById(runRowId) ?: return false
-            if (session.endTime != 0L) return false
-            if (sampleDao?.getSamplesForSessionOnce(runRowId).orEmpty().isNotEmpty()) return false
-            if (trackPointDao?.getTrackPointsForSessionOnce(runRowId).orEmpty().isNotEmpty()) return false
-            sessionDao.deleteSessionById(runRowId)
+            discarded = sessionDao.deleteSessionIfItRecordedNothing(runRowId)
         } catch (e: Exception) {
             // The row stays exactly as it is, which is where it was before this was tried. Nothing
             // here is worth taking a dying process down for.
             Log.w("InterruptedRun", "Could not discard the empty row of run $runRowId", e)
+            return false
+        }
+        if (discarded == 0) {
+            // Somebody wrote to the row between the teardown deciding to settle it and this
+            // statement — a sample or a fix from a producer the bounded waits could not see the
+            // end of, or a finalize that beat both. The row has a record now, so it is a Run like
+            // any other and the launch pass has it.
+            Log.w("InterruptedRun", "Run $runRowId had recorded something after all; its row stays")
             return false
         }
         Log.w("InterruptedRun", "Discarded run $runRowId: its row landed after the service was destroyed and it had recorded nothing")

@@ -425,84 +425,39 @@ class SessionRepositoryRescueTest {
         // #314: the insert landed after the teardown had gone, so what is on disk is a row with a
         // start time and nothing else. Left alone it is an interrupted Run no launch pass can ever
         // rebuild, so it is not left alone.
-        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
-        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(emptyList())
-        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+        whenever(sessionDao.deleteSessionIfItRecordedNothing(67L)).thenReturn(1)
 
         assertTrue(repository.discardRunThatRecordedNothing(67L))
-
-        verify(sessionDao).deleteSessionById(67L)
     }
 
     @Test
-    fun `a Run that recorded a second is never taken away`() = runTest {
-        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
-        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 1))
-        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+    fun `a Run the statement would not take is one this reports it did not take`() = runTest {
+        // Which Runs the statement refuses — finished, or with a sample or a fix against it — is
+        // proved where it can be: against a real engine, in [DiscardEmptyRunQueryTest]. What is
+        // this side of the seam is that a refusal is carried back rather than reported as a
+        // deletion, because the Run Journal writes its line from this answer.
+        whenever(sessionDao.deleteSessionIfItRecordedNothing(67L)).thenReturn(0)
 
         assertFalse(repository.discardRunThatRecordedNothing(67L))
-
-        verify(sessionDao, never()).deleteSessionById(any())
     }
 
     @Test
-    fun `a Run that is already finished is never taken away, however empty it looks`() = runTest {
-        // The finalize that beat the teardown there is the one case this must not act on: the row
-        // holds the Run's own totals, and totals are not evidence of samples.
-        whenever(sessionDao.getSessionById(67L))
-            .thenReturn(interruptedRun(67L).copy(endTime = startedAt + 60_000, durationSeconds = 60))
+    fun `the row is never taken away by a delete that asks nothing first`() = runTest {
+        // The conditions and the deletion are one statement, which is the whole of the fix: the
+        // teardown's waits for the Run's writers are bounded, so a sample can still land between a
+        // question asked separately and a delete acting on the answer.
+        whenever(sessionDao.deleteSessionIfItRecordedNothing(67L)).thenReturn(1)
+
+        repository.discardRunThatRecordedNothing(67L)
+
+        verify(sessionDao, never()).deleteSessionById(any())
+        verify(sessionDao, never()).getSessionById(any())
+    }
+
+    @Test
+    fun `a database that throws leaves the row where it is`() = runTest {
+        whenever(sessionDao.deleteSessionIfItRecordedNothing(67L)).thenThrow(RuntimeException("no disk"))
 
         assertFalse(repository.discardRunThatRecordedNothing(67L))
-
-        verify(sessionDao, never()).deleteSessionById(any())
-    }
-
-    @Test
-    fun `a Run that banked only a Pause is still taken away`() = runTest {
-        // A Pause says where the clock stopped; it does not say a second was written down. With no
-        // sample and no fix the row can never be rebuilt, so the Pause goes with it — which the
-        // database does itself, every table that hangs off a Run being ON DELETE CASCADE.
-        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
-        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(emptyList())
-        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
-        whenever(runPauseDao.getPausesForSession(67L)).thenReturn(
-            listOf(RunPause(sessionId = 67L, startTimeMillis = startedAt, endTimeMillis = startedAt + 300))
-        )
-
-        assertTrue(repository.discardRunThatRecordedNothing(67L))
-
-        verify(sessionDao).deleteSessionById(67L)
-    }
-
-    @Test
-    fun `a Run that recorded only a fix is never taken away`() = runTest {
-        // One fix minutes after START is one row, and it proves both that the Run was recording and
-        // how far into it that was — the same rule the rebuild reads it by.
-        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
-        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(emptyList())
-        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(
-            listOf(
-                TrackPoint(
-                    sessionId = 67L,
-                    latitude = 51.5,
-                    longitude = -0.1,
-                    timestampMillis = startedAt + 120_000,
-                    source = TrackPointSource.GPS,
-                )
-            )
-        )
-
-        assertFalse(repository.discardRunThatRecordedNothing(67L))
-
-        verify(sessionDao, never()).deleteSessionById(any())
-    }
-
-    @Test
-    fun `a row that is not there at all is nothing to take away`() = runTest {
-        whenever(sessionDao.getSessionById(67L)).thenReturn(null)
-
-        assertFalse(repository.discardRunThatRecordedNothing(67L))
-
-        verify(sessionDao, never()).deleteSessionById(any())
     }
 }
