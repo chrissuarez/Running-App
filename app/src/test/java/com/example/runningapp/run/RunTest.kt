@@ -135,21 +135,28 @@ class RunStartTest {
      * runner their choice, so a pick really does arrive beside a treadmill mode (#56).
      */
     @Test
-    fun `a treadmill run follows no course, whatever was picked`() {
-        assertNull(runRouteFollowed(RunMode.TREADMILL, routeId = 12L, reversed = true))
+    fun `a treadmill run sets out on no course, whatever was picked`() {
+        assertNull(runRouteSetOutOn(RunMode.TREADMILL, routeId = 12L, reversed = true))
     }
 
     @Test
-    fun `an outdoor run follows the course it was given, the way round it was given`() {
+    fun `an outdoor run sets out on the course it was given, the way round it was given`() {
         assertEquals(
             RunRoute(routeId = 12L, reversed = true),
-            runRouteFollowed(RunMode.OUTDOOR, routeId = 12L, reversed = true),
+            runRouteSetOutOn(RunMode.OUTDOOR, routeId = 12L, reversed = true),
         )
     }
 
     @Test
-    fun `an outdoor run given no course follows none`() {
-        assertNull(runRouteFollowed(RunMode.OUTDOOR, routeId = null, reversed = false))
+    fun `an outdoor run given no course sets out on none`() {
+        assertNull(runRouteSetOutOn(RunMode.OUTDOOR, routeId = null, reversed = false))
+    }
+
+    /** The one statement of the rule, so the screen and the rulebook cannot disagree (#56). */
+    @Test
+    fun `only an outdoor run can set out on a course at all`() {
+        assertTrue(runModeCanSetOutOnARoute(RunMode.OUTDOOR))
+        assertFalse(runModeCanSetOutOnARoute(RunMode.TREADMILL))
     }
 
     @Test

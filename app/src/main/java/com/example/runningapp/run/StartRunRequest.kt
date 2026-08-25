@@ -15,12 +15,16 @@ package com.example.runningapp.run
 data class StartRunRequest(
     /** Today's plan set aside for this Run only — it never edits the plan (#107). */
     val skipPlan: Boolean,
-    /** Treadmill or outdoor, as the toggle stood — see [RunMode.settingValue]. */
-    val runMode: String,
+    /** Treadmill or outdoor, as the toggle stood. */
+    val runMode: RunMode,
     /** Which of the Stage's Workouts the card was showing (#174), or null for none. */
     val pickedWorkoutId: String?,
-    /** The Route picked to follow, or null for a Run following none (#56). */
-    val routeId: Long?,
-    /** Which way round that course is to be run. Meaningless without [routeId] beside it. */
-    val routeReversed: Boolean,
+    /**
+     * The course picked on the card, and which way round — null where none was (#56).
+     *
+     * The pair travels as the one thing it is, so a course and its direction can never be taken from
+     * different taps. Whether a Run in [runMode] may set out on it at all is not asked here: this is
+     * what the screen offered, and the rulebook has the say (see [runRouteSetOutOn]).
+     */
+    val route: RunRoute?,
 )

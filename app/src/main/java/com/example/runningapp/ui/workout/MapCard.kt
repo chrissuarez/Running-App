@@ -130,6 +130,11 @@ fun MapSurface(sessionId: Long, sessionRepository: SessionRepository, modifier: 
                 puckBearing = PuckBearing.HEADING
                 enabled = true
             }
+            // Follow the runner, and not the course, even on a routed Run (#56). The camera's job
+            // during a Run is to show where they are and what is immediately in front of them; a
+            // camera pulled back far enough to hold the whole of a ten-kilometre course would show
+            // them neither. So the whole course line is drawn, and how much of it is on screen at
+            // any moment is the zoom's business — the full-screen map is the way to see the rest.
             mapViewportState.transitionToFollowPuckState()
         }
         // Before the trail, so the runner's own path is drawn on top of the plan rather than under
