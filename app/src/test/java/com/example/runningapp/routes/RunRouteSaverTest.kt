@@ -4,6 +4,8 @@ import com.example.runningapp.data.RouteSource
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointSource
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -67,6 +69,32 @@ class RunRouteSaverTest {
         assertTrue(first is RunRouteOutcome.Saved)
         assertEquals(RunRouteOutcome.AlreadySaved(dao.stored.single().name), again)
         assertEquals(1, dao.stored.size)
+    }
+
+    /**
+     * The runner taps the button twice before the first tap has finished — an impatient double-tap,
+     * which is all it takes, since each tap saves on a scope of its own.
+     *
+     * The library must still hold one course afterwards. Asked whether it already has this line and
+     * only then told to keep it, both taps would have been told "no" before either wrote, and the
+     * runner would be left with the same course on two rows that nothing in the table can tell apart.
+     */
+    @Test
+    fun `two taps at once keep one course`() = runTest {
+        // Long enough for the second tap to arrive while the first is still deciding.
+        dao.findDelayMillis = 50
+
+        val outcomes = listOf(
+            async { saver.save(aRun, aLap(), london) },
+            async { saver.save(aRun, aLap(), london) },
+        ).awaitAll()
+
+        val kept = dao.stored.single()
+        // One kept it, the other was sent back to the row that keeping it made.
+        assertEquals(
+            setOf(RunRouteOutcome.Saved(kept.id, kept.name), RunRouteOutcome.AlreadySaved(kept.name)),
+            outcomes.toSet(),
+        )
     }
 
     /** The runner renamed it, and the row they already have is the one to send them back to. */

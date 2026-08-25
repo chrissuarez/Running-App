@@ -93,18 +93,15 @@ class RunRouteSaver(
         if (course.line.size < 2) return RunRouteOutcome.NoGround
         if (courseSpanMeters(course.line) < ROUTE_MINIMUM_METERS) return RunRouteOutcome.NoGround
 
-        // Asked before anything is worked out that a second row would need, the way an import asks
-        // it: the line is the course's identity, and an answer of "you already have this" names the
-        // row the runner has rather than the Run they came from.
+        // Offered rather than asked about first: the line is the course's identity, and the library
+        // itself decides in one go whether this one is new — asking and then writing would leave a
+        // gap for a second tap to walk into, and the runner would have two rows of the same course.
+        // What comes back names the row they have, which after a rename is not the Run's own name.
         val polyline = RoutePolyline.encode(course.line)
-        routeDao.findRouteByPolyline(polyline)?.let { kept ->
-            return RunRouteOutcome.AlreadySaved(name = kept.name)
-        }
-
         // The Run's own name, in the same words it is exported under, so a course saved off a Run
         // and a file shared from it cannot disagree about which evening they came from (#304).
         val name = RunExportName.runName(run, zoneId)
-        val id = routeDao.insertRoute(
+        val kept = routeDao.keepRoute(
             Route(
                 name = name,
                 // Along the line that was kept, and up the hills that were recorded — the two are
@@ -117,6 +114,10 @@ class RunRouteSaver(
                 source = RouteSource.FROM_RUN,
             )
         )
-        return RunRouteOutcome.Saved(routeId = id, name = name)
+        return if (kept.alreadyKept) {
+            RunRouteOutcome.AlreadySaved(name = kept.name)
+        } else {
+            RunRouteOutcome.Saved(routeId = kept.id, name = kept.name)
+        }
     }
 }
