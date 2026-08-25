@@ -85,6 +85,7 @@ import com.example.runningapp.ui.SegmentsViewModel
 import com.example.runningapp.ui.SegmentsViewModelFactory
 import com.example.runningapp.routes.RunRouteSaver
 import com.example.runningapp.ui.RoutePickerCard
+import com.example.runningapp.ui.RunRouteSaver
 import com.example.runningapp.ui.RoutesScreen
 import com.example.runningapp.ui.RoutesViewModel
 import com.example.runningapp.ui.RoutesViewModelFactory
@@ -351,6 +352,15 @@ class MainActivity : ComponentActivity() {
                     // Run is over and no longer has a mode to be asked for.
                     var feelSheetRunMode by rememberSaveable { mutableStateOf<String?>(null) }
 
+                    // The course picked for the next Run, and which way round (#56). Above the
+                    // NavHost, not inside the record screen, because [navigateTo] below pops the
+                    // whole graph inclusively and takes any state the popped screen was holding
+                    // with it — and checking a course in the Routes library before setting off on
+                    // it is the very trip that would then have thrown the pick away.
+                    var routeChoice by rememberSaveable(stateSaver = RunRouteSaver) {
+                        mutableStateOf<RunRoute?>(null)
+                    }
+
                     val navController = rememberNavController()
                     val navigateTo: (String) -> Unit = { route ->
                         navController.navigate(route) {
@@ -528,6 +538,8 @@ class MainActivity : ComponentActivity() {
                                 zoneChanges = appContainer.zoneChanges,
                                 onRequestPermissions = { checkAndRequestPermissions() },
                                 routes = routeLibrary,
+                                routeChoice = routeChoice,
+                                onRouteChoiceChange = { routeChoice = it },
                                 onStartRun = { request ->
                                     // An Outdoor run without location permission would silently
                                     // record 0 km (LocationTracker just logs and returns): ask
@@ -1470,6 +1482,16 @@ fun MainScreen(
      */
     routes: List<Route>,
     /**
+     * The course picked for the next Run, and which way round — null for none picked (#56).
+     *
+     * Held above this screen rather than in it, because this screen does not survive being left:
+     * `navigateTo` pops the whole graph inclusively, so a walk to the Routes library to check which
+     * course is which builds a fresh MainScreen on the way back, and a pick kept here would be
+     * silently dropped by exactly the trip a runner makes to make it.
+     */
+    routeChoice: RunRoute?,
+    onRouteChoiceChange: (RunRoute?) -> Unit,
+    /**
      * The phone changing zone, so the Today card's "Test due" answer arrives when the runner lands
      * rather than at the midnight of the zone they took off from (#320).
      *
@@ -1511,12 +1533,6 @@ fun MainScreen(
     // position in the Plan down, because the Plan is a menu and has no position to write.
     var pickedWorkoutId by rememberSaveable { mutableStateOf<String?>(null) }
 
-    // The course this Run will follow, and which way round (#56). Screen state, saved the way the
-    // Workout pick is and for the same reason: a rotation must not undo the tap. Kept across a
-    // switch to Treadmill rather than cleared, so switching back does not cost the runner their
-    // choice — a treadmill Run following no course is the rulebook's rule, not the screen's.
-    var pickedRouteId by rememberSaveable { mutableStateOf<Long?>(null) }
-    var pickedRouteReversed by rememberSaveable { mutableStateOf(false) }
 
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     val activeStage = TrainingPlanProvider.resolveActiveStage(
@@ -1588,7 +1604,8 @@ fun MainScreen(
 
     // Taken from the library rather than from the pick, so a course deleted while this screen sat
     // open is not the course a Run sets off on (#56) — the same rule the Workout pick keeps above.
-    val pickedRoute = routes.firstOrNull { it.id == pickedRouteId }
+    val pickedRoute = routes.firstOrNull { it.id == routeChoice?.routeId }
+    val pickedRouteReversed = routeChoice?.reversed == true
     // Everything the tap has to carry, built in one place so START and Simulate cannot set off on
     // different Runs.
     val startRunRequest = StartRunRequest(
@@ -1604,10 +1621,7 @@ fun MainScreen(
     // the Run is still ahead of them, and exactly what it must not do once it is behind them. Not
     // conditioned on the Run actually beginning: a START that is refused was still the runner
     // saying "that Run, now", and a refusal they have to notice is better than a course they do not.
-    val spendRouteChoice = {
-        pickedRouteId = null
-        pickedRouteReversed = false
-    }
+    val spendRouteChoice = { onRouteChoiceChange(null) }
 
     val isSessionActive = state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED
 
@@ -1758,12 +1772,15 @@ fun MainScreen(
                             onPick = { routeId ->
                                 // A different course starts pointing the way it is drawn. Carrying
                                 // the last pick's direction over would send the runner backwards
-                                // round a course they never asked to reverse. Tested before the
-                                // pick is written down, or every pick would look like the same one.
-                                if (routeId != pickedRouteId) pickedRouteReversed = false
-                                pickedRouteId = routeId
+                                // round a course they never asked to reverse; re-picking the one
+                                // already chosen keeps the direction they set on it.
+                                val keptDirection =
+                                    routeId == routeChoice?.routeId && pickedRouteReversed
+                                onRouteChoiceChange(routeId?.let { RunRoute(it, keptDirection) })
                             },
-                            onReversedChange = { pickedRouteReversed = it }
+                            onReversedChange = { reversed ->
+                                routeChoice?.let { onRouteChoiceChange(it.copy(reversed = reversed)) }
+                            }
                         )
                     }
                 }

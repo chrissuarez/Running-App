@@ -1020,6 +1020,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         )
     }
 
+    /**
+     * The mode the tap that sent [intent] was aiming at.
+     *
+     * Read from the intent where it says, and from settings only where it does not, because the
+     * settings write behind a Treadmill/Outdoor tap is asynchronous and the tap that follows it can
+     * beat it here. Asked in one place because both actions that begin a Run have to answer it the
+     * same way: a Run is a Run whether the Strap is real or invented, and the two disagreeing meant
+     * the Simulate button quietly recorded a different Run from the one START would have.
+     */
+    private fun runModeAskedFor(intent: Intent): RunMode =
+        RunMode.ofSettingValue(intent.getStringExtra(EXTRA_RUN_MODE) ?: currentSettings.runMode)
+
     /** The settings the runner may still change mid-Run, delivered as events rather than read. */
     private fun controlsFrom(settings: UserSettings) = RunControls(
         coachingEnabled = settings.coachingEnabled,
@@ -1267,11 +1279,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 //
                 // The run mode comes from the START intent when present so a just-tapped
                 // Treadmill/Outdoor choice wins over a not-yet-persisted setting.
-                startRun(
-                    RunMode.ofSettingValue(
-                        intent.getStringExtra(EXTRA_RUN_MODE) ?: currentSettings.runMode
-                    )
-                )
+                startRun(runModeAskedFor(intent))
                 // The Run publishes RUNNING from its own thread, a moment after this returns, so
                 // the tail reconcile below would read IDLE and demote — stopSelf and all — the
                 // Promotion this Run has just earned. The subscription in onCreate() takes it from
@@ -1339,8 +1347,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
             ACTION_SET_SIMULATION -> {
                 val enabled = intent.getBooleanExtra(EXTRA_SIMULATION_ENABLED, isSimulationEnabled)
-                // Simulation starts a Run of its own, so the same deferral applies.
-                val simulationStartedRun = setSimulationEnabled(enabled)
+                // Simulation starts a Run of its own, so the same deferral applies — and the same
+                // reading of the mode. A Simulate tap made straight after an Outdoor tap used to
+                // start from whatever the settings still said, so a Run the runner had just aimed
+                // outdoors was recorded on a treadmill and dropped the course they had picked for
+                // it, and the inverse carried a course onto a Run they had aimed indoors.
+                val simulationStartedRun = setSimulationEnabled(enabled, runModeAskedFor(intent))
                 deferReconcileToRun = simulationStartedRun
             }
         }
@@ -2193,7 +2205,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * Promotion in place for the Run to justify rather than reconciling it away before the Run has
      * had a chance to publish.
      */
-    fun setSimulationEnabled(enabled: Boolean): Boolean {
+    fun setSimulationEnabled(enabled: Boolean, runMode: RunMode = RunMode.ofSettingValue(currentSettings.runMode)): Boolean {
         if (isSimulationEnabled == enabled) {
             _hrState.update { it.copy(isSimulating = isSimulationEnabled) }
             Log.d(TAG, "Simulation unchanged: enabled=$isSimulationEnabled status=${_hrState.value.sessionStatus}")
@@ -2219,7 +2231,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
         // Whether there is a Run to begin is the Run's question, exactly as it is at START: it
         // ignores a Started that arrives while one is live, so there is no guard to keep here.
-        startRun(RunMode.ofSettingValue(currentSettings.runMode))
+        startRun(runMode)
         Log.d(TAG, "Simulation Mode ENABLED - started a run")
         return true
     }
@@ -2470,11 +2482,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
  * The mode travels on the intent so a just-tapped Treadmill/Outdoor choice is honoured even before
  * its settings write lands; the Workout (#174) and the Route (#56) travel for the same reason.
  *
- * Every choice goes on whichever of the two Run-starting actions this is, including the ones that
- * action does not consult: a Run begun by the Simulate button still reads its mode out of settings,
- * so [HrForegroundService.EXTRA_RUN_MODE] rides along unread there. That is the price of one door,
- * and it is the right way round — an extra nobody reads costs nothing, and a choice left off an
- * intent is a Run that sets out on something the runner did not pick.
+ * Every choice goes on whichever of the two Run-starting actions this is, and both actions read the
+ * same choices back: a Run is a Run whether the Strap is real or invented, so the Simulate button
+ * must not quietly record a different Run from the one START would have.
  */
 fun Intent.putRunChoices(request: StartRunRequest) {
     putExtra(HrForegroundService.EXTRA_SKIP_PLAN, request.skipPlan)
