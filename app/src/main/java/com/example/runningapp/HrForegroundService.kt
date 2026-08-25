@@ -2346,11 +2346,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * be given an id for, which is what this settles.
      *
      * The first is the same loss as [endRunLostToTeardown] caught a moment earlier, and it needs a
-     * different answer because the Run's seconds are somewhere else. A Run with a row writes each second to
-     * the database as it happens; a Run still waiting on its id holds them instead, addressed to a
-     * row number that does not exist yet ([RunLostToTeardown.AwaitingItsRow]). Nothing on disk can
-     * be read back for such a Run, so the held work is handed over here and the ordinary rescue
-     * then reads what it wrote.
+     * different answer because the Run's seconds are somewhere else. A Run with a row writes each
+     * second to the database as it happens; a Run still waiting on its id holds them instead,
+     * addressed to a row number that does not exist yet ([RunLostToTeardown.AwaitingItsRow]).
+     * Nothing on disk can be read back for such a Run, so the held work is handed over here and
+     * the ordinary rescue then reads what it wrote.
      *
      * The insert is waited out rather than cancelled. It runs on [recorderWriteScope], which the
      * teardown does not cancel and must not — that scope carries the tail writes of the very Run
