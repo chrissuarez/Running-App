@@ -177,7 +177,7 @@
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
-      <p><strong>Keep a run you liked as a route to run again.</strong> Under the map on a finished run there is now <strong>Save as route</strong>, beside the way to cut a segment out of it. A segment is a stretch <em>inside</em> the run; this is the whole round of it, kept in the same library your GPX files land in and renameable there like any other. It is named after the run — <em>Run 22 Aug 2026, 06:21</em> — and you get told in plain words which of three things happened: kept, already kept, or nothing to keep. Runs with no GPS track, treadmill ones included, are not offered it at all.</p>
+      <p><strong>Set off on a route, and watch it on the map as you run.</strong> The home screen now has a <strong>Route</strong> card above today's run: pick a course out of your library, and switch on <strong>Run it backwards</strong> if you are doing it the other way round. Your run is then an ordinary run in every other way — same coaching, same intervals, same cues — except the live map draws the course in blue underneath the amber line of where you have actually been, so you can see at a glance whether you are on it. Outdoor runs only; a treadmill has no ground to follow a course over, so the card is not offered there.</p>
     </div>
   </header>
 
@@ -251,6 +251,16 @@
         <h3>Treadmill or Outdoor</h3>
         <p><strong>Outdoor</strong> records GPS as well as heart rate, so you get distance, pace, a map and splits. <strong>Treadmill</strong> records heart rate only — there is no GPS indoors worth having — and you type the distance in afterwards from the console.</p>
         <div class="where"><b>Where</b> Home → the two buttons above START</div>
+      </div>
+
+      <div class="e">
+        <h3>Following a route</h3>
+        <p>Pick a course out of your <a href="#routes">routes</a> before you start and the run follows it. Tap <strong>Choose a route</strong>, pick one from the list, and the card says which one and how far it goes. <strong>No route</strong> is at the top of the same list, which is how you go back to an ordinary run.</p>
+        <p><strong>Run it backwards</strong> is for doing the course the other way round. It makes no difference to the line on the map — the same ground in the same places — and it is what the app will read when it starts telling you which way to turn.</p>
+        <p class="note"><b>Outdoor only.</b> There is no ground under a treadmill for a course to be over, so the card is not shown in Treadmill mode. If you pick a route and then switch to Treadmill your choice is kept, in case you switch back — it just does not come along on that run.</p>
+        <p class="note"><b>Picking a route changes nothing else about the run.</b> Same warm-up and cool-down, same intervals, same target zone, same spoken cues, same records. It is a line on the map, not a different kind of run.</p>
+        <p class="note"><b>No routes yet?</b> The card says so and tells you where they come from — a GPX under <strong>Open Routes</strong>, or a run you have already been for.</p>
+        <div class="where"><b>Where</b> Home → the <strong>Route</strong> card, under Treadmill / Outdoor</div>
       </div>
 
       <div class="e">
@@ -645,6 +655,14 @@
       </div>
 
       <div class="e">
+        <h3>Running one</h3>
+        <p>Pick a course on the home screen before you start — see <a href="#before">Following a route</a>. During the run the map card, and the full-screen map behind it, draw the course in <strong>blue</strong> underneath the <strong>amber</strong> line of where you have actually been. Amber sitting on blue means you are on the course; blue showing on its own is course you have not run yet.</p>
+        <p>It works with the map downloaded for offline use, because the course comes out of your own library rather than off the internet.</p>
+        <p class="note"><b>Delete a route mid-run and the run is fine.</b> The blue line simply stops being drawn. The run carries on recording where you actually go, which was never the route's business.</p>
+        <div class="where"><b>Where</b> During an outdoor run → the map card, or tap it for full screen</div>
+      </div>
+
+      <div class="e">
         <h3>Rename and delete</h3>
         <p>Any route can be renamed and deleted, however it got in. Deleting a route never touches a run — including the run it was saved off.</p>
       </div>
@@ -752,6 +770,8 @@
       <dt>Run summary</dt>
       <dd>The few sentences the AI writes about one run, at the top of that run's own page. Written the first time you open the run and kept. It describes that run and nothing else — it never prescribes a workout; that is the coach's job.</dd>
 
+      <dt>Routed run</dt>
+      <dd>A run you started on a <strong>route</strong>. An ordinary run with a course written on it and a second, blue line on its live map. Which route is fixed the moment you press START.</dd>
       <dt>Matched runs</dt>
       <dd>Runs the app worked out are the same course, by shape alone. Nothing named, nothing saved, and no <strong>route</strong> in your library is involved. Runs under half a kilometre have no shape and join nothing.</dd>
     </dl>
@@ -759,7 +779,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>25 August 2026</strong>, when keeping a run as a route went in. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>25 August 2026</strong>, when starting a run on a route went in. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>

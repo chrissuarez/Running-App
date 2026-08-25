@@ -202,6 +202,29 @@ the line itself as against the whole record of it. The `Routes` object under
 `navigation/` is the app's list of screen addresses and is a different word that happens to be
 spelled the same.
 
+**Routed Run**:
+A Run started on a Route (#56) — the runner picked a course on the record screen before pressing
+START, and may have said they are running it backwards. In every other respect it is an ordinary
+Run: the same coaching, the same Intervals, the same cues, the same record book. What it has that
+other Runs do not is a course written on its row, and a second line on its live map — the Route
+drawn in blue, under the amber Track the Run is laying down as it goes, so the plan and where the
+runner actually is are told apart at a glance.
+
+Which Route, and never a copy of the line: the library stays the runner's to edit while the Run goes
+on, and a Route deleted mid-Run leaves the Run drawing its own Track alone, which costs it nothing
+([ADR 0014](docs/adr/0014-a-route-is-a-plan-not-a-recording.md)). It is written down at START and
+nothing ever moves it, because what a Run set out to do cannot be recovered afterwards — a Run that
+happens to cross a course's ground is not a Run that was following it, which is also why no Run
+recorded before this shipped is ever matched to a Route retrospectively.
+
+**Reversed** is the runner's word that they are setting off the other way round. It changes nothing
+about the line — the same ground in the same places, so the same line is drawn — and everything
+about which way you are *going* along it, which is what the tickets after this one read it for. A
+treadmill Run follows no course whatever was picked, there being no ground under a treadmill for a
+course to be over.
+_Avoid_: guided run, navigation (nothing is being navigated yet), and **following** as a name for
+the state — a Run either has a Route or it does not; there is no on-course/off-course judgement here.
+
 **Segment**:
 A stretch of ground the runner has named — "Cemetery Hill" — cut out of one Run they actually ran
 (#69). Neither a Route nor a Run: a Route is a line somebody else drew and a Run is one outing, while
