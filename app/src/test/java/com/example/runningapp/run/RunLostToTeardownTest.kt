@@ -140,19 +140,51 @@ class RunLostToTeardownTest {
         // runner nothing was recorded while that very row was being rescued behind them.
         val landed = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = 9133L, heldWork = emptyList())
 
-        assertEquals(RunLostToTeardown.HasRow(9133L), runLostToTeardown(landed))
+        assertEquals(RunLostToTeardown.HasRow(9133L), runLostToTeardown(landed, sessionThreadFinished = true))
     }
 
     @Test
     fun `a Run still holding its seconds reads as one awaiting its row`() {
         val awaiting = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = null, heldWork = listOf(heldSample(1)))
 
-        assertEquals(RunLostToTeardown.AwaitingItsRow(listOf(heldSample(1))), runLostToTeardown(awaiting))
+        assertEquals(RunLostToTeardown.AwaitingItsRow(listOf(heldSample(1))), runLostToTeardown(awaiting, sessionThreadFinished = true))
     }
 
     @Test
     fun `a service torn down with no Run at all lost nothing`() {
-        assertNull(runLostToTeardown(RunAtLastDispatch.NONE))
+        assertNull(runLostToTeardown(RunAtLastDispatch.NONE, sessionThreadFinished = true))
+    }
+
+    @Test
+    fun `a teardown that outwaited the session thread settles the Run it was holding`() {
+        val awaiting = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = null, heldWork = listOf(heldSample(1)))
+
+        val lost = runLostToTeardown(awaiting, sessionThreadFinished = true)
+                as RunLostToTeardown.AwaitingItsRow
+
+        assertTrue(lost.mayBeSettledHere)
+    }
+
+    @Test
+    fun `a teardown whose join ran out leaves the held work to the thread that owns it`() {
+        // The thread is mid-dispatch of the id, emptying the very buffer this read. Delivered from
+        // both sides, every second the Run recorded would be written down twice and the rescue
+        // would rebuild inflated totals from the duplicates.
+        val awaiting = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = null, heldWork = listOf(heldSample(1)))
+
+        val lost = runLostToTeardown(awaiting, sessionThreadFinished = false)
+                as RunLostToTeardown.AwaitingItsRow
+
+        assertFalse(lost.mayBeSettledHere)
+    }
+
+    @Test
+    fun `a Run that already has a row is nothing for the session thread to be holding`() {
+        // Its seconds went to the database as it ran; there is no buffer for two deliverers to
+        // race over, so a join that ran out changes nothing about it (#309).
+        val landed = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = 9133L, heldWork = emptyList())
+
+        assertEquals(RunLostToTeardown.HasRow(9133L), runLostToTeardown(landed, sessionThreadFinished = false))
     }
 }
 
