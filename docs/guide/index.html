@@ -177,7 +177,7 @@
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
-      <p><strong>A written summary at the top of every run.</strong> Open a run and the app now writes a few sentences about it, in plain English, above everything else on the page: how the pace and the heart rate sat, what the effort cost, any records or segment medals it took, and how it went against your usual on the same route. It is written the first time you open that run and kept, so the second time it is simply there. Runs you never open are never sent anywhere. If you are offline it says so and leaves a <strong>Try again</strong> — the rest of the page is untouched — and there is a <strong>Write it again</strong> if you want different words.</p>
+      <p><strong>Keep a run you liked as a route to run again.</strong> Under the map on a finished run there is now <strong>Save as route</strong>, beside the way to cut a segment out of it. A segment is a stretch <em>inside</em> the run; this is the whole round of it, kept in the same library your GPX files land in and renameable there like any other. It is named after the run — <em>Run 22 Aug 2026, 06:21</em> — and you get told in plain words which of three things happened: kept, already kept, or nothing to keep. Runs with no GPS track, treadmill ones included, are not offered it at all.</p>
     </div>
   </header>
 
@@ -412,6 +412,11 @@
       </div>
 
       <div class="e">
+        <h3>Keeping this run as a route</h3>
+        <p>Under the map, <strong>Save as route</strong> keeps the ground this run went over as a course in your library, to run again. Beside it is the way to cut a <em>segment</em> out of the run — a stretch inside it — where this is the whole round. See <a href="#routes">Routes</a>.</p>
+      </div>
+
+      <div class="e">
         <h3>Sharing the run as a file</h3>
         <p><strong>Garmin (.fit)</strong> is the one to use for Garmin Connect and Strava. It <em>states</em> everything rather than leaving it to be worked out — its own distance, duration and moving time, its own splits as laps, and a moment for every second that recorded anything. A treadmill run with no GPS at all is still a whole file, with its heart-rate trace intact.</p>
         <p><strong>GPX</strong> is the portable option for everything that isn't Garmin: track, times and heart rate per point. A run with no GPS track cannot be one, so it is not offered.</p>
@@ -614,19 +619,34 @@
 
       <div class="e">
         <h3>The library</h3>
-        <p>Every course you keep, with its distance and its elevation gain. A file that carried no heights says so rather than showing <span class="mono">0 m</span>.</p>
+        <p>Every course you keep, with its distance and its elevation gain. A course whose heights were never recorded says so rather than showing <span class="mono">0 m</span>.</p>
         <div class="where"><b>Where</b> Home → Open Routes</div>
       </div>
 
       <div class="e">
         <h3>Getting a route in</h3>
-        <p>Either from the picker on the Routes screen, or by choosing this app from another app's share sheet on a <span class="mono">.gpx</span> file — a download, an email attachment, a Strava or Komoot export. Both land in the same place.</p>
-        <p>A route takes its name from inside the GPX, or from the filename if the file doesn't name itself. A file that isn't a GPX, is damaged, or holds no route is refused with a message saying why, and nothing is saved.</p>
+        <p>Three ways, all landing in the same library. From the picker on the Routes screen; by choosing this app from another app's share sheet on a <span class="mono">.gpx</span> file — a download, an email attachment, a Strava or Komoot export; or off a run you have already been for, with <strong>Save as route</strong> on the run's page.</p>
+        <p>A route from a file takes its name from inside the GPX, or from the filename if the file doesn't name itself. A file that isn't a GPX, is damaged, or holds no route is refused with a message saying why, and nothing is saved. A route off a run is named after that run.</p>
+      </div>
+
+      <div class="e">
+        <h3>Keeping a run as a route</h3>
+        <p>On a finished run's page, under the map, <strong>Save as route</strong> keeps the ground that run went over as a course you can keep and rename. The run itself is not touched and nothing links the two afterwards — delete either and the other is unharmed.</p>
+        <p>You are told which of three things happened, in words:</p>
+        <ul>
+          <li><strong>Kept.</strong> It names what the course is called, which is what the run is called — <em>Run 22 Aug 2026, 06:21</em>, the same words the run is shared under.</li>
+          <li><strong>Already kept.</strong> Saving the same run twice makes one course, not two, and the message names the row you already have. If you have since renamed it, that is the name you are told.</li>
+          <li><strong>Nothing to keep.</strong> A run that never got a fix, or one that only ever wandered on the spot.</li>
+        </ul>
+        <p class="note"><b>The distance shown is not the run's distance.</b> A route's distance is how far the course <em>goes</em> for whoever follows it — one clean line, straightened out and joined across any pause. Your run counted every metre it actually covered. The two are close, and they are not meant to match.</p>
+        <p class="note"><b>Only where there is a track.</b> A treadmill run has no ground to keep, so it gets no button rather than a button that refuses. The same goes for history from before the app recorded tracks.</p>
+        <p class="note"><b>Saving a run and importing that same run's GPX makes two routes.</b> They are drawn from the same outing but not from the same line — the file keeps every point the run recorded, and the saved course is tidied to its shape — so the app sees two different courses. Both work; delete whichever you do not want.</p>
+        <div class="where"><b>Where</b> History → any run with a map → under the map</div>
       </div>
 
       <div class="e">
         <h3>Rename and delete</h3>
-        <p>Deleting a route never touches a run.</p>
+        <p>Any route can be renamed and deleted, however it got in. Deleting a route never touches a run — including the run it was saved off.</p>
       </div>
 
       <div class="e">
@@ -723,20 +743,23 @@
       <dt>Prescription</dt>
       <dd>The intervals and target zone the AI coach wrote for your next Long run. Written only after you finish a Long run, and it stands on the runs it was shown.</dd>
 
+      <dt>Route</dt>
+      <dd>A course in your library: a line to follow and what following it costs. A plan, not a recording — it carries no date, no heart rate and no times, and it may be run any number of times or never. It gets in from a GPX file or off a run you have already been for. Deleting one touches no run.</dd>
+
       <dt>Segment</dt>
-      <dd>A stretch of ground you marked and named. Every run that crosses it is timed.</dd>
+      <dd>A stretch of ground you marked and named. Every run that crosses it is timed. Part of a run, where a <strong>route</strong> is a whole course.</dd>
 
       <dt>Run summary</dt>
       <dd>The few sentences the AI writes about one run, at the top of that run's own page. Written the first time you open the run and kept. It describes that run and nothing else — it never prescribes a workout; that is the coach's job.</dd>
 
       <dt>Matched runs</dt>
-      <dd>Runs the app worked out are the same route, by shape alone. Nothing named, nothing saved. Runs under half a kilometre have no shape and join nothing.</dd>
+      <dd>Runs the app worked out are the same course, by shape alone. Nothing named, nothing saved, and no <strong>route</strong> in your library is involved. Runs under half a kilometre have no shape and join nothing.</dd>
     </dl>
   </section>
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>25 August 2026</strong>, when written run summaries went in. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>25 August 2026</strong>, when keeping a run as a route went in. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
