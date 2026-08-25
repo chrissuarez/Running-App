@@ -60,7 +60,7 @@ import com.example.runningapp.run.AcquisitionState
 import com.example.runningapp.run.CueTag
 import com.example.runningapp.run.SCAN_UNAVAILABLE
 import com.example.runningapp.run.ScannedStrap
-import com.example.runningapp.run.PendingRowWork
+import com.example.runningapp.run.RunAtLastDispatch
 import com.example.runningapp.run.RunLostToTeardown
 import com.example.runningapp.run.beginARun
 import com.example.runningapp.run.runLostToTeardown
@@ -366,17 +366,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var insertedRunRowId: Long? = null
 
     /**
-     * What the Run is holding for a row id it has not been given, as of its last event (#314).
+     * The Run as its last dispatch left it, for the teardown to read (#314).
      *
-     * A copy of [RunState.pendingRowEffects], published out of [dispatchRunEvent] the way the
-     * Run's state is. The teardown needs it and the teardown is not on the session thread, so it
-     * cannot read [runState] itself: that field is guarded by the thread that owns it, and the
-     * teardown's join of that thread is bounded ([SESSION_THREAD_JOIN_TIMEOUT_MS]) — a join that
-     * times out is a read with nothing ordering it. `@Volatile` is that ordering, and what it
-     * promises is exactly right for the job: the held work of whichever event dispatched last.
+     * Published out of [publishRun] the way the Run's state is, and for the same reason: the
+     * teardown is not on the session thread, so it cannot read [runState] itself — that field is
+     * guarded by the thread that owns it, and the teardown's join of that thread is bounded
+     * ([SESSION_THREAD_JOIN_TIMEOUT_MS]), so a join that times out is a read with nothing ordering
+     * it. `@Volatile` is that ordering.
+     *
+     * All three of the teardown's inputs together in one value, because a teardown that read them
+     * separately would be reading two different moments: see [RunAtLastDispatch]. One write, one
+     * read, and nothing between them to interleave with.
      */
     @Volatile
-    private var heldRowWork: List<PendingRowWork> = emptyList()
+    private var runAtLastDispatch: RunAtLastDispatch = RunAtLastDispatch.NONE
 
     // Mission: Resilient Tracking Loop — now the Run's single inbox, kept off main so a busy UI
     // cannot stall the Run's clock.
@@ -612,9 +615,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // this thread timed out ([SESSION_THREAD_JOIN_TIMEOUT_MS]) to read the new Run as awaiting
         // its row and settle the old Run's row in its name.
         if (outcome.effects.beginARun()) insertedRunRowId = null
-        // Published for the teardown alongside the state, and for the same reason the state is
-        // published: it is read from another thread (#314). A reference copy, not a walk.
-        heldRowWork = runState.pendingRowEffects
         publishRun(runState, event.nowMillis)
         // Between the publish and the effects: the journal describes what is now true, and it must
         // say so before an effect can act on it — a stop's own effects end in the demote, and a
@@ -681,6 +681,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 activeDbSessionId = if (live) run.runRowId else null,
             )
         }
+        // The teardown's copy of the same reading, taken here and from this same [RunState] so the
+        // two can never disagree (#314). The trio is what a teardown asks of the Run, and it is
+        // published as one value because a teardown that read the parts separately would be asking
+        // about two different moments — see [runAtLastDispatch].
+        runAtLastDispatch = RunAtLastDispatch(
+            status = run.lifecycle.asSessionStatus(),
+            liveRunRowId = if (live) run.runRowId else null,
+            heldWork = run.pendingRowEffects,
+        )
     }
 
     private fun RunLifecycle.asSessionStatus(): SessionStatus = when (this) {
@@ -2555,9 +2564,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // service-destroyed is an event the journal waits out for itself, because a destroy is
         // often followed straight away by the process being reclaimed (#310).
 
-        // What is done about a Run this teardown took is decided from that same snapshot, so what
-        // the journal says happened and what is done about it can never be two different answers —
-        // but it is acted on below, once nothing can still be working on that Run (#309).
+        // What is done about a Run this teardown took is decided below, once nothing can still be
+        // working on that Run (#309), and from the last reading the Run itself published rather
+        // than from this line's snapshot (#314): during the join below the session thread can
+        // still finish a stop or take delivery of a row, and acting on a status that has since
+        // been overtaken would tell the runner their Run was lost when it was not.
 
         // 0. Anything that opens a GATT from here on closes it itself; the sweep below is the
         // last one there will be. Set before the join, so a connect that outlasts it sees this.
@@ -2624,16 +2635,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // the Run's own, banked as it ran, or the poorer ones the rescue rebuilds from the record.
         //
         // A Run whose insert had not come back is the same loss arriving a moment earlier, and it
-        // is settled here for the same reason (#314). What it was holding comes from [heldRowWork]
-        // rather than from [runState], which belongs to a thread this one has only bounded its wait
-        // for — see that field. It is read here rather than up beside the snapshot for the same
-        // reason everything else is: taken then, a STOP dispatching at that instant would still be
-        // adding to it.
-        when (val lost = runLostToTeardown(
-            stateAtTeardown.sessionStatus,
-            stateAtTeardown.activeDbSessionId,
-            heldRowWork,
-        )) {
+        // is settled here for the same reason (#314). All three of the things read of the Run come
+        // from [runAtLastDispatch] rather than from [runState], which belongs to a thread this one
+        // has only bounded its wait for — see that field — and they come from it in one read, so
+        // they describe one moment. Read here rather than up beside the journal's snapshot for the
+        // same reason everything else is done here: taken then, a dispatch landing at that instant
+        // would still be changing what it says. The journal line above records the status the
+        // destroy began in, which is what it claims to be; what is done about the Run is decided
+        // from the last thing the Run actually said.
+        when (val lost = runLostToTeardown(runAtLastDispatch)) {
             is RunLostToTeardown.HasRow -> endRunLostToTeardown(lost.runRowId)
             is RunLostToTeardown.AwaitingItsRow -> endRunAwaitingItsRow(lost)
             null -> Unit

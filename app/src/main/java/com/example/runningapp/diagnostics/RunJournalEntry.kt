@@ -20,8 +20,9 @@ import java.time.format.DateTimeFormatter
  * are read backwards, and each one is an inference somebody actually draws off a phone: a
  * [SERVICE_CREATED] with no [SERVICE_DESTROYED] above it says the process died, a [RUN_STARTED]
  * with no [RUN_STOPPED] after it says the Run died still recording (#309), a Run with no
- * [RUN_ROW_CREATED] never got a row, a stop with no [RUN_FINALIZED] after it says the totals never
- * reached the row, a destroy with a live Run and no [DEMOTED] above it says the system took the
+ * [RUN_ROW_CREATED] never got a row, a row created with no [RUN_ROW_DISCARDED] after it says a row
+ * missing from the database was lost rather than taken away, a stop with no [RUN_FINALIZED] after
+ * it says the totals never reached the row, a destroy with a live Run and no [DEMOTED] above it says the system took the
  * service. That reasoning only holds while a missing line means the event did not happen. Every one
  * of them is written at a moment the process may be about to go away — a row landing on a service
  * that may not outlive it, a stop, a teardown, a hand-back, a finalize — so a line merely queued
@@ -62,8 +63,14 @@ enum class RunJournalEvent(val token: String, val absenceIsEvidence: Boolean = f
      * `endTime = 0` for good. A held Interval or Pause does not save such a row: those are
      * bookkeeping about seconds that were never written down, and they go with it. Written down
      * because a deletion nobody can see is the one kind of change a journal has to say out loud.
+     *
+     * Absence is evidence, and it is the reason the line exists: a reader who finds a
+     * [RUN_ROW_CREATED] for a row that is not in the database concludes the row was lost, and only
+     * this line says otherwise. It is written after `onDestroy` has returned and taken its own
+     * flush with it, on a process that may be reclaimed at any moment, so a line merely queued
+     * would be exactly the line that never lands.
      */
-    RUN_ROW_DISCARDED("run-row-discarded"),
+    RUN_ROW_DISCARDED("run-row-discarded", absenceIsEvidence = true),
 
     RUN_PAUSED("run-paused"),
     RUN_RESUMED("run-resumed"),

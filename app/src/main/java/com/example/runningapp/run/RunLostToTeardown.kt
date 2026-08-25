@@ -29,6 +29,40 @@ import com.example.runningapp.isRecording
  * ([RunState.pendingRowEffects]). Only ever read for a Run with no row: a Run with one is holding
  * nothing, because the id it was waiting for arrived.
  */
+fun runLostToTeardown(run: RunAtLastDispatch): RunLostToTeardown? =
+    runLostToTeardown(run.status, run.liveRunRowId, run.heldWork)
+
+/**
+ * The three things a teardown reads of the Run, as one dispatch left them (#314).
+ *
+ * One value rather than three fields because the reading is only sound if the three describe the
+ * same moment. A teardown that took the status from one dispatch and the held work from a later one
+ * would answer a question nobody asked: a Run snapshotted as recording with no row, whose row then
+ * landed and whose held work was handed over and cleared, reads as a Run that recorded nothing and
+ * its runner is told so while that very row is being rescued behind them.
+ *
+ * Published where the Run's state is published, from the same [RunState], so the two can never be
+ * two readings — and read by the teardown in a single reference read, which is what makes the trio
+ * indivisible whatever the reading thread was doing in between.
+ *
+ * @param status what the Run's lifecycle says, as the rest of the app is told it.
+ * @param liveRunRowId the row id of the Run while it is live, null once a stop has cleared it and
+ * null again before the Run's insert has come back.
+ * @param heldWork what the Run is still holding for an id it has not been given
+ * ([RunState.pendingRowEffects]).
+ */
+data class RunAtLastDispatch(
+    val status: SessionStatus,
+    val liveRunRowId: Long?,
+    val heldWork: List<PendingRowWork>,
+) {
+    companion object {
+
+        /** No Run has been dispatched yet, which is no Run for a teardown to find. */
+        val NONE = RunAtLastDispatch(SessionStatus.IDLE, liveRunRowId = null, heldWork = emptyList())
+    }
+}
+
 fun runLostToTeardown(
     status: SessionStatus,
     liveRunRowId: Long?,
