@@ -57,7 +57,8 @@ class SessionDetailViewModel(
     private val aiSummariesAllowed: Flow<Boolean>? = null,
     /**
      * Where a Run's ground is kept as a course (#55). Null wherever the library is not wired
-     * (tests): the button is then not offered, the same as it is not offered on a Run with no track.
+     * (tests): the ask then keeps nothing and says nothing, rather than failing in front of the
+     * runner.
      */
     private val runRouteSaver: RunRouteSaver? = null,
 ) : ViewModel() {
@@ -113,17 +114,18 @@ class SessionDetailViewModel(
     fun saveAsRoute(sessionId: Long) {
         val saver = runRouteSaver ?: return
         viewModelScope.launch {
-            val session = sessionRepository.getSession(sessionId)
-            if (session == null) {
+            val run = sessionRepository.getSession(sessionId)
+            if (run == null) {
                 _saveAsRouteMessage.value =
-                    SaveAsRouteMessage(sessionId, runHasNoRouteToSaveMessage())
+                    SaveAsRouteMessage(sessionId, runCouldNotBeReadMessage())
                 return@launch
             }
             val trackPoints = sessionRepository.getTrackPointsForMap(sessionId)
-            val words = when (val outcome = saver.save(session, trackPoints)) {
+            val words = when (val outcome = saver.save(run, trackPoints)) {
                 is RunRouteOutcome.Saved -> runSavedAsRouteMessage(outcome.name)
-                is RunRouteOutcome.AlreadySaved -> runAlreadySavedAsRouteMessage(outcome.name)
+                is RunRouteOutcome.AlreadySaved -> routeAlreadySavedMessage(outcome.name)
                 RunRouteOutcome.NoGround -> runHasNoRouteToSaveMessage()
+                RunRouteOutcome.StillRunning -> runStillRunningMessage()
             }
             _saveAsRouteMessage.value = SaveAsRouteMessage(sessionId, words)
         }

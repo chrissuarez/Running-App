@@ -85,22 +85,59 @@ class RunRouteSaverTest {
     }
 
     /**
-     * A Run that never left the spot: a few fixes scattered inside the error of the fix that
-     * accepted them. There is a line to draw and no course in it.
+     * A Run that never left the spot: two hundred fixes wandering inside the error of the gate that
+     * accepted them. The line they make is hundreds of metres long and goes nowhere, which is why
+     * how far a course *reaches* is what decides it.
      */
     @Test
     fun `a run that never left the spot is no course`() = runTest {
-        val scattered = listOf(0.0 to 0.0, 12.0 to 4.0, 3.0 to 9.0).mapIndexed { i, (north, east) ->
+        val scattered = (0..199).map { step ->
             TrackPoint(
                 sessionId = 7,
-                latitude = 51.5 + north / 111_320.0,
-                longitude = -0.1 + east / (111_320.0 * 0.6225),
-                timestampMillis = 1_700_000_000_000L + i * 60_000L,
+                latitude = 51.5 + (if (step % 2 == 0) 8.0 else -8.0) / 111_320.0,
+                longitude = -0.1 + (if (step % 4 < 2) 6.0 else -6.0) / (111_320.0 * 0.6225),
+                timestampMillis = 1_700_000_000_000L + step * 1_000L,
                 source = TrackPointSource.GPS,
             )
         }
 
         assertEquals(RunRouteOutcome.NoGround, saver.save(aRun, scattered, london))
+        assertTrue(dao.stored.isEmpty())
+    }
+
+    /**
+     * The climb is read off what the Run recorded rather than off the thinned line, because a road
+     * straight up a hill and down the other side has no bend in it to keep the crest for.
+     */
+    @Test
+    fun `the climb of a straight hill survives being kept`() = runTest {
+        val overAHill = (0..40).map { step ->
+            TrackPoint(
+                sessionId = 7,
+                latitude = 51.5 + step * 25.0 / 111_320.0,
+                longitude = -0.1,
+                altitudeMeters = 10.0 + if (step <= 20) step * 5.0 else (40 - step) * 5.0,
+                timestampMillis = 1_700_000_000_000L + step * 10_000L,
+                source = TrackPointSource.GPS,
+            )
+        }
+
+        saver.save(aRun, overAHill, london)
+
+        // A climb rather than the nought the two-point line it was thinned to would report; the
+        // smoothing shaves its shoulders, which is RouteShape's own bargain.
+        assertTrue(dao.stored.single().elevationGainMeters!! > 70.0)
+    }
+
+    /**
+     * History lists a Run from the moment it starts, so its page can be opened with the runner still
+     * on it — and a Route's numbers are banked once and never re-measured (ADR 0014).
+     */
+    @Test
+    fun `a run still being run is not a course yet`() = runTest {
+        val stillRunning = aRun.copy(endTime = 0L)
+
+        assertEquals(RunRouteOutcome.StillRunning, saver.save(stillRunning, aLap(), london))
         assertTrue(dao.stored.isEmpty())
     }
 

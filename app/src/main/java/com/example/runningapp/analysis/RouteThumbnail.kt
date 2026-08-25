@@ -2,9 +2,9 @@ package com.example.runningapp.analysis
 
 import com.example.runningapp.data.MeasuredTrack
 import com.example.runningapp.data.TrackPoint
+import com.example.runningapp.recording.METERS_PER_DEGREE
 import com.example.runningapp.recording.SessionRecorder
 import kotlin.math.cos
-import kotlin.math.hypot
 import kotlin.math.max
 
 /**
@@ -72,9 +72,6 @@ private const val THUMBNAIL_DETAIL = 0.01
  */
 private val SHAPE_MINIMUM_METERS = 2 * SessionRecorder.ACCURACY_THRESHOLD_METERS
 
-/** Metres in a degree of latitude — the span is measured in degrees and the minimum in metres. */
-private const val METERS_PER_DEGREE = 111_320.0
-
 /**
  * The shape of a Run's route, or null when there is none to draw.
  *
@@ -124,65 +121,17 @@ private fun recordedStretches(measured: MeasuredTrack): List<List<TrackPoint>> =
     measured.unbrokenLegs.map { unbroken -> measured.points.subList(unbroken.first, unbroken.last + 2) }
 
 /**
- * The same line with everything too small to see taken out of it (Ramer-Douglas-Peucker).
+ * The same line with everything too small to see taken out of it.
  *
- * Keeps the fix furthest from the straight line between the two ends, and asks the same of each
- * half, until no fix left out sits further than [THUMBNAIL_DETAIL] from the line that would be
- * drawn without it. A mile of straight road collapses to its two ends; the corner it turns at
- * survives exactly where it was.
- *
- * Walked with a stack rather than by recursion: an hour's Run is thousands of fixes, and a track
- * recorded straight down a road is the case that puts every one of them on the call stack.
+ * The thinning itself is [thinnedLineIndices], shared with the Run kept as a course
+ * ([com.example.runningapp.routes.runAsCourse]); all that is decided here is how much detail a
+ * thumbnail can show, which is [THUMBNAIL_DETAIL].
  */
 private fun simplified(line: List<ThumbPoint>): List<ThumbPoint> {
-    if (line.size <= 2) return line
-    val keep = BooleanArray(line.size)
-    keep[0] = true
-    keep[line.lastIndex] = true
-
-    val pending = ArrayDeque<Pair<Int, Int>>()
-    pending += 0 to line.lastIndex
-    while (pending.isNotEmpty()) {
-        val (from, to) = pending.removeLast()
-        if (to - from < 2) continue
-        var furthest = -1
-        var furthestDistance = THUMBNAIL_DETAIL
-        for (i in from + 1 until to) {
-            val distance = distanceToLine(line[i], line[from], line[to])
-            if (distance > furthestDistance) {
-                furthest = i
-                furthestDistance = distance
-            }
-        }
-        if (furthest < 0) continue
-        keep[furthest] = true
-        pending += from to furthest
-        pending += furthest to to
-    }
-    return line.filterIndexed { i, _ -> keep[i] }
-}
-
-/**
- * How far [point] sits from the stretch of line actually drawn between [start] and [end] — from
- * whichever end it lies beyond, when it lies beyond one of them.
- *
- * Measured from the drawn stretch rather than from the endless line it sits on, because an
- * out-and-back that turns for home before it gets back to where it started is the case that tells
- * the two apart. Two kilometres out and one back leaves the turnaround a kilometre past the finish
- * and *exactly on* the line through start and finish: measured against that line it is nothing
- * worth keeping, both halves collapse, and the run is drawn as a one-kilometre stroll in a straight
- * line — the wrong shape, in the one view that is read at a glance. Measured against the stretch,
- * the turnaround is a kilometre from the nearer end, and it survives.
- */
-private fun distanceToLine(point: ThumbPoint, start: ThumbPoint, end: ThumbPoint): Double {
-    val dx = (end.x - start.x).toDouble()
-    val dy = (end.y - start.y).toDouble()
-    val lengthSquared = dx * dx + dy * dy
-    val fromStartX = (point.x - start.x).toDouble()
-    val fromStartY = (point.y - start.y).toDouble()
-    if (lengthSquared == 0.0) return hypot(fromStartX, fromStartY)
-    // How far along the stretch the point sits, as a fraction of it — held inside the two ends, so
-    // anything past either one is measured from that end rather than from open ground beyond it.
-    val along = ((fromStartX * dx + fromStartY * dy) / lengthSquared).coerceIn(0.0, 1.0)
-    return hypot(fromStartX - along * dx, fromStartY - along * dy)
+    val kept = thinnedLineIndices(
+        x = DoubleArray(line.size) { line[it].x.toDouble() },
+        y = DoubleArray(line.size) { line[it].y.toDouble() },
+        detail = THUMBNAIL_DETAIL,
+    )
+    return kept.map { line[it] }
 }

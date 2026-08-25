@@ -1,8 +1,9 @@
 package com.example.runningapp.routes
 
+import com.example.runningapp.analysis.thinnedLineIndices
 import com.example.runningapp.data.TrackPoint
+import com.example.runningapp.recording.METERS_PER_DEGREE
 import kotlin.math.cos
-import kotlin.math.hypot
 
 /**
  * How far a fix may sit from the line drawn without it before the course keeps it (#55).
@@ -20,11 +21,35 @@ import kotlin.math.hypot
  */
 private const val ROUTE_DETAIL_METERS = 2.0
 
-/** Metres in a degree of latitude — the fixes are in degrees and the detail above is in metres. */
-private const val METERS_PER_DEGREE = 111_320.0
-
 /**
  * The course a Run went over, taken out of what it recorded (#55).
+ *
+ * Two readings of one walk, because the Route's line and the Route's climb are not answered by the
+ * same points — see [line] and [asRecorded].
+ */
+data class RunCourse(
+    /**
+     * The line the Route keeps: the fixes in order, a place recorded twice written once, and the
+     * whole thinned to its shape ([ROUTE_DETAIL_METERS]).
+     *
+     * This is what is written into the row and what a runner following the Route covers, so it is
+     * what the Route's distance is measured along.
+     */
+    val line: List<RoutePoint>,
+    /**
+     * The same walk before it was thinned: every place the Run recorded, in order.
+     *
+     * What the climb is worked out from, because thinning is a judgement about where the line
+     * *bends* and a hill is not a bend. A road running straight up one side of a hill and down the
+     * other is two points once it is thinned, and its crest — the whole of the climb — is one of the
+     * points thrown away. The heights never reach the row in any case ([RoutePolyline] keeps none),
+     * so nothing is served by measuring them off the shortened line.
+     */
+    val asRecorded: List<RoutePoint>,
+)
+
+/**
+ * What a Run's recorded track becomes when it is kept as a course (#55).
  *
  * Three things happen to the track on the way, and each of them is about what a Route *is*:
  *
@@ -44,15 +69,15 @@ private const val METERS_PER_DEGREE = 111_320.0
  * exactly as a GPX file's segments are joined on the way in ([GpxRouteReader],
  * [ADR 0014](../../../../../../../docs/adr/0014-a-route-is-a-plan-not-a-recording.md)).
  *
- * Pure and free of Android, so all of the above is pinned by [RunAsRouteTest] rather than found on a
+ * Pure and free of Android, so all of the above is pinned by `RunAsRouteTest` rather than found on a
  * phone.
  */
-fun runAsRoutePoints(trackPoints: List<TrackPoint>): List<RoutePoint> {
+fun runAsCourse(trackPoints: List<TrackPoint>): RunCourse {
     val walked = trackPoints
         .sortedBy { it.timestampMillis }
         .map { RoutePoint(it.latitude, it.longitude, it.altitudeMeters) }
         .withoutRepeatedPlaces()
-    return if (walked.size <= 2) walked else walked.thinnedToItsShape()
+    return RunCourse(line = walked.thinnedToItsShape(), asRecorded = walked)
 }
 
 /**
@@ -68,68 +93,43 @@ private fun List<RoutePoint>.withoutRepeatedPlaces(): List<RoutePoint> = filterI
 }
 
 /**
- * The same line with everything finer than [ROUTE_DETAIL_METERS] taken out of it
- * (Ramer-Douglas-Peucker).
+ * The same line with everything finer than [ROUTE_DETAIL_METERS] taken out of it.
  *
- * Keeps the fix furthest from the straight line between the two ends, and asks the same of each
- * half, until nothing left out sits further than that from the line that would be drawn without it.
- *
- * Distance is measured to the stretch actually drawn rather than to the endless line through its
- * ends, for the reason [com.example.runningapp.analysis.routeThumbnailOf] gives at length: an
- * out-and-back that turns for home short of where it started leaves the turnaround sitting exactly
- * on that endless line, and measured against it the whole route collapses to a straight stroll.
- *
- * Walked with a stack rather than by recursion: an hour's Run is thousands of fixes, and a track
- * recorded straight down a road is the case that puts every one of them on the call stack.
+ * The thinning itself is [thinnedLineIndices], shared with the drawing beside a Run in History; all
+ * that is decided here is what the line is measured in, which is metres on the ground.
  */
 private fun List<RoutePoint>.thinnedToItsShape(): List<RoutePoint> {
+    if (size <= 2) return this
     // Metres on a flat sheet, taken once for the whole line. A degree of longitude shrinks going
     // north, so it is shrunk by the cosine of where the Run was — one Run covers too little ground
     // for that to have changed within it, and this is only ever asked how far a fix sits from a
     // line a few hundred metres long.
     val cosLatitude = cos(Math.toRadians(first().latitude))
-    val x = DoubleArray(size) { (this[it].longitude - first().longitude) * METERS_PER_DEGREE * cosLatitude }
-    val y = DoubleArray(size) { (this[it].latitude - first().latitude) * METERS_PER_DEGREE }
-
-    val keep = BooleanArray(size)
-    keep[0] = true
-    keep[lastIndex] = true
-
-    val pending = ArrayDeque<Pair<Int, Int>>()
-    pending += 0 to lastIndex
-    while (pending.isNotEmpty()) {
-        val (from, to) = pending.removeLast()
-        if (to - from < 2) continue
-        var furthest = -1
-        var furthestDistance = ROUTE_DETAIL_METERS
-        for (i in from + 1 until to) {
-            val distance = distanceToStretch(x[i], y[i], x[from], y[from], x[to], y[to])
-            if (distance > furthestDistance) {
-                furthest = i
-                furthestDistance = distance
-            }
-        }
-        if (furthest < 0) continue
-        keep[furthest] = true
-        pending += from to furthest
-        pending += furthest to to
-    }
-    return filterIndexed { i, _ -> keep[i] }
+    val kept = thinnedLineIndices(
+        x = DoubleArray(size) { (this[it].longitude - first().longitude) * METERS_PER_DEGREE * cosLatitude },
+        y = DoubleArray(size) { (this[it].latitude - first().latitude) * METERS_PER_DEGREE },
+        detail = ROUTE_DETAIL_METERS,
+    )
+    return kept.map { this[it] }
 }
 
-/** How far (x, y) sits from the stretch of line between its two ends — from an end, when it lies beyond one. */
-private fun distanceToStretch(
-    x: Double,
-    y: Double,
-    fromX: Double,
-    fromY: Double,
-    toX: Double,
-    toY: Double,
-): Double {
-    val runX = toX - fromX
-    val runY = toY - fromY
-    val lengthSquared = runX * runX + runY * runY
-    if (lengthSquared == 0.0) return hypot(x - fromX, y - fromY)
-    val alongIt = (((x - fromX) * runX + (y - fromY) * runY) / lengthSquared).coerceIn(0.0, 1.0)
-    return hypot(x - (fromX + alongIt * runX), y - (fromY + alongIt * runY))
+/**
+ * How far the course reaches across the ground: the wider of its two sides, north-south or
+ * east-west.
+ *
+ * How far it *reaches*, not how far it goes. A runner standing on one spot for ten minutes with a
+ * fix arriving every second records hundreds of metres of wandering, all of it inside the error of
+ * the fixes it is made of, so the length of that line says nothing about whether there is a course
+ * in it. What its extent says is plain: a scatter thirty metres wide is a scatter however long its
+ * path. The same question the History drawing asks of a Run before it draws it
+ * ([com.example.runningapp.analysis.routeThumbnailOf]), asked here before one is kept.
+ */
+fun courseSpanMeters(points: List<RoutePoint>): Double {
+    if (points.isEmpty()) return 0.0
+    val northSouth = (points.maxOf { it.latitude } - points.minOf { it.latitude }) * METERS_PER_DEGREE
+    // East-west in the same metres, by shrinking a degree of longitude to the width it has this far
+    // from the equator.
+    val eastWest = (points.maxOf { it.longitude } - points.minOf { it.longitude }) *
+        METERS_PER_DEGREE * cos(Math.toRadians(points.first().latitude))
+    return maxOf(northSouth, eastWest)
 }
