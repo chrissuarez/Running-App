@@ -145,8 +145,17 @@ sealed interface RunLostToTeardown {
          * written down twice, with the rescue rebuilding inflated totals from the duplicates.
          *
          * So the teardown settles only what it knows nobody else is settling. Left to the thread,
-         * the work still goes out; nothing finalizes the Run behind it, so its row stays unfinished
-         * and the launch pass has it — the same residue as a drain that gave up.
+         * the work goes out when the id reaches it; nothing finalizes the Run behind it, so its row
+         * stays unfinished and the launch pass has it — the same residue as a drain that gave up.
+         *
+         * What this cannot tell is *why* the join was lost. A thread still going may be mid-dispatch
+         * of the id, or may be doing something else entirely while the insert is still in flight —
+         * and in that second case the id never reaches it, because the inbox is quit behind it, so
+         * nobody delivers the buffer and the Run's seconds are lost with its row left empty. Telling
+         * those apart needs a claim on the buffer taken by whichever side is about to deliver it,
+         * which is a thing the Run has to be able to be told and so not this teardown's to add
+         * (#360). Standing down is the safer of the two: a lost buffer is the residue this file
+         * already describes, and a doubled one is a Run in history with totals nobody ran.
          */
 
 
