@@ -14,6 +14,20 @@ import com.example.runningapp.run.RunRoute
 import com.example.runningapp.training.HistoryBestEffort
 import kotlinx.coroutines.flow.Flow
 
+/**
+ * The one statement that takes away the row of a Run that never recorded a second (#314).
+ *
+ * Named here rather than written inline so the test that proves what it does can run the very
+ * statement the phone runs ([SessionDao.deleteSessionIfItRecordedNothing]).
+ */
+const val DELETE_RUN_THAT_RECORDED_NOTHING = """
+    DELETE FROM sessions
+    WHERE id = :sessionId
+      AND endTime = 0
+      AND NOT EXISTS (SELECT 1 FROM hr_samples WHERE sessionId = :sessionId)
+      AND NOT EXISTS (SELECT 1 FROM track_points WHERE sessionId = :sessionId)
+"""
+
 @Entity(tableName = "sessions")
 data class RunnerSession(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -1136,6 +1150,28 @@ interface SessionDao {
 
     @Query("DELETE FROM sessions WHERE id = :sessionId")
     suspend fun deleteSessionById(sessionId: Long)
+
+    /**
+     * Takes away the row of a Run that never recorded a second, and asks whether it was one in the
+     * same breath (#314).
+     *
+     * One statement rather than a read and then a delete because the two would be a decision taken
+     * about a row that can still change underneath it. The teardown that calls this has waited for
+     * every writer it knows of, but those waits are bounded: a drain that gives up
+     * ([SCOPE_DRAIN_PASSES]) or a fix arriving from a looper that was asked to quit and never
+     * joined leaves a producer that can still commit — and a sample landing between a check and a
+     * delete is a Run deleted with its record inside it, children and all.
+     *
+     * The conditions are the whole of what makes a row un-rebuildable: still unfinished, and with
+     * neither a sample nor a fix against it. SQLite evaluates them and the delete as one statement,
+     * so a write that lands first is seen and the row is left alone, and one that lands after is a
+     * write to a row that is gone — which the foreign keys refuse. There is no order of arrivals
+     * that deletes a Run with a record.
+     *
+     * @return the number of rows taken away: 1 if this was such a Run, 0 if it was not.
+     */
+    @Query(DELETE_RUN_THAT_RECORDED_NOTHING)
+    suspend fun deleteSessionIfItRecordedNothing(sessionId: Long): Int
 
     @Query("DELETE FROM sessions WHERE id IN (:sessionIds)")
     suspend fun deleteSessionsByIds(sessionIds: List<Long>)
