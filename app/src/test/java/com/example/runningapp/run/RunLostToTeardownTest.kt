@@ -85,9 +85,30 @@ class RunLostToTeardownTest {
     }
 
     @Test
-    fun `a stopped Run with no row is not a loss even though it has no row`() {
+    fun `a stopped Run holding nothing has nothing for the teardown to settle`() {
+        // STOPPING with an empty buffer is a Run whose held work has already been handed over by
+        // the thread that owned it. There is nothing left to deliver, so there is nothing here.
         assertNull(runLostToTeardown(SessionStatus.STOPPING, null))
         assertNull(runLostToTeardown(SessionStatus.IDLE, null))
+    }
+
+    @Test
+    fun `a Run the runner stopped, still holding its finalize, is the teardown's to settle`() {
+        // #361: the runner pressed STOP inside the insert's window, so the Run is STOPPING and its
+        // own finalize is in the buffer waiting for an id. If the teardown takes the inbox with it
+        // the id never reaches the thread, and nobody but this delivers the buffer.
+        val lost = runLostToTeardown(SessionStatus.STOPPING, null, listOf(heldSample(1), heldFinalize))
+                as RunLostToTeardown.AwaitingItsRow
+
+        assertEquals(listOf(heldSample(1), heldFinalize), lost.heldWork)
+        assertTrue(lost.runnerStopped)
+    }
+
+    @Test
+    fun `a stopped Run whose row landed is nothing for the teardown to do`() {
+        // The id arrived, the buffer went out with it and the Run finalized itself. STOPPING only
+        // outlives its row id in the reading, never in fact.
+        assertNull(runLostToTeardown(SessionStatus.STOPPING, 9133L, listOf(heldFinalize)))
     }
 
     @Test
@@ -176,6 +197,50 @@ class RunLostToTeardownTest {
                 as RunLostToTeardown.AwaitingItsRow
 
         assertFalse(lost.mayBeSettledHere)
+    }
+
+    @Test
+    fun `a stopped Run whose join ran out is left to the thread that owns its buffer`() {
+        // The same claim nobody owns as for a recording Run (#360): a thread still going may be
+        // emptying this very buffer, and both delivering it would write the Run down twice.
+        val stopping = RunAtLastDispatch(
+            SessionStatus.STOPPING,
+            liveRunRowId = null,
+            heldWork = listOf(heldSample(1), heldFinalize),
+        )
+
+        val lost = runLostToTeardown(stopping, sessionThreadFinished = false)
+                as RunLostToTeardown.AwaitingItsRow
+
+        assertFalse(lost.mayBeSettledHere)
+        assertTrue(lost.runnerStopped)
+    }
+
+    @Test
+    fun `the Run the ticket describes reads as one for the teardown to settle`() {
+        // #361 end to end, driven through the real Run: START, one banked second, then the
+        // runner's own STOP — the whole of it inside the insert's window. What the Run publishes
+        // at that moment is exactly what a teardown reads of it.
+        val driver = Driver()
+        driver.start(withRow = false)
+        driver.advanceWith(seconds = 1, bpm = 132)
+        driver.stop()
+
+        assertEquals(RunLifecycle.STOPPING, driver.state.lifecycle)
+        assertNull(driver.state.runRowId)
+
+        val lost = runLostToTeardown(
+            RunAtLastDispatch(
+                status = SessionStatus.STOPPING,
+                liveRunRowId = null,
+                heldWork = driver.state.pendingRowEffects,
+            ),
+            sessionThreadFinished = true,
+        ) as RunLostToTeardown.AwaitingItsRow
+
+        assertTrue(lost.mayBeSettledHere)
+        assertTrue(lost.runnerStopped)
+        assertTrue(lost.hasSomethingToSave)
     }
 
     @Test

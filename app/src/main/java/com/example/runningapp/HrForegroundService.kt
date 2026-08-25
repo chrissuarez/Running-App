@@ -2338,10 +2338,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
 
     /**
      * What is done about a Run this service is torn down out from under before its row landed
-     * (#314).
+     * (#314, #361).
      *
-     * The same loss as [endRunLostToTeardown] caught a moment earlier, and it needs a different
-     * answer because the Run's seconds are somewhere else. A Run with a row writes each second to
+     * Two Runs arrive here and they are the same shape: one the teardown took while it was still
+     * recording, and one the runner had already stopped whose held finalize was still waiting for
+     * an id (#361). Only the first is a loss; both are held work that no session inbox is left to
+     * be given an id for, which is what this settles.
+     *
+     * The first is the same loss as [endRunLostToTeardown] caught a moment earlier, and it needs a
+     * different answer because the Run's seconds are somewhere else. A Run with a row writes each second to
      * the database as it happens; a Run still waiting on its id holds them instead, addressed to a
      * row number that does not exist yet ([RunLostToTeardown.AwaitingItsRow]). Nothing on disk can
      * be read back for such a Run, so the held work is handed over here and the ordinary rescue
@@ -2359,7 +2364,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      *  - The runner had stopped it. The held work includes the Run's own finalize
      *    ([RunLostToTeardown.AwaitingItsRow.runnerStopped]); performing it is the whole of the job,
      *    and nothing here rescues or discards behind it — those exist for a Run with no finish of
-     *    its own, and a second writer of the same row is what the #309 comment above forbids.
+     *    its own, and a second writer of the same row is what the #309 comment above forbids. It is
+     *    the one answer for both readings of a stop: the state that says so may have been published
+     *    already (STOPPING) or not yet, and either way the finalize is in the buffer and this is
+     *    what delivers it.
      *  - The Run banked something. Its held seconds go to the row and the Run is put back from them
      *    ([SessionRepository.rescueRunLostToTeardown]), exactly as a Run with a row of its own is.
      *  - The Run banked nothing. The row is an empty `endTime = 0` row that no launch pass can ever
@@ -2386,7 +2394,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun endRunAwaitingItsRow(lost: RunLostToTeardown.AwaitingItsRow) {
         Log.w(
             TAG,
-            "Service destroyed with a run recording whose row had not landed; " +
+            "Service destroyed with a run whose row had not landed; " +
                 "${lost.heldWork.size} held writes, runnerStopped=${lost.runnerStopped}"
         )
         if (!lost.mayBeSettledHere) {

@@ -18,9 +18,21 @@ import com.example.runningapp.isRecording
  *
  * This is the one place that tells those apart, and it is deliberately the same reading the Run
  * Journal is reasoned about by: recording, then not, is a stop; still recording at the teardown is
- * a loss ([com.example.runningapp.diagnostics.RunJournalEvent.RUN_STOPPED]). STOPPING is not a loss
- * even though its row has no totals yet — the runner has stopped, and the Run finalizes the moment
- * its id lands ([RunLifecycle.STOPPING]).
+ * a loss ([com.example.runningapp.diagnostics.RunJournalEvent.RUN_STOPPED]).
+ *
+ * STOPPING is not a loss — the runner stopped it themselves — but it is still this teardown's to
+ * settle, which is a different question and the one #361 was filed about. A Run in STOPPING is
+ * holding its own finalize for an id that has not arrived ([RunLifecycle.STOPPING]), and it
+ * finalizes the moment that id reaches the session inbox. A teardown quits that inbox, so the
+ * insert's later announcement of the id is delivered to nobody and the held finalize never goes
+ * out: the Run the runner deliberately stopped leaves an empty `endTime = 0` row, tells them
+ * nothing, and is offered to the launch pass at every launch for ever. So a STOPPING Run that is
+ * still holding work is read here exactly as a recording Run with no row is — as one
+ * [RunLostToTeardown.AwaitingItsRow] whose [RunLostToTeardown.AwaitingItsRow.runnerStopped] is
+ * true, which is the branch that hands the buffer over and lets the Run's own finalize finish it.
+ *
+ * A STOPPING Run holding nothing is nothing to settle: its buffer has already been handed over by
+ * the thread that owned it, which is the same event that ends STOPPING.
  *
  * @param status what the service last published of the Run.
  * @param liveRunRowId the row id of the Run it holds as live, null once a stop has cleared it and
@@ -77,10 +89,21 @@ fun runLostToTeardown(
     status: SessionStatus,
     liveRunRowId: Long?,
     heldWork: List<PendingRowWork> = emptyList(),
-): RunLostToTeardown? =
-    if (!status.isRecording) null
-    else liveRunRowId?.let { RunLostToTeardown.HasRow(it) }
-        ?: RunLostToTeardown.AwaitingItsRow(heldWork)
+): RunLostToTeardown? = when {
+    status.isRecording ->
+        liveRunRowId?.let { RunLostToTeardown.HasRow(it) }
+            ?: RunLostToTeardown.AwaitingItsRow(heldWork)
+
+    // The runner's own STOP, arriving before the Run's insert did (#361). Not a loss, but held
+    // work that no session inbox is left to be given an id for — so it is settled here, the same
+    // way and by the same branch as a Run stopped a beat before its state said so. An empty
+    // buffer is a Run whose work has already gone out, and a row id is the event that empties it,
+    // so either one leaves this teardown nothing to do.
+    status == SessionStatus.STOPPING && liveRunRowId == null && heldWork.isNotEmpty() ->
+        RunLostToTeardown.AwaitingItsRow(heldWork)
+
+    else -> null
+}
 
 /**
  * The Run a teardown took, in the two states it can be found in — which are two different jobs.
