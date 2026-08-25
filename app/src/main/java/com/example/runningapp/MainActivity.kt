@@ -6,6 +6,7 @@ import android.net.Uri
 import com.example.runningapp.run.AcquisitionPhase
 import com.example.runningapp.run.AcquisitionState
 import com.example.runningapp.run.RunMode
+import com.example.runningapp.run.StartRunRequest
 import com.example.runningapp.run.ScannedStrap
 import android.content.ComponentName
 import android.content.Context
@@ -63,6 +64,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import com.example.runningapp.archive.MonthlyArchiveWorker
 import com.example.runningapp.archive.SafArchiveFolder
+import com.example.runningapp.data.Route
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.export.ExportFormat
@@ -80,6 +82,11 @@ import com.example.runningapp.ui.SegmentsScreen
 import com.example.runningapp.ui.SegmentsViewModel
 import com.example.runningapp.ui.SegmentsViewModelFactory
 import com.example.runningapp.routes.RunRouteSaver
+import com.example.runningapp.ui.NO_ROUTE_CHOICE_LABEL
+import com.example.runningapp.ui.ROUTE_REVERSED_TOGGLE_LABEL
+import com.example.runningapp.ui.routeRowSubtitle
+import com.example.runningapp.ui.runRouteChoiceSummary
+import com.example.runningapp.ui.runRouteLibraryEmptyLine
 import com.example.runningapp.ui.RoutesScreen
 import com.example.runningapp.ui.RoutesViewModel
 import com.example.runningapp.ui.RoutesViewModelFactory
@@ -155,13 +162,7 @@ class MainActivity : ComponentActivity() {
     // dialog resolves, then the run starts from the launcher callback. Whole,
     // including which Workout was picked (#174): the tap is replayed as it was
     // made, not re-read from a screen that has been sitting behind a dialog.
-    private data class PendingStartRun(
-        val skipPlan: Boolean,
-        val runMode: String,
-        val pickedWorkoutId: String?
-    )
-
-    private var pendingStartRun: PendingStartRun? = null
+    private var pendingStartRun: StartRunRequest? = null
 
     // A Manage Devices scan tap that had to ask for BLUETOOTH_SCAN first.
     // Unlike START (which proceeds even on denial — GPS is a sensor, #110),
@@ -228,7 +229,7 @@ class MainActivity : ComponentActivity() {
             // the dialog was granted; denied just means no GPS this run.
             pendingStartRun?.let { parked ->
                 pendingStartRun = null
-                sendStartRun(parked.skipPlan, parked.runMode, parked.pickedWorkoutId)
+                sendStartRun(parked)
             }
             if (pendingScan) {
                 pendingScan = false
@@ -247,7 +248,7 @@ class MainActivity : ComponentActivity() {
         ContextCompat.startForegroundService(this, intent)
     }
 
-    private fun sendStartRun(skipPlan: Boolean, runMode: String, pickedWorkoutId: String?) {
+    private fun sendStartRun(request: StartRunRequest) {
         // START begins the run regardless of the strap (#110): the service
         // opens the record and starts the clock, then acquires the strap as a
         // sensor alongside. The mode travels with the intent so a just-tapped
@@ -255,13 +256,29 @@ class MainActivity : ComponentActivity() {
         // lands.
         val intent = Intent(this, HrForegroundService::class.java).apply {
             action = HrForegroundService.ACTION_START_RUN
-            putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
-            putExtra(HrForegroundService.EXTRA_RUN_MODE, runMode)
-            // The Workout picked on the card travels with START, so the run is the one the card
-            // was showing (#174).
-            putExtra(HrForegroundService.EXTRA_WORKOUT_ID, pickedWorkoutId)
+            putRunChoices(request)
         }
         ContextCompat.startForegroundService(this, intent)
+    }
+
+    /**
+     * Puts every choice the record screen offered onto an intent that begins a Run.
+     *
+     * One place, so START and the Simulate button beside it cannot carry different subsets of the
+     * same tap — which is exactly what happened while they each spelled the extras out (#56). The
+     * mode travels with the intent so a just-tapped Treadmill/Outdoor choice is honoured even before
+     * its settings write lands; the Workout (#174) and the Route (#56) travel for the same reason.
+     */
+    private fun Intent.putRunChoices(request: StartRunRequest) {
+        putExtra(HrForegroundService.EXTRA_SKIP_PLAN, request.skipPlan)
+        putExtra(HrForegroundService.EXTRA_RUN_MODE, request.runMode)
+        putExtra(HrForegroundService.EXTRA_WORKOUT_ID, request.pickedWorkoutId)
+        // Nought is "no course": an intent extra cannot carry a null Long, and no Route has that id.
+        putExtra(
+            HrForegroundService.EXTRA_ROUTE_ID,
+            request.routeId ?: HrForegroundService.NO_ROUTE_ID
+        )
+        putExtra(HrForegroundService.EXTRA_ROUTE_REVERSED, request.routeReversed)
     }
 
     /**
@@ -501,6 +518,11 @@ class MainActivity : ComponentActivity() {
                     // those.
                     val historyRows by historyViewModel.rows.collectAsState()
 
+                    // The library the pre-run picker offers (#56). Off the same Activity-scoped
+                    // view model the Routes screen watches, so an import made a moment ago is
+                    // already in the picker.
+                    val routeLibrary by routesViewModel.routes.collectAsState()
+
                     val forceMainSignal by forceMainToken
                     LaunchedEffect(forceMainSignal) {
                         if (forceMainSignal > 0) {
@@ -527,23 +549,23 @@ class MainActivity : ComponentActivity() {
                                 sessionRepository = sessionRepository,
                                 zoneChanges = appContainer.zoneChanges,
                                 onRequestPermissions = { checkAndRequestPermissions() },
-                                onStartRun = { skipPlan, runMode, pickedWorkoutId ->
+                                routes = routeLibrary,
+                                onStartRun = { request ->
                                     // An Outdoor run without location permission would silently
                                     // record 0 km (LocationTracker just logs and returns): ask
                                     // first instead of starting blind. The tap is parked in
                                     // pendingStartRun and the run starts from the permission
                                     // callback once the dialog resolves — START itself never
                                     // gates on GPS (#110), only on having asked.
-                                    val needsLocation = runMode == "outdoor" &&
+                                    val needsLocation = request.runMode == "outdoor" &&
                                         ContextCompat.checkSelfPermission(
                                             this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION
                                         ) != PackageManager.PERMISSION_GRANTED
                                     if (needsLocation) {
-                                        pendingStartRun =
-                                            PendingStartRun(skipPlan, runMode, pickedWorkoutId)
+                                        pendingStartRun = request
                                         checkAndRequestPermissions()
                                     } else {
-                                        sendStartRun(skipPlan, runMode, pickedWorkoutId)
+                                        sendStartRun(request)
                                     }
                                 },
                                 onRetryStrap = {
@@ -636,14 +658,13 @@ class MainActivity : ComponentActivity() {
                                 onOpenFullScreenMap = {
                                     navigateTo(Routes.MAP)
                                 },
-                                onToggleSimulation = { simulationEnabled, skipPlan, pickedWorkoutId ->
+                                onToggleSimulation = { simulationEnabled, request ->
                                     val simulationIntent = Intent(this@MainActivity, HrForegroundService::class.java).apply {
                                         action = HrForegroundService.ACTION_SET_SIMULATION
                                         putExtra(HrForegroundService.EXTRA_SIMULATION_ENABLED, simulationEnabled)
-                                        putExtra(HrForegroundService.EXTRA_SKIP_PLAN, skipPlan)
-                                        // Turning simulation on starts a run, so it carries the
-                                        // pick for the same reason START does (#174).
-                                        putExtra(HrForegroundService.EXTRA_WORKOUT_ID, pickedWorkoutId)
+                                        // Turning simulation on starts a Run, so it carries every
+                                        // choice START carries, by the same one door (#174, #56).
+                                        putRunChoices(request)
                                     }
                                     // Started from the tap, not from the settings write's coroutine. The
                                     // write is suspend and lands on Dispatchers.IO, so starting after it
@@ -1463,6 +1484,14 @@ fun MainScreen(
     coachPrescriptions: CoachPrescriptions,
     sessionRepository: SessionRepository,
     /**
+     * The runner's library of courses, for the pre-run picker (#56).
+     *
+     * The whole library rather than a picked row, because the card has to be able to say there is
+     * nothing to pick, and because a Route deleted while this screen sits open must drop out of the
+     * pick rather than be started on.
+     */
+    routes: List<Route>,
+    /**
      * The phone changing zone, so the Today card's "Test due" answer arrives when the runner lands
      * rather than at the midnight of the zone they took off from (#320).
      *
@@ -1471,7 +1500,7 @@ fun MainScreen(
     zoneChanges: Flow<Unit>,
     paddingValues: PaddingValues = PaddingValues(0.dp),
     onRequestPermissions: () -> Unit,
-    onStartRun: (Boolean, String, String?) -> Unit,
+    onStartRun: (StartRunRequest) -> Unit,
     onRetryStrap: () -> Unit,
     onTogglePause: () -> Unit,
     onStopSession: () -> Unit,
@@ -1485,7 +1514,7 @@ fun MainScreen(
     onOpenRoutes: () -> Unit,
     onOpenSegments: () -> Unit,
     onOpenFullScreenMap: () -> Unit,
-    onToggleSimulation: (Boolean, Boolean, String?) -> Unit,
+    onToggleSimulation: (Boolean, StartRunRequest) -> Unit,
     onRunModeChange: (String) -> Unit
 ) {
     // Skip today's plan (#107): a today-only choice that runs open-ended without touching the plan.
@@ -1503,6 +1532,13 @@ fun MainScreen(
     // choice is so a rotation doesn't undo the tap — and nowhere else, ever. Nothing writes a
     // position in the Plan down, because the Plan is a menu and has no position to write.
     var pickedWorkoutId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    // The course this Run will follow, and which way round (#56). Screen state, saved the way the
+    // Workout pick is and for the same reason: a rotation must not undo the tap. Kept across a
+    // switch to Treadmill rather than cleared, so switching back does not cost the runner their
+    // choice — a treadmill Run following no course is the rulebook's rule, not the screen's.
+    var pickedRouteId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var pickedRouteReversed by rememberSaveable { mutableStateOf(false) }
 
     val state = hrService?.hrState?.collectAsState()?.value ?: HrState()
     val activeStage = TrainingPlanProvider.resolveActiveStage(
@@ -1571,6 +1607,19 @@ fun MainScreen(
     // Taken from the card rather than from the pick itself, so START runs exactly what the card is
     // showing — including where a stale pick has already fallen back to the stage's first (#174).
     val todaysWorkoutId = todayCard.workouts.firstOrNull { it.picked }?.workoutId
+
+    // Taken from the library rather than from the pick, so a course deleted while this screen sat
+    // open is not the course a Run sets off on (#56) — the same rule the Workout pick keeps above.
+    val pickedRoute = routes.firstOrNull { it.id == pickedRouteId }
+    // Everything the tap has to carry, built in one place so START and Simulate cannot set off on
+    // different Runs.
+    val startRunRequest = StartRunRequest(
+        skipPlan = skipPlanToday,
+        runMode = selectedRunMode,
+        pickedWorkoutId = todaysWorkoutId,
+        routeId = pickedRoute?.id,
+        routeReversed = pickedRouteReversed,
+    )
 
     val isSessionActive = state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED
 
@@ -1710,6 +1759,26 @@ fun MainScreen(
                     }
                 }
 
+                // Outdoor only: there is no ground under a treadmill to follow a course over (#56).
+                if (!isSessionActive && RunMode.ofSettingValue(selectedRunMode) == RunMode.OUTDOOR) {
+                    item {
+                        RoutePickerCard(
+                            routes = routes,
+                            picked = pickedRoute,
+                            reversed = pickedRouteReversed,
+                            onPick = { routeId ->
+                                // A different course starts pointing the way it is drawn. Carrying
+                                // the last pick's direction over would send the runner backwards
+                                // round a course they never asked to reverse. Tested before the
+                                // pick is written down, or every pick would look like the same one.
+                                if (routeId != pickedRouteId) pickedRouteReversed = false
+                                pickedRouteId = routeId
+                            },
+                            onReversedChange = { pickedRouteReversed = it }
+                        )
+                    }
+                }
+
                 if (!isSessionActive) {
                     item {
                         TodayCard(
@@ -1811,7 +1880,7 @@ fun MainScreen(
                         }
                         Button(
                             onClick = {
-                                onToggleSimulation(!state.isSimulating, skipPlanToday, todaysWorkoutId)
+                                onToggleSimulation(!state.isSimulating, startRunRequest)
                             },
                             colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer) else ButtonDefaults.buttonColors(),
                             modifier = Modifier
@@ -1849,7 +1918,7 @@ fun MainScreen(
                     acquisition = state.acquisition,
                     strapConnected = state.acquisition.phase is AcquisitionPhase.Connected,
                     isSimulating = state.isSimulating,
-                    onStart = { onStartRun(skipPlanToday, selectedRunMode, todaysWorkoutId) },
+                    onStart = { onStartRun(startRunRequest) },
                     // The activity-level handler re-acquires via the service intent (saved strap
                     // first, scan fallback) — no direct binder connect here, which would race the
                     // intent-based connect paths.
@@ -1889,6 +1958,144 @@ private fun RunModeSelector(runMode: String, onRunModeChange: (String) -> Unit) 
             }
         ) {
             Text("Outdoor")
+        }
+    }
+}
+
+/**
+ * The pre-run route picker (#56): which course this Run will follow, and which way round.
+ *
+ * Outdoor only, and offered by the screen rather than decided by it — a treadmill Run follows no
+ * course, and that rule is the Run's, applied where its configuration is pinned. Shown even when the
+ * library is empty, because "you have no routes yet" is the answer a runner looking for the picker
+ * needs, and a card that simply is not there reads as a feature that is not built.
+ *
+ * [picked] is the Route the library actually holds for the runner's pick, not the pick itself: a
+ * course deleted from the library while this screen sat open leaves the card saying "No route",
+ * which is the truth, rather than naming a row that has gone.
+ */
+@Composable
+private fun RoutePickerCard(
+    routes: List<Route>,
+    picked: Route?,
+    reversed: Boolean,
+    onPick: (Long?) -> Unit,
+    onReversedChange: (Boolean) -> Unit
+) {
+    var choosing by rememberSaveable { mutableStateOf(false) }
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
+            Text("Route", style = MaterialTheme.typography.labelLarge)
+            Spacer(modifier = Modifier.height(4.dp))
+            if (routes.isEmpty()) {
+                Text(
+                    text = runRouteLibraryEmptyLine(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Text(
+                    text = runRouteChoiceSummary(picked, reversed),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { choosing = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = RunningUiTokens.MinTouchTarget)
+                ) {
+                    Text("Choose a route")
+                }
+                // Only where there is a course to turn round. A switch offered beside "No route"
+                // would be a control with nothing to act on, and one left on from a previous pick
+                // would silently apply itself to the next.
+                if (picked != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = RunningUiTokens.MinTouchTarget),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = ROUTE_REVERSED_TOGGLE_LABEL,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Switch(checked = reversed, onCheckedChange = onReversedChange)
+                    }
+                }
+            }
+        }
+    }
+
+    if (choosing) {
+        AlertDialog(
+            onDismissRequest = { choosing = false },
+            title = { Text("Choose a route") },
+            text = {
+                LazyColumn {
+                    // "No route" at the top rather than as a separate button, so following nothing
+                    // is one of the choices in the same list and can be got back to the same way.
+                    item {
+                        RouteChoiceRow(
+                            label = NO_ROUTE_CHOICE_LABEL,
+                            subtitle = null,
+                            selected = picked == null,
+                            onSelect = {
+                                onPick(null)
+                                choosing = false
+                            }
+                        )
+                    }
+                    items(routes, key = { it.id }) { route ->
+                        RouteChoiceRow(
+                            label = route.name,
+                            subtitle = routeRowSubtitle(route),
+                            selected = picked?.id == route.id,
+                            onSelect = {
+                                onPick(route.id)
+                                choosing = false
+                            }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { choosing = false }) { Text("Close") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun RouteChoiceRow(
+    label: String,
+    subtitle: String?,
+    selected: Boolean,
+    onSelect: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = RunningUiTokens.MinTouchTarget)
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.bodyLarge)
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
