@@ -29,8 +29,8 @@ import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.ui.theme.RunningUiTokens
 
 /**
- * Full-screen live map (#41): the same camera-follow/amber-trail/day-night [MapSurface] as the
- * in-run [MapCard], full-bleed, with a slim high-contrast stats strip overlaid on top. Back is
+ * Full-screen live map (#41): the same camera-follow/amber-trail/course-line/day-night [MapSurface]
+ * as the in-run [MapCard], full-bleed, with a slim high-contrast stats strip overlaid on top. Back is
  * the only tappable control, so sweaty thumbs can't reach pause/stop from here. The system
  * back button/gesture is intercepted via [BackHandler] and routed through the same [onBack] as
  * the strip's back arrow — otherwise it would pop this destination off Navigation-Compose's

@@ -184,6 +184,9 @@ class AppContainer(context: Context) {
             // Where a Run's AI summary is kept once it has been written (#76). Without it a Run's
             // page simply never offers one.
             runSummaryDao = database.runSummaryDao(),
+            // The runner's courses, read only so a live Run's map can draw the one it set out to
+            // follow (#56).
+            routeDao = database.routeDao(),
             settingsRepository = settingsRepository,
             coachPrescriptionRepository = coachPrescriptionRepository,
             aiCoachClient = aiCoachClient,
