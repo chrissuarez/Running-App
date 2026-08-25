@@ -372,6 +372,44 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var insertedRunRowId: Long? = null
 
     /**
+     * The claim on the Run's held work, taken by whichever side is about to deliver it (#360).
+     *
+     * A Run holds every second it records until its row id lands ([RunState.pendingRowEffects]),
+     * and two sides can hand that buffer over: the session inbox, the moment
+     * [RunEvent.RunRowCreated] reaches it, and this service's teardown, which must be able to —
+     * a teardown can arrive while the insert is still in flight and it quits the inbox behind it,
+     * so the id arriving afterwards reaches nobody. Exactly one of them may deliver, or every
+     * second the Run recorded is written down twice and the rescue rebuilds inflated totals from
+     * the duplicates.
+     *
+     * A compare-and-set is what decides it, rather than either side inferring from the other's
+     * liveness. #314 inferred: the teardown delivered only when its bounded join of the session
+     * thread said the thread had stopped. That closed the duplicate but not its other half — a
+     * join can run out for any reason at all, and a teardown that stood down for a thread doing
+     * something else entirely left nobody to deliver the buffer (#360).
+     *
+     * The loser is always told. The session thread learns it lost through
+     * [RunEvent.HeldWorkTakenOver] and lets its buffer go without emitting it; the teardown learns
+     * it lost here and stands down ([RunLostToTeardown.AwaitingItsRow.mayBeSettledHere]).
+     *
+     * Reset as each Run is started, in the same place and for the same reason as
+     * [insertedRunRowId]: the claim is about the Run being recorded now, and a claim left standing
+     * from the last Run would have this one's buffer refused delivery by both sides.
+     */
+    private val heldWorkClaim = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * Take the Run's held work, if nobody has (#360). True to the one side that wins it.
+     *
+     * A teardown must read [runAtLastDispatch] *before* it calls this, never after. The side that
+     * loses the claim lets its buffer go, and the session thread's letting go is published like
+     * everything else it does — so a teardown that claimed first and read second could find the
+     * buffer it just won already published as empty and deliver nothing at all. Read first and the
+     * buffer is whole: the loser cannot have emptied it, because it had not yet been told.
+     */
+    private fun takeHeldWork(): Boolean = heldWorkClaim.compareAndSet(false, true)
+
+    /**
      * The Run as its last dispatch left it, for the teardown to read (#314).
      *
      * Published out of [publishRun] the way the Run's state is, and for the same reason: the
@@ -612,7 +650,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * state, so an effect must never be carried out against a state the app has not been told about.
      */
     private fun dispatchRunEvent(event: RunEvent) {
-        val outcome = Run.onEvent(runState, event)
+        // The one thing decided before the Run sees the event, because it is not the Run's to
+        // decide: whether this inbox is the side that hands the Run's held work over (#360). The
+        // id is the event that empties the buffer, so this is the moment to take the claim — and a
+        // teardown that took it first turns the arrival into the one the Run drops its buffer on
+        // instead of emitting it.
+        val toDispatch =
+            if (event is RunEvent.RunRowCreated && !takeHeldWork()) {
+                Log.w(TAG, "A teardown took run ${event.runRowId}'s held work; not delivering it here")
+                RunEvent.HeldWorkTakenOver(event.runRowId, event.nowMillis)
+            } else {
+                event
+            }
+        val outcome = Run.onEvent(runState, toDispatch)
         runState = outcome.state
         // Retired here, with the state and before the publish, rather than when the insert is
         // dispatched (#314). A Run becomes observable to a teardown at [publishRun], and its
@@ -620,8 +670,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // Run's for the whole of the window in between — long enough for a teardown whose join of
         // this thread timed out ([SESSION_THREAD_JOIN_TIMEOUT_MS]) to read the new Run as awaiting
         // its row and settle the old Run's row in its name.
-        if (outcome.effects.beginARun()) insertedRunRowId = null
-        publishRun(runState, event.nowMillis)
+        if (outcome.effects.beginARun()) {
+            insertedRunRowId = null
+            // The new Run's buffer is nobody's yet. Reset with the id and for the same reason: a
+            // claim left standing from the last Run would leave this one's held work refused by
+            // both sides (#360).
+            heldWorkClaim.set(false)
+        }
+        publishRun(runState, toDispatch.nowMillis)
         // Between the publish and the effects: the journal describes what is now true, and it must
         // say so before an effect can act on it — a stop's own effects end in the demote, and a
         // journal that read the state afterwards would file the two in the wrong order.
@@ -2384,9 +2440,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * alone rather than finishing it as a Run of no seconds ([finishedFromRecord]).
      *
      * The held work is performed off the session thread, which nothing else in this file does. It
-     * is safe only because that thread is *known* to be gone — a join that ran out is a thread that
-     * may be delivering this very buffer itself, and both delivering it would write every second
-     * the Run recorded down twice ([RunLostToTeardown.AwaitingItsRow.mayBeSettledHere]) — and
+     * is safe only because this teardown *holds the claim* on that buffer, so the session thread
+     * cannot be delivering it too — both delivering it would write every second the Run recorded
+     * down twice ([RunLostToTeardown.AwaitingItsRow.mayBeSettledHere], [takeHeldWork]) — and
      * because these particular effects are builders: each maps
      * one held piece to one row and launches it onto [recorderWriteScope] or [finalizationScope],
      * both of which outlive the service by design. Nothing here touches [runState].
@@ -2398,12 +2454,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 "${lost.heldWork.size} held writes, runnerStopped=${lost.runnerStopped}"
         )
         if (!lost.mayBeSettledHere) {
-            // The session thread outlasted the join and is the one holding this Run's work, so it
-            // delivers it and this does not. Nothing will finalize the Run behind it, so the row
-            // stays unfinished and the launch pass has it — the same residue as a drain that gave
-            // up. The runner is told the #309 way, which is the honest answer here: what the buffer
-            // held is being written down, and what it amounts to is not this teardown's to say.
-            Log.w(TAG, "The session thread outlasted its join; leaving the run's held work to it")
+            // The session inbox took the claim on this buffer first, so it is the side delivering
+            // it and this is not (#360). Nothing will finalize the Run behind that delivery, so
+            // the row stays unfinished and the launch pass has it — the same residue as a drain
+            // that gave up. The runner is told the #309 way, which is the honest answer here: what
+            // the buffer held is being written down, and what it amounts to is not this teardown's
+            // to say.
+            Log.w(TAG, "The session inbox took the run's held work first; leaving it to that thread")
             if (!lost.runnerStopped) notifyRunLostToTeardown(recordedSomething = true)
             return
         }
@@ -2638,11 +2695,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         sessionHandler?.removeCallbacks(sessionTimerRunnable)
         sessionHandlerThread?.quit()
         sessionHandlerThread?.join(SESSION_THREAD_JOIN_TIMEOUT_MS)
-        // Whether that join ended because the thread stopped or because it ran out of time, taken
-        // before the handle is dropped. A teardown that settles a Run's held work while the thread
-        // that owns it is still going would deliver it twice (#314) — see
-        // [RunLostToTeardown.AwaitingItsRow.mayBeSettledHere].
-        val sessionThreadFinished = sessionHandlerThread?.isAlive != true
+        // What the join is for is the sweep below — one message finishing before this thread is
+        // alone with [openGatts]. It is not what decides the Run's held work: that is a claim
+        // taken further down, because whether the thread is still going says nothing about
+        // whether it is the side delivering the buffer (#360).
         sessionHandlerThread = null
         sessionHandler = null
 
@@ -2693,7 +2749,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // would still be changing what it says. The journal line above records the status the
         // destroy began in, which is what it claims to be; what is done about the Run is decided
         // from the last thing the Run actually said.
-        when (val lost = runLostToTeardown(runAtLastDispatch, sessionThreadFinished)) {
+        //
+        // The reading first and the claim on the buffer second, in that order and never the other
+        // way about (#360): see [takeHeldWork]. The claim is what decides which side delivers the
+        // held work, and it is taken here rather than up at the join because a teardown that took
+        // it earlier would be claiming a buffer the session thread might still have been about to
+        // deliver from — and standing the thread down for the whole of the teardown below.
+        val run = runAtLastDispatch
+        val heldWorkTakenHere = takeHeldWork()
+        when (val lost = runLostToTeardown(run, heldWorkTakenHere)) {
             is RunLostToTeardown.HasRow -> endRunLostToTeardown(lost.runRowId)
             is RunLostToTeardown.AwaitingItsRow -> endRunAwaitingItsRow(lost)
             null -> Unit

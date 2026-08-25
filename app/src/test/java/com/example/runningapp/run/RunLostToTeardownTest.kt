@@ -176,55 +176,55 @@ class RunLostToTeardownTest {
         // runner nothing was recorded while that very row was being rescued behind them.
         val landed = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = 9133L, heldWork = emptyList())
 
-        assertEquals(RunLostToTeardown.HasRow(9133L), runLostToTeardown(landed, sessionThreadFinished = true))
+        assertEquals(RunLostToTeardown.HasRow(9133L), runLostToTeardown(landed, heldWorkTakenHere = true))
     }
 
     @Test
     fun `a Run still holding its seconds reads as one awaiting its row`() {
         val awaiting = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = null, heldWork = listOf(heldSample(1)))
 
-        assertEquals(RunLostToTeardown.AwaitingItsRow(listOf(heldSample(1))), runLostToTeardown(awaiting, sessionThreadFinished = true))
+        assertEquals(RunLostToTeardown.AwaitingItsRow(listOf(heldSample(1))), runLostToTeardown(awaiting, heldWorkTakenHere = true))
     }
 
     @Test
     fun `a service torn down with no Run at all lost nothing`() {
-        assertNull(runLostToTeardown(RunAtLastDispatch.NONE, sessionThreadFinished = true))
+        assertNull(runLostToTeardown(RunAtLastDispatch.NONE, heldWorkTakenHere = true))
     }
 
     @Test
-    fun `a teardown that outwaited the session thread settles the Run it was holding`() {
+    fun `a teardown that took the claim on the buffer settles the Run that was holding it`() {
         val awaiting = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = null, heldWork = listOf(heldSample(1)))
 
-        val lost = runLostToTeardown(awaiting, sessionThreadFinished = true)
+        val lost = runLostToTeardown(awaiting, heldWorkTakenHere = true)
                 as RunLostToTeardown.AwaitingItsRow
 
         assertTrue(lost.mayBeSettledHere)
     }
 
     @Test
-    fun `a teardown whose join ran out leaves the held work to the thread that owns it`() {
-        // The thread is mid-dispatch of the id, emptying the very buffer this read. Delivered from
-        // both sides, every second the Run recorded would be written down twice and the rescue
-        // would rebuild inflated totals from the duplicates.
+    fun `a teardown that lost the claim leaves the held work to the side that won it`() {
+        // The session inbox took the buffer first and is emptying it. Delivered from both sides,
+        // every second the Run recorded would be written down twice and the rescue would rebuild
+        // inflated totals from the duplicates (#360).
         val awaiting = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = null, heldWork = listOf(heldSample(1)))
 
-        val lost = runLostToTeardown(awaiting, sessionThreadFinished = false)
+        val lost = runLostToTeardown(awaiting, heldWorkTakenHere = false)
                 as RunLostToTeardown.AwaitingItsRow
 
         assertFalse(lost.mayBeSettledHere)
     }
 
     @Test
-    fun `a stopped Run whose join ran out is left to the thread that owns its buffer`() {
-        // The same claim nobody owns as for a recording Run (#360): a thread still going may be
-        // emptying this very buffer, and both delivering it would write the Run down twice.
+    fun `a stopped Run whose buffer was claimed elsewhere is left to the side that claimed it`() {
+        // The same claim as for a recording Run, and only one side may win it: the loser here is
+        // the teardown, and the session inbox delivers the Run's own finalize (#360).
         val stopping = RunAtLastDispatch(
             SessionStatus.STOPPING,
             liveRunRowId = null,
             heldWork = listOf(heldSample(1), heldFinalize),
         )
 
-        val lost = runLostToTeardown(stopping, sessionThreadFinished = false)
+        val lost = runLostToTeardown(stopping, heldWorkTakenHere = false)
                 as RunLostToTeardown.AwaitingItsRow
 
         assertFalse(lost.mayBeSettledHere)
@@ -250,7 +250,7 @@ class RunLostToTeardownTest {
                 liveRunRowId = null,
                 heldWork = driver.state.pendingRowEffects,
             ),
-            sessionThreadFinished = true,
+            heldWorkTakenHere = true,
         ) as RunLostToTeardown.AwaitingItsRow
 
         assertTrue(lost.mayBeSettledHere)
@@ -261,10 +261,10 @@ class RunLostToTeardownTest {
     @Test
     fun `a Run that already has a row is nothing for the session thread to be holding`() {
         // Its seconds went to the database as it ran; there is no buffer for two deliverers to
-        // race over, so a join that ran out changes nothing about it (#309).
+        // race over, so a lost claim changes nothing about it (#309).
         val landed = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = 9133L, heldWork = emptyList())
 
-        assertEquals(RunLostToTeardown.HasRow(9133L), runLostToTeardown(landed, sessionThreadFinished = false))
+        assertEquals(RunLostToTeardown.HasRow(9133L), runLostToTeardown(landed, heldWorkTakenHere = false))
     }
 }
 
@@ -332,5 +332,92 @@ class SettlementOfRowAwaitedTest {
             RowSettlement.PUT_BACK,
             settlementOfRowAwaited(rescued = true, recorderWritesDrained = false),
         )
+    }
+}
+
+/**
+ * What a Run does when it is told its held work is already somebody else's (#360).
+ *
+ * The event exists for one moment: a teardown that took the Run's buffer before the id reached the
+ * session inbox. The Run still learns its id — that is the truth of it, the row exists — but it
+ * must not emit a second copy of work another side is delivering.
+ */
+class HeldWorkTakenOverTest {
+
+    @Test
+    fun `a Run told its held work is taken over emits none of it`() {
+        val driver = Driver()
+        driver.start(withRow = false)
+        driver.advanceWith(seconds = 3, bpm = IN_TARGET)
+        assertTrue(driver.state.pendingRowEffects.isNotEmpty())
+
+        val effects = driver.on(RunEvent.HeldWorkTakenOver(9133L, driver.nowMillis))
+
+        assertEquals(emptyList<RunEffect>(), effects)
+        assertEquals(emptyList<PendingRowWork>(), driver.state.pendingRowEffects)
+        assertEquals(9133L, driver.state.runRowId)
+    }
+
+    @Test
+    fun `a stopped Run told its held work is taken over finalizes nothing and is over`() {
+        // The teardown has the Run's own finalize and is performing it. A second one from here
+        // would write the same row twice.
+        val driver = Driver()
+        driver.start(withRow = false)
+        driver.advanceWith(seconds = 2, bpm = IN_TARGET)
+        driver.stop()
+
+        val effects = driver.on(RunEvent.HeldWorkTakenOver(9133L, driver.nowMillis))
+
+        assertEquals(0, effects.count { it is RunEffect.FinalizeRun })
+        assertEquals(emptyList<RunEffect>(), effects)
+        assertEquals(RunLifecycle.STOPPED, driver.state.lifecycle)
+    }
+
+    @Test
+    fun `an outdoor Run told its held work is taken over starts no GPS`() {
+        // This event only ever arrives from a teardown, so the service that would stop GPS again
+        // is on its way out. Starting a sensor for it would leave one running with nobody to stop it.
+        val driver = Driver()
+        driver.start(config(runMode = RunMode.OUTDOOR), withRow = false)
+
+        val effects = driver.on(RunEvent.HeldWorkTakenOver(9133L, driver.nowMillis))
+
+        assertEquals(0, effects.count { it is RunEffect.StartGps })
+    }
+
+    @Test
+    fun `a Run that already has its row is told nothing new`() {
+        val driver = Driver()
+        driver.start(runRowId = 7L)
+
+        val effects = driver.on(RunEvent.HeldWorkTakenOver(9133L, driver.nowMillis))
+
+        assertEquals(emptyList<RunEffect>(), effects)
+        assertEquals(7L, driver.state.runRowId)
+    }
+
+    @Test
+    fun `the id landing after the handover flushes nothing`() {
+        // Both events can reach one Run: the teardown takes the buffer, and the insert's own
+        // announcement arrives behind it. The buffer is empty by then and must stay that way.
+        val driver = Driver()
+        driver.start(withRow = false)
+        driver.advanceWith(seconds = 3, bpm = IN_TARGET)
+        driver.on(RunEvent.HeldWorkTakenOver(9133L, driver.nowMillis))
+
+        val effects = driver.on(RunEvent.RunRowCreated(9133L, driver.nowMillis))
+
+        assertEquals(emptyList<RunEffect>(), effects)
+    }
+
+    @Test
+    fun `a Run that never started has no held work for anyone to take`() {
+        val driver = Driver()
+
+        val effects = driver.on(RunEvent.HeldWorkTakenOver(9133L, T0))
+
+        assertEquals(emptyList<RunEffect>(), effects)
+        assertNull(driver.state.runRowId)
     }
 }
