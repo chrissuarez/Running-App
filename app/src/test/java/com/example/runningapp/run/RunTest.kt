@@ -101,6 +101,58 @@ class RunStartTest {
     }
 
     @Test
+    fun `the row request carries the course the run set out on, and which way round`() {
+        // Which Route, not the Route: the library is the runner's and stays editable while the Run
+        // goes on (#56).
+        val driver = Driver()
+
+        val effects = driver.on(
+            RunEvent.Started(
+                config(runMode = RunMode.OUTDOOR, route = RunRoute(routeId = 12L, reversed = true)),
+                RunControls(),
+                T0,
+            ),
+        )
+
+        val create = effects.only<RunEffect.CreateRunRow>()
+        assertEquals(12L, create.ranAlongRouteId)
+        assertTrue(create.ranAlongRouteReversed)
+    }
+
+    @Test
+    fun `a run started with no course follows none, in neither direction`() {
+        val driver = Driver()
+
+        val effects = driver.on(RunEvent.Started(config(route = null), RunControls(), T0))
+
+        val create = effects.only<RunEffect.CreateRunRow>()
+        assertNull(create.ranAlongRouteId)
+        assertFalse(create.ranAlongRouteReversed)
+    }
+
+    /**
+     * The screen keeps the pick across a switch to Treadmill so switching back does not cost the
+     * runner their choice, so a pick really does arrive beside a treadmill mode (#56).
+     */
+    @Test
+    fun `a treadmill run follows no course, whatever was picked`() {
+        assertNull(runRouteFollowed(RunMode.TREADMILL, routeId = 12L, reversed = true))
+    }
+
+    @Test
+    fun `an outdoor run follows the course it was given, the way round it was given`() {
+        assertEquals(
+            RunRoute(routeId = 12L, reversed = true),
+            runRouteFollowed(RunMode.OUTDOOR, routeId = 12L, reversed = true),
+        )
+    }
+
+    @Test
+    fun `an outdoor run given no course follows none`() {
+        assertNull(runRouteFollowed(RunMode.OUTDOOR, routeId = null, reversed = false))
+    }
+
+    @Test
     fun `a second start while the run is live asks for nothing`() {
         val driver = Driver()
         driver.start()

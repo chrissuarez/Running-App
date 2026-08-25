@@ -23,6 +23,38 @@ enum class RunMode(val settingValue: String) {
 }
 
 /**
+ * The course a Run set out to follow, and which way round it was set out on (#56).
+ *
+ * The Route itself is not held here, only which one it is. A Route is a row in a library the runner
+ * curates while no Run is going on — it can be renamed, re-measured by a better export of the same
+ * file, or thrown away entirely — and the Run has no business holding a copy of a line it did not
+ * record. What the Run is entitled to say is which course it set out on, which is what this is.
+ *
+ * [reversed] is the runner's word that they are running the course the other way round. It changes
+ * nothing about the line: the same ground is covered in the same places, so the same line is drawn
+ * on the map. What it is for is everything that depends on which way you are *going* along it — the
+ * next turn, how far is left — which belong to the tickets that come after this one.
+ */
+data class RunRoute(val routeId: Long, val reversed: Boolean)
+
+/**
+ * The course a Run started in [runMode] may follow, given what the record screen offered (#56).
+ *
+ * The one place the rule that a treadmill Run follows no course is applied, and it is here rather
+ * than on the screen because it is a fact about what a Run may be recorded as, not about what a
+ * screen may show. There is no ground under a treadmill for a course to be over.
+ *
+ * That matters because the screen does not clear the pick when the runner switches to Treadmill —
+ * switching back must not cost them their choice — so a pick genuinely does arrive at START beside a
+ * treadmill mode, and something has to drop it. Stated once, here, so it cannot be stated
+ * differently in a second place later.
+ */
+fun runRouteFollowed(runMode: RunMode, routeId: Long?, reversed: Boolean): RunRoute? {
+    if (runMode != RunMode.OUTDOOR) return null
+    return routeId?.let { RunRoute(it, reversed) }
+}
+
+/**
  * Everything about a Run that is fixed the moment START is pressed (#131).
  *
  * Nothing changes these for the Run's lifetime. The heart-rate profile used to be read live on
@@ -56,6 +88,20 @@ data class RunConfig(
      * begins.
      */
     val ranUnderStageId: String?,
+    /**
+     * The Route this Run set out to follow, or null for a Run following none (#56).
+     *
+     * Pinned like everything else here, and for the sharpest version of the reason a Route needs:
+     * the library is editable and a Route can be deleted mid-Run. What the Run set out to follow is
+     * settled when it begins, and a course thrown away afterwards does not retrospectively make
+     * this an unrouted Run — it makes it a Run whose course is gone, which the map says by drawing
+     * nothing and which is exactly what a Route's own doc promises costs a Run nothing.
+     *
+     * Always null on a treadmill Run, whatever the screen sent: see `pinRunConfig`, which is the one
+     * place that rule is applied. There is no course to follow on a treadmill and nothing that could
+     * be measured against one.
+     */
+    val route: RunRoute? = null,
 ) {
     val warmUpSeconds: Int get() = workout?.warmUpSeconds ?: 0
 

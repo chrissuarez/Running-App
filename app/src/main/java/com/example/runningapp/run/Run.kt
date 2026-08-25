@@ -88,6 +88,8 @@ object Run {
                     hrProfile = event.config.hrProfile,
                     ranUnderStageId = event.config.ranUnderStageId,
                     ranUnderWorkoutId = event.config.workout?.id,
+                    ranAlongRouteId = event.config.route?.routeId,
+                    ranAlongRouteReversed = event.config.route?.reversed == true,
                 ),
             ),
         )

@@ -10,6 +10,7 @@ import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.hrZoneOf
 import com.example.runningapp.run.RunMode
+import com.example.runningapp.run.RunRoute
 import com.example.runningapp.training.HistoryBestEffort
 import kotlinx.coroutines.flow.Flow
 
@@ -250,8 +251,48 @@ data class RunnerSession(
      * backfill, because the only offset a backfill could write is the one the phone is on today,
      * which is exactly the guess this exists to stop.
      */
-    val ranAtUtcOffsetSeconds: Int? = null
+    val ranAtUtcOffsetSeconds: Int? = null,
+    /**
+     * The Route this Run set out to follow (#56), written with the row at START from
+     * [com.example.runningapp.run.RunConfig.route] — the course picked on the screen the runner
+     * pressed START on, and null for a Run following none.
+     *
+     * An id and not a copy of the line. A Route is a plan the runner keeps in a library they edit
+     * between Runs (ADR 0014), and this Run recorded its own Track of where it actually went; the
+     * course it set out on is a third thing, and the only honest way to say it is to name the row.
+     * There is deliberately no foreign key, for the reason [Route] itself gives: the library must be
+     * emptiable without a single Run being disturbed. So a Route deleted afterwards leaves this
+     * naming a row that is gone, which reads as "the course this Run followed is no longer kept" —
+     * a true statement, and the one every reader here already handles by drawing nothing.
+     *
+     * Like [ranUnderStageId] nothing ever moves it: it is what the Run set out to do, and no later
+     * reading of the Run changes that. Null is also every Run recorded before v39, and there is no
+     * backfill — a Run that went over a course's ground is not a Run that was following it, and
+     * guessing which is which is exactly what writing it down at START exists to stop.
+     */
+    val ranAlongRouteId: Long? = null,
+    /**
+     * Which way round the Run set out along [ranAlongRouteId] — true for the course run backwards.
+     *
+     * Only meaningful beside an id, and false for every Run following no course. False rather than
+     * null because there is no third state to tell apart: a Run either set out the way the course is
+     * drawn or the other way, and a Run following nothing has done neither, which "not reversed"
+     * says as truthfully as a null would. Read the pair through [ranAlongRoute], which is the only
+     * way anything should ask.
+     */
+    val ranAlongRouteReversed: Boolean = false,
 )
+
+/**
+ * The course this Run set out to follow and which way round, or null for a Run following none (#56).
+ *
+ * The one door for the question, so no reader has to remember that the direction means nothing
+ * without an id beside it.
+ */
+fun RunnerSession.ranAlongRoute(): RunRoute? {
+    val routeId = ranAlongRouteId ?: return null
+    return RunRoute(routeId, ranAlongRouteReversed)
+}
 
 /**
  * The Reserve this Run's zone seconds are banded against, or null for a Run that has none of its
@@ -1221,7 +1262,7 @@ interface RunPauseDao {
         RecordFillRow::class,
         RunSummaryRow::class
     ],
-    version = 38,
+    version = 39,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1331,7 +1372,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_34_35,
     MIGRATION_35_36,
     MIGRATION_36_37,
-    MIGRATION_37_38
+    MIGRATION_37_38,
+    MIGRATION_38_39
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2422,5 +2464,29 @@ val MIGRATION_37_38 = object : Migration(37, 38) {
             )
             """.trimIndent()
         )
+    }
+}
+
+/**
+ * Room for the course a Run set out to follow (#56): [RunnerSession.ranAlongRouteId] and the
+ * direction beside it.
+ *
+ * Two columns and nothing else. Every Run already in history follows no course, which is not the
+ * migration giving up on them but the only true thing that can be said: the app had no way to be
+ * told a course before this, so no Run in history was ever started on one. A backfill matching old
+ * Runs to Routes by their shape would be writing down a guess — a Run that happens to cross a
+ * course's ground is not a Run that set out to follow it — and the whole reason this is stamped at
+ * START is that intent cannot be recovered afterwards.
+ */
+val MIGRATION_38_39 = object : Migration(38, 39) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        if (!database.hasColumn("sessions", "ranAlongRouteId")) {
+            database.execSQL("ALTER TABLE sessions ADD COLUMN ranAlongRouteId INTEGER")
+        }
+        if (!database.hasColumn("sessions", "ranAlongRouteReversed")) {
+            database.execSQL(
+                "ALTER TABLE sessions ADD COLUMN ranAlongRouteReversed INTEGER NOT NULL DEFAULT 0"
+            )
+        }
     }
 }
