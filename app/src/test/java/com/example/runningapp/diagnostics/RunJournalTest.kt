@@ -159,6 +159,9 @@ class RunJournalTest {
             "a service-created with no service-destroyed above it: the process died",
         RunJournalEvent.RUN_ROW_CREATED to
             "a Run with no run-row-created: its row never landed",
+        RunJournalEvent.RUN_ROW_DISCARDED to
+            "a run-row-created with no run-row-discarded after it, for a row that is not in the " +
+                "database: the row was lost rather than taken away",
         RunJournalEvent.RUN_STOPPED to
             "a run-started with no run-stopped after it: the Run died still recording",
         RunJournalEvent.RUN_FINALIZED to

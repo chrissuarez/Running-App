@@ -131,6 +131,29 @@ class RunLostToTeardownTest {
     fun `a Run with a row always has something to save`() {
         assertTrue(runLostToTeardown(SessionStatus.RUNNING, 9133L)!!.hasSomethingToSave)
     }
+
+    @Test
+    fun `the reading is taken from one moment of the Run, not three`() {
+        // The three inputs travel together, so a teardown cannot pair a status from one dispatch
+        // with held work from a later one. A Run whose row landed reads as a Run with a row —
+        // never as a Run awaiting one whose buffer has since been emptied, which would tell its
+        // runner nothing was recorded while that very row was being rescued behind them.
+        val landed = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = 9133L, heldWork = emptyList())
+
+        assertEquals(RunLostToTeardown.HasRow(9133L), runLostToTeardown(landed))
+    }
+
+    @Test
+    fun `a Run still holding its seconds reads as one awaiting its row`() {
+        val awaiting = RunAtLastDispatch(SessionStatus.RUNNING, liveRunRowId = null, heldWork = listOf(heldSample(1)))
+
+        assertEquals(RunLostToTeardown.AwaitingItsRow(listOf(heldSample(1))), runLostToTeardown(awaiting))
+    }
+
+    @Test
+    fun `a service torn down with no Run at all lost nothing`() {
+        assertNull(runLostToTeardown(RunAtLastDispatch.NONE))
+    }
 }
 
 /**
