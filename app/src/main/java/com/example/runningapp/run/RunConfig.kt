@@ -38,19 +38,28 @@ enum class RunMode(val settingValue: String) {
 data class RunRoute(val routeId: Long, val reversed: Boolean)
 
 /**
- * The course a Run started in [runMode] may follow, given what the record screen offered (#56).
+ * Whether a Run recorded in [runMode] can set out on a course at all (#56).
  *
- * The one place the rule that a treadmill Run follows no course is applied, and it is here rather
- * than on the screen because it is a fact about what a Run may be recorded as, not about what a
- * screen may show. There is no ground under a treadmill for a course to be over.
+ * The one statement of the rule, and both its readers come through here: the rulebook, which drops a
+ * course a treadmill Run was handed ([runRouteSetOutOn]), and the record screen, which does not
+ * offer the picker where the answer is no. There is no ground under a treadmill for a course to be
+ * over.
  *
- * That matters because the screen does not clear the pick when the runner switches to Treadmill —
- * switching back must not cost them their choice — so a pick genuinely does arrive at START beside a
- * treadmill mode, and something has to drop it. Stated once, here, so it cannot be stated
- * differently in a second place later.
+ * Two readers rather than one because they answer different questions with the same fact — what a
+ * Run may be recorded as, and what a screen may show — and a rule spelled at each of them is a rule
+ * free to be spelled differently at one of them later.
  */
-fun runRouteFollowed(runMode: RunMode, routeId: Long?, reversed: Boolean): RunRoute? {
-    if (runMode != RunMode.OUTDOOR) return null
+fun runModeCanSetOutOnARoute(runMode: RunMode): Boolean = runMode == RunMode.OUTDOOR
+
+/**
+ * The course a Run started in [runMode] set out on, given what the record screen offered (#56).
+ *
+ * The screen does not clear the pick when the runner switches to Treadmill — switching back must not
+ * cost them their choice — so a pick genuinely does arrive at START beside a treadmill mode, and
+ * something has to drop it. That is this, put to [runModeCanSetOutOnARoute].
+ */
+fun runRouteSetOutOn(runMode: RunMode, routeId: Long?, reversed: Boolean): RunRoute? {
+    if (!runModeCanSetOutOnARoute(runMode)) return null
     return routeId?.let { RunRoute(it, reversed) }
 }
 
@@ -97,9 +106,9 @@ data class RunConfig(
      * this an unrouted Run — it makes it a Run whose course is gone, which the map says by drawing
      * nothing and which is exactly what a Route's own doc promises costs a Run nothing.
      *
-     * Always null on a treadmill Run, whatever the screen sent: see `pinRunConfig`, which is the one
-     * place that rule is applied. There is no course to follow on a treadmill and nothing that could
-     * be measured against one.
+     * Always null on a treadmill Run, whatever the screen sent — see [runModeCanSetOutOnARoute],
+     * which is the one statement of that rule. There is no ground under a treadmill for a course to
+     * be over, and nothing that could be measured against one.
      */
     val route: RunRoute? = null,
 ) {

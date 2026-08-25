@@ -72,7 +72,8 @@ import com.example.runningapp.run.RunLifecycle
 import com.example.runningapp.run.RunMode
 import com.example.runningapp.run.RunPhase
 import com.example.runningapp.run.RunState
-import com.example.runningapp.run.runRouteFollowed
+import com.example.runningapp.run.StartRunRequest
+import com.example.runningapp.run.runRouteSetOutOn
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.AfterRunWorker
 import com.example.runningapp.data.RunnerSession
@@ -1011,7 +1012,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             ranUnderStageId = settings.activeStageId,
             // The course picked on the record screen, put to the rule that says whether a Run in
             // this mode may follow one at all (#56).
-            route = runRouteFollowed(
+            route = runRouteSetOutOn(
                 runMode = runMode,
                 routeId = pickedRouteId.takeIf { it != NO_ROUTE_ID },
                 reversed = pickedRouteReversed,
@@ -2455,4 +2456,34 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         runJournal.flushBlocking()
         Log.d(TAG, "Service destroyed")
     }
+}
+
+/**
+ * Puts every choice the record screen offered onto an intent that begins a Run.
+ *
+ * One place, so START and the Simulate button beside it cannot carry different subsets of the same
+ * tap — which is what they did while each spelled the extras out (#56). Here rather than beside its
+ * callers because this is the writing half of a pair: the reading half is in
+ * [HrForegroundService.onStartCommand], and a sentinel packed in one file and unpacked in another is
+ * two statements of one convention.
+ *
+ * The mode travels on the intent so a just-tapped Treadmill/Outdoor choice is honoured even before
+ * its settings write lands; the Workout (#174) and the Route (#56) travel for the same reason.
+ *
+ * Every choice goes on whichever of the two Run-starting actions this is, including the ones that
+ * action does not consult: a Run begun by the Simulate button still reads its mode out of settings,
+ * so [HrForegroundService.EXTRA_RUN_MODE] rides along unread there. That is the price of one door,
+ * and it is the right way round — an extra nobody reads costs nothing, and a choice left off an
+ * intent is a Run that sets out on something the runner did not pick.
+ */
+fun Intent.putRunChoices(request: StartRunRequest) {
+    putExtra(HrForegroundService.EXTRA_SKIP_PLAN, request.skipPlan)
+    putExtra(HrForegroundService.EXTRA_RUN_MODE, request.runMode.settingValue)
+    putExtra(HrForegroundService.EXTRA_WORKOUT_ID, request.pickedWorkoutId)
+    // Nought is "no course": an intent extra cannot carry a null Long, and no Route has that id.
+    putExtra(
+        HrForegroundService.EXTRA_ROUTE_ID,
+        request.route?.routeId ?: HrForegroundService.NO_ROUTE_ID
+    )
+    putExtra(HrForegroundService.EXTRA_ROUTE_REVERSED, request.route?.reversed == true)
 }

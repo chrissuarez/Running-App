@@ -7,6 +7,8 @@ import com.example.runningapp.run.AcquisitionPhase
 import com.example.runningapp.run.AcquisitionState
 import com.example.runningapp.run.RunMode
 import com.example.runningapp.run.StartRunRequest
+import com.example.runningapp.run.RunRoute
+import com.example.runningapp.run.runModeCanSetOutOnARoute
 import com.example.runningapp.run.ScannedStrap
 import android.content.ComponentName
 import android.content.Context
@@ -82,11 +84,7 @@ import com.example.runningapp.ui.SegmentsScreen
 import com.example.runningapp.ui.SegmentsViewModel
 import com.example.runningapp.ui.SegmentsViewModelFactory
 import com.example.runningapp.routes.RunRouteSaver
-import com.example.runningapp.ui.NO_ROUTE_CHOICE_LABEL
-import com.example.runningapp.ui.ROUTE_REVERSED_TOGGLE_LABEL
-import com.example.runningapp.ui.routeRowSubtitle
-import com.example.runningapp.ui.runRouteChoiceSummary
-import com.example.runningapp.ui.runRouteLibraryEmptyLine
+import com.example.runningapp.ui.RoutePickerCard
 import com.example.runningapp.ui.RoutesScreen
 import com.example.runningapp.ui.RoutesViewModel
 import com.example.runningapp.ui.RoutesViewModelFactory
@@ -259,26 +257,6 @@ class MainActivity : ComponentActivity() {
             putRunChoices(request)
         }
         ContextCompat.startForegroundService(this, intent)
-    }
-
-    /**
-     * Puts every choice the record screen offered onto an intent that begins a Run.
-     *
-     * One place, so START and the Simulate button beside it cannot carry different subsets of the
-     * same tap — which is exactly what happened while they each spelled the extras out (#56). The
-     * mode travels with the intent so a just-tapped Treadmill/Outdoor choice is honoured even before
-     * its settings write lands; the Workout (#174) and the Route (#56) travel for the same reason.
-     */
-    private fun Intent.putRunChoices(request: StartRunRequest) {
-        putExtra(HrForegroundService.EXTRA_SKIP_PLAN, request.skipPlan)
-        putExtra(HrForegroundService.EXTRA_RUN_MODE, request.runMode)
-        putExtra(HrForegroundService.EXTRA_WORKOUT_ID, request.pickedWorkoutId)
-        // Nought is "no course": an intent extra cannot carry a null Long, and no Route has that id.
-        putExtra(
-            HrForegroundService.EXTRA_ROUTE_ID,
-            request.routeId ?: HrForegroundService.NO_ROUTE_ID
-        )
-        putExtra(HrForegroundService.EXTRA_ROUTE_REVERSED, request.routeReversed)
     }
 
     /**
@@ -557,7 +535,7 @@ class MainActivity : ComponentActivity() {
                                     // pendingStartRun and the run starts from the permission
                                     // callback once the dialog resolves — START itself never
                                     // gates on GPS (#110), only on having asked.
-                                    val needsLocation = request.runMode == "outdoor" &&
+                                    val needsLocation = request.runMode == RunMode.OUTDOOR &&
                                         ContextCompat.checkSelfPermission(
                                             this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION
                                         ) != PackageManager.PERMISSION_GRANTED
@@ -1615,11 +1593,21 @@ fun MainScreen(
     // different Runs.
     val startRunRequest = StartRunRequest(
         skipPlan = skipPlanToday,
-        runMode = selectedRunMode,
+        runMode = RunMode.ofSettingValue(selectedRunMode),
         pickedWorkoutId = todaysWorkoutId,
-        routeId = pickedRoute?.id,
-        routeReversed = pickedRouteReversed,
+        route = pickedRoute?.let { RunRoute(it.id, pickedRouteReversed) },
     )
+
+    // A course is chosen for one Run (#56), so the tap that asks for that Run spends it. Without
+    // this the pick would outlive the Run it was made for — the screen keeps it across a rotation
+    // and across a walk to the Routes library and back, which is exactly what it should do while
+    // the Run is still ahead of them, and exactly what it must not do once it is behind them. Not
+    // conditioned on the Run actually beginning: a START that is refused was still the runner
+    // saying "that Run, now", and a refusal they have to notice is better than a course they do not.
+    val spendRouteChoice = {
+        pickedRouteId = null
+        pickedRouteReversed = false
+    }
 
     val isSessionActive = state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED
 
@@ -1759,8 +1747,9 @@ fun MainScreen(
                     }
                 }
 
-                // Outdoor only: there is no ground under a treadmill to follow a course over (#56).
-                if (!isSessionActive && RunMode.ofSettingValue(selectedRunMode) == RunMode.OUTDOOR) {
+                // Not offered where a Run could not set out on a course anyway (#56) — asked of the
+                // rule rather than spelled here, so the screen and the rulebook cannot disagree.
+                if (!isSessionActive && runModeCanSetOutOnARoute(RunMode.ofSettingValue(selectedRunMode))) {
                     item {
                         RoutePickerCard(
                             routes = routes,
@@ -1880,6 +1869,7 @@ fun MainScreen(
                         }
                         Button(
                             onClick = {
+                                if (!state.isSimulating) spendRouteChoice()
                                 onToggleSimulation(!state.isSimulating, startRunRequest)
                             },
                             colors = if (state.isSimulating) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer) else ButtonDefaults.buttonColors(),
@@ -1918,7 +1908,10 @@ fun MainScreen(
                     acquisition = state.acquisition,
                     strapConnected = state.acquisition.phase is AcquisitionPhase.Connected,
                     isSimulating = state.isSimulating,
-                    onStart = { onStartRun(startRunRequest) },
+                    onStart = {
+                        onStartRun(startRunRequest)
+                        spendRouteChoice()
+                    },
                     // The activity-level handler re-acquires via the service intent (saved strap
                     // first, scan fallback) — no direct binder connect here, which would race the
                     // intent-based connect paths.
@@ -1958,144 +1951,6 @@ private fun RunModeSelector(runMode: String, onRunModeChange: (String) -> Unit) 
             }
         ) {
             Text("Outdoor")
-        }
-    }
-}
-
-/**
- * The pre-run route picker (#56): which course this Run will follow, and which way round.
- *
- * Outdoor only, and offered by the screen rather than decided by it — a treadmill Run follows no
- * course, and that rule is the Run's, applied where its configuration is pinned. Shown even when the
- * library is empty, because "you have no routes yet" is the answer a runner looking for the picker
- * needs, and a card that simply is not there reads as a feature that is not built.
- *
- * [picked] is the Route the library actually holds for the runner's pick, not the pick itself: a
- * course deleted from the library while this screen sat open leaves the card saying "No route",
- * which is the truth, rather than naming a row that has gone.
- */
-@Composable
-private fun RoutePickerCard(
-    routes: List<Route>,
-    picked: Route?,
-    reversed: Boolean,
-    onPick: (Long?) -> Unit,
-    onReversedChange: (Boolean) -> Unit
-) {
-    var choosing by rememberSaveable { mutableStateOf(false) }
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
-            Text("Route", style = MaterialTheme.typography.labelLarge)
-            Spacer(modifier = Modifier.height(4.dp))
-            if (routes.isEmpty()) {
-                Text(
-                    text = runRouteLibraryEmptyLine(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                Text(
-                    text = runRouteChoiceSummary(picked, reversed),
-                    style = MaterialTheme.typography.bodyMedium
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { choosing = true },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = RunningUiTokens.MinTouchTarget)
-                ) {
-                    Text("Choose a route")
-                }
-                // Only where there is a course to turn round. A switch offered beside "No route"
-                // would be a control with nothing to act on, and one left on from a previous pick
-                // would silently apply itself to the next.
-                if (picked != null) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = RunningUiTokens.MinTouchTarget),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = ROUTE_REVERSED_TOGGLE_LABEL,
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.weight(1f)
-                        )
-                        Switch(checked = reversed, onCheckedChange = onReversedChange)
-                    }
-                }
-            }
-        }
-    }
-
-    if (choosing) {
-        AlertDialog(
-            onDismissRequest = { choosing = false },
-            title = { Text("Choose a route") },
-            text = {
-                LazyColumn {
-                    // "No route" at the top rather than as a separate button, so following nothing
-                    // is one of the choices in the same list and can be got back to the same way.
-                    item {
-                        RouteChoiceRow(
-                            label = NO_ROUTE_CHOICE_LABEL,
-                            subtitle = null,
-                            selected = picked == null,
-                            onSelect = {
-                                onPick(null)
-                                choosing = false
-                            }
-                        )
-                    }
-                    items(routes, key = { it.id }) { route ->
-                        RouteChoiceRow(
-                            label = route.name,
-                            subtitle = routeRowSubtitle(route),
-                            selected = picked?.id == route.id,
-                            onSelect = {
-                                onPick(route.id)
-                                choosing = false
-                            }
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { choosing = false }) { Text("Close") }
-            }
-        )
-    }
-}
-
-@Composable
-private fun RouteChoiceRow(
-    label: String,
-    subtitle: String?,
-    selected: Boolean,
-    onSelect: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = RunningUiTokens.MinTouchTarget)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RadioButton(selected = selected, onClick = null)
-        Spacer(modifier = Modifier.width(8.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge)
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
         }
     }
 }

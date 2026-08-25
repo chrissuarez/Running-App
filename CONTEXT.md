@@ -222,8 +222,11 @@ about the line — the same ground in the same places, so the same line is drawn
 about which way you are *going* along it, which is what the tickets after this one read it for. A
 treadmill Run follows no course whatever was picked, there being no ground under a treadmill for a
 course to be over.
-_Avoid_: guided run, navigation (nothing is being navigated yet), and **following** as a name for
-the state — a Run either has a Route or it does not; there is no on-course/off-course judgement here.
+_Avoid_: guided run, navigation (nothing is being navigated yet), and **on course** / **off course**
+as a state — a Run either set out on a Route or it did not, and nothing here judges whether the
+runner is still on it. Ordinary English is fine: a Run "following no course" reads the same way a Run
+following no **Workout** already does, and only a *name* — a field, a flag, a function — claiming to
+hold that judgement is the mistake.
 
 **Segment**:
 A stretch of ground the runner has named — "Cemetery Hill" — cut out of one Run they actually ran
