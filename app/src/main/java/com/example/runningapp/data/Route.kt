@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.PrimaryKey
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 /** Where a Route came from. Stored as text on the row, the way a Run stores its own mode. */
@@ -59,6 +60,18 @@ data class Route(
     val source: String,
 )
 
+/**
+ * The Route the library holds for one line, and whether it was already holding it.
+ *
+ * The answer [RouteDao.keepRoute] gives, and the reason it is one answer rather than two: the caller
+ * has to be able to tell "kept" from "you already have this" without asking a second question, since
+ * asking again is exactly the gap this closes.
+ *
+ * [name] is the kept row's name, which for a course already held is the runner's name for it and not
+ * whatever the caller was about to call it.
+ */
+data class KeptRoute(val id: Long, val name: String, val alreadyKept: Boolean)
+
 @Dao
 interface RouteDao {
 
@@ -80,6 +93,29 @@ interface RouteDao {
      */
     @Query("SELECT * FROM routes WHERE polyline = :polyline ORDER BY id LIMIT 1")
     suspend fun findRouteByPolyline(polyline: String): Route?
+
+    /**
+     * Keeps [route], unless the library already holds a Route drawn along this very line, and says
+     * which of the two happened.
+     *
+     * The looking and the writing are one operation because they are one decision. Two taps on
+     * "Save as route" are two coroutines, and asked separately they can both look before either
+     * writes: both find nothing, both write, and the library ends up holding the same course twice
+     * with nothing in the table to tell the copies apart. In one transaction the second tap cannot
+     * look until the first has finished writing, so it sees the row and is sent back to it.
+     *
+     * The column itself is left without a unique constraint on purpose. That would be the same
+     * promise made in a second place, and it would make the promise to the GPX importer too — which
+     * re-measures a line it already holds rather than refusing it, and would then be refused by the
+     * database instead ([com.example.runningapp.routes.RouteImporter]).
+     */
+    @Transaction
+    suspend fun keepRoute(route: Route): KeptRoute {
+        findRouteByPolyline(route.polyline)?.let { alreadyHeld ->
+            return KeptRoute(id = alreadyHeld.id, name = alreadyHeld.name, alreadyKept = true)
+        }
+        return KeptRoute(id = insertRoute(route), name = route.name, alreadyKept = false)
+    }
 
     /**
      * Writes a re-read of the same line's distance and climb onto the Route already kept.
