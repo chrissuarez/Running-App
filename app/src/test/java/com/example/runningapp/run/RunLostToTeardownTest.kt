@@ -180,3 +180,45 @@ internal class BeginARunTest {
         assertFalse(driver.on(RunEvent.Tick(1_700_000_002_000L)).beginARun())
     }
 }
+
+/**
+ * What becomes of the row of a Run the teardown waited out (#314).
+ */
+class SettlementOfRowAwaitedTest {
+
+    @Test
+    fun `a Run put back from its record is a Run in history`() {
+        assertEquals(
+            RowSettlement.PUT_BACK,
+            settlementOfRowAwaited(rescued = true, recorderWritesDrained = true),
+        )
+    }
+
+    @Test
+    fun `a Run that recorded nothing, with nobody still writing, loses its row`() {
+        assertEquals(
+            RowSettlement.TAKEN_AWAY,
+            settlementOfRowAwaited(rescued = false, recorderWritesDrained = true),
+        )
+    }
+
+    @Test
+    fun `a row somebody may still be writing to is left exactly where it is`() {
+        // The drain gave up with a writer still going, so what looks like an empty row is a row
+        // about to hold the one second the Run recorded. Taking it away would delete the parent of
+        // a write already on its way, and the foreign keys would refuse the write.
+        assertEquals(
+            RowSettlement.LEFT_ALONE,
+            settlementOfRowAwaited(rescued = false, recorderWritesDrained = false),
+        )
+    }
+
+    @Test
+    fun `a Run already put back is never left in doubt by a drain that gave up`() {
+        // Its totals are on the row; nothing a late writer adds changes that it is in history.
+        assertEquals(
+            RowSettlement.PUT_BACK,
+            settlementOfRowAwaited(rescued = true, recorderWritesDrained = false),
+        )
+    }
+}
