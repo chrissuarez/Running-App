@@ -118,6 +118,15 @@ sealed interface RunEffect {
          * is: it is what the Run is, and a Run whose process is killed never reaches a finish.
          */
         val ranUnderWorkoutId: String?,
+        /**
+         * The Route this Run set out to follow, and which way round — see
+         * `RunnerSession.ranAlongRouteId` (#56). Null and false for a Run following no course.
+         *
+         * Written at START for the reason the Stage and the Workout are: it is what the Run set out
+         * to be, and a Run whose process is killed never reaches a finish.
+         */
+        val ranAlongRouteId: Long?,
+        val ranAlongRouteReversed: Boolean,
     ) : RunEffect
 
     /** Write the finished Run's totals to its row. Emitted once per Run, and only with an id. */
