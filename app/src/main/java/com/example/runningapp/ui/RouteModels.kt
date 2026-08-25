@@ -104,3 +104,30 @@ fun runStillRunningMessage(): String =
  */
 fun routeRemeasuredMessage(name: String): String =
     "“$name” is already in your routes. Its distance and climb now come from this file."
+
+/**
+ * What the pre-run card says the next Run will follow, and which way round (#56).
+ *
+ * One line rather than a name alone, because the two things a runner checks on the start line are
+ * that it is the right course and that it is pointing the way they mean to set off.
+ */
+fun runRouteChoiceSummary(route: Route?, reversed: Boolean): String {
+    if (route == null) return "No route — just go for a run"
+    val direction = if (reversed) "backwards" else "as drawn"
+    return "${route.name} · ${routeDistanceLabel(route.distanceMeters)} · $direction"
+}
+
+/** What the pre-run card offers as "follow nothing", and the top of the list of courses. */
+const val NO_ROUTE_CHOICE_LABEL = "No route"
+
+/** The switch that turns the course round, in the runner's words rather than the map's. */
+const val ROUTE_REVERSED_TOGGLE_LABEL = "Run it backwards"
+
+/**
+ * What the pre-run card says when there is nothing to pick.
+ *
+ * Names both doors into the library, because a runner with no routes has usually not realised a run
+ * they have already been for can become one (#55).
+ */
+fun runRouteLibraryEmptyLine(): String =
+    "No routes yet. Import a GPX under Open Routes, or save a run you've already been for as one."

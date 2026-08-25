@@ -81,4 +81,34 @@ class RouteModelsTest {
             routeRemeasuredMessage("Park loop"),
         )
     }
+
+    /** The start line's two questions in one line: the right course, pointing the right way. */
+    @Test
+    fun `the pre-run card names the course and which way round`() {
+        assertEquals(
+            "Regent's Park loop · 5.20 km · as drawn",
+            runRouteChoiceSummary(route(5200.0, null), reversed = false),
+        )
+        assertEquals(
+            "Regent's Park loop · 5.20 km · backwards",
+            runRouteChoiceSummary(route(5200.0, null), reversed = true),
+        )
+    }
+
+    /** Following nothing is a choice the card states, not a blank where a name would be. */
+    @Test
+    fun `no course chosen says so, in either direction`() {
+        assertEquals("No route — just go for a run", runRouteChoiceSummary(null, reversed = false))
+        assertEquals("No route — just go for a run", runRouteChoiceSummary(null, reversed = true))
+    }
+
+    /** Both doors into the library, because the second one surprises people (#55). */
+    @Test
+    fun `an empty library says where routes come from`() {
+        assertEquals(
+            "No routes yet. Import a GPX under Open Routes, or save a run you've already been " +
+                "for as one.",
+            runRouteLibraryEmptyLine(),
+        )
+    }
 }
