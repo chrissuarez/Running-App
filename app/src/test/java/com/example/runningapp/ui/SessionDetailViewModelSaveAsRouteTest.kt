@@ -9,6 +9,7 @@ import com.example.runningapp.data.TrackPointDao
 import com.example.runningapp.data.TrackPointSource
 import com.example.runningapp.routes.FakeRouteDao
 import com.example.runningapp.routes.RunRouteSaver
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -24,6 +25,7 @@ import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
+import kotlin.coroutines.CoroutineContext
 
 /** What a Run's page tells the runner when they keep its ground as a course (#55). */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -63,9 +65,27 @@ class SessionDetailViewModelSaveAsRouteTest {
         )
     }
 
+    /**
+     * Stands in for the dispatcher the course is worked out on, and counts the times it is handed
+     * work. It passes everything straight to the test's own clock, so the saving still happens on
+     * this test's terms — all it adds is a record of having been asked.
+     */
+    private class RecordingDispatcher(
+        private val delegate: CoroutineDispatcher,
+    ) : CoroutineDispatcher() {
+        var dispatches = 0
+            private set
+
+        override fun dispatch(context: CoroutineContext, block: Runnable) {
+            dispatches++
+            delegate.dispatch(context, block)
+        }
+    }
+
     private fun viewModel(
         session: RunnerSession? = session(),
         trackPoints: List<TrackPoint> = aLap(),
+        assembly: CoroutineDispatcher = dispatcher,
     ) = SessionDetailViewModel(
         SessionRepository(
             sessionDao = mock<SessionDao> { onBlocking { getSessionById(7L) } doReturn session },
@@ -74,6 +94,7 @@ class SessionDetailViewModelSaveAsRouteTest {
                 onBlocking { getTrackPointsForSessionOnce(7L) } doReturn trackPoints
             },
         ),
+        assemblyDispatcher = assembly,
         runRouteSaver = RunRouteSaver(routeDao),
     )
 
@@ -164,6 +185,28 @@ class SessionDetailViewModelSaveAsRouteTest {
         viewModel.saveAsRouteMessageShown()
 
         assertNull(viewModel.saveAsRouteMessage.value)
+    }
+
+    /**
+     * The runner is on the main thread when they tap the button, and turning a Run into a course is
+     * arithmetic over every fix it recorded — sorting them, thinning them to their shape, and
+     * walking them again for distance and hills. An hour's run is thousands of them, so none of that
+     * may be done where the screen is drawn.
+     */
+    @Test
+    fun `turning a run into a course is worked out off the main thread`() = runTest(dispatcher) {
+        val assembly = RecordingDispatcher(dispatcher)
+        val viewModel = viewModel(assembly = assembly)
+
+        viewModel.saveAsRoute(7L)
+        advanceUntilIdle()
+
+        // The course was kept, and the work of making it went to the dispatcher meant for it.
+        assertEquals(1, routeDao.stored.size)
+        assertTrue(
+            "The course was assembled on the main dispatcher",
+            assembly.dispatches > 0,
+        )
     }
 
     /** Nothing is wired to keep a course with, so nothing is kept and nothing is said. */

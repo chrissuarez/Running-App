@@ -121,7 +121,14 @@ class SessionDetailViewModel(
                 return@launch
             }
             val trackPoints = sessionRepository.getTrackPointsForMap(sessionId)
-            val words = when (val outcome = saver.save(run, trackPoints)) {
+            // Off the main thread, for the reason the export is: an hour's run is thousands of
+            // fixes, and turning them into a course sorts them, thins them to their shape and walks
+            // them twice over for distance and hills — all of it arithmetic, none of it waiting on
+            // anything. The runner tapped a button expecting the words back, not the screen to
+            // stall.
+            val words = when (val outcome = withContext(assemblyDispatcher) {
+                saver.save(run, trackPoints)
+            }) {
                 is RunRouteOutcome.Saved -> runSavedAsRouteMessage(outcome.name)
                 is RunRouteOutcome.AlreadySaved -> routeAlreadySavedMessage(outcome.name)
                 RunRouteOutcome.NoGround -> runHasNoRouteToSaveMessage()
