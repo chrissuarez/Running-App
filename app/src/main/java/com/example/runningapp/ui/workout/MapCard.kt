@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.map.SunriseSunsetCalculator
+import com.example.runningapp.routes.RoutePoint
 import com.mapbox.geojson.Point
 import com.mapbox.maps.extension.compose.MapEffect
 import com.mapbox.maps.extension.compose.MapboxMap
@@ -29,6 +30,16 @@ import com.mapbox.maps.plugin.locationcomponent.location
 
 private val MapCardHeight = 180.dp
 private const val TrailLineWidth = 6.0
+
+/**
+ * The course line, drawn a shade wider than the trail and underneath it (#56).
+ *
+ * Wider and under, so where the runner is exactly on the course both lines are visible: an amber
+ * trail on a broader blue band reads as "on it", and the blue showing on its own reads as "not yet".
+ * Equal widths would have the trail hide the course completely and leave the runner unable to tell
+ * the two states apart.
+ */
+private const val CourseLineWidth = 9.0
 
 /**
  * Live map card for the outdoor in-run screen (#40). Tapping it opens the full-screen map (#41)
@@ -61,8 +72,13 @@ fun MapCard(
 
 /**
  * Shared map rendering for the in-run [MapCard] and the [FullScreenMapScreen]: camera follows the
- * device's location puck, the session trail is drawn from accuracy-accepted track points, and the
- * style switches between day/night presets from on-device sunrise/sunset.
+ * device's location puck, the session trail is drawn from accuracy-accepted track points, the course
+ * the Run set out to follow is drawn under it in its own colour (#56), and the style switches
+ * between day/night presets from on-device sunrise/sunset.
+ *
+ * One composable and not two, which is why the course reaches the full-screen map for nothing: the
+ * two views differ in how much of the screen they take and in what is drawn over them, never in what
+ * the map itself says.
  */
 @Composable
 fun MapSurface(sessionId: Long, sessionRepository: SessionRepository, modifier: Modifier = Modifier) {
@@ -71,6 +87,15 @@ fun MapSurface(sessionId: Long, sessionRepository: SessionRepository, modifier: 
     }
     val trailPoints = remember(trackPoints) {
         trackPoints.map { Point.fromLngLat(it.longitude, it.latitude) }
+    }
+    // The course this Run set out to follow, or empty for a Run following none (#56). Drawn exactly
+    // as it is kept, in both directions: running a course backwards covers the same ground in the
+    // same places, so there is nothing about the line itself to turn round.
+    val routePoints by produceState(initialValue = emptyList<RoutePoint>(), sessionId, sessionRepository) {
+        sessionRepository.routeLineForRunFlow(sessionId).collect { value = it }
+    }
+    val coursePoints = remember(routePoints) {
+        routePoints.map { Point.fromLngLat(it.longitude, it.latitude) }
     }
 
     val isDaytime = remember(trailPoints) {
@@ -89,6 +114,9 @@ fun MapSurface(sessionId: Long, sessionRepository: SessionRepository, modifier: 
 
     val mapViewportState = rememberMapViewportState()
     val trailColor = MaterialTheme.colorScheme.primary
+    // Blue against the trail's amber: the two lines have to be told apart at a glance, in daylight,
+    // at arm's length, by someone running.
+    val courseColor = MaterialTheme.colorScheme.secondary
 
     MapboxMap(
         modifier = modifier,
@@ -103,6 +131,14 @@ fun MapSurface(sessionId: Long, sessionRepository: SessionRepository, modifier: 
                 enabled = true
             }
             mapViewportState.transitionToFollowPuckState()
+        }
+        // Before the trail, so the runner's own path is drawn on top of the plan rather than under
+        // it. Where they are on the course, what they want to see is where they have been.
+        if (coursePoints.size >= 2) {
+            PolylineAnnotation(points = coursePoints) {
+                lineColor = courseColor
+                lineWidth = CourseLineWidth
+            }
         }
         if (trailPoints.size >= 2) {
             PolylineAnnotation(points = trailPoints) {

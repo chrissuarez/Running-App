@@ -45,6 +45,8 @@ import com.example.runningapp.training.weeklyVolumeOf
 import com.example.runningapp.analysis.BestEffort
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.analysis.RouteThumbnail
+import com.example.runningapp.routes.RoutePoint
+import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.analysis.routeThumbnailOf
 import com.example.runningapp.analysis.RunEfforts
 import com.example.runningapp.analysis.recordBookOf
@@ -568,6 +570,16 @@ class SessionRepository(
      * page did before this shipped.
      */
     private val runSummaryDao: RunSummaryDao? = null,
+    /**
+     * The runner's library of courses, read for one thing only: drawing the course a live Run set
+     * out to follow on its map (#56).
+     *
+     * Null on the same terms as the record book — wherever it is not wired, a Run's map draws its
+     * amber trail and nothing else, which is what every Run's map did before this shipped. Nothing
+     * here ever writes to it: keeping the library is the Routes screen's business, and a Run that
+     * happened to be started on a course must not be able to change it.
+     */
+    private val routeDao: RouteDao? = null,
     private val settingsRepository: SettingsRepository? = null,
     private val coachPrescriptionRepository: CoachPrescriptionRepository? = null,
     private val aiCoachClient: AiCoachClient? = null,
@@ -2409,6 +2421,32 @@ class SessionRepository(
     fun getTrackPointsForMapFlow(sessionId: Long): Flow<List<TrackPoint>> {
         val dao = trackPointDao ?: return flowOf(emptyList())
         return dao.getTrackPointsForSession(sessionId).map { points -> points.acceptedForMap() }
+    }
+
+    /**
+     * The course a Run set out to follow, as a line to draw beside its trail (#56) — empty for a Run
+     * following none.
+     *
+     * Watched through the Run's own row rather than taken as a reading, because a live Run's map is
+     * built the moment the screen appears and the row may not exist yet: START inserts it on another
+     * thread, and a map that asked once would draw no course for the whole of a routed Run.
+     *
+     * Empty is also what a Route deleted from the library gives back, and that is the honest answer
+     * rather than a failure. A Route is a plan the runner keeps and may throw away, and throwing one
+     * away costs a Run nothing (ADR 0014) — so the Run carries on, drawing where it is actually
+     * going, with nothing left to draw the plan from.
+     */
+    fun routeLineForRunFlow(sessionId: Long): Flow<List<RoutePoint>> {
+        val dao = routeDao ?: return flowOf(emptyList())
+        return sessionDao.getSessionByIdFlow(sessionId)
+            .map { it?.ranAlongRoute()?.routeId }
+            .distinctUntilChanged()
+            .map { routeId ->
+                // Read once per course rather than watched: a Route's line is written when the row
+                // is created and nothing ever edits it — a rename and a re-measure touch the name
+                // and the numbers beside it, never the line.
+                routeId?.let { dao.getRoute(it) }?.let { RoutePolyline.decode(it.polyline) }.orEmpty()
+            }
     }
 
     /**
