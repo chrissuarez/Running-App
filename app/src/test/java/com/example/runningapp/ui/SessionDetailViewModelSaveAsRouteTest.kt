@@ -103,7 +103,7 @@ class SessionDetailViewModelSaveAsRouteTest {
 
         assertEquals(1, routeDao.stored.size)
         assertEquals(
-            SaveAsRouteMessage(7L, runAlreadySavedAsRouteMessage(routeDao.stored.single().name)),
+            SaveAsRouteMessage(7L, routeAlreadySavedMessage(routeDao.stored.single().name)),
             viewModel.saveAsRouteMessage.value,
         )
     }
@@ -123,6 +123,34 @@ class SessionDetailViewModelSaveAsRouteTest {
         assertTrue(routeDao.stored.isEmpty())
         assertEquals(
             SaveAsRouteMessage(7L, runHasNoRouteToSaveMessage()),
+            viewModel.saveAsRouteMessage.value,
+        )
+    }
+
+    @Test
+    fun `a run still being recorded is told to come back`() = runTest(dispatcher) {
+        val viewModel = viewModel(session = session().copy(endTime = 0L))
+
+        viewModel.saveAsRoute(7L)
+        advanceUntilIdle()
+
+        assertTrue(routeDao.stored.isEmpty())
+        assertEquals(
+            SaveAsRouteMessage(7L, runStillRunningMessage()),
+            viewModel.saveAsRouteMessage.value,
+        )
+    }
+
+    @Test
+    fun `a run that is no longer there says so`() = runTest(dispatcher) {
+        val viewModel = viewModel(session = null)
+
+        viewModel.saveAsRoute(7L)
+        advanceUntilIdle()
+
+        assertTrue(routeDao.stored.isEmpty())
+        assertEquals(
+            SaveAsRouteMessage(7L, runCouldNotBeReadMessage()),
             viewModel.saveAsRouteMessage.value,
         )
     }

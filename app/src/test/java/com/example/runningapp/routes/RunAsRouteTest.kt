@@ -45,7 +45,7 @@ class RunAsRouteTest {
             fix(northMeters = 200.0, eastMeters = 200.0, secondsIn = 120),
         )
 
-        val points = runAsRoutePoints(outOfOrder)
+        val points = runAsCourse(outOfOrder).line
 
         assertEquals(3, points.size)
         assertEquals(51.5, points.first().latitude, 0.000001)
@@ -58,14 +58,14 @@ class RunAsRouteTest {
     fun `standing on one spot is one point, not a hundred`() {
         val stoodStill = (0..99).map { fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = it.toLong()) }
 
-        assertEquals(1, runAsRoutePoints(stoodStill).size)
+        assertEquals(1, runAsCourse(stoodStill).line.size)
     }
 
     @Test
     fun `a straight road is its two ends`() {
         val straight = (0..50).map { fix(northMeters = it * 10.0, eastMeters = 0.0, secondsIn = it.toLong()) }
 
-        assertEquals(2, runAsRoutePoints(straight).size)
+        assertEquals(2, runAsCourse(straight).line.size)
     }
 
     @Test
@@ -73,7 +73,7 @@ class RunAsRouteTest {
         val turned = (0..20).map { fix(northMeters = it * 10.0, eastMeters = 0.0, secondsIn = it.toLong()) } +
             (1..20).map { fix(northMeters = 200.0, eastMeters = it * 10.0, secondsIn = 20L + it) }
 
-        val points = runAsRoutePoints(turned)
+        val points = runAsCourse(turned).line
 
         assertEquals(3, points.size)
         // The middle one is the corner itself, where the run stopped going north.
@@ -88,7 +88,7 @@ class RunAsRouteTest {
             fix(northMeters = 200.0, eastMeters = 0.0, secondsIn = 40),
         )
 
-        assertEquals(2, runAsRoutePoints(wobbled).size)
+        assertEquals(2, runAsCourse(wobbled).line.size)
     }
 
     @Test
@@ -99,7 +99,7 @@ class RunAsRouteTest {
             fix(northMeters = 200.0, eastMeters = 0.0, secondsIn = 40),
         )
 
-        assertEquals(3, runAsRoutePoints(steppedAside).size)
+        assertEquals(3, runAsCourse(steppedAside).line.size)
     }
 
     @Test
@@ -110,7 +110,7 @@ class RunAsRouteTest {
             fix(northMeters = 200.0, eastMeters = 0.0, secondsIn = 40, altitudeMeters = 12.0),
         )
 
-        assertEquals(listOf(10.0, 40.0, 12.0), runAsRoutePoints(overAHill).map { it.elevationMeters })
+        assertEquals(listOf(10.0, 40.0, 12.0), runAsCourse(overAHill).line.map { it.elevationMeters })
     }
 
     @Test
@@ -120,7 +120,7 @@ class RunAsRouteTest {
             fix(northMeters = 200.0, eastMeters = 0.0, secondsIn = 40),
         )
 
-        assertNull(routeElevationGainMeters(runAsRoutePoints(flat)))
+        assertNull(routeElevationGainMeters(runAsCourse(flat).asRecorded))
     }
 
     /**
@@ -137,7 +137,7 @@ class RunAsRouteTest {
             fix(northMeters = 400.0, eastMeters = 200.0, secondsIn = 440),
         )
 
-        assertEquals(4, runAsRoutePoints(paused).size)
+        assertEquals(4, runAsCourse(paused).line.size)
     }
 
     /**
@@ -154,7 +154,7 @@ class RunAsRouteTest {
             fix(northMeters = 0.0, eastMeters = 500.0, secondsIn = 540, source = TrackPointSource.BACKFILL),
         )
 
-        val points = runAsRoutePoints(breadcrumbs)
+        val points = runAsCourse(breadcrumbs).line
 
         assertEquals(4, points.size)
         assertTrue(routeDistanceMeters(points) > 1_400.0)
@@ -162,6 +162,65 @@ class RunAsRouteTest {
 
     @Test
     fun `a run that recorded nothing is no course at all`() {
-        assertEquals(emptyList<RoutePoint>(), runAsRoutePoints(emptyList()))
+        assertEquals(emptyList<RoutePoint>(), runAsCourse(emptyList()).line)
+    }
+
+    /**
+     * A hill is not a bend. A road straight up one side of it and down the other is two points once
+     * the line is thinned, and the crest — the whole of the climb — is one of the points thrown
+     * away, so the heights are read off what the Run recorded rather than off what was kept.
+     */
+    @Test
+    fun `the climb is still there after the straight road it is on has been thinned`() {
+        val overAHill = (0..40).map { step ->
+            fix(
+                northMeters = step * 25.0,
+                eastMeters = 0.0,
+                secondsIn = step.toLong() * 10,
+                altitudeMeters = 10.0 + if (step <= 20) step * 5.0 else (40 - step) * 5.0,
+            )
+        }
+
+        val course = runAsCourse(overAHill)
+
+        assertEquals(2, course.line.size)
+        assertEquals(41, course.asRecorded.size)
+        // Not the whole hundred metres: the smoothing shaves the shoulders off a hill whose
+        // points sit far apart, which is the bargain RouteShape argues for. What matters is that
+        // the climb is still a climb rather than the nought the thinned line would report.
+        assertTrue(routeElevationGainMeters(course.asRecorded)!! > 70.0)
+        assertEquals(0.0, routeElevationGainMeters(course.line) ?: 0.0, 0.001)
+    }
+
+    @Test
+    fun `a lap reaches as far across the ground as its widest side`() {
+        val lap = listOf(
+            fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = 0),
+            fix(northMeters = 300.0, eastMeters = 0.0, secondsIn = 60),
+            fix(northMeters = 300.0, eastMeters = 500.0, secondsIn = 120),
+            fix(northMeters = 0.0, eastMeters = 500.0, secondsIn = 180),
+        )
+
+        assertEquals(500.0, courseSpanMeters(runAsCourse(lap).line), 2.0)
+    }
+
+    /**
+     * Ten minutes standing on one spot is hundreds of metres of wandering and no course at all, so
+     * how far the line *goes* cannot be what decides it.
+     */
+    @Test
+    fun `standing still wanders a long way and reaches nowhere`() {
+        val jitter = (0..199).map { step ->
+            fix(
+                northMeters = if (step % 2 == 0) 8.0 else -8.0,
+                eastMeters = if (step % 4 < 2) 6.0 else -6.0,
+                secondsIn = step.toLong(),
+            )
+        }
+
+        val course = runAsCourse(jitter)
+
+        assertTrue(routeDistanceMeters(course.line) > 500.0)
+        assertTrue(courseSpanMeters(course.line) < 40.0)
     }
 }

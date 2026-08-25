@@ -8,6 +8,18 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.math.tan
 
+/**
+ * Metres in a degree of latitude.
+ *
+ * The one place it is written down, because more than one thing in the app has to turn a span of
+ * degrees into a span of ground: the drawing beside a Run in History sizes itself by it
+ * ([com.example.runningapp.analysis.routeThumbnailOf]), and a Run kept as a course is thinned in
+ * metres ([com.example.runningapp.routes.runAsCourse]). It is a rounding of the ellipsoid
+ * above and never a substitute for [geodesicDistanceMeters], which is what every distance a runner
+ * is shown is measured with.
+ */
+const val METERS_PER_DEGREE = 111_320.0
+
 // WGS84 ellipsoid semi-major/semi-minor axes, meters.
 private const val WGS84_SEMI_MAJOR_AXIS = 6378137.0
 private const val WGS84_SEMI_MINOR_AXIS = 6356752.3142

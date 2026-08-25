@@ -5,18 +5,22 @@ import com.example.runningapp.data.RouteDao
 import com.example.runningapp.data.RouteSource
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
+import com.example.runningapp.data.isFinished
 import com.example.runningapp.export.RunExportName
 import com.example.runningapp.recording.SessionRecorder
 import java.time.ZoneId
 
 /**
- * How much ground a Run has to have covered before it holds a course worth keeping (#55).
+ * How far a Run has to reach across the ground before it holds a course worth keeping (#55).
  *
  * The same width, and for the same reason, as the drawing on a History row
  * ([com.example.runningapp.analysis.routeThumbnailOf]): a fix is accepted at up to
  * [SessionRecorder.ACCURACY_THRESHOLD_METERS] of error, so two accepted fixes from a runner who
- * never moved can sit twice that apart. Anything inside that width is the error alone, and a Route
- * made of it would be a course the runner could never follow.
+ * never moved can sit twice that apart. Anything that never reaches outside that width is the error
+ * alone, and a Route made of it would be a course the runner could never follow.
+ *
+ * Measured across rather than along, because the Run this turns away is the one that stood still
+ * and the length of *that* line is the length of ten minutes of wandering — see [courseSpanMeters].
  */
 private val ROUTE_MINIMUM_METERS = 2 * SessionRecorder.ACCURACY_THRESHOLD_METERS
 
@@ -33,14 +37,24 @@ sealed interface RunRouteOutcome {
     data class AlreadySaved(val name: String) : RunRouteOutcome
 
     /**
-     * The Run has no course in it: no fixes at all, or none that reach further apart than the error
-     * of the fixes themselves ([ROUTE_MINIMUM_METERS]).
+     * The Run has no course in it: no fixes at all, or none that reach further across the ground
+     * than the error of the fixes themselves ([ROUTE_MINIMUM_METERS]).
      *
      * Nothing is written. A treadmill Run never gets this far — the button is not offered without a
      * recorded track — so this is the outdoor Run that stopped in the first seconds, and the one
      * that recorded a standstill.
      */
     data object NoGround : RunRouteOutcome
+
+    /**
+     * The Run is still being recorded, so the course it will go over is not yet a course.
+     *
+     * Reachable, not defensive: History lists a Run the moment it starts, so its page can be opened
+     * while the runner is still on it. Kept then, the Route would be however far they had got when
+     * they looked at their phone — banked, never re-measured, and named after a Run that went twice
+     * as far.
+     */
+    data object StillRunning : RunRouteOutcome
 }
 
 /**
@@ -61,7 +75,7 @@ sealed interface RunRouteOutcome {
  * The distance banked here is the length of the line, which is not the distance shown on the Run's
  * own page and is not meant to be. The Run counted the ground it covered, pauses and lost signal and
  * all; this is how far the course goes for whoever follows it, thinned to its shape and joined
- * across the coffee stop ([runAsRoutePoints]).
+ * across the coffee stop ([runAsCourse]).
  */
 class RunRouteSaver(
     private val routeDao: RouteDao,
@@ -69,31 +83,35 @@ class RunRouteSaver(
 ) {
 
     suspend fun save(
-        session: RunnerSession,
+        run: RunnerSession,
         trackPoints: List<TrackPoint>,
         zoneId: ZoneId = ZoneId.systemDefault(),
     ): RunRouteOutcome {
-        val points = runAsRoutePoints(trackPoints)
-        if (points.size < 2) return RunRouteOutcome.NoGround
-        val distanceMeters = routeDistanceMeters(points)
-        if (distanceMeters < ROUTE_MINIMUM_METERS) return RunRouteOutcome.NoGround
+        if (!run.isFinished()) return RunRouteOutcome.StillRunning
+
+        val course = runAsCourse(trackPoints)
+        if (course.line.size < 2) return RunRouteOutcome.NoGround
+        if (courseSpanMeters(course.line) < ROUTE_MINIMUM_METERS) return RunRouteOutcome.NoGround
 
         // Asked before anything is worked out that a second row would need, the way an import asks
         // it: the line is the course's identity, and an answer of "you already have this" names the
         // row the runner has rather than the Run they came from.
-        val polyline = RoutePolyline.encode(points)
+        val polyline = RoutePolyline.encode(course.line)
         routeDao.findRouteByPolyline(polyline)?.let { kept ->
             return RunRouteOutcome.AlreadySaved(name = kept.name)
         }
 
         // The Run's own name, in the same words it is exported under, so a course saved off a Run
         // and a file shared from it cannot disagree about which evening they came from (#304).
-        val name = RunExportName.runName(session, zoneId)
+        val name = RunExportName.runName(run, zoneId)
         val id = routeDao.insertRoute(
             Route(
                 name = name,
-                distanceMeters = distanceMeters,
-                elevationGainMeters = routeElevationGainMeters(points),
+                // Along the line that was kept, and up the hills that were recorded — the two are
+                // measured off different readings of the walk, and [RunCourse] is where that is
+                // argued.
+                distanceMeters = routeDistanceMeters(course.line),
+                elevationGainMeters = routeElevationGainMeters(course.asRecorded),
                 polyline = polyline,
                 createdAtMillis = now(),
                 source = RouteSource.FROM_RUN,
