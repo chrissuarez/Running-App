@@ -163,3 +163,44 @@ sealed interface RunLostToTeardown {
  * whole of the window in between.
  */
 fun List<RunEffect>.beginARun(): Boolean = any { it is RunEffect.CreateRunRow }
+
+/**
+ * What is to become of the row of a Run the teardown found awaiting one (#314).
+ *
+ * Three answers, and the third is why this is written down rather than left as a pair of `if`s: a
+ * row is only ever taken away when nothing can still be writing to it, and the teardown cannot
+ * always know that. Its wait for the Run's writers is bounded ([SCOPE_DRAIN_PASSES]) and a bounded
+ * wait can end with one still going, so a drain that gave up is a teardown that does not know what
+ * the row is about to hold. Taking it away then would delete the parent of a write already on its
+ * way, and the write would be refused by the foreign keys — the one second the Run recorded, lost
+ * by the tidying up.
+ *
+ * Leaving it is the safe answer because leaving it is what the teardown found: an unfinished row,
+ * offered to the launch pass at every launch. That is the ticket's own residue, kept in the one
+ * case where the alternative is destroying a record.
+ *
+ * @param rescued whether the Run was put back from what it wrote down.
+ * @param recorderWritesDrained whether the wait for the Run's writers ended because they were done,
+ * rather than because it ran out of passes.
+ */
+fun settlementOfRowAwaited(rescued: Boolean, recorderWritesDrained: Boolean): RowSettlement = when {
+    rescued -> RowSettlement.PUT_BACK
+    recorderWritesDrained -> RowSettlement.TAKEN_AWAY
+    else -> RowSettlement.LEFT_ALONE
+}
+
+/** The three things that can become of a row the teardown waited out. */
+enum class RowSettlement {
+
+    /** The Run was rebuilt from what it wrote down, and is in history. */
+    PUT_BACK,
+
+    /** The Run recorded nothing and never could, so its row is gone. */
+    TAKEN_AWAY,
+
+    /**
+     * The Run recorded nothing that could be found, but somebody may still be writing. The row
+     * stays unfinished and the launch pass has it.
+     */
+    LEFT_ALONE,
+}

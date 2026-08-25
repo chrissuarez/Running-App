@@ -60,7 +60,9 @@ import com.example.runningapp.run.AcquisitionState
 import com.example.runningapp.run.CueTag
 import com.example.runningapp.run.SCAN_UNAVAILABLE
 import com.example.runningapp.run.ScannedStrap
+import com.example.runningapp.run.RowSettlement
 import com.example.runningapp.run.RunAtLastDispatch
+import com.example.runningapp.run.settlementOfRowAwaited
 import com.example.runningapp.run.RunLostToTeardown
 import com.example.runningapp.run.beginARun
 import com.example.runningapp.run.runLostToTeardown
@@ -238,10 +240,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * shared with the Run's own finalize and that is not a conflict but the point: whichever of the
      * two is waiting waits for every write the Run made, not only for the ones it started.
      */
-    private suspend fun awaitRecorderWrites() {
-        if (!drainChildren(recorderWriteScope.coroutineContext.job)) {
+    private suspend fun awaitRecorderWrites(): Boolean {
+        val drained = drainChildren(recorderWriteScope.coroutineContext.job)
+        if (!drained) {
             Log.w(TAG, "Recorder writes were still arriving after $SCOPE_DRAIN_PASSES passes; not waiting further")
         }
+        // Carried back rather than only logged: a teardown about to take a row away has to know
+        // whether anything can still be writing to it (#314, [settlementOfRowAwaited]).
+        return drained
     }
 
     // Letting a GATT go outlives the service too. The handle leaves [openGatts] the moment the
@@ -2362,7 +2368,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      *
      * One window is left, and it is the one nothing in a dying process can close: if the drains
      * give up ([SCOPE_DRAIN_PASSES]) or the process is reclaimed before the insert lands, the row
-     * appears with nobody left to settle it. That is the ticket's own empty row, surviving in the
+     * appears with nobody left to settle it. A drain that gives up is at least known about, and
+     * what is done about it is to leave the row rather than take it away ([settlementOfRowAwaited]):
+     * a writer still going is a record about to exist, and deleting its row would be the tidying
+     * up destroying the thing it was tidying around. That is the ticket's own empty row, surviving in the
      * case where nothing was going to survive — and it is why the launch pass leaves such a row
      * alone rather than finishing it as a Run of no seconds ([finishedFromRecord]).
      *
@@ -2407,20 +2416,35 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 return@settleAfterTeardown
             }
             // The held work has just been queued, and both answers below read the record it makes.
-            awaitRecorderWrites()
-            when {
-                sessionRepository.rescueRunLostToTeardown(runRowId) ->
-                    runJournal.write(
-                        RunJournalEvent.RUN_FINALIZED,
-                        runRowId,
-                        "rescued after the service was destroyed with its row still on its way"
-                    )
-                sessionRepository.discardRunThatRecordedNothing(runRowId) ->
+            // Whether that wait ended because the writers were done decides what may be done with
+            // an empty row: see [settlementOfRowAwaited].
+            val drained = awaitRecorderWrites()
+            when (
+                settlementOfRowAwaited(
+                    rescued = sessionRepository.rescueRunLostToTeardown(runRowId),
+                    recorderWritesDrained = drained,
+                )
+            ) {
+                RowSettlement.PUT_BACK -> runJournal.write(
+                    RunJournalEvent.RUN_FINALIZED,
+                    runRowId,
+                    "rescued after the service was destroyed with its row still on its way"
+                )
+                RowSettlement.TAKEN_AWAY -> if (sessionRepository.discardRunThatRecordedNothing(runRowId)) {
                     runJournal.write(
                         RunJournalEvent.RUN_ROW_DISCARDED,
                         runRowId,
                         "the row landed after the service was destroyed and the Run had recorded nothing"
                     )
+                }
+                // Nothing was found to put back and somebody may still be writing, so the row is
+                // left exactly as the teardown found it. The absence of a `run-row-discarded` line
+                // is what says so, and the launch pass has the row.
+                RowSettlement.LEFT_ALONE -> Log.w(
+                    TAG,
+                    "Run $runRowId recorded nothing that could be found, but its writers had not " +
+                        "finished; its row stays for the launch pass"
+                )
             }
         }
     }
