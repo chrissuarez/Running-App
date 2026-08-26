@@ -5,6 +5,7 @@ import com.example.runningapp.data.MeasuredTrack
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.recording.geodesicDistanceMeters
+import com.example.runningapp.recording.theShortWayRound
 import kotlin.math.abs
 import kotlin.math.min
 
