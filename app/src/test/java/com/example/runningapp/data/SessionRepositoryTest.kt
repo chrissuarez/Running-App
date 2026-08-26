@@ -44,6 +44,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -3310,6 +3311,7 @@ class SessionRepositoryTest {
         coach: AiCoachClient? = null,
         activeStageId: String = "sub_30_bridge",
         refreshHistoryBackup: (suspend () -> Unit)? = null,
+        achievementDao: AchievementDao? = null,
     ): SessionRepository {
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
             flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = activeStageId))
@@ -3318,6 +3320,7 @@ class SessionRepositoryTest {
         return SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
+            achievementDao = achievementDao,
             statedBestEffortDao = statedDao,
             aiCoachClient = coach,
             refreshHistoryBackup = refreshHistoryBackup,
@@ -3761,6 +3764,106 @@ class SessionRepositoryTest {
 
         repo.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_700)
 
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+    }
+
+    @Test
+    fun `a claim landing after the settlement has judged graduates the Stage itself`() = runTest {
+        // The window this ticket is about (#318). The settlement has already asked the rule — and
+        // been declined, because the claim the Run held was short of the bar — and is now inside
+        // the coach's round trip, which on a Long Run is seconds. That is exactly when the runner
+        // is free to type the console's real 5K into the Run's page.
+        //
+        // Reading `stageSettled = false` alone, the claim stood down for a settlement whose
+        // judgement was already made. The settlement never rereads a claim, and it then marks the
+        // Run settled, so the launch pass would not look at it again either: that qualifying effort
+        // could never advance the Stage.
+        val statedDao: StatedBestEffortDao = mock()
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        val mockCoach: AiCoachClient = mock()
+        // The Gemini round trip, held open for as long as the test wants it.
+        val theCoachIsThinking = CompletableDeferred<Unit>()
+        whenever(mockCoach.evaluateProgress(any())).doSuspendableAnswer {
+            theCoachIsThinking.await()
+            null
+        }
+        val shortOfTheBar = StatedBestEffort(sessionId = 7, type = RecordType.FASTEST_5K, seconds = 2_400)
+        val qualifying = StatedBestEffort(sessionId = 7, type = RecordType.FASTEST_5K, seconds = 1_632)
+        whenever(statedDao.getForSession(7L)).thenReturn(
+            // What the settlement's own reading of the rule finds, and then what the claim's write
+            // reads back as the time already standing.
+            listOf(shortOfTheBar),
+            listOf(shortOfTheBar),
+            // And what the Run holds once the runner's correction has been stored.
+            listOf(qualifying)
+        )
+        val run = aTreadmillRun(id = 7, seconds = 2_500).copy(
+            distanceKm = 5.0,
+            ranUnderStageId = "sub_30_bridge",
+            // Stage 2's Long run, which is the Run Type the coach is asked about.
+            ranUnderWorkoutId = "w2_s1",
+            stageSettled = false,
+        )
+        whenever(mockDao.getSessionById(7L)).thenReturn(run)
+        val repo = repositoryForSettling(statedDao, mockCoach, achievementDao = mockAchievementDao)
+
+        val settlement = launch { repo.settleStageForRun(7L) }
+        runCurrent()
+        // The rule has been asked and declined, and the coach now has the Run and has not answered.
+        // The mark is not on the row yet, which is the whole of the window.
+        verify(mockCoach).evaluateProgress(any())
+        verify(mockDao, never()).setStageSettled(7L)
+
+        repo.stateBestEffort(7L, RecordType.FASTEST_5K, seconds = 1_632, finalizeWaitStepMillis = 1L)
+
+        verify(mockSettingsRepo).advanceStageAndClearPrescriptions(eq("sub_25_peak"), any())
+
+        theCoachIsThinking.complete(Unit)
+        settlement.join()
+    }
+
+    @Test
+    fun `a settlement that never marked the Run leaves a later claim to the launch pass`() = runTest {
+        // The other side of the same rule (#318). A settlement that threw before the mark landed
+        // leaves the Run owing one, and the launch pass will pay it and read every claim the Run
+        // holds when it does — so a claim arriving after that is right to stand down, exactly as it
+        // was before the settlement began. The window closes when the settlement ends, however it
+        // ends, and the row is what says which of the two happened.
+        val statedDao: StatedBestEffortDao = mock()
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        val mockCoach: AiCoachClient = mock()
+        val shortOfTheBar = StatedBestEffort(sessionId = 7, type = RecordType.FASTEST_5K, seconds = 2_400)
+        val qualifying = StatedBestEffort(sessionId = 7, type = RecordType.FASTEST_5K, seconds = 1_632)
+        whenever(statedDao.getForSession(7L)).thenReturn(
+            listOf(shortOfTheBar),
+            listOf(shortOfTheBar),
+            listOf(qualifying)
+        )
+        val run = aTreadmillRun(id = 7, seconds = 2_500).copy(
+            distanceKm = 5.0,
+            ranUnderStageId = "sub_30_bridge",
+            ranUnderWorkoutId = "w2_s1",
+            stageSettled = false,
+        )
+        whenever(mockDao.getSessionById(7L)).thenReturn(run)
+        val repo = repositoryForSettling(statedDao, mockCoach, achievementDao = mockAchievementDao)
+        // The mark itself is what fails, which is the one way a settlement ends having judged the
+        // Run and having written nothing down.
+        whenever(mockDao.setStageSettled(7L)).thenThrow(RuntimeException("the mark could not be written"))
+
+        try {
+            repo.settleStageForRun(7L)
+            fail("the settlement was expected to throw on the mark")
+        } catch (e: RuntimeException) {
+            assertEquals("the mark could not be written", e.message)
+        }
+
+        repo.stateBestEffort(7L, RecordType.FASTEST_5K, seconds = 1_632, finalizeWaitStepMillis = 1L)
+
+        // Nothing granted here: the Run's row still owes a settlement, and the launch pass that pays
+        // it will read this claim.
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
     }
 

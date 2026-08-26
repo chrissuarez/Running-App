@@ -3193,17 +3193,44 @@ class SessionRepository(
         // typed today re-ask the rule would graduate the Stage off that old claim, which is the
         // pass over history the rule refuses to make.
         //
-        // And only once the Run's Stage has been settled at all (#297). A Run whose finish sheet is
-        // still open has not been judged yet, and the settlement waiting on that sheet reads every
-        // claim the Run holds — this one included — when it comes. Asking here first would be the
-        // rule granting before the runner has said whether the Run was a walk, which is the whole of
-        // what that wait exists for.
+        // And only where nobody else is going to read this claim for us (#297). A Run whose finish
+        // sheet is still open has not been judged yet, and the settlement waiting on that sheet
+        // reads every claim the Run holds — this one included — when it comes. Asking here first
+        // would be the rule granting before the runner has said whether the Run was a walk, which is
+        // the whole of what that wait exists for.
+        //
+        // "Nobody else" is two facts and not one (#318): the mark on the row says a settlement has
+        // *finished*, and [beingJudged] says one is part-way through — which is a settlement that
+        // has already asked the rule and will not ask it again. That KDoc is where the argument for
+        // the second one lives; here it is enough that between the two there is no reader left, so
+        // standing down on the row alone lost the claim for good.
+        //
+        // **The marker is read first and the row second, and that order is the rule.** These two
+        // reads are not one step and the settlement they are about runs on another thread, so the
+        // one taken second is the fresher of the two — and it has to be the row. Read the row first
+        // and a settlement can slip wholly between them: the row is seen unsettled, the settlement
+        // then marks it and leaves the marker, and the marker read afterwards is clear, so the claim
+        // stands down for a settlement that is already over and a row that will never be looked at
+        // again. Taken this way round, a clear marker says no settlement was part-way through at
+        // that instant, so any settlement beginning after it reads the claim — which was stored
+        // before either read — and any settlement that ended before it left the mark the row read
+        // second will show.
+        //
+        // Read rather than waited on, deliberately. Taking [settling] here would put a Gemini round
+        // trip in front of a Save the runner is watching, for a lock this claim does not need. What
+        // the lock is not needed for is the double grant: if the settlement and this claim both ask
+        // the rule, the second is declined inside the write itself — [SettingsRepository] re-reads
+        // the scope inside its own edit and a completed plan is checked again as it is stored — and
+        // not by the rule's "the Stage has since moved" read, which two concurrent askers can both
+        // pass. Two settlements never reach that, because [settling] serializes them; a claim and a
+        // settlement can, and the writes are where it is caught.
         if (!worse) {
+            val aSettlementIsPartWayThrough = sessionId in beingJudged
             sessionDao.getSessionById(sessionId)?.let { stored ->
-                if (!stored.stageSettled) {
+                if (!stored.stageSettled && !aSettlementIsPartWayThrough) {
                     Log.d(
                         "StageRule",
-                        "Run $sessionId has not been settled yet; its settlement will read this claim (#297)"
+                        "Run $sessionId has not been judged yet; its settlement will read this claim (#318)"
                     )
                     return@let
                 }
@@ -4023,25 +4050,61 @@ class SessionRepository(
             return false
         }
         if (run.stageSettled) return false
-        val stageId = run.ranUnderStageId
-        if (stageId != null) {
-            // Judged on the runner's word about the Walk, not on the column — the column is a
-            // write that can fail and the word cannot (#297). Everything else is the row as
-            // stored, and where the two agree this is the row itself.
-            val asTheRunnerSaid =
-                if (markedAsWalk != null && markedAsWalk != run.isWalk) run.copy(isWalk = markedAsWalk) else run
-            settleStageAfterRun(
-                stageId,
-                runTypeOf(stageId, run.ranUnderWorkoutId),
-                asTheRunnerSaid,
-                zone
-            )
+        // From here on this Run is being judged, and it says so — because from here on a claim
+        // arriving has no reader but itself (#318). Set before the rule is asked and cleared only
+        // once the mark is on the row, so the two together cover every instant in which this
+        // settlement's judgement is made and the row does not yet say so.
+        beingJudged.add(sessionId)
+        try {
+            val stageId = run.ranUnderStageId
+            if (stageId != null) {
+                // Judged on the runner's word about the Walk, not on the column — the column is a
+                // write that can fail and the word cannot (#297). Everything else is the row as
+                // stored, and where the two agree this is the row itself.
+                val asTheRunnerSaid =
+                    if (markedAsWalk != null && markedAsWalk != run.isWalk) run.copy(isWalk = markedAsWalk) else run
+                settleStageAfterRun(
+                    stageId,
+                    runTypeOf(stageId, run.ranUnderWorkoutId),
+                    asTheRunnerSaid,
+                    zone
+                )
+            }
+            // Marked even where there was no Stage to settle: the column says the question has been
+            // put and cannot be put again, and a Run that ran under no Stage has had its answer.
+            sessionDao.setStageSettled(sessionId)
+        } finally {
+            // A settlement that threw before the mark landed leaves the Run owing one, and a claim
+            // reaching it after that is right to stand down again: the launch pass will read it.
+            // So this is cleared however the settlement ended, and the row is what says which of
+            // the two happened.
+            beingJudged.remove(sessionId)
         }
-        // Marked even where there was no Stage to settle: the column says the question has been
-        // put and cannot be put again, and a Run that ran under no Stage has had its answer.
-        sessionDao.setStageSettled(sessionId)
         return true
     }
+
+    /**
+     * Every Run a settlement has begun judging and has not yet marked settled (#318).
+     *
+     * The pair to [RunnerSession.stageSettled] and not a substitute for it: the column says a
+     * settlement has *finished*, this says one is part-way through. A Stated Best Effort saved in
+     * between reads a row that still says unsettled, and the settlement that would have read the
+     * claim has already asked the rule and will never ask again — so without this the claim stood
+     * down for a reader that no longer existed, and the mark that followed put the Run beyond the
+     * launch pass too. The window is not a few instructions: on a Long Run it is a Gemini round
+     * trip, beginning the moment the finish sheet disappears, which is exactly when the runner is
+     * free to type a treadmill's console into the Run's page.
+     *
+     * In memory, like [awaitingTheRunnersWord] and for the same reason: it says what is happening in
+     * *this* process, and a process that dies mid-settlement leaves a Run whose row still owes a
+     * settlement, which is what the launch pass is for.
+     *
+     * Concurrent, because the settlements write it and a claim on the runner's own screen reads it,
+     * and those are different coroutines. Read rather than locked against — see [stateBestEffort]
+     * for why a claim may not wait out a settlement.
+     */
+    private val beingJudged: MutableSet<Long> =
+        Collections.newSetFromMap(ConcurrentHashMap<Long, Boolean>())
 
     /**
      * Held while a Run is being put to the Plan, so the debt is read and paid as one step (#297).
