@@ -676,10 +676,26 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // id is the event that empties the buffer, so this is the moment to take the claim — and a
         // teardown that took it first turns the arrival into the one the Run drops its buffer on
         // instead of emitting it.
+        //
+        // An id addressed to a Run that is not the one being recorded now reaches neither (#365).
+        // It is dropped rather than handed on, because the claim is what it would touch first and
+        // the claim belongs to this Run's buffer: spending it on the last Run's late answer would
+        // leave this Run's own id to find it gone, and the delivery refused by both sides. The Run
+        // refuses such an id on its own reading of the same address ([RunState.isTheRunStartedAt]),
+        // so dropping it here changes nothing about the Run — it only keeps a foreign arrival from
+        // republishing and re-journalling this Run under a clock that is not its own.
+        if (event is RunEvent.RunRowCreated && !runState.isTheRunStartedAt(event.forRunStartedAtMillis)) {
+            Log.w(
+                TAG,
+                "Row ${event.runRowId} belongs to an earlier run; " +
+                    "the run being recorded now is not taking it"
+            )
+            return
+        }
         val toDispatch =
             if (event is RunEvent.RunRowCreated && !heldWorkClaim.compareAndSet(false, true)) {
                 Log.w(TAG, "A teardown took run ${event.runRowId}'s held work; not delivering it here")
-                RunEvent.HeldWorkTakenOver(event.runRowId, event.nowMillis)
+                RunEvent.HeldWorkTakenOver(event.runRowId, event.forRunStartedAtMillis, event.nowMillis)
             } else {
                 event
             }
@@ -892,7 +908,15 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // Before the post, not after it: a teardown racing this must find the id whether or not
             // there is still an inbox for the event to reach (#314).
             insertedRunRowId = runRowId
-            postRunEvent(RunEvent.RunRowCreated(runRowId, System.currentTimeMillis()))
+            postRunEvent(
+                RunEvent.RunRowCreated(
+                    runRowId = runRowId,
+                    // Which Run's id this is, taken from the request rather than from whatever Run
+                    // is live by the time it lands (#365).
+                    forRunStartedAtMillis = effect.startedAtMillis,
+                    nowMillis = System.currentTimeMillis(),
+                )
+            )
         }
     }
 

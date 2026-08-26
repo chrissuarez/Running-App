@@ -288,7 +288,7 @@ internal class BeginARunTest {
         val driver = Driver()
         driver.on(started)
 
-        assertFalse(driver.on(RunEvent.RunRowCreated(9133L, 1_700_000_001_000L)).beginARun())
+        assertFalse(driver.on(RunEvent.RunRowCreated(9133L, started.nowMillis, 1_700_000_001_000L)).beginARun())
         assertFalse(driver.on(RunEvent.Tick(1_700_000_002_000L)).beginARun())
     }
 }
@@ -351,7 +351,7 @@ class HeldWorkTakenOverTest {
         driver.advanceWith(seconds = 3, bpm = IN_TARGET)
         assertTrue(driver.state.pendingRowEffects.isNotEmpty())
 
-        val effects = driver.on(RunEvent.HeldWorkTakenOver(9133L, driver.nowMillis))
+        val effects = driver.heldWorkTakenOver(9133L)
 
         assertEquals(emptyList<RunEffect>(), effects)
         assertEquals(emptyList<PendingRowWork>(), driver.state.pendingRowEffects)
@@ -367,7 +367,7 @@ class HeldWorkTakenOverTest {
         driver.advanceWith(seconds = 2, bpm = IN_TARGET)
         driver.stop()
 
-        val effects = driver.on(RunEvent.HeldWorkTakenOver(9133L, driver.nowMillis))
+        val effects = driver.heldWorkTakenOver(9133L)
 
         assertEquals(emptyList<RunEffect>(), effects)
         assertEquals(RunLifecycle.STOPPED, driver.state.lifecycle)
@@ -380,7 +380,7 @@ class HeldWorkTakenOverTest {
         val driver = Driver()
         driver.start(config(runMode = RunMode.OUTDOOR), withRow = false)
 
-        val effects = driver.on(RunEvent.HeldWorkTakenOver(9133L, driver.nowMillis))
+        val effects = driver.heldWorkTakenOver(9133L)
 
         assertEquals(0, effects.count { it is RunEffect.StartGps })
     }
@@ -390,7 +390,7 @@ class HeldWorkTakenOverTest {
         val driver = Driver()
         driver.start(runRowId = 7L)
 
-        val effects = driver.on(RunEvent.HeldWorkTakenOver(9133L, driver.nowMillis))
+        val effects = driver.heldWorkTakenOver(9133L)
 
         assertEquals(emptyList<RunEffect>(), effects)
         assertEquals(7L, driver.state.runRowId)
@@ -403,9 +403,9 @@ class HeldWorkTakenOverTest {
         val driver = Driver()
         driver.start(withRow = false)
         driver.advanceWith(seconds = 3, bpm = IN_TARGET)
-        driver.on(RunEvent.HeldWorkTakenOver(9133L, driver.nowMillis))
+        driver.heldWorkTakenOver(9133L)
 
-        val effects = driver.on(RunEvent.RunRowCreated(9133L, driver.nowMillis))
+        val effects = driver.rowCreated(9133L)
 
         assertEquals(emptyList<RunEffect>(), effects)
     }
@@ -414,7 +414,7 @@ class HeldWorkTakenOverTest {
     fun `a Run that never started has no held work for anyone to take`() {
         val driver = Driver()
 
-        val effects = driver.on(RunEvent.HeldWorkTakenOver(9133L, T0))
+        val effects = driver.heldWorkTakenOver(9133L)
 
         assertEquals(emptyList<RunEffect>(), effects)
         assertNull(driver.state.runRowId)
