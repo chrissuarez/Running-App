@@ -104,6 +104,30 @@ interface WalkMarkDebtDao {
     @Query("DELETE FROM walk_mark_debts WHERE sessionId = :sessionId")
     suspend fun forgetDebtFor(sessionId: Long)
 
+    /**
+     * The debt standing against one Run, or null where it owes nothing.
+     *
+     * Read inside the transaction that writes a mark the launch pass is paying
+     * ([SessionRepository.markAsWalk]), and read nowhere else. The pass takes its work list in one
+     * go ([owed]) and then pays it a Run at a time, so between the list and any one payment the
+     * runner has had every chance to reach the switch on that Run's own page and say the opposite —
+     * which discharges the debt. Without this the pass would still write the word it was holding,
+     * over the top of the runner's newer one, and a tick they made during startup would come undone
+     * in front of them.
+     *
+     * The whole row and not the id, because the debt the pass is holding and the debt on the disk
+     * agreeing that a mark is owed is not the same thing as their agreeing *which* mark: the word is
+     * [isWalk], and a payment may only land while the row it came from is unchanged.
+     *
+     * A read and not a claim — the pass may not delete the debt first and mark afterwards, because a
+     * mark that then fails leaves the Run wrong for ever with nothing left to say so. The debt is
+     * still discharged by the write it belongs to ([forgetDebtFor]), in the transaction this read
+     * happens in, so "the debt stood when the mark landed" is one indivisible statement rather than
+     * a check with a window after it.
+     */
+    @Query("SELECT * FROM walk_mark_debts WHERE sessionId = :sessionId")
+    suspend fun debtFor(sessionId: Long): WalkMarkDebtRow?
+
     /** Every mark still owed, oldest Run first — the launch pass's whole work list. */
     @Query("SELECT * FROM walk_mark_debts ORDER BY sessionId")
     suspend fun owed(): List<WalkMarkDebtRow>

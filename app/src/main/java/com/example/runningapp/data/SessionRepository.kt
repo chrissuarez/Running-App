@@ -2726,6 +2726,19 @@ class SessionRepository(
         sessionId: Long,
         isWalk: Boolean,
         finalizeWaitStepMillis: Long = 250L,
+        /**
+         * The debt this mark is paying, where it is paying one (#371) — null at every door the
+         * runner reaches themselves, which are marks owed to nobody.
+         *
+         * The launch pass reads its whole work list before it pays any of it
+         * ([payWalkMarkDebts]), so the word it hands down here was true when the list was taken and
+         * need not be true now: the runner can open that very Run during startup and say the
+         * opposite, which discharges the debt. Given the row it came from, the write below refuses
+         * to land unless that same row is still standing — checked inside the transaction that
+         * writes, because a check anywhere earlier is a check with a window after it, and the whole
+         * of this defect lives in windows like that one.
+         */
+        payingDebt: WalkMarkDebtRow? = null,
     ) {
         val session = awaitFinalized(sessionId, finalizeWaitStepMillis) ?: return
         if (session.isWalk == isWalk) return
@@ -2749,6 +2762,34 @@ class SessionRepository(
         // wholly before, and is deleted, or wholly after, and is abandoned.
         val write: suspend () -> Unit = {
             inTransaction {
+                // A mark that is paying a debt is only good while that debt stands (#371).
+                //
+                // The pass's word is the runner's word as it was when the list was read, and the
+                // runner outranks it: reaching the switch on the Run's own page writes their newer
+                // answer and drops the debt in the same transaction, so a debt that is gone is a
+                // question somebody has since answered. Applying the snapshot anyway would undo them
+                // — true, then false by their own hand, then true again out of a startup pass they
+                // cannot see.
+                //
+                // Asked here rather than before the mends above it, because "the debt stood a moment
+                // ago" is not what this write needs to be true; it needs the debt to stand at the
+                // instant the mark lands, and only a read in the same transaction as the write says
+                // that. And asked rather than claimed: deleting the debt first and marking
+                // afterwards would leave a mark that then failed owing nothing at all, which is the
+                // Run staying wrong for ever — see [WalkMarkDebtDao.debtFor].
+                //
+                // Abandoning is the whole of it: nothing here has written yet, and everything
+                // outside the transaction — the record-book mend, the scoring, the Segment re-timing
+                // — reads the Run as it now stands, so each of them arrives at the runner's own
+                // answer rather than at this one. What they cost is a walk that changes nothing.
+                if (payingDebt != null && walkMarkDebtDao?.debtFor(sessionId) != payingDebt) {
+                    Log.i(
+                        "Walk",
+                        "Run $sessionId's owed mark was discharged while the launch pass held it; " +
+                            "leaving the row as whoever paid it left it (#371)"
+                    )
+                    return@inTransaction
+                }
                 sessionDao.clearSegmentsTimed(sessionId)
                 runShapeDao?.forgetShape(sessionId)
                 sessionDao.setIsWalk(sessionId, isWalk)
@@ -4428,6 +4469,16 @@ class SessionRepository(
      * mark — so this pass never deletes a row it has not paid for, and a row whose mark somebody
      * beat it to costs one no-op.
      *
+     * **Each payment carries the debt it came from, and is refused if that debt has since been
+     * paid.** The work list is read in one go and then worked through a Run at a time, so a word
+     * taken from it is only ever a word that was true when the list was read — and the runner is
+     * free the whole time, on the Run's own page, to say the opposite and discharge the debt.
+     * [markAsWalk] is therefore told which row this write is paying, and re-reads it inside the
+     * transaction that writes the mark: gone, and the mark is abandoned rather than put over the top
+     * of the runner's newer answer. Re-reading it here instead would only shorten the window, and
+     * claiming the debt here — deleting it first, marking second — would lose the debt outright to a
+     * mark that then failed.
+     *
      * **It runs at launch and only at launch, so the ordinary debt is paid one launch late.** The
      * mend that fails does so at the finish of a Run, which is after this pass has read its list —
      * so the Run's own page says "run" until the next cold start. Knowingly kept: an in-process
@@ -4451,7 +4502,7 @@ class SessionRepository(
         var paid = 0
         owed.forEach { debt ->
             try {
-                markAsWalk(debt.sessionId, debt.isWalk)
+                markAsWalk(debt.sessionId, debt.isWalk, payingDebt = debt)
                 // And the debt is discharged here, not only inside [markAsWalk]'s own transaction.
                 // That transaction covers the mark that changes something, which is this pass's
                 // ordinary case; this covers the one it does not — a row that already agrees, which
