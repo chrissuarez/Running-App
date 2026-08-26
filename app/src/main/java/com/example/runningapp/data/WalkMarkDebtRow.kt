@@ -128,6 +128,20 @@ interface WalkMarkDebtDao {
     @Query("SELECT * FROM walk_mark_debts WHERE sessionId = :sessionId")
     suspend fun debtFor(sessionId: Long): WalkMarkDebtRow?
 
+    /**
+     * Drops a Run's debt only while it still says exactly what the caller was holding.
+     *
+     * The launch pass's own tidy-up, and nobody else's. That pass may finish a payment without
+     * having written anything — a row that already agrees, which [SessionRepository.markAsWalk]
+     * refuses as a change of nothing, and a payment its own guard abandoned because the debt had
+     * moved under it. Told only the id, the delete would take away whatever debt now stands there,
+     * including a newer one nobody has paid: the row left as it was, and the mark owed against it
+     * forgotten for good. Naming the word as well as the Run makes the delete describe the debt the
+     * pass actually dealt with, so a debt it did not deal with survives it.
+     */
+    @Query("DELETE FROM walk_mark_debts WHERE sessionId = :sessionId AND isWalk = :isWalk")
+    suspend fun forgetDebtIfUnchanged(sessionId: Long, isWalk: Boolean)
+
     /** Every mark still owed, oldest Run first — the launch pass's whole work list. */
     @Query("SELECT * FROM walk_mark_debts ORDER BY sessionId")
     suspend fun owed(): List<WalkMarkDebtRow>
