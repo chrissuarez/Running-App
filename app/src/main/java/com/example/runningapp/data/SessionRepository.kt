@@ -4368,12 +4368,17 @@ class SessionRepository(
         // And stamped as the app's, so the screen says so too (#296): the slot is shared with the
         // coach's debrief and the card names whoever is in it. Told it is the coach's, a runner with
         // AI sharing switched off is congratulated by a coach they never turned on.
-        settingsRepo.setLatestDebrief(
+        //
+        // The message and the move go in one write, which is [SettingsRepository.graduateStage]'s
+        // rule and matters most here: since #318 this can be running beside the settlement's own
+        // coach round trip, and a coach reply landing between two writes would overwrite the
+        // congratulation with words about the Stage the runner is being moved off.
+        settingsRepo.graduateStage(
+            nextStage.id,
             graduationMessage(stage.title, requirement, seconds, nextStageTitle = nextStage.title),
             DebriefAuthor.APP,
             scope
         )
-        settingsRepo.advanceStageAndClearPrescriptions(nextStage.id, scope)
         Log.i(
             "StageRule",
             "Run ${run.id} is worth ${seconds.toLong()}s at ${requirement.record} and graduates " +
@@ -4680,7 +4685,7 @@ class SessionRepository(
                 // Worse than a Prescription written on evidence that has gone, because there is
                 // nothing to take it back with. A Prescription records the Runs it stood on and a
                 // later delete unwinds it; a graduation records nothing and only ever writes
-                // forward ([SettingsRepository.advanceStageAndClearPrescriptions]), so a graduation
+                // forward ([SettingsRepository.graduateStage]), so a graduation
                 // granted wrongly is granted for good. Refused whole on a partial delete too — one
                 // of the three gone is enough — which is the direction the app already errs in:
                 // graduating late rather than twice ([RunnerSession.ranUnderStageId]).
@@ -4700,13 +4705,15 @@ class SessionRepository(
                         return
                     }
                     // The coach's own words, come back from Gemini about a Stage whose requirement
-                    // is a judgement — so the card names the coach over them (#296).
-                    settingsRepo.setLatestDebrief(
+                    // is a judgement — so the card names the coach over them (#296). Written with
+                    // the move and not before it: this lock holds off a delete, and it holds off no
+                    // other writer of the same slot ([SettingsRepository.graduateStage]).
+                    settingsRepo.graduateStage(
+                        nextStageId,
                         clampedResponse.coachMessage,
                         DebriefAuthor.COACH,
                         scope
                     )
-                    settingsRepo.advanceStageAndClearPrescriptions(nextStageId, scope)
                 }
             } else {
                 // The numbers, the debrief that explains them, and the Runs they were reasoned from,

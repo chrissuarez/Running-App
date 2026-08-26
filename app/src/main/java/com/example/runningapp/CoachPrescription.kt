@@ -405,7 +405,7 @@ internal fun MutablePreferences.rollBackCoachWorkFedBy(deletedRunIds: Set<Long>)
     // A debrief with no numbers under it is not coaching about a Run either: the one thing that
     // leaves that state is a graduation, whose "you have finished this stage" is deliberately kept
     // when the Prescriptions it advanced past are dropped
-    // ([SettingsRepository.advanceStageAndClearPrescriptions]). Read as work standing, it would be
+    // ([SettingsRepository.graduateStage]). Read as work standing, it would be
     // taken away by the next delete of any Run at all, because a graduation leaves no provenance
     // behind for it to be measured against.
     val anythingStanding = coachPrescriptions(standing) != CoachPrescriptions.NONE
