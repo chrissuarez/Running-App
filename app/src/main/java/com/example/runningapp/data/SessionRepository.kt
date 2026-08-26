@@ -4512,7 +4512,14 @@ class SessionRepository(
                 // ever, retried at every launch for the life of the app. Doing it here rather than
                 // at that early return is what keeps every *other* caller of [markAsWalk] — the
                 // feel sheet saving an unchanged switch, above all — costing no write at all.
-                walkMarkDebtDao?.forgetDebtFor(debt.sessionId)
+                //
+                // Named by its word as well as its Run, because this delete runs whether or not the
+                // mark landed — the guard inside [markAsWalk] abandons the write where the debt has
+                // moved under the pass, and returns as any other payment does. Told only the id it
+                // would then carry off the debt that displaced it, leaving the row untouched and the
+                // newer mark owed to nobody: the one outcome this whole pass exists to prevent. A
+                // delete that names the debt it was holding takes away only that debt.
+                walkMarkDebtDao?.forgetDebtIfUnchanged(debt.sessionId, debt.isWalk)
                 paid++
             } catch (cancellation: CancellationException) {
                 // Not a failure, and not this pass's to swallow: the runner has backed out of the

@@ -3847,7 +3847,7 @@ class SessionRepositoryTest {
         repo.payWalkMarkDebts()
 
         verify(mockDao, never()).setIsWalk(any(), any())
-        verify(walkDebtDao).forgetDebtFor(7L)
+        verify(walkDebtDao).forgetDebtIfUnchanged(7L, true)
     }
 
     @Test
@@ -3887,6 +3887,11 @@ class SessionRepositoryTest {
         repo.payWalkMarkDebts()
 
         verify(mockDao, never()).setIsWalk(any(), any())
+        // And the debt that displaced it is still owed. The pass tidies up after every payment,
+        // landed or abandoned, so a tidy-up told only the Run would carry off the newer debt as
+        // well — the row left as it was with nothing left saying a mark is owed against it.
+        verify(walkDebtDao, never()).forgetDebtFor(7L)
+        verify(walkDebtDao).forgetDebtIfUnchanged(7L, true)
     }
 
     @Test
