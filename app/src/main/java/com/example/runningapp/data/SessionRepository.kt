@@ -3354,6 +3354,10 @@ class SessionRepository(
      * naming a Run this delete has already taken out of history.
      */
     private suspend fun deleteRuns(runIds: List<Long>, delete: suspend () -> Unit) {
+        // Whatever the runner said about these Runs goes with them: the id a deleted Run gives up
+        // can be handed to the next Run Room writes, and a word left behind would be the wrong
+        // runner's word about a different Run (#317).
+        runIds.forEach { theRunnersWordFor.remove(it) }
         val fedTheCoach = aiEligibleIdsAmong(runIds)
         changeAndRepair(
             runIds,
@@ -3764,6 +3768,38 @@ class SessionRepository(
         Collections.newSetFromMap(ConcurrentHashMap<Long, Boolean>())
 
     /**
+     * The runner's word about a Run whose settlement could not use it, kept for the next one (#317).
+     *
+     * [finishSheetClosed]'s wait for the finalize is bounded, and a finalize blocked on a slow
+     * recorder write outlasts it: the wait then returns a row that is still unfinished, which
+     * [settleUnderSettling] rightly declines to judge. Without this, that is where the word ended.
+     * The finalize landing afterwards writes the row whole — taking off the Walk mark the Save put
+     * there — and settles the Run itself carrying no word, so the Run is judged off the
+     * `isWalk = false` the finalize just restored and a Stage can be graduated on a walk, which
+     * cannot be taken back.
+     *
+     * **The word is what outlives the settlement, not the gate.** Holding [awaitingTheRunnersWord]
+     * closed instead would leave a Run nothing will ever settle — the sheet has been answered and
+     * gone, and the gate is what every other settlement stands down for. So the gate opens exactly
+     * when it always did, and what is kept is the one fact the opened gate promised was already in.
+     *
+     * Kept only while a settlement is still owed: written as the sheet closes, and forgotten by the
+     * settlement that used it, by a Run that turns out to be settled already or gone, and by a
+     * delete ([deleteRuns]) — a deleted Run's id can be handed to the next Run Room writes, and a
+     * word left behind would be the wrong runner's word about a different Run.
+     *
+     * In memory, like [awaitingTheRunnersWord] and for the same reason: a process that dies takes
+     * the unfinished row with it, and a Run left unfinished is rescued and settled at the next
+     * launch, where the mark the Save wrote is still on its row because no finalize ever overwrote
+     * it. Null is not stored — a sheet that said nothing about the Walk is a dismissal, and then the
+     * row is the only word there is ([finishSheetClosed]).
+     *
+     * Concurrent, because the sheet writes it and the settlements read and clear it, and those are
+     * different coroutines.
+     */
+    private val theRunnersWordFor: ConcurrentHashMap<Long, Boolean> = ConcurrentHashMap()
+
+    /**
      * The finish sheet has been put on screen for a Run (#297) — called as STOP is pressed, before
      * the Run has finished finalizing.
      *
@@ -3813,6 +3849,14 @@ class SessionRepository(
      * other Run's settlement should queue behind a row that is still being written. Waiting with the
      * gate still closed is what the gate is for: a settlement arriving during the wait declines and
      * leaves the debt here, which is exactly what it would have done a moment earlier.
+     *
+     * **The wait can run out, and then the word is kept rather than spent** (#317). A finalize
+     * blocked on a slow recorder write outlasts the wait, which returns the row still unfinished —
+     * a row no settlement may judge. The gate still opens, because a gate held closed over a sheet
+     * that has been answered and gone is a Run nothing will ever settle; what stands in its place is
+     * [theRunnersWordFor], which hands this word to the settlement that follows — the finalize's
+     * own, moments later, which would otherwise judge the Run off the `isWalk = false` its full-row
+     * write had just restored.
      */
     suspend fun finishSheetClosed(
         sessionId: Long,
@@ -3822,6 +3866,10 @@ class SessionRepository(
     ) {
         val finalized = awaitFinalized(sessionId, finalizeWaitStepMillis)
         val settled = settling.withLock {
+            // Written down before the gate opens and inside the same lock, so no settlement can see
+            // the gate open and the word neither settled nor kept. The settlement below forgets it
+            // again if it uses it; what it leaves standing is a word the wait ran out on (#317).
+            if (markedAsWalk != null) theRunnersWordFor[sessionId] = markedAsWalk
             awaitingTheRunnersWord.remove(sessionId)
             finalized != null && settleUnderSettling(sessionId, zone, markedAsWalk)
         }
@@ -4032,12 +4080,43 @@ class SessionRepository(
         sessionId: Long,
         zone: ZoneId,
         markedAsWalk: Boolean? = null,
-    ): Boolean = settling.withLock {
-        if (sessionId in awaitingTheRunnersWord) {
-            Log.d("StageRule", "Run $sessionId still has its finish sheet open; the Stage waits (#297)")
-            return@withLock false
+    ): Boolean {
+        // A word the sheet's own settlement could not use, because its wait for the finalize ran out
+        // on an unfinished row (#317). This settlement is the one that follows, so the word is its
+        // to carry — and it beats the column here for the reason it beats it everywhere
+        // ([settleStageForRun]): the column is a write that can fail, and this is the case where it
+        // was undone, by the very finalize that called this.
+        val word = markedAsWalk ?: theRunnersWordFor[sessionId]
+        if (markedAsWalk == null && word != null) putTheWordBackOnTheRow(sessionId, word)
+        return settling.withLock {
+            if (sessionId in awaitingTheRunnersWord) {
+                Log.d("StageRule", "Run $sessionId still has its finish sheet open; the Stage waits (#297)")
+                return@withLock false
+            }
+            settleUnderSettling(sessionId, zone, word)
         }
-        settleUnderSettling(sessionId, zone, markedAsWalk)
+    }
+
+    /**
+     * Writes a kept word back onto the row the finalize overwrote, before the Run is judged (#317).
+     *
+     * Judging on the word is only half of what the word is owed. The finalize's full-row write also
+     * takes the mark off the Run's own page, and it scores the Run against the record book a moment
+     * before this — so a Walk left unmarked keeps medals no Walk may hold. [markAsWalk] is the one
+     * door that writes the mark and mends everything standing on it, so it is the door used here;
+     * it refuses a change of nothing itself, so a word the row already agrees with costs nothing.
+     *
+     * Outside [settling] and before it, because the mend walks the record book and no other Run's
+     * settlement should queue behind that. Guarded, because the judgement below is the irreversible
+     * half and must not be lost to a mend that failed: a mark that cannot be written leaves the row
+     * disagreeing with the runner, which is the state the word is carried separately for.
+     */
+    private suspend fun putTheWordBackOnTheRow(sessionId: Long, markedAsWalk: Boolean) {
+        try {
+            markAsWalk(sessionId, markedAsWalk)
+        } catch (e: Exception) {
+            Log.w("StageRule", "Could not put run $sessionId's Walk mark back on its row; judging on the word", e)
+        }
     }
 
     /**
@@ -4053,12 +4132,23 @@ class SessionRepository(
         zone: ZoneId,
         markedAsWalk: Boolean?,
     ): Boolean {
-        val run = sessionDao.getSessionById(sessionId) ?: return false
+        val run = sessionDao.getSessionById(sessionId)
+        // A Run still owing a settlement is the one case that keeps the word: it is the case the
+        // word is kept for (#317). A Run that is gone, or already judged, owes nothing and no later
+        // settlement may be handed a word about it.
+        if (run == null || run.stageSettled) {
+            theRunnersWordFor.remove(sessionId)
+            return false
+        }
         if (!run.isFinished()) {
             Log.d("StageRule", "Run $sessionId is not finished; leaving its Stage owing a settlement")
             return false
         }
-        if (run.stageSettled) return false
+        // Used by this settlement, so nothing after it is owed the word. Forgotten before the
+        // judgement rather than after it, because a judgement that throws leaves the Run owing a
+        // settlement its row will still say it owes — and the mark it disagreed with has by then
+        // been written back on that row ([putTheWordBackOnTheRow]).
+        theRunnersWordFor.remove(sessionId)
         // From here on this Run is being judged, and it says so — because from here on a claim
         // arriving has no reader but itself (#318). Set before the rule is asked and cleared only
         // once the mark is on the row, so the two together cover every instant in which this
