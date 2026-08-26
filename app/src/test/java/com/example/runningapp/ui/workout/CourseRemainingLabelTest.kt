@@ -1,11 +1,20 @@
 package com.example.runningapp.ui.workout
 
+import java.util.Locale
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
 
 /** The words on the live map's badge (#57). */
 class CourseRemainingLabelTest {
+
+    private val phonesOwnLocale: Locale = Locale.getDefault()
+
+    @After
+    fun restoreThePhonesOwnLocale() {
+        Locale.setDefault(phonesOwnLocale)
+    }
 
     @Test
     fun `a Run following no course says nothing`() {
@@ -39,5 +48,11 @@ class CourseRemainingLabelTest {
     @Test
     fun `a runner past the end of the course has nothing left, never less`() {
         assertEquals("0 m to go", courseRemainingLabel(-40.0))
+    }
+
+    @Test
+    fun `a phone set to a decimal comma still reads the same as the Route's own row`() {
+        Locale.setDefault(Locale.GERMANY)
+        assertEquals("2.50 km to go", courseRemainingLabel(2500.0))
     }
 }
