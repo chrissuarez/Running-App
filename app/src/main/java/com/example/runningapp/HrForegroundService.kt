@@ -994,6 +994,22 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // cannot protect a coroutine that never starts.
         finalizationScope.launch {
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                // Let the Run's still-queued sample and track-point inserts land before the row is
+                // stamped as finished. An end time is what everything downstream reads as "this Run
+                // is complete" — the history snapshot below, and the GPX export, which offers Share
+                // the moment it sees one (#84). Stamping first would let a runner who shares
+                // straight after stopping export the Run minus its final seconds.
+                awaitRecorderWrites()
+
+                // Read after that wait and not before it, because the row is written back whole and
+                // the wait can last seconds — with the feel sheet on screen throughout. The Walk
+                // mark, the effort, the note and a stated distance are all the runner's to write in
+                // that window and none of them is this Run's to overwrite. Read beforehand, a Walk
+                // ticked into the sheet during the wait was silently undone here, and the
+                // settlement below then judged the Run off the `isWalk = false` this write had just
+                // restored — a Stage graduated on a walk, which cannot be taken back (#317). The
+                // totals below are this Run's own and are written over whatever is there; every
+                // other column is left as the runner left it.
                 val session = database.sessionDao().getSessionById(runRowId)
                 if (session == null) {
                     Log.w(TAG, "Finalize found no row $runRowId")
@@ -1018,13 +1034,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     walkBreaksCount = totals.walkBreaks,
                     isRunWalkMode = totals.isRunWalkMode,
                 )
-                // Let the Run's still-queued sample and track-point inserts land before the row is
-                // stamped as finished. An end time is what everything downstream reads as "this Run
-                // is complete" — the history snapshot below, and the GPX export, which offers Share
-                // the moment it sees one (#84). Stamping first would let a runner who shares
-                // straight after stopping export the Run minus its final seconds.
-                awaitRecorderWrites()
-
                 database.sessionDao().updateSession(updatedSession)
 
                 // Against the Run's own id rather than the live one, which this stop has already

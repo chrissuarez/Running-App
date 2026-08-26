@@ -3616,6 +3616,54 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a judgement that throws leaves the kept word standing for the settlement that follows`() = runTest {
+        // The word is spent by the settlement that lands, not by the one that starts (#317). Spent
+        // first, a settlement that could not write its mark left the Run owing one — its row still
+        // says so — with nothing but the `isWalk = false` column for the next settlement to judge
+        // on, which is a Stage graduated on a walk.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(endTime = 0L))
+
+        repo.finishSheetOpened(7L)
+        repo.finishSheetClosed(7L, markedAsWalk = true, finalizeWaitStepMillis = 1L)
+
+        // The Run finishes without its mark, and the settlement that reaches it cannot be marked.
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(isWalk = false))
+        whenever(mockDao.getSessionIdsOwingStageSettlement()).thenReturn(listOf(7L))
+        whenever(mockDao.setStageSettled(7L))
+            .thenThrow(IllegalStateException("the settlement could not be marked"))
+            .thenAnswer { null }
+        repo.settleStagesMissedAtTheFinish()
+
+        // The next launch pays the debt, and the word is still there to be judged on.
+        repo.settleStagesMissedAtTheFinish()
+
+        verify(mockSettingsRepo, never()).graduateStage(any(), any(), any(), any())
+    }
+
+    @Test
+    fun `no word is kept about a Run that has already gone`() = runTest {
+        // The word is kept against the Run's id, and the id of a Run that is no longer there can be
+        // handed to the next Run Room writes. A word kept about a row the wait never found would be
+        // the wrong runner's word about a different Run (#317).
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        val aLaterRun = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.getSessionById(7L)).thenReturn(null)
+
+        repo.finishSheetOpened(7L)
+        repo.finishSheetClosed(7L, markedAsWalk = true, finalizeWaitStepMillis = 1L)
+
+        // A different Run, under the id the gone one gave up, and nobody said that one was a walk.
+        whenever(mockDao.getSessionById(7L)).thenReturn(aLaterRun)
+        repo.settleStageForRun(7L)
+
+        verify(mockSettingsRepo).graduateStage(eq("sub_25_peak"), any(), any(), any())
+    }
+
+    @Test
     fun `the answer's writes land before the Stage is settled`() = runTest {
         // The order is the ticket: a Walk ticked into the sheet has to be in the row before the rule
         // reads it (#297), so the door that closes the gate is the same one that stores the answer.

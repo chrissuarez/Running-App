@@ -3788,10 +3788,20 @@ class SessionRepository(
      * delete ([deleteRuns]) — a deleted Run's id can be handed to the next Run Room writes, and a
      * word left behind would be the wrong runner's word about a different Run.
      *
-     * In memory, like [awaitingTheRunnersWord] and for the same reason: a process that dies takes
-     * the unfinished row with it, and a Run left unfinished is rescued and settled at the next
-     * launch, where the mark the Save wrote is still on its row because no finalize ever overwrote
-     * it. Null is not stored — a sheet that said nothing about the Walk is a dismissal, and then the
+     * In memory, like [awaitingTheRunnersWord] and for the same reason: it says what is happening in
+     * *this* process. What makes that safe is that the row itself is the durable copy of this word
+     * — the finish sheet writes the mark on it, and `finalizeRun` reads the row back after its own
+     * waits so that a mark written during them is carried into the full-row write rather than
+     * undone by it (#317). A process that dies leaves the mark standing, and the launch pass judges
+     * off a row that agrees with the runner.
+     *
+     * **What is knowingly left** is the instant inside `finalizeRun` between that read and its
+     * write: a mark landing there is overwritten, and this word is then the only copy, so a process
+     * dying between the write and the settlement below would lose it. It is an instant rather than
+     * the seconds it used to be, and the alternative — a stored debt — would hold a Stage open for
+     * ever on a word that a process which died with the sheet up will never be given.
+     *
+     * Null is not stored — a sheet that said nothing about the Walk is a dismissal, and then the
      * row is the only word there is ([finishSheetClosed]).
      *
      * Concurrent, because the sheet writes it and the settlements read and clear it, and those are
@@ -3856,7 +3866,8 @@ class SessionRepository(
      * that has been answered and gone is a Run nothing will ever settle; what stands in its place is
      * [theRunnersWordFor], which hands this word to the settlement that follows — the finalize's
      * own, moments later, which would otherwise judge the Run off the `isWalk = false` its full-row
-     * write had just restored.
+     * write had just restored — which `finalizeRun` no longer does to a mark that was already on
+     * the row when it read it, so this covers the narrower case of a mark written after that read.
      */
     suspend fun finishSheetClosed(
         sessionId: Long,
@@ -3869,7 +3880,11 @@ class SessionRepository(
             // Written down before the gate opens and inside the same lock, so no settlement can see
             // the gate open and the word neither settled nor kept. The settlement below forgets it
             // again if it uses it; what it leaves standing is a word the wait ran out on (#317).
-            if (markedAsWalk != null) theRunnersWordFor[sessionId] = markedAsWalk
+            //
+            // Only where there is a Run to owe it: a wait that found no row at all is a Run that has
+            // gone, and a word kept about it would be waiting for an id Room can hand to the next
+            // Run written — the wrong runner's word about a different Run.
+            if (markedAsWalk != null && finalized != null) theRunnersWordFor[sessionId] = markedAsWalk
             awaitingTheRunnersWord.remove(sessionId)
             finalized != null && settleUnderSettling(sessionId, zone, markedAsWalk)
         }
@@ -4112,6 +4127,11 @@ class SessionRepository(
      * disagreeing with the runner, which is the state the word is carried separately for.
      */
     private suspend fun putTheWordBackOnTheRow(sessionId: Long, markedAsWalk: Boolean) {
+        // Only onto a row the finalize has finished writing. A Run still being recorded is a Run
+        // this mend would be spent on twice — the full-row write is still to come and would take the
+        // mark straight back off — and [markAsWalk] would sit out its own wait to do it. The word
+        // is kept either way, and the settlement that follows the finalize is the one that mends.
+        if (sessionDao.getSessionById(sessionId)?.isFinished() != true) return
         try {
             markAsWalk(sessionId, markedAsWalk)
         } catch (e: Exception) {
@@ -4144,11 +4164,6 @@ class SessionRepository(
             Log.d("StageRule", "Run $sessionId is not finished; leaving its Stage owing a settlement")
             return false
         }
-        // Used by this settlement, so nothing after it is owed the word. Forgotten before the
-        // judgement rather than after it, because a judgement that throws leaves the Run owing a
-        // settlement its row will still say it owes — and the mark it disagreed with has by then
-        // been written back on that row ([putTheWordBackOnTheRow]).
-        theRunnersWordFor.remove(sessionId)
         // From here on this Run is being judged, and it says so — because from here on a claim
         // arriving has no reader but itself (#318). Set before the rule is asked and cleared only
         // once the mark is on the row, so the two together cover every instant in which this
@@ -4177,6 +4192,11 @@ class SessionRepository(
             // Marked even where there was no Stage to settle: the column says the question has been
             // put and cannot be put again, and a Run that ran under no Stage has had its answer.
             sessionDao.setStageSettled(sessionId)
+            // And only now is the word spent (#317). Forgotten before the judgement it would have
+            // been lost by a judgement that threw — which leaves the Run owing a settlement its row
+            // still says it owes, and the next one to pay it would have nothing but the column the
+            // word exists to beat.
+            theRunnersWordFor.remove(sessionId)
         } finally {
             // A settlement that threw before the mark landed leaves the Run owing one, and a claim
             // reaching it after that is right to stand down again: the launch pass will read it.
