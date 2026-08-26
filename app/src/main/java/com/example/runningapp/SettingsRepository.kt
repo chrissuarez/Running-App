@@ -377,6 +377,27 @@ internal fun MutablePreferences.completePlanOnce(completion: PlanCompletion, mes
 }
 
 /**
+ * The runner moved on a Stage and told so, as one thing (#175, #318).
+ *
+ * Pure and separate from the write around it, for the reason [coachWriteAllowed] is — and named at
+ * all so that "a graduation is its message and its move together" is one rule with one
+ * implementation rather than an order two callers each have to remember. See
+ * [SettingsRepository.graduateStage] for why they may not be two writes.
+ *
+ * A null [nextStageId] leaves the stage where it is: the coach can call a Stage finished when the
+ * plan has no next one, and the message is still the whole of what it had to say.
+ */
+internal fun MutablePreferences.graduateToStage(
+    nextStageId: String?,
+    message: String,
+    author: DebriefAuthor,
+) {
+    writeStandingDebrief(message, author)
+    if (nextStageId != null) this[PreferencesKeys.ACTIVE_STAGE_ID] = nextStageId
+    clearCoachPrescriptions()
+}
+
+/**
  * Everything stored, read as what it means (#234).
  *
  * Pure and separate from the flow that publishes it, for the reason [coachWriteAllowed] is: the
@@ -660,7 +681,7 @@ class SettingsRepository(private val context: Context) {
      *
      * Those numbers were reasoned about against the plan being left. Carried across, they would
      * overwrite day one of the plan just chosen — target zone included — which is the one workout
-     * the runner picked the plan *for*. Same rule as [advanceStageAndClearPrescriptions], since
+     * the runner picked the plan *for*. Same rule as [graduateStage], since
      * "the stage under it changed" is the same event either way.
      *
      * The debrief goes because it exists to explain the prescription, so it cannot outlive one:
@@ -670,8 +691,9 @@ class SettingsRepository(private val context: Context) {
      * there is no ordering between them to get right, which is the only reason they need not share
      * a single edit.
      *
-     * Graduating is the exception and keeps its message: [advanceStageAndClearPrescriptions] is the
-     * coach moving the runner on, and "you have finished this stage" is the one thing it had to say.
+     * Graduating is the exception and keeps its message: [graduateStage] is the coach moving the
+     * runner on, and "you have finished this stage" is the one thing it had to say — which is why
+     * it writes the two together.
      */
     suspend fun setActivePlan(planId: String?, stageId: String?) {
         context.dataStore.edit { preferences ->
@@ -705,21 +727,37 @@ class SettingsRepository(private val context: Context) {
     }
 
     /**
-     * Moves the plan on, dropping every standing prescription with it: those numbers were written
-     * for the stage just left, and the new stage's own workouts are where the next progression
-     * starts. One write for the move and all three slots (#175), so no run can start against the new
-     * stage carrying the old stage's intervals.
+     * Moves the plan on and says so — the runner told what they finished, the stage advanced, and
+     * every standing prescription dropped, in **one write** (#175, #318).
+     *
+     * The prescriptions go because those numbers were written for the stage just left, and the new
+     * stage's own workouts are where the next progression starts. One write for the move and all
+     * three slots, so no run can start against the new stage carrying the old stage's intervals.
+     *
+     * **The message is in that same write and not a call before it**, for the reason [completePlan]
+     * gives about its own two halves: they are one event. Written apart, another writer holding the
+     * old scope can land between them — its own [setLatestDebrief] passes, because the stage has not
+     * moved yet — and overwrite the graduation with words about the Stage the runner has just left.
+     * The advance then lands anyway, so the runner is moved on and told something else. Since #318 a
+     * Stated Best Effort's graduation genuinely runs beside the coach's round trip, so "between
+     * them" is no longer a handful of instructions.
      *
      * Graduating is the coach moving the runner on, so it goes through [editCoachWrite] like its
      * other writes: [scope] is the stage it decided to graduate *from*, and a runner who changed
-     * plans while it was thinking must not be advanced to a stage of the plan they left.
+     * plans while it was thinking must not be advanced to a stage of the plan they left. That check
+     * is now the whole graduation's, which is what makes a losing writer lose all of it.
+     *
+     * [author] is whoever the words are: the app's own graduation message, or the coach's where the
+     * requirement was a judgement it answered (#296).
      */
-    suspend fun advanceStageAndClearPrescriptions(nextStageId: String?, scope: CoachWriteScope) {
+    suspend fun graduateStage(
+        nextStageId: String?,
+        message: String,
+        author: DebriefAuthor,
+        scope: CoachWriteScope,
+    ) {
         context.dataStore.editCoachWrite(scope) { preferences ->
-            if (nextStageId != null) {
-                preferences[PreferencesKeys.ACTIVE_STAGE_ID] = nextStageId
-            }
-            preferences.clearCoachPrescriptions()
+            preferences.graduateToStage(nextStageId, message, author)
         }
     }
 
@@ -741,7 +779,7 @@ class SettingsRepository(private val context: Context) {
      * overwritten rather than obeyed: one slot holds the fact, and the fact is about a Plan.
      *
      * Goes through [editCoachWrite] like every other write of the graduation rule's, for the same
-     * reason [advanceStageAndClearPrescriptions] does: a runner who changed plans while this was
+     * reason [graduateStage] does: a runner who changed plans while this was
      * being decided must not have the plan they left declared finished.
      */
     suspend fun completePlan(completion: PlanCompletion, message: String, scope: CoachWriteScope) {

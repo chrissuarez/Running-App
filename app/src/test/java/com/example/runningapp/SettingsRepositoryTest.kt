@@ -328,6 +328,48 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `a graduation moves the Stage and says so in one pass`() {
+        // The two halves are one event (#318). Written apart, a writer still holding the Stage being
+        // left can land between them — its own debrief passes, because the Stage has not moved yet —
+        // and overwrite the congratulation, while the advance lands anyway: the runner is moved on
+        // and told something else. One pass over the preferences is what leaves no between, and
+        // since #318 the gap is a Gemini round trip rather than two instructions.
+        val preferences = mutablePreferencesOf()
+        preferences[PreferencesKeys.ACTIVE_STAGE_ID] = "sub_30_bridge"
+        // What the coach said about the Stage being left, and the numbers it queued for it.
+        preferences.writeStandingDebrief("Steady all the way through.", DebriefAuthor.COACH)
+
+        preferences.graduateToStage(
+            "sub_25_peak",
+            "You ran 5 km in 27:12. Stage 2: Sub-30 Bridge complete. Next up: Stage 3: Sub-25 Peak.",
+            DebriefAuthor.APP
+        )
+
+        assertEquals("sub_25_peak", preferences[PreferencesKeys.ACTIVE_STAGE_ID])
+        assertEquals(
+            "You ran 5 km in 27:12. Stage 2: Sub-30 Bridge complete. Next up: Stage 3: Sub-25 Peak.",
+            preferences[PreferencesKeys.LATEST_COACH_MESSAGE]
+        )
+        // Stamped as the app's, because the app wrote it (#296).
+        assertEquals(DebriefAuthor.APP, debriefAuthorOf(preferences))
+    }
+
+    @Test
+    fun `a graduation with no next Stage still tells the runner`() {
+        // The coach can call a Stage finished where the plan has no next one. Nothing to advance to,
+        // and "you have finished this stage" is still the whole of what it had to say — so the
+        // message may not be lost with the move that never happens.
+        val preferences = mutablePreferencesOf()
+        preferences[PreferencesKeys.ACTIVE_STAGE_ID] = "sub_25_peak"
+
+        preferences.graduateToStage(null, "Stage complete.", DebriefAuthor.COACH)
+
+        assertEquals("sub_25_peak", preferences[PreferencesKeys.ACTIVE_STAGE_ID])
+        assertEquals("Stage complete.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+        assertEquals(DebriefAuthor.COACH, debriefAuthorOf(preferences))
+    }
+
+    @Test
     fun `a Max HR chosen before the flag existed still counts as deliberately set`() {
         // Upgrading from a build with a Save button: they typed their number, the flag didn't
         // exist to record it. Reading that as "never set" would let their next edit rewrite
