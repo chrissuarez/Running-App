@@ -224,11 +224,21 @@ nothing ever moves it, because what a Run set out to do cannot be recovered afte
 happens to cross a course's ground is not a Run that was following it, which is also why no Run
 recorded before this shipped is ever matched to a Route retrospectively.
 
+**Distance remaining** is how much of the course is left, shown in the corner of the live map and of
+the full-screen map, and never spoken (#57). Measured from the nearest point on the course to the
+runner's last fix, which is read from around the fix before it rather than against the whole line —
+an out-and-back has two pieces of line under the same ground, and the runner is on the one they have
+run to. Until the runner has actually reached the course, every fix is read against the whole of it
+and equally near places are settled in favour of the earlier one: the walk from the door to the start
+is not a claim about which half of a course you are on. Off the course it keeps counting, and how far off is too far is not asked here.
+_Avoid_: distance to go as a *field*, remaining distance of a Run (a Run has no end to be near), and
+anything that turns this number into a milestone the app says out loud.
+
 **Reversed** is the runner's word that they are setting off the other way round. It changes nothing
 about the line — the same ground in the same places, so the same line is drawn — and everything
-about which way you are *going* along it, which is what the tickets after this one read it for. A
-treadmill Run follows no course whatever was picked, there being no ground under a treadmill for a
-course to be over.
+about which way you are *going* along it: the course is handed to the map already turned round, so
+distance remaining counts down from the end the runner actually set off at. A treadmill Run follows
+no course whatever was picked, there being no ground under a treadmill for a course to be over.
 _Avoid_: guided run, navigation (nothing is being navigated yet), and **on course** / **off course**
 as a state — a Run either set out on a Route or it did not, and nothing here judges whether the
 runner is still on it. Ordinary English is fine: a Run "following no course" reads the same way a Run
