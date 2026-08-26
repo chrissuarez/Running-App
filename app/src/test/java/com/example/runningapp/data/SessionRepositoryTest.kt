@@ -3616,6 +3616,31 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a delete that fails leaves the word standing with the Run it was said about`() = runTest {
+        // The word goes with the rows, so it may only go once they have (#317). Dropped before the
+        // delete is attempted, a delete that throws leaves the Run standing without the word the
+        // settlement that follows was going to be judged on — and that settlement then judges off
+        // the `isWalk = false` column the finalize restored, which is a Stage graduated on a walk.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(endTime = 0L))
+
+        repo.finishSheetOpened(7L)
+        repo.finishSheetClosed(7L, markedAsWalk = true, finalizeWaitStepMillis = 1L)
+
+        whenever(mockDao.deleteSessionById(7L))
+            .thenThrow(IllegalStateException("the row could not be deleted"))
+        runCatching { repo.deleteSession(7L) }
+
+        // The Run is still there, still owing a settlement, and its column still says no walk.
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(isWalk = false))
+        repo.settleStageForRun(7L)
+
+        verify(mockSettingsRepo, never()).graduateStage(any(), any(), any(), any())
+    }
+
+    @Test
     fun `a judgement that throws leaves the kept word standing for the settlement that follows`() = runTest {
         // The word is spent by the settlement that lands, not by the one that starts (#317). Spent
         // first, a settlement that could not write its mark left the Run owing one — its row still
