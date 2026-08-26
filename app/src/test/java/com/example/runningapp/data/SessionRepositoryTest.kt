@@ -3525,6 +3525,97 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a word given to a settlement that timed out is kept for the settlement that follows`() = runTest {
+        // The sheet's wait for the finalize is bounded, and a finalize blocked on a slow recorder
+        // write outlasts it (#317). The sheet then settles nothing — the row is still unfinished —
+        // and the finalize that lands afterwards writes the row whole, taking the Walk mark off it
+        // and settling the Run itself, carrying no word. Judged off that row the Run is not a Walk,
+        // and a Stage graduated on a walk cannot be taken back. The word outlives the settlement it
+        // was given to, so the next one judges on it.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        // Still being written when the sheet's wait runs out, however long it waits.
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(endTime = 0L))
+
+        repo.finishSheetOpened(7L)
+        repo.finishSheetClosed(7L, markedAsWalk = true, finalizeWaitStepMillis = 1L)
+
+        verify(mockDao, never()).setStageSettled(7L)
+
+        // And now the finalize lands, writing the row whole — the mark the Save put on it is gone —
+        // and settles the Run, carrying no word of its own.
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(isWalk = false))
+        repo.settleStageForRun(7L)
+
+        verify(mockSettingsRepo, never()).graduateStage(any(), any(), any(), any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `a word kept past a timed-out settlement is put back on the row the finalize overwrote`() = runTest {
+        // The judgement is only half of what the word is owed: the finalize's full-row write also
+        // takes the mark off the Run's own page and leaves the records it scored a moment later
+        // standing on a Walk (#317). The settlement that finally reads the word writes it back.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(endTime = 0L))
+
+        repo.finishSheetOpened(7L)
+        repo.finishSheetClosed(7L, markedAsWalk = true, finalizeWaitStepMillis = 1L)
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(isWalk = false))
+        repo.settleStageForRun(7L)
+
+        verify(mockDao).setIsWalk(7L, true)
+    }
+
+    @Test
+    fun `a settlement that timed out leaves the Run settleable rather than holding its gate`() = runTest {
+        // The fix may not be "hold the gate until the row is finished": that leaves a Run nothing
+        // will ever settle, which is the failure the gate's own rule was written to end (#297). A
+        // Run whose sheet has been answered is settled by the very next settlement that reaches it,
+        // timed out or not — here the launch pass, standing in for a finalize that lands after the
+        // process has been and gone.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(endTime = 0L))
+
+        repo.finishSheetOpened(7L)
+        repo.finishSheetClosed(7L, markedAsWalk = false, finalizeWaitStepMillis = 1L)
+
+        // The Run finishes, and the pass finds it owing a settlement.
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded)
+        whenever(mockDao.getSessionIdsOwingStageSettlement()).thenReturn(listOf(7L))
+        repo.settleStagesMissedAtTheFinish()
+
+        verify(mockSettingsRepo).graduateStage(eq("sub_25_peak"), any(), any(), any())
+        verify(mockDao).setStageSettled(7L)
+    }
+
+    @Test
+    fun `a word is forgotten with the Run it was said about`() = runTest {
+        // Kept in memory against the Run's id, and a deleted Run's id can be handed to the next Run
+        // Room writes. A word left behind would then be the wrong runner's word about a different
+        // Run — so the delete takes it, the same way it takes everything else that stood on the row.
+        val statedDao: StatedBestEffortDao = mock()
+        val repo = repositoryForSettling(statedDao)
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(endTime = 0L))
+
+        repo.finishSheetOpened(7L)
+        repo.finishSheetClosed(7L, markedAsWalk = true, finalizeWaitStepMillis = 1L)
+        repo.deleteSession(7L)
+
+        // A different Run, written under the id the deleted one gave up, and no Walk about it.
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded)
+        repo.settleStageForRun(7L)
+
+        verify(mockSettingsRepo).graduateStage(eq("sub_25_peak"), any(), any(), any())
+    }
+
+    @Test
     fun `the answer's writes land before the Stage is settled`() = runTest {
         // The order is the ticket: a Walk ticked into the sheet has to be in the row before the rule
         // reads it (#297), so the door that closes the gate is the same one that stores the answer.
