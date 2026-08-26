@@ -15,7 +15,7 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
 /**
- * The course a live Run's map draws beside its trail (#56).
+ * The course a live Run's map draws beside its trail (#56), in the order the Run is running it (#57).
  *
  * Asked of the repository rather than of the map, because the map is Mapbox and the decision here is
  * not: which row to read, when to read it, and what to hand back when the course has gone.
@@ -61,13 +61,19 @@ class RunRouteLineTest {
         assertEquals(line, repository.routeLineForRunFlow(1L).first())
     }
 
-    /** The same ground in the same places, so there is nothing about the line to turn round. */
+    /**
+     * The one place the runner's word about direction is read.
+     *
+     * The same ground in the same places, so the drawn line is unchanged — a line's points may be
+     * given in either order and it draws the same. What turning it round is *for* is everything that
+     * counts from the start: how far is left is measured from the end the runner set off at.
+     */
     @Test
-    fun `a course run backwards is drawn exactly as it is kept`() = runTest {
+    fun `a course run backwards hands back its line the other way round`() = runTest {
         val routeId = keepRoute()
         val repository = repositoryWatching(MutableStateFlow(run(routeId, reversed = true)))
 
-        assertEquals(line, repository.routeLineForRunFlow(1L).first())
+        assertEquals(line.reversed(), repository.routeLineForRunFlow(1L).first())
     }
 
     @Test

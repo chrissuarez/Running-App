@@ -2492,8 +2492,14 @@ class SessionRepository(
     }
 
     /**
-     * The course a Run set out to follow, as a line to draw beside its trail (#56) — empty for a Run
-     * following none.
+     * The course a Run set out to follow, in the order the Run is running it (#56, #57) — empty for
+     * a Run following none.
+     *
+     * Reversed here, and nowhere else, when the runner said they were setting off the other way
+     * round. The line drawn on the map does not care — the same ground in the same places — but how
+     * far is left does, and it is read off this same list ([com.example.runningapp.routes.CourseLine]).
+     * One reader of [com.example.runningapp.run.RunRoute.reversed] means the plan drawn and the
+     * distance remaining cannot come to disagree about which way the runner turned.
      *
      * Watched through the Run's own row rather than taken as a reading, because a live Run's map is
      * built the moment the screen appears and the row may not exist yet: START inserts it on another
@@ -2514,14 +2520,16 @@ class SessionRepository(
     fun routeLineForRunFlow(sessionId: Long): Flow<List<RoutePoint>> {
         val dao = routeDao ?: return flowOf(emptyList())
         return sessionDao.getSessionByIdFlow(sessionId)
-            .map { it?.ranAlongRoute()?.routeId }
+            .map { it?.ranAlongRoute() }
             .distinctUntilChanged()
-            .flatMapLatest { routeId ->
-                if (routeId == null) {
+            .flatMapLatest { ranAlong ->
+                if (ranAlong == null) {
                     flowOf(emptyList())
                 } else {
-                    dao.getRouteFlow(routeId)
-                        .map { route -> route?.let { RoutePolyline.decode(it.polyline) }.orEmpty() }
+                    dao.getRouteFlow(ranAlong.routeId).map { route ->
+                        val course = route?.let { RoutePolyline.decode(it.polyline) }.orEmpty()
+                        if (ranAlong.reversed) course.reversed() else course
+                    }
                 }
             }
     }
