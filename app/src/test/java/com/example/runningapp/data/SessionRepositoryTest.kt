@@ -3791,6 +3791,7 @@ class SessionRepositoryTest {
         val repo = repositoryForSettling(statedDao, walkMarkDebtDao = walkDebtDao)
         aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
         whenever(walkDebtDao.owed()).thenReturn(listOf(WalkMarkDebtRow(sessionId = 7L, isWalk = true)))
+        whenever(walkDebtDao.debtFor(7L)).thenReturn(WalkMarkDebtRow(sessionId = 7L, isWalk = true))
 
         repo.payWalkMarkDebts()
 
@@ -3809,6 +3810,7 @@ class SessionRepositoryTest {
         val repo = repositoryForSettling(statedDao, walkMarkDebtDao = walkDebtDao)
         aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
         whenever(walkDebtDao.owed()).thenReturn(listOf(WalkMarkDebtRow(sessionId = 7L, isWalk = true)))
+        whenever(walkDebtDao.debtFor(7L)).thenReturn(WalkMarkDebtRow(sessionId = 7L, isWalk = true))
         whenever(mockDao.clearSegmentsTimed(7L)).thenThrow(IllegalStateException("the disk is still full"))
 
         repo.payWalkMarkDebts()
@@ -3846,6 +3848,45 @@ class SessionRepositoryTest {
 
         verify(mockDao, never()).setIsWalk(any(), any())
         verify(walkDebtDao).forgetDebtFor(7L)
+    }
+
+    @Test
+    fun `a debt the runner discharged while the pass held it is not paid over their answer`() = runTest {
+        // The pass reads its whole work list and then pays it a Run at a time, and the runner is
+        // free the whole time: they open that Run during startup, tick the switch the other way, and
+        // their own write drops the debt in the transaction that makes it. The word the pass is
+        // still carrying is now the older of the two, and writing it would undo them in front of
+        // their eyes — true, then false by their hand, then true again out of a startup pass they
+        // cannot see. So the mark is only good while the debt it came from is still standing, which
+        // is asked inside the transaction that writes it and nowhere earlier (#371).
+        val statedDao: StatedBestEffortDao = mock()
+        val walkDebtDao: WalkMarkDebtDao = mock()
+        val repo = repositoryForSettling(statedDao, walkMarkDebtDao = walkDebtDao)
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(walkDebtDao.owed()).thenReturn(listOf(WalkMarkDebtRow(sessionId = 7L, isWalk = true)))
+        // The runner got there first: the row says "run" again and owes nothing.
+        whenever(walkDebtDao.debtFor(7L)).thenReturn(null)
+
+        repo.payWalkMarkDebts()
+
+        verify(mockDao, never()).setIsWalk(any(), any())
+    }
+
+    @Test
+    fun `a debt that no longer says what the pass is holding is not paid either`() = runTest {
+        // The same rule read the other way: the pass and the disk agreeing that a mark is owed is
+        // not the same as their agreeing which mark. Only the row the word came from, unchanged,
+        // makes this write the one that was owed.
+        val statedDao: StatedBestEffortDao = mock()
+        val walkDebtDao: WalkMarkDebtDao = mock()
+        val repo = repositoryForSettling(statedDao, walkMarkDebtDao = walkDebtDao)
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(walkDebtDao.owed()).thenReturn(listOf(WalkMarkDebtRow(sessionId = 7L, isWalk = true)))
+        whenever(walkDebtDao.debtFor(7L)).thenReturn(WalkMarkDebtRow(sessionId = 7L, isWalk = false))
+
+        repo.payWalkMarkDebts()
+
+        verify(mockDao, never()).setIsWalk(any(), any())
     }
 
     @Test
