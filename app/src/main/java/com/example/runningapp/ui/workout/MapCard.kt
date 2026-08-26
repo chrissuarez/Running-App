@@ -37,6 +37,7 @@ import com.mapbox.maps.extension.compose.style.standard.rememberStandardStyleSta
 import com.mapbox.maps.plugin.PuckBearing
 import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
 import com.mapbox.maps.plugin.locationcomponent.location
+import java.util.Locale
 import kotlin.math.roundToInt
 
 private val MapCardHeight = 180.dp
@@ -229,9 +230,16 @@ private fun DistanceRemainingBadge(label: String, modifier: Modifier = Modifier)
  *
  * Ten metres and not one, because a metre is a lie about a number read off GPS — and a figure whose
  * last digit flickers every second is a figure the runner stops reading.
+ *
+ * [Locale.UK] and not the phone's own, the same as every other distance the app writes
+ * ([com.example.runningapp.ui.routeDistanceLabel]): the words either side of the number are English
+ * whatever the phone is set to, so a decimal comma from a phone set to German would put "2,50 km to
+ * go" on the badge while the Route's own row two taps away still said "2.50 km". One notation, or
+ * the runner is being shown the same course measured two ways.
  */
 internal fun courseRemainingLabel(remainingMeters: Double?): String? {
     if (remainingMeters == null) return null
     val meters = (remainingMeters.coerceAtLeast(0.0) / 10.0).roundToInt() * 10
-    return if (meters >= 1000) "%.2f km to go".format(meters / 1000.0) else "$meters m to go"
+    return if (meters >= 1000) String.format(Locale.UK, "%.2f km to go", meters / 1000.0)
+    else "$meters m to go"
 }
