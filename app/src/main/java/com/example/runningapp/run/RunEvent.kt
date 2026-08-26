@@ -22,9 +22,19 @@ sealed interface RunEvent {
     /**
      * The answer to [RunEffect.CreateRunRow]. A pure module cannot await Room, so the id comes
      * back as an event, and everything held for it flushes here.
+     *
+     * It says which Run it is the id of, and not only what the id is (#365). An id is addressed
+     * because the inbox it travels on outlives the Run that asked for it: a stop and a start inside
+     * one insert's window put a second Run in front of the first Run's answer, and a Run that read
+     * only the number would take an id belonging to a Run that is not it — two Runs' seconds on one
+     * row, and the second Run's own row left empty. The Run's start time is what addresses it: it is
+     * pinned for the whole Run, it already travels out on [RunEffect.CreateRunRow], and it is the
+     * one thing about a Run that no later event can move.
      */
     data class RunRowCreated(
         val runRowId: Long,
+        /** The [RunState.startedAtMillis] of the Run this id belongs to. */
+        val forRunStartedAtMillis: Long,
         override val nowMillis: Long,
     ) : RunEvent
 
@@ -45,6 +55,8 @@ sealed interface RunEvent {
      */
     data class HeldWorkTakenOver(
         val runRowId: Long,
+        /** The [RunState.startedAtMillis] of the Run this id belongs to — see [RunRowCreated]. */
+        val forRunStartedAtMillis: Long,
         override val nowMillis: Long,
     ) : RunEvent
 

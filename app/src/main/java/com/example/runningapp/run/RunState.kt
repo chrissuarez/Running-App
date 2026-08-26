@@ -151,6 +151,12 @@ data class RunState(
      */
     val autoPaused: Boolean = false,
 
+    /**
+     * When the runner pressed START, and so which Run this is (#365).
+     *
+     * Pinned by START and moved by nothing afterwards, which is what makes it usable as the Run's
+     * name: an answer to this Run's insert is addressed to it — see [isTheRunStartedAt].
+     */
     val startedAtMillis: Long = 0,
 
     /**
@@ -280,6 +286,16 @@ data class RunState(
     val runIntervalTracker: IntervalTracker?
         get() = intervalTracker
             ?.takeIf { phase == RunPhase.MAIN && intervals?.kind == IntervalKind.RUN }
+
+    /**
+     * Whether this Run is the Run an arrival addressed to a Run that started at
+     * [startedAtMillis] belongs to (#365).
+     *
+     * Said once, here, because two sides ask it of one arrival — the Run itself, deciding whether
+     * to take an id, and the inbox outside it, deciding whether that arrival may reach for the
+     * claim on the Run's held work. Two spellings of one rule are two rules waiting to disagree.
+     */
+    fun isTheRunStartedAt(startedAtMillis: Long): Boolean = this.startedAtMillis == startedAtMillis
 
     companion object {
         /** No Run. Every Run begins by replacing this wholesale, so nothing carries over. */

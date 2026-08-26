@@ -419,6 +419,90 @@ class RunRowHandshakeTest {
 
         assertEquals(0, (paused + resumed + idEffects).count<RunEffect.StartGps>())
     }
+
+    // --- The id says which Run it belongs to (#365) ---
+
+    @Test
+    fun `an id addressed to an earlier run is refused`() {
+        // The last Run's insert answering late, into a Run that is still waiting on its own. Taking
+        // it would write this Run's every second to the last Run's row.
+        val driver = Driver()
+        driver.start(withRow = false)
+        driver.advance(4)
+
+        val effects = driver.rowCreated(runRowId = 41L, forRunStartedAtMillis = ANOTHER_RUNS_START)
+
+        assertTrue(effects.isEmpty())
+        assertNull(driver.state.runRowId)
+        assertEquals(RunLifecycle.RUNNING, driver.state.lifecycle)
+    }
+
+    @Test
+    fun `a run that refused an earlier run's id still takes its own`() {
+        // The refusal costs the Run nothing: the buffer is still held, and its own answer flushes it.
+        val driver = Driver()
+        driver.start(withRow = false)
+        driver.advanceWith(3, IN_TARGET)
+        driver.rowCreated(runRowId = 41L, forRunStartedAtMillis = ANOTHER_RUNS_START)
+
+        val effects = driver.rowCreated(runRowId = 42L)
+
+        assertEquals(42L, driver.state.runRowId)
+        assertEquals(3, effects.count<RunEffect.SaveHrSample>())
+        assertTrue(effects.filterIsInstance<RunEffect.SaveHrSample>().all { it.runRowId == 42L })
+    }
+
+    @Test
+    fun `a stop waiting on its row is not finalized by an earlier run's id`() {
+        // The loudest way to get it wrong: the Run's finalize sent to somebody else's row.
+        val driver = Driver()
+        driver.start(withRow = false)
+        driver.advance(3)
+        driver.stop()
+
+        val effects = driver.rowCreated(runRowId = 41L, forRunStartedAtMillis = ANOTHER_RUNS_START)
+
+        assertEquals(0, effects.count<RunEffect.FinalizeRun>())
+        assertEquals(RunLifecycle.STOPPING, driver.state.lifecycle)
+    }
+
+    @Test
+    fun `an outdoor run does not start GPS on an earlier run's id`() {
+        val driver = Driver()
+        driver.start(config(runMode = RunMode.OUTDOOR), withRow = false)
+
+        val effects = driver.rowCreated(runRowId = 41L, forRunStartedAtMillis = ANOTHER_RUNS_START)
+
+        assertEquals(0, effects.count<RunEffect.StartGps>())
+    }
+
+    @Test
+    fun `a take-over addressed to an earlier run leaves this run's held work held`() {
+        // The other arrival says the same thing, so it is refused the same way — and refusing it
+        // must not empty the buffer either, or the Run's seconds would be dropped on somebody
+        // else's word (#360).
+        val driver = Driver()
+        driver.start(withRow = false)
+        driver.advanceWith(2, IN_TARGET)
+
+        val takenOver = driver.heldWorkTakenOver(41L, ANOTHER_RUNS_START)
+        val ownId = driver.rowCreated(runRowId = 42L)
+
+        assertTrue(takenOver.isEmpty())
+        assertEquals(42L, driver.state.runRowId)
+        assertEquals(2, ownId.count<RunEffect.SaveHrSample>())
+    }
+
+    @Test
+    fun `the row request and the id that answers it name the same run`() {
+        // What makes the address readable at all: the start time the Run asks under is the start
+        // time it holds, so the insert has one to send back.
+        val driver = Driver()
+
+        val effects = driver.on(RunEvent.Started(config(), RunControls(), T0))
+
+        assertEquals(driver.state.startedAtMillis, effects.only<RunEffect.CreateRunRow>().startedAtMillis)
+    }
 }
 
 class RunClockTest {

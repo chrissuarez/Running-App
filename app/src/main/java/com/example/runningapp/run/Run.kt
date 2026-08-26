@@ -107,7 +107,7 @@ object Run {
      * A Run that was stopped while waiting finalizes here and starts nothing.
      */
     private fun rowCreated(state: RunState, event: RunEvent.RunRowCreated): RunOutcome =
-        adoptRow(state, event.runRowId, deliverHeldWork = true)
+        adoptRow(state, event.runRowId, event.forRunStartedAtMillis, deliverHeldWork = true)
 
     /**
      * The row id came back, and another side of the app is already delivering what the Run held
@@ -122,20 +122,35 @@ object Run {
      * ([RunEvent.HeldWorkTakenOver]), so there is no service left to stop anything it started.
      */
     private fun heldWorkTakenOver(state: RunState, event: RunEvent.HeldWorkTakenOver): RunOutcome =
-        adoptRow(state, event.runRowId, deliverHeldWork = false)
+        adoptRow(state, event.runRowId, event.forRunStartedAtMillis, deliverHeldWork = false)
 
     /**
      * The Run takes the id its insert produced, whoever is delivering the work held for it.
      *
      * Written once so the two arrivals cannot come to differ about what having a row means: an id
-     * that has already landed is never replaced, a Run with no lifecycle left to it takes no id at
-     * all, and a Run that was stopped while waiting is over the moment the id exists. Only the
-     * buffer is the caller's to decide about.
+     * addressed to another Run is refused, an id that has already landed is never replaced, a Run
+     * with no lifecycle left to it takes no id at all, and a Run that was stopped while waiting is
+     * over the moment the id exists. Only the buffer is the caller's to decide about.
      *
+     * The address is checked first and by the Run itself, rather than left to whoever posts the
+     * event (#365). "No other Run's id can be in this inbox" is an argument about a service's
+     * threads and lifetimes, held in another file, and it is the kind of argument that stops being
+     * true without this file changing. Reading the address is an argument about one value the Run
+     * already holds.
+     *
+     * @param forRunStartedAtMillis the [RunState.startedAtMillis] the id was produced for. A Run
+     * whose own start time is not this one ([RunState.isTheRunStartedAt]) is not the Run the id
+     * belongs to, and takes nothing.
      * @param deliverHeldWork whether this side is the one handing the buffer over. False empties it
      * without emitting it, which is how a Run learns another side already has it.
      */
-    private fun adoptRow(state: RunState, runRowId: Long, deliverHeldWork: Boolean): RunOutcome {
+    private fun adoptRow(
+        state: RunState,
+        runRowId: Long,
+        forRunStartedAtMillis: Long,
+        deliverHeldWork: Boolean,
+    ): RunOutcome {
+        if (!state.isTheRunStartedAt(forRunStartedAtMillis)) return RunOutcome(state)
         if (state.runRowId != null) return RunOutcome(state)
         if (state.lifecycle == RunLifecycle.IDLE || state.lifecycle == RunLifecycle.STOPPED) {
             return RunOutcome(state)

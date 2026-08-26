@@ -14,6 +14,12 @@ import org.junit.Assert.assertEquals
  */
 internal const val T0 = 1_700_000_000_000L
 
+/**
+ * The start time of some Run that is not the one under test, for the tests that feed a Run an id
+ * addressed elsewhere (#365).
+ */
+internal const val ANOTHER_RUNS_START = T0 - 60_000L
+
 internal const val CONNECTED = "Connected"
 internal const val DISCONNECTED = "Disconnected (Retrying)"
 
@@ -76,7 +82,7 @@ internal class Driver(var state: RunState = RunState.IDLE) {
         runRowId: Long = 7L,
     ): List<RunEffect> {
         val effects = on(RunEvent.Started(config, controls, nowMillis)).toMutableList()
-        if (withRow) effects += on(RunEvent.RunRowCreated(runRowId, nowMillis))
+        if (withRow) effects += rowCreated(runRowId)
         return effects
     }
 
@@ -142,8 +148,23 @@ internal class Driver(var state: RunState = RunState.IDLE) {
 
     fun skipPhase(): List<RunEffect> = on(RunEvent.PhaseSkipped(nowMillis))
 
-    fun rowCreated(runRowId: Long = 7L): List<RunEffect> =
-        on(RunEvent.RunRowCreated(runRowId, nowMillis))
+    /**
+     * The id coming back, addressed to the Run the driver is holding — which is what the insert
+     * this Run asked for produces (#365). [forRunStartedAtMillis] is for the tests that want an id
+     * addressed to some other Run.
+     */
+    fun rowCreated(
+        runRowId: Long = 7L,
+        forRunStartedAtMillis: Long = state.startedAtMillis,
+    ): List<RunEffect> =
+        on(RunEvent.RunRowCreated(runRowId, forRunStartedAtMillis, nowMillis))
+
+    /** The same id, arriving with another side already delivering what was held for it (#360). */
+    fun heldWorkTakenOver(
+        runRowId: Long = 7L,
+        forRunStartedAtMillis: Long = state.startedAtMillis,
+    ): List<RunEffect> =
+        on(RunEvent.HeldWorkTakenOver(runRowId, forRunStartedAtMillis, nowMillis))
 }
 
 internal inline fun <reified T : RunEffect> List<RunEffect>.only(): T {
