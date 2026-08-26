@@ -1296,9 +1296,10 @@ interface RunPauseDao {
         RunShapeRow::class,
         RunEffortRow::class,
         RecordFillRow::class,
-        RunSummaryRow::class
+        RunSummaryRow::class,
+        WalkMarkDebtRow::class
     ],
-    version = 39,
+    version = 40,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1317,6 +1318,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun runEffortDao(): RunEffortDao
     abstract fun recordFillDao(): RecordFillDao
     abstract fun runSummaryDao(): RunSummaryDao
+    abstract fun walkMarkDebtDao(): WalkMarkDebtDao
 
     companion object {
         @Volatile
@@ -1409,7 +1411,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_35_36,
     MIGRATION_36_37,
     MIGRATION_37_38,
-    MIGRATION_38_39
+    MIGRATION_38_39,
+    MIGRATION_39_40
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2524,5 +2527,21 @@ val MIGRATION_38_39 = object : Migration(38, 39) {
                 "ALTER TABLE sessions ADD COLUMN ranAlongRouteReversed INTEGER NOT NULL DEFAULT 0"
             )
         }
+    }
+}
+
+/**
+ * Where a Run that owes its Walk mark is written down (#371) — see [WalkMarkDebtRow].
+ *
+ * A table and nothing else. There is no backfill and nothing to raise over history, which is what
+ * separates this from [MIGRATION_36_37]: a debt here is raised by one settlement at the moment it
+ * judges a Run on a word the row disagrees with, and no such moment can be recovered afterwards. A
+ * Run already settled with an unmarked row is unreachable — the settlement is spent and the word it
+ * carried died with its process — so an empty table is the honest description of every history that
+ * arrives here, and the runner's own tick is the only remedy those Runs ever had.
+ */
+val MIGRATION_39_40 = object : Migration(39, 40) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(WALK_MARK_DEBTS_TABLE_SQL)
     }
 }
