@@ -3,6 +3,7 @@ package com.example.runningapp.segments
 import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.measureTrack
+import com.example.runningapp.recording.theShortWayRound
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

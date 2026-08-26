@@ -2,12 +2,10 @@ package com.example.runningapp.segments
 
 import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.data.MeasuredTrack
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.hypot
+import com.example.runningapp.recording.FLAT_EPSILON_METERS
+import com.example.runningapp.recording.FlatPoint
+import com.example.runningapp.recording.LocalFrame
 import kotlin.math.roundToLong
-import kotlin.math.sin
-import kotlin.math.sqrt
 
 /**
  * Whether a Run covered a Segment, and how long it took over it (#70).
@@ -101,9 +99,6 @@ private const val SEGMENT_BACKTRACK_METERS: Double = 15.0
  */
 private const val SEGMENT_ADVANCE_SLACK_METERS: Double = 15.0
 
-/** Below this, two distances along the line are the same place. */
-private const val EPSILON_METERS = 1e-6
-
 /**
  * Every time [track] went over [ground], in the order the Run made them.
  *
@@ -115,11 +110,15 @@ private const val EPSILON_METERS = 1e-6
 fun segmentTraversalsIn(ground: List<MapFix>, track: List<SegmentTrackFix>): List<SegmentTraversal> {
     if (ground.size < 2 || track.size < 2) return emptyList()
 
-    val frame = LocalFrame(ground.first())
+    // One frame for the whole matching, pinned at the Segment's own start. A Segment is a few
+    // hundred metres of one street, and over that the flattening is true to well inside a
+    // centimetre. Fixes far from the origin are distorted, and it does not matter: they are hundreds
+    // of metres from a gate that is thirty metres wide, and they are refused either way.
+    val frame = LocalFrame(ground.first().latitude, ground.first().longitude)
     val line = ground.map { frame.project(it.latitude, it.longitude) }
     val alongAt = alongEachPointOf(line)
     val length = alongAt.last()
-    if (length <= EPSILON_METERS) return emptyList()
+    if (length <= FLAT_EPSILON_METERS) return emptyList()
 
     val fixes = track.map { frame.project(it.latitude, it.longitude) }
     val matcher = Matcher(line, alongAt, length, fixes, track)
@@ -159,10 +158,10 @@ fun segmentTrackOf(measured: MeasuredTrack): List<SegmentTrackFix> =
 
 /** One traversal being tried, and the rules it has to keep. */
 private class Matcher(
-    private val line: List<Point>,
+    private val line: List<FlatPoint>,
     private val alongAt: DoubleArray,
     private val length: Double,
-    private val fixes: List<Point>,
+    private val fixes: List<FlatPoint>,
     private val track: List<SegmentTrackFix>,
 ) {
 
@@ -175,7 +174,7 @@ private class Matcher(
      */
     fun arrivesAtTheStartGate(at: Int): Boolean =
         fixes[at].metersTo(start) <= SEGMENT_GATE_METERS &&
-            nearestPointOnTheLine(fixes[at], alongLow = 0.0, alongHigh = length).along <= EPSILON_METERS
+            nearestPointOnTheLine(fixes[at], alongLow = 0.0, alongHigh = length).along <= FLAT_EPSILON_METERS
 
     /**
      * The Run going over the whole Segment, having kept every rule from [from] onwards — or null,
@@ -224,7 +223,7 @@ private class Matcher(
 
             when {
                 // Out of the far end: the effort stands or falls here.
-                nearest.along >= length - EPSILON_METERS -> return if (
+                nearest.along >= length - FLAT_EPSILON_METERS -> return if (
                     fixes[at].metersTo(end) <= SEGMENT_GATE_METERS
                 ) {
                     WentOver(enteredAfter = enteredAfter, leftAt = at)
@@ -236,7 +235,7 @@ private class Matcher(
                 // as it is still the start gate they are milling about at. Any stray still open here
                 // was short enough to be a blip, and the effort is starting again from this fix
                 // anyway, so it is forgotten.
-                nearest.along <= EPSILON_METERS -> {
+                nearest.along <= FLAT_EPSILON_METERS -> {
                     if (fixes[at].metersTo(start) > SEGMENT_GATE_METERS) return null
                     strayedAtMillis = null
                     enteredAfter = at
@@ -292,7 +291,7 @@ private class Matcher(
     }
 
     /** When the leg from [from] to [to] passed [gate], as a fraction of the leg's own clock. */
-    private fun crossingMillis(from: Int, to: Int, gate: Point): Long {
+    private fun crossingMillis(from: Int, to: Int, gate: FlatPoint): Long {
         val fromMillis = track[from].timestampMillis
         val toMillis = track[to].timestampMillis
         val crossed = fixes[from].fractionNearest(fixes[to], gate)
@@ -307,7 +306,7 @@ private class Matcher(
      * itself has two pieces of line under the same patch of ground, and the runner is on the one
      * they have run to rather than on whichever is nearest.
      */
-    fun nearestPointOnTheLine(from: Point, alongLow: Double, alongHigh: Double): OnTheLine {
+    fun nearestPointOnTheLine(from: FlatPoint, alongLow: Double, alongHigh: Double): OnTheLine {
         val low = alongLow.coerceIn(0.0, length)
         val high = alongHigh.coerceIn(low, length)
         var best = OnTheLine(along = low, offset = Double.MAX_VALUE)
@@ -315,7 +314,7 @@ private class Matcher(
             val legFrom = alongAt[leg]
             val legTo = alongAt[leg + 1]
             val legMeters = legTo - legFrom
-            if (legMeters <= EPSILON_METERS) continue
+            if (legMeters <= FLAT_EPSILON_METERS) continue
             if (legTo < low || legFrom > high) continue
 
             val fraction = line[leg]
@@ -337,90 +336,8 @@ private data class WentOver(val enteredAfter: Int, val leftAt: Int)
 private data class OnTheLine(val along: Double, val offset: Double)
 
 /** How far along the line each of its points sits. */
-private fun alongEachPointOf(line: List<Point>): DoubleArray {
+private fun alongEachPointOf(line: List<FlatPoint>): DoubleArray {
     val along = DoubleArray(line.size)
     for (i in 1 until line.size) along[i] = along[i - 1] + line[i - 1].metersTo(line[i])
     return along
-}
-
-/** A place, in metres east and north of wherever the frame was pinned. */
-private data class Point(val east: Double, val north: Double) {
-
-    fun metersTo(other: Point): Double = hypot(other.east - east, other.north - north)
-
-    /** How far along this-to-[other] the point nearest [target] sits, as a fraction of the leg. */
-    fun fractionNearest(other: Point, target: Point): Double {
-        val runEast = other.east - east
-        val runNorth = other.north - north
-        val lengthSquared = runEast * runEast + runNorth * runNorth
-        if (lengthSquared <= EPSILON_METERS * EPSILON_METERS) return 0.0
-        val projected = ((target.east - east) * runEast + (target.north - north) * runNorth) / lengthSquared
-        return projected.coerceIn(0.0, 1.0)
-    }
-
-    fun along(other: Point, fraction: Double): Point =
-        Point(east + (other.east - east) * fraction, north + (other.north - north) * fraction)
-}
-
-/**
- * A difference of longitude, signed and taken **the short way round** — so ground on the date line
- * is not read as half a planet wide.
- *
- * Two fixes a stride apart either side of ±180° subtract to 359.99°, and every reader of a
- * difference of longitude has to say which way round it meant. This is where the app says it: the
- * projection a Segment's gate is measured in ([LocalFrame]), and the interpolation a Run's
- * waypoints are taken by ([runShapeOf], #73).
- */
-fun theShortWayRound(degrees: Double): Double {
-    var short = degrees
-    while (short > 180.0) short -= 360.0
-    while (short < -180.0) short += 360.0
-    return short
-}
-
-/**
- * Metres east and north of one origin, so the matching is done in flat geometry.
- *
- * A Segment is hundreds of metres of one street. Over that, the ground is flat to well inside a
- * centimetre, and flat is what lets a fix be *projected onto a line* at all — the question the whole
- * of the matching is made of, and one that has no cheap answer on an ellipsoid. The scaling is taken
- * at the Segment's own start on the WGS84 ellipsoid rather than on a sphere, so the two ways this
- * app measures ground ([com.example.runningapp.recording.geodesicDistanceMeters]) do not disagree
- * about a Segment's length by the third of a percent a spherical earth would cost.
- *
- * Fixes far from the origin are distorted, and it does not matter: they are hundreds of metres from
- * a gate that is thirty metres wide, and they are refused either way.
- */
-private class LocalFrame(origin: MapFix) {
-
-    private val originLatitude = origin.latitude
-    private val originLongitude = origin.longitude
-    private val metersPerDegreeLatitude: Double
-    private val metersPerDegreeLongitude: Double
-
-    init {
-        val latitude = originLatitude * PI / 180.0
-        val a = WGS84_SEMI_MAJOR_AXIS
-        val eccentricitySquared = 1.0 - (WGS84_SEMI_MINOR_AXIS / a) * (WGS84_SEMI_MINOR_AXIS / a)
-        val w = 1.0 - eccentricitySquared * sin(latitude) * sin(latitude)
-        // The meridional and normal radii of curvature at this latitude — how far a degree of
-        // latitude and a degree of longitude are on the ground here.
-        metersPerDegreeLatitude = PI / 180.0 * a * (1.0 - eccentricitySquared) / (w * sqrt(w))
-        metersPerDegreeLongitude = PI / 180.0 * a / sqrt(w) * cos(latitude)
-    }
-
-    fun project(latitude: Double, longitude: Double): Point = Point(
-        east = degreesOfLongitudeFromOrigin(longitude) * metersPerDegreeLongitude,
-        north = (latitude - originLatitude) * metersPerDegreeLatitude,
-    )
-
-    /** Signed, and the short way round, so a Segment on the date line is not half a planet wide. */
-    private fun degreesOfLongitudeFromOrigin(longitude: Double): Double =
-        theShortWayRound(longitude - originLongitude)
-
-    private companion object {
-        // The same ellipsoid [com.example.runningapp.recording.geodesicDistanceMeters] measures on.
-        const val WGS84_SEMI_MAJOR_AXIS = 6378137.0
-        const val WGS84_SEMI_MINOR_AXIS = 6356752.3142
-    }
 }
