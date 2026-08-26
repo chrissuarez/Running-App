@@ -3867,6 +3867,57 @@ class SessionRepositoryTest {
         verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
     }
 
+    @Test
+    fun `a claim landing mid-settlement is judged as the runner said, not as the column has it`() = runTest {
+        // The marker carries the runner's word and not just the Run's id (#318, #297). A Walk marked
+        // on the sheet whose column write failed leaves the row saying `isWalk = false`, which is
+        // exactly the disagreement [asTheRunnerSaid] exists for — the settlement judges the Walk and
+        // grants nothing. A claim landing inside that settlement now takes the rule's turn itself,
+        // so it has to take the settlement's Run with it: reading the row alone it would judge a
+        // walk as a run and graduate a Stage that cannot be taken back.
+        val statedDao: StatedBestEffortDao = mock()
+        val mockAchievementDao: AchievementDao = mock()
+        whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
+        val mockCoach: AiCoachClient = mock()
+        val theCoachIsThinking = CompletableDeferred<Unit>()
+        whenever(mockCoach.evaluateProgress(any())).doSuspendableAnswer {
+            theCoachIsThinking.await()
+            null
+        }
+        val shortOfTheBar = StatedBestEffort(sessionId = 7, type = RecordType.FASTEST_5K, seconds = 2_400)
+        val qualifying = StatedBestEffort(sessionId = 7, type = RecordType.FASTEST_5K, seconds = 1_632)
+        whenever(statedDao.getForSession(7L)).thenReturn(
+            listOf(shortOfTheBar),
+            listOf(shortOfTheBar),
+            listOf(qualifying)
+        )
+        val run = aTreadmillRun(id = 7, seconds = 2_500).copy(
+            distanceKm = 5.0,
+            ranUnderStageId = "sub_30_bridge",
+            ranUnderWorkoutId = "w2_s1",
+            stageSettled = false,
+        )
+        assertFalse("the row carries no mark, because the mark's write failed", run.isWalk)
+        whenever(mockDao.getSessionById(7L)).thenReturn(run)
+        val repo = repositoryForSettling(statedDao, mockCoach, achievementDao = mockAchievementDao)
+
+        // The sheet's word is that it was a walk, and only the word says so.
+        val settlement = launch { repo.finishSheetClosed(7L, markedAsWalk = true, finalizeWaitStepMillis = 1L) }
+        runCurrent()
+        // The rule has been asked about a Walk and granted nothing, and the coach now has the Run.
+        // The mark is not on the row yet, which is the whole of the window.
+        verify(mockCoach).evaluateProgress(any())
+        verify(mockDao, never()).setStageSettled(7L)
+
+        repo.stateBestEffort(7L, RecordType.FASTEST_5K, seconds = 1_632, finalizeWaitStepMillis = 1L)
+
+        // A walk holds no Best Effort of any kind, whatever the row still says.
+        verify(mockSettingsRepo, never()).advanceStageAndClearPrescriptions(any(), any())
+
+        theCoachIsThinking.complete(Unit)
+        settlement.join()
+    }
+
     // --- The card is told when a Test is due (#292) --------------------------------------------
 
     /** The Test's last outing, [daysAgo] days back — read the same way the runner counts days. */

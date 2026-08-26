@@ -3205,6 +3205,10 @@ class SessionRepository(
         // the second one lives; here it is enough that between the two there is no reader left, so
         // standing down on the row alone lost the claim for good.
         //
+        // The marker also carries what that settlement is judging the Run *as*, and this reads it:
+        // taking the claim's turn at the rule means taking the settlement's Run with it, stale
+        // column and all ([asTheRunnerSaid]).
+        //
         // **The marker is read first and the row second, and that order is the rule.** These two
         // reads are not one step and the settlement they are about runs on another thread, so the
         // one taken second is the fresher of the two — and it has to be the row. Read the row first
@@ -3225,16 +3229,21 @@ class SessionRepository(
         // pass. Two settlements never reach that, because [settling] serializes them; a claim and a
         // settlement can, and the writes are where it is caught.
         if (!worse) {
-            val aSettlementIsPartWayThrough = sessionId in beingJudged
+            val partWayThrough = beingJudged[sessionId]
             sessionDao.getSessionById(sessionId)?.let { stored ->
-                if (!stored.stageSettled && !aSettlementIsPartWayThrough) {
+                if (!stored.stageSettled && partWayThrough == null) {
                     Log.d(
                         "StageRule",
                         "Run $sessionId has not been judged yet; its settlement will read this claim (#318)"
                     )
                     return@let
                 }
-                stored.ranUnderStageId?.let { graduateOnBestEffortRequirement(it, stored, answering = type) }
+                // Judged as the settlement in this window is judging it, and not as the column has
+                // it: the Walk mark is a write that can fail, and the word the sheet gave that
+                // settlement is the one thing that cannot (#297). Where no settlement is part-way
+                // through there is no word to take, and the row is the only word there is.
+                val judged = stored.asTheRunnerSaid(partWayThrough?.markedAsWalk)
+                judged.ranUnderStageId?.let { graduateOnBestEffortRequirement(it, judged, answering = type) }
             }
         }
     }
@@ -4054,19 +4063,24 @@ class SessionRepository(
         // arriving has no reader but itself (#318). Set before the rule is asked and cleared only
         // once the mark is on the row, so the two together cover every instant in which this
         // settlement's judgement is made and the row does not yet say so.
-        beingJudged.add(sessionId)
+        //
+        // **It carries the runner's word and not just the Run's id**, because a claim landing in
+        // this window now judges the Run itself and must judge the same Run this settlement is
+        // judging. The word beats the column (#297) and the column is a write that can fail, so a
+        // marker that named only the id would hand the claim the stale `isWalk = false` the
+        // settlement is deliberately ignoring — and a Stage graduated on a walk cannot be taken
+        // back.
+        beingJudged[sessionId] = UnderJudgement(markedAsWalk)
         try {
             val stageId = run.ranUnderStageId
             if (stageId != null) {
                 // Judged on the runner's word about the Walk, not on the column — the column is a
                 // write that can fail and the word cannot (#297). Everything else is the row as
                 // stored, and where the two agree this is the row itself.
-                val asTheRunnerSaid =
-                    if (markedAsWalk != null && markedAsWalk != run.isWalk) run.copy(isWalk = markedAsWalk) else run
                 settleStageAfterRun(
                     stageId,
                     runTypeOf(stageId, run.ranUnderWorkoutId),
-                    asTheRunnerSaid,
+                    run.asTheRunnerSaid(markedAsWalk),
                     zone
                 )
             }
@@ -4103,8 +4117,32 @@ class SessionRepository(
      * and those are different coroutines. Read rather than locked against — see [stateBestEffort]
      * for why a claim may not wait out a settlement.
      */
-    private val beingJudged: MutableSet<Long> =
-        Collections.newSetFromMap(ConcurrentHashMap<Long, Boolean>())
+    private val beingJudged: ConcurrentHashMap<Long, UnderJudgement> = ConcurrentHashMap()
+
+    /**
+     * What a settlement part-way through is judging its Run as (#318) — the value side of
+     * [beingJudged].
+     *
+     * A wrapper and not the bare [Boolean] because the word has three states and a map value has
+     * two: absent is "no settlement is part-way through", and present-with-null is "one is, and the
+     * sheet said nothing about the Walk", which is a dismissal and leaves the row the only word
+     * there is ([finishSheetClosed]).
+     */
+    private data class UnderJudgement(
+        /** The runner's word about the Walk, exactly as [settleUnderSettling] was given it. */
+        val markedAsWalk: Boolean?,
+    )
+
+    /**
+     * This Run as the runner said it was, where their word and the column disagree (#297, #318).
+     *
+     * Stated once because two readers now need it: the settlement that was handed the word, and a
+     * claim landing while that settlement is part-way through, which takes the word back off
+     * [beingJudged]. The column is a write that can fail and the word cannot, so where there is a
+     * word it wins; null is no word, and then the row stands as stored.
+     */
+    private fun RunnerSession.asTheRunnerSaid(markedAsWalk: Boolean?): RunnerSession =
+        if (markedAsWalk != null && markedAsWalk != isWalk) copy(isWalk = markedAsWalk) else this
 
     /**
      * Held while a Run is being put to the Plan, so the debt is read and paid as one step (#297).
