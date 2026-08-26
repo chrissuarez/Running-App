@@ -179,7 +179,7 @@ fun MapSurface(sessionId: Long, sessionRepository: SessionRepository, modifier: 
             DistanceRemainingBadge(
                 label = remainingLabel,
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
+                    .align(Alignment.BottomEnd)
                     .padding(8.dp)
             )
         }
@@ -187,12 +187,19 @@ fun MapSurface(sessionId: Long, sessionRepository: SessionRepository, modifier: 
 }
 
 /**
- * How much of the course is left, sat in the bottom corner of whichever map is on screen (#57).
+ * How much of the course is left, sat in the bottom-right corner of whichever map is on screen (#57).
  *
- * Bottom-left on both views for one reason: it is the only corner that is free on both. The
- * full-screen map's stats strip has the top, and the card is small enough that a badge in the middle
- * of it would sit on the runner's own puck. Nothing here is tappable — a sweaty thumb on this map
- * must not be able to do anything but open it or leave it.
+ * The bottom of the map is where this has to go: the full-screen map's stats strip owns the top, and
+ * the card is small enough that a badge anywhere in the middle of it would sit on the runner's own
+ * puck. That leaves two corners, and only one of them is ours. Mapbox draws its logo and the little
+ * attribution "i" in the bottom-left of every map it renders, and the terms this app uses its maps
+ * under say both of those stay where a person can see them — so a badge there would be covering the
+ * one thing that is not allowed to be covered. Bottom-right is empty on both views, and it costs
+ * nothing: on the full-screen map the corner is bare, and on the card the only thing behind it is
+ * more map.
+ *
+ * Nothing here is tappable — a sweaty thumb on this map must not be able to do anything but open it
+ * or leave it.
  */
 @Composable
 private fun DistanceRemainingBadge(label: String, modifier: Modifier = Modifier) {
