@@ -3354,14 +3354,21 @@ class SessionRepository(
      * naming a Run this delete has already taken out of history.
      */
     private suspend fun deleteRuns(runIds: List<Long>, delete: suspend () -> Unit) {
-        // Whatever the runner said about these Runs goes with them: the id a deleted Run gives up
-        // can be handed to the next Run Room writes, and a word left behind would be the wrong
-        // runner's word about a different Run (#317).
-        runIds.forEach { theRunnersWordFor.remove(it) }
         val fedTheCoach = aiEligibleIdsAmong(runIds)
         changeAndRepair(
             runIds,
             onceRowsAreDurable = {
+                // Whatever the runner said about these Runs goes with them: the id a deleted Run
+                // gives up can be handed to the next Run Room writes, and a word left behind would
+                // be the wrong runner's word about a different Run (#317).
+                //
+                // Here, and not before the delete is attempted, because a delete that throws leaves
+                // the row standing — and a word dropped for a Run that is still there is the word
+                // the settlement that follows was going to be judged on, which is the graduation on
+                // a walk this whole change exists to stop. Nothing can be written under the freed id
+                // before this: the rows have only just gone, and this runs first of everything that
+                // follows the commit, uncancellable.
+                runIds.forEach { theRunnersWordFor.remove(it) }
                 try {
                     coachPrescriptionRepository?.forgetWorkFedBy(fedTheCoach)
                 } catch (e: Exception) {
