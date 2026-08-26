@@ -571,6 +571,16 @@ class SessionRepository(
      */
     private val runSummaryDao: RunSummaryDao? = null,
     /**
+     * Where a Run whose row does not yet say what the runner said it was is written down (#371) —
+     * see [WalkMarkDebtRow].
+     *
+     * Null wherever the debt cannot be paid: tests that drive the DAOs directly, and the archive's
+     * read-only container, which never marks a Run anything. Unwired, a settlement judging on a word
+     * the row disagrees with writes the same row the code did before this shipped and says so in the
+     * log — the judgement is unaffected either way, because the word is what it is made on.
+     */
+    private val walkMarkDebtDao: WalkMarkDebtDao? = null,
+    /**
      * The runner's library of courses, read for one thing only: drawing the course a live Run set
      * out to follow on its map (#56).
      *
@@ -2742,6 +2752,13 @@ class SessionRepository(
                 sessionDao.clearSegmentsTimed(sessionId)
                 runShapeDao?.forgetShape(sessionId)
                 sessionDao.setIsWalk(sessionId, isWalk)
+                // And the debt this mark discharges, in the same breath as the mark that discharges
+                // it (#371). Every writer of the column comes through here, so this is where a debt
+                // ends whoever paid it. In the transaction for the reason the debts above are
+                // raised in it: a mark that committed and a debt that survived it would be paid a
+                // second time at the next launch, which for a debt against the runner's *own* later
+                // tick means undoing them.
+                walkMarkDebtDao?.forgetDebtFor(sessionId)
             }
         }
         if (isWalk) {
@@ -4206,7 +4223,8 @@ class SessionRepository(
             }
             // Marked even where there was no Stage to settle: the column says the question has been
             // put and cannot be put again, and a Run that ran under no Stage has had its answer.
-            sessionDao.setStageSettled(sessionId)
+            // With whatever mark the row still owes, as one step — see [settleAndOweAnyWalkMark].
+            settleAndOweAnyWalkMark(sessionId, markedAsWalk)
             // And only now is the word spent (#317). Forgotten before the judgement it would have
             // been lost by a judgement that threw — which leaves the Run owing a settlement its row
             // still says it owes, and the next one to pay it would have nothing but the column the
@@ -4220,6 +4238,67 @@ class SessionRepository(
             beingJudged.remove(sessionId)
         }
         return true
+    }
+
+    /**
+     * Marks the Run settled, and writes down any Walk mark its row still owes, as one step (#371).
+     *
+     * The judgement is made on the runner's word and the row is written separately, and the two
+     * attempts at that write are both guarded — a mend that fails must not cost the Run the
+     * judgement, which is the irreversible half ([putTheWordBackOnTheRow],
+     * [finishSheetAnswered]). So a settlement can arrive here right about the Stage and holding a
+     * word the column disagrees with, and the mark below is what makes that disagreement permanent:
+     * from here the Run is settled, and every launch pass reads it as dealt with. History, the
+     * fitness figures, the record book and the Segments then go on treating a Walk as a Run for
+     * ever, and the runner's only remedy is a switch they have no reason to know they need to touch.
+     *
+     * **One transaction where there is a debt, and a bare write where there is not** — the argument
+     * for the first is [WalkMarkDebtRow]'s and is not repeated here.
+     *
+     * **The row is read again here** rather than reused from the top of [settleUnderSettling],
+     * because a mark landing between the two is a mark that is on the row: [settling] holds off
+     * other settlements and holds off nothing else, and the runner can reach the switch on the Run's
+     * own page while a Long Run's judgement is inside a Gemini round trip. The read is still outside
+     * the transaction, and the narrow window that leaves is harmless in both directions: a mark
+     * landing after it that *agrees* with the word raises a debt the pass pays as a no-op and drops,
+     * and one that disagrees is the column, which the word beats anyway (#297).
+     *
+     * **A debt that cannot be written throws, and is meant to.** The write it replaces was a bare
+     * one that threw the same way, and everything downstream is built on that: the word is spent
+     * only once the judgement returns (#317), so a settlement that throws here leaves the Run owing
+     * one, with the word still standing for the next pass to judge on. Swallowing the failure and
+     * marking the Run settled anyway would spend the word on a judgement that was never recorded —
+     * and the next pass would then judge the same Run off the `isWalk = false` this one was
+     * deliberately ignoring, which is a Stage graduated on a walk.
+     *
+     * **Only where there is a word and the row disagrees with it.** No word is every settlement but
+     * the sheet's, and there the column is all there is and is by definition what the Run says it
+     * is. A row that is gone owes nothing to anybody. And a word the row already agrees with is the
+     * ordinary case — the mark landed — which is why this is a comparison and not "the mend threw":
+     * both attempts at the write fail the same way and are guarded in different places, and stating
+     * the rule at the judgement covers whichever of them it was.
+     */
+    private suspend fun settleAndOweAnyWalkMark(sessionId: Long, markedAsWalk: Boolean?) {
+        val owedMark = markedAsWalk?.takeIf { word ->
+            sessionDao.getSessionById(sessionId)?.isWalk?.let { onTheRow -> onTheRow != word } == true
+        }
+        // The ordinary settlement is the bare write it has always been. Nothing is owed, so there is
+        // nothing to commit with it, and wrapping it anyway would put two new ways to fail
+        // ([WalkMarkDebtDao.owe] and the read above) in front of every judgement the app makes, for
+        // the sake of the one in ten thousand that needs them.
+        if (owedMark == null) {
+            sessionDao.setStageSettled(sessionId)
+            return
+        }
+        Log.w(
+            "Walk",
+            "Run $sessionId is being judged as ${if (owedMark) "a Walk" else "a Run"} and its row " +
+                "still disagrees; the mark is owed and the next launch pays it (#371)"
+        )
+        inTransaction {
+            walkMarkDebtDao?.owe(WalkMarkDebtRow(sessionId = sessionId, isWalk = owedMark))
+            sessionDao.setStageSettled(sessionId)
+        }
     }
 
     /**
@@ -4332,6 +4411,69 @@ class SessionRepository(
         // single Run's own door: a snapshot taken before these marks restores Runs that have been
         // judged as Runs that have not, and each would be judged again (#297).
         if (settled > 0) refreshHistoryBackup?.invoke()
+    }
+
+    /**
+     * Puts back every Walk mark a settlement left owed, at launch (#371).
+     *
+     * The debt is raised by the settlement that judged a Run on a word its row disagreed with, in
+     * that settlement's own transaction ([settleAndOweAnyWalkMark]), and this is the pass that pays
+     * it. Until it does, the Run's own page, the fitness figures, the record book and the Segments
+     * all describe a Run the runner has already told the app was a Walk.
+     *
+     * **Through [markAsWalk] and not through the column**, because putting the word back is never
+     * one write: a Walk hands its medals back to the record book and its times back to every Segment
+     * leaderboard it stands on, and unmarking one measures both again. That door is the only place
+     * those mends are stated, and it discharges the debt itself, in the transaction that writes the
+     * mark — so this pass never deletes a row it has not paid for, and a row whose mark somebody
+     * beat it to costs one no-op.
+     *
+     * **It runs at launch and only at launch, so the ordinary debt is paid one launch late.** The
+     * mend that fails does so at the finish of a Run, which is after this pass has read its list —
+     * so the Run's own page says "run" until the next cold start. Knowingly kept: an in-process
+     * retry would be a second copy of this pass, and a database that has just refused a write is not
+     * one worth asking twice in the same second (the rule [finishSheetAnswered] keeps). Android
+     * reclaims a backgrounded process soon enough that the next launch is not far away.
+     *
+     * One Run at a time, each discharged as its mark lands, so a pass cut short keeps what it paid
+     * for. Failures are logged and never thrown, the rule every launch pass here keeps: a mend that
+     * fails again is not a reason to take the app down on the way to the first screen, and the debt
+     * it leaves standing is the next launch's — which is the whole point of writing it down.
+     *
+     * **The history snapshot is not refreshed**, and deliberately: [markAsWalk] does not refresh it
+     * at the runner's own door either, so a pass that did would be a rule this door invented for
+     * itself. A snapshot holding the unmarked row is restored still owing this debt, because the
+     * debt is in the same file — and this pass runs at the launch that follows.
+     */
+    suspend fun payWalkMarkDebts() {
+        val owed = walkMarkDebtDao?.owed().orEmpty()
+        if (owed.isEmpty()) return
+        var paid = 0
+        owed.forEach { debt ->
+            try {
+                markAsWalk(debt.sessionId, debt.isWalk)
+                // And the debt is discharged here, not only inside [markAsWalk]'s own transaction.
+                // That transaction covers the mark that changes something, which is this pass's
+                // ordinary case; this covers the one it does not — a row that already agrees, which
+                // [markAsWalk] refuses as a change of nothing. That happens when the runner has
+                // reached the switch on the Run's own page first, or when a previous pass's process
+                // died between its mark and this delete. Without it such a debt would stand for
+                // ever, retried at every launch for the life of the app. Doing it here rather than
+                // at that early return is what keeps every *other* caller of [markAsWalk] — the
+                // feel sheet saving an unchanged switch, above all — costing no write at all.
+                walkMarkDebtDao?.forgetDebtFor(debt.sessionId)
+                paid++
+            } catch (cancellation: CancellationException) {
+                // Not a failure, and not this pass's to swallow: the runner has backed out of the
+                // Activity this scope belongs to. Caught by name and rethrown so the loop stops
+                // where it is rather than logging a "failure" per remaining Run and carrying on
+                // inside a cancelled scope — the debts it has not reached are still written down.
+                throw cancellation
+            } catch (e: Exception) {
+                Log.w("Walk", "Could not put run ${debt.sessionId}'s Walk mark back on its row; leaving it for next launch", e)
+            }
+        }
+        Log.d("Walk", "Put the Walk mark back on $paid of ${owed.size} run(s) whose settlement could not")
     }
 
     /**

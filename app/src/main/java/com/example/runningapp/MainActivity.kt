@@ -315,6 +315,12 @@ class MainActivity : ComponentActivity() {
         // for it (#297).
         runningAppContainer().settleMissedStagesOnce()
 
+        // A Run the app agreed was a walk but could not write the mark onto — the record-book mend
+        // threw, or the row's own write did — is judged right and reads wrong, and its settlement is
+        // spent, so nothing above would ever go back for it. This is the launch that puts the mark
+        // back (#371).
+        runningAppContainer().payWalkMarkDebtsOnce()
+
         // Every Run recorded before the Effort Score shipped has the beats to work one out and no
         // Score stored, so history would read as unscored until each Run was run again (#62). This
         // is the launch that scores it, from the samples those Runs already kept.

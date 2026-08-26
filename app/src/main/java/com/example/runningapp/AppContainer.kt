@@ -184,6 +184,9 @@ class AppContainer(context: Context) {
             // Where a Run's AI summary is kept once it has been written (#76). Without it a Run's
             // page simply never offers one.
             runSummaryDao = database.runSummaryDao(),
+            // Where a Run whose settlement could not write its Walk mark is written down, so the
+            // next launch puts the mark back (#371). Without it such a Run says "run" for ever.
+            walkMarkDebtDao = database.walkMarkDebtDao(),
             // The runner's courses, read only so a live Run's map can draw the one it set out to
             // follow (#56).
             routeDao = database.routeDao(),
@@ -323,6 +326,25 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Puts back any Walk mark a settlement judged on but could not write, once per process (#371).
+     *
+     * After the settling pass in the list above and not waiting on it, as none of these do — and the
+     * order genuinely does not matter here either. A debt this pass ran past is one the settling
+     * pass raised a moment later, and it is still in the table at the next launch; a debt raised
+     * before this pass reads is paid now. Nothing is lost by either order because the debt is
+     * durable, which is the whole reason it is stored.
+     *
+     * On the container's own scope, for the same reason the moving-time backfill is — see above. It
+     * matters here as it does everywhere in this list: each mark discharges its own debt as it
+     * lands, so a pass cancelled because the runner backed out of an Activity keeps every mark it
+     * put back, but would not be resumed for the life of the process.
+     */
+    fun payWalkMarkDebtsOnce() {
+        if (!walkMarkDebtsPaid.compareAndSet(false, true)) return
+        applicationScope.launch { sessionRepository.payWalkMarkDebts() }
+    }
+
+    /**
      * Scores the history recorded before the Effort Score shipped, once per process (#62).
      *
      * Started after the rescue pass, though nothing makes them run in that order: both are launched
@@ -458,6 +480,7 @@ class AppContainer(context: Context) {
     private val effortScored = AtomicBoolean(false)
     private val missedRecordsScored = AtomicBoolean(false)
     private val missedStagesSettled = AtomicBoolean(false)
+    private val walkMarkDebtsPaid = AtomicBoolean(false)
     private val segmentTimingPaid = AtomicBoolean(false)
     private val runShapesTaken = AtomicBoolean(false)
 

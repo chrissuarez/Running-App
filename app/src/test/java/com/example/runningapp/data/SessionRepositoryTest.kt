@@ -3314,6 +3314,8 @@ class SessionRepositoryTest {
         activeStageId: String = "sub_30_bridge",
         refreshHistoryBackup: (suspend () -> Unit)? = null,
         achievementDao: AchievementDao? = null,
+        walkMarkDebtDao: WalkMarkDebtDao? = null,
+        inTransaction: (suspend (suspend () -> Unit) -> Unit)? = null,
     ): SessionRepository {
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
             flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = activeStageId))
@@ -3326,6 +3328,8 @@ class SessionRepositoryTest {
             statedBestEffortDao = statedDao,
             aiCoachClient = coach,
             refreshHistoryBackup = refreshHistoryBackup,
+            walkMarkDebtDao = walkMarkDebtDao,
+            inTransaction = inTransaction ?: { it() },
         )
     }
 
@@ -3686,6 +3690,207 @@ class SessionRepositoryTest {
         repo.settleStageForRun(7L)
 
         verify(mockSettingsRepo).graduateStage(eq("sub_25_peak"), any(), any(), any())
+    }
+
+    // --- When the mark could not be written: the row owes it (#371) ---------------------------
+    //
+    // The judgement is made on the runner's word and is right; the row is a separate write and can
+    // fail. These are about what is left behind when it does.
+
+    @Test
+    fun `a Walk mark the sheet could not write is written down as owed`() = runTest {
+        // The mark's own write throws — the record-book mend, the transaction, the settings read —
+        // and it is guarded, because losing the judgement to it would be the bigger loss (#297).
+        // The Stage is then judged correctly off the word and the row still says "run", and the
+        // settlement that has just been written puts the Run beyond every launch pass there is. So
+        // the debt is written down instead (#371).
+        val statedDao: StatedBestEffortDao = mock()
+        val walkDebtDao: WalkMarkDebtDao = mock()
+        val repo = repositoryForSettling(statedDao, walkMarkDebtDao = walkDebtDao)
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.clearSegmentsTimed(7L)).thenThrow(IllegalStateException("the disk is full"))
+
+        repo.finishSheetOpened(7L)
+        repo.finishSheetAnswered(7L, markedAsWalk = true, finalizeWaitStepMillis = 1L) {}
+
+        verify(mockDao).setStageSettled(7L)
+        verify(walkDebtDao).owe(WalkMarkDebtRow(sessionId = 7L, isWalk = true))
+    }
+
+    @Test
+    fun `a Walk mark that landed leaves nothing owed`() = runTest {
+        // The ordinary case, and the reason the debt is a comparison against the row rather than a
+        // report from whichever write failed: a mark that is on the row is a debt nobody has.
+        val statedDao: StatedBestEffortDao = mock()
+        val walkDebtDao: WalkMarkDebtDao = mock()
+        val repo = repositoryForSettling(statedDao, walkMarkDebtDao = walkDebtDao)
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        var onTheRow = asItEnded
+        whenever(mockDao.getSessionById(7L)).thenAnswer { onTheRow }
+        whenever(mockDao.setIsWalk(eq(7L), any())).thenAnswer {
+            onTheRow = onTheRow.copy(isWalk = it.getArgument(1))
+            null
+        }
+
+        repo.finishSheetOpened(7L)
+        repo.finishSheetAnswered(7L, markedAsWalk = true, finalizeWaitStepMillis = 1L) {}
+
+        verify(mockDao).setIsWalk(7L, true)
+        verify(mockDao).setStageSettled(7L)
+        verify(walkDebtDao, never()).owe(any())
+    }
+
+    @Test
+    fun `a settlement nobody said anything to owes no mark`() = runTest {
+        // No word is every settlement but the sheet's — the finish from the notification, the launch
+        // pass — and there the column is not a write that failed, it is what the Run is.
+        val statedDao: StatedBestEffortDao = mock()
+        val walkDebtDao: WalkMarkDebtDao = mock()
+        val repo = repositoryForSettling(statedDao, walkMarkDebtDao = walkDebtDao)
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+
+        repo.settleStageForRun(7L)
+
+        verify(mockDao).setStageSettled(7L)
+        verify(walkDebtDao, never()).owe(any())
+    }
+
+    @Test
+    fun `the debt is written in the same transaction as the settlement it survives`() = runTest {
+        // The debt says the settlement below cannot be taken back, so the two may not be two
+        // writes: a process dying between them leaves the Run settled and owing nothing, which is
+        // the state the debt exists to end (#371).
+        val statedDao: StatedBestEffortDao = mock()
+        val walkDebtDao: WalkMarkDebtDao = mock()
+        var depth = 0
+        val oweDepths = mutableListOf<Int>()
+        val settleDepths = mutableListOf<Int>()
+        val repo = repositoryForSettling(
+            statedDao,
+            walkMarkDebtDao = walkDebtDao,
+            inTransaction = { block -> depth++; try { block() } finally { depth-- } },
+        )
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.clearSegmentsTimed(7L)).thenThrow(IllegalStateException("the disk is full"))
+        whenever(walkDebtDao.owe(any())).thenAnswer { oweDepths.add(depth); null }
+        whenever(mockDao.setStageSettled(7L)).thenAnswer { settleDepths.add(depth); null }
+
+        repo.finishSheetOpened(7L)
+        repo.finishSheetAnswered(7L, markedAsWalk = true, finalizeWaitStepMillis = 1L) {}
+
+        assertEquals("the debt is raised inside a transaction", listOf(1), oweDepths)
+        assertEquals("and the settlement is written inside the same one", listOf(1), settleDepths)
+    }
+
+    @Test
+    fun `the launch pass puts an owed mark back on the row`() = runTest {
+        // What makes the debt worth writing: the pass that pays it. Through the same door the
+        // runner's own switch uses, so the record book and the Segments are mended with it (#371).
+        val statedDao: StatedBestEffortDao = mock()
+        val walkDebtDao: WalkMarkDebtDao = mock()
+        val repo = repositoryForSettling(statedDao, walkMarkDebtDao = walkDebtDao)
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(walkDebtDao.owed()).thenReturn(listOf(WalkMarkDebtRow(sessionId = 7L, isWalk = true)))
+
+        repo.payWalkMarkDebts()
+
+        verify(mockDao).setIsWalk(7L, true)
+        // At least once: the mark's own transaction drops it, and the pass drops it again for the
+        // no-change case below. A second DELETE of a row that is already gone costs nothing.
+        verify(walkDebtDao, atLeastOnce()).forgetDebtFor(7L)
+    }
+
+    @Test
+    fun `a mark that fails again is left owed for the next launch`() = runTest {
+        // The pass keeps the rule every launch pass here keeps: a mend that throws is logged, never
+        // thrown, and the debt it could not pay stands — which is what writing it down is for.
+        val statedDao: StatedBestEffortDao = mock()
+        val walkDebtDao: WalkMarkDebtDao = mock()
+        val repo = repositoryForSettling(statedDao, walkMarkDebtDao = walkDebtDao)
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(walkDebtDao.owed()).thenReturn(listOf(WalkMarkDebtRow(sessionId = 7L, isWalk = true)))
+        whenever(mockDao.clearSegmentsTimed(7L)).thenThrow(IllegalStateException("the disk is still full"))
+
+        repo.payWalkMarkDebts()
+
+        verify(walkDebtDao, never()).forgetDebtFor(7L)
+    }
+
+    @Test
+    fun `the runner's own tick discharges the debt`() = runTest {
+        // They can reach the same switch on the Run's own page, and a debt outliving that would put
+        // their tick back at the next launch — an undo nobody asked for (#371).
+        val statedDao: StatedBestEffortDao = mock()
+        val walkDebtDao: WalkMarkDebtDao = mock()
+        val repo = repositoryForSettling(statedDao, walkMarkDebtDao = walkDebtDao)
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+
+        repo.markAsWalk(7L, true, finalizeWaitStepMillis = 1L)
+
+        verify(walkDebtDao).forgetDebtFor(7L)
+    }
+
+    @Test
+    fun `the pass drops a debt whose row already agrees`() = runTest {
+        // [markAsWalk] refuses a change of nothing, so a debt the pass finds already paid — by the
+        // runner reaching the switch first, or by a previous pass whose process died between its
+        // mark and this delete — writes no mark. Left standing it would be retried at every launch
+        // for the life of the app, so the pass drops it itself.
+        val statedDao: StatedBestEffortDao = mock()
+        val walkDebtDao: WalkMarkDebtDao = mock()
+        val repo = repositoryForSettling(statedDao, walkMarkDebtDao = walkDebtDao)
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao, isWalk = true)
+        whenever(walkDebtDao.owed()).thenReturn(listOf(WalkMarkDebtRow(sessionId = 7L, isWalk = true)))
+
+        repo.payWalkMarkDebts()
+
+        verify(mockDao, never()).setIsWalk(any(), any())
+        verify(walkDebtDao).forgetDebtFor(7L)
+    }
+
+    @Test
+    fun `a Walk switch that changes nothing still costs no write`() = runTest {
+        // What the pass's own delete buys: every other caller of [markAsWalk] is left as it was.
+        // The feel sheet hands the switch over as it stands on every Save, and a Save that did not
+        // touch it must go on costing nothing (#275) — which is why the debt is dropped by the pass
+        // that read it and not at [markAsWalk]'s early return, where every caller would pay.
+        val statedDao: StatedBestEffortDao = mock()
+        val walkDebtDao: WalkMarkDebtDao = mock()
+        val repo = repositoryForSettling(statedDao, walkMarkDebtDao = walkDebtDao)
+        aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao, isWalk = true)
+
+        repo.markAsWalk(7L, true, finalizeWaitStepMillis = 1L)
+
+        verify(mockDao, never()).setIsWalk(any(), any())
+        verifyNoInteractions(walkDebtDao)
+    }
+
+    @Test
+    fun `a debt that cannot be written leaves the Run owing its settlement`() = runTest {
+        // The debt shares the settlement's transaction, so it brings the settlement two new ways to
+        // fail — and it may not answer them by marking the Run settled anyway. The word is spent
+        // only once the judgement returns (#317): a Run marked settled on a judgement that was never
+        // recorded is a Run the next pass judges off the `isWalk = false` this one was ignoring,
+        // which is a Stage graduated on a walk. Throwing is what keeps the word standing.
+        val statedDao: StatedBestEffortDao = mock()
+        val walkDebtDao: WalkMarkDebtDao = mock()
+        val repo = repositoryForSettling(statedDao, walkMarkDebtDao = walkDebtDao)
+        val asItEnded = aRunOwingSettlement(id = 7, fiveKSeconds = 1_500, statedDao = statedDao)
+        whenever(mockDao.clearSegmentsTimed(7L)).thenThrow(IllegalStateException("the disk is full"))
+        whenever(walkDebtDao.owe(any())).thenThrow(IllegalStateException("the disk is still full"))
+
+        repo.finishSheetOpened(7L)
+        repo.finishSheetAnswered(7L, markedAsWalk = true, finalizeWaitStepMillis = 1L) {}
+
+        verify(mockDao, never()).setStageSettled(7L)
+
+        // And the next launch judges the same Run on the word that was never spent — as a Walk, so
+        // it graduates nothing — rather than on the column.
+        whenever(mockDao.getSessionById(7L)).thenReturn(asItEnded.copy(isWalk = false))
+        whenever(mockDao.getSessionIdsOwingStageSettlement()).thenReturn(listOf(7L))
+        repo.settleStagesMissedAtTheFinish()
+
+        verify(mockSettingsRepo, never()).graduateStage(any(), any(), any(), any())
     }
 
     @Test
