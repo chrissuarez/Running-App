@@ -2,6 +2,7 @@ package com.example.runningapp.routes
 
 import com.example.runningapp.data.RouteDao
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 
@@ -22,6 +23,14 @@ import kotlinx.coroutines.flow.map
  * the cost of following the library, and it is the right way round — a line that has changed shape
  * underneath a Run has no earlier judgement about it worth keeping.
  *
+ * **Only a line that has changed shape, though.** [RouteDao.getRouteFlow] is a Room query, and Room
+ * hands a query its rows again whenever the *table* is written to — renaming some other Route,
+ * importing one, deleting one. None of those is this course changing, and every one of them would
+ * otherwise end the watch: a runner already told they were off course would never be told they were
+ * back, and a ten-second wait halfway through would start again from nothing. So the course is
+ * compared, not the row, and an emission that describes the same ground keeps the watch that is
+ * already reading it. The Route's name and its row are nothing to do with where the line goes.
+ *
  * [reversed] is the runner's word that they set off the other way round, applied here so the course
  * is handed over in the order the Run is running it, exactly as it is handed to the map (#56). It
  * makes no difference to how far off a line the runner is; handing it over any other way is how two
@@ -29,8 +38,11 @@ import kotlinx.coroutines.flow.map
  */
 fun courseToWatchFlow(routeDao: RouteDao, routeId: Long?, reversed: Boolean): Flow<OffCourseWatch?> {
     if (routeId == null) return flowOf(null)
-    return routeDao.getRouteFlow(routeId).map { route ->
-        val course = route?.let { RoutePolyline.decode(it.polyline) }.orEmpty()
-        OffCourseWatch.of(if (reversed) course.reversed() else course)
-    }
+    return routeDao.getRouteFlow(routeId)
+        .map { route ->
+            val course = route?.let { RoutePolyline.decode(it.polyline) }.orEmpty()
+            if (reversed) course.reversed() else course
+        }
+        .distinctUntilChanged()
+        .map(OffCourseWatch::of)
 }
