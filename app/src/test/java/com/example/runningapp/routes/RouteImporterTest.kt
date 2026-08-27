@@ -242,6 +242,27 @@ class RouteImporterTest {
     }
 
     @Test
+    fun `a re-measure keeps no climb where none was ever banked`() = runTest {
+        // The screen is told a climb was *kept*, so a row that never had one must not take that
+        // answer: "its climb is unchanged" about a climb that does not exist is a sentence about
+        // nothing.
+        val banked = Route(
+            name = "Flat as anything",
+            distanceMeters = 200.0,
+            elevationGainMeters = null,
+            polyline = "51.5000000,-0.1000000 51.5020000,-0.1000000",
+            createdAtMillis = 1L,
+            source = RouteSource.IMPORTED,
+        )
+        dao.insertRoute(banked)
+
+        val kept = dao.keepRoute(banked.copy(distanceMeters = 222.4), remeasuring = true)
+
+        assertEquals(RouteKeeping.REMEASURED, kept.keeping)
+        assertNull(dao.stored.single().elevationGainMeters)
+    }
+
+    @Test
     fun `writes nothing when the file is not a gpx`() = runTest {
         val outcome = importerFor("<kml><Placemark/></kml>").import(uri)
 
