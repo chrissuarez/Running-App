@@ -361,6 +361,35 @@ internal fun MutablePreferences.writePlanCompletion(completion: PlanCompletion?)
 }
 
 /**
+ * Where in their training a restore may put the runner: the archive's own Plan and Stage, or neither
+ * of them (#262).
+ *
+ * An archive is written from live settings and carries whatever ids this build held at the time. A
+ * later build that has renamed a Stage, or dropped a Plan, reads back ids that name nothing — and
+ * [TrainingPlanProvider.resolveActiveStage] answers an unknown Stage with the Plan's *first* one, so
+ * a restore that wrote them through unexamined would silently put the runner at the start of a Plan
+ * they were halfway through, and stamp their next Run with that Stage (#234). A Stage stamp cannot
+ * be corrected afterwards.
+ *
+ * So: both or neither. An id this build does not recognise takes the Plan down with it rather than
+ * falling back, because a fallback is a claim about where the runner is that nothing checked. With
+ * neither attached, the app is in the state a fresh install is in — no Workout, no Stage, no
+ * stamping — and the runner picks their Plan again on the Training screen, which is a thing they can
+ * see and do. Every other setting in the archive is restored regardless: this costs a pick, not a
+ * backup.
+ *
+ * A finished Plan ([writePlanCompletion]) is left alone even when it names a Plan this build has
+ * dropped. It is a fact about something that happened, not a place the runner is standing, and every
+ * reader of it already matches it against a Plan by id — so an id naming nothing shows nothing,
+ * while dropping it would throw away the one moment in the app that can never be re-earned.
+ */
+internal fun recognisedPlanAndStage(planId: String?, stageId: String?): Pair<String?, String?> {
+    val plan = planId?.let { TrainingPlanProvider.getPlanById(it) } ?: return null to null
+    if (stageId != null && plan.stages.none { it.id == stageId }) return null to null
+    return planId to stageId
+}
+
+/**
  * A finished Plan recorded and the runner told so, or nothing at all where this Plan is already
  * recorded as finished (#294).
  *
@@ -880,10 +909,15 @@ class SettingsRepository(private val context: Context) {
             preferences[PreferencesKeys.AUTO_PAUSE_ENABLED] = settings.autoPauseEnabled
             preferences[PreferencesKeys.AI_DATA_SHARING_ENABLED] = settings.aiDataSharingEnabled
             preferences[PreferencesKeys.RUN_MODE] = settings.runMode
-            settings.activePlanId
+            // Both or neither, and only ids this build still holds — see [recognisedPlanAndStage].
+            val (planId, stageId) = recognisedPlanAndStage(
+                settings.activePlanId,
+                settings.activeStageId,
+            )
+            planId
                 ?.let { preferences[PreferencesKeys.ACTIVE_PLAN_ID] = it }
                 ?: preferences.remove(PreferencesKeys.ACTIVE_PLAN_ID)
-            settings.activeStageId
+            stageId
                 ?.let { preferences[PreferencesKeys.ACTIVE_STAGE_ID] = it }
                 ?: preferences.remove(PreferencesKeys.ACTIVE_STAGE_ID)
             // Where the runner is in their training, which is what the two keys above are, includes
