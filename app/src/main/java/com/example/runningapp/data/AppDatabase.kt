@@ -28,6 +28,114 @@ const val DELETE_RUN_THAT_RECORDED_NOTHING = """
       AND NOT EXISTS (SELECT 1 FROM track_points WHERE sessionId = :sessionId)
 """
 
+/**
+ * The one statement that settles a Run's row, and the whole of the rule that only one settler may
+ * (#315, #382).
+ *
+ * **The Run's row is settled by the write that finds it unsettled.** A Run's row is created at START
+ * with `endTime = 0` and must be finished exactly once, by one of two writers that finish it
+ * differently: the Run's own finalize, with the totals it banked second by second as it ran, and the
+ * rescue, with totals rebuilt from what reached the database
+ * ([SessionRepository.rescueRunLostToTeardown]). `endTime = 0` in the `WHERE` is that rule, asked of
+ * the row itself at the instant of the write: the first settler to arrive writes, and every settler
+ * after it changes nothing and is told so by a zero.
+ *
+ * **Why the rule lives here and not in an in-memory claim.** It was a claim first — a per-Run
+ * compare-and-set both settlers had to win before writing — and a claim is an approximation of a
+ * database fact. Approximations lose Runs. The teardown took the claim before it knew whether it
+ * could rescue anything, and for a Run with no reconstructable seconds (a short strapless treadmill
+ * Run) the rescue then wrote nothing at all — while the Run's own finalize, having found the claim
+ * gone, had already stood down. Nobody settled the row and it stayed at `endTime = 0`: gone from
+ * history, the export and the coach. Handing the claim back on that failure was considered and
+ * declined: the rescue discovers it cannot rebuild deep inside an asynchronous settling, long after
+ * the finalize has asked for the claim and stood down, so a hand-back moves the window rather than
+ * closing it. Only the row can say whether the row is settled.
+ *
+ * **One statement rather than a read and then a write**, for the reason
+ * [DELETE_RUN_THAT_RECORDED_NOTHING] is one statement: the two settlers do not observe each other —
+ * one runs from the session thread's dispatch of a STOP, the other from `onDestroy` on main — so a
+ * check taken before a write is a decision about a row that can change in between, and both would
+ * pass it. SQLite evaluates the condition and the update as one statement, so there is no such
+ * in-between and no ordering of arrivals that writes the row twice.
+ *
+ * **Only the settling columns**, listed one by one rather than writing the row back whole. Everything
+ * here is a fact about the Run's *finish* that a settler derives; everything absent is somebody
+ * else's, and most of it is the runner's own — the Walk mark, the effort, the note, a stated
+ * distance, all written from the feel sheet while the finalize is still waiting out the recorder's
+ * tail writes (#317). A whole-row `@Update` from a copy read before that wait silently undid them.
+ * Naming the columns means a settler cannot overwrite what it did not measure, whenever its copy of
+ * the row was read.
+ *
+ * `stageSettled` and `walkBreaksCount` are in the list because one settler each derives them — the
+ * rescue marks a rebuilt Run as owing the Plan nothing ([finishedFromRecord]), the finalize banks
+ * the Run's walk breaks — and both settlers pass through one statement so that the rule is written
+ * down once. The other passes its own row's value, which is what it already had.
+ *
+ * Named here rather than written inline so the test that proves what it does can run the very
+ * statement the phone runs ([SessionDao.settleRunRowIfUnsettled]).
+ */
+const val SETTLE_RUN_ROW_IF_UNSETTLED = """
+    UPDATE sessions SET
+        endTime = :endTime,
+        durationSeconds = :durationSeconds,
+        avgBpm = :avgBpm,
+        maxBpm = :maxBpm,
+        distanceKm = :distanceKm,
+        avgPaceMinPerKm = :avgPaceMinPerKm,
+        noDataSeconds = :noDataSeconds,
+        zone1Seconds = :zone1Seconds,
+        zone2Seconds = :zone2Seconds,
+        zone3Seconds = :zone3Seconds,
+        zone4Seconds = :zone4Seconds,
+        zone5Seconds = :zone5Seconds,
+        effortScore = :effortScore,
+        walkBreaksCount = :walkBreaksCount,
+        isRunWalkMode = :isRunWalkMode,
+        startLatitude = :startLatitude,
+        startLongitude = :startLongitude,
+        stageSettled = :stageSettled
+    WHERE id = :sessionId AND endTime = 0
+"""
+
+/**
+ * Settle a Run's row from a settler's finished copy of it, if no other settler has already (#382).
+ *
+ * The one door both settlers go through — the Run's own finalize
+ * ([com.example.runningapp.HrForegroundService.finalizeRun]) and the rescue
+ * ([SessionRepository.rescueRunLostToTeardown]) — so that "which columns settling writes" is stated
+ * once and cannot drift into two lists that disagree. Each settler still builds the whole finished
+ * [RunnerSession] it believes in; this takes the settling columns off it and leaves the rest of the
+ * row alone.
+ *
+ * A caller answered `false` measured a Run that is already finished. It must not go on to do the
+ * work that hangs off a Run being finished — the journal line, the after-run measurements, the
+ * Plan's settlement — because the settler that won the row is doing them, or has.
+ *
+ * @return whether this call was the write that settled the row.
+ */
+suspend fun SessionDao.settleRunRow(finished: RunnerSession): Boolean =
+    settleRunRowIfUnsettled(
+        sessionId = finished.id,
+        endTime = finished.endTime,
+        durationSeconds = finished.durationSeconds,
+        avgBpm = finished.avgBpm,
+        maxBpm = finished.maxBpm,
+        distanceKm = finished.distanceKm,
+        avgPaceMinPerKm = finished.avgPaceMinPerKm,
+        noDataSeconds = finished.noDataSeconds,
+        zone1Seconds = finished.zone1Seconds,
+        zone2Seconds = finished.zone2Seconds,
+        zone3Seconds = finished.zone3Seconds,
+        zone4Seconds = finished.zone4Seconds,
+        zone5Seconds = finished.zone5Seconds,
+        effortScore = finished.effortScore,
+        walkBreaksCount = finished.walkBreaksCount,
+        isRunWalkMode = finished.isRunWalkMode,
+        startLatitude = finished.startLatitude,
+        startLongitude = finished.startLongitude,
+        stageSettled = finished.stageSettled,
+    ) == 1
+
 @Entity(tableName = "sessions")
 data class RunnerSession(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -670,6 +778,40 @@ interface SessionDao {
 
     @Update
     suspend fun updateSession(session: RunnerSession)
+
+    /**
+     * Settles a Run's row with the totals one settler measured, if the row is still unsettled — and
+     * says whether it was (#315, #382).
+     *
+     * The rule and every reason for its shape are on [SETTLE_RUN_ROW_IF_UNSETTLED]. Called through
+     * [settleRunRow], which is where the parameters are read off the settler's own finished copy of
+     * the Run, so that neither settler writes out its own spelling of this list.
+     *
+     * @return the number of rows settled: 1 if this settler was the one that found the row
+     * unfinished, 0 if another had already finished it — or if the row is gone.
+     */
+    @Query(SETTLE_RUN_ROW_IF_UNSETTLED)
+    suspend fun settleRunRowIfUnsettled(
+        sessionId: Long,
+        endTime: Long,
+        durationSeconds: Long,
+        avgBpm: Int,
+        maxBpm: Int,
+        distanceKm: Double,
+        avgPaceMinPerKm: Double,
+        noDataSeconds: Long,
+        zone1Seconds: Long,
+        zone2Seconds: Long,
+        zone3Seconds: Long,
+        zone4Seconds: Long,
+        zone5Seconds: Long,
+        effortScore: Int?,
+        walkBreaksCount: Int,
+        isRunWalkMode: Boolean,
+        startLatitude: Double?,
+        startLongitude: Double?,
+        stageSettled: Boolean,
+    ): Int
 
     @Query("SELECT * FROM sessions ORDER BY startTime DESC LIMIT 20")
     fun getLast20Sessions(): Flow<List<RunnerSession>>

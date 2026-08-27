@@ -38,10 +38,13 @@ package com.example.runningapp.foreground
  * the coach until some later launch happened to rescue it. Zero writers is a worse harm than the two
  * it was replacing.
  *
- * So mutual exclusion is made explicit where it belongs — a per-Run claim that both settlers must win
- * before they write the row ([com.example.runningapp.run.RunRowSettlementClaim]) — and this gate goes
- * back to being about *new* work. The finalize still registers here, so it is a child the drains can
- * see; it is simply never refused.
+ * So mutual exclusion was made explicit somewhere else, and this gate went back to being about *new*
+ * work. Where "somewhere else" is has since moved once more, and the current answer is the row
+ * itself: a Run's row is settled by the write that finds it unsettled
+ * ([com.example.runningapp.data.SETTLE_RUN_ROW_IF_UNSETTLED]), because an in-memory claim taken
+ * before a settler knows whether it can write is an approximation of a database fact, and the
+ * approximation lost the Run all over again (#382). Nothing about that is this gate's business. The
+ * finalize still registers here, so it is a child the drains can see; it is simply never refused.
  *
  * Here, as a named rule with nothing else in it, so that the places that ask it — the entry refusal
  * in `HrForegroundService.dispatchRunEvent` and [TeardownGate] itself, which is where the answer is
@@ -76,8 +79,9 @@ fun runMayBeGivenWork(
  * here it is already a child of the finalization scope by the time [beginTeardown] returns, so the
  * teardown's drains wait for it; launched outside, it could appear on that scope after the drains'
  * empty pass, and the teardown would read a settled world that was still being written. Which of the
- * two writers may write the row is a different question and is not this gate's — it is the per-Run
- * claim in [com.example.runningapp.run.RunRowSettlementClaim] (#382).
+ * two writers settles the row is a different question and is not this gate's — it is answered by the
+ * row, in the condition the settling write carries with it
+ * ([com.example.runningapp.data.SETTLE_RUN_ROW_IF_UNSETTLED], #382).
  *
  * **The monitor is held for a launch and nothing else.** [beginTeardown] runs on main, at the very
  * top of `onDestroy`, and a service that blocked there would be an ANR rather than a fix. What it

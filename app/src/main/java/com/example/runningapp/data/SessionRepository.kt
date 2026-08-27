@@ -1319,7 +1319,16 @@ class SessionRepository(
      * What makes this safe is not a clock but the caller: the only caller is the teardown of the
      * service that was recording this Run ([com.example.runningapp.run.runLostToTeardown]), so
      * there is nothing left to be recording it. Nothing here may be called about a live Run, and
-     * [finishFromRecord] will not touch a Run that already has an end time either way.
+     * [finishFromRecord] will not touch a Run that already has an end time either way — not because
+     * it looks first, but because the look is part of the write ([SETTLE_RUN_ROW_IF_UNSETTLED]). A
+     * finalize that beat this rescue to the row therefore keeps it, whatever this had rebuilt, and
+     * this returns false.
+     *
+     * False is the answer to two different things and the caller may not tell them apart: a Run that
+     * could not be rebuilt, and a Run somebody else had already finished. Neither is a Run left
+     * unsettled, which is what the caller would otherwise have to do something about — a rescue that
+     * rebuilt nothing is a Run whose own finalize is still free to settle it, because nothing here
+     * stands that finalize down (#382).
      *
      * Returns whether the Run was put back, so the caller can say so in the Run Journal — a
      * `run-finalized` from here is the answer to a `service-destroyed` that names a live Run.
@@ -1454,11 +1463,6 @@ class SessionRepository(
         val samples = sampleDao ?: return false
         try {
             val session = sessionDao.getSessionById(runRowId) ?: return false
-            // A Run that already has an end time is a Run somebody finished, and totals derived
-            // from the record are not an improvement on the ones the Run itself banked. The launch
-            // pass only ever asks about Runs with no end time; the teardown asks about the Run it
-            // was holding, and a finalize that beat it there is exactly the case this declines.
-            if (session.endTime != 0L) return false
             // Read once and gated here rather than through [getTrackPointsForMap], because the
             // rebuild wants both: every fix says when the Run was recording, the accepted ones
             // say where it went. See [finishedFromRecord].
@@ -1473,7 +1477,21 @@ class SessionRepository(
                     .orEmpty()
                     .isNotEmpty(),
             ) ?: return false
-            sessionDao.updateSession(finished)
+            // The write is the guard (#382). A read of `endTime` taken up with the read of the row
+            // above, and acted on down here, would be a decision about a row that can change in
+            // between — and it did: the Run's own finalize lands in that window in the ordinary
+            // background STOP, so this rebuild would go over the top of the totals the Run banked as
+            // it ran. The condition travels with the write instead
+            // ([SETTLE_RUN_ROW_IF_UNSETTLED]), so a rescue that arrives second changes nothing and
+            // is told so.
+            //
+            // Told so, and it stops here: a Run already finished has had its journal line, its
+            // measurements and its Plan settlement done by the settler that finished it, and doing
+            // them again from here would re-measure a Run on rebuilt totals it does not have.
+            if (!sessionDao.settleRunRow(finished)) {
+                Log.w("InterruptedRun", "Run $runRowId was finished by its own finalize; leaving it that way")
+                return false
+            }
             try {
                 onRowFinished?.invoke(runRowId)
             } catch (e: Exception) {
