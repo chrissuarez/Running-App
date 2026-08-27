@@ -102,6 +102,7 @@ import com.example.runningapp.foreground.ForegroundPromotion
 import com.example.runningapp.foreground.PromotionHost
 import com.example.runningapp.foreground.SCOPE_DRAIN_PASSES
 import com.example.runningapp.foreground.drainChildren
+import com.example.runningapp.foreground.runMayBeGivenWork
 import java.time.ZoneId
 
 // Exactly the Run's lifecycle, under the screen's older names — [RunLifecycle.asSessionStatus] is
@@ -281,6 +282,44 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      */
     @Volatile
     private var destroyed = false
+
+    /**
+     * Whether this service has begun going down, and with it whether the Run may still be given new
+     * work (#315).
+     *
+     * **A gate, not a wait, and that is the whole of the point.** The teardown finishes a Run it
+     * took, and before it does so it drains the scopes the Run's writers run on
+     * ([awaitRecorderWrites], [settleAfterTeardown]). A drain closes the gap where a late arrival
+     * lands *while the drain is waiting*: it looks again, and again, until a pass finds the scope
+     * empty. It cannot close the gap where the scope goes empty and a producer that is still alive
+     * launches something afterwards — an empty pass ends the drain, and no number of passes can
+     * prove a producer will never produce again.
+     *
+     * Neither producer is stopped definitively. The session inbox is joined with a timeout
+     * ([SESSION_THREAD_JOIN_TIMEOUT_MS]), so a long message can outlive the join and dispatch again;
+     * [LocationTracker.shutdown] calls `quitSafely` and never joins, so a fix already on that queue
+     * can still run and launch a track-point write. What this flag adds is the thing a wait cannot
+     * be: from the moment it is set, a producer that is still alive is *refused*, so an empty scope
+     * is proof rather than an observation.
+     *
+     * Set on main at the very top of `onDestroy`, before anything is stopped, so nothing can slip
+     * between the decision to go down and the gate closing. `@Volatile` because it is read on every
+     * other thread this service owns — the session inbox, the GPS callback's thread, and the
+     * coroutines of the teardown itself.
+     *
+     * **What it must not refuse is the finish already under way.** A background STOP finalizes and
+     * *then* takes the service down, so this teardown is running while the Run's own last writes are
+     * legitimately being made — and the teardown's own delivery of a held buffer
+     * ([endRunAwaitingItsRow]) is a whole Run's seconds arriving after this is set. A gate that
+     * dropped those would cost a real Run its recording to fix a rescue's rounding. So the writes
+     * that belong to a finish already under way say so where they are launched
+     * (`deliveringHeldWork`), rather than the gate trying to work out who is calling it.
+     *
+     * Separate from [destroyed], which is a narrower fact about one resource: that one says the GATT
+     * sweep has been made, and is read by a connect deciding whether to close its own handle.
+     */
+    @Volatile
+    private var teardownBegun = false
     private var bluetoothAdapter: BluetoothAdapter? = null
 
     /**
@@ -687,6 +726,22 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * state, so an effect must never be carried out against a state the app has not been told about.
      */
     private fun dispatchRunEvent(event: RunEvent) {
+        // Refused outright once the teardown has begun (#315), and before the claim below is
+        // touched. A dispatch already inside this method when the gate closed runs to its end — it
+        // is work in flight, which the drains are for; this refuses a dispatch that *begins*
+        // afterwards, which no drain can wait for. The one that can still arrive is a message the
+        // session thread was already running when its bounded join ran out
+        // ([SESSION_THREAD_JOIN_TIMEOUT_MS]), and what it would do is exactly what the teardown is
+        // about to do from the other side: a STOP dispatching here would launch a second finalize
+        // for the row the rescue is rebuilding, and the totals would go to whichever landed last.
+        //
+        // Before the claim, because the claim is a compare-and-set and losing it is a decision. A
+        // refusal that spent the claim first would take the buffer from the teardown and then not
+        // deliver it, and the Run's held seconds would be nobody's (#360).
+        if (!runMayBeGivenWork(teardownBegun)) {
+            Log.w(TAG, "The service is being torn down; not dispatching $event to the run")
+            return
+        }
         // The one thing decided before the Run sees the event, because it is not the Run's to
         // decide: whether this inbox is the side that hands the Run's held work over (#360). The
         // id is the event that empties the buffer, so this is the moment to take the claim — and a
@@ -848,13 +903,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * decision belongs in [Run], where it can be tested. That is why this has no seam of its own
      * and is verified on the phone instead.
      */
-    private fun perform(effect: RunEffect) {
+    /**
+     * [deliveringHeldWork] says this effect belongs to a finish already under way rather than being
+     * new work for the Run — the teardown handing over a buffer whose seconds were recorded before
+     * the service began going down ([endRunAwaitingItsRow]). It is the one thing the teardown gate
+     * lets past, and it is said here rather than worked out from a flag, because the difference is
+     * about *which Run's work this is* and not about which thread happens to be calling (#315).
+     */
+    private fun perform(effect: RunEffect, deliveringHeldWork: Boolean = false) {
         when (effect) {
             is RunEffect.CreateRunRow -> createRunRow(effect)
             is RunEffect.FinalizeRun -> finalizeRun(effect)
-            is RunEffect.SaveHrSample -> saveHrSample(effect)
-            is RunEffect.SaveIntervalStat -> saveIntervalStat(effect)
-            is RunEffect.SavePause -> savePause(effect)
+            is RunEffect.SaveHrSample -> saveHrSample(effect, deliveringHeldWork)
+            is RunEffect.SaveIntervalStat -> saveIntervalStat(effect, deliveringHeldWork)
+            is RunEffect.SavePause -> savePause(effect, deliveringHeldWork)
             is RunEffect.Speak -> speakCue(effect)
             is RunEffect.WithdrawCue -> withdrawCue(effect.tag)
             is RunEffect.Notify -> updateNotification(effect.text)
@@ -897,6 +959,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             effect.startedAtMillis,
             ZoneId.systemDefault(),
         )
+        // Not through [recordForTheRun], and so not refused by the teardown gate (#315). Every other
+        // write adds to a Run that exists; this one is the Run existing, and refusing it would cost
+        // a Run its whole recording rather than its last second. It cannot in fact be reached after
+        // the gate closes — it is launched from a dispatch, and dispatches are refused — but it is
+        // left outside on the strength of what a refusal here would mean, not of that.
         recorderWriteScope.launch {
             val runRowId = database.sessionDao().insertSession(
                 RunnerSession(
@@ -940,7 +1007,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun saveHrSample(effect: RunEffect.SaveHrSample) {
+    private fun saveHrSample(effect: RunEffect.SaveHrSample, deliveringHeldWork: Boolean = false) {
         val sample = HrSample(
             sessionId = effect.runRowId,
             elapsedSeconds = effect.sample.elapsedSeconds,
@@ -951,20 +1018,55 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // Pace is GPS's, which the Run starts and stops but never reads.
             paceMinPerKm = _hrState.value.paceMinPerKm,
         )
-        recorderWriteScope.launch { database.sampleDao().insertSample(sample) }
+        recordForTheRun("a heart-rate sample", deliveringHeldWork) {
+            database.sampleDao().insertSample(sample)
+        }
+    }
+
+    /**
+     * Launches one of the Run's own writes onto [recorderWriteScope], unless the teardown has closed
+     * the gate on new work for the Run (#315).
+     *
+     * The one door for the writes that *add to* a Run — its samples, its Pauses, its interval stats,
+     * its track points — which is what makes an empty [recorderWriteScope] proof that the Run is
+     * finished with rather than an observation that it was, for that instant, quiet. A drain can
+     * wait out a write that has started; only a refusal can answer a producer that is still alive
+     * and has not started one yet.
+     *
+     * [deliveringHeldWork] is the exception the gate is built around, and the only one: the teardown
+     * hands over a buffer of seconds the Run recorded *before* the service began going down, and
+     * refusing those would cost a real Run its whole recording to fix a rescue's rounding. The
+     * teardown holds the claim on that buffer when it delivers ([runTakenByThisTeardown]), so
+     * nothing else can be writing the same seconds.
+     *
+     * The Run's insert does not come through here, deliberately. It is the one write whose refusal
+     * would cost a Run its existence rather than its last second, and the teardown already has an
+     * answer for a Run whose row is still on its way ([endRunAwaitingItsRow]). The finalize does not
+     * either: it is the finish, not work added to the Run, and it runs on [finalizationScope].
+     */
+    private fun recordForTheRun(
+        what: String,
+        deliveringHeldWork: Boolean = false,
+        write: suspend () -> Unit,
+    ) {
+        if (!runMayBeGivenWork(teardownBegun, deliveringHeldWork)) {
+            Log.w(TAG, "The service is being torn down; not writing $what for the run")
+            return
+        }
+        recorderWriteScope.launch { write() }
     }
 
     /** Write down one Pause of this Run, so an Export can state where its clock stopped (#328). */
-    private fun savePause(effect: RunEffect.SavePause) {
+    private fun savePause(effect: RunEffect.SavePause, deliveringHeldWork: Boolean = false) {
         val row = RunPause(
             sessionId = effect.runRowId,
             startTimeMillis = effect.pause.startedAtMillis,
             endTimeMillis = effect.pause.endedAtMillis,
         )
-        recorderWriteScope.launch { database.runPauseDao().insertPause(row) }
+        recordForTheRun("a pause", deliveringHeldWork) { database.runPauseDao().insertPause(row) }
     }
 
-    private fun saveIntervalStat(effect: RunEffect.SaveIntervalStat) {
+    private fun saveIntervalStat(effect: RunEffect.SaveIntervalStat, deliveringHeldWork: Boolean = false) {
         val stat = effect.stat
         val row = RunWalkIntervalStat(
             sessionId = effect.runRowId,
@@ -977,7 +1079,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             avgHrAtTriggerInInterval = stat.avgHrAtTriggerInInterval,
             avgRecoverySecondsAfterTriggerInInterval = stat.avgRecoverySecondsAfterTriggerInInterval,
         )
-        recorderWriteScope.launch { database.runWalkIntervalStatDao().insertIntervalStats(listOf(row)) }
+        recordForTheRun("an interval stat", deliveringHeldWork) {
+            database.runWalkIntervalStatDao().insertIntervalStats(listOf(row))
+        }
     }
 
     private fun startGps() {
@@ -1328,7 +1432,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         source = TrackPointSource.GPS,
                         startsAfterPause = startsAfterPause
                     )
-                    recorderWriteScope.launch {
+                    // Gated: LocationTracker.shutdown() quits its thread safely and never joins
+                    // it, so a fix already queued can reach here after the teardown's drain has
+                    // ended — the very arrival no wait can answer (#315).
+                    recordForTheRun("a track point") {
                         database.trackPointDao().insertTrackPoint(trackPoint)
                     }
                 }
@@ -2582,7 +2689,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 runRowId,
                 "landed after the service was destroyed"
             )
-            lost.heldWork.forEach { perform(it.toEffect(runRowId)) }
+            // Past the teardown gate, and the only writes that go past it: these seconds were
+            // recorded before the service began going down, and this teardown holds the claim on
+            // the buffer, so nothing else can be writing them (#315).
+            lost.heldWork.forEach { perform(it.toEffect(runRowId), deliveringHeldWork = true) }
             if (lost.runnerStopped) {
                 // The Run's own finalize is on its way to the row with the totals it banked as it
                 // ran. Nothing rebuilt from the record would be an improvement on those, and a
@@ -2748,6 +2858,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         super.onDestroy()
         Log.d(TAG, "onDestroy called - Clean Exit")
 
+        // Before anything at all is stopped: from here on the Run is given no new work, so the
+        // drains further down settle a set nothing can add to rather than a set nothing happened to
+        // add to while they looked (#315). See [teardownBegun] for why a wait could not do this.
+        teardownBegun = true
+
         // Android does not say why a service is being destroyed, so what goes down is what this
         // service knew at the moment the destroy began — whether a Run was still live, and whether
         // it still held the Promotion — and not a settled account of how it ended: the teardown
@@ -2833,7 +2948,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // Here, and not up beside that snapshot, because this is the first point at which nothing
         // can start work on that Run any more: the session inbox is quit and joined, so no further
         // run event will be dispatched and no STOP will emit a finalize, and GPS and serviceScope
-        // are down, so no further sample or track point will be queued. Everything the rescue does
+        // are down, so no further sample or track point will be queued. Neither of those stops is
+        // definitive on its own — the join is bounded and the GPS thread is never joined at all —
+        // which is what [teardownBegun] is for: both producers are refused from the top of this
+        // method, so "nothing can still be working on this Run" is enforced rather than waited for
+        // (#315). Everything the rescue does
         // is waiting for work in flight and then reading what that work left behind
         // ([endRunLostToTeardown]), and waiting only settles a set nothing can add to. Taken above,
         // a STOP dispatching at that instant would launch its finalize after the rescue had looked,
