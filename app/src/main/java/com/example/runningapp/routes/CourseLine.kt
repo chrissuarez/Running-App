@@ -37,8 +37,12 @@ private const val EQUALLY_NEAR_METERS = 1.0
  * After that the window takes over and never gives way again, however far off the runner strays. A
  * runner who has reached the course and then left it is *somewhere they ran to*, and reading them
  * against the whole line again is exactly the mistake this exists to prevent.
+ *
+ * Not private, because "near enough to be on the course" is one fact and the off-course alerts are
+ * the app's other reader of it (#58): the distance that arms them and the distance they call the
+ * runner back within are this distance, and a change here has to move all three together.
  */
-private const val REACHED_THE_COURSE_METERS = 30.0
+const val REACHED_THE_COURSE_METERS = 30.0
 
 /**
  * How far along the course the next fix is looked for, either side of where the last one landed.

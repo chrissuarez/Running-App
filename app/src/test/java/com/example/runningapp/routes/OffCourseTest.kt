@@ -264,6 +264,73 @@ class OffCourseTest {
     }
 
     @Test
+    fun `rejoining the course far ahead of where it was left still closes it`() {
+        val watch = watch()
+        watch.reachTheCourse()
+        watch.onFix(fix(50.0, eastMeters = 200.0), seconds(1), autoPaused = false)
+        assertEquals(
+            CourseAlert.OFF_COURSE,
+            watch.onFix(fix(50.0, eastMeters = 200.0), seconds(11), autoPaused = false),
+        )
+
+        // A wrong turn that cuts a corner and comes back on 900 m up the course — further ahead than
+        // the stretch of line the fix before it opened a window on. Read from the old place, the
+        // runner would be hundreds of metres from the line for the rest of the Run.
+        assertEquals(
+            CourseAlert.BACK_ON_COURSE,
+            watch.onFix(fix(950.0), seconds(200), autoPaused = false),
+        )
+    }
+
+    @Test
+    fun `the course is read from where the runner rejoined it`() {
+        val watch = watch()
+        watch.reachTheCourse()
+        watch.onFix(fix(50.0, eastMeters = 200.0), seconds(1), autoPaused = false)
+        watch.onFix(fix(50.0, eastMeters = 200.0), seconds(11), autoPaused = false)
+        watch.onFix(fix(950.0), seconds(200), autoPaused = false)
+
+        // Running on from there is running along the course, not away from it: the window reopened
+        // around the far end, so the last fifty metres read as nothing to say.
+        assertNull(watch.onFix(fix(1000.0), seconds(210), autoPaused = false))
+        assertNull(watch.onFix(fix(1000.0), seconds(230), autoPaused = false))
+    }
+
+    @Test
+    fun `a Pause does not count towards the wait`() {
+        val watch = watch()
+        watch.reachTheCourse()
+        assertNull(watch.onFix(fix(100.0, eastMeters = 60.0), seconds(1), autoPaused = false))
+
+        // Five minutes of standing still with GPS torn down, then one fix on the far side of it.
+        watch.recordingBroke()
+        assertNull(watch.onFix(fix(100.0, eastMeters = 60.0), seconds(300), autoPaused = false))
+        assertNull(watch.onFix(fix(100.0, eastMeters = 60.0), seconds(309), autoPaused = false))
+        assertEquals(
+            CourseAlert.OFF_COURSE,
+            watch.onFix(fix(100.0, eastMeters = 60.0), seconds(310), autoPaused = false),
+        )
+    }
+
+    @Test
+    fun `a Pause taken out there leaves the runner off course`() {
+        val watch = watch()
+        watch.reachTheCourse()
+        watch.onFix(fix(100.0, eastMeters = 60.0), seconds(1), autoPaused = false)
+        watch.onFix(fix(100.0, eastMeters = 60.0), seconds(11), autoPaused = false)
+
+        watch.recordingBroke()
+
+        // Still off course on the far side of it, so coming back is still the closing cue and is
+        // still said only once.
+        assertEquals(
+            CourseAlert.BACK_ON_COURSE,
+            watch.onFix(fix(100.0), seconds(300), autoPaused = false),
+        )
+        assertNull(watch.onFix(fix(200.0), seconds(310), autoPaused = false))
+    }
+
+    @Test
     fun `the two sentences are the two the runner hears`() {
         assertEquals("Off course.", CourseAlert.OFF_COURSE.spoken)
         assertEquals("Back on course.", CourseAlert.BACK_ON_COURSE.spoken)

@@ -1,6 +1,7 @@
 package com.example.runningapp
 
 import android.media.AudioManager
+import com.example.runningapp.routes.CourseAlert
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -126,6 +127,27 @@ class AudioCueManagerTest {
         finishCurrent()
         finishCurrent()
         assertEquals(listOf("speaking now", "start running", "ease off", "a split"), spokenTexts())
+    }
+
+    @Test
+    fun `a course alert goes ahead of everything waiting and cuts nothing off`() {
+        manager.enqueue("split two kilometers", CuePriority.INFORMATION)
+        manager.enqueue("ease off slightly", CuePriority.COACHING)
+        manager.enqueue("start walking", CuePriority.INSTRUCTION)
+        manager.enqueue(CourseAlert.OFF_COURSE.spoken, CuePriority.NAVIGATION)
+
+        // The split is half-said and stays half-said: the runner going the wrong way is told at the
+        // end of that sentence and not over the top of it (#58).
+        assertEquals(listOf("split two kilometers"), spokenTexts())
+        finishCurrent()
+        assertEquals(listOf("split two kilometers", "Off course."), spokenTexts())
+
+        // And nothing waiting behind it is lost — the coaching goes on exactly as it was.
+        repeat(2) { finishCurrent() }
+        assertEquals(
+            listOf("split two kilometers", "Off course.", "start walking", "ease off slightly"),
+            spokenTexts(),
+        )
     }
 
     @Test
