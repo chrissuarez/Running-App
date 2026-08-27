@@ -60,7 +60,7 @@ data class Route(
     val source: String,
 )
 
-/** What keeping a course came to: the three things that can become of one line offered to the table. */
+/** What keeping a course came to: the four things that can become of one line offered to the table. */
 enum class RouteKeeping {
     /** The library had nothing drawn along this line, so a new Route now holds it. */
     KEPT,
@@ -74,6 +74,17 @@ enum class RouteKeeping {
      * Only ever the answer to a caller that asked to re-measure — see [RouteDao.keepRoute].
      */
     REMEASURED,
+
+    /**
+     * The library already held this line, and the caller's distance was written onto it while the
+     * climb already banked was left standing, because the caller carried no heights (#355).
+     *
+     * A file with no `<ele>` in it says nothing about climb. It does not say the course is flat, and
+     * it does not say that what an earlier file said about the same course was wrong — so it is not
+     * allowed to take that answer away. Told apart from [REMEASURED] because the screen has to say
+     * which numbers moved, and here only one of them did.
+     */
+    REMEASURED_KEEPING_CLIMB,
 }
 
 /**
@@ -141,13 +152,24 @@ interface RouteDao {
     @Transaction
     suspend fun keepRoute(route: Route, remeasuring: Boolean): KeptRoute {
         findRouteByPolyline(route.polyline)?.let { alreadyHeld ->
+            // A caller carrying no heights is silent about climb, not authoritative about it
+            // (#355), so the banked answer stands rather than being written over with null.
+            // Everything below reads this rather than the caller's own field: what the row would end
+            // up holding is what decides both whether anything moved and what the runner is told
+            // moved.
+            val climb = route.elevationGainMeters ?: alreadyHeld.elevationGainMeters
             val measuresTheSame = route.distanceMeters == alreadyHeld.distanceMeters &&
-                route.elevationGainMeters == alreadyHeld.elevationGainMeters
+                climb == alreadyHeld.elevationGainMeters
             if (!remeasuring || measuresTheSame) {
                 return KeptRoute(alreadyHeld.id, alreadyHeld.name, RouteKeeping.ALREADY_KEPT)
             }
-            remeasureRoute(alreadyHeld.id, route.distanceMeters, route.elevationGainMeters)
-            return KeptRoute(alreadyHeld.id, alreadyHeld.name, RouteKeeping.REMEASURED)
+            remeasureRoute(alreadyHeld.id, route.distanceMeters, climb)
+            val keeping = if (route.elevationGainMeters == null) {
+                RouteKeeping.REMEASURED_KEEPING_CLIMB
+            } else {
+                RouteKeeping.REMEASURED
+            }
+            return KeptRoute(alreadyHeld.id, alreadyHeld.name, keeping)
         }
         return KeptRoute(insertRoute(route), route.name, RouteKeeping.KEPT)
     }
