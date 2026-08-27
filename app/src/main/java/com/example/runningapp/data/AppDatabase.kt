@@ -1297,9 +1297,10 @@ interface RunPauseDao {
         RunEffortRow::class,
         RecordFillRow::class,
         RunSummaryRow::class,
-        WalkMarkDebtRow::class
+        WalkMarkDebtRow::class,
+        HistoryDebtRow::class
     ],
-    version = 40,
+    version = 41,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1319,6 +1320,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun recordFillDao(): RecordFillDao
     abstract fun runSummaryDao(): RunSummaryDao
     abstract fun walkMarkDebtDao(): WalkMarkDebtDao
+    abstract fun historyDebtDao(): HistoryDebtDao
 
     companion object {
         @Volatile
@@ -1412,7 +1414,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_36_37,
     MIGRATION_37_38,
     MIGRATION_38_39,
-    MIGRATION_39_40
+    MIGRATION_39_40,
+    MIGRATION_40_41
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2543,5 +2546,26 @@ val MIGRATION_38_39 = object : Migration(38, 39) {
 val MIGRATION_39_40 = object : Migration(39, 40) {
     override fun migrate(database: SupportSQLiteDatabase) {
         database.execSQL(WALK_MARK_DEBTS_TABLE_SQL)
+    }
+}
+
+/**
+ * Where a launch pass that owes history a re-measuring is written down (#349) — see
+ * [HistoryDebtRow].
+ *
+ * A table **and** a backfill, which is what separates this from [MIGRATION_39_40] and puts it beside
+ * [MIGRATION_36_37]: the two passes this is for have been rewriting Runs' numbers since #163 and #62
+ * shipped, with nothing anywhere saying so, and the upgrade is the one moment that can honestly
+ * raise the debt — before a line of Kotlin runs, so no reader can see a clean history first. What is
+ * raised here is what a Run Summary covers itself with for the whole of the first launch after the
+ * upgrade, and no longer: each pass lowers its own debt when it has been through its list.
+ *
+ * Nothing is raised on an install whose history is already measured, which is most of them.
+ */
+val MIGRATION_40_41 = object : Migration(40, 41) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(HISTORY_DEBTS_TABLE_SQL)
+        database.execSQL(RAISE_MOVING_TIME_DEBT_SQL)
+        database.execSQL(RAISE_EFFORT_SCORE_DEBT_SQL)
     }
 }
