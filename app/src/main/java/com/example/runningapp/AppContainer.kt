@@ -345,6 +345,23 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Takes back coaching left standing on Runs that are no longer in history, once per process
+     * (#270).
+     *
+     * On the container's own scope, for the same reason the moving-time backfill is — see above, and
+     * more sharply here: the delete this finishes was cut short by a process being reclaimed, and a
+     * pass tied to the screen the runner deletes from would be the same kind of half-finished work
+     * one lifetime further in.
+     *
+     * Nothing orders this against the passes around it. None of them takes a Run out of history,
+     * which is the only thing this reads.
+     */
+    fun reconcileCoachingOnce() {
+        if (!coachingReconciled.compareAndSet(false, true)) return
+        applicationScope.launch { sessionRepository.reconcileCoachingWithHistory() }
+    }
+
+    /**
      * Scores the history recorded before the Effort Score shipped, once per process (#62).
      *
      * Started after the rescue pass, though nothing makes them run in that order: both are launched
@@ -481,6 +498,7 @@ class AppContainer(context: Context) {
     private val missedRecordsScored = AtomicBoolean(false)
     private val missedStagesSettled = AtomicBoolean(false)
     private val walkMarkDebtsPaid = AtomicBoolean(false)
+    private val coachingReconciled = AtomicBoolean(false)
     private val segmentTimingPaid = AtomicBoolean(false)
     private val runShapesTaken = AtomicBoolean(false)
 

@@ -4,6 +4,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.mutablePreferencesOf
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -316,6 +317,43 @@ class CoachPrescriptionTest {
         assertFalse(preferences.rollBackCoachWorkFedBy(setOf(9L)))
 
         assertEquals(600, preferences.coachPrescriptions()[RunType.LONG]?.runDurationSeconds)
+    }
+
+    @Test
+    fun `the work names every run both its generations stood on`() {
+        // What the launch pass (#270) asks history about. Both generations, because the previous one
+        // is a Prescription waiting to be promoted onto whatever it named.
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 600), "Steady.", setOf(1L, 2L))
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 660), "Longer.", setOf(2L, 3L))
+
+        assertEquals(setOf(1L, 2L, 3L), preferences.coachWorkProvenance())
+    }
+
+    @Test
+    fun `coaching that recorded no provenance gives the launch pass nothing to look into`() {
+        // The opposite reading from the delete path's, and deliberately: a delete that is happening
+        // guesses safe by taking the coaching away, while "is there anything to check" cannot be
+        // answered at all here — so it must not become a reason to check. ADR 0013 covers it.
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachPrescription(RunType.LONG, prescription(run = 240))
+        preferences[PreferencesKeys.LATEST_COACH_MESSAGE] = "Your HR read 0 BPM."
+
+        assertEquals(emptySet<Long>(), preferences.coachWorkProvenance())
+    }
+
+    @Test
+    fun `an unreadable stored id names no run`() {
+        val preferences = mutablePreferencesOf()
+        preferences.writeCoachWork(RunType.LONG, prescription(run = 600), "Steady.", setOf(4L))
+        preferences[stringSetPreferencesKey("coach_source_runs")] = setOf("4", "not-a-number")
+
+        assertEquals(setOf(4L), preferences.coachWorkProvenance())
+    }
+
+    @Test
+    fun `an empty store names no run`() {
+        assertEquals(emptySet<Long>(), mutablePreferencesOf().coachWorkProvenance())
     }
 
     @Test

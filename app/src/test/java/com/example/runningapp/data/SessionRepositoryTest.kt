@@ -2051,6 +2051,58 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a launch finishes a delete that was cut short before it took the coaching back`() = runTest {
+        // The residue of #156, closed by #270: the rows go and the rollback is a second write to a
+        // second store, so a process reclaimed between them leaves the Prescription standing on a
+        // Run that is not there. Nothing on the running app would ever notice.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        mockPrescriptions.stub { onBlocking { runsTheWorkStandsOn() }.thenReturn(setOf(7L, 8L)) }
+        // Run 8 was deleted; run 7 is still in history.
+        mockDao.stub { onBlocking { getAiEligibleIdsIn(any()) }.thenReturn(listOf(7L)) }
+        val repositoryWithCoach = SessionRepository(
+            sessionDao = mockDao,
+            coachPrescriptionRepository = mockPrescriptions
+        )
+
+        repositoryWithCoach.reconcileCoachingWithHistory()
+
+        // Only the Run that has actually gone: the standing work is judged against the same
+        // question a delete asks, not taken away wholesale.
+        verify(mockPrescriptions).forgetWorkFedBy(setOf(8L))
+    }
+
+    @Test
+    fun `a launch with every named run still in history takes nothing back`() = runTest {
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        mockPrescriptions.stub { onBlocking { runsTheWorkStandsOn() }.thenReturn(setOf(7L, 8L)) }
+        val repositoryWithCoach = SessionRepository(
+            sessionDao = mockDao,
+            coachPrescriptionRepository = mockPrescriptions
+        )
+
+        repositoryWithCoach.reconcileCoachingWithHistory()
+
+        verify(mockPrescriptions, never()).forgetWorkFedBy(any())
+    }
+
+    @Test
+    fun `a launch with no provenance recorded asks history nothing`() = runTest {
+        // Every Prescription written before #156 is one of these. There is nothing to check it
+        // against, and this pass must not read that as a reason to take it away — ADR 0013.
+        val mockPrescriptions: CoachPrescriptionRepository = mock()
+        mockPrescriptions.stub { onBlocking { runsTheWorkStandsOn() }.thenReturn(emptySet()) }
+        val repositoryWithCoach = SessionRepository(
+            sessionDao = mockDao,
+            coachPrescriptionRepository = mockPrescriptions
+        )
+
+        repositoryWithCoach.reconcileCoachingWithHistory()
+
+        verify(mockDao, never()).getAiEligibleIdsIn(any())
+        verify(mockPrescriptions, never()).forgetWorkFedBy(any())
+    }
+
+    @Test
     fun `which runs fed the coach is asked before the rows are gone`() = runTest {
         // Afterwards there is nothing left to ask: the sharing flag lives on the row being deleted.
         val repositoryWithCoach = SessionRepository(

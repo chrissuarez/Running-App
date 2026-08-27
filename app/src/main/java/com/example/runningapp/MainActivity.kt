@@ -321,6 +321,12 @@ class MainActivity : ComponentActivity() {
         // back (#371).
         runningAppContainer().payWalkMarkDebtsOnce()
 
+        // Deleting a Run takes back the coaching that stood on it, but the rows and the coaching
+        // live in two stores and a process reclaimed between them leaves the Prescription standing
+        // on a Run that is gone — with nothing on the running app to notice. This is the launch that
+        // finishes it (#270).
+        runningAppContainer().reconcileCoachingOnce()
+
         // Every Run recorded before the Effort Score shipped has the beats to work one out and no
         // Score stored, so history would read as unscored until each Run was run again (#62). This
         // is the launch that scores it, from the samples those Runs already kept.

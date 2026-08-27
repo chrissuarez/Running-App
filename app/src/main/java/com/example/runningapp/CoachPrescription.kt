@@ -11,6 +11,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 /**
@@ -437,6 +438,28 @@ internal fun MutablePreferences.rollBackCoachWorkFedBy(deletedRunIds: Set<Long>)
  * A stored id that is not a number is treated as no id rather than as a match: it cannot name a Run
  * being deleted, and taking coaching away over an unreadable one would be a corrupt key deciding it.
  */
+/**
+ * Every Run the coach's work says it was reasoned from, across both generations (#270).
+ *
+ * The question a launch pass asks before it can ask history anything: which Runs does the standing
+ * coaching claim to stand on? Both generations, because the previous one is a Prescription waiting
+ * to be promoted, and coaching promoted onto a deleted Run is the same fault a turn later.
+ *
+ * **Absent provenance contributes nothing.** A Prescription written before #156 recorded no Runs, so
+ * there is nothing here to check it against — which is not the reading [standsOnDeletedRuns] gives,
+ * and deliberately so: that one is answering a delete that is happening, where guessing safe means
+ * taking the coaching away, while this one is answering "is there anything to look into at all", and
+ * an unanswerable question must not become a reason to look. ADR 0013 covers the legacy case.
+ *
+ * A stored id that is not a number is skipped, for the reason [standsOnDeletedRuns] gives.
+ */
+internal fun Preferences.coachWorkProvenance(): Set<Long> =
+    CoachWorkGeneration.entries
+        .mapNotNull { this[coachSourceRunsKey(it)] }
+        .flatten()
+        .mapNotNull { it.toLongOrNull() }
+        .toSet()
+
 private fun Preferences.standsOnDeletedRuns(
     generation: CoachWorkGeneration,
     deletedRunIds: Set<Long>
@@ -570,6 +593,15 @@ class CoachPrescriptionRepository(private val context: Context) {
      * went — and there is no state of the app in which coaching about a deleted Run should be left
      * standing. Testing mode has erased it already; a plan change has too.
      */
+    /**
+     * The Runs the coach's work names as its evidence — see [coachWorkProvenance] (#270).
+     *
+     * Read as one snapshot rather than watched, because the only caller is a launch pass that
+     * asks once and acts on the answer under the same lock a delete takes.
+     */
+    suspend fun runsTheWorkStandsOn(): Set<Long> =
+        context.dataStore.data.first().coachWorkProvenance()
+
     suspend fun forgetWorkFedBy(deletedRunIds: Set<Long>) {
         if (deletedRunIds.isEmpty()) return
         var rolledBack = false
