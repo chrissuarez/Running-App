@@ -438,6 +438,14 @@ internal fun MutablePreferences.rollBackCoachWorkFedBy(deletedRunIds: Set<Long>)
  * A stored id that is not a number is treated as no id rather than as a match: it cannot name a Run
  * being deleted, and taking coaching away over an unreadable one would be a corrupt key deciding it.
  */
+private fun Preferences.standsOnDeletedRuns(
+    generation: CoachWorkGeneration,
+    deletedRunIds: Set<Long>
+): Boolean {
+    val sources = this[coachSourceRunsKey(generation)] ?: return true
+    return sources.mapNotNull { it.toLongOrNull() }.any { it in deletedRunIds }
+}
+
 /**
  * Every Run the coach's work says it was reasoned from, across both generations (#270).
  *
@@ -459,14 +467,6 @@ internal fun Preferences.coachWorkProvenance(): Set<Long> =
         .flatten()
         .mapNotNull { it.toLongOrNull() }
         .toSet()
-
-private fun Preferences.standsOnDeletedRuns(
-    generation: CoachWorkGeneration,
-    deletedRunIds: Set<Long>
-): Boolean {
-    val sources = this[coachSourceRunsKey(generation)] ?: return true
-    return sources.mapNotNull { it.toLongOrNull() }.any { it in deletedRunIds }
-}
 
 /**
  * Copies one generation's whole work over another's — every slot, its provenance, and its debrief.
@@ -593,15 +593,6 @@ class CoachPrescriptionRepository(private val context: Context) {
      * went — and there is no state of the app in which coaching about a deleted Run should be left
      * standing. Testing mode has erased it already; a plan change has too.
      */
-    /**
-     * The Runs the coach's work names as its evidence — see [coachWorkProvenance] (#270).
-     *
-     * Read as one snapshot rather than watched, because the only caller is a launch pass that
-     * asks once and acts on the answer under the same lock a delete takes.
-     */
-    suspend fun runsTheWorkStandsOn(): Set<Long> =
-        context.dataStore.data.first().coachWorkProvenance()
-
     suspend fun forgetWorkFedBy(deletedRunIds: Set<Long>) {
         if (deletedRunIds.isEmpty()) return
         var rolledBack = false
@@ -615,4 +606,13 @@ class CoachPrescriptionRepository(private val context: Context) {
             )
         }
     }
+
+    /**
+     * The Runs the coach's work names as its evidence — see [coachWorkProvenance] (#270).
+     *
+     * Read as one snapshot rather than watched, because the only caller is a launch pass that asks
+     * once and acts on the answer under the same lock a delete takes.
+     */
+    suspend fun runsTheWorkStandsOn(): Set<Long> =
+        context.dataStore.data.first().coachWorkProvenance()
 }

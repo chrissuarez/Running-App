@@ -2,8 +2,6 @@ package com.example.runningapp.data
 
 import androidx.room.Dao
 import androidx.room.Entity
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
@@ -71,16 +69,13 @@ object HistoryPass {
 interface HistoryDebtDao {
 
     /**
-     * Writes down that a pass owes history work, over whatever was there before.
+     * Drops a pass's debt, because it has been through the history it owed.
      *
-     * Not called by any pass today — the debts that exist are raised by the v40 to v41 migration,
-     * for the reason [HistoryDebtRow] gives. Here so that a pass which learns of work at a moment no
-     * migration can speak for has the honest way to say so, rather than inventing a fifth one.
+     * The only write this DAO offers. A debt is *raised* in SQL by the migration that makes history
+     * half-measured ([HistoryDebtRow]), so there is nothing here to raise one with — a pass that
+     * learns of work at a moment no migration can speak for is a design that does not exist yet, and
+     * the way to add it is to add the writer then rather than to keep an unused one now.
      */
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun owe(row: HistoryDebtRow)
-
-    /** Drops a pass's debt, because it has been through the history it owed. */
     @Query("DELETE FROM history_debts WHERE pass = :pass")
     suspend fun settle(pass: String)
 

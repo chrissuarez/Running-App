@@ -164,7 +164,12 @@ interface RouteDao {
                 return KeptRoute(alreadyHeld.id, alreadyHeld.name, RouteKeeping.ALREADY_KEPT)
             }
             remeasureRoute(alreadyHeld.id, route.distanceMeters, climb)
-            val keeping = if (route.elevationGainMeters == null) {
+            // Both halves, because the screen is told that a climb was *kept*: a caller with no
+            // heights arriving at a row that never had a climb keeps nothing, and saying "its climb
+            // is unchanged" about a climb that does not exist would be a sentence about nothing.
+            val climbWasKept =
+                route.elevationGainMeters == null && alreadyHeld.elevationGainMeters != null
+            val keeping = if (climbWasKept) {
                 RouteKeeping.REMEASURED_KEEPING_CLIMB
             } else {
                 RouteKeeping.REMEASURED

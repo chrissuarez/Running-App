@@ -902,18 +902,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * No branching and no state of its own, deliberately: if this ever needs a decision, the
      * decision belongs in [Run], where it can be tested. That is why this has no seam of its own
      * and is verified on the phone instead.
-     */
-    /**
+     *
      * [deliveringHeldWork] says this effect belongs to a finish already under way rather than being
      * new work for the Run — the teardown handing over a buffer whose seconds were recorded before
      * the service began going down ([endRunAwaitingItsRow]). It is the one thing the teardown gate
      * lets past, and it is said here rather than worked out from a flag, because the difference is
      * about *which Run's work this is* and not about which thread happens to be calling (#315).
+     * Carried rather than decided, so this still branches on nothing.
      */
     private fun perform(effect: RunEffect, deliveringHeldWork: Boolean = false) {
         when (effect) {
             is RunEffect.CreateRunRow -> createRunRow(effect)
-            is RunEffect.FinalizeRun -> finalizeRun(effect)
+            is RunEffect.FinalizeRun -> finalizeRun(effect, deliveringHeldWork)
             is RunEffect.SaveHrSample -> saveHrSample(effect, deliveringHeldWork)
             is RunEffect.SaveIntervalStat -> saveIntervalStat(effect, deliveringHeldWork)
             is RunEffect.SavePause -> savePause(effect, deliveringHeldWork)
@@ -1007,7 +1007,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun saveHrSample(effect: RunEffect.SaveHrSample, deliveringHeldWork: Boolean = false) {
+    private fun saveHrSample(effect: RunEffect.SaveHrSample, deliveringHeldWork: Boolean) {
         val sample = HrSample(
             sessionId = effect.runRowId,
             elapsedSeconds = effect.sample.elapsedSeconds,
@@ -1057,7 +1057,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     }
 
     /** Write down one Pause of this Run, so an Export can state where its clock stopped (#328). */
-    private fun savePause(effect: RunEffect.SavePause, deliveringHeldWork: Boolean = false) {
+    private fun savePause(effect: RunEffect.SavePause, deliveringHeldWork: Boolean) {
         val row = RunPause(
             sessionId = effect.runRowId,
             startTimeMillis = effect.pause.startedAtMillis,
@@ -1066,7 +1066,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         recordForTheRun("a pause", deliveringHeldWork) { database.runPauseDao().insertPause(row) }
     }
 
-    private fun saveIntervalStat(effect: RunEffect.SaveIntervalStat, deliveringHeldWork: Boolean = false) {
+    private fun saveIntervalStat(
+        effect: RunEffect.SaveIntervalStat,
+        deliveringHeldWork: Boolean,
+    ) {
         val stat = effect.stat
         val row = RunWalkIntervalStat(
             sessionId = effect.runRowId,
@@ -1101,7 +1104,28 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * patching it. What is still read from the outside is what the Run never had: distance, pace
      * and the start position, which are GPS's.
      */
-    private fun finalizeRun(effect: RunEffect.FinalizeRun) {
+    private fun finalizeRun(effect: RunEffect.FinalizeRun, deliveringHeldWork: Boolean) {
+        // Refused once the teardown has begun (#315), and refused *before* anything below is
+        // touched. The dispatch that emits this can straddle the gate — a session-thread message
+        // already inside [dispatchRunEvent] when the gate closed runs to its end, and it can outlive
+        // the bounded join that follows — so a finalize launched here can start after the drains in
+        // [settleAfterTeardown] have had their empty pass. That is the ticket's own named harm: the
+        // rescue and the Run's own finalize both writing the row, and the totals going to whichever
+        // lands last. Refused, there is exactly one writer, and a Run whose finalize this turns away
+        // is left with an unfinished row — which the launch rescue pass finishes (#192), the same
+        // residue every other refusal in this teardown leaves.
+        //
+        // The teardown's own delivery of a held buffer goes through, for the reason it does
+        // everywhere else: those seconds were recorded before any of this began, and this teardown
+        // holds the claim on them, so nothing else can be writing them.
+        if (!runMayBeGivenWork(teardownBegun, deliveringHeldWork)) {
+            Log.w(
+                TAG,
+                "The service is being torn down; not finalizing run ${effect.runRowId} here. " +
+                    "The teardown settles it, or the launch pass does."
+            )
+            return
+        }
         // The Run is over, so there is no longer a runner to be off anything (#58). Ended here as
         // well as at the next Run's start, so a phone sitting idle after a Run is not still holding
         // a query open on the library.
