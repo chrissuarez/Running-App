@@ -1091,60 +1091,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     Log.w(TAG, "Could not book the after-run work for $runRowId", e)
                 }
 
-                // Measured only now the track-point inserts above have landed, so it sees the whole
-                // run. This also rewrites avgPaceMinPerKm over the duration-based value set above:
-                // pace is quoted against other apps, so it is measured over moving time (#163).
+                // Measured, scored, put to the Segments and shaped — only now the track-point
+                // inserts above have landed, so every one of them sees the whole Run. One call, and
+                // the order is inside it: the rescue of a Run a teardown left recording owes the
+                // same four, and two copies of an order are two things free to drift apart
+                // ([AfterRunMeasurements]).
                 //
-                // The run is already saved by this point, and finalizationScope carries no
-                // exception handler, so a failure here must not be allowed to take the process
-                // down and strand the backup, weather fetch and plan evaluation below it. A run
-                // that fails to measure keeps a null moving time and is picked up by the backfill.
-                val movingTime = try {
-                    sessionRepository.computeMovingTime(runRowId)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Moving time failed for $runRowId; leaving it to the backfill", e)
-                    null
-                }
-
-                // Scored after the track-point inserts have landed, for the same reason moving time
-                // is: a record measured over half a run is a record nobody ran. Its own attempt,
-                // because the Run is already saved and a book that cannot be written must not cost
-                // the runner the backup, the weather or the coach's evaluation below.
-                try {
-                    // Marked as scored only once the book has been written, never beside the row
-                    // being stamped finished above: an ending in between leaves the Run owing a
-                    // scoring, which the launch pass pays, where a mark written early would lose the
-                    // Run its medals for good (#210).
-                    val earned = sessionRepository.scoreAndMarkRecords(runRowId)
-                    if (earned.isNotEmpty()) {
-                        Log.d(TAG, "Run $runRowId earned ${earned.size} achievement(s): " +
-                            earned.joinToString { "${it.medal} ${it.type}" })
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not score run $runRowId against the record book", e)
-                }
-
-                // Put to every Segment the runner keeps, after the track-point inserts have landed
-                // and for the same reason the two above are: a Segment timed over half a Run is a
-                // PR nobody ran (#70). Its own attempt, on the same terms — the Run is saved, and a
-                // Segment that cannot be timed must not cost the runner the plan evaluation below.
-                // A Run left untimed here is timed by the next scan of the pair, which is whatever
-                // Segment the runner cuts next.
-                try {
-                    sessionRepository.timeRunAgainstSegments(runRowId)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not time run $runRowId against the segments", e)
-                }
-
-                // And its own shape, so the next Run over the same ground recognises this one (#73).
-                // After the track-point inserts for the reason above, and guarded on the same terms:
-                // a Run left unshaped here is shaped by the launch pass, which the absence of its
-                // row is what guarantees.
-                try {
-                    sessionRepository.shapeRun(runRowId)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not take the shape of run $runRowId", e)
-                }
+                // Nothing here may throw: the Run is already saved by this point, and
+                // finalizationScope carries no exception handler, so a failure allowed out would
+                // take the process down and strand the backup, weather fetch and plan evaluation
+                // below it. Each pass is guarded inside, and each failure is left in the state a
+                // launch pass already looks for.
+                val movingTime = sessionRepository.afterRun(runRowId)
 
                 Log.d(
                     TAG,

@@ -1444,44 +1444,13 @@ class SessionRepository(
             Log.w("InterruptedRun", "Could not rescue run $runRowId; leaving it for next launch", e)
             return false
         }
-        try {
-            // After the row is finished, not before: this measures the same stored track and
-            // rewrites avgPaceMinPerKm over moving time, which is the pace the app quotes (#163).
-            computeMovingTime(runRowId)
-        } catch (e: Exception) {
-            // Its own attempt, because the row is already finished by this point and will never
-            // be offered to this pass again. Failing here leaves movingTimeSeconds null, which
-            // is the state [backfillMovingTime] picks up at the next launch — so the Run is in
-            // history with everything else it needs, and the one number it is missing is
-            // already somebody's job.
-            Log.w("InterruptedRun", "Rescued run $runRowId but could not measure its moving time", e)
-        }
-        try {
-            // A rescued Run has just finished, however long ago it was run, so it is scored like
-            // any other (#49). Its own attempt for the same reason as the moving time above: the
-            // row is already in history, and a book that cannot be written must not undo that.
-            // Marked as scored by the same call, and only once the scoring has returned, so a
-            // failure here leaves the Run owing one for the launch pass to pay (#210).
-            scoreAndMarkRecords(runRowId)
-        } catch (e: Exception) {
-            Log.w("InterruptedRun", "Rescued run $runRowId but could not score its records", e)
-        }
-        try {
-            // And put to the Segments, for the same reason and on the same terms as the scoring
-            // above (#70): a rescued Run has just finished, however long ago it was run. Marked as
-            // timed by the same call and only once it has returned, so a failure here leaves the
-            // Run owing a walk for the launch pass to pay.
-            timeRunAgainstSegments(runRowId)
-        } catch (e: Exception) {
-            Log.w("InterruptedRun", "Rescued run $runRowId but could not time it against the segments", e)
-        }
-        try {
-            // And its shape taken, on the same terms again (#73). A failure here leaves the Run with
-            // no shape row, which is the debt itself, so the next launch pass takes it.
-            shapeRun(runRowId)
-        } catch (e: Exception) {
-            Log.w("InterruptedRun", "Rescued run $runRowId but could not take its shape", e)
-        }
+        // The four measurements every finished Run owes, in the one order that is correct and with
+        // each failure left where a launch pass already looks for it — the same call the finalize
+        // of a Run the runner stopped makes, so the two cannot drift apart ([AfterRunMeasurements]).
+        // The Stage is not settled here: this pass owes one snapshot for the whole list of Runs it
+        // puts back, and a settlement takes one per Run. A rescued Run keeps that debt for the
+        // launch pass.
+        afterRun(runRowId)
         return true
     }
 
@@ -1522,6 +1491,22 @@ class SessionRepository(
      * Measured over the same accuracy-filtered points the map and the GPX export use, so a fix the
      * run itself refused can't reappear here as a phantom sprint.
      */
+    /**
+     * Measures a Run that has just been finished, whichever door it came in by (#122-style order,
+     * spelled once). See [AfterRunMeasurements] for what the four passes are and why each failure
+     * is left rather than raised.
+     *
+     * Returns the Run's moving time, so a caller that reports the finish can say what was measured.
+     */
+    suspend fun afterRun(runRowId: Long): Long? = afterRunMeasurements.perform(runRowId)
+
+    private val afterRunMeasurements = AfterRunMeasurements(
+        computeMovingTime = { computeMovingTime(it) },
+        scoreAndMarkRecords = { scoreAndMarkRecords(it) },
+        timeRunAgainstSegments = { timeRunAgainstSegments(it) },
+        shapeRun = { shapeRun(it) },
+    )
+
     suspend fun computeMovingTime(sessionId: Long): Long? {
         val session = sessionDao.getSessionById(sessionId) ?: return null
         val points = getTrackPointsForMap(sessionId)
