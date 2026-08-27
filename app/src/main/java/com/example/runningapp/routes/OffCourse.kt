@@ -19,11 +19,13 @@ const val OFF_COURSE_METERS = 50.0
  *
  * Nearer than [OFF_COURSE_METERS], and deliberately: one number for both would have a runner
  * hovering either side of it told they are off and back and off again for the length of a street.
- * Thirty metres is the same distance that arms the alerts in the first place
- * ([hasReachedTheCourse][CourseProgress.hasReachedTheCourse]) — "near enough to be on the course"
- * is one fact and is worth one number.
+ *
+ * The distance itself is [REACHED_THE_COURSE_METERS] and not a second thirty of its own, because
+ * coming back to the course is the same fact as reaching it in the first place — the fact that arms
+ * these alerts ([hasReachedTheCourse][CourseProgress.hasReachedTheCourse]). A name here as well, so
+ * the rule below reads as the rule it is, but one number underneath, so the two cannot part company.
  */
-const val BACK_ON_COURSE_METERS = 30.0
+const val BACK_ON_COURSE_METERS = REACHED_THE_COURSE_METERS
 
 /**
  * How long the runner has to stay past [OFF_COURSE_METERS] before it is spoken.
@@ -104,7 +106,22 @@ class OffCourseWatch(private val course: CourseLine) {
         if (!here.hasReachedTheCourse) return null
 
         if (isOffCourse) {
-            if (here.metersFromCourse > BACK_ON_COURSE_METERS) return null
+            // Against the whole course, not against the stretch of it the runner was last near.
+            //
+            // [CourseLine] reads a fix from around the fix before it, which is right for how far is
+            // left and wrong for this: a runner who has left the course rejoins it wherever the
+            // streets let them, and that can be past the end of the window the last fix opened — a
+            // wrong turn that cuts the corner off a loop comes back on half a kilometre further up.
+            // Read from the old place they would be a hundred metres from the line for the rest of
+            // the Run, told they were off course and never told they were back.
+            //
+            // Only while they are off course, and only for this decision. Nothing is being claimed
+            // about how far along they are while they are away from the line, and the moment they
+            // rejoin the whole-line reading *is* where they are, so it becomes the place the next
+            // fix is read from — the window reopens around the course they are actually back on.
+            val rejoined = course.progressAt(fix.latitude, fix.longitude, previous = null)
+            if (rejoined.metersFromCourse > BACK_ON_COURSE_METERS) return null
+            progress = rejoined
             isOffCourse = false
             strayingSinceMs = null
             return CourseAlert.BACK_ON_COURSE
@@ -120,6 +137,21 @@ class OffCourseWatch(private val course: CourseLine) {
         isOffCourse = true
         strayingSinceMs = null
         return CourseAlert.OFF_COURSE
+    }
+
+    /**
+     * The fixes have stopped keeping up with the runner — a manual Pause, or the end of the Run.
+     *
+     * Only the wait is let go of. Ten seconds of being off the line has to be ten seconds the runner
+     * actually spent out there, and a Pause tears the fixes down entirely: without this, a wait
+     * begun before a five-minute Pause would be over the instant one fix arrived after it, and the
+     * runner would be told they were off course for something they did before they stopped.
+     *
+     * What has been said still stands, and where they were on the course still stands. A runner told
+     * they were off course, who pauses out there and starts again, is still off course.
+     */
+    fun recordingBroke() {
+        strayingSinceMs = null
     }
 
     companion object {

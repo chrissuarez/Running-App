@@ -53,7 +53,7 @@ import com.google.android.gms.location.LocationServices
 import java.util.UUID
 import com.example.runningapp.recording.LocationFix
 import com.example.runningapp.routes.OffCourseWatch
-import com.example.runningapp.routes.RoutePolyline
+import com.example.runningapp.routes.courseToWatchFlow
 import com.example.runningapp.run.Acquisition
 import com.example.runningapp.run.AcquisitionContext
 import com.example.runningapp.run.AcquisitionEffect
@@ -513,17 +513,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      */
     @Volatile private var offCourseWatch: OffCourseWatch? = null
 
-    /**
-     * Following the Run's Route in the library while the Run goes on, so the course being watched is
-     * the course being drawn.
-     *
-     * A Route stays the runner's to edit and to delete mid-Run ([ADR 0014]), and the live map reads
-     * it as a flow for exactly that reason. Watching a snapshot taken at START would have the app
-     * telling a runner they had left a line the map had stopped drawing. Deleting the Route stops
-     * the alerts; editing it starts a new watch on the new line, which arms itself again the next
-     * time the runner comes within thirty metres of it — a course that has changed shape underneath
-     * a Run has no earlier judgement about it worth keeping.
-     */
+    /** Keeps [offCourseWatch] up with the library while the Run goes on — see [courseToWatchFlow]. */
     private var courseWatchJob: Job? = null
 
     private lateinit var database: AppDatabase
@@ -869,7 +859,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             is RunEffect.WithdrawCue -> withdrawCue(effect.tag)
             is RunEffect.Notify -> updateNotification(effect.text)
             RunEffect.StartGps -> startGps()
-            RunEffect.StopGps -> locationTracker?.stop()
+            RunEffect.StopGps -> stopGps()
             RunEffect.ReleaseStrap -> releaseStrapAndTimer()
         }
     }
@@ -1656,20 +1646,33 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         offCourseWatch = null
         if (routeId == null) return
         courseWatchJob = serviceScope.launch {
-            database.routeDao().getRouteFlow(routeId).collect { route ->
-                val course = route?.let { RoutePolyline.decode(it.polyline) }.orEmpty()
-                // Handed over in the order the Run is running it, as everything else that reads a
-                // course is (#56). It makes no difference to how far off the line the runner is,
-                // and handing it over any other way is how two readers of one course come to
-                // disagree about it.
-                offCourseWatch = OffCourseWatch.of(if (reversed) course.reversed() else course)
-            }
+            courseToWatchFlow(database.routeDao(), routeId, reversed).collect { offCourseWatch = it }
         }
+    }
+
+    /**
+     * Stop location updates, and tell the course watch that the fixes have stopped keeping up with
+     * the runner (#58).
+     *
+     * The two go together because a manual Pause comes through here: it tears the GPS stream down
+     * entirely, so the next fix the watch sees can be minutes of standing still later. A ten-second
+     * wait begun before the Pause would be long over by then, and the runner would be told they were
+     * off course for something they did before they stopped. Symmetric with the same moment in
+     * [LocationTracker.stop], which drops the distance baseline for the same reason.
+     */
+    private fun stopGps() {
+        locationTracker?.stop()
+        offCourseWatch?.recordingBroke()
     }
 
     /**
      * A fix has landed on a routed Run: say whatever the course has to say about it, if anything
      * (#58).
+     *
+     * Untagged, unlike the turnaround (#208): there is nothing to take one back for. A cue is
+     * withdrawn when the Run moves on underneath it, and both of these are true the moment they are
+     * made — the runner *is* off the line, or *is* back on it — so the worst a queue can do to one is
+     * speak it a sentence late. The end of a Run sweeps out whatever is still waiting anyway (#220).
      *
      * [CuePriority.NAVIGATION], which is the top of the queue: a runner going the wrong way is going
      * further the wrong way for as long as a split announcement takes to finish. It still never cuts

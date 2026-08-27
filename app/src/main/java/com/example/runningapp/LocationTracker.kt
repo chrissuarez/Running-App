@@ -28,8 +28,12 @@ class LocationTracker(
     onMetricsUpdated: (distanceKm: Double, paceMinPerKm: Double, lastLocation: Location?) -> Unit,
     private val onRawFix: (location: Location, barometerPressureHpa: Float?, startsAfterPause: Boolean) -> Unit = { _, _, _ -> },
     /**
-     * Every fix, with whether the Run was auto-paused when it landed — for whoever is watching the
-     * Run against a course (#58).
+     * Every fix this tracker handles, with whether the Run was auto-paused when it landed — for
+     * whoever is watching the Run against a course (#58).
+     *
+     * "Every fix this tracker handles" and not every fix there is: updates are torn down by a manual
+     * pause and by the end of a Run ([stop]), so nothing arrives here across either. That is the
+     * watcher's to know about, and [stop]'s callers tell it.
      *
      * Separate from [onRawFix], which is the Track being written down and so skips the fixes taken
      * at a standstill. Off-course detection has to *see* those fixes to know to stay quiet about
