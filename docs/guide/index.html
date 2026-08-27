@@ -177,10 +177,10 @@
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
+      <p><strong>A route file with no heights in it no longer takes your climb away.</strong> Import a <span class="mono">.gpx</span> drawn along a course you already keep and the app refreshes that course’s numbers from the new file rather than making a second copy. If the new file carries no heights, it used to write your climb away to nothing &mdash; a course with 43 m of climb became &ldquo;no elevation recorded&rdquo;, and the only way back was finding the first file again. Now the climb stays, and the message tells you: <em>&ldquo;Its distance now comes from this file. The file carries no heights, so its climb is unchanged.&rdquo;</em> See <em>Importing the same course again</em> in <a href="#routes">routes</a>.</p>
       <p><strong>The app tells you when you have come off your route, and when you are back on it.</strong> On a run following a route, stray more than <strong>50 m</strong> from the course and stay there for <strong>10 seconds</strong> and it says <em>&ldquo;Off course.&rdquo;</em> Come back within <strong>30 m</strong> of it and it says <em>&ldquo;Back on course.&rdquo;</em> Two sentences, and nothing in between &mdash; a detour you meant to take costs you exactly two, however long you are away. It never tells you which way to turn. It stays quiet until you have actually reached the course, so the walk from your front door is silent however far off the line it is. See <em>Off course</em> in <a href="#routes">routes</a>.</p>
       <p><strong>The live map tells you how much of the course is left.</strong> On a run along a route, the bottom-right corner of the map card now counts the course down &mdash; <em>5.54 km to go</em>, and plain metres once you are inside the last kilometre. It is measured from wherever you actually are to the nearest point on the course, and on from there to the end. If you told the app you were running the course <strong>backwards</strong>, it counts down from the end you actually set off at. Stray off the course and it keeps counting, measuring to the end from the nearest bit of course to you. See <em>Running one</em> in <a href="#routes">routes</a>.</p>
       <p><strong>Somebody always saves a run's first seconds.</strong> The app holds the seconds it counts at the very start of a run until the run has somewhere to put them. Two parts of the app can hand them over, and only one of them may &mdash; both doing it would write every second down twice. The app used to choose by looking at whether the run's own clock was still busy: if it was, the shutting-down part stood aside and left the job to it. On a busy phone that clock could be busy with something else entirely, and by then it had been shut anyway, so it never picked the job up &mdash; the seconds went and the run showed 00:00. Now whichever of the two is about to do it claims the job first and the other is told it has been taken, so exactly one of them always hands the seconds over. This does not make 00:00 impossible: it is still what you see when the app is shut down too fast, or is left too busy, to finish tidying up. The note in that chapter says what to do. See <em>If something goes wrong</em> in <a href="#during">during the run</a>.</p>
-      <p><strong>A run you stop in its first second is saved, instead of vanishing.</strong> Writing a run down takes the app a fraction of a second. Stop inside that fraction &mdash; you set off and changed your mind &mdash; and if the app was shut down in the same moment, the run used to disappear with no message at all. It now keeps the seconds and the heart rate it had already counted and finishes the run with them, so it turns up in your history like any other. One can still slip through if the app is shut down too quickly even for that; the note in that chapter says what it looks like and what to do. See <em>If something goes wrong</em> in <a href="#during">during the run</a>.</p>
     </div>
   </header>
 
@@ -647,6 +647,19 @@
       </div>
 
       <div class="e">
+        <h3>Importing the same course again</h3>
+        <p>Import a <span class="mono">.gpx</span> file drawn along a course you already keep and you get no second copy. The line is what the app knows a course by, so it recognises it and tells you which of three things happened:</p>
+        <ul>
+          <li><strong>Nothing was added.</strong> The file measures the course exactly as your library already has it. <em>&ldquo;That route is already in your routes, as &lsquo;Willingdon Circle&rsquo;. Nothing was added.&rdquo;</em></li>
+          <li><strong>Its numbers were refreshed.</strong> The file measures the course differently, so the distance and climb you keep now come from this file. <em>&ldquo;&lsquo;Willingdon Circle&rsquo; is already in your routes. Its distance and climb now come from this file.&rdquo;</em></li>
+          <li><strong>Its distance was refreshed, and its climb kept.</strong> Same as above, but the file carries no heights. <em>&ldquo;&hellip; Its distance now comes from this file. The file carries no heights, so its climb is unchanged.&rdquo;</em></li>
+        </ul>
+        <p class="note"><b>A file that says nothing about climb cannot take your climb away.</b> Plenty of GPX files carry no heights at all &mdash; a course traced on a map, an export that dropped them. Re-importing one of those over a course that <em>does</em> have a climb used to wipe the climb out and leave &ldquo;no elevation recorded&rdquo;, with no way back but finding the first file again. It now keeps the climb, and the message says so plainly rather than staying quiet about it.</p>
+        <p class="note"><b>Your name for it is never overwritten.</b> Rename a course and re-import its file, and the name you gave it stands. Only the distance and the climb are ever refreshed.</p>
+        <div class="where"><b>Where</b> Any app&rsquo;s share sheet on a <span class="mono">.gpx</span> file &rarr; Running App</div>
+      </div>
+
+      <div class="e">
         <h3>Keeping a run as a route</h3>
         <p>On a finished run's page, under the map, <strong>Save as route</strong> keeps the ground that run went over as a course you can keep and rename. The run itself is not touched and nothing links the two afterwards — delete either and the other is unharmed.</p>
         <p>You are told which of three things happened, in words:</p>
@@ -792,7 +805,7 @@
       <dd>The intervals and target zone the AI coach wrote for your next Long run. Written only after you finish a Long run, and it stands on the runs it was shown.</dd>
 
       <dt>Route</dt>
-      <dd>A course in your library: a line to follow and what following it costs. A plan, not a recording — it carries no date, no heart rate and no times, and it may be run any number of times or never. It gets in from a GPX file or off a run you have already been for. Deleting one touches no run.</dd>
+      <dd>A course in your library: a line to follow and what following it costs. A plan, not a recording — it carries no date, no heart rate and no times, and it may be run any number of times or never. It gets in from a GPX file or off a run you have already been for. The app knows one by its <em>line</em>, so a second file drawn along the same course refreshes the one you have rather than making a copy. Deleting one touches no run.</dd>
 
       <dt>Segment</dt>
       <dd>A stretch of ground you marked and named. Every run that crosses it is timed. Part of a run, where a <strong>route</strong> is a whole course.</dd>
@@ -813,7 +826,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>27 August 2026</strong>, when the app started telling you out loud that you had come off your route. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>27 August 2026</strong>, when a route file with no heights in it stopped taking your climb away. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
