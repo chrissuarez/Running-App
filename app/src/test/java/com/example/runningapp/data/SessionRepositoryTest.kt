@@ -7793,6 +7793,87 @@ class SessionRepositoryTest {
         verify(mockDao, never()).getSessionIdsMissingEffort()
     }
 
+    // --- The debt these two passes owe the rest of history (#349) ---
+
+    private fun repositoryOwing(debts: HistoryDebtDao, samples: SampleDao? = null) = SessionRepository(
+        sessionDao = mockDao,
+        sampleDao = samples,
+        historyDebtDao = debts,
+        settingsRepository = mockSettingsRepo
+    )
+
+    @Test
+    fun `the effort backfill lowers its debt once it has been through history`() = runTest {
+        val debts: HistoryDebtDao = mock()
+        debts.stub { onBlocking { owes(any()) }.thenReturn(true) }
+        val mockSampleDao: SampleDao = mock()
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(historyMaxHr = 181)))
+        whenever(mockDao.getSessionIdsMissingEffort()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(List(60) { 130 })
+
+        repositoryOwing(debts, mockSampleDao).backfillEffortScores()
+
+        // After the walk, not before it: a process reclaimed mid-pass has to come back owing.
+        inOrder(mockDao, debts) {
+            verify(mockDao).setEffortScore(7L, 3)
+            verify(debts).settle(HistoryPass.EFFORT_SCORES)
+        }
+    }
+
+    @Test
+    fun `a run that can never be scored does not leave the debt standing for ever`() = runTest {
+        // A Run that recorded no beats stays on the work list for good. Left owed over it, the app
+        // would say history was still being measured for the life of the install.
+        val debts: HistoryDebtDao = mock()
+        debts.stub { onBlocking { owes(any()) }.thenReturn(true) }
+        val mockSampleDao: SampleDao = mock()
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(historyMaxHr = 181)))
+        whenever(mockDao.getSessionIdsMissingEffort()).thenReturn(listOf(9L))
+        whenever(mockSampleDao.getRawBpmsForSession(9L)).thenReturn(emptyList())
+
+        repositoryOwing(debts, mockSampleDao).backfillEffortScores()
+
+        verify(debts).settle(HistoryPass.EFFORT_SCORES)
+    }
+
+    @Test
+    fun `a pass that was never owed anything writes nothing`() = runTest {
+        // A delete of a row that is not there would still wake every reader of
+        // historyBeingMeasuredFlow, at every launch, for the life of the app.
+        val debts: HistoryDebtDao = mock()
+        debts.stub { onBlocking { owes(any()) }.thenReturn(false) }
+        whenever(mockDao.getSessionIdsMissingMovingTime()).thenReturn(emptyList())
+
+        repositoryOwing(debts).backfillMovingTime()
+
+        verify(debts, never()).settle(any())
+    }
+
+    @Test
+    fun `the moving-time backfill lowers its debt even with nothing left to measure`() = runTest {
+        // The debt is about history, not about this pass's work: whether this launch measured the
+        // last of it or a previous one did, there is nothing outstanding now.
+        val debts: HistoryDebtDao = mock()
+        debts.stub { onBlocking { owes(any()) }.thenReturn(true) }
+        whenever(mockDao.getSessionIdsMissingMovingTime()).thenReturn(emptyList())
+
+        repositoryOwing(debts).backfillMovingTime()
+
+        verify(debts).settle(HistoryPass.MOVING_TIME)
+    }
+
+    @Test
+    fun `a backfill that could not run at all leaves its debt standing`() = runTest {
+        // No samples wired means the pass never reached history, so nothing has been measured and
+        // the debt must survive to the next launch.
+        val debts: HistoryDebtDao = mock()
+        debts.stub { onBlocking { owes(any()) }.thenReturn(true) }
+
+        repositoryOwing(debts).backfillEffortScores()
+
+        verify(debts, never()).settle(any())
+    }
+
     private fun fiveKFix(latitude: Double, timestampMillis: Long) = TrackPoint(
         sessionId = 7L,
         latitude = latitude,

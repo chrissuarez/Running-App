@@ -581,6 +581,17 @@ class SessionRepository(
      */
     private val walkMarkDebtDao: WalkMarkDebtDao? = null,
     /**
+     * Where a launch pass that owes the whole of history a re-measuring is written down (#349) — see
+     * [HistoryDebtRow].
+     *
+     * Null wherever nothing reads the debt: tests that drive the DAOs directly, and the archive's
+     * read-only container. Unwired, the two backfills behave exactly as they did before this shipped
+     * — they measure what they find and say nothing about it — and
+     * [historyBeingMeasuredFlow] folds in a plain false for this arm, which is the reading it
+     * has always had.
+     */
+    private val historyDebtDao: HistoryDebtDao? = null,
+    /**
      * The runner's library of courses, read for one thing only: drawing the course a live Run set
      * out to follow on its map (#56).
      *
@@ -889,19 +900,25 @@ class SessionRepository(
             ?: settingsRepository?.userSettingsFlow?.first()?.historyHrProfile
             ?: return@withLock
         val sessionIds = sessionDao.getSessionIdsMissingEffort()
-        if (sessionIds.isEmpty()) return@withLock
-        var scored = 0
-        sessionIds.forEach { sessionId ->
-            try {
-                val score = effortScoreOf(samples.getRawBpmsForSession(sessionId), against)
-                    ?: return@forEach
-                sessionDao.setEffortScore(sessionId, score)
-                scored++
-            } catch (e: Exception) {
-                Log.w("Effort", "Could not score run $sessionId; leaving it for next launch", e)
+        if (sessionIds.isNotEmpty()) {
+            var scored = 0
+            sessionIds.forEach { sessionId ->
+                try {
+                    val score = effortScoreOf(samples.getRawBpmsForSession(sessionId), against)
+                        ?: return@forEach
+                    sessionDao.setEffortScore(sessionId, score)
+                    scored++
+                } catch (e: Exception) {
+                    Log.w("Effort", "Could not score run $sessionId; leaving it for next launch", e)
+                }
             }
+            Log.d("Effort", "Scored $scored of ${sessionIds.size} unscored run(s)")
         }
-        Log.d("Effort", "Scored $scored of ${sessionIds.size} unscored run(s)")
+        // After the walk, for [settleHistoryDebt]'s reasons (#349) — and after it whether or not
+        // every Run on the list could be scored. A Run that recorded no beats has no Score to
+        // compute and stays on that list for ever; leaving the debt raised over it would say
+        // history was still being measured for the life of the install.
+        settleHistoryDebt(HistoryPass.EFFORT_SCORES)
     }
 
     /**
@@ -1472,9 +1489,31 @@ class SessionRepository(
      */
     suspend fun backfillMovingTime() {
         val sessionIds = sessionDao.getSessionIdsMissingMovingTime()
-        if (sessionIds.isEmpty()) return
-        val measured = sessionIds.count { computeMovingTime(it) != null }
-        Log.d("MovingTime", "Backfilled moving time for $measured of ${sessionIds.size} run(s)")
+        if (sessionIds.isNotEmpty()) {
+            val measured = sessionIds.count { computeMovingTime(it) != null }
+            Log.d("MovingTime", "Backfilled moving time for $measured of ${sessionIds.size} run(s)")
+        }
+        // Lowered after the walk and never before it, so a process reclaimed mid-pass comes back
+        // owing the same debt (#349). An empty work list lowers it too: there is nothing left to
+        // measure, whether this pass measured it or a previous one did.
+        settleHistoryDebt(HistoryPass.MOVING_TIME)
+    }
+
+    /**
+     * Lowers a launch pass's history-wide debt, if it stood — see [HistoryDebtRow] (#349).
+     *
+     * Only where it stood, because a pass that was never owed anything has nothing to lower and a
+     * delete written anyway would wake every reader of [historyBeingMeasuredFlow] at every launch
+     * for the life of the app. Nothing here ever raises one: a debt of this kind is raised by the
+     * migration that makes history half-measured, which is the only moment that can honestly speak
+     * for it.
+     */
+    private suspend fun settleHistoryDebt(pass: String) {
+        val debts = historyDebtDao ?: return
+        if (debts.owes(pass)) {
+            debts.settle(pass)
+            Log.d("HistoryDebt", "Pass '$pass' has been through history; debt settled")
+        }
     }
 
     /**
@@ -2999,11 +3038,16 @@ class SessionRepository(
      *   — so this Run can be handed efforts and medals it did not have when the walk reaches it;
      * - the shapes ([SessionDao.anyRunShapeOwedFlow]), paid by
      *   [com.example.runningapp.AppContainer.takeRunShapesOnce], where a Run's group is every Run
-     *   shaped like it, so a shape taken later moves the count of times the route has been run.
+     *   shaped like it, so a shape taken later moves the count of times the route has been run;
+     * - the moving-time backfill (#163) and the Effort Score backfill (#62), which rewrite a Run's
+     *   pace, moving time and Score, and which said nothing at all until #349 gave them the one
+     *   shared way of saying it ([HistoryDebtDao.anyHistoryDebtOwedFlow]).
      *
      * All of these passes run on their own, off any screen's lifetime, which is why a page opened
      * moments after an upgrade can find its own Run marked and history not. A debt of this kind
-     * added later belongs here, in this list, rather than in another arm of a gate somewhere.
+     * added later belongs here, in this list, rather than in another arm of a gate somewhere — and
+     * a pass that has no debt to name should take [HistoryDebtRow]'s rather than invent a sixth
+     * shape, in which case this list does not change at all.
      */
     fun historyBeingMeasuredFlow(): Flow<Boolean> = combine(
         recordsBeingMeasuredFlow(),
@@ -3011,9 +3055,8 @@ class SessionRepository(
         sessionDao.anySegmentTimingOwedFlow(),
         segmentDao?.anySegmentHistoryWalkOwedFlow() ?: flowOf(false),
         sessionDao.anyRunShapeOwedFlow(),
-    ) { fillOwed, scoringOwed, segmentWalkOwed, segmentHistoryWalkOwed, shapesOwed ->
-        fillOwed || scoringOwed || segmentWalkOwed || segmentHistoryWalkOwed || shapesOwed
-    }.distinctUntilChanged()
+        historyDebtDao?.anyHistoryDebtOwedFlow() ?: flowOf(false),
+    ) { owed -> owed.any { it } }.distinctUntilChanged()
 
     /**
      * Whether this Run has been measured against everything its summary would describe (#76).

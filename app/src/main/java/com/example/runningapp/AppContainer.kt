@@ -187,6 +187,9 @@ class AppContainer(context: Context) {
             // Where a Run whose settlement could not write its Walk mark is written down, so the
             // next launch puts the mark back (#371). Without it such a Run says "run" for ever.
             walkMarkDebtDao = database.walkMarkDebtDao(),
+            // Where a launch pass that still owes the whole of history a re-measuring is written
+            // down, so a Run Summary is not written out of numbers that are about to change (#349).
+            historyDebtDao = database.historyDebtDao(),
             // The runner's courses, read only so a live Run's map can draw the one it set out to
             // follow (#56).
             routeDao = database.routeDao(),
