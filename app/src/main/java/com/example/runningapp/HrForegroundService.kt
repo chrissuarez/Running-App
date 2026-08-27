@@ -51,6 +51,9 @@ import kotlin.jvm.Volatile
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import java.util.UUID
+import com.example.runningapp.recording.LocationFix
+import com.example.runningapp.routes.OffCourseWatch
+import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.run.Acquisition
 import com.example.runningapp.run.AcquisitionContext
 import com.example.runningapp.run.AcquisitionEffect
@@ -500,6 +503,29 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var pickedRouteId: Long = NO_ROUTE_ID
     @Volatile private var pickedRouteReversed: Boolean = false
 
+    /**
+     * The Run's course, watched (#58) — null for a Run following none, and for a routed Run in the
+     * moment between START and the course being read out of the library.
+     *
+     * Volatile because the fixes arrive on the tracker's own thread and this is replaced from a
+     * coroutine. Nothing here decides anything: [OffCourseWatch] does, and this file speaks what it
+     * says.
+     */
+    @Volatile private var offCourseWatch: OffCourseWatch? = null
+
+    /**
+     * Following the Run's Route in the library while the Run goes on, so the course being watched is
+     * the course being drawn.
+     *
+     * A Route stays the runner's to edit and to delete mid-Run ([ADR 0014]), and the live map reads
+     * it as a flow for exactly that reason. Watching a snapshot taken at START would have the app
+     * telling a runner they had left a line the map had stopped drawing. Deleting the Route stops
+     * the alerts; editing it starts a new watch on the new line, which arms itself again the next
+     * time the runner comes within thirty metres of it — a course that has changed shape underneath
+     * a Run has no earlier judgement about it worth keeping.
+     */
+    private var courseWatchJob: Job? = null
+
     private lateinit var database: AppDatabase
 
     /**
@@ -860,6 +886,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // needs zeroed but does not own can be zeroed: GPS's distance and pace, and the Strap's
         // last reading and the clock that ages it.
         locationTracker?.beginRun()
+        // And the one place the course this Run is watched against is taken up, for the same reason
+        // (#58). Ended and cleared first and unconditionally: an unrouted Run following a routed one
+        // must not still be measured against yesterday's course.
+        watchTheCourse(effect.ranAlongRouteId, effect.ranAlongRouteReversed)
         // Clear the HR-freshness clock so age is measured within this Run. A strapless Run started
         // after one that had HR would otherwise inherit a stale timestamp, read as a huge
         // lastHrAgeSeconds, and trip the screen's sensor-lost warning on a Run deliberately started
@@ -978,6 +1008,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * and the start position, which are GPS's.
      */
     private fun finalizeRun(effect: RunEffect.FinalizeRun) {
+        // The Run is over, so there is no longer a runner to be off anything (#58). Ended here as
+        // well as at the next Run's start, so a phone sitting idle after a Run is not still holding
+        // a query open on the library.
+        watchTheCourse(routeId = null, reversed = false)
         val runRowId = effect.runRowId
         val totals = effect.totals
         val distanceKm = locationTracker?.getDistanceKm() ?: 0.0
@@ -1324,6 +1358,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             isAutoPauseEnabled = { currentSettings.autoPauseEnabled },
             onAutoPause = { postRunEvent(RunEvent.AutoPauseRequested(System.currentTimeMillis())) },
             onAutoResume = { postRunEvent(RunEvent.AutoResumeRequested(System.currentTimeMillis())) },
+            onFixForCourse = ::onFixForCourse,
             onRawFix = { location, barometerPressureHpa, startsAfterPause ->
                 // The Run's row id off its published state: the tracker's thread has no business
                 // reading the Run, and the Run has no business knowing what a fix is.
@@ -1599,6 +1634,53 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     /** The Run's [RunEffect.Speak], under the name the Run gave the cue, if it gave one. */
     private fun speakCue(effect: RunEffect.Speak) =
         enqueueCue(effect.text, effect.priority, effect.tag)
+
+    /**
+     * Begin watching this Run against the course it set out on, or stop watching entirely when it
+     * set out on none (#58).
+     *
+     * Not the [Run]'s business, deliberately. The rulebook has no idea what a GPS fix is — it starts
+     * and stops location updates and never reads one (ADR 0002) — and a course is a line the fixes
+     * are measured against. What the Run does own is the fact that this Run was following a Route at
+     * all, which is why the id arrives here on the Run's own effect rather than off
+     * [pickedRouteId]: by the time the row is being made, a second tap could already have moved the
+     * pick, and the course watched has to be the course written on the row.
+     *
+     * There is a window between START and the first course arriving, and nothing is done about it:
+     * the alerts do not arm until the runner has been on the course anyway, and a Run that begins
+     * standing on the start line has the whole of the walk to it in hand.
+     */
+    private fun watchTheCourse(routeId: Long?, reversed: Boolean) {
+        courseWatchJob?.cancel()
+        courseWatchJob = null
+        offCourseWatch = null
+        if (routeId == null) return
+        courseWatchJob = serviceScope.launch {
+            database.routeDao().getRouteFlow(routeId).collect { route ->
+                val course = route?.let { RoutePolyline.decode(it.polyline) }.orEmpty()
+                // Handed over in the order the Run is running it, as everything else that reads a
+                // course is (#56). It makes no difference to how far off the line the runner is,
+                // and handing it over any other way is how two readers of one course come to
+                // disagree about it.
+                offCourseWatch = OffCourseWatch.of(if (reversed) course.reversed() else course)
+            }
+        }
+    }
+
+    /**
+     * A fix has landed on a routed Run: say whatever the course has to say about it, if anything
+     * (#58).
+     *
+     * [CuePriority.NAVIGATION], which is the top of the queue: a runner going the wrong way is going
+     * further the wrong way for as long as a split announcement takes to finish. It still never cuts
+     * one off mid-sentence — nothing in this app does (#53) — it goes to the front of what is
+     * waiting.
+     */
+    private fun onFixForCourse(fix: LocationFix, autoPaused: Boolean) {
+        val alert = offCourseWatch?.onFix(fix, System.currentTimeMillis(), autoPaused) ?: return
+        Log.d(TAG, "Course alert: $alert")
+        enqueueCue(alert.spoken, CuePriority.NAVIGATION)
+    }
 
     /**
      * Take back a cue that has not been spoken: whatever it was going to say is no longer true
