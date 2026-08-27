@@ -67,6 +67,7 @@ import com.example.runningapp.run.RowSettlement
 import com.example.runningapp.run.RunAtLastDispatch
 import com.example.runningapp.run.settlementOfRowAwaited
 import com.example.runningapp.run.RunLostToTeardown
+import com.example.runningapp.run.RunRowSettlementClaim
 import com.example.runningapp.run.beginARun
 import com.example.runningapp.run.runLostToTeardown
 import java.util.concurrent.ConcurrentHashMap
@@ -315,9 +316,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * the decision and the registration of the work as one step under one monitor
      * ([TeardownGate.registerWorkForTheRun]), and flips the flag under that same monitor
      * ([TeardownGate.beginTeardown]): afterwards a producer has either already registered, where
-     * the drains see it, or is refused. This property is the plain read, kept for the refusals that
-     * only want to turn a piece of work away before it is begun — [dispatchRunEvent] and the entry
-     * check in [finalizeRun] — where a stale answer costs at most work a later refusal discards.
+     * the drains see it, or is refused. This property is the plain read, kept for the one refusal
+     * that only wants to turn a piece of work away before it is begun — [dispatchRunEvent] — where a
+     * stale answer costs at most work a later refusal discards.
      *
      * **What it must not refuse is the finish already under way.** A background STOP finalizes and
      * *then* takes the service down, so this teardown is running while the Run's own last writes are
@@ -325,7 +326,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * ([endRunAwaitingItsRow]) is a whole Run's seconds arriving after this is set. A gate that
      * dropped those would cost a real Run its recording to fix a rescue's rounding. So the writes
      * that belong to a finish already under way say so where they are launched
-     * (`deliveringHeldWork`), rather than the gate trying to work out who is calling it.
+     * (`deliveringHeldWork`, `finishingTheRun`), rather than the gate trying to work out who is
+     * calling it.
+     *
+     * The Run's own finalize is in that category and was for a while refused anyway, on the
+     * reasoning that the teardown's rescue would write the row in its place — which is true only of
+     * a Run the teardown finds still recording, and a background STOP is not one (#382). The row
+     * then had no writer at all. Keeping one writer per row is a claim both settlers race for
+     * ([RunRowSettlementClaim]), not something this flag decides.
      *
      * Separate from [destroyed], which is a narrower fact about one resource: that one says the GATT
      * sweep has been made, and is read by a connect deciding whether to close its own handle.
@@ -449,6 +457,29 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * from the last Run would have this one's buffer refused delivery by both sides.
      */
     private val heldWorkClaim = AtomicBoolean(false)
+
+    /**
+     * The claim on settling this Run's row, taken by whichever of its two settlers gets there first
+     * (#382).
+     *
+     * The rule, what winning and losing mean, and why a claim rather than a refusal, are stated once
+     * on [RunRowSettlementClaim]. This is where the two settlers meet it: [finalizeRun] takes it as
+     * the Run's own finalize is performed, and the teardown takes it in each of the two places it
+     * would otherwise write the row itself ([endRunLostToTeardown], [endRunAwaitingItsRow]).
+     *
+     * It is not taken in [runTakenByThisTeardown] alongside the held-work claim, though that is where
+     * it would sit most tidily, and the reason is the defect that produced it. A teardown that took
+     * this claim while reading the Run would take it even when the reading turns out to be *no Run
+     * to settle* — which is exactly what an ordinary background STOP looks like from here, the Run
+     * already published as STOPPED. The Run's own finalize, still on its way down the session
+     * thread, would then find the claim gone and stand down, and the row nobody had any intention of
+     * settling would be settled by nobody. The claim is taken where the row is about to be written
+     * and nowhere else.
+     *
+     * Reset as each Run is started, in the same place and for the same reason as [insertedRunRowId]
+     * and [heldWorkClaim].
+     */
+    private val rowSettlementClaim = RunRowSettlementClaim()
 
     /**
      * What this teardown found of the Run, and whether the Run's held work is now its to deliver
@@ -745,7 +776,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // session thread was already running when its bounded join ran out
         // ([SESSION_THREAD_JOIN_TIMEOUT_MS]), and what it would do is exactly what the teardown is
         // about to do from the other side: a STOP dispatching here would launch a second finalize
-        // for the row the rescue is rebuilding, and the totals would go to whichever landed last.
+        // for the row the rescue is rebuilding. Which of those two writes the row is no longer left
+        // to whichever lands last — they race for a claim (#382) — but a dispatch begun after the
+        // gate shut would still republish and re-journal a Run the teardown has already accounted
+        // for, and cost a rebuilt row the Run's own totals for no reason. Refused here, that
+        // question never arises.
         //
         // Before the claim, because the claim is a compare-and-set and losing it is a decision. A
         // refusal that spent the claim first would take the buffer from the teardown and then not
@@ -796,6 +831,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // claim left standing from the last Run would leave this one's held work refused by
             // both sides (#360).
             heldWorkClaim.set(false)
+            // And its row is nobody's yet either, for the same reason again: a settlement claim
+            // left standing from the last Run would have this one's row written by neither its own
+            // finalize nor a teardown's rescue, both standing down for the other (#382).
+            rowSettlementClaim.releaseForANewRun()
         }
         publishRun(runState, toDispatch.nowMillis)
         // Between the publish and the effects: the journal describes what is now true, and it must
@@ -925,7 +964,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun perform(effect: RunEffect, deliveringHeldWork: Boolean = false) {
         when (effect) {
             is RunEffect.CreateRunRow -> createRunRow(effect)
-            is RunEffect.FinalizeRun -> finalizeRun(effect, deliveringHeldWork)
+            is RunEffect.FinalizeRun -> finalizeRun(effect)
             is RunEffect.SaveHrSample -> saveHrSample(effect, deliveringHeldWork)
             is RunEffect.SaveIntervalStat -> saveIntervalStat(effect, deliveringHeldWork)
             is RunEffect.SavePause -> savePause(effect, deliveringHeldWork)
@@ -1054,7 +1093,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * The Run's insert does not come through here, deliberately. It is the one write whose refusal
      * would cost a Run its existence rather than its last second, and the teardown already has an
      * answer for a Run whose row is still on its way ([endRunAwaitingItsRow]). The finalize does not
-     * either: it is the finish, not work added to the Run, and it runs on [finalizationScope].
+     * either: it is the finish, not work added to the Run, and it runs on [finalizationScope]. It
+     * still registers with the same gate ([TeardownGate.registerWorkForTheRun], `finishingTheRun`) so
+     * that the drains can see it — it is simply never refused, which is a distinction #382 was filed
+     * to restore.
      */
     private fun recordForTheRun(
         what: String,
@@ -1123,25 +1165,36 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * patching it. What is still read from the outside is what the Run never had: distance, pace
      * and the start position, which are GPS's.
      */
-    private fun finalizeRun(effect: RunEffect.FinalizeRun, deliveringHeldWork: Boolean) {
-        // Refused once the teardown has begun (#315), and refused *before* anything below is
-        // touched. The dispatch that emits this can straddle the gate — a session-thread message
-        // already inside [dispatchRunEvent] when the gate closed runs to its end, and it can outlive
-        // the bounded join that follows — so a finalize launched here can start after the drains in
-        // [settleAfterTeardown] have had their empty pass. That is the ticket's own named harm: the
-        // rescue and the Run's own finalize both writing the row, and the totals going to whichever
-        // lands last. Refused, there is exactly one writer, and a Run whose finalize this turns away
-        // is left with an unfinished row — which the launch rescue pass finishes (#192), the same
-        // residue every other refusal in this teardown leaves.
+    private fun finalizeRun(effect: RunEffect.FinalizeRun) {
+        // Taken here, and this is the whole of the mutual exclusion between this write and the
+        // teardown's rescue of the same row (#315, #382).
         //
-        // The teardown's own delivery of a held buffer goes through, for the reason it does
-        // everywhere else: those seconds were recorded before any of this began, and this teardown
-        // holds the claim on them, so nothing else can be writing them.
-        if (!runMayBeGivenWork(teardownBegun, deliveringHeldWork)) {
+        // The dispatch that emits this can straddle the teardown gate — a session-thread message
+        // already inside [dispatchRunEvent] when the gate closed runs to its end, and it can outlive
+        // the bounded join that follows — so this finalize can start after the drains in
+        // [settleAfterTeardown] have had their empty pass. That is #315's named harm: the rescue and
+        // the Run's own finalize both writing the row, with the totals going to whichever lands
+        // last.
+        //
+        // #315's first answer was to refuse the finalize outright once the teardown had begun, and
+        // that answer lost Runs. An ordinary background STOP publishes STOPPED before it performs
+        // its effects; the promotion follower reads that publish on main and demotes, `stopSelf()`
+        // and all; so `onDestroy` can shut the gate while this dispatch is still walking its effects
+        // — and the teardown that follows reads a Run that is no longer recording, which is not a
+        // Run it settles anything for ([runLostToTeardown] answers null for STOPPED). Refused here,
+        // the Run had *no* writer: an `endTime = 0` row, gone from history, the export and the coach
+        // until a later launch's pass happened to rescue it (#192). That is not residue on a rare
+        // path — it is what every background STOP would do.
+        //
+        // So the exclusion is a claim rather than a refusal, and this is the settler that takes it
+        // first: synchronously, on the session thread, before the launch below, which is what makes
+        // the ordinary case end with the Run keeping the totals it banked as it ran. A finalize that
+        // finds the claim gone lost the race to a teardown that has already read the record and
+        // written the row, so it stands down rather than writing a second answer over the first.
+        if (!rowSettlementClaim.takenHere()) {
             Log.w(
                 TAG,
-                "The service is being torn down; not finalizing run ${effect.runRowId} here. " +
-                    "The teardown settles it, or the launch pass does."
+                "A teardown settled run ${effect.runRowId}'s row already; not finalizing it here"
             )
             return
         }
@@ -1163,17 +1216,22 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // activity unbound) reaches stopSelf() -> onDestroy -> serviceScope.cancel() on the next
         // main-loop message, and a launch not yet dequeued dies before its body — NonCancellable
         // cannot protect a coroutine that never starts.
-        // Asked again here, and this time inseparably from the launch (#315). The check at the top
-        // of this method refuses a finalize before anything below it is touched, which is what
-        // keeps a doomed finalize from doing work nobody will read; it cannot make the launch
-        // atomic, because everything between it and this line is time in which the teardown can
-        // begin, drain this very scope and settle the row. Registered under the gate's monitor,
-        // this finalize is either one of [finalizationScope]'s children — which
-        // [settleAfterTeardown] drains before it rescues anything — or it does not run at all, and
-        // the row it would have written is left unfinished for the launch pass (#192). The one
-        // thing that still goes past is the teardown's own delivery of a held buffer, which holds
-        // the claim on those seconds.
-        val finalizing = teardownGate.registerWorkForTheRun(deliveringHeldWork) {
+        // Registered through the gate, and never refused by it (#315, #382). The two halves of that
+        // are separate on purpose and neither is incidental.
+        //
+        // *Never refused*, because the finalize is the finish already under way — the category the
+        // gate is documented never to turn away — and refusing it is what lost the Run above. Which
+        // of the two settlers may write the row is answered by the claim at the top of this method,
+        // not here; the gate is about new work being added to a Run, and a finish adds nothing.
+        //
+        // *Registered all the same*, because permission is not what this registration buys: the
+        // monitor is what makes this launch a child of [finalizationScope] before
+        // [TeardownGate.beginTeardown] can return. [settleAfterTeardown] drains that scope before it
+        // reads anything back, so a finalize registered here is one the teardown waits out; a
+        // finalize launched outside the gate could appear on the scope after the drains' empty pass,
+        // and the teardown would then read a record still being written — which is the very thing
+        // #315's atomic registration exists to stop.
+        val finalizing = teardownGate.registerWorkForTheRun(finishingTheRun = true) {
             finalizationScope.launch {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
                     // Let the Run's still-queued sample and track-point inserts land before the row is
@@ -1296,11 +1354,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 }
             }
         }
+        // Never false, and checked because of what it would mean if it ever were. The finish is the
+        // one thing the gate does not refuse (#382), and by this line the settlement claim has
+        // already been spent — so a registration that *did* refuse would leave the row claimed by a
+        // writer that never ran, and no teardown could settle it either. That is the lost Run this
+        // whole change is about, and it would be silent. An editor who puts the finalize back behind
+        // the rule finds this line rather than an empty history.
         if (!finalizing) {
-            Log.w(
+            Log.e(
                 TAG,
-                "The service is being torn down; not finalizing run ${effect.runRowId} here. " +
-                    "The teardown settles it, or the launch pass does."
+                "Run ${effect.runRowId}'s finalize was refused registration; its row is claimed by " +
+                    "a write that will not happen. Only the launch pass can finish it now."
             )
         }
     }
@@ -1935,8 +1999,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 @Suppress("DEPRECATION")
                 stopForeground(true)
             }
-            // Safe mid-finalize: the activity's binding keeps the service alive while the app is
-            // on screen, and the finalize coroutine runs on a scope that survives destruction.
+            // Safe mid-finalize, and it takes three things to be so. The activity's binding keeps
+            // the service alive while the app is on screen; the finalize coroutine runs on a scope
+            // that survives destruction; and — the one this call actually races — the teardown that
+            // follows does not refuse the finalize and does not settle the row behind it.
+            //
+            // That last one is not free, and it is the whole of #382. A background STOP reaches here
+            // from the promotion follower, which runs on main off the *publish*, while the session
+            // thread is still walking the same STOP's effects. So `onDestroy` can begin before the
+            // finalize does. While the teardown refused a finalize it found in that window, this
+            // line took the Run with it: nobody wrote the row. What makes it safe again is that the
+            // finalize is never refused ([TeardownGate]) and that the two possible writers of the
+            // row race for a claim rather than one being turned away ([RunRowSettlementClaim]).
             stopSelf()
         }
 
@@ -2642,6 +2716,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * waiting for the same thing.
      */
     private fun endRunLostToTeardown(runRowId: Long) {
+        // The claim, taken before the runner is told anything and before a word is written (#382).
+        //
+        // The Run read here is one this teardown found still recording, and that reading can be a
+        // beat old: a STOP dispatch publishes its state before it performs its effects, so the Run
+        // whose snapshot says RUNNING may already have a finalize of its own walking down the
+        // session thread with the totals it banked as it ran. Both of us writing this row is #315's
+        // named harm. The claim decides it once, and losing it means the better answer is already on
+        // its way — so nothing is rescued and nothing is said, exactly as for a Run whose runner
+        // stopped it before its row landed ([RunLostToTeardown.AwaitingItsRow.runnerStopped]).
+        if (!rowSettlementClaim.takenHere()) {
+            Log.w(TAG, "Run $runRowId's own finalize took its row; leaving it to that write")
+            return
+        }
         Log.w(TAG, "Service destroyed with run $runRowId still recording; finishing it from its record")
         notifyRunLostToTeardown(recordedSomething = true)
         settleAfterTeardown("finish run $runRowId") {
@@ -2760,6 +2847,22 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 // ran. Nothing rebuilt from the record would be an improvement on those, and a
                 // rescue racing them would decide the row by whichever landed last.
                 Log.w(TAG, "Run $runRowId was stopped by the runner before its row landed; its own finalize has it")
+                return@settleAfterTeardown
+            }
+            // The claim on the row, taken here rather than up with the held-work claim (#382).
+            // Here, because this is the first line past which this teardown would write the row
+            // itself. Above it there was nothing to exclude: the branch that just returned is a Run
+            // whose own finalize is in the buffer, and that finalize takes the claim when it is
+            // performed ([finalizeRun]) — a teardown that had taken it first would have stood that
+            // finalize down and settled the row with rebuilt totals in place of the Run's own.
+            //
+            // Losing it here would mean a finalize reached this row first — a STOP that straddled
+            // the gate and emitted one before the branch above could read the buffer. Whether that
+            // is reachable or merely conceivable, the answer is the same and is the answer
+            // everywhere else: the Run's own totals beat anything rebuilt here, so nothing is
+            // rescued and nothing is discarded.
+            if (!rowSettlementClaim.takenHere()) {
+                Log.w(TAG, "Run $runRowId's row was settled by its own finalize; leaving it alone")
                 return@settleAfterTeardown
             }
             // The held work has just been queued, and both answers below read the record it makes.
@@ -3023,10 +3126,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // method, so "nothing can still be working on this Run" is enforced rather than waited for
         // (#315). Everything the rescue does
         // is waiting for work in flight and then reading what that work left behind
-        // ([endRunLostToTeardown]), and waiting only settles a set nothing can add to. Taken above,
-        // a STOP dispatching at that instant would launch its finalize after the rescue had looked,
-        // and the two would write the same row with the totals going to whichever landed last —
-        // the Run's own, banked as it ran, or the poorer ones the rescue rebuilds from the record.
+        // ([endRunLostToTeardown]), and waiting only settles a set nothing can add to.
+        //
+        // One thing is deliberately not refused, and so is not covered by any of that: the Run's own
+        // finalize, which a STOP dispatch already in flight can still launch after this gate shut
+        // (#382). It is left through because refusing it left the row with no writer at all, and the
+        // exclusion it needs is not a gate but a claim — the finalize and the rescue below race for
+        // the right to settle the row, and the loser stands down ([RunRowSettlementClaim]).
         //
         // A Run whose insert had not come back is the same loss arriving a moment earlier, and it
         // is settled here for the same reason (#314). All three of the things read of the Run come
