@@ -101,6 +101,7 @@ import com.example.runningapp.diagnostics.JournaledState
 import com.example.runningapp.foreground.ForegroundPromotion
 import com.example.runningapp.foreground.PromotionHost
 import com.example.runningapp.foreground.SCOPE_DRAIN_PASSES
+import com.example.runningapp.foreground.TeardownGate
 import com.example.runningapp.foreground.drainChildren
 import com.example.runningapp.foreground.runMayBeGivenWork
 import java.time.ZoneId
@@ -303,9 +304,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * is proof rather than an observation.
      *
      * Set on main at the very top of `onDestroy`, before anything is stopped, so nothing can slip
-     * between the decision to go down and the gate closing. `@Volatile` because it is read on every
-     * other thread this service owns — the session inbox, the GPS callback's thread, and the
-     * coroutines of the teardown itself.
+     * between the decision to go down and the gate closing. It is read on every other thread this
+     * service owns — the session inbox, the GPS callback's thread, and the coroutines of the
+     * teardown itself.
+     *
+     * **Reading the flag is not the same as being refused, which is why the flag lives in
+     * [TeardownGate] and not here.** A producer that reads `false` here and is then descheduled can
+     * resume after the flag has flipped, after the drains have had their empty pass, and after the
+     * rescued row has been settled — and its launch lands behind all of it. So the gate hands out
+     * the decision and the registration of the work as one step under one monitor
+     * ([TeardownGate.registerWorkForTheRun]), and flips the flag under that same monitor
+     * ([TeardownGate.beginTeardown]): afterwards a producer has either already registered, where
+     * the drains see it, or is refused. This property is the plain read, kept for the refusals that
+     * only want to turn a piece of work away before it is begun — [dispatchRunEvent] and the entry
+     * check in [finalizeRun] — where a stale answer costs at most work a later refusal discards.
      *
      * **What it must not refuse is the finish already under way.** A background STOP finalizes and
      * *then* takes the service down, so this teardown is running while the Run's own last writes are
@@ -318,8 +330,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * Separate from [destroyed], which is a narrower fact about one resource: that one says the GATT
      * sweep has been made, and is read by a connect deciding whether to close its own handle.
      */
-    @Volatile
-    private var teardownBegun = false
+    private val teardownGate = TeardownGate()
+    private val teardownBegun: Boolean get() = teardownGate.teardownBegun
     private var bluetoothAdapter: BluetoothAdapter? = null
 
     /**
@@ -1049,11 +1061,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         deliveringHeldWork: Boolean = false,
         write: suspend () -> Unit,
     ) {
-        if (!runMayBeGivenWork(teardownBegun, deliveringHeldWork)) {
-            Log.w(TAG, "The service is being torn down; not writing $what for the run")
-            return
+        // Asked and answered in the same breath as the launch, under the gate's monitor (#315).
+        // The two cannot be separate statements here: a producer that read the gate open and was
+        // then descheduled would resume after the teardown had flipped the flag and after
+        // [awaitRecorderWrites] had seen this scope empty, and its insert would be a second the
+        // rescue rebuilt the Run's totals without. Registered under the monitor, the write is
+        // either a child the drains wait for or it never exists.
+        val registered = teardownGate.registerWorkForTheRun(deliveringHeldWork) {
+            recorderWriteScope.launch { write() }
         }
-        recorderWriteScope.launch { write() }
+        if (!registered) {
+            Log.w(TAG, "The service is being torn down; not writing $what for the run")
+        }
     }
 
     /** Write down one Pause of this Run, so an Export can state where its clock stopped (#328). */
@@ -1144,126 +1163,145 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // activity unbound) reaches stopSelf() -> onDestroy -> serviceScope.cancel() on the next
         // main-loop message, and a launch not yet dequeued dies before its body — NonCancellable
         // cannot protect a coroutine that never starts.
-        finalizationScope.launch {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                // Let the Run's still-queued sample and track-point inserts land before the row is
-                // stamped as finished. An end time is what everything downstream reads as "this Run
-                // is complete" — the history snapshot below, and the GPX export, which offers Share
-                // the moment it sees one (#84). Stamping first would let a runner who shares
-                // straight after stopping export the Run minus its final seconds.
-                awaitRecorderWrites()
+        // Asked again here, and this time inseparably from the launch (#315). The check at the top
+        // of this method refuses a finalize before anything below it is touched, which is what
+        // keeps a doomed finalize from doing work nobody will read; it cannot make the launch
+        // atomic, because everything between it and this line is time in which the teardown can
+        // begin, drain this very scope and settle the row. Registered under the gate's monitor,
+        // this finalize is either one of [finalizationScope]'s children — which
+        // [settleAfterTeardown] drains before it rescues anything — or it does not run at all, and
+        // the row it would have written is left unfinished for the launch pass (#192). The one
+        // thing that still goes past is the teardown's own delivery of a held buffer, which holds
+        // the claim on those seconds.
+        val finalizing = teardownGate.registerWorkForTheRun(deliveringHeldWork) {
+            finalizationScope.launch {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    // Let the Run's still-queued sample and track-point inserts land before the row is
+                    // stamped as finished. An end time is what everything downstream reads as "this Run
+                    // is complete" — the history snapshot below, and the GPX export, which offers Share
+                    // the moment it sees one (#84). Stamping first would let a runner who shares
+                    // straight after stopping export the Run minus its final seconds.
+                    awaitRecorderWrites()
 
-                // Read after that wait and not before it, because the row is written back whole and
-                // the wait can last seconds — with the feel sheet on screen throughout. The Walk
-                // mark, the effort, the note and a stated distance are all the runner's to write in
-                // that window and none of them is this Run's to overwrite. Read beforehand, a Walk
-                // ticked into the sheet during the wait was silently undone here, and the
-                // settlement below then judged the Run off the `isWalk = false` this write had just
-                // restored — a Stage graduated on a walk, which cannot be taken back (#317). The
-                // totals below are this Run's own and are written over whatever is there; every
-                // other column is left as the runner left it.
-                val session = database.sessionDao().getSessionById(runRowId)
-                if (session == null) {
-                    Log.w(TAG, "Finalize found no row $runRowId")
-                    return@withContext
-                }
-                val updatedSession = session.copy(
-                    endTime = totals.endedAtMillis,
-                    durationSeconds = totals.durationSeconds,
-                    avgBpm = totals.averageBpm,
-                    maxBpm = totals.maxBpm,
-                    distanceKm = distanceKm,
-                    avgPaceMinPerKm = avgPace,
-                    startLatitude = startLocation?.latitude,
-                    startLongitude = startLocation?.longitude,
-                    zone1Seconds = totals.zoneSeconds.zone1,
-                    zone2Seconds = totals.zoneSeconds.zone2,
-                    zone3Seconds = totals.zoneSeconds.zone3,
-                    zone4Seconds = totals.zoneSeconds.zone4,
-                    zone5Seconds = totals.zoneSeconds.zone5,
-                    noDataSeconds = totals.noDataSeconds,
-                    effortScore = totals.effortScore,
-                    walkBreaksCount = totals.walkBreaks,
-                    isRunWalkMode = totals.isRunWalkMode,
-                )
-                database.sessionDao().updateSession(updatedSession)
+                    // Read after that wait and not before it, because the row is written back whole and
+                    // the wait can last seconds — with the feel sheet on screen throughout. The Walk
+                    // mark, the effort, the note and a stated distance are all the runner's to write in
+                    // that window and none of them is this Run's to overwrite. Read beforehand, a Walk
+                    // ticked into the sheet during the wait was silently undone here, and the
+                    // settlement below then judged the Run off the `isWalk = false` this write had just
+                    // restored — a Stage graduated on a walk, which cannot be taken back (#317). The
+                    // totals below are this Run's own and are written over whatever is there; every
+                    // other column is left as the runner left it.
+                    val session = database.sessionDao().getSessionById(runRowId)
+                    if (session == null) {
+                        Log.w(TAG, "Finalize found no row $runRowId")
+                        return@withContext
+                    }
+                    val updatedSession = session.copy(
+                        endTime = totals.endedAtMillis,
+                        durationSeconds = totals.durationSeconds,
+                        avgBpm = totals.averageBpm,
+                        maxBpm = totals.maxBpm,
+                        distanceKm = distanceKm,
+                        avgPaceMinPerKm = avgPace,
+                        startLatitude = startLocation?.latitude,
+                        startLongitude = startLocation?.longitude,
+                        zone1Seconds = totals.zoneSeconds.zone1,
+                        zone2Seconds = totals.zoneSeconds.zone2,
+                        zone3Seconds = totals.zoneSeconds.zone3,
+                        zone4Seconds = totals.zoneSeconds.zone4,
+                        zone5Seconds = totals.zoneSeconds.zone5,
+                        noDataSeconds = totals.noDataSeconds,
+                        effortScore = totals.effortScore,
+                        walkBreaksCount = totals.walkBreaks,
+                        isRunWalkMode = totals.isRunWalkMode,
+                    )
+                    database.sessionDao().updateSession(updatedSession)
 
-                // Against the Run's own id rather than the live one, which this stop has already
-                // cleared. A Run journaled as stopped but never as finalized is a Run whose totals
-                // never reached its row — which is what an interrupted Run looks like from here.
-                // Read that way, the line has to be on disk before this coroutine can be lost with
-                // the process, and run-finalized is one the journal waits out for itself (#310).
-                runJournal.write(
-                    RunJournalEvent.RUN_FINALIZED,
-                    runRowId,
-                    "duration=${updatedSession.durationSeconds}s"
-                )
+                    // Against the Run's own id rather than the live one, which this stop has already
+                    // cleared. A Run journaled as stopped but never as finalized is a Run whose totals
+                    // never reached its row — which is what an interrupted Run looks like from here.
+                    // Read that way, the line has to be on disk before this coroutine can be lost with
+                    // the process, and run-finalized is one the journal waits out for itself (#310).
+                    runJournal.write(
+                        RunJournalEvent.RUN_FINALIZED,
+                        runRowId,
+                        "duration=${updatedSession.durationSeconds}s"
+                    )
 
-                // The Downloads snapshot of the history the Run now belongs to, and the Run's
-                // weather, handed to WorkManager rather than launched here (#122). A STOP from the
-                // notification ends with this service taking itself down, and Android is free to
-                // reclaim the process straight after — before a coroutine launched here had a turn.
-                // Room never lost by that, but the Downloads copy could stay a Run behind until the
-                // next run finished, and a runner who cleared their storage in between would get
-                // yesterday's history back.
-                //
-                // Booked the instant the Run is written down, ahead of the measuring and scoring
-                // below rather than after them, because until WorkManager has the request the
-                // window this closes is still open — and those take seconds of GPS arithmetic and
-                // a network call. What the snapshot may then miss is a moving time or a medal,
-                // both of which are re-derived from the Run itself by the passes at launch; what
-                // it can no longer miss is the Run.
-                try {
-                    AfterRunWorker.enqueue(applicationContext, runRowId)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not book the after-run work for $runRowId", e)
-                }
+                    // The Downloads snapshot of the history the Run now belongs to, and the Run's
+                    // weather, handed to WorkManager rather than launched here (#122). A STOP from the
+                    // notification ends with this service taking itself down, and Android is free to
+                    // reclaim the process straight after — before a coroutine launched here had a turn.
+                    // Room never lost by that, but the Downloads copy could stay a Run behind until the
+                    // next run finished, and a runner who cleared their storage in between would get
+                    // yesterday's history back.
+                    //
+                    // Booked the instant the Run is written down, ahead of the measuring and scoring
+                    // below rather than after them, because until WorkManager has the request the
+                    // window this closes is still open — and those take seconds of GPS arithmetic and
+                    // a network call. What the snapshot may then miss is a moving time or a medal,
+                    // both of which are re-derived from the Run itself by the passes at launch; what
+                    // it can no longer miss is the Run.
+                    try {
+                        AfterRunWorker.enqueue(applicationContext, runRowId)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not book the after-run work for $runRowId", e)
+                    }
 
-                // Measured, scored, put to the Segments and shaped — only now the track-point
-                // inserts above have landed, so every one of them sees the whole Run. One call, and
-                // the order is inside it: the rescue of a Run a teardown left recording owes the
-                // same four, and two copies of an order are two things free to drift apart
-                // ([AfterRunMeasurements]).
-                //
-                // Nothing here may throw: the Run is already saved by this point, and
-                // finalizationScope carries no exception handler, so a failure allowed out would
-                // take the process down and strand the backup, weather fetch and plan evaluation
-                // below it. Each pass is guarded inside, and each failure is left in the state a
-                // launch pass already looks for.
-                val movingTime = sessionRepository.afterRun(runRowId)
+                    // Measured, scored, put to the Segments and shaped — only now the track-point
+                    // inserts above have landed, so every one of them sees the whole Run. One call, and
+                    // the order is inside it: the rescue of a Run a teardown left recording owes the
+                    // same four, and two copies of an order are two things free to drift apart
+                    // ([AfterRunMeasurements]).
+                    //
+                    // Nothing here may throw: the Run is already saved by this point, and
+                    // finalizationScope carries no exception handler, so a failure allowed out would
+                    // take the process down and strand the backup, weather fetch and plan evaluation
+                    // below it. Each pass is guarded inside, and each failure is left in the state a
+                    // launch pass already looks for.
+                    val movingTime = sessionRepository.afterRun(runRowId)
 
-                Log.d(
-                    TAG,
-                    "Finalized DB Session: $runRowId. Evidence: duration=${updatedSession.durationSeconds} moving=$movingTime"
-                )
+                    Log.d(
+                        TAG,
+                        "Finalized DB Session: $runRowId. Evidence: duration=${updatedSession.durationSeconds} moving=$movingTime"
+                    )
 
-                // Everything the Plan has to say about this Run — the app's graduation rule, and
-                // then the coach — asked by name rather than by handing the row over (#297).
-                //
-                // The row is deliberately not passed. The feel sheet has been on screen since STOP
-                // and it carries the Walk mark: the runner's own word, and the one fact that
-                // withdraws a Run from the judgement entirely. A Run judged off this copy is judged
-                // before that word can arrive, which is a Stage graduated on a walk. So this call
-                // finds the sheet still open and leaves the settlement to it, and settles here and
-                // now only for a Run no sheet was shown for — a STOP from the notification. Either
-                // way the Run keeps the debt until a settlement returns, so a process reclaimed in
-                // between leaves it to the launch pass rather than losing the graduation for good.
-                //
-                // Nothing about the Stage, the Run Type, testing mode or AI sharing is decided here:
-                // each is asked once, inside the rule or inside the coach's own path, and asking
-                // again here would be the same rule in two places free to drift apart.
-                // Guarded like the moving-time and record-book calls above it, and for the same
-                // reason: this runs as a root child of [finalizationScope], whose SupervisorJob
-                // keeps a failure from the siblings but does not handle it, so a database error
-                // here would reach the default handler and take the app down. Logged and left —
-                // the Run keeps its debt, and the launch pass is what pays it.
-                Log.d("AiCoach", "Settling the stage after session finalization for run: $runRowId")
-                try {
-                    sessionRepository.settleStageForRun(runRowId)
-                } catch (e: Exception) {
-                    Log.w(TAG, "Could not settle the Stage for run $runRowId; it keeps the debt", e)
+                    // Everything the Plan has to say about this Run — the app's graduation rule, and
+                    // then the coach — asked by name rather than by handing the row over (#297).
+                    //
+                    // The row is deliberately not passed. The feel sheet has been on screen since STOP
+                    // and it carries the Walk mark: the runner's own word, and the one fact that
+                    // withdraws a Run from the judgement entirely. A Run judged off this copy is judged
+                    // before that word can arrive, which is a Stage graduated on a walk. So this call
+                    // finds the sheet still open and leaves the settlement to it, and settles here and
+                    // now only for a Run no sheet was shown for — a STOP from the notification. Either
+                    // way the Run keeps the debt until a settlement returns, so a process reclaimed in
+                    // between leaves it to the launch pass rather than losing the graduation for good.
+                    //
+                    // Nothing about the Stage, the Run Type, testing mode or AI sharing is decided here:
+                    // each is asked once, inside the rule or inside the coach's own path, and asking
+                    // again here would be the same rule in two places free to drift apart.
+                    // Guarded like the moving-time and record-book calls above it, and for the same
+                    // reason: this runs as a root child of [finalizationScope], whose SupervisorJob
+                    // keeps a failure from the siblings but does not handle it, so a database error
+                    // here would reach the default handler and take the app down. Logged and left —
+                    // the Run keeps its debt, and the launch pass is what pays it.
+                    Log.d("AiCoach", "Settling the stage after session finalization for run: $runRowId")
+                    try {
+                        sessionRepository.settleStageForRun(runRowId)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Could not settle the Stage for run $runRowId; it keeps the debt", e)
+                    }
                 }
             }
+        }
+        if (!finalizing) {
+            Log.w(
+                TAG,
+                "The service is being torn down; not finalizing run ${effect.runRowId} here. " +
+                    "The teardown settles it, or the launch pass does."
+            )
         }
     }
 
@@ -2885,7 +2923,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // Before anything at all is stopped: from here on the Run is given no new work, so the
         // drains further down settle a set nothing can add to rather than a set nothing happened to
         // add to while they looked (#315). See [teardownBegun] for why a wait could not do this.
-        teardownBegun = true
+        //
+        // This returns once the gate is shut AND every producer that had already passed it has
+        // registered its work on a scope, because the two happen under one monitor — so from this
+        // line on, there is no producer holding a stale `may give work` answer that a drain below
+        // will not see. It waits for a `launch` at most, never for a write: what the monitor may
+        // cover is stated on [TeardownGate], and blocking main for anything more here would be an
+        // ANR rather than a fix.
+        teardownGate.beginTeardown()
 
         // Android does not say why a service is being destroyed, so what goes down is what this
         // service knew at the moment the destroy began — whether a Run was still live, and whether
