@@ -172,15 +172,15 @@
 <div class="wrap">
 
   <header class="mast">
-    <div class="kicker">Handbook · updated 26 August 2026</div>
+    <div class="kicker">Handbook · updated 27 August 2026</div>
     <h1>Everything the app does, and where to find it.</h1>
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
-      <p><strong>The live map tells you how much of the course is left.</strong> On a run along a route, the bottom-right corner of the map card now counts the course down &mdash; <em>5.54 km to go</em>, and plain metres once you are inside the last kilometre. It is measured from wherever you actually are to the nearest point on the course, and on from there to the end. If you told the app you were running the course <strong>backwards</strong>, it counts down from the end you actually set off at. Stray off the course and it keeps counting; nothing yet says anything about having strayed. See <em>Running one</em> in <a href="#routes">routes</a>.</p>
+      <p><strong>The app tells you when you have come off your route, and when you are back on it.</strong> On a run following a route, stray more than <strong>50 m</strong> from the course and stay there for <strong>10 seconds</strong> and it says <em>&ldquo;Off course.&rdquo;</em> Come back within <strong>30 m</strong> of it and it says <em>&ldquo;Back on course.&rdquo;</em> Two sentences, and nothing in between &mdash; a detour you meant to take costs you exactly two, however long you are away. It never tells you which way to turn. It stays quiet until you have actually reached the course, so the walk from your front door is silent however far off the line it is. See <em>Off course</em> in <a href="#routes">routes</a>.</p>
+      <p><strong>The live map tells you how much of the course is left.</strong> On a run along a route, the bottom-right corner of the map card now counts the course down &mdash; <em>5.54 km to go</em>, and plain metres once you are inside the last kilometre. It is measured from wherever you actually are to the nearest point on the course, and on from there to the end. If you told the app you were running the course <strong>backwards</strong>, it counts down from the end you actually set off at. Stray off the course and it keeps counting, measuring to the end from the nearest bit of course to you. See <em>Running one</em> in <a href="#routes">routes</a>.</p>
       <p><strong>Somebody always saves a run's first seconds.</strong> The app holds the seconds it counts at the very start of a run until the run has somewhere to put them. Two parts of the app can hand them over, and only one of them may &mdash; both doing it would write every second down twice. The app used to choose by looking at whether the run's own clock was still busy: if it was, the shutting-down part stood aside and left the job to it. On a busy phone that clock could be busy with something else entirely, and by then it had been shut anyway, so it never picked the job up &mdash; the seconds went and the run showed 00:00. Now whichever of the two is about to do it claims the job first and the other is told it has been taken, so exactly one of them always hands the seconds over. This does not make 00:00 impossible: it is still what you see when the app is shut down too fast, or is left too busy, to finish tidying up. The note in that chapter says what to do. See <em>If something goes wrong</em> in <a href="#during">during the run</a>.</p>
       <p><strong>A run you stop in its first second is saved, instead of vanishing.</strong> Writing a run down takes the app a fraction of a second. Stop inside that fraction &mdash; you set off and changed your mind &mdash; and if the app was shut down in the same moment, the run used to disappear with no message at all. It now keeps the seconds and the heart rate it had already counted and finishes the run with them, so it turns up in your history like any other. One can still slip through if the app is shut down too quickly even for that; the note in that chapter says what it looks like and what to do. See <em>If something goes wrong</em> in <a href="#during">during the run</a>.</p>
-      <p><strong>A recording taken away in the first instant no longer leaves an empty run behind.</strong> If Android takes a recording away in the fraction of a second between START and the run being written down, the app now waits for that run to be written down and clears it away again if it holds nothing at all. You are told there is nothing to save and to start again, rather than being sent to look through your history for a run that was never there. One can still slip through if the app is shut down too quickly to finish the job; the note below says what that looks like and what to do about it. Nothing changes for an ordinary run, or for one that had already recorded something: those are still finished from whatever they got and put in your history. See <em>If something goes wrong</em> in <a href="#during">during the run</a>.</p>
     </div>
   </header>
 
@@ -261,7 +261,7 @@
         <p>Pick a course out of your <a href="#routes">routes</a> before you start and the run follows it. Tap <strong>Choose a route</strong>, pick one from the list, and the card says which one and how far it goes. <strong>No route</strong> is at the top of the same list, which is how you go back to an ordinary run.</p>
         <p><strong>Run it backwards</strong> is for doing the course the other way round. It makes no difference to the line on the map — the same ground in the same places — but it does decide which end the map counts down to, so the distance left is measured to the end you are actually running towards.</p>
         <p class="note"><b>Outdoor only.</b> There is no ground under a treadmill for a course to be over, so the card is not shown in Treadmill mode. If you pick a route and then switch to Treadmill your choice is kept, in case you switch back — it just does not come along on that run.</p>
-        <p class="note"><b>Picking a route changes nothing else about the run.</b> Same warm-up and cool-down, same intervals, same target zone, same spoken cues, same records. It is a line on the map, not a different kind of run.</p>
+        <p class="note"><b>Picking a route changes almost nothing else about the run.</b> Same warm-up and cool-down, same intervals, same target zone, same records. It is a line on the map, not a different kind of run. The one thing it adds is the two course cues &mdash; <em>&ldquo;Off course.&rdquo;</em> and <em>&ldquo;Back on course.&rdquo;</em> &mdash; which only a run following a route can ever hear. See <em>Off course</em> in <a href="#routes">routes</a>.</p>
         <p class="note"><b>No routes yet?</b> The card says so and tells you where they come from — a GPX under <strong>Open Routes</strong>, or a run you have already been for.</p>
         <div class="where"><b>Where</b> Home → the <strong>Route</strong> card, under Treadmill / Outdoor</div>
       </div>
@@ -311,6 +311,7 @@
           <li><strong>Cardiac drift is recognised.</strong> Your heart rate at ten minutes is remembered. After twenty minutes, a heart rate that has crept up only a little above that gets "heart rate drifting up, keep effort steady, or take a short walk break" rather than "ease off". Higher than a little is treated as real overexertion and gets the plain cue.</li>
           <li><strong>Every kilometre is called out</strong> — on an outdoor run, and only while <strong>Split announcements</strong> is on in Prefs. A treadmill run has no measured ground to cross a kilometre of, so it gets none.</li>
           <li><strong>"Halfway. Turn around."</strong> once, on an outdoor run following a plan, at half the run's total moving time — so an out-and-back gets you home. Switch it off in Prefs.</li>
+          <li><strong>"Off course." and "Back on course."</strong> — only on a run following a <a href="#routes">route</a>, and only about that route. These two sit outside every rule above: they are nothing to do with your heart rate, so the quiet warm-up, the 30-second wait and the five-minute limit have no bearing on them. See <em>Off course</em> in routes.</li>
         </ul>
       </div>
 
@@ -666,11 +667,29 @@
         <p>In the bottom-right corner of the map, <strong>how much of the course is left</strong>: <em>5.54 km to go</em> while there are kilometres in it, then plain metres — <em>840 m to go</em> — once you are inside the last one. Before you reach the course it reads as the whole course, because you have not run any of it yet.</p>
         <p>The number is measured from where you actually are to the nearest point on the course, and on to the end. On an out-and-back, where the way out and the way back lie over the same ground, it knows which of the two you are on: it reads from where you were a moment ago rather than from the whole line. Run the course <strong>backwards</strong> and it counts down to the end you set off towards.</p>
         <p>It works with the map downloaded for offline use, because the course comes out of your own library rather than off the internet.</p>
-        <p class="note"><b>It keeps counting when you are nowhere near the course.</b> Wander off and the number carries on measuring to the end from the nearest bit of course to you. Nothing says you have strayed — that is the off-course alert, which is not built yet.</p>
-        <p class="note"><b>Nothing is said out loud.</b> The distance left is on the screen only. No cue, no milestone, nothing spoken.</p>
+        <p class="note"><b>It keeps counting when you are nowhere near the course.</b> Wander off and the number carries on measuring to the end from the nearest bit of course to you. Being <em>told</em> you have strayed is a separate thing, and it is spoken rather than shown — see <em>Off course</em> below.</p>
+        <p class="note"><b>The distance left is never spoken.</b> It is on the screen only — no cue, no milestone. The only things the app says out loud about a route are the two in <em>Off course</em> below, and neither of them mentions how far is left.</p>
         <p class="note"><b>Delete a route mid-run and the run is fine.</b> The blue line stops being drawn and the corner number goes with it. The run carries on recording where you actually go, which was never the route&rsquo;s business.</p>
         <p class="note"><b>The full-screen map is not reachable at the moment.</b> Tapping the map card is meant to open it, and does nothing — a fault that has been there since the map was built, not something this brought in. The course is drawn there too, so it will simply appear once tapping works again. Until then the card is the whole of it, and the camera stays close to you rather than pulling back to hold the whole course.</p>
         <div class="where"><b>Where</b> During an outdoor run → the map card</div>
+      </div>
+
+      <div class="e">
+        <h3>Off course</h3>
+        <p>On a run following a route, the app says two things and no more. Go more than <strong>50 m</strong> from the course and stay out there for <strong>10 seconds</strong>, and it says <em>&ldquo;Off course.&rdquo;</em> Come back within <strong>30 m</strong> of it, and it says <em>&ldquo;Back on course.&rdquo;</em></p>
+        <p>Nothing at all is said in between. A detour you meant to take &mdash; round a closed path, out to a shop, a lap of the park &mdash; costs you exactly two sentences, whether you are away for one minute or twenty. Go off again later and you are told the same way again.</p>
+        <p><strong>It never tells you which way to turn.</strong> The app knows where the course is and where you are. It has no idea what is between the two &mdash; which streets exist, which way they run, what is a wall. So it tells you the one thing it actually knows, and leaves the navigating to you.</p>
+        <p>The 50 m and the 30 m are deliberately different numbers. 50 m is a street away, not a wide pavement: a course drawn down the middle of a road, running on the far side of a dual carriageway, and a GPX traced off somebody else&rsquo;s run all put honest running tens of metres off the line. Coming back within 30 m is the same closeness that counts as reaching the course in the first place. Two numbers rather than one so that hovering either side of a single line does not have the app telling you off and back and off again for the length of a street.</p>
+        <ul class="plain">
+          <li><strong>Silent until you have reached the course.</strong> A run starts at your front door, and the walk or jog to the start of the route is not a wrong turn. Nothing is said, however far off the line you are, until you have been within 30 m of the course at least once.</li>
+          <li><strong>A poor fix is not counted.</strong> If the GPS is not sure of you to better than 30 m &mdash; or cannot say how sure it is at all &mdash; that reading is not measured against the course. A fix that could be 100 m out on its own admission is no evidence of a wrong turn. Any 10 seconds part-way through starts again from the next good fix.</li>
+          <li><strong>Standing still is not counted either.</strong> While the app has auto-paused you for standing still, the same applies. You are not running off course; you are not running.</li>
+          <li><strong>A pause starts the 10 seconds again.</strong> Pause out there by hand and the wait begins again when you resume, so you are never told off for something you did five minutes before you stopped. What you have already been told still stands: pause while off course, resume, and you are still off course, and you will still be told when you get back.</li>
+          <li><strong>It goes to the front of the queue.</strong> Ahead of a split, ahead of an interval change, ahead of the coach &mdash; going the wrong way gets worse the longer it takes to say. It still never cuts off a sentence already being spoken; nothing in the app does.</li>
+        </ul>
+        <p class="note"><b>Only on a run following a route.</b> An ordinary run has no course to be off, so there is nothing to say and nothing is said.</p>
+        <p class="note"><b>Delete the route mid-run and it goes quiet.</b> The blue line stops being drawn and no further cue is made, the same promise the map makes: deleting a route costs the run nothing. If one had just been made and was waiting its turn to be spoken, you may still hear that one.</p>
+        <div class="where"><b>Where</b> During an outdoor run following a route &mdash; spoken, nothing on screen</div>
       </div>
 
       <div class="e">
@@ -680,7 +699,7 @@
 
       <div class="e">
         <h3>Not built yet</h3>
-        <p>Off-course voice alerts &mdash; being told out loud when you have come off the course &mdash; are still to come, and so are little pictures of each course in the library. Drawing the route on the live map, and counting down how much of it is left, are both built &mdash; see <em>Running one</em> above.</p>
+        <p>Little pictures of each course in the library are still to come. Everything else on this page is built: drawing the route on the live map and counting down how much is left (<em>Running one</em>), and being told out loud when you have come off the course and when you are back on it (<em>Off course</em>).</p>
       </div>
 
     </div>
@@ -783,6 +802,10 @@
 
       <dt>Routed run</dt>
       <dd>A run you started on a <strong>route</strong>. An ordinary run with a course written on it and a second, blue line on its live map. Which route is fixed the moment you press START.</dd>
+
+      <dt>Off course</dt>
+      <dd>More than <strong>50 m</strong> from the route you are following, for <strong>10 seconds</strong> or more &mdash; and only once you have actually reached that course. Something the app says about <em>you</em>, during one run; it is never a thing that is true of a route. You stop being off course when you come back within <strong>30 m</strong> of the line.</dd>
+
       <dt>Matched runs</dt>
       <dd>Runs the app worked out are the same course, by shape alone. Nothing named, nothing saved, and no <strong>route</strong> in your library is involved. Runs under half a kilometre have no shape and join nothing.</dd>
     </dl>
@@ -790,7 +813,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>26 August 2026</strong>, when the live map started counting the course down. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>27 August 2026</strong>, when the app started telling you out loud that you had come off your route. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
