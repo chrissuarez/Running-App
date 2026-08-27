@@ -61,6 +61,8 @@ class RoutesViewModel(
                 is RouteImportOutcome.Imported -> routeImportedMessage(outcome.name)
                 is RouteImportOutcome.AlreadySaved -> routeAlreadySavedMessage(outcome.name)
                 is RouteImportOutcome.Remeasured -> routeRemeasuredMessage(outcome.name)
+                is RouteImportOutcome.RemeasuredKeepingClimb ->
+                    routeRemeasuredKeepingClimbMessage(outcome.name)
                 is RouteImportOutcome.Refused -> gpxRefusalMessage(outcome.reason)
             }
             _importing.value = false

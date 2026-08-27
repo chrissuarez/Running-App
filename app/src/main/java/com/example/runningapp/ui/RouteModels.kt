@@ -106,6 +106,18 @@ fun routeRemeasuredMessage(name: String): String =
     "“$name” is already in your routes. Its distance and climb now come from this file."
 
 /**
+ * What the screen says when a course already kept has been re-measured from a file that carries no
+ * heights, so only its distance moved (#355).
+ *
+ * Names the climb rather than passing over it, because the runner is being told that one of the two
+ * numbers on the row did not change and why — otherwise a re-import that was meant to correct a
+ * climb looks as though it worked.
+ */
+fun routeRemeasuredKeepingClimbMessage(name: String): String =
+    "“$name” is already in your routes. Its distance now comes from this file. " +
+        "The file carries no heights, so its climb is unchanged."
+
+/**
  * What the pre-run card says the next Run will follow, and which way round (#56).
  *
  * One line rather than a name alone, because the two things a runner checks on the start line are

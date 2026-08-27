@@ -3,6 +3,8 @@ package com.example.runningapp.routes
 import android.content.ContentResolver
 import android.database.Cursor
 import android.net.Uri
+import com.example.runningapp.data.Route
+import com.example.runningapp.data.RouteKeeping
 import com.example.runningapp.data.RouteSource
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
@@ -182,6 +184,61 @@ class RouteImporterTest {
 
         // Absent, not zero — the file said nothing about the ground rather than that it is flat.
         assertNull(dao.stored.single().elevationGainMeters)
+    }
+
+    /**
+     * The other way round from the re-measure above, and the point of #355: a file that says nothing
+     * about climb is silent, not authoritative, so it cannot take away what an earlier file said.
+     */
+    @Test
+    fun `a heightless export of a course already kept leaves its climb standing`() = runTest {
+        importerFor(aRealGpx).import(uri)
+        val banked = dao.stored.single().elevationGainMeters
+        assertNotNull(banked)
+
+        // The very same three points, this time with no <ele> anywhere in the file.
+        val heightless = """
+            <gpx version="1.1"><metadata><name>Regent's Park loop</name></metadata><trk><trkseg>
+              <trkpt lat="51.5000000" lon="-0.1000000"/>
+              <trkpt lat="51.5010000" lon="-0.1000000"/>
+              <trkpt lat="51.5020000" lon="-0.1000000"/>
+            </trkseg></trk></gpx>
+        """.trimIndent()
+        val outcome = importerFor(heightless).import(uri)
+
+        // Nothing about the row moved, so the runner is told they already have it rather than that
+        // it has been re-measured.
+        assertEquals(RouteImportOutcome.AlreadySaved("Regent's Park loop"), outcome)
+        assertEquals(banked, dao.stored.single().elevationGainMeters)
+    }
+
+    /**
+     * The reachable half of #355: the line is the identity, so a second file drawing it measures the
+     * same distance — unless the banked distance was worked out under an older rule, which is the
+     * case ADR 0014 says re-importing is the remedy for. Asked of the table directly because a file
+     * cannot stage a stale banked number.
+     */
+    @Test
+    fun `a re-measure with no heights takes the distance and keeps the climb`() = runTest {
+        val banked = Route(
+            name = "Tuesday hills",
+            distanceMeters = 200.0,
+            elevationGainMeters = 30.0,
+            polyline = "51.5000000,-0.1000000 51.5020000,-0.1000000",
+            createdAtMillis = 1L,
+            source = RouteSource.IMPORTED,
+        )
+        dao.insertRoute(banked)
+
+        val kept = dao.keepRoute(
+            banked.copy(distanceMeters = 222.4, elevationGainMeters = null),
+            remeasuring = true,
+        )
+
+        assertEquals(RouteKeeping.REMEASURED_KEEPING_CLIMB, kept.keeping)
+        val row = dao.stored.single()
+        assertEquals(222.4, row.distanceMeters, 0.01)
+        assertEquals(30.0, row.elevationGainMeters!!, 0.01)
     }
 
     @Test

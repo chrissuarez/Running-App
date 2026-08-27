@@ -32,6 +32,16 @@ sealed interface RouteImportOutcome {
      */
     data class Remeasured(val name: String) : RouteImportOutcome
 
+    /**
+     * The library already held this course, and this file measures its distance differently but
+     * carries no heights, so the kept Route took the new distance and kept the climb it had (#355).
+     *
+     * Its own outcome rather than a [Remeasured] because the screen must not tell a runner that a
+     * number came from a file that never mentioned it. A file with no `<ele>` says nothing about
+     * climb; saying nothing is not the same as saying there is none, so the banked answer stands.
+     */
+    data class RemeasuredKeepingClimb(val name: String) : RouteImportOutcome
+
     /** Nothing was written. See [com.example.runningapp.ui.gpxRefusalMessage] for the words. */
     data class Refused(val reason: GpxRefusal) : RouteImportOutcome
 }
@@ -113,6 +123,8 @@ class RouteImporter(
             RouteKeeping.KEPT -> RouteImportOutcome.Imported(routeId = kept.id, name = kept.name)
             RouteKeeping.ALREADY_KEPT -> RouteImportOutcome.AlreadySaved(name = kept.name)
             RouteKeeping.REMEASURED -> RouteImportOutcome.Remeasured(name = kept.name)
+            RouteKeeping.REMEASURED_KEEPING_CLIMB ->
+                RouteImportOutcome.RemeasuredKeepingClimb(name = kept.name)
         }
     }
 
