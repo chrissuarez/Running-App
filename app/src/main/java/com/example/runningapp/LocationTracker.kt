@@ -27,6 +27,17 @@ class LocationTracker(
     isSplitAnnouncementsEnabled: () -> Boolean,
     onMetricsUpdated: (distanceKm: Double, paceMinPerKm: Double, lastLocation: Location?) -> Unit,
     private val onRawFix: (location: Location, barometerPressureHpa: Float?, startsAfterPause: Boolean) -> Unit = { _, _, _ -> },
+    /**
+     * Every fix, with whether the Run was auto-paused when it landed — for whoever is watching the
+     * Run against a course (#58).
+     *
+     * Separate from [onRawFix], which is the Track being written down and so skips the fixes taken
+     * at a standstill. Off-course detection has to *see* those fixes to know to stay quiet about
+     * them, and it neither wants them written nor may be told nothing at all while they arrive.
+     * Nothing is filtered on the way here: the accuracy gate is the watcher's to apply, on the same
+     * bar as everything else (#38).
+     */
+    private val onFixForCourse: (fix: LocationFix, autoPaused: Boolean) -> Unit = { _, _ -> },
     isAutoPauseEnabled: () -> Boolean = { false },
     onAutoPause: () -> Unit = {},
     onAutoResume: () -> Unit = {},
@@ -193,15 +204,21 @@ class LocationTracker(
         } else {
             onRawFix(location, barometerReader.getLastPressureHpa(), pauseMark.takeForFix())
         }
-        sessionRecorder.onLocationFix(
-            LocationFix(
-                latitude = location.latitude,
-                longitude = location.longitude,
-                accuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
-                speedMps = if (location.hasSpeed()) location.speed else null,
-                timestampMs = location.time,
-            )
+        val fix = LocationFix(
+            latitude = location.latitude,
+            longitude = location.longitude,
+            accuracyMeters = if (location.hasAccuracy()) location.accuracy else null,
+            speedMps = if (location.hasSpeed()) location.speed else null,
+            timestampMs = location.time,
         )
+        sessionRecorder.onLocationFix(fix)
+        // After the recorder and asking the recorder, rather than passing the [autoPaused] this
+        // method was called with: that value is the standstill as it stood *before* this fix, and
+        // the recorder resolves the transition while handling it. The fix that starts a standstill
+        // is one the recorder has already refused to count, and the fix that ends one is counted —
+        // so asking afterwards is what makes "auto-paused" mean the same thing to the course as it
+        // means to distance (#58).
+        onFixForCourse(fix, sessionRecorder.isAutoPaused())
     }
 
     private fun logDecision(reason: String, detail: String) {

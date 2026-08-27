@@ -230,7 +230,7 @@ runner's last fix, which is read from around the fix before it rather than again
 an out-and-back has two pieces of line under the same ground, and the runner is on the one they have
 run to. Until the runner has actually reached the course, every fix is read against the whole of it
 and equally near places are settled in favour of the earlier one: the walk from the door to the start
-is not a claim about which half of a course you are on. Off the course it keeps counting, and how far off is too far is not asked here.
+is not a claim about which half of a course you are on. Off the course it keeps counting: how far off is too far is **Off course**'s question, asked of the same measurement and answered somewhere else.
 _Avoid_: distance to go as a *field*, remaining distance of a Run (a Run has no end to be near), and
 anything that turns this number into a milestone the app says out loud.
 
@@ -239,11 +239,31 @@ about the line — the same ground in the same places, so the same line is drawn
 about which way you are *going* along it: the course is handed to the map already turned round, so
 distance remaining counts down from the end the runner actually set off at. A treadmill Run follows
 no course whatever was picked, there being no ground under a treadmill for a course to be over.
-_Avoid_: guided run, navigation (nothing is being navigated yet), and **on course** / **off course**
-as a state — a Run either set out on a Route or it did not, and nothing here judges whether the
-runner is still on it. Ordinary English is fine: a Run "following no course" reads the same way a Run
-following no **Workout** already does, and only a *name* — a field, a flag, a function — claiming to
-hold that judgement is the mistake.
+_Avoid_: guided run, and turn-by-turn — the app says nothing about which way to go, only that the
+runner is no longer on the line (**Off course**). "Following no course" is still ordinary English and
+reads the way a Run following no **Workout** does.
+
+**Off course**:
+The runner has left the course their Run set out on, far enough and for long enough that they are
+told so (#58). Two spoken cues and nothing in between: "Off course." once they have been more than
+50 m from the line for 10 seconds, and "Back on course." once they are within 30 m of it again. A
+later excursion is told the same way. Deliberately not a running commentary — an intentional detour
+costs the runner exactly two sentences, and the app never says which way to turn, because it does not
+know: it has the line and where the runner is, and no notion of the streets between them.
+
+Nothing is said until the runner has first come within 30 m of the course — the same distance
+**Distance remaining** already trusts a fix at (#38) — so the walk from the front door to the start
+is silent. Detection suspends while the fix is too coarse to trust and while the Run is auto-paused,
+and a suspended fix is not measured against the course at all; the 10 seconds start again from the
+next fix that is heard, while what has already been said stands. The cues go to the front of the
+voice queue ahead of coaching (#53), and, like everything else the app says, never cut off a sentence
+already being spoken.
+
+How far off the line the runner is is not measured here — it is the one measurement
+**Distance remaining** already takes. What is decided here is when that number is worth a sentence.
+_Avoid_: off route, off track (a Track is what a Run recorded), lost, rerouting and re-routing
+(nothing is recalculated — the course never changes), and "off course" as a fact about a *Route*: it
+is a fact about a runner during one Run, and it lives only for as long as that Run does.
 
 **Segment**:
 A stretch of ground the runner has named — "Cemetery Hill" — cut out of one Run they actually ran
