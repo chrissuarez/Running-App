@@ -20,6 +20,16 @@ import com.example.runningapp.isRecording
  * Journal is reasoned about by: recording, then not, is a stop; still recording at the teardown is
  * a loss ([com.example.runningapp.diagnostics.RunJournalEvent.RUN_STOPPED]).
  *
+ * **A stop answering null here is a promise that something else finishes the row.** This function
+ * has no answer for a Run already published as STOPPED, and it is right not to: that Run's own
+ * finalize is on its way with the totals it banked as it ran, and a second writer of the same row is
+ * the harm the teardown gate was built about. What that leans on is that the finalize is actually
+ * allowed to happen. It briefly was not — a teardown refused it as new work, and since this reading
+ * offers no rescue for a STOPPED Run either, the row was left at `endTime = 0` with nobody at all to
+ * finish it (#382). The finalize is now never refused, and the one-writer rule it used to buy is a
+ * claim the two settlers race for ([RunRowSettlementClaim]). Anything that changes the null above
+ * into a rescue has to reckon with that claim, not with this reading alone.
+ *
  * STOPPING is not a loss — the runner stopped it themselves — but it is still this teardown's to
  * settle, which is a different question and the one #361 was filed about. A Run in STOPPING is
  * holding its own finalize for an id that has not arrived ([RunLifecycle.STOPPING]), and it

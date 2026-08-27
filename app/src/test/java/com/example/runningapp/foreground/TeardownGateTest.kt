@@ -44,6 +44,21 @@ class TeardownGateTest {
         assertTrue(runMayBeGivenWork(teardownBegun = false, deliveringHeldWork = true))
     }
 
+    @Test
+    fun `a teardown never refuses the run's own finish`() {
+        // The regression this rule was extended for (#382). A background STOP publishes STOPPED, the
+        // promotion follower demotes off that publish and stopSelf() lands `onDestroy` — gate and
+        // all — while the session thread is still walking the same STOP's effects. Refuse the
+        // finalize in that window and nothing else settles the row: the teardown reads a Run that is
+        // no longer recording, which is not a Run it rescues. The Run then has no writer at all.
+        assertTrue(runMayBeGivenWork(teardownBegun = true, finishingTheRun = true))
+    }
+
+    @Test
+    fun `the run's own finish needs no exception while the service is alive`() {
+        assertTrue(runMayBeGivenWork(teardownBegun = false, finishingTheRun = true))
+    }
+
     // --- The registration is atomic with the transition, not merely checked before it (#315) ---
 
     @Test
@@ -120,6 +135,52 @@ class TeardownGateTest {
         gate.beginTeardown()
         assertTrue(gate.registerWorkForTheRun(deliveringHeldWork = true) { launches.incrementAndGet() })
         assertEquals(1, launches.get())
+    }
+
+    @Test
+    fun `the run's own finish still registers through a shut gate`() {
+        // The other half of #382, and the half a rule test cannot reach: the finalize must actually
+        // be let onto its scope, not merely be allowed to be in principle. Registered, it is a child
+        // the teardown's drains wait for; refused, it never runs and the row is nobody's.
+        val gate = TeardownGate()
+        val launches = AtomicInteger()
+        gate.beginTeardown()
+        assertTrue(gate.registerWorkForTheRun(finishingTheRun = true) { launches.incrementAndGet() })
+        assertEquals(1, launches.get())
+    }
+
+    @Test
+    fun `the finish registers under the same monitor as everything else`() {
+        // Never refused is not the same as never registered. What the monitor buys the finalize is
+        // visibility: it has to be a child of its scope by the time beginTeardown returns, or the
+        // drains can have their empty pass while it is still in the air. Same proof as the producer
+        // test above — a teardown cannot flip the flag while a finish is registering.
+        val gate = TeardownGate()
+        val insideTheGate = CountDownLatch(1)
+        val letTheRegistrationFinish = CountDownLatch(1)
+        val teardownReturned = AtomicBoolean(false)
+
+        val finisher = Thread {
+            gate.registerWorkForTheRun(finishingTheRun = true) {
+                insideTheGate.countDown()
+                letTheRegistrationFinish.await(5, TimeUnit.SECONDS)
+            }
+        }
+        finisher.start()
+        assertTrue("the finish never reached the gate", insideTheGate.await(5, TimeUnit.SECONDS))
+
+        val teardown = Thread {
+            gate.beginTeardown()
+            teardownReturned.set(true)
+        }
+        teardown.start()
+        Thread.sleep(200)
+        assertFalse("the teardown flipped the flag mid-registration", teardownReturned.get())
+
+        letTheRegistrationFinish.countDown()
+        finisher.join(5_000)
+        teardown.join(5_000)
+        assertTrue(teardownReturned.get())
     }
 
     @Test
