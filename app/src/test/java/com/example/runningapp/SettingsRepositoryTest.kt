@@ -474,4 +474,45 @@ class SettingsRepositoryTest {
         // Unstated survives the reconciliation rather than being clamped up into the range.
         assertEquals(RESTING_HR_UNSTATED, effectiveRestingHr(RESTING_HR_UNSTATED, 100))
     }
+
+    @Test
+    fun `a restore keeps the plan and stage this build still holds`() {
+        val plan = TrainingPlanProvider.getAllPlans().first()
+        val stage = plan.stages[1]
+
+        assertEquals(
+            plan.id to stage.id,
+            recognisedPlanAndStage(plan.id, stage.id),
+        )
+    }
+
+    @Test
+    fun `a plan chosen with no stage yet is restored as it stands`() {
+        val plan = TrainingPlanProvider.getAllPlans().first()
+
+        // Not the same thing as an id naming nothing: no Stage picked is an ordinary state, and the
+        // plan's first is what the app has always shown for it.
+        assertEquals(plan.id to null, recognisedPlanAndStage(plan.id, null))
+    }
+
+    @Test
+    fun `a stage this build no longer holds takes its plan down with it`() {
+        val plan = TrainingPlanProvider.getAllPlans().first()
+
+        // Never plan.id to null: that would resolve to the plan's FIRST Stage and stamp the next
+        // Run with it, which is a claim about where the runner is that nothing checked (#234).
+        assertEquals(null to null, recognisedPlanAndStage(plan.id, "stage_renamed_since"))
+    }
+
+    @Test
+    fun `a plan this build no longer holds is dropped`() {
+        assertEquals(null to null, recognisedPlanAndStage("plan_dropped_since", "base_builder"))
+    }
+
+    @Test
+    fun `an archive with no plan attached restores none`() {
+        assertEquals(null to null, recognisedPlanAndStage(null, null))
+        // A Stage without its Plan resolves to nothing anyway, and is not a place to stand.
+        assertEquals(null to null, recognisedPlanAndStage(null, "base_builder"))
+    }
 }
