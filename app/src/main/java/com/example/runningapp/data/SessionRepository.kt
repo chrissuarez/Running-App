@@ -3478,9 +3478,15 @@ class SessionRepository(
      *
      * [refusing] names what is being turned away, in the words the log should use for it.
      */
+    /**
+     * Which of [shownRunIds] have left history — the one spelling of the question, asked by the
+     * refusal below and by the launch pass that finishes an interrupted delete (#270).
+     */
+    private suspend fun runsGoneFrom(shownRunIds: Set<Long>): Set<Long> =
+        shownRunIds - aiEligibleIdsAmong(shownRunIds.toList())
+
     private suspend fun theEvidenceStillStands(shownRunIds: Set<Long>, refusing: String): Boolean {
-        val stillInHistory = aiEligibleIdsAmong(shownRunIds.toList())
-        val gone = shownRunIds - stillInHistory
+        val gone = runsGoneFrom(shownRunIds)
         if (gone.isEmpty()) return true
         Log.d(
             "AiCoach",
@@ -3488,6 +3494,48 @@ class SessionRepository(
                 "gone=$gone shown=$shownRunIds"
         )
         return false
+    }
+
+    /**
+     * Takes back coaching left standing on Runs that are no longer in history — the launch pass that
+     * finishes a delete a reclaimed process cut short (#270).
+     *
+     * Deleting a Run rolls back the coaching that stood on it the moment the rows are durable, and
+     * that rollback is uncancellable — but it is a second write to a second store, and a process
+     * reclaimed inside it leaves the rows gone and the Prescription standing on them. Nothing on the
+     * running app would ever notice: the delete is spent, and the runner's only remedies are to
+     * delete the Run again, which they cannot, or to cycle testing mode, which nobody would think
+     * of. This is the pass that goes back for it.
+     *
+     * Cheap enough to run every launch and say nothing: provenance is at most three ids per
+     * generation, so an install with nothing owed asks one small query and stops. An install with
+     * no provenance recorded at all — every Prescription written before #156 — asks nothing, because
+     * [coachWorkProvenance] gives an empty answer for it. That is the case ADR 0013 covers, and the
+     * one reading a launch pass must not take the other way round: an absent provenance is a
+     * question this cannot answer, not a Prescription to take away.
+     *
+     * **The whole of it is under [coachingProvenance]**, including the re-read, for the same reason
+     * the coach's own write is: what is standing is read, history is asked about it, and the answer
+     * is acted on — a check-and-act, and a delete landing inside it would be taking away work this
+     * pass has already decided to keep. The re-read under the lock is not the same read as the one
+     * that got here: that one is outside the lock so that the common case, nothing owed, never waits
+     * on a delete at all.
+     */
+    suspend fun reconcileCoachingWithHistory() {
+        val coach = coachPrescriptionRepository ?: return
+        if (coach.runsTheWorkStandsOn().isEmpty()) return
+        coachingProvenance.withLock {
+            val named = coach.runsTheWorkStandsOn()
+            if (named.isEmpty()) return@withLock
+            val gone = runsGoneFrom(named)
+            if (gone.isEmpty()) return@withLock
+            Log.d(
+                "AiCoach",
+                "Coaching was left standing on runs that are no longer in history; " +
+                    "taking it back now. gone=$gone named=$named"
+            )
+            coach.forgetWorkFedBy(gone)
+        }
     }
 
     suspend fun getMaxSessionLoadLast30Days(
