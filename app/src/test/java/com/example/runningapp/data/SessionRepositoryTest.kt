@@ -7837,6 +7837,64 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a run left unscored by a failure keeps the debt standing`() = runTest {
+        // The debt holds a permanent Run Summary back until history is whole. Settled here, this
+        // process would report history settled with a Score still missing, and a Summary written
+        // in that window is not repaired by the next launch's retry (#381).
+        val debts: HistoryDebtDao = mock()
+        debts.stub { onBlocking { owes(any()) }.thenReturn(true) }
+        val mockSampleDao: SampleDao = mock()
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(historyMaxHr = 181)))
+        whenever(mockDao.getSessionIdsMissingEffort()).thenReturn(listOf(7L, 8L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenThrow(IllegalStateException("unreadable"))
+        whenever(mockSampleDao.getRawBpmsForSession(8L)).thenReturn(List(60) { 130 })
+
+        repositoryOwing(debts, mockSampleDao).backfillEffortScores()
+
+        // The rest of the history is still scored — one unreadable Run costs the others nothing.
+        verify(mockDao).setEffortScore(8L, 3)
+        verify(debts, never()).settle(any())
+    }
+
+    @Test
+    fun `a failure earlier in the walk keeps the debt standing even though later runs scored`() =
+        runTest {
+            // The flag is never cleared: a Run that threw is owed a Score however many went
+            // through after it.
+            val debts: HistoryDebtDao = mock()
+            debts.stub { onBlocking { owes(any()) }.thenReturn(true) }
+            val mockSampleDao: SampleDao = mock()
+            whenever(mockSettingsRepo.userSettingsFlow)
+                .thenReturn(flowOf(UserSettings(historyMaxHr = 181)))
+            whenever(mockDao.getSessionIdsMissingEffort()).thenReturn(listOf(7L, 8L, 9L))
+            whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(List(60) { 130 })
+            whenever(mockSampleDao.getRawBpmsForSession(8L))
+                .thenThrow(IllegalStateException("unreadable"))
+            // A no-beats Run after the failure must not be read as "nothing was left behind".
+            whenever(mockSampleDao.getRawBpmsForSession(9L)).thenReturn(emptyList())
+
+            repositoryOwing(debts, mockSampleDao).backfillEffortScores()
+
+            verify(debts, never()).settle(any())
+        }
+
+    @Test
+    fun `a write that throws keeps the debt standing`() = runTest {
+        // Reading the samples is not the only retryable step — the Score still has to be stored.
+        val debts: HistoryDebtDao = mock()
+        debts.stub { onBlocking { owes(any()) }.thenReturn(true) }
+        val mockSampleDao: SampleDao = mock()
+        whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(UserSettings(historyMaxHr = 181)))
+        whenever(mockDao.getSessionIdsMissingEffort()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(List(60) { 130 })
+        whenever(mockDao.setEffortScore(7L, 3)).thenThrow(IllegalStateException("write failed"))
+
+        repositoryOwing(debts, mockSampleDao).backfillEffortScores()
+
+        verify(debts, never()).settle(any())
+    }
+
+    @Test
     fun `a pass that was never owed anything writes nothing`() = runTest {
         // A delete of a row that is not there would still wake every reader of
         // historyBeingMeasuredFlow, at every launch, for the life of the app.

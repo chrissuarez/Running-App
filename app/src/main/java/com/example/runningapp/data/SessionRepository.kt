@@ -893,6 +893,27 @@ class SessionRepository(
      *
      * One Run at a time, keeping going past a failure: a Run whose samples cannot be read should cost
      * the others nothing, and it stays unscored for the next launch to try again.
+     *
+     * **The debt is only settled if nothing was left for the next launch.** The two ways a Run can
+     * come out of the walk with no Score are not the same debt, and the pass has to tell them apart
+     * (#349, #381):
+     *
+     * - *Permanently unscorable* — a Run that recorded no beats. There is no Score to compute, now
+     *   or ever, and it sits on [SessionDao.getSessionIdsMissingEffort]'s list for the life of the
+     *   install. A debt held open over it would say "still measuring your runs" at every launch for
+     *   ever, so this settles the debt over it, exactly as the paragraph above describes.
+     * - *Retryable* — a read or a write that threw. That Run really is still owed a Score, and the
+     *   thing the debt is guarding is that a permanent Run Summary is not written out of a
+     *   half-measured history ([HistoryDebtRow]). Settling here would tell every reader of
+     *   [historyBeingMeasuredFlow] that history was settled for the rest of this process, long
+     *   enough for a Summary to be generated without the missing Score — and the next launch's
+     *   retry cannot go back and repair a Summary already written. So a caught exception keeps the
+     *   debt standing, and the next launch both re-scores the Run and settles the debt itself.
+     *
+     * The sibling pass ([backfillMovingTime]) reaches the same rule by having no catch at all: an
+     * exception there propagates past its settlement and leaves the debt standing. This one catches
+     * on purpose — one unreadable Run must not cost the rest of the history its Scores — so it has
+     * to remember that it caught.
      */
     suspend fun backfillEffortScores(profile: HrProfile? = null) = statedProfile.withLock {
         val samples = sampleDao ?: return@withLock
@@ -900,6 +921,9 @@ class SessionRepository(
             ?: settingsRepository?.userSettingsFlow?.first()?.historyHrProfile
             ?: return@withLock
         val sessionIds = sessionDao.getSessionIdsMissingEffort()
+        // Set by the catch and never cleared: one Run this launch could not read or write is one
+        // Run history is still owed, however many others went through afterwards.
+        var leftForNextLaunch = false
         if (sessionIds.isNotEmpty()) {
             var scored = 0
             sessionIds.forEach { sessionId ->
@@ -909,16 +933,22 @@ class SessionRepository(
                     sessionDao.setEffortScore(sessionId, score)
                     scored++
                 } catch (e: Exception) {
+                    leftForNextLaunch = true
                     Log.w("Effort", "Could not score run $sessionId; leaving it for next launch", e)
                 }
             }
             Log.d("Effort", "Scored $scored of ${sessionIds.size} unscored run(s)")
         }
-        // After the walk, for [settleHistoryDebt]'s reasons (#349) — and after it whether or not
-        // every Run on the list could be scored. A Run that recorded no beats has no Score to
-        // compute and stays on that list for ever; leaving the debt raised over it would say
-        // history was still being measured for the life of the install.
-        settleHistoryDebt(HistoryPass.EFFORT_SCORES)
+        // After the walk, for [settleHistoryDebt]'s reasons (#349) — and only where the walk left
+        // nothing behind for the next launch to do (#381). A Run that recorded no beats is not
+        // "left behind": it has no Score to compute, now or ever, and holding the debt open over it
+        // would say history was still being measured for the life of the install. A Run whose read
+        // or write threw is, so the debt stands and the next launch settles it.
+        if (leftForNextLaunch) {
+            Log.d("HistoryDebt", "Effort pass could not read every run; debt kept for next launch")
+        } else {
+            settleHistoryDebt(HistoryPass.EFFORT_SCORES)
+        }
     }
 
     /**
@@ -1496,6 +1526,10 @@ class SessionRepository(
         // Lowered after the walk and never before it, so a process reclaimed mid-pass comes back
         // owing the same debt (#349). An empty work list lowers it too: there is nothing left to
         // measure, whether this pass measured it or a previous one did.
+        //
+        // No catch here, on purpose: a run that cannot be measured throws past this line and the
+        // debt stands for the next launch, which is the same rule [backfillEffortScores] has to
+        // keep a flag to reach (#381). Do not wrap the walk in one without carrying that rule over.
         settleHistoryDebt(HistoryPass.MOVING_TIME)
     }
 
@@ -1507,6 +1541,13 @@ class SessionRepository(
      * for the life of the app. Nothing here ever raises one: a debt of this kind is raised by the
      * migration that makes history half-measured, which is the only moment that can honestly speak
      * for it.
+     *
+     * **A caller may only reach this line having left nothing for the next launch to do** (#381).
+     * The debt is what holds a permanent Run Summary back until history is whole; settling it while
+     * a Run is still owed its measurement says history is whole for the rest of this process, and
+     * a Summary written in that window is not repaired by the next launch's retry. A Run that can
+     * *never* be measured — no beats to score, no track to measure — is not owed anything and does
+     * not hold the debt open; a Run whose read or write threw is, and does.
      */
     private suspend fun settleHistoryDebt(pass: String) {
         val debts = historyDebtDao ?: return
