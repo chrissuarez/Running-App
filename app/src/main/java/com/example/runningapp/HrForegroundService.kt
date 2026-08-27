@@ -67,7 +67,7 @@ import com.example.runningapp.run.RowSettlement
 import com.example.runningapp.run.RunAtLastDispatch
 import com.example.runningapp.run.settlementOfRowAwaited
 import com.example.runningapp.run.RunLostToTeardown
-import com.example.runningapp.run.RunRowSettlementClaim
+import com.example.runningapp.run.RunRescueClaim
 import com.example.runningapp.run.beginARun
 import com.example.runningapp.run.runLostToTeardown
 import java.util.concurrent.ConcurrentHashMap
@@ -94,6 +94,7 @@ import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointSource
 import com.example.runningapp.data.averagePaceMinPerKm
+import com.example.runningapp.data.settleRunRow
 import com.example.runningapp.diagnostics.RunHeldFor
 import com.example.runningapp.diagnostics.RunJournal
 import com.example.runningapp.diagnostics.RunJournalEvent
@@ -332,8 +333,9 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * The Run's own finalize is in that category and was for a while refused anyway, on the
      * reasoning that the teardown's rescue would write the row in its place — which is true only of
      * a Run the teardown finds still recording, and a background STOP is not one (#382). The row
-     * then had no writer at all. Keeping one writer per row is a claim both settlers race for
-     * ([RunRowSettlementClaim]), not something this flag decides.
+     * then had no writer at all. Keeping one writer per row is the settling write's own business —
+     * it writes only where the row is still unsettled ([SETTLE_RUN_ROW_IF_UNSETTLED]) — and not
+     * something this flag decides.
      *
      * Separate from [destroyed], which is a narrower fact about one resource: that one says the GATT
      * sweep has been made, and is read by a connect deciding whether to close its own handle.
@@ -459,27 +461,26 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private val heldWorkClaim = AtomicBoolean(false)
 
     /**
-     * The claim on settling this Run's row, taken by whichever of its two settlers gets there first
+     * The claim on rescuing this Run, taken by whichever of its two settlers gets there first
      * (#382).
      *
-     * The rule, what winning and losing mean, and why a claim rather than a refusal, are stated once
-     * on [RunRowSettlementClaim]. This is where the two settlers meet it: [finalizeRun] takes it as
-     * the Run's own finalize is performed, and the teardown takes it in each of the two places it
-     * would otherwise write the row itself ([endRunLostToTeardown], [endRunAwaitingItsRow]).
+     * What it decides — who pays for a rebuild and who tells the runner their Run stopped recording
+     * — and what it deliberately no longer decides, which is who writes the row, are stated once on
+     * [RunRescueClaim]. This is where the two settlers meet it: [finalizeRun] takes it as the Run's
+     * own finalize is performed, and the teardown takes it in each of the two places it would
+     * otherwise rebuild the Run itself ([endRunLostToTeardown], [endRunAwaitingItsRow]).
      *
      * It is not taken in [runTakenByThisTeardown] alongside the held-work claim, though that is where
-     * it would sit most tidily, and the reason is the defect that produced it. A teardown that took
-     * this claim while reading the Run would take it even when the reading turns out to be *no Run
-     * to settle* — which is exactly what an ordinary background STOP looks like from here, the Run
-     * already published as STOPPED. The Run's own finalize, still on its way down the session
-     * thread, would then find the claim gone and stand down, and the row nobody had any intention of
-     * settling would be settled by nobody. The claim is taken where the row is about to be written
-     * and nowhere else.
+     * it would sit most tidily. A teardown that took this claim while reading the Run would take it
+     * even when the reading turns out to be *no Run to settle* — which is exactly what an ordinary
+     * background STOP looks like from here, the Run already published as STOPPED — and would then be
+     * telling a runner who stopped their own Run that it stopped recording. It is taken where a
+     * rebuild is about to be paid for and nowhere else.
      *
      * Reset as each Run is started, in the same place and for the same reason as [insertedRunRowId]
      * and [heldWorkClaim].
      */
-    private val rowSettlementClaim = RunRowSettlementClaim()
+    private val rescueClaim = RunRescueClaim()
 
     /**
      * What this teardown found of the Run, and whether the Run's held work is now its to deliver
@@ -776,13 +777,14 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // session thread was already running when its bounded join ran out
         // ([SESSION_THREAD_JOIN_TIMEOUT_MS]), and what it would do is exactly what the teardown is
         // about to do from the other side: a STOP dispatching here would launch a second finalize
-        // for the row the rescue is rebuilding. Which of those two writes the row is no longer left
-        // to whichever lands last — they race for a claim (#382) — but a dispatch begun after the
-        // gate shut would still republish and re-journal a Run the teardown has already accounted
-        // for, and cost a rebuilt row the Run's own totals for no reason. Refused here, that
+        // for the row the rescue is rebuilding. Which of those two settles the row is no longer left
+        // to whichever lands last — the settling write only writes an unsettled row (#382,
+        // [SETTLE_RUN_ROW_IF_UNSETTLED]) — but a dispatch begun after the gate shut would still
+        // republish and re-journal a Run the teardown has already accounted for. Refused here, that
         // question never arises.
         //
-        // Before the claim, because the claim is a compare-and-set and losing it is a decision. A
+        // Before the held-work claim, because that claim is a compare-and-set and losing it is a
+        // decision. A
         // refusal that spent the claim first would take the buffer from the teardown and then not
         // deliver it, and the Run's held seconds would be nobody's (#360).
         if (!runMayBeGivenWork(teardownBegun)) {
@@ -831,10 +833,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // claim left standing from the last Run would leave this one's held work refused by
             // both sides (#360).
             heldWorkClaim.set(false)
-            // And its row is nobody's yet either, for the same reason again: a settlement claim
-            // left standing from the last Run would have this one's row written by neither its own
-            // finalize nor a teardown's rescue, both standing down for the other (#382).
-            rowSettlementClaim.releaseForANewRun()
+            // And nobody has this Run to rescue yet, for the same reason again: a claim left
+            // standing from the last Run would tell this one's teardown that a finalize was on its
+            // way when none is, and a Run genuinely taken from its runner would be neither rebuilt
+            // nor spoken about (#382).
+            rescueClaim.releaseForANewRun()
         }
         publishRun(runState, toDispatch.nowMillis)
         // Between the publish and the effects: the journal describes what is now true, and it must
@@ -1166,38 +1169,37 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * and the start position, which are GPS's.
      */
     private fun finalizeRun(effect: RunEffect.FinalizeRun) {
-        // Taken here, and this is the whole of the mutual exclusion between this write and the
-        // teardown's rescue of the same row (#315, #382).
+        // Taken here, and it no longer decides who writes the row (#315, #382).
         //
-        // The dispatch that emits this can straddle the teardown gate — a session-thread message
-        // already inside [dispatchRunEvent] when the gate closed runs to its end, and it can outlive
-        // the bounded join that follows — so this finalize can start after the drains in
-        // [settleAfterTeardown] have had their empty pass. That is #315's named harm: the rescue and
-        // the Run's own finalize both writing the row, with the totals going to whichever lands
-        // last.
+        // The history matters, because two answers have already been wrong here. The dispatch that
+        // emits this can straddle the teardown gate — a session-thread message already inside
+        // [dispatchRunEvent] when the gate closed runs to its end, and it can outlive the bounded
+        // join that follows — so this finalize can start after the drains in [settleAfterTeardown]
+        // have had their empty pass. #315's named harm was both settlers writing the row, with the
+        // totals going to whichever landed last.
         //
-        // #315's first answer was to refuse the finalize outright once the teardown had begun, and
-        // that answer lost Runs. An ordinary background STOP publishes STOPPED before it performs
-        // its effects; the promotion follower reads that publish on main and demotes, `stopSelf()`
-        // and all; so `onDestroy` can shut the gate while this dispatch is still walking its effects
-        // — and the teardown that follows reads a Run that is no longer recording, which is not a
-        // Run it settles anything for ([runLostToTeardown] answers null for STOPPED). Refused here,
-        // the Run had *no* writer: an `endTime = 0` row, gone from history, the export and the coach
-        // until a later launch's pass happened to rescue it (#192). That is not residue on a rare
-        // path — it is what every background STOP would do.
+        // The first answer was to refuse this finalize outright once the teardown had begun, and it
+        // lost Runs: an ordinary background STOP publishes STOPPED before it performs its effects,
+        // the promotion follower reads that publish on main and demotes, `stopSelf()` and all, so
+        // `onDestroy` can shut the gate while this dispatch is still walking its effects — and the
+        // teardown that follows reads a Run that is no longer recording, which is not a Run it
+        // settles anything for ([runLostToTeardown] answers null for STOPPED). Refused here, the Run
+        // had *no* writer at all.
         //
-        // So the exclusion is a claim rather than a refusal, and this is the settler that takes it
-        // first: synchronously, on the session thread, before the launch below, which is what makes
-        // the ordinary case end with the Run keeping the totals it banked as it ran. A finalize that
-        // finds the claim gone lost the race to a teardown that has already read the record and
-        // written the row, so it stands down rather than writing a second answer over the first.
-        if (!rowSettlementClaim.takenHere()) {
-            Log.w(
-                TAG,
-                "A teardown settled run ${effect.runRowId}'s row already; not finalizing it here"
-            )
-            return
-        }
+        // The second answer was this claim: whichever settler took it wrote the row, and the other
+        // stood down. It lost Runs too, one level further in. A teardown takes the claim before it
+        // knows whether it can rebuild anything, and for a Run with no reconstructable seconds — a
+        // short strapless treadmill Run — the rescue writes nothing; this finalize, having found the
+        // claim gone, had already stood down for good. An `endTime = 0` row with nobody left to
+        // finish it, which is the very Run #382 exists to stop losing.
+        //
+        // So the exclusion is not here any more. **The Run's row is settled by the write that finds
+        // it unsettled** ([SETTLE_RUN_ROW_IF_UNSETTLED]), and this finalize goes and writes whatever
+        // the claim says. What the claim is still good for is stated on it: it keeps a teardown from
+        // paying for a rebuild and telling the runner their Run stopped recording when the Run's own
+        // finish is already on its way. Taking it and not using it now costs a message; it can no
+        // longer cost a Run.
+        rescueClaim.takenHere()
         // The Run is over, so there is no longer a runner to be off anything (#58). Ended here as
         // well as at the next Run's start, so a phone sitting idle after a Run is not still holding
         // a query open on the library.
@@ -1241,15 +1243,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     // straight after stopping export the Run minus its final seconds.
                     awaitRecorderWrites()
 
-                    // Read after that wait and not before it, because the row is written back whole and
-                    // the wait can last seconds — with the feel sheet on screen throughout. The Walk
-                    // mark, the effort, the note and a stated distance are all the runner's to write in
-                    // that window and none of them is this Run's to overwrite. Read beforehand, a Walk
-                    // ticked into the sheet during the wait was silently undone here, and the
-                    // settlement below then judged the Run off the `isWalk = false` this write had just
-                    // restored — a Stage graduated on a walk, which cannot be taken back (#317). The
-                    // totals below are this Run's own and are written over whatever is there; every
-                    // other column is left as the runner left it.
+                    // Read after that wait and not before it, and it stays there (#317). The wait can
+                    // last seconds with the feel sheet on screen throughout, and the Walk mark, the
+                    // effort, the note and a stated distance are all the runner's to write in that
+                    // window. Read beforehand, a Walk ticked into the sheet during the wait was
+                    // silently undone by this write, and the settlement below then judged the Run off
+                    // the `isWalk = false` it had just restored — a Stage graduated on a walk, which
+                    // cannot be taken back.
+                    //
+                    // The settling write no longer carries the whole row, which is what made the
+                    // timing of this read load-bearing: it names the columns a settler measured and
+                    // leaves every other one alone ([SETTLE_RUN_ROW_IF_UNSETTLED]), so the runner's
+                    // edits are safe from it whenever they land. The read stays all the same. It is
+                    // what says there is a row here to finish at all, and it is what the copy below
+                    // is built from — a copy that is the *settler's* answer for this Run and is
+                    // deliberately taken as late as the settling itself.
                     val session = database.sessionDao().getSessionById(runRowId)
                     if (session == null) {
                         Log.w(TAG, "Finalize found no row $runRowId")
@@ -1274,7 +1282,28 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         walkBreaksCount = totals.walkBreaks,
                         isRunWalkMode = totals.isRunWalkMode,
                     )
-                    database.sessionDao().updateSession(updatedSession)
+                    // The settling write, and the whole of the mutual exclusion between this and the
+                    // teardown's rescue of the same row (#382). It writes if the row is still
+                    // unsettled and says whether it did; nothing was decided about that beforehand,
+                    // because nothing but the row can say it.
+                    //
+                    // In the ordinary case this is the write that lands, and the Run keeps the
+                    // totals it banked as it ran: a teardown's rescue runs behind the drains in
+                    // [settleAfterTeardown], which wait this finalize out. In the race that is left
+                    // — a teardown whose bounded joins gave up, whose rescue rebuilt the Run from
+                    // its record and wrote first — the row keeps the rescue's rebuilt totals and
+                    // this returns false. That is the acceptable outcome of the two: rebuilt totals
+                    // are a true account of the seconds that reached the database, they are already
+                    // on disk with the Run's after-run work done off them, and the alternative is
+                    // this write going over the top of them, which is the two-writer harm #315 was
+                    // filed about.
+                    if (!database.sessionDao().settleRunRow(updatedSession)) {
+                        // Everything below belongs to the settler that won the row — the journal
+                        // line, the after-run measurements, the Plan's settlement — and it is
+                        // doing them, or has.
+                        Log.w(TAG, "Run $runRowId was settled by a teardown's rescue; leaving it that way")
+                        return@withContext
+                    }
 
                     // Against the Run's own id rather than the live one, which this stop has already
                     // cleared. A Run journaled as stopped but never as finalized is a Run whose totals
@@ -1355,16 +1384,18 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             }
         }
         // Never false, and checked because of what it would mean if it ever were. The finish is the
-        // one thing the gate does not refuse (#382), and by this line the settlement claim has
-        // already been spent — so a registration that *did* refuse would leave the row claimed by a
-        // writer that never ran, and no teardown could settle it either. That is the lost Run this
-        // whole change is about, and it would be silent. An editor who puts the finalize back behind
-        // the rule finds this line rather than an empty history.
+        // one thing the gate does not refuse (#382), and by this line the settlement claim has been
+        // spent — so a registration that *did* refuse would leave a Run whose own totals never
+        // reach its row, and a teardown that had asked for the claim first would already have stood
+        // its rescue down. The row would not be lost for good: it is unsettled, so the launch pass
+        // has it. But the Run would lose the totals it banked as it ran and be rebuilt from its
+        // record instead, silently. An editor who puts the finalize back behind the rule finds this
+        // line rather than a Run quietly demoted to its own wreckage.
         if (!finalizing) {
             Log.e(
                 TAG,
-                "Run ${effect.runRowId}'s finalize was refused registration; its row is claimed by " +
-                    "a write that will not happen. Only the launch pass can finish it now."
+                "Run ${effect.runRowId}'s finalize was refused registration; its own totals will " +
+                    "never reach its row. Only the launch pass can finish it now."
             )
         }
     }
@@ -2010,7 +2041,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
             // finalize does. While the teardown refused a finalize it found in that window, this
             // line took the Run with it: nobody wrote the row. What makes it safe again is that the
             // finalize is never refused ([TeardownGate]) and that the two possible writers of the
-            // row race for a claim rather than one being turned away ([RunRowSettlementClaim]).
+            // row race for a claim rather than one being turned away ([RunRescueClaim]).
             stopSelf()
         }
 
@@ -2716,17 +2747,25 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * waiting for the same thing.
      */
     private fun endRunLostToTeardown(runRowId: Long) {
-        // The claim, taken before the runner is told anything and before a word is written (#382).
+        // The claim, taken before the runner is told anything and before a rebuild is paid for
+        // (#382).
         //
         // The Run read here is one this teardown found still recording, and that reading can be a
         // beat old: a STOP dispatch publishes its state before it performs its effects, so the Run
         // whose snapshot says RUNNING may already have a finalize of its own walking down the
-        // session thread with the totals it banked as it ran. Both of us writing this row is #315's
-        // named harm. The claim decides it once, and losing it means the better answer is already on
-        // its way — so nothing is rescued and nothing is said, exactly as for a Run whose runner
-        // stopped it before its row landed ([RunLostToTeardown.AwaitingItsRow.runnerStopped]).
-        if (!rowSettlementClaim.takenHere()) {
-            Log.w(TAG, "Run $runRowId's own finalize took its row; leaving it to that write")
+        // session thread with the totals it banked as it ran. Losing the claim says exactly that,
+        // and there is then nothing here worth doing: rebuilding the Run from its record would cost
+        // a dying process a walk of two tables to produce a worse answer, and telling the runner
+        // their Run stopped recording would be false — they stopped it themselves.
+        //
+        // What this does *not* decide is who writes the row. It used to, and that is what lost the
+        // Run this ticket is about: taken here and then handed to a rescue that turned out to have
+        // nothing to rebuild, it left a row nobody settled, because the Run's own finalize had
+        // already stood down on finding it gone. The write is its own guard now
+        // ([SETTLE_RUN_ROW_IF_UNSETTLED]) and the finalize never stands down, so the worst this
+        // claim can now get wrong is a message.
+        if (!rescueClaim.takenHere()) {
+            Log.w(TAG, "Run $runRowId's own finalize is settling its row; not rescuing it here")
             return
         }
         Log.w(TAG, "Service destroyed with run $runRowId still recording; finishing it from its record")
@@ -2773,7 +2812,8 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      *  - The runner had stopped it. The held work includes the Run's own finalize
      *    ([RunLostToTeardown.AwaitingItsRow.runnerStopped]); performing it is the whole of the job,
      *    and nothing here rescues or discards behind it — those exist for a Run with no finish of
-     *    its own, and a second writer of the same row is what the #309 comment above forbids. It is
+     *    its own, and rebuilding a Run whose own totals are already on their way is work for a worse
+     *    answer (the row itself refuses the second write, #382, but the work is still wasted). It is
      *    the one answer for both readings of a stop: the state that says so may have been published
      *    already (STOPPING) or not yet, and either way the finalize is in the buffer and this is
      *    what delivers it.
@@ -2849,20 +2889,21 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                 Log.w(TAG, "Run $runRowId was stopped by the runner before its row landed; its own finalize has it")
                 return@settleAfterTeardown
             }
-            // The claim on the row, taken here rather than up with the held-work claim (#382).
-            // Here, because this is the first line past which this teardown would write the row
-            // itself. Above it there was nothing to exclude: the branch that just returned is a Run
-            // whose own finalize is in the buffer, and that finalize takes the claim when it is
-            // performed ([finalizeRun]) — a teardown that had taken it first would have stood that
-            // finalize down and settled the row with rebuilt totals in place of the Run's own.
+            // The claim, taken here rather than up with the held-work claim (#382). Here, because
+            // this is the first line past which this teardown would rebuild the Run itself. Above
+            // it there was nothing to ask about: the branch that just returned is a Run whose own
+            // finalize is in the buffer, and that finalize takes the claim when it is performed
+            // ([finalizeRun]).
             //
-            // Losing it here would mean a finalize reached this row first — a STOP that straddled
+            // Losing it here would mean a finalize reached this Run first — a STOP that straddled
             // the gate and emitted one before the branch above could read the buffer. Whether that
-            // is reachable or merely conceivable, the answer is the same and is the answer
-            // everywhere else: the Run's own totals beat anything rebuilt here, so nothing is
-            // rescued and nothing is discarded.
-            if (!rowSettlementClaim.takenHere()) {
-                Log.w(TAG, "Run $runRowId's row was settled by its own finalize; leaving it alone")
+            // is reachable or merely conceivable, the answer is the answer everywhere else: the
+            // Run's own totals beat anything rebuilt here, so there is nothing to rebuild and
+            // nothing to discard. Not because the claim forbids the write — the row's own condition
+            // is what decides that now ([SETTLE_RUN_ROW_IF_UNSETTLED]) — but because a rebuild
+            // behind a live finalize is work for a worse answer.
+            if (!rescueClaim.takenHere()) {
+                Log.w(TAG, "Run $runRowId's own finalize is settling its row; leaving it alone")
                 return@settleAfterTeardown
             }
             // The held work has just been queued, and both answers below read the record it makes.
@@ -3132,7 +3173,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // finalize, which a STOP dispatch already in flight can still launch after this gate shut
         // (#382). It is left through because refusing it left the row with no writer at all, and the
         // exclusion it needs is not a gate but a claim — the finalize and the rescue below race for
-        // the right to settle the row, and the loser stands down ([RunRowSettlementClaim]).
+        // the right to settle the row, and the loser stands down ([RunRescueClaim]).
         //
         // A Run whose insert had not come back is the same loss arriving a moment earlier, and it
         // is settled here for the same reason (#314). All three of the things read of the Run come

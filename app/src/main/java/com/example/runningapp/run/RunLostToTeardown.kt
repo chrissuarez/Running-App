@@ -26,9 +26,12 @@ import com.example.runningapp.isRecording
  * the harm the teardown gate was built about. What that leans on is that the finalize is actually
  * allowed to happen. It briefly was not — a teardown refused it as new work, and since this reading
  * offers no rescue for a STOPPED Run either, the row was left at `endTime = 0` with nobody at all to
- * finish it (#382). The finalize is now never refused, and the one-writer rule it used to buy is a
- * claim the two settlers race for ([RunRowSettlementClaim]). Anything that changes the null above
- * into a rescue has to reckon with that claim, not with this reading alone.
+ * finish it (#382). The finalize is now never refused, and the one-writer rule it used to buy is kept
+ * by the row instead: a Run's row is settled by the write that finds it unsettled
+ * ([com.example.runningapp.data.SETTLE_RUN_ROW_IF_UNSETTLED]), so a second settler arriving after
+ * the first changes nothing. Anything that changes the null above into a rescue has to reckon with
+ * that write, not with this reading alone — and with [RunRescueClaim], which is what keeps a
+ * teardown from paying for a rebuild the Run's own finish makes pointless.
  *
  * STOPPING is not a loss — the runner stopped it themselves — but it is still this teardown's to
  * settle, which is a different question and the one #361 was filed about. A Run in STOPPING is

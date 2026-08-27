@@ -11,11 +11,11 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.kotlin.any
-import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
-import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -30,7 +30,53 @@ class SessionRepositoryRescueTest {
     private val processStartedAt = 1_700_000_100_000L
     private val startedAt = 1_700_000_000_000L
 
-    private val sessionDao: SessionDao = mock()
+    /**
+     * How many rows the settling statement says it settled, so a test can be the settler that
+     * arrived second (#382).
+     *
+     * 1 is a row that was still unfinished when the write reached it, which is every test here bar
+     * the ones about losing that race.
+     */
+    private var rowsSettled = 1
+
+    /** What the settling statement was given, rebuilt into the Run the settler meant to write. */
+    private val settled = mutableListOf<RunnerSession>()
+
+    private val sessionDao: SessionDao = mock {
+        // The one seam every settler goes through ([settleRunRow]). Answered rather than merely
+        // stubbed, because what the tests below are about is the *totals* a rescue arrived at, and
+        // the statement takes them apart into columns.
+        onBlocking {
+            settleRunRowIfUnsettled(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                any(), anyOrNull(), any(), any(), anyOrNull(), anyOrNull(), any(),
+            )
+        } doAnswer { call ->
+            settled += RunnerSession(
+                id = call.getArgument(0),
+                startTime = startedAt,
+                endTime = call.getArgument(1),
+                durationSeconds = call.getArgument(2),
+                avgBpm = call.getArgument(3),
+                maxBpm = call.getArgument(4),
+                distanceKm = call.getArgument(5),
+                avgPaceMinPerKm = call.getArgument(6),
+                noDataSeconds = call.getArgument(7),
+                zone1Seconds = call.getArgument(8),
+                zone2Seconds = call.getArgument(9),
+                zone3Seconds = call.getArgument(10),
+                zone4Seconds = call.getArgument(11),
+                zone5Seconds = call.getArgument(12),
+                effortScore = call.getArgument(13),
+                walkBreaksCount = call.getArgument(14),
+                isRunWalkMode = call.getArgument(15),
+                startLatitude = call.getArgument(16),
+                startLongitude = call.getArgument(17),
+                stageSettled = call.getArgument(18),
+            )
+            rowsSettled
+        }
+    }
     private val sampleDao: SampleDao = mock()
     private val trackPointDao: TrackPointDao = mock()
     private val intervalStatDao: RunWalkIntervalStatDao = mock()
@@ -82,10 +128,8 @@ class SessionRepositoryRescueTest {
 
         repository.rescueInterruptedRuns(processStartedAt)
 
-        val saved = argumentCaptor<RunnerSession>()
-        verify(sessionDao).updateSession(saved.capture())
-        assertEquals(292, saved.firstValue.durationSeconds)
-        assertEquals(startedAt + 292_000, saved.firstValue.endTime)
+        assertEquals(292, settled.single().durationSeconds)
+        assertEquals(startedAt + 292_000, settled.single().endTime)
     }
 
     @Test
@@ -97,7 +141,7 @@ class SessionRepositoryRescueTest {
 
         repository.rescueInterruptedRuns(processStartedAt)
 
-        verify(sessionDao, never()).updateSession(any())
+        assertTrue(settled.isEmpty())
         assertEquals(0, backupsRefreshed)
     }
 
@@ -111,9 +155,7 @@ class SessionRepositoryRescueTest {
 
         repository.rescueInterruptedRuns(processStartedAt)
 
-        val saved = argumentCaptor<RunnerSession>()
-        verify(sessionDao).updateSession(saved.capture())
-        assertEquals(67L, saved.firstValue.id)
+        assertEquals(67L, settled.single().id)
     }
 
     @Test
@@ -127,7 +169,7 @@ class SessionRepositoryRescueTest {
 
         repository.rescueInterruptedRuns(processStartedAt)
 
-        verify(sessionDao, times(2)).updateSession(any())
+        assertEquals(2, settled.size)
         assertEquals(1, backupsRefreshed)
         // And no durable booking per Run. That handoff belongs to the teardown, whose process is
         // dying; this pass runs at launch on a process that is not, and a booking each would mean a
@@ -149,7 +191,7 @@ class SessionRepositoryRescueTest {
 
         repository.rescueInterruptedRuns(processStartedAt)
 
-        verify(sessionDao).updateSession(any())
+        assertEquals(1, settled.size)
         assertEquals(1, backupsRefreshed)
     }
 
@@ -179,7 +221,7 @@ class SessionRepositoryRescueTest {
 
         repository.rescueInterruptedRuns(processStartedAt)
 
-        verify(sessionDao).updateSession(any())
+        assertEquals(1, settled.size)
         verify(sessionDao, never()).setRecordsScored(any())
     }
 
@@ -197,11 +239,9 @@ class SessionRepositoryRescueTest {
 
         repository.rescueInterruptedRuns(processStartedAt)
 
-        val saved = argumentCaptor<RunnerSession>()
-        verify(sessionDao).updateSession(saved.capture())
         val onHistoryProfile = tallyZoneSeconds(List(60) { 130 }, HrProfile(maxHr = 181))
-        assertEquals(onHistoryProfile.zone2, saved.firstValue.zone2Seconds)
-        assertEquals(onHistoryProfile.zone3, saved.firstValue.zone3Seconds)
+        assertEquals(onHistoryProfile.zone2, settled.single().zone2Seconds)
+        assertEquals(onHistoryProfile.zone3, settled.single().zone3Seconds)
     }
 
     @Test
@@ -221,13 +261,13 @@ class SessionRepositoryRescueTest {
 
         repository.rescueInterruptedRuns(processStartedAt)
 
-        val saved = argumentCaptor<RunnerSession>()
-        verify(sessionDao).updateSession(saved.capture())
         val onItsOwnProfile = tallyZoneSeconds(List(60) { 130 }, HrProfile(maxHr = 195))
-        assertEquals(onItsOwnProfile.zone2, saved.firstValue.zone2Seconds)
-        assertEquals(onItsOwnProfile.zone3, saved.firstValue.zone3Seconds)
-        // And the run keeps saying what it was banded on, rather than being rewritten to the global.
-        assertEquals(195, saved.firstValue.bandedOnMaxHr)
+        assertEquals(onItsOwnProfile.zone2, settled.single().zone2Seconds)
+        assertEquals(onItsOwnProfile.zone3, settled.single().zone3Seconds)
+        // And the run keeps saying what it was banded on, which the settling write cannot rewrite:
+        // the pair it was recorded under is not one of the columns a settler measures, so it is not
+        // one of the columns a settler writes ([SETTLE_RUN_ROW_IF_UNSETTLED]).
+        verify(sessionDao, never()).updateSession(any())
     }
 
     @Test
@@ -260,9 +300,7 @@ class SessionRepositoryRescueTest {
 
         repository.rescueInterruptedRuns(processStartedAt)
 
-        val saved = argumentCaptor<RunnerSession>()
-        verify(sessionDao).updateSession(saved.capture())
-        assertTrue(saved.firstValue.isRunWalkMode)
+        assertTrue(settled.single().isRunWalkMode)
     }
 
     @Test
@@ -272,7 +310,7 @@ class SessionRepositoryRescueTest {
         repository.rescueInterruptedRuns(processStartedAt)
 
         verify(sessionDao, never()).getSessionById(any())
-        verify(sessionDao, never()).updateSession(any())
+        assertTrue(settled.isEmpty())
         assertEquals(0, backupsRefreshed)
     }
 
@@ -290,9 +328,7 @@ class SessionRepositoryRescueTest {
 
         assertTrue(repository.rescueRunLostToTeardown(67L))
 
-        val saved = argumentCaptor<RunnerSession>()
-        verify(sessionDao).updateSession(saved.capture())
-        assertEquals(22, saved.firstValue.durationSeconds)
+        assertEquals(22, settled.single().durationSeconds)
         // Named rather than searched for: no list is asked for, so nothing else in the database can
         // be caught up in a teardown's rescue.
         verify(sessionDao, never()).getInterruptedSessionIds(any())
@@ -366,25 +402,54 @@ class SessionRepositoryRescueTest {
 
             assertTrue(repository.rescueRunLostToTeardown(67L))
 
-            verify(sessionDao).updateSession(any())
+            assertEquals(1, settled.size)
             assertEquals(1, refreshed)
         }
 
     @Test
-    fun `a Run that had already been finished is left exactly as it was finished`() = runTest {
+    fun `a Run finished after this rescue read it keeps the totals it was finished with`() = runTest {
         // The race the teardown opens and the launch pass never could: a stop's finalize landing
         // between the teardown and this rescue. The Run's own totals are the ones it banked as it
         // ran; totals rebuilt from the record are the second-best answer, and must not overwrite
         // the best one.
-        whenever(sessionDao.getSessionById(67L))
-            .thenReturn(interruptedRun(67L).copy(endTime = startedAt + 22_000, durationSeconds = 22))
+        //
+        // The row read here still says `endTime = 0`, which is the point: it is the *write* that
+        // finds the row already settled, not a check taken beforehand off a copy that has since
+        // gone stale (#382). Before that, a rescue that read an unfinished row went on to write it
+        // whatever had happened in between, and the finalize's totals were the ones lost.
+        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
         whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 22))
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+        rowsSettled = 0
 
         assertEquals(false, repository.rescueRunLostToTeardown(67L))
 
-        verify(sessionDao, never()).updateSession(any())
+        // Everything that hangs off a Run being finished belongs to the settler that finished it.
         assertEquals(0, backupsRefreshed)
         assertTrue(runsBooked.isEmpty())
+        verify(sessionDao, never()).setRecordsScored(any())
+    }
+
+    @Test
+    fun `a rescue with nothing to rebuild leaves the row for its own finalize to settle`() = runTest {
+        // The Codex finding this pass answers, at the layer that can be shown: a short strapless
+        // treadmill Run, torn down, with no sample and no fix to rebuild it from. The rescue writes
+        // nothing at all — so the row is still unsettled, and the Run's own finalize is still free
+        // to settle it. It is free because nothing here stands it down: the rescue takes no lasting
+        // hold on the row, and the only thing that decides who settles it is the write itself.
+        //
+        // Before this, the teardown's claim was taken before any of this was known, and a rescue
+        // that got here and wrote nothing had already sent the Run's own finalize away for good.
+        // The row stayed at `endTime = 0` with nobody left to finish it.
+        whenever(sessionDao.getSessionById(67L)).thenReturn(interruptedRun(67L))
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(emptyList())
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+
+        assertEquals(false, repository.rescueRunLostToTeardown(67L))
+
+        assertTrue(settled.isEmpty())
+        verify(sessionDao, never()).updateSession(any())
+        verify(sessionDao, never()).deleteSessionIfItRecordedNothing(any())
     }
 
     @Test
@@ -395,7 +460,7 @@ class SessionRepositoryRescueTest {
 
         assertEquals(false, repository.rescueRunLostToTeardown(67L))
 
-        verify(sessionDao, never()).updateSession(any())
+        assertTrue(settled.isEmpty())
         assertEquals(0, backupsRefreshed)
         assertTrue(runsBooked.isEmpty())
     }
@@ -406,7 +471,7 @@ class SessionRepositoryRescueTest {
 
         assertEquals(false, repository.rescueRunLostToTeardown(67L))
 
-        verify(sessionDao, never()).updateSession(any())
+        assertTrue(settled.isEmpty())
     }
 
     @Test
