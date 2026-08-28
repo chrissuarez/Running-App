@@ -1306,8 +1306,10 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                         // marks every Run it puts back as owing the Plan nothing
                         // ([finishedFromRecord]) — right for a Run nobody closed, wrong for this
                         // one, whose runner closed it, which is why there is a finalize here at
-                        // all. The question goes back rather than being answered here; the rule and
-                        // every reason for it are on [HAND_THE_STAGE_QUESTION_BACK].
+                        // all. The question goes back rather than being answered here — and the
+                        // rescue pays it as soon as its measurements are in, in this process rather
+                        // than at the next cold start (#386). The rule and every reason for it are
+                        // on [HAND_THE_STAGE_QUESTION_BACK].
                         Log.w(TAG, "Run $runRowId was settled by a teardown's rescue; leaving it that way")
                         try {
                             sessionRepository.handTheStageQuestionBack(runRowId)

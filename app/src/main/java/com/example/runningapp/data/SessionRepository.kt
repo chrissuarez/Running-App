@@ -1350,19 +1350,31 @@ class SessionRepository(
      * the Run a Clear storage would lose. A copy taken here and now may not outlive the teardown,
      * but a copy that might happen beats one that certainly will not.
      */
-    suspend fun rescueRunLostToTeardown(runRowId: Long): Boolean = statedProfile.withLock {
-        val settings = settingsRepository ?: return@withLock false
-        val historyProfile = settings.userSettingsFlow.first().historyHrProfile
-        var booked = false
-        val rescued = finishFromRecord(runRowId, historyProfile, onRowFinished = { rowId ->
-            // Set after the call and not before it, so a booking that throws leaves this false and
-            // the fallback below owns the snapshot. The throw itself is swallowed by
-            // [finishFromRecord] — the row is finished by then and must stay finished.
-            bookAfterRunWork?.invoke(rowId)
-            booked = bookAfterRunWork != null
-        })
-        if (rescued && !booked) refreshHistoryBackup?.invoke()
-        rescued
+    suspend fun rescueRunLostToTeardown(runRowId: Long): Boolean {
+        val rescued = statedProfile.withLock {
+            val settings = settingsRepository ?: return@withLock false
+            val historyProfile = settings.userSettingsFlow.first().historyHrProfile
+            var booked = false
+            val rescued = finishFromRecord(runRowId, historyProfile, onRowFinished = { rowId ->
+                // Set after the call and not before it, so a booking that throws leaves this false
+                // and the fallback below owns the snapshot. The throw itself is swallowed by
+                // [finishFromRecord] — the row is finished by then and must stay finished.
+                bookAfterRunWork?.invoke(rowId)
+                booked = bookAfterRunWork != null
+            })
+            if (rescued && !booked) refreshHistoryBackup?.invoke()
+            rescued
+        }
+        // The rescue's half of the handed-back Stage (#386), and only where this rescue won the row:
+        // a rescue that rebuilt nothing measured nothing, and a rescue that arrived second changed
+        // nothing — the settler that beat it owns the Run's Stage the ordinary way.
+        //
+        // Here rather than inside [finishFromRecord], because the debt is the teardown's alone: the
+        // launch pass's rescue has the launch pass behind it. Outside [statedProfile], because a
+        // settlement can copy the whole database and no statement of a heart rate should queue
+        // behind that — and nothing under the lock is read again after it.
+        if (rescued) settleAStageHandedBack(runRowId, theRescueHasMeasured = true)
+        return rescued
     }
 
     /**
@@ -4312,25 +4324,83 @@ class SessionRepository(
      * (ADR 0016). This is the Run where that premise is false: the runner stopped it themselves,
      * and the rescue had no way to see it.
      *
-     * **The debt goes back rather than being paid here.** Judging the Run from the finalize's losing
-     * branch would put the graduation rule in a second place, free to drift from the first, and it
-     * would judge a Run the winner is still measuring — its moving time, its records, its Segments
-     * and its shape all run on behind this call ([AfterRunMeasurements]). The launch pass judges a
-     * Run that is finished and measured, which is the Run this one will be by then.
+     * **The debt goes back rather than being paid here.** Judging the Run from this branch would put
+     * the graduation rule in a second place, free to drift from the first, and it would judge a Run
+     * the winner is still measuring — its moving time, its records, its Segments and its shape all
+     * run on behind this call ([AfterRunMeasurements]). A Stage is judged on a Run that is finished
+     * and measured, which is the Run this one will be once the winner has caught up.
      *
-     * **No snapshot is taken here**, unlike every settlement door ([settleStageForRun]). The rescue
-     * that won the row hands its own after-run booking to WorkManager as it stamps the row, and
-     * that copy is taken later than this write; what is knowingly left is a Clear storage restored
-     * from a copy taken in the instant between the two, which brings back a Run marked settled that
-     * was never judged. A whole-database copy is not worth paying for that instant in a process the
-     * teardown is already taking down.
+     * **Which is not the same as waiting for the next cold start** (#386). Handing the debt back is
+     * this branch's whole job, but the debt then has a reader in this process too: the rescue says
+     * so when its measurements return, and whichever half is second settles the Run
+     * ([settleAStageHandedBack]). The launch pass is what is left for a process that dies before
+     * that meeting — a backstop rather than the ordinary path.
+     *
+     * **No snapshot is taken by this write**, unlike every settlement door ([settleStageForRun]).
+     * The rescue that won the row hands its own after-run booking to WorkManager as it stamps the
+     * row, and that copy is taken later than this write; what is knowingly left is a Clear storage
+     * restored from a copy taken in the instant between the two, which brings back a Run marked
+     * settled that was never judged. A whole-database copy is not worth paying for that instant in a
+     * process the teardown is already taking down. The settlement that follows takes one of its own,
+     * as every judgement must — it is a mark that is not derivable from anything else the copy
+     * holds.
      *
      * Never throws for the caller to handle beyond its own guard: the write is one statement against
      * one row, and a failure leaves the Run exactly as the rescue left it.
      */
     suspend fun handTheStageQuestionBack(runRowId: Long) {
         sessionDao.setStageUnsettled(runRowId)
-        Log.d("StageRule", "Run $runRowId was settled by a rescue that could not know its runner closed it; the launch pass has its Stage")
+        Log.d("StageRule", "Run $runRowId was settled by a rescue that could not know its runner closed it; its Stage is owed again")
+        // And offered to this process before the next cold start, if the rescue has finished
+        // measuring the Run (#386). Nothing is judged from here — see below for who judges and when.
+        settleAStageHandedBack(runRowId, theRescueHasMeasured = false)
+    }
+
+    /**
+     * Settles a Stage handed back to the launch pass, in the process that is still alive (#386).
+     *
+     * The debt [handTheStageQuestionBack] raises is real work, and until #386 nothing in this
+     * process consumed it: the launch pass runs once per process and had already been spent before
+     * the Run started, so a Run stopped from the notification — where there is no finish sheet to
+     * pay the debt — got no Stage credit and no coach debrief until Android reclaimed the process.
+     * The winning path settles such a Run here and now; the losing one should not be later.
+     *
+     * **Two callers and one settlement.** The debt has two halves and they arrive in either order:
+     * the finalize writes it down, and the rescue that beat it finishes measuring the Run. Neither
+     * half alone is enough. Judging before the rescue's [afterRun] has returned would read a Run
+     * half measured — records unscored, moving time unwritten — which is a worse answer than the
+     * launch pass's, and it is why PR #385 could not carry this. So each half says so as it lands
+     * and the *second* one settles.
+     *
+     * **The race between them is answered, not assumed.** Both halves come through this one door
+     * under [handback], and the row is read inside that lock — after the finalize's write, because
+     * the finalize writes before it calls. Whichever half is second is the one that sees both a
+     * measured rescue and a row saying the Stage is owed, and it takes the settlement by name
+     * ([handbacksTakenInProcess]) so the other can never take it too. A Run is judged once.
+     *
+     * **What is not settled here is left exactly where it was.** A Run with its finish sheet still
+     * open is refused by the settlement's own gate ([settleOneStage]) and stays owed, which is the
+     * sheet's to pay — this door does not take that away. A settlement that throws leaves the row
+     * saying the Stage is owed, so the next cold start's launch pass has it, which is where the
+     * debt was going before this existed.
+     */
+    private suspend fun settleAStageHandedBack(runRowId: Long, theRescueHasMeasured: Boolean) {
+        val mine = handback.withLock {
+            if (theRescueHasMeasured) rescuesThatHaveMeasured += runRowId
+            if (runRowId !in rescuesThatHaveMeasured) return@withLock false
+            if (runRowId in handbacksTakenInProcess) return@withLock false
+            // False and not null: null is a Run that is gone, and true is a Run whose Stage question
+            // has been answered — neither is a debt this process may pay.
+            if (sessionDao.getSessionById(runRowId)?.stageSettled != false) return@withLock false
+            handbacksTakenInProcess += runRowId
+            true
+        }
+        if (!mine) return
+        try {
+            settleStageForRun(runRowId)
+        } catch (e: Exception) {
+            Log.w("StageRule", "Could not settle run $runRowId's handed-back Stage here; the next launch has it", e)
+        }
     }
 
     /**
@@ -4584,6 +4654,27 @@ class SessionRepository(
      * ever settled at once by the launch pass, which walks them one at a time anyway.
      */
     private val settling = Mutex()
+
+    /**
+     * Where the two halves of a handed-back Stage meet, for the life of the process (#386) — see
+     * [settleAStageHandedBack]. Held only across the decision, never across the settlement itself.
+     */
+    private val handback = Mutex()
+
+    /** Runs a teardown's rescue has finished measuring in this process. Guarded by [handback]. */
+    private val rescuesThatHaveMeasured = mutableSetOf<Long>()
+
+    /**
+     * Runs whose handed-back Stage this process has taken, so neither half can take it twice.
+     * Guarded by [handback].
+     *
+     * Neither set is ever emptied, and both are bounded by the same thing: a Run is added only by a
+     * teardown rescue that won a row, which is one entry per Run recorded in this process and, in
+     * practice, one per process — a lost Run is not an ordinary finish. A Long each is a smaller
+     * price than a rule for when it is safe to forget one, given the other half may still be
+     * coming.
+     */
+    private val handbacksTakenInProcess = mutableSetOf<Long>()
 
     /**
      * The kind of Run a Run was, recovered from the Workout it followed (#297).
