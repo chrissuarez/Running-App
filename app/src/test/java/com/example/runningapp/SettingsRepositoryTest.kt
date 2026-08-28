@@ -117,7 +117,11 @@ class SettingsRepositoryTest {
     }
 
     @Test
-    fun `a Stage the plan does not hold reads as its first`() {
+    fun `a Stage the plan does not hold takes the plan down with it`() {
+        // The same answer the restore door gives (#262), given here so a plain in-place upgrade
+        // that renamed a Stage cannot reach it either (#381): read as the plan's first, the runner
+        // would be put back at the start of a Plan they were halfway through, and their next Run
+        // stamped with that Stage (#234) — a stamp nothing can correct afterwards.
         val settings = userSettingsOf(
             mutablePreferencesOf(
                 PreferencesKeys.ACTIVE_PLAN_ID to "5k_sub_25",
@@ -125,7 +129,34 @@ class SettingsRepositoryTest {
             )
         )
 
-        assertEquals("base_builder", settings.activeStageId)
+        assertNull(settings.activePlanId)
+        assertNull(settings.activeStageId)
+    }
+
+    @Test
+    fun `a plan this build no longer holds reads as no plan at all`() {
+        val settings = userSettingsOf(
+            mutablePreferencesOf(
+                PreferencesKeys.ACTIVE_PLAN_ID to "plan_dropped_since",
+                PreferencesKeys.ACTIVE_STAGE_ID to "base_builder"
+            )
+        )
+
+        assertNull(settings.activePlanId)
+        assertNull(settings.activeStageId)
+    }
+
+    @Test
+    fun `a plan and Stage this build holds read back as they stand`() {
+        val settings = userSettingsOf(
+            mutablePreferencesOf(
+                PreferencesKeys.ACTIVE_PLAN_ID to "5k_sub_25",
+                PreferencesKeys.ACTIVE_STAGE_ID to "sub_30_bridge"
+            )
+        )
+
+        assertEquals("5k_sub_25", settings.activePlanId)
+        assertEquals("sub_30_bridge", settings.activeStageId)
     }
 
     @Test
@@ -251,7 +282,15 @@ class SettingsRepositoryTest {
                 scope = CoachWriteScope("5k_sub_25", "base_builder")
             )
         )
-        assertTrue(
+    }
+
+    @Test
+    fun `a Stage storage names but the plan does not hold refuses the write`() {
+        // Not the same case as the one above (#381). A Stage id naming nothing is not "no Stage
+        // picked": the settings the coach was scoped against read as no plan attached at all, so
+        // this scope cannot have come from them, and writing it would stamp work onto a position
+        // nothing checked.
+        assertFalse(
             coachWriteAllowed(
                 testingModeEnabled = false,
                 activePlanId = "5k_sub_25",
