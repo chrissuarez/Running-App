@@ -40,18 +40,18 @@ class OutstandingCuesTest {
         cues.record { 1L }
         cues.record(CueTag.TURNAROUND) { 2L }
 
-        assertEquals(2L, cues.takeBack(CueTag.TURNAROUND))
+        assertEquals(listOf(2L), cues.takeBack(CueTag.TURNAROUND))
         assertEquals(listOf(1L), takeBackAll())
     }
 
     @Test
     fun `taking back a name that is not outstanding hands back nothing`() {
-        assertNull(cues.takeBack(CueTag.TURNAROUND))
+        assertEquals(emptyList<Long>(), cues.takeBack(CueTag.TURNAROUND))
 
         cues.record(CueTag.TURNAROUND) { 1L }
         cues.takeBack(CueTag.TURNAROUND)
 
-        assertNull(cues.takeBack(CueTag.TURNAROUND))
+        assertEquals(emptyList<Long>(), cues.takeBack(CueTag.TURNAROUND))
     }
 
     @Test
@@ -65,22 +65,35 @@ class OutstandingCuesTest {
         assertEquals(listOf(3L), takeBackAll())
     }
 
+    /**
+     * The case #377 turns on: the two course alerts are a pair, and a long sentence in front of them
+     * can leave both waiting. Handing back only the newer would speak the older about a course that
+     * has gone.
+     */
     @Test
-    fun `the same name issued twice keeps both cues, and the end of the Run hands back both`() {
-        cues.record(CueTag.TURNAROUND) { 1L }
+    fun `a name issued twice hands back both cues, oldest first`() {
+        cues.record(CueTag.COURSE) { 1L }
+        cues.record(CueTag.COURSE) { 2L }
+
+        assertEquals(listOf(1L, 2L), cues.takeBack(CueTag.COURSE))
+        // And neither is handed back a second time at the end of the Run.
+        assertEquals(emptyList<Long>(), takeBackAll())
+    }
+
+    @Test
+    fun `one name taken back leaves the cues under every other name outstanding`() {
+        cues.record(CueTag.COURSE) { 1L }
         cues.record(CueTag.TURNAROUND) { 2L }
 
-        // By name only the last one can be found — but the first was never spoken either, so it is
-        // still the Run's to take back.
-        assertEquals(2L, cues.takeBack(CueTag.TURNAROUND))
-        assertEquals(listOf(1L), takeBackAll())
+        assertEquals(listOf(1L), cues.takeBack(CueTag.COURSE))
+        assertEquals(listOf(2L), takeBackAll())
     }
 
     @Test
     fun `a cue the queue would not take leaves nothing outstanding`() {
         assertNull(cues.record(CueTag.TURNAROUND) { null })
 
-        assertNull(cues.takeBack(CueTag.TURNAROUND))
+        assertEquals(emptyList<Long>(), cues.takeBack(CueTag.TURNAROUND))
         assertEquals(emptyList<Long>(), takeBackAll())
     }
 

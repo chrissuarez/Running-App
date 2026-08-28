@@ -26,7 +26,7 @@ import java.util.TimerTask
  *
  * **The queue never drops a cue.** There is no expiry and no staleness rule: everything enqueued is
  * eventually spoken, however late. The one way a cue leaves unspoken is its producer taking it back
- * with [withdraw] — the Run does that with the halfway turnaround when it enters the cool-down,
+ * with [withdrawAll] — the Run does that with the halfway turnaround when it enters the cool-down,
  * because the cue has stopped being true. Withdrawal is the producer's act, not the queue's.
  *
  * Audio focus belongs to the queue rather than to each cue: it is taken when the queue starts
@@ -123,7 +123,7 @@ class AudioCueManager(
     }
 
     /**
-     * Say this, in its turn. Returns the ticket the cue can later be taken back by ([withdraw]);
+     * Say this, in its turn. Returns the ticket the cue can later be taken back by ([withdrawAll]);
      * a caller with nothing to take back can ignore it.
      *
      * Null when there was no queue left to join, which is only ever the service going away
@@ -149,27 +149,17 @@ class AudioCueManager(
     }
 
     /**
-     * Take back a cue that has not been spoken yet — whatever it was going to say has stopped being
-     * true. Inert for a cue already spoken, already withdrawn, or never enqueued, so a producer
-     * never has to know which of those happened.
-     */
-    @Synchronized
-    fun withdraw(ticket: Long) {
-        if (queue.removeAll { it.ticket == ticket }) {
-            Log.d(logTag, "Cue withdrawn before it was spoken: ticket=$ticket")
-        }
-    }
-
-    /**
-     * Take back a whole set of cues as one act, for the end of a Run taking back everything it
-     * enqueued (#220). Inert per ticket in all the ways [withdraw] is.
+     * Take back cues that have not been spoken yet — whatever they were going to say has stopped
+     * being true. Inert per ticket for a cue already spoken, already withdrawn, or never enqueued,
+     * so a producer never has to know which of those happened.
      *
-     * One act because the cues are taken back against a moving queue. Withdrawing them one at a
-     * time lets the engine finish its sentence between two of them, and the callback that reports
-     * it done hands the next waiting cue to the engine from under this lock — so a cue of the Run
-     * that has just ended starts speaking before its own withdrawal reaches it, and a withdrawal
-     * for a cue already gone out is inert. Removing them all under one hold leaves the callback no
-     * gap to pump into.
+     * A set and never one at a time, however few are being taken back. Withdrawing them singly lets
+     * the engine finish its sentence between two of them, and the callback that reports it done
+     * hands the next waiting cue to the engine from under this lock — so a cue that was to be taken
+     * back starts speaking before its own withdrawal reaches it, and a withdrawal for a cue already
+     * gone out is inert. Removing them all under one hold leaves the callback no gap to pump into.
+     * That is the end of a Run taking back everything it enqueued (#220), and it is equally the
+     * course taking back the pair it left waiting (#377).
      */
     @Synchronized
     fun withdrawAll(tickets: Collection<Long>) {

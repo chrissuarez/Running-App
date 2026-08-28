@@ -162,25 +162,13 @@ class AudioCueManagerTest {
     }
 
     @Test
-    fun `a cue withdrawn before it is spoken is not spoken`() {
+    fun `a cue withdrawn before it is spoken is not spoken, and the ones around it still are`() {
         manager.enqueue("in flight", CuePriority.INSTRUCTION)
         val turnaround = manager.enqueue("turn around", CuePriority.INFORMATION)!!
         manager.enqueue("a split", CuePriority.INFORMATION)
 
-        manager.withdraw(turnaround)
+        manager.withdrawAll(listOf(turnaround))
         repeat(2) { finishCurrent() }
-
-        assertEquals(listOf("in flight", "a split"), spokenTexts())
-    }
-
-    @Test
-    fun `withdrawing a cue already spoken, or one that never existed, does nothing`() {
-        val spoken = manager.enqueue("in flight", CuePriority.INSTRUCTION)!!
-        manager.enqueue("a split", CuePriority.INFORMATION)
-
-        manager.withdraw(spoken)
-        manager.withdraw(9999L)
-        finishCurrent()
 
         assertEquals(listOf("in flight", "a split"), spokenTexts())
     }
