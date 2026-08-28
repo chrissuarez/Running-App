@@ -172,23 +172,19 @@ private fun recordedStretches(measured: MeasuredTrack): List<List<TrackPoint>> =
 /**
  * The most points any one line is thinned from.
  *
- * The thinning walk is quadratic in the worst case — a line that keeps bending splits into two
- * halves that each keep bending — so the number of points handed to it has to be bounded by
- * something, and until #59 it was bounded by accident. A Run's Track is a fix every second or so
- * and an hour of running is a few thousand of them; an imported course is bounded by nothing but
- * the reader's refusal at 200,000 points
+ * The thinning walk is quadratic in the worst case — a line that keeps bending splits into a
+ * stretch of one point and a stretch of the rest — so the number of points handed to it has to be
+ * bounded by something, and until #59 it was bounded by accident. A Run's Track is a fix every
+ * second or so and an hour of running is a few thousand of them; an imported course is bounded by
+ * nothing but the reader's refusal at 200,000 points
  * ([com.example.runningapp.routes.GpxRouteReader]), and nothing thins it before it is stored. One
  * such file, valid and accepted, would have held the whole library's drawings behind it on every
  * fresh process.
  *
  * Two thousand is far more than the square can show: at [THUMBNAIL_DETAIL] of a side, a 56dp square
  * has of the order of a hundred distinguishable steps across it, and what survives the thinning is
- * fewer again. So this bound is not a compromise on how the drawing looks — it is a bound on the
+ * fewer again. So this is not a compromise on how the drawing looks — it is a bound on the
  * arithmetic, chosen well above anything the drawing could use.
- *
- * Read as the number of runs the line is cut into rather than as an exact ceiling: the ends and the
- * four corners of the box are kept on top of them, so a reduced line is this length give or take a
- * handful. What matters is that it does not grow with the file.
  */
 private const val MOST_POINTS_A_DRAWING_IS_THINNED_FROM = 2_000
 
@@ -199,60 +195,75 @@ private const val MOST_POINTS_A_DRAWING_IS_THINNED_FROM = 2_000
  * ([com.example.runningapp.routes.runAsCourse]); all that is decided here is how much detail a
  * thumbnail can show, which is [THUMBNAIL_DETAIL].
  *
- * A line longer than [MOST_POINTS_A_DRAWING_IS_THINNED_FROM] is cut down to that first, by
- * [reducedToDrawableLength].
+ * A line too long to hand to it is shortened first by [spacedOutEnoughToThin], which drops only
+ * points the square cannot tell apart. If it is still too long after that, the thinning is skipped
+ * rather than risked: what came back is already a drawing of the same line to within the detail
+ * this square can show, and thinning it again would only be tidier.
  */
 private fun simplified(line: List<ThumbPoint>): List<ThumbPoint> {
-    val sampled = reducedToDrawableLength(line)
+    val drawable = spacedOutEnoughToThin(line)
+    if (drawable.size > MOST_POINTS_A_DRAWING_IS_THINNED_FROM) return drawable
     val kept = thinnedLineIndices(
-        x = DoubleArray(sampled.size) { sampled[it].x.toDouble() },
-        y = DoubleArray(sampled.size) { sampled[it].y.toDouble() },
+        x = DoubleArray(drawable.size) { drawable[it].x.toDouble() },
+        y = DoubleArray(drawable.size) { drawable[it].y.toDouble() },
         detail = THUMBNAIL_DETAIL,
     )
-    return kept.map { sampled[it] }
+    return kept.map { drawable[it] }
 }
 
 /**
- * The line cut down to a length the thinning can take — see [MOST_POINTS_A_DRAWING_IS_THINNED_FROM].
+ * The line with the points the square cannot tell apart taken out of it, and no others.
  *
- * Counting alone will not do it. A course's points are not spread evenly along the ground: a GPX
- * may hold a hundred thousand points around a park and fifty for the kilometre of road out to it,
- * and a line cut down by index would drop that kilometre whole, between two samples, and draw a
- * route the runner never planned. Nothing after this can put it back — the thinning only ever
+ * The one rule here, because every rule that is not this one draws the wrong route. A line cannot
+ * be shortened by counting — a course may spend a hundred thousand points shuffling round a park
+ * and fifty on the kilometre of road out to it, and every rule that picks points by their position
+ * in the list throws that kilometre away. Nor by keeping one point out of each stretch, however the
+ * one is chosen: a stretch that holds both a detour and the road on from it has two things to say
+ * and one point cannot say both. Nothing later puts either back, because thinning only ever
  * removes.
  *
- * So the line is cut into equal runs of points, and each run gives up the one point that reaches
- * furthest from where the run began. In a dense stretch that is much the same as counting; in a run
- * that holds a detour it is the far end of the detour, which is the whole of what that stretch has
- * to say. The four points the square is scaled against are kept outright on top of that, so the
- * drawing still fills its box in both directions however the file's points were spread.
+ * So the only thing dropped is a point that sits within [gap] of the last point kept, which is to
+ * say a point that would be drawn on top of one already there. Whatever is dropped moves the line
+ * by less than [gap], so no feature bigger than [gap] can go missing however the file spread its
+ * points — a detour, a road, a corner, or both of two in the same handful of points.
  *
- * Both ends are always kept, so a loop still closes and a course still starts where the runner did.
+ * The ends are always kept, so a loop still closes and a course still starts where the runner did.
  */
-private fun reducedToDrawableLength(line: List<ThumbPoint>): List<ThumbPoint> {
+private fun spacedOutEnoughToThin(line: List<ThumbPoint>): List<ThumbPoint> {
     if (line.size <= MOST_POINTS_A_DRAWING_IS_THINNED_FROM) return line
-    val runs = MOST_POINTS_A_DRAWING_IS_THINNED_FROM
-    val last = line.lastIndex
 
-    val kept = sortedSetOf(0, last)
-    // The corners of the box the drawing is scaled into. Kept whatever run they fall in, because
-    // the scaling has already promised the long side fills the square, and a sample that lost the
-    // point the square was measured to would leave the drawing short of its own edge.
-    kept += line.indices.minBy { line[it].x }
-    kept += line.indices.maxBy { line[it].x }
-    kept += line.indices.minBy { line[it].y }
-    kept += line.indices.maxBy { line[it].y }
+    // Widened until the line is short enough to thin, doubling each time. It reaches that in a
+    // handful of passes — the square is one unit across, so a gap doubling from a hundredth of it
+    // covers the whole square within seven — and each pass is one walk down the line.
+    //
+    // A line still too long at a gap of a hundredth is one holding thousands of steps the square
+    // could just about tell apart, which is a smudge rather than a shape. Widening the gap is the
+    // honest answer to that: it draws the smudge with fewer strokes. It cannot happen to a course
+    // anyone ran or planned, only to a file built to be dense.
+    var gap = THUMBNAIL_DETAIL
+    var kept = separatedByAtLeast(line, gap)
+    while (kept.size > MOST_POINTS_A_DRAWING_IS_THINNED_FROM) {
+        gap *= 2
+        kept = separatedByAtLeast(line, gap)
+    }
+    return kept
+}
 
-    for (run in 0 until runs) {
-        val from = (run.toLong() * line.size / runs).toInt()
-        val to = ((run + 1).toLong() * line.size / runs).toInt()
-        if (to <= from) continue
-        val start = line[from]
-        kept += (from until to).maxBy { i ->
-            val dx = line[i].x - start.x
-            val dy = line[i].y - start.y
-            dx * dx + dy * dy
+/** The line walked once, keeping each point that lands at least [gap] from the last one kept. */
+private fun separatedByAtLeast(line: List<ThumbPoint>, gap: Double): List<ThumbPoint> {
+    val kept = ArrayList<ThumbPoint>()
+    var last = line.first()
+    kept += last
+    for (point in line) {
+        val dx = point.x - last.x
+        val dy = point.y - last.y
+        if (dx * dx + dy * dy >= gap * gap) {
+            kept += point
+            last = point
         }
     }
-    return kept.map { line[it] }
+    // The far end is kept whether or not it earned its place, so the drawing ends where the course
+    // does rather than at whichever point last cleared the gap.
+    if (kept.last() != line.last()) kept += line.last()
+    return kept
 }
