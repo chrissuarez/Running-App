@@ -306,6 +306,28 @@ class RunSummaryTest {
         assertFalse(settled(null).runSummaryFactsSettledFlow(7).first())
     }
 
+    /**
+     * And a Run that is gone is nevertheless done being waited for (#350).
+     *
+     * An ask already under way waits on this rather than on settledness, because settledness is
+     * never true for a Run that is not there. A runner deleting a Run while the model writes about
+     * it would otherwise leave the ask waiting for ever.
+     */
+    @Test
+    fun `there is nothing left to wait for on a run that is gone`() = runTest {
+        assertTrue(settled(null).runSummaryWaitOverFlow(7).first())
+    }
+
+    @Test
+    fun `a run still being measured is still worth waiting for`() = runTest {
+        assertFalse(settled(measuredRun(recordsScored = false)).runSummaryWaitOverFlow(7).first())
+    }
+
+    @Test
+    fun `a settled run is done being waited for`() = runTest {
+        assertTrue(settled(measuredRun()).runSummaryWaitOverFlow(7).first())
+    }
+
     // --- What the model said ---
 
     @Test

@@ -3191,6 +3191,29 @@ class SessionRepository(
     }.distinctUntilChanged()
 
     /**
+     * Whether there is anything left to wait for before writing about this Run (#350) — which is
+     * either that its facts have settled, or that the Run is no longer there.
+     *
+     * [runSummaryFactsSettledFlow] is never true for a Run that is gone, and rightly so: a Run that
+     * does not exist has not been measured. But a *wait* on that flow, made by an ask that is
+     * already under way, would then never end. The runner can delete a Run while the model is
+     * writing about it, and the ask rebuilds the prompt after the model answers, behind the same
+     * gate — so a delete in that window would leave the ask waiting for a Run that is never coming
+     * back, the spinner up until the page is destroyed, and [writeRunSummary]'s refusal for a Run
+     * that has gone unreachable.
+     *
+     * So the thing to wait for is not "settled" but "there is nothing more to wait for". A Run that
+     * has gone is answered by the builder returning null, which the ask reads as the refusal it is:
+     * there is nothing left to write about, and trying again could not work.
+     */
+    fun runSummaryWaitOverFlow(sessionId: Long): Flow<Boolean> = combine(
+        runSummaryFactsSettledFlow(sessionId),
+        sessionDao.getSessionByIdFlow(sessionId),
+    ) { settled, session ->
+        settled || session == null
+    }.distinctUntilChanged()
+
+    /**
      * Asks the model for a Run's summary and keeps what it says (#76).
      *
      * The prompt is built by the caller and is a pure function of stored facts
