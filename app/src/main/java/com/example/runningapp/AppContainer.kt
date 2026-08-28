@@ -27,7 +27,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -258,7 +257,7 @@ class AppContainer(context: Context) {
      */
     fun backfillMovingTimeOnce() {
         if (!movingTimeBackfilled.compareAndSet(false, true)) return
-        applicationScope.launch { sessionRepository.backfillMovingTime() }
+        passes.launch("moving-time backfill") { sessionRepository.backfillMovingTime() }
     }
 
     /**
@@ -273,7 +272,7 @@ class AppContainer(context: Context) {
      */
     fun rescueInterruptedRunsOnce() {
         if (!interruptedRunsRescued.compareAndSet(false, true)) return
-        applicationScope.launch { sessionRepository.rescueInterruptedRuns(processStartedAtMillis) }
+        passes.launch("interrupted-run rescue") { sessionRepository.rescueInterruptedRuns(processStartedAtMillis) }
     }
 
     /**
@@ -288,7 +287,7 @@ class AppContainer(context: Context) {
      */
     fun seedRecordsFromHistoryOnce() {
         if (!recordsSeeded.compareAndSet(false, true)) return
-        applicationScope.launch { sessionRepository.seedRecordsFromHistory() }
+        passes.launch("record seeding") { sessionRepository.seedRecordsFromHistory() }
     }
 
     /**
@@ -307,7 +306,7 @@ class AppContainer(context: Context) {
      */
     fun scoreMissedRecordsOnce() {
         if (!missedRecordsScored.compareAndSet(false, true)) return
-        applicationScope.launch { sessionRepository.scoreMissedRecords() }
+        passes.launch("missed-record scoring") { sessionRepository.scoreMissedRecords() }
     }
 
     /**
@@ -325,7 +324,7 @@ class AppContainer(context: Context) {
      */
     fun settleMissedStagesOnce() {
         if (!missedStagesSettled.compareAndSet(false, true)) return
-        applicationScope.launch { sessionRepository.settleStagesMissedAtTheFinish() }
+        passes.launch("Stage settlement") { sessionRepository.settleStagesMissedAtTheFinish() }
     }
 
     /**
@@ -344,7 +343,7 @@ class AppContainer(context: Context) {
      */
     fun payWalkMarkDebtsOnce() {
         if (!walkMarkDebtsPaid.compareAndSet(false, true)) return
-        applicationScope.launch { sessionRepository.payWalkMarkDebts() }
+        passes.launch("Walk-mark debt") { sessionRepository.payWalkMarkDebts() }
     }
 
     /**
@@ -361,7 +360,7 @@ class AppContainer(context: Context) {
      */
     fun reconcileCoachingOnce() {
         if (!coachingReconciled.compareAndSet(false, true)) return
-        applicationScope.launch { sessionRepository.reconcileCoachingWithHistory() }
+        passes.launch("coaching reconciliation") { sessionRepository.reconcileCoachingWithHistory() }
     }
 
     /**
@@ -380,7 +379,7 @@ class AppContainer(context: Context) {
      */
     fun backfillEffortScoresOnce() {
         if (!effortScored.compareAndSet(false, true)) return
-        applicationScope.launch { sessionRepository.backfillEffortScores() }
+        passes.launch("Effort Score backfill") { sessionRepository.backfillEffortScores() }
     }
 
     /**
@@ -397,12 +396,8 @@ class AppContainer(context: Context) {
      * several.
      */
     fun timeSegmentAgainstHistory(segmentId: Long) {
-        applicationScope.launch {
-            try {
-                sessionRepository.timeSegmentAgainstHistory(segmentId)
-            } catch (e: Exception) {
-                Log.w("Segments", "Could not time segment $segmentId against history", e)
-            }
+        passes.launch("Segment timing for segment $segmentId") {
+            sessionRepository.timeSegmentAgainstHistory(segmentId)
         }
     }
 
@@ -425,13 +420,7 @@ class AppContainer(context: Context) {
      */
     fun paySegmentTimingOnce() {
         if (!segmentTimingPaid.compareAndSet(false, true)) return
-        applicationScope.launch {
-            try {
-                sessionRepository.payWhatSegmentTimingOwes()
-            } catch (e: Exception) {
-                Log.w("Segments", "Could not pay what the segment timing owes; leaving it for next launch", e)
-            }
-        }
+        passes.launch("Segment-timing debt") { sessionRepository.payWhatSegmentTimingOwes() }
     }
 
     /**
@@ -448,13 +437,7 @@ class AppContainer(context: Context) {
      */
     fun takeRunShapesOnce() {
         if (!runShapesTaken.compareAndSet(false, true)) return
-        applicationScope.launch {
-            try {
-                sessionRepository.payWhatRunShapesOwe()
-            } catch (e: Exception) {
-                Log.w("MatchedRuns", "Could not take the run shapes owed; leaving them for next launch", e)
-            }
-        }
+        passes.launch("Run-shape debt") { sessionRepository.payWhatRunShapesOwe() }
     }
 
     /**
@@ -475,7 +458,7 @@ class AppContainer(context: Context) {
      * per Run.
      */
     fun answerFinishSheet(sessionId: Long, markedAsWalk: Boolean?, writes: suspend () -> Unit) {
-        applicationScope.launch {
+        passes.launch("finish sheet for run $sessionId") {
             sessionRepository.finishSheetAnswered(sessionId, markedAsWalk, writes = writes)
         }
     }
@@ -484,8 +467,20 @@ class AppContainer(context: Context) {
      * Lives as long as the process, and deliberately never cancelled — the container itself is a
      * process-wide singleton, so there is no shorter lifetime to bind to. SupervisorJob so one
      * failed background pass cannot take the others down with it.
+     *
+     * **A SupervisorJob keeps a failure from the siblings; it does not handle it** (#375). Anything
+     * escaping a bare `launch` here reaches the default uncaught handler and kills the app, so no
+     * background pass is started on this scope directly — they all go through [passes], which names
+     * the pass and states the rule once. What is left on it is work with a reader that owns its own
+     * failures: a flow this scope keeps hot, and the stated-heart-rate queue below.
      */
     private val applicationScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    /**
+     * Every deferrable background pass, started and guarded in one place — see [BackgroundPasses]
+     * for what "deferrable" buys and what is still allowed to be fatal (#375).
+     */
+    private val passes = BackgroundPasses(applicationScope)
 
     /**
      * States a heart rate, or both at once. Ordered — see [StatedHeartRateQueue].
