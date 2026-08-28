@@ -177,10 +177,10 @@
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
+      <p><strong>Your routes are drawings now, not just names.</strong> Every course in your library has a small drawing of its shape beside it &mdash; the same drawing your runs have in History, in the same amber line. You can pick the park loop out from the canal out-and-back without reading a word. A course too short to have a shape keeps an empty square rather than a dot pretending to be a route. See <em>The library</em> in <a href="#routes">routes</a>.</p>
       <p><strong>Two things the app does when nobody is watching, done better.</strong> Every time you open the app it quietly finishes off jobs left over from last time &mdash; filling in old numbers, rescuing a run that was never finished. If the very first step of one of those jobs failed, the whole app used to shut itself down before you saw a screen. It now writes the failure down, leaves that job&rsquo;s work for the next time you open the app, and carries on. What it catches is a job going wrong, which is what a job does. It does not catch the app or the phone being in real trouble underneath &mdash; out of room to work in, or something broken in the app itself &mdash; and it deliberately does not, because carrying on past one of those is worse than stopping. Separately: stop a run from the notification at the same moment the app is being shut down, and the app&rsquo;s own rescue can save the run first &mdash; correctly, but without knowing you stopped it yourself, so your stage credit was held back until you next fully restarted the app &mdash; and, after a Long run, the coach&rsquo;s words with it. They now arrive straight away, while the app is still open. See <em>If something goes wrong</em> in <a href="#during">during the run</a>.</p>
       <p><strong>A route file with no heights in it no longer takes your climb away.</strong> Import a <span class="mono">.gpx</span> drawn along a course you already keep and the app refreshes that course’s numbers from the new file rather than making a second copy. If the new file carries no heights, it used to write your climb away to nothing &mdash; a course with 43 m of climb became &ldquo;no elevation recorded&rdquo;, and the only way back was finding the first file again. Now the climb stays, and the message tells you: <em>&ldquo;Its distance now comes from this file. The file carries no heights, so its climb is unchanged.&rdquo;</em> See <em>Importing the same course again</em> in <a href="#routes">routes</a>.</p>
       <p><strong>The app tells you when you have come off your route, and when you are back on it.</strong> On a run following a route, stray more than <strong>50 m</strong> from the course and stay there for <strong>10 seconds</strong> and it says <em>&ldquo;Off course.&rdquo;</em> Come back within <strong>30 m</strong> of it and it says <em>&ldquo;Back on course.&rdquo;</em> Two sentences, and nothing in between &mdash; a detour you meant to take costs you exactly two, however long you are away. It never tells you which way to turn. It stays quiet until you have actually reached the course, so the walk from your front door is silent however far off the line it is. See <em>Off course</em> in <a href="#routes">routes</a>.</p>
-      <p><strong>The live map tells you how much of the course is left.</strong> On a run along a route, the bottom-right corner of the map card now counts the course down &mdash; <em>5.54 km to go</em>, and plain metres once you are inside the last kilometre. It is measured from wherever you actually are to the nearest point on the course, and on from there to the end. If you told the app you were running the course <strong>backwards</strong>, it counts down from the end you actually set off at. Stray off the course and it keeps counting, measuring to the end from the nearest bit of course to you. See <em>Running one</em> in <a href="#routes">routes</a>.</p>
     </div>
   </header>
 
@@ -639,6 +639,9 @@
       <div class="e">
         <h3>The library</h3>
         <p>Every course you keep, with its distance and its elevation gain. A course whose heights were never recorded says so rather than showing <span class="mono">0 m</span>.</p>
+        <p>Beside each one, <strong>a small drawing of its shape</strong> &mdash; the park loop, the canal out-and-back &mdash; so you can pick the one you want without reading the names. It is the same little drawing your runs have in History, in the same amber line, so the two lists read as one thing.</p>
+        <p>It is an outline and nothing else: no map underneath, no streets, no colours. At that size streets are a smudge, and the drawing has one job, which is letting you recognise a course at a glance. The course&rsquo;s real map is on the run page when you run it.</p>
+        <p class="note"><b>The square is always there, drawn or not.</b> A course too short to have a shape &mdash; sixty metres or less &mdash; keeps an empty square rather than showing a dot pretending to be a route. The square is held open either way so the names stay in a straight line down the list, and so nothing shuffles under your finger when a drawing appears a moment after the list does.</p>
         <div class="where"><b>Where</b> Home → Open Routes</div>
       </div>
 
@@ -710,11 +713,6 @@
       <div class="e">
         <h3>Rename and delete</h3>
         <p>Any route can be renamed and deleted, however it got in. Deleting a route never touches a run — including the run it was saved off.</p>
-      </div>
-
-      <div class="e">
-        <h3>Not built yet</h3>
-        <p>Little pictures of each course in the library are still to come. Everything else on this page is built: drawing the route on the live map and counting down how much is left (<em>Running one</em>), and being told out loud when you have come off the course and when you are back on it (<em>Off course</em>).</p>
       </div>
 
     </div>
@@ -828,7 +826,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>28 August 2026</strong>, when a start-up job going wrong stopped taking the whole app with it, and a run stopped from the notification started getting its stage credit straight away. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>28 August 2026</strong>, when every course in your routes library got a small drawing of its shape beside it. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
