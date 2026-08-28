@@ -4,7 +4,6 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.example.runningapp.analysis.CoursePoint
 import com.example.runningapp.analysis.RouteThumbnail
 import com.example.runningapp.analysis.courseThumbnailOf
 import com.example.runningapp.data.Route
@@ -12,6 +11,7 @@ import com.example.runningapp.data.RouteDao
 import com.example.runningapp.routes.RouteImportOutcome
 import com.example.runningapp.routes.RouteImporter
 import com.example.runningapp.routes.RoutePolyline
+import com.example.runningapp.routes.asShape
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -67,7 +67,7 @@ class RoutesViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
-     * The shapes worked out so far, kept for as long as the screen is.
+     * The shapes worked out so far, kept for as long as this view model is.
      *
      * Held here rather than worked out per emission because the library re-emits for reasons that
      * have nothing to do with shapes — a rename, a delete, an import — and redrawing every course in
@@ -82,7 +82,16 @@ class RoutesViewModel(
     /** A course already drawn, and the line it was drawn from — see [thumbnails]. */
     private data class DrawnCourse(val polyline: String, val thumbnail: RouteThumbnail?)
 
-    /** The rows the library shows: what is stored, with each course's shape as it is worked out. */
+    /**
+     * The rows the library shows: what is stored, with each course's shape as it is worked out.
+     *
+     * Watched from the moment this view model exists rather than from the moment the library is
+     * opened, because the screen says "No routes yet" when this list is empty, and that is a claim
+     * about the table. Started when the screen is, it would be empty for the first frame or two of
+     * every visit and a runner with a library would be told they have none. Working the shapes out
+     * is the expensive part and is still not done until asked
+     * ([drawCoursesWhileLibraryIsOpen]); this is one small query.
+     */
     val rows: StateFlow<List<RouteRowUi>> = combine(routes, thumbnails) { routes, drawn ->
         routes.map { route ->
             // The line is checked as well as the id, so a Route re-measured under the same id is
@@ -90,7 +99,7 @@ class RoutesViewModel(
             val course = drawn[route.id]?.takeIf { it.polyline == route.polyline }
             RouteRowUi(route = route, thumbnail = course?.thumbnail)
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Whether the pass below has been set going, so opening the library twice does not start two. */
     private var drawing = false
@@ -102,6 +111,11 @@ class RoutesViewModel(
      * moment the app launches whether or not the runner ever opens their routes. Safe to call on
      * every visit: courses already drawn are kept ([thumbnails]), and the collector is only ever
      * started once.
+     *
+     * Once started it runs for the life of the view model rather than the life of the screen, which
+     * is what the name is worth: what it promises is that nothing is worked out *before* the
+     * library has been opened, not that anything is torn down after it is closed. Stopping it would
+     * only mean drawing the same courses again on the next visit.
      */
     fun drawCoursesWhileLibraryIsOpen() {
         if (drawing) return
@@ -111,15 +125,24 @@ class RoutesViewModel(
                 // Courses already drawn are dropped as their Routes are, so a library emptied and
                 // filled again does not carry the old shapes about for the life of the screen.
                 thumbnails.value = thumbnails.value.filterKeys { id -> library.any { it.id == id } }
-                library.filter { needsDrawing(it) }.forEach { route ->
-                    val drawn = withContext(courseDispatcher) {
-                        courseThumbnailOf(
-                            RoutePolyline.decode(route.polyline)
-                                .map { CoursePoint(it.latitude, it.longitude) }
+                val pending = library.filter { needsDrawing(it) }
+                if (pending.isEmpty()) return@collect
+                // Worked out in one pass and published once, rather than a row at a time. Every
+                // publish rebuilds the whole row list on the thread drawing it, so publishing per
+                // route would rebuild it once per route in the library while the runner is already
+                // scrolling. The cost of holding them back is a pause before the first drawing
+                // appears, and a course is small enough for that to be no pause worth seeing: it is
+                // stored already thinned, and there is one line rather than a Run's thousands of
+                // fixes.
+                val drawn = withContext(courseDispatcher) {
+                    pending.associate { route ->
+                        route.id to DrawnCourse(
+                            polyline = route.polyline,
+                            thumbnail = courseThumbnailOf(RoutePolyline.decode(route.polyline).asShape()),
                         )
                     }
-                    thumbnails.value += route.id to DrawnCourse(route.polyline, drawn)
                 }
+                thumbnails.value += drawn
             }
         }
     }

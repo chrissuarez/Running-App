@@ -13,15 +13,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.analysis.RouteThumbnail
 
-/**
- * The little square drawn beside a row in a list, and everything drawn inside it.
- *
- * Shared by the two lists that hold one: History, where the square says where a Run went or that it
- * was run indoors (#51, #232), and the Route library, where it says what shape a course is (#59).
- * One file rather than one per screen because the whole point of the square is that it reads as the
- * same thing in both places — the same size, the same line weight, the same colour, so a runner who
- * has learnt to skim their history by shape can skim their routes by it too.
- */
+// The little square drawn beside a row in a list, and everything drawn inside it. One file rather
+// than one per screen because the whole point of the square is that it reads as the same thing in
+// both the lists that hold one — see [ThumbnailCanvas].
+
 /** How big the drawing is, and how thick its line — a thumb-tip of route beside a row's words. */
 internal val ThumbnailSize = 56.dp
 private val ThumbnailLineWidth = 2.dp
@@ -84,7 +79,6 @@ private class ThumbnailStroke(
 ) {
     fun moveTo(x: Float, y: Float) = path.moveTo(at(x), at(y))
     fun lineTo(x: Float, y: Float) = path.lineTo(at(x), at(y))
-    fun close() = path.close()
     private fun at(fraction: Float) = inset + fraction * span
 }
 

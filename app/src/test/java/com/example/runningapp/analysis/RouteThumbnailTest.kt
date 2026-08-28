@@ -299,7 +299,7 @@ class CourseThumbnailTest {
     fun `a course is drawn the same way a run's route is`() {
         val course = route { east(200.0); north(200.0) }
 
-        val drawn = requireNotNull(courseThumbnailOf(course.map { it.asCoursePoint() }))
+        val drawn = requireNotNull(courseThumbnailOf(course.map { it.asShapePoint() }))
         val run = requireNotNull(routeThumbnailOf(measureTrack(course)))
 
         assertEquals(run.strokes, drawn.strokes)
@@ -313,9 +313,9 @@ class CourseThumbnailTest {
     @Test
     fun `a course is one unbroken line however far apart its points sit`() {
         val far = listOf(
-            CoursePoint(51.5, -0.1),
-            CoursePoint(51.5, -0.05),
-            CoursePoint(51.53, -0.05),
+            ShapePoint(51.5, -0.1),
+            ShapePoint(51.5, -0.05),
+            ShapePoint(51.53, -0.05),
         )
 
         assertEquals(1, requireNotNull(courseThumbnailOf(far)).strokes.size)
@@ -323,7 +323,7 @@ class CourseThumbnailTest {
 
     @Test
     fun `a course of one point has no shape to draw`() {
-        assertNull(courseThumbnailOf(listOf(CoursePoint(51.5, -0.1))))
+        assertNull(courseThumbnailOf(listOf(ShapePoint(51.5, -0.1))))
     }
 
     @Test
@@ -333,10 +333,10 @@ class CourseThumbnailTest {
 
     @Test
     fun `a course that covers no ground has no shape to draw`() {
-        val onTheSpot = route { standingStill(seconds = 10) }.map { it.asCoursePoint() }
+        val onTheSpot = route { standingStill(seconds = 10) }.map { it.asShapePoint() }
 
         assertNull(courseThumbnailOf(onTheSpot))
     }
 }
 
-private fun TrackPoint.asCoursePoint() = CoursePoint(latitude, longitude)
+private fun TrackPoint.asShapePoint() = ShapePoint(latitude, longitude)
