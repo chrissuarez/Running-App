@@ -133,6 +133,15 @@ fun RunnerSession.finishedFromRecord(
         // the pass over history the graduation rule refuses to make (ADR 0016), and it is also what
         // this Run has always got: nothing here ever settled a Stage. Said here rather than left to
         // the default so a rescue cannot race the launch pass for the same row.
+        //
+        // **A Run nobody closed is what this can see, not what is always true.** Since the row
+        // became the settlers' mutual exclusion ([SETTLE_RUN_ROW_IF_UNSETTLED]), a rescue can win
+        // the row of a Run the runner deliberately stopped, whose own finalize was still in flight
+        // — and nothing here or in the record says so. The mark goes on all the same, because it is
+        // the right answer for every Run this can tell apart and the wrong one would grant
+        // graduations off Runs nobody closed. The Run's own finalize is what corrects it, from the
+        // one place that knows: it is told it lost the row and hands the question back
+        // ([HAND_THE_STAGE_QUESTION_BACK], #383).
         stageSettled = true,
     )
 }

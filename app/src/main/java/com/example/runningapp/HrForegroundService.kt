@@ -1299,9 +1299,26 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
                     // filed about.
                     if (!database.sessionDao().settleRunRow(updatedSession)) {
                         // Everything below belongs to the settler that won the row — the journal
-                        // line, the after-run measurements, the Plan's settlement — and it is
-                        // doing them, or has.
+                        // line, the after-run measurements — and it is doing them, or has.
+                        //
+                        // The Plan's settlement is the exception, because this branch holds the one
+                        // fact the winner could not have (#383). The winner is a rescue, and it
+                        // marks every Run it puts back as owing the Plan nothing
+                        // ([finishedFromRecord]) — right for a Run nobody closed, wrong for this
+                        // one, whose runner closed it, which is why there is a finalize here at
+                        // all. The question goes back rather than being answered here; the rule and
+                        // every reason for it are on [HAND_THE_STAGE_QUESTION_BACK].
                         Log.w(TAG, "Run $runRowId was settled by a teardown's rescue; leaving it that way")
+                        try {
+                            sessionRepository.handTheStageQuestionBack(runRowId)
+                        } catch (e: Exception) {
+                            // The same guard the settlement below carries, and for the same reason:
+                            // this runs as a root child of [finalizationScope], whose SupervisorJob
+                            // keeps a failure from the siblings but does not handle it. Logged and
+                            // left — the Run keeps the rescue's mark and its Stage is lost, which is
+                            // no worse than it was before this branch existed.
+                            Log.w(TAG, "Could not hand run $runRowId's Stage question back; it keeps the rescue's mark", e)
+                        }
                         return@withContext
                     }
 

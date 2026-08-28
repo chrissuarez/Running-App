@@ -149,6 +149,65 @@ class SettleRunRowQueryTest {
         assertEquals(0L, valueOf(68L, "endTime"))
     }
 
+    @Test
+    fun `a rescue's mark takes the Run out of the launch pass's reach`() {
+        // The rescue settles the Stage question by writing it closed, because the Run it is
+        // rescuing is a Run nobody closed and the graduation rule may not judge one of those
+        // (ADR 0016, [finishedFromRecord]). This is that mark doing its job: the launch pass looks
+        // for a finished Run still owing a settlement, and this Run is not one.
+        givenRunStillRecording(67L)
+
+        assertEquals(1, settle(67L, durationSeconds = 292, endTime = startedAt + 292_000, stageSettled = true))
+
+        assertEquals(emptyList<Long>(), runsOwingAStageSettlement())
+    }
+
+    @Test
+    fun `the Run's own finish hands the Stage question back after losing the row`() {
+        // The one case the rescue's mark is wrong about (#383). The runner stopped this Run
+        // themselves, so its own finalize is on its way — but the teardown's bounded joins gave up
+        // while that dispatch was still in flight, the rescue wrote first, and the finalize is told
+        // it lost the row. The rescue could not know any of that: it sees the row and the record,
+        // and neither says a runner ever closed this Run.
+        //
+        // The finalize does know, and this is what it does about it. It leaves the rescue's totals
+        // exactly where they are — they are a true account of the seconds that reached the database
+        // — and reopens the one thing the rescue decided on a premise that was false. The launch
+        // pass then has the Run, which is what a rescued Run its runner closed should always have
+        // got.
+        givenRunStillRecording(67L)
+        assertEquals(1, settle(67L, durationSeconds = 292, endTime = startedAt + 292_000, stageSettled = true))
+
+        assertEquals(1, handTheStageQuestionBack(67L))
+
+        assertEquals(listOf(67L), runsOwingAStageSettlement())
+        // And nothing else about the row moved: the settler that won it keeps every total it wrote.
+        assertEquals(292L, valueOf(67L, "durationSeconds"))
+        assertEquals(startedAt + 292_000, valueOf(67L, "endTime"))
+    }
+
+    @Test
+    fun `handing the question back names one Run and no other`() {
+        givenRunStillRecording(67L)
+        givenRunStillRecording(68L)
+        assertEquals(1, settle(67L, durationSeconds = 292, endTime = startedAt + 292_000, stageSettled = true))
+        assertEquals(1, settle(68L, durationSeconds = 41, endTime = startedAt + 41_000, stageSettled = true))
+
+        assertEquals(1, handTheStageQuestionBack(67L))
+
+        assertEquals(listOf(67L), runsOwingAStageSettlement())
+    }
+
+    /** The statement the losing finalize runs, run here — the constant the DAO is annotated with. */
+    private fun handTheStageQuestionBack(sessionId: Long): Int =
+        db.prepareStatement(HAND_THE_STAGE_QUESTION_BACK.replace(Regex(":\\w+"), "?")).use {
+            it.setLong(1, sessionId)
+            it.executeUpdate()
+        }
+
+    /** The question the launch pass asks, run here — the constant the DAO is annotated with. */
+    private fun runsOwingAStageSettlement(): List<Long> = db.query(RUNS_OWING_A_STAGE_SETTLEMENT)
+
     /**
      * The statement the phone runs, run here — the same constant the DAO is annotated with, with
      * Room's named parameters swapped for JDBC's positional ones in the order they appear.
@@ -160,6 +219,7 @@ class SettleRunRowQueryTest {
         sessionId: Long,
         endTime: Long,
         durationSeconds: Long,
+        stageSettled: Boolean = false,
     ): Int = db.prepareStatement(SETTLE_RUN_ROW_IF_UNSETTLED.replace(Regex(":\\w+"), "?")).use {
         it.setLong(1, endTime)
         it.setLong(2, durationSeconds)
@@ -178,7 +238,7 @@ class SettleRunRowQueryTest {
         it.setBoolean(15, false)
         it.setDouble(16, 51.5)
         it.setDouble(17, -0.12)
-        it.setBoolean(18, false)
+        it.setBoolean(18, stageSettled)
         it.setLong(19, sessionId)
         it.executeUpdate()
     }

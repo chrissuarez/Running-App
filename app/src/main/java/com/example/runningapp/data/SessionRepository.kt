@@ -4282,6 +4282,39 @@ class SessionRepository(
     }
 
     /**
+     * Hands a Run's Stage question back to the launch pass, after its own finalize lost the row
+     * (#383).
+     *
+     * For the Run's own finalize, on being told another settler wrote the row first — which is the
+     * only caller there is a reason for, because it is the only one holding the fact. That settler
+     * is always a rescue — the Run has one finalize — and a rescue marks every
+     * Run it puts back as owing the Plan nothing ([finishedFromRecord]), because a Run rebuilt from
+     * its record is a Run nobody closed and the graduation rule may not judge one of those
+     * (ADR 0016). This is the Run where that premise is false: the runner stopped it themselves,
+     * and the rescue had no way to see it.
+     *
+     * **The debt goes back rather than being paid here.** Judging the Run from the finalize's losing
+     * branch would put the graduation rule in a second place, free to drift from the first, and it
+     * would judge a Run the winner is still measuring — its moving time, its records, its Segments
+     * and its shape all run on behind this call ([AfterRunMeasurements]). The launch pass judges a
+     * Run that is finished and measured, which is the Run this one will be by then.
+     *
+     * **No snapshot is taken here**, unlike every settlement door ([settleStageForRun]). The rescue
+     * that won the row hands its own after-run booking to WorkManager as it stamps the row, and
+     * that copy is taken later than this write; what is knowingly left is a Clear storage restored
+     * from a copy taken in the instant between the two, which brings back a Run marked settled that
+     * was never judged. A whole-database copy is not worth paying for that instant in a process the
+     * teardown is already taking down.
+     *
+     * Never throws for the caller to handle beyond its own guard: the write is one statement against
+     * one row, and a failure leaves the Run exactly as the rescue left it.
+     */
+    suspend fun handTheStageQuestionBack(runRowId: Long) {
+        sessionDao.setStageUnsettled(runRowId)
+        Log.d("StageRule", "Run $runRowId was settled by a rescue that could not know its runner closed it; the launch pass has its Stage")
+    }
+
+    /**
      * A settlement nobody has spoken for: the gate, and then the settlement itself, as one step —
      * and whether it wrote the mark (#297).
      *
@@ -4564,6 +4597,12 @@ class SessionRepository(
      * (`MIGRATION_30_31`), so the list can only hold Runs finished since — and the rule itself still
      * declines any Run recorded under a Stage the runner has since left, which is what a Run old
      * enough to be a surprise will almost always be. Forwards only is ADR 0016's, and this keeps it.
+     *
+     * One Run reaches this list by having its debt handed back rather than never paid: a Run its
+     * runner closed whose own finalize lost the row to a rescue ([handTheStageQuestionBack], #383).
+     * It belongs here for the same reason as the rest — its runner closed it, so it is a Run the
+     * rule may look at — and the rescue that beat its finalize is why nothing closer to the finish
+     * could take it.
      *
      * One Run at a time, each marked as its settlement lands, so a pass cut short keeps what it paid
      * for. Failures are logged and never thrown: a Stage that cannot be settled is not a reason to
