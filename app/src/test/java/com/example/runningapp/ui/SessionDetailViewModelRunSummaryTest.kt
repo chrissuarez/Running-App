@@ -337,6 +337,58 @@ class SessionDetailViewModelRunSummaryTest {
         assertTrue(viewModel.summaryWriting.value.isEmpty())
     }
 
+    /**
+     * #350: a Run deleted while the model is writing about it ends the ask instead of hanging it.
+     *
+     * The rebuild after the words land waits for the Run's facts to settle again, and a Run that is
+     * gone never settles — there is nothing left to measure. Waited for on settledness alone, the
+     * ask would sit there for the life of the page, spinner up, and the repository's refusal for a
+     * Run that has gone could never be reached.
+     */
+    @Test
+    fun `a run deleted while the model is writing ends the ask rather than hanging it`() =
+        runTest(dispatcher) {
+            val onFile = MutableStateFlow<RunnerSession?>(finishedRun)
+            // Answering deletes the Run, exactly as the runner pressing Delete mid-ask would.
+            val client = mock<AiCoachClient> {
+                on { canBeAsked } doReturn true
+                onBlocking { summariseRun(any()) } doSuspendableAnswer {
+                    onFile.value = null
+                    "words"
+                }
+            }
+            val summaries = mock<RunSummaryDao>()
+            val viewModel = SessionDetailViewModel(
+                SessionRepository(
+                    sessionDao = mock<SessionDao> {
+                        onBlocking { getSessionById(7) } doSuspendableAnswer { onFile.value }
+                        on { getSessionByIdFlow(7) } doReturn onFile
+                        on { anyRecordScoringOwedFlow() } doReturn flowOf(false)
+                        on { anySegmentTimingOwedFlow() } doReturn flowOf(false)
+                        on { anyRunShapeOwedFlow() } doReturn flowOf(false)
+                    },
+                    achievementDao = mock<AchievementDao> {
+                        onBlocking { getAchievementsForSessions(listOf(7)) } doReturn emptyList()
+                    },
+                    runSummaryDao = summaries,
+                    settingsRepository = mock<SettingsRepository> {
+                        on { userSettingsFlow } doReturn flowOf(UserSettings(aiDataSharingEnabled = true))
+                    },
+                    aiCoachClient = client,
+                )
+            )
+
+            viewModel.requestRunSummary(7)
+            advanceUntilIdle()
+
+            // Nothing kept about a Run that is not there, and nothing still spinning.
+            verify(summaries, never()).put(any())
+            assertTrue(viewModel.summaryWriting.value.isEmpty())
+            // A refusal rather than a failure: asking again could not work.
+            assertEquals(setOf(7L), viewModel.summaryRefused.value)
+            assertTrue(viewModel.summaryFailed.value.isEmpty())
+        }
+
     /** And the button is not there to press until then, which is the half the runner can see. */
     @Test
     fun `the button is not offered while the run is still being measured`() {

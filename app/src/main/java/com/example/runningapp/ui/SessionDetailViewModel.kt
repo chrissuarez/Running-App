@@ -315,8 +315,9 @@ class SessionDetailViewModel(
                 // Nothing is sent until there is nothing left to find out about this Run — the one
                 // rule both ways in share it, because both write words that are kept for ever. The
                 // spinner is already up while this waits, which is the truth: the app is working on
-                // it.
-                sessionRepository.runSummaryFactsSettledFlow(sessionId).first { it }
+                // it. A Run deleted while the wait is on ends it too, or the wait would never end
+                // (#350): the ask below then finds nothing to write about and refuses.
+                sessionRepository.runSummaryWaitOverFlow(sessionId).first { it }
                 // Handed over as something to run, not as a finished prompt: the repository builds
                 // it again once the model has answered, and keeps no words written out of facts
                 // that moved while it was answering (#350). The wait above still earns its place —
@@ -371,9 +372,15 @@ class SessionDetailViewModel(
      *
      * The wait is normally over before it starts, because the page asks nothing until the facts
      * have settled. Where it is not, the spinner is already up and saying the truth.
+     *
+     * **A Run that has gone ends the wait as well as a Run that has settled**
+     * ([SessionRepository.runSummaryWaitOverFlow]). Settledness is never true for a Run that is not
+     * there, so waiting on it alone would wait for ever on a Run the runner deleted while the model
+     * was writing about it — which is precisely the window this rebuild is here to look at. The
+     * builder answers null for a gone Run, and the ask reads that as the refusal it is.
      */
     private suspend fun settledRunSummaryPrompt(sessionId: Long): String? {
-        sessionRepository.runSummaryFactsSettledFlow(sessionId).first { it }
+        sessionRepository.runSummaryWaitOverFlow(sessionId).first { it }
         return runSummaryPrompt(sessionId)
     }
 
