@@ -16,6 +16,7 @@ import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
+import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -463,6 +464,105 @@ class SessionRepositoryRescueTest {
         assertTrue(settled.isEmpty())
         assertEquals(0, backupsRefreshed)
         assertTrue(runsBooked.isEmpty())
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // The Stage of a Run whose own finalize lost the row to this rescue (#383, #386). The finalize
+    // hands the question back, and the two halves — the handback and the rescue's measurements —
+    // meet in this process rather than waiting for the next cold start.
+    // ------------------------------------------------------------------------------------------
+
+    /**
+     * The row as the database would hand it back at any moment: what the rescue last wrote, or the
+     * unfinished row if it has not written yet. A handback is applied on top, the way the finalize's
+     * own write would be.
+     */
+    private var handedBack = false
+
+    private suspend fun stubTheRowAsTheRescueLeavesIt() {
+        whenever(sessionDao.getSessionById(67L)) doAnswer {
+            val row = settled.lastOrNull() ?: interruptedRun(67L)
+            if (handedBack) row.copy(stageSettled = false) else row
+        }
+        whenever(sessionDao.setStageUnsettled(67L)) doAnswer { handedBack = true; Unit }
+        whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 22))
+        whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
+    }
+
+    @Test
+    fun `an ordinary rescue settles no Stage, because nobody closed that Run`() = runTest {
+        // The rule the whole feature hangs off (ADR 0016): a Run rebuilt from its record is a Run
+        // nobody closed, and the graduation rule may not judge one of those. The rescue marks the
+        // question closed as it stamps the row, and re-reading that row is how the settlement below
+        // tells this Run from the one whose runner did close it.
+        stubTheRowAsTheRescueLeavesIt()
+
+        assertTrue(repository.rescueRunLostToTeardown(67L))
+
+        assertTrue(settled.single().stageSettled)
+        verify(sessionDao, never()).setStageSettled(67L)
+    }
+
+    @Test
+    fun `a Stage handed back before the rescue has measured is settled when it has`() = runTest {
+        // The ordinary order: the finalize is told it lost and hands the question back within the
+        // same instant, while the rescue's after-run measurements run on for seconds behind it.
+        // Before #386 nothing in this process read that debt — the launch pass had been spent at
+        // MainActivity.onCreate long before the Run started — so a Run stopped from the
+        // notification, with no finish sheet to pay it, waited for Android to reclaim the process.
+        stubTheRowAsTheRescueLeavesIt()
+        repository.handTheStageQuestionBack(67L)
+
+        // Nothing is judged from the handback itself: the Run is still being measured.
+        verify(sessionDao, never()).setStageSettled(67L)
+
+        assertTrue(repository.rescueRunLostToTeardown(67L))
+
+        // And judged once the measurements are in, in this process.
+        verify(sessionDao).setStageSettled(67L)
+    }
+
+    @Test
+    fun `a Stage handed back after the rescue has measured is settled by the handback`() = runTest {
+        // The other order, which is the race #386 had to answer rather than assume: the rescue
+        // finishes measuring and reads a row that still says the Stage was settled, because the
+        // finalize's write has not landed yet. The second half to arrive is the one that settles,
+        // whichever half that is.
+        stubTheRowAsTheRescueLeavesIt()
+
+        assertTrue(repository.rescueRunLostToTeardown(67L))
+        verify(sessionDao, never()).setStageSettled(67L)
+
+        repository.handTheStageQuestionBack(67L)
+
+        verify(sessionDao).setStageSettled(67L)
+    }
+
+    @Test
+    fun `a Run is judged once, whichever half arrives second`() = runTest {
+        // Both halves land, and both call the same door. The settlement is taken by name, so the
+        // first to take it is the only one that can.
+        stubTheRowAsTheRescueLeavesIt()
+
+        repository.handTheStageQuestionBack(67L)
+        assertTrue(repository.rescueRunLostToTeardown(67L))
+        repository.handTheStageQuestionBack(67L)
+
+        verify(sessionDao, times(1)).setStageSettled(67L)
+    }
+
+    @Test
+    fun `a Run whose finish sheet is open is still the sheet's to settle`() = runTest {
+        // The rule #297 keeps and this door may not take away: a runner still looking at the sheet
+        // has not said their word yet, and a Stage judged before they do is judged without it. The
+        // Run stays owed — the sheet pays it, or the next launch does.
+        stubTheRowAsTheRescueLeavesIt()
+        repository.finishSheetOpened(67L)
+        repository.handTheStageQuestionBack(67L)
+
+        assertTrue(repository.rescueRunLostToTeardown(67L))
+
+        verify(sessionDao, never()).setStageSettled(67L)
     }
 
     @Test
