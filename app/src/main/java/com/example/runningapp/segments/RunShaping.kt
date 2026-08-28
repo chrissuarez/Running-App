@@ -40,9 +40,13 @@ interface RunShapeStore {
  * is a reason to throw a measurement away. What is here is the three things
  * [mayBeMatchedToOtherRuns] asks — a Run finishing, being marked a Walk, becoming a treadmill Run —
  * because each of those changes the shape the Run should hold from a route to nothing, or back.
+ *
+ * Deferred to [holdsEffortsAs] rather than written out again, the way [mayBeMatchedToOtherRuns]
+ * defers to [mayHoldSegmentEfforts]: the two ask the same three columns because they are gated on
+ * the same eligibility, and two copies of that would be free to drift apart at the next change to
+ * either.
  */
-fun RunnerSession.shapesAs(other: RunnerSession): Boolean =
-    endTime == other.endTime && isWalk == other.isWalk && runMode == other.runMode
+fun RunnerSession.shapesAs(other: RunnerSession): Boolean = holdsEffortsAs(other)
 
 /**
  * Taking the shape of Runs, so they can recognise each other (#73).
