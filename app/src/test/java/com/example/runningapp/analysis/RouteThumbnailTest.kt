@@ -399,6 +399,44 @@ class CourseThumbnailTest {
             drawn.any { it.x > 0.9f },
         )
     }
+
+    /**
+     * Two things worth drawing can sit in the same handful of a file's points, and both have to
+     * survive.
+     *
+     * This is the same rule as the test above, asked where it is hardest: a spur north and the road
+     * on from it are twenty points out of two hundred thousand, so any rule that keeps one point
+     * out of each stretch of the list has to choose between them, and it chooses the road. The spur
+     * is not the furthest north on the course either — a taller one at the start holds that — so
+     * being an outermost point does not save it.
+     *
+     * The spur stands at the middle of the square and reaches half way up it. Finding a drawn point
+     * up there is finding the spur.
+     */
+    @Test(timeout = 10_000)
+    fun `two features in the same handful of points are both drawn`() {
+        val west = -0.1
+        val middle = -0.0928
+        val east = -0.0856
+        val course =
+            // A taller spur at the start, so the one in the middle is not the furthest north.
+            (0 until 25).map { ShapePoint(51.5 + it * (0.006 / 24), west) } +
+                (0 until 25).map { ShapePoint(51.5 + (24 - it) * (0.006 / 24), west) } +
+                (0 until 10).map { ShapePoint(51.5, west + it * ((middle - west) / 9)) } +
+                (0 until 100_030).map { ShapePoint(51.5 + (it % 2) * 0.00001, middle) } +
+                // The twenty: a spur north and back, and then the road east.
+                (0 until 5).map { ShapePoint(51.5 + it * (0.004 / 4), middle) } +
+                (0 until 5).map { ShapePoint(51.5 + (4 - it) * (0.004 / 4), middle) } +
+                (0 until 10).map { ShapePoint(51.5, middle + it * ((east - middle) / 9)) } +
+                (0 until 100_000).map { ShapePoint(51.5 + (it % 2) * 0.00001, east) }
+
+        val drawn = requireNotNull(courseThumbnailOf(course)).strokes.single()
+
+        assertTrue(
+            "the spur in the middle should be drawn, not lost to the road beside it",
+            drawn.any { it.x > 0.45f && it.x < 0.55f && it.y < 0.45f },
+        )
+    }
 }
 
 private fun TrackPoint.asShapePoint() = ShapePoint(latitude, longitude)
