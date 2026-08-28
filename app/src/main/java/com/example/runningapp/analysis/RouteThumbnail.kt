@@ -8,11 +8,12 @@ import kotlin.math.cos
 import kotlin.math.max
 
 /**
- * The Run's route reduced to the shape of it, for the little drawing beside a Run in the History
- * list (#51).
+ * A route reduced to the shape of it, for the little drawing beside a Run in the History list (#51)
+ * and beside a Route in the library (#59).
  *
- * The list's job is recognition, not inspection: a runner scrolling their history is asking "which
- * run was that?", and the answer is the shape — the river loop, the out-and-back up the hill, the
+ * A list's job is recognition, not inspection: a runner scrolling their history is asking "which
+ * run was that?", a runner scrolling their routes is asking "which one is the park loop?", and the
+ * answer to both is the shape — the river loop, the out-and-back up the hill, the
  * park laps. So this is the outline and nothing else. No map underneath, no zone colours: at forty
  * pixels a side, streets are a smudge and five colours are a smear, and both cost the list the one
  * thing it must keep, which is scrolling smoothly. The Run's own page has the map that answers the
@@ -23,7 +24,7 @@ import kotlin.math.max
  * that square — a long out-and-back stays a long out-and-back rather than being stretched to fill
  * the corners — and it is centred in whichever direction it has room to spare in.
  *
- * Pure, so what the list draws for any Run can be settled without a phone.
+ * Pure, so what a list draws for any Run or Route can be settled without a phone.
  */
 data class RouteThumbnail(
     /**
@@ -69,6 +70,11 @@ private const val THUMBNAIL_DETAIL = 0.01
  *
  * It costs nothing worth keeping. Sixty metres of running has no shape to recognise a Run by, which
  * is the only thing the drawing is for.
+ *
+ * The same width is asked of a kept course (#59), on the second reason rather than the first: an
+ * imported course is a drawn plan and carries no accuracy gate of its own, so what rules it out is
+ * simply that sixty metres is nothing to recognise a Route by either. Both numbers would be the
+ * same in any case — a course traced off a Run is made of those very fixes.
  */
 private val SHAPE_MINIMUM_METERS = 2 * SessionRecorder.ACCURACY_THRESHOLD_METERS
 
@@ -79,11 +85,45 @@ private val SHAPE_MINIMUM_METERS = 2 * SessionRecorder.ACCURACY_THRESHOLD_METERS
  * Run that covered less ground than [SHAPE_MINIMUM_METERS]. The row then shows what it shows today
  * — no drawing, rather than a dot claiming to be a route.
  */
-fun routeThumbnailOf(measured: MeasuredTrack): RouteThumbnail? {
-    val strokes = recordedStretches(measured)
-    if (strokes.isEmpty()) return null
+fun routeThumbnailOf(measured: MeasuredTrack): RouteThumbnail? =
+    thumbnailOf(recordedStretches(measured).map { stretch -> stretch.map { it.place() } })
 
-    val fixes = strokes.flatten()
+/** A place on a course, which is all a drawing of one needs off it — no height, and no time. */
+data class CoursePoint(val latitude: Double, val longitude: Double)
+
+/**
+ * The shape of a Route the runner keeps, drawn beside it in the library (#59).
+ *
+ * The same drawing as a Run's, made the same way, because it answers the same question: a library
+ * of names tells a runner nothing they cannot already read, and the shape is how they recognise the
+ * park loop from the canal out-and-back at a glance.
+ *
+ * One stroke, always. A Run is cut at its Breaks because a straight line across ground nothing
+ * witnessed would be a claim about where the runner went; a course claims nothing about where
+ * anyone went, and by the time it is kept it is a single line either way — the GPX reader joins the
+ * segments a file arrives in, and a Run kept as a course is thinned into one line before it is
+ * stored.
+ *
+ * Null on the same terms as a Run's: fewer than two points, or less ground covered than
+ * [SHAPE_MINIMUM_METERS]. Fewer than two is reachable here in a way it is not for a Run, because a
+ * damaged row is read leniently and may give back almost nothing
+ * ([com.example.runningapp.routes.RoutePolyline]); the row then keeps its empty square and its name
+ * and numbers, which is more than a dot claiming to be a route would be worth.
+ */
+fun courseThumbnailOf(course: List<CoursePoint>): RouteThumbnail? = thumbnailOf(listOf(course))
+
+/**
+ * The shape shared by both drawings: the strokes fitted into the square, thinned, and centred.
+ *
+ * Strokes of fewer than two points are dropped before anything is measured — a line of one point
+ * has no shape, and letting it through would let a course of one point set the span everything else
+ * is scaled against.
+ */
+private fun thumbnailOf(strokes: List<List<CoursePoint>>): RouteThumbnail? {
+    val lines = strokes.filter { it.size >= 2 }
+    if (lines.isEmpty()) return null
+
+    val fixes = lines.flatten()
     // East-west is measured in the same metres as north-south, by shrinking a degree of longitude
     // the way the latitude does: a degree of longitude is half a degree of latitude in Norway, and
     // read as the same unit it would squash every route there flat.
@@ -103,7 +143,7 @@ fun routeThumbnailOf(measured: MeasuredTrack): RouteThumbnail? {
     val sidePadding = (1.0 - spanX * scale) / 2.0
     val topAndBottomPadding = (1.0 - spanY * scale) / 2.0
 
-    val drawn = strokes.map { stretch ->
+    val drawn = lines.map { stretch ->
         stretch.map { fix ->
             ThumbPoint(
                 x = (sidePadding + (fix.longitude * eastWest - westmost) * scale).toFloat(),
@@ -115,6 +155,8 @@ fun routeThumbnailOf(measured: MeasuredTrack): RouteThumbnail? {
 
     return if (drawn.isEmpty()) null else RouteThumbnail(drawn)
 }
+
+private fun TrackPoint.place() = CoursePoint(latitude, longitude)
 
 /** The track cut at its breaks: the fixes of each stretch the recording covers. */
 private fun recordedStretches(measured: MeasuredTrack): List<List<TrackPoint>> =

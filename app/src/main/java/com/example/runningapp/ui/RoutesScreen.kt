@@ -51,6 +51,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.runningapp.analysis.RouteThumbnail
+import com.example.runningapp.analysis.ThumbPoint
 import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteSource
 import com.example.runningapp.ui.theme.RunningAppTheme
@@ -61,12 +63,14 @@ import com.example.runningapp.ui.theme.RunningUiTokens
  *
  * Deliberately thin. Everything it prints comes from [routeRowSubtitle] and its neighbours in
  * `RouteModels.kt`, so what a runner reads is pinned by unit tests rather than by opening the screen
- * on a phone; the screen's own job is where the taps go.
+ * on a phone; the screen's own job is where the taps go. The shape drawn beside each row is worked
+ * out the same way, by [com.example.runningapp.analysis.courseThumbnailOf] before the row is handed
+ * over (#59).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RoutesScreen(
-    routes: List<Route>,
+    rows: List<RouteRowUi>,
     isImporting: Boolean,
     message: String?,
     onImport: () -> Unit,
@@ -129,7 +133,7 @@ fun RoutesScreen(
             )
         },
     ) { padding ->
-        if (routes.isEmpty()) {
+        if (rows.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -160,18 +164,18 @@ fun RoutesScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(RunningUiTokens.SectionSpacing),
             ) {
-                items(routes, key = { it.id }) { route ->
+                items(rows, key = { it.route.id }) { row ->
                     RouteRow(
-                        route = route,
-                        onRename = { renaming = route.id },
-                        onDelete = { deleting = route.id },
+                        row = row,
+                        onRename = { renaming = row.route.id },
+                        onDelete = { deleting = row.route.id },
                     )
                 }
             }
         }
     }
 
-    routes.firstOrNull { it.id == renaming }?.let { route ->
+    rows.map { it.route }.firstOrNull { it.id == renaming }?.let { route ->
         RenameRouteDialog(
             route = route,
             onDismiss = { renaming = null },
@@ -182,7 +186,7 @@ fun RoutesScreen(
         )
     }
 
-    routes.firstOrNull { it.id == deleting }?.let { route ->
+    rows.map { it.route }.firstOrNull { it.id == deleting }?.let { route ->
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text("Delete this route?") },
@@ -203,14 +207,24 @@ fun RoutesScreen(
 }
 
 @Composable
-private fun RouteRow(route: Route, onRename: () -> Unit, onDelete: () -> Unit) {
+private fun RouteRow(row: RouteRowUi, onRename: () -> Unit, onDelete: () -> Unit) {
+    val route = row.route
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(RunningUiTokens.CardPadding),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // The square is held open on every row, drawn or not, for the reason History holds one
+            // open (#51): a course's shape is worked out after the row is on screen, and a row that
+            // widened when its drawing arrived would shuffle the list under the runner's finger. It
+            // stays empty for a course too short or too damaged to have a shape, which keeps the
+            // name edge straight down a library that holds one.
+            Box(modifier = Modifier.size(ThumbnailSize)) {
+                row.thumbnail?.let { RouteThumbnailDrawing(it) }
+            }
             // Weighted rather than sized, and the name is allowed to wrap: a long route name at a
             // large text scale must push the buttons nowhere (#63).
             Column(modifier = Modifier.weight(1f)) {
@@ -281,24 +295,45 @@ private val RouteIdSaver = androidx.compose.runtime.saveable.Saver<Long?, Long>(
 private fun RoutesScreenPreview() {
     RunningAppTheme {
         RoutesScreen(
-            routes = listOf(
-                Route(
-                    id = 1,
-                    name = "Regent's Park outer loop",
-                    distanceMeters = 4_215.0,
-                    elevationGainMeters = 27.4,
-                    polyline = "",
-                    createdAtMillis = 0,
-                    source = RouteSource.IMPORTED,
+            rows = listOf(
+                RouteRowUi(
+                    route = Route(
+                        id = 1,
+                        name = "Regent's Park outer loop",
+                        distanceMeters = 4_215.0,
+                        elevationGainMeters = 27.4,
+                        polyline = "",
+                        createdAtMillis = 0,
+                        source = RouteSource.IMPORTED,
+                    ),
+                    thumbnail = RouteThumbnail(
+                        listOf(
+                            listOf(
+                                ThumbPoint(0.15f, 0.85f), ThumbPoint(0.05f, 0.35f),
+                                ThumbPoint(0.45f, 0.05f), ThumbPoint(0.9f, 0.3f),
+                                ThumbPoint(0.75f, 0.8f), ThumbPoint(0.15f, 0.85f),
+                            )
+                        )
+                    ),
                 ),
-                Route(
-                    id = 2,
-                    name = "Canal towpath out and back",
-                    distanceMeters = 10_050.0,
-                    elevationGainMeters = null,
-                    polyline = "",
-                    createdAtMillis = 0,
-                    source = RouteSource.IMPORTED,
+                RouteRowUi(
+                    route = Route(
+                        id = 2,
+                        name = "Canal towpath out and back",
+                        distanceMeters = 10_050.0,
+                        elevationGainMeters = null,
+                        polyline = "",
+                        createdAtMillis = 0,
+                        source = RouteSource.IMPORTED,
+                    ),
+                    thumbnail = RouteThumbnail(
+                        listOf(
+                            listOf(
+                                ThumbPoint(0.45f, 1f), ThumbPoint(0.4f, 0.5f),
+                                ThumbPoint(0.6f, 0.2f), ThumbPoint(0.55f, 0f),
+                            )
+                        )
+                    ),
                 ),
             ),
             isImporting = false,
@@ -317,7 +352,7 @@ private fun RoutesScreenPreview() {
 private fun EmptyRoutesScreenPreview() {
     RunningAppTheme {
         RoutesScreen(
-            routes = emptyList(),
+            rows = emptyList(),
             isImporting = false,
             message = null,
             onImport = {},

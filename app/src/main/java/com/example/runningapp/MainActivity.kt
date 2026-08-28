@@ -1203,11 +1203,15 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         composable(Routes.ROUTE_LIBRARY) {
-                            val routes by routesViewModel.routes.collectAsState()
+                            val routeRows by routesViewModel.rows.collectAsState()
                             val importingRoute by routesViewModel.importing.collectAsState()
                             val routeMessage by routesViewModel.message.collectAsState()
+                            // Asked for here rather than at launch: working out the shape of every
+                            // kept course is arithmetic nobody who never opens their routes should
+                            // pay for (#59).
+                            LaunchedEffect(Unit) { routesViewModel.drawCoursesWhileLibraryIsOpen() }
                             RoutesScreen(
-                                routes = routes,
+                                rows = routeRows,
                                 isImporting = importingRoute,
                                 message = routeMessage,
                                 onImport = { pickRouteFile.launch(arrayOf("*/*")) },

@@ -85,4 +85,15 @@ class FakeRouteDao : RouteDao {
     override suspend fun deleteRoute(routeId: Long) {
         rows.value = rows.value.filterNot { it.id == routeId }
     }
+
+    /**
+     * A row's course replaced under the same id, which is what re-importing a kept Route does.
+     *
+     * The real DAO reaches this state through [keepRoute], which matches a file to a Route by its
+     * line and then re-measures the row it found. There is no one query to imitate, so a test that
+     * cares only that the row's line moved says so directly.
+     */
+    fun replaceLine(routeId: Long, polyline: String) {
+        rows.value = rows.value.map { if (it.id == routeId) it.copy(polyline = polyline) else it }
+    }
 }
