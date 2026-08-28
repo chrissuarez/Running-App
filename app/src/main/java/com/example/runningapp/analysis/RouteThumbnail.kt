@@ -170,17 +170,61 @@ private fun recordedStretches(measured: MeasuredTrack): List<List<TrackPoint>> =
     measured.unbrokenLegs.map { unbroken -> measured.points.subList(unbroken.first, unbroken.last + 2) }
 
 /**
+ * The most points any one line is thinned from.
+ *
+ * The thinning walk is quadratic in the worst case — a line that keeps bending splits into two
+ * halves that each keep bending — so the number of points handed to it has to be bounded by
+ * something, and until #59 it was bounded by accident. A Run's Track is a fix every second or so
+ * and an hour of running is a few thousand of them; an imported course is bounded by nothing but
+ * the reader's refusal at 200,000 points
+ * ([com.example.runningapp.routes.GpxRouteReader]), and nothing thins it before it is stored. One
+ * such file, valid and accepted, would have held the whole library's drawings behind it on every
+ * fresh process.
+ *
+ * Two thousand is far more than the square can show: at [THUMBNAIL_DETAIL] of a side, a 56dp square
+ * has of the order of a hundred distinguishable steps across it, and what survives the thinning is
+ * fewer again. So this bound is not a compromise on how the drawing looks — it is a bound on the
+ * arithmetic, chosen well above anything the drawing could use.
+ */
+private const val MOST_POINTS_A_DRAWING_IS_THINNED_FROM = 2_000
+
+/**
  * The same line with everything too small to see taken out of it.
  *
  * The thinning itself is [thinnedLineIndices], shared with the Run kept as a course
  * ([com.example.runningapp.routes.runAsCourse]); all that is decided here is how much detail a
  * thumbnail can show, which is [THUMBNAIL_DETAIL].
+ *
+ * A line longer than [MOST_POINTS_A_DRAWING_IS_THINNED_FROM] is evenly sampled down to it first.
+ * Evenly rather than by cutting the tail off, because the shape is the whole point: a course kept
+ * to its first two thousand points would be drawn as its first mile, which is a different route.
  */
 private fun simplified(line: List<ThumbPoint>): List<ThumbPoint> {
+    val sampled = evenlySampled(line)
     val kept = thinnedLineIndices(
-        x = DoubleArray(line.size) { line[it].x.toDouble() },
-        y = DoubleArray(line.size) { line[it].y.toDouble() },
+        x = DoubleArray(sampled.size) { sampled[it].x.toDouble() },
+        y = DoubleArray(sampled.size) { sampled[it].y.toDouble() },
         detail = THUMBNAIL_DETAIL,
     )
-    return kept.map { line[it] }
+    return kept.map { sampled[it] }
+}
+
+/**
+ * The line with points dropped evenly along it until it is short enough to thin — see
+ * [MOST_POINTS_A_DRAWING_IS_THINNED_FROM]. Both ends are always kept, so a loop still closes.
+ *
+ * Blunter than the thinning it stands in front of, and deliberately: it drops points by counting
+ * rather than by looking, and a corner can land on a dropped point. At a thousandth of the square
+ * per step that corner moves by less than the line's own width, and only a line already denser than
+ * anything the square can show is sampled at all.
+ */
+private fun evenlySampled(line: List<ThumbPoint>): List<ThumbPoint> {
+    if (line.size <= MOST_POINTS_A_DRAWING_IS_THINNED_FROM) return line
+    val steps = MOST_POINTS_A_DRAWING_IS_THINNED_FROM - 1
+    val last = line.lastIndex
+    // Indices spread across the line by rounding, so the first is 0 and the last is the last: the
+    // ends of a course are where a runner starts and finishes, and neither may be invented. Each is
+    // past the one before it, since the line is longer than the number of steps taken across it, so
+    // no point is picked twice and the sample is exactly as long as it says it is.
+    return (0..steps).map { step -> line[(step.toLong() * last / steps).toInt()] }
 }

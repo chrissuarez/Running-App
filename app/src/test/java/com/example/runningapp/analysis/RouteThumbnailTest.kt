@@ -337,6 +337,35 @@ class CourseThumbnailTest {
 
         assertNull(courseThumbnailOf(onTheSpot))
     }
+
+    /**
+     * The one file the reader accepts that the drawing could not survive.
+     *
+     * A GPX is refused above 200,000 points and nothing thins what is accepted before it is stored,
+     * so a course of that size is a valid row in the library. The thinning walk is quadratic on a
+     * line that bends at every point — each split peels one point off instead of halving — and a
+     * saw-toothed course of 200,000 points is therefore of the order of 10^10 steps: not slow, but
+     * never finishing, with every other drawing in the library held behind it.
+     *
+     * The teeth are 2% of the course's width, so each one is well clear of the detail the drawing
+     * keeps and none of them can be thinned away. Ten seconds is not a measurement of how fast this
+     * should be — it is far above the tens of milliseconds it takes and far below the minutes it
+     * took — so the test fails on the fault and not on the machine.
+     */
+    @Test(timeout = 10_000)
+    fun `the largest course a file may carry is still drawn`() {
+        val teeth = (0 until 200_000).map { i ->
+            ShapePoint(
+                latitude = 51.5 + if (i % 2 == 0) 0.0 else 0.0004,
+                longitude = -0.1 + i * (0.02 / 199_999),
+            )
+        }
+
+        val drawn = requireNotNull(courseThumbnailOf(teeth))
+
+        assertEquals(1, drawn.strokes.size)
+        assertTrue(drawn.strokes.single().size >= 2)
+    }
 }
 
 private fun TrackPoint.asShapePoint() = ShapePoint(latitude, longitude)

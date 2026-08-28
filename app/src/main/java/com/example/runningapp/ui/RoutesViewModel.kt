@@ -131,9 +131,9 @@ class RoutesViewModel(
                 // publish rebuilds the whole row list on the thread drawing it, so publishing per
                 // route would rebuild it once per route in the library while the runner is already
                 // scrolling. The cost of holding them back is a pause before the first drawing
-                // appears, and a course is small enough for that to be no pause worth seeing: it is
-                // stored already thinned, and there is one line rather than a Run's thousands of
-                // fixes.
+                // appears, and each course is bounded work: an imported course is stored exactly
+                // as its file drew it, but the drawing samples any line down before it thins it,
+                // so what one costs is bounded whatever the file held (`courseThumbnailOf`).
                 val drawn = withContext(courseDispatcher) {
                     pending.associate { route ->
                         route.id to DrawnCourse(
