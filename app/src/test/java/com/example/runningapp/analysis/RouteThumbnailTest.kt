@@ -366,6 +366,39 @@ class CourseThumbnailTest {
         assertEquals(1, drawn.strokes.size)
         assertTrue(drawn.strokes.single().size >= 2)
     }
+
+    /**
+     * A file's points are not spread evenly along the ground, and cutting the line down by counting
+     * alone would draw the wrong route.
+     *
+     * Here almost every point is spent shuffling about inside a few metres, and the kilometre out
+     * and back — the only thing there is to recognise this course by — is fifty of them, dropped in
+     * the middle. Cut down by index at one point in a hundred, that whole leg falls between two
+     * samples and the library draws a course that goes nowhere. Nothing later can put it back,
+     * since the thinning only ever removes.
+     *
+     * The drawing is scaled so the furthest east is the right-hand edge, so the leg surviving is
+     * exactly the drawing reaching that edge.
+     */
+    @Test(timeout = 10_000)
+    fun `a short leg between long dense stretches is still drawn`() {
+        val dense = { i: Int -> ShapePoint(51.5 + (i % 2) * 0.00001, -0.1 + (i % 3) * 0.00001) }
+        // 100,050 dense points, then the leg, then 100,000 more: 200,100 in all, so a line cut at
+        // one point in every hundred takes its samples either side of the leg and never inside it.
+        val course =
+            (0 until 100_050).map(dense) +
+                // A kilometre east and back, in fifty points.
+                (0 until 25).map { ShapePoint(51.5, -0.1 + it * (0.0144 / 24)) } +
+                (0 until 25).map { ShapePoint(51.5, -0.1 + (24 - it) * (0.0144 / 24)) } +
+                (0 until 100_000).map(dense)
+
+        val drawn = requireNotNull(courseThumbnailOf(course)).strokes.single()
+
+        assertTrue(
+            "the leg east should reach the edge of the square, not be sampled away",
+            drawn.any { it.x > 0.9f },
+        )
+    }
 }
 
 private fun TrackPoint.asShapePoint() = ShapePoint(latitude, longitude)

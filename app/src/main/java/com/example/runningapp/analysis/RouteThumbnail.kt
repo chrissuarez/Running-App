@@ -185,6 +185,10 @@ private fun recordedStretches(measured: MeasuredTrack): List<List<TrackPoint>> =
  * has of the order of a hundred distinguishable steps across it, and what survives the thinning is
  * fewer again. So this bound is not a compromise on how the drawing looks — it is a bound on the
  * arithmetic, chosen well above anything the drawing could use.
+ *
+ * Read as the number of runs the line is cut into rather than as an exact ceiling: the ends and the
+ * four corners of the box are kept on top of them, so a reduced line is this length give or take a
+ * handful. What matters is that it does not grow with the file.
  */
 private const val MOST_POINTS_A_DRAWING_IS_THINNED_FROM = 2_000
 
@@ -195,12 +199,11 @@ private const val MOST_POINTS_A_DRAWING_IS_THINNED_FROM = 2_000
  * ([com.example.runningapp.routes.runAsCourse]); all that is decided here is how much detail a
  * thumbnail can show, which is [THUMBNAIL_DETAIL].
  *
- * A line longer than [MOST_POINTS_A_DRAWING_IS_THINNED_FROM] is evenly sampled down to it first.
- * Evenly rather than by cutting the tail off, because the shape is the whole point: a course kept
- * to its first two thousand points would be drawn as its first mile, which is a different route.
+ * A line longer than [MOST_POINTS_A_DRAWING_IS_THINNED_FROM] is cut down to that first, by
+ * [reducedToDrawableLength].
  */
 private fun simplified(line: List<ThumbPoint>): List<ThumbPoint> {
-    val sampled = evenlySampled(line)
+    val sampled = reducedToDrawableLength(line)
     val kept = thinnedLineIndices(
         x = DoubleArray(sampled.size) { sampled[it].x.toDouble() },
         y = DoubleArray(sampled.size) { sampled[it].y.toDouble() },
@@ -210,21 +213,46 @@ private fun simplified(line: List<ThumbPoint>): List<ThumbPoint> {
 }
 
 /**
- * The line with points dropped evenly along it until it is short enough to thin — see
- * [MOST_POINTS_A_DRAWING_IS_THINNED_FROM]. Both ends are always kept, so a loop still closes.
+ * The line cut down to a length the thinning can take — see [MOST_POINTS_A_DRAWING_IS_THINNED_FROM].
  *
- * Blunter than the thinning it stands in front of, and deliberately: it drops points by counting
- * rather than by looking, and a corner can land on a dropped point. At a thousandth of the square
- * per step that corner moves by less than the line's own width, and only a line already denser than
- * anything the square can show is sampled at all.
+ * Counting alone will not do it. A course's points are not spread evenly along the ground: a GPX
+ * may hold a hundred thousand points around a park and fifty for the kilometre of road out to it,
+ * and a line cut down by index would drop that kilometre whole, between two samples, and draw a
+ * route the runner never planned. Nothing after this can put it back — the thinning only ever
+ * removes.
+ *
+ * So the line is cut into equal runs of points, and each run gives up the one point that reaches
+ * furthest from where the run began. In a dense stretch that is much the same as counting; in a run
+ * that holds a detour it is the far end of the detour, which is the whole of what that stretch has
+ * to say. The four points the square is scaled against are kept outright on top of that, so the
+ * drawing still fills its box in both directions however the file's points were spread.
+ *
+ * Both ends are always kept, so a loop still closes and a course still starts where the runner did.
  */
-private fun evenlySampled(line: List<ThumbPoint>): List<ThumbPoint> {
+private fun reducedToDrawableLength(line: List<ThumbPoint>): List<ThumbPoint> {
     if (line.size <= MOST_POINTS_A_DRAWING_IS_THINNED_FROM) return line
-    val steps = MOST_POINTS_A_DRAWING_IS_THINNED_FROM - 1
+    val runs = MOST_POINTS_A_DRAWING_IS_THINNED_FROM
     val last = line.lastIndex
-    // Indices spread across the line by rounding, so the first is 0 and the last is the last: the
-    // ends of a course are where a runner starts and finishes, and neither may be invented. Each is
-    // past the one before it, since the line is longer than the number of steps taken across it, so
-    // no point is picked twice and the sample is exactly as long as it says it is.
-    return (0..steps).map { step -> line[(step.toLong() * last / steps).toInt()] }
+
+    val kept = sortedSetOf(0, last)
+    // The corners of the box the drawing is scaled into. Kept whatever run they fall in, because
+    // the scaling has already promised the long side fills the square, and a sample that lost the
+    // point the square was measured to would leave the drawing short of its own edge.
+    kept += line.indices.minBy { line[it].x }
+    kept += line.indices.maxBy { line[it].x }
+    kept += line.indices.minBy { line[it].y }
+    kept += line.indices.maxBy { line[it].y }
+
+    for (run in 0 until runs) {
+        val from = (run.toLong() * line.size / runs).toInt()
+        val to = ((run + 1).toLong() * line.size / runs).toInt()
+        if (to <= from) continue
+        val start = line[from]
+        kept += (from until to).maxBy { i ->
+            val dx = line[i].x - start.x
+            val dy = line[i].y - start.y
+            dx * dx + dy * dy
+        }
+    }
+    return kept.map { line[it] }
 }
