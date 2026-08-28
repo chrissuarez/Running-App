@@ -32,6 +32,7 @@ import org.junit.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.doReturn
+import org.mockito.kotlin.doSuspendableAnswer
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
@@ -282,6 +283,57 @@ class SessionDetailViewModelRunSummaryTest {
         advanceUntilIdle()
 
         verify(client, times(1)).summariseRun(any())
+        assertTrue(viewModel.summaryWriting.value.isEmpty())
+    }
+
+    /**
+     * #350: the rebuild after the model answers waits for the same all-clear the first build did.
+     *
+     * The repository builds the prompt again once the words land, to see whether the Run changed
+     * while it was being written about. The changes that make it change — a Walk marked, a treadmill
+     * distance corrected, a rival Run finished — all raise a measurement debt and repay it, so the
+     * moment of the rebuild is the moment a pass is most likely to be mid-flight. Building then
+     * would send a half-measured Run and keep the answer for ever, which is the whole thing the
+     * first ask waits to avoid.
+     */
+    @Test
+    fun `the rebuild after the words land waits for the facts to settle again`() = runTest(dispatcher) {
+        val shapesOwed = MutableStateFlow(false)
+        // Answering raises a debt, exactly as a pass kicked off by the runner's own edit would.
+        val client = mock<AiCoachClient> {
+            on { canBeAsked } doReturn true
+            onBlocking { summariseRun(any()) } doSuspendableAnswer {
+                shapesOwed.value = true
+                "words"
+            }
+        }
+        val summaries = mock<RunSummaryDao>()
+        val viewModel = SessionDetailViewModel(
+            SessionRepository(
+                sessionDao = sessionDaoOverBothRuns(shapesOwed),
+                achievementDao = mock<AchievementDao> {
+                    onBlocking { getAchievementsForSessions(listOf(7)) } doReturn emptyList()
+                },
+                runSummaryDao = summaries,
+                settingsRepository = mock<SettingsRepository> {
+                    on { userSettingsFlow } doReturn flowOf(UserSettings(aiDataSharingEnabled = true))
+                },
+                aiCoachClient = client,
+            )
+        )
+
+        viewModel.requestRunSummary(7)
+        advanceUntilIdle()
+
+        // The model has spoken and nothing has been kept: history is being measured again.
+        verify(client, times(1)).summariseRun(any())
+        verify(summaries, never()).put(any())
+        assertEquals(setOf(7L), viewModel.summaryWriting.value)
+
+        shapesOwed.value = false
+        advanceUntilIdle()
+
+        verify(summaries, times(1)).put(any())
         assertTrue(viewModel.summaryWriting.value.isEmpty())
     }
 

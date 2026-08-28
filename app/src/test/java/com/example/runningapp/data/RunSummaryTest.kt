@@ -13,8 +13,10 @@ import org.junit.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.doReturn
+import org.mockito.kotlin.doReturnConsecutively
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
+import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 
 /**
@@ -47,6 +49,7 @@ class RunSummaryTest {
         session: RunnerSession? = finishedRun(),
         settings: UserSettings = UserSettings(aiDataSharingEnabled = true, testingModeEnabled = false),
         modelSays: String? = "You were quick today.",
+        client: AiCoachClient = modelSaying(modelSays),
         refreshHistoryBackup: (suspend () -> Unit)? = null,
     ) = SessionRepository(
         sessionDao = mock<SessionDao> { onBlocking { getSessionById(7) } doReturn session },
@@ -54,7 +57,7 @@ class RunSummaryTest {
         settingsRepository = mock<SettingsRepository> {
             on { userSettingsFlow } doReturn flowOf(settings)
         },
-        aiCoachClient = modelSaying(modelSays),
+        aiCoachClient = client,
         refreshHistoryBackup = refreshHistoryBackup,
     )
 
@@ -62,7 +65,7 @@ class RunSummaryTest {
 
     @Test
     fun `a run recorded while sharing was on, with sharing still on, is summarised`() = runTest {
-        val outcome = repository().writeRunSummary(7, "a prompt")
+        val outcome = repository().writeRunSummary(7) { "a prompt" }
 
         assertEquals(RunSummaryOutcome.WRITTEN, outcome)
         val written = argumentCaptor<RunSummaryRow>()
@@ -84,7 +87,7 @@ class RunSummaryTest {
             aiCoachClient = client,
         )
 
-        repository.writeRunSummary(7, "THE RUN\n- Distance: 5.00 km")
+        repository.writeRunSummary(7) { "THE RUN\n- Distance: 5.00 km" }
 
         verify(client).summariseRun("THE RUN\n- Distance: 5.00 km")
     }
@@ -103,7 +106,7 @@ class RunSummaryTest {
             aiCoachClient = client,
         )
 
-        assertEquals(RunSummaryOutcome.REFUSED, repository.writeRunSummary(7, "a prompt"))
+        assertEquals(RunSummaryOutcome.REFUSED, repository.writeRunSummary(7) { "a prompt" })
         verify(client, never()).summariseRun(any())
     }
 
@@ -111,7 +114,7 @@ class RunSummaryTest {
     fun `sharing switched off now refuses a run that was recorded while it was on`() = runTest {
         val outcome = repository(
             settings = UserSettings(aiDataSharingEnabled = false)
-        ).writeRunSummary(7, "a prompt")
+        ).writeRunSummary(7) { "a prompt" }
 
         assertEquals(RunSummaryOutcome.REFUSED, outcome)
         verify(summaries, never()).put(any())
@@ -121,7 +124,7 @@ class RunSummaryTest {
     fun `testing mode refuses it too`() = runTest {
         val outcome = repository(
             settings = UserSettings(aiDataSharingEnabled = true, testingModeEnabled = true)
-        ).writeRunSummary(7, "a prompt")
+        ).writeRunSummary(7) { "a prompt" }
 
         assertEquals(RunSummaryOutcome.REFUSED, outcome)
     }
@@ -130,7 +133,7 @@ class RunSummaryTest {
     fun `a run still being recorded is refused`() = runTest {
         val stillRunning = RunnerSession(id = 7, startTime = 1_786_514_400_000L, endTime = 0)
 
-        assertEquals(RunSummaryOutcome.REFUSED, repository(session = stillRunning).writeRunSummary(7, "a prompt"))
+        assertEquals(RunSummaryOutcome.REFUSED, repository(session = stillRunning).writeRunSummary(7) { "a prompt" })
     }
 
     // --- The backup: paid-for words the snapshot must not be missing ---
@@ -139,7 +142,7 @@ class RunSummaryTest {
     fun `a stored summary refreshes the history backup`() = runTest {
         var snapshots = 0
 
-        val outcome = repository(refreshHistoryBackup = { snapshots++ }).writeRunSummary(7, "a prompt")
+        val outcome = repository(refreshHistoryBackup = { snapshots++ }).writeRunSummary(7) { "a prompt" }
 
         assertEquals(RunSummaryOutcome.WRITTEN, outcome)
         assertEquals(1, snapshots)
@@ -152,7 +155,7 @@ class RunSummaryTest {
         val outcome = repository(
             settings = UserSettings(aiDataSharingEnabled = false),
             refreshHistoryBackup = { snapshots++ },
-        ).writeRunSummary(7, "a prompt")
+        ).writeRunSummary(7) { "a prompt" }
 
         assertEquals(RunSummaryOutcome.REFUSED, outcome)
         assertEquals(0, snapshots)
@@ -165,7 +168,7 @@ class RunSummaryTest {
         val outcome = repository(
             modelSays = null,
             refreshHistoryBackup = { snapshots++ },
-        ).writeRunSummary(7, "a prompt")
+        ).writeRunSummary(7) { "a prompt" }
 
         assertEquals(RunSummaryOutcome.FAILED, outcome)
         assertEquals(0, snapshots)
@@ -319,14 +322,130 @@ class RunSummaryTest {
 
         // A retry button is worth offering only where trying again could work, and no amount of
         // trying puts a key in the build.
-        assertEquals(RunSummaryOutcome.REFUSED, repository.writeRunSummary(7, "a prompt"))
+        assertEquals(RunSummaryOutcome.REFUSED, repository.writeRunSummary(7) { "a prompt" })
     }
 
     @Test
     fun `a model that said nothing leaves the run holding no summary`() = runTest {
-        val outcome = repository(modelSays = null).writeRunSummary(7, "a prompt")
+        val outcome = repository(modelSays = null).writeRunSummary(7) { "a prompt" }
 
         assertEquals(RunSummaryOutcome.FAILED, outcome)
         verify(summaries, never()).put(any())
+    }
+
+    // --- Facts that moved while the model was answering (#350) ---
+
+    /**
+     * A client with a key in it, saying each of [texts] in turn, one per ask.
+     *
+     * Asked more times than it was given answers, it says nothing — which is what a run of asks
+     * beyond the ones a test set up should be: a failure it can see, not a silently repeated answer.
+     */
+    private fun modelSayingInTurn(vararg texts: String?) = mock<AiCoachClient> {
+        on { canBeAsked } doReturn true
+        onBlocking { summariseRun(any()) } doReturnConsecutively texts.toList()
+    }
+
+    /**
+     * A builder that hands out [prompts] in turn and then repeats the last one for ever.
+     *
+     * Repeating rather than running out, unlike the client above, and for the opposite reason: the
+     * last prompt is the facts as they finally stand, and facts stay where they are put. A test that
+     * wants a third build to differ says so by naming a third prompt.
+     */
+    private fun promptsInTurn(vararg prompts: String?): suspend () -> String? {
+        var asked = 0
+        return { prompts[minOf(asked++, prompts.size - 1)] }
+    }
+
+    @Test
+    fun `facts that stood still are asked about once`() = runTest {
+        val client = modelSayingInTurn("first words", "second words")
+
+        val outcome = repository(client = client).writeRunSummary(7, promptsInTurn("a prompt"))
+
+        assertEquals(RunSummaryOutcome.WRITTEN, outcome)
+        verify(client, times(1)).summariseRun(any())
+        val written = argumentCaptor<RunSummaryRow>()
+        verify(summaries).put(written.capture())
+        assertEquals("first words", written.firstValue.text)
+    }
+
+    @Test
+    fun `facts that moved while the model answered are asked over again`() = runTest {
+        val client = modelSayingInTurn("about the old run", "about the new run")
+
+        val outcome = repository(client = client)
+            .writeRunSummary(7, promptsInTurn("before the walk mark", "after the walk mark"))
+
+        assertEquals(RunSummaryOutcome.WRITTEN, outcome)
+        val sent = argumentCaptor<String>()
+        verify(client, times(2)).summariseRun(sent.capture())
+        assertEquals(listOf("before the walk mark", "after the walk mark"), sent.allValues)
+        // The words kept are the ones about the Run as it now is, and the stale ones are dropped.
+        val written = argumentCaptor<RunSummaryRow>()
+        verify(summaries).put(written.capture())
+        assertEquals("about the new run", written.firstValue.text)
+    }
+
+    @Test
+    fun `a second ask that says nothing leaves the old words alone`() = runTest {
+        val client = modelSayingInTurn("about the old run", null)
+
+        val outcome = repository(client = client)
+            .writeRunSummary(7, promptsInTurn("before", "after"))
+
+        assertEquals(RunSummaryOutcome.FAILED, outcome)
+        verify(summaries, never()).put(any())
+    }
+
+    @Test
+    fun `facts that move again during the second ask are not chased a third time`() = runTest {
+        val client = modelSayingInTurn("first", "second", "third")
+
+        val outcome = repository(client = client)
+            .writeRunSummary(7, promptsInTurn("one", "two", "three"))
+
+        assertEquals(RunSummaryOutcome.WRITTEN, outcome)
+        verify(client, times(2)).summariseRun(any())
+        val written = argumentCaptor<RunSummaryRow>()
+        verify(summaries).put(written.capture())
+        assertEquals("second", written.firstValue.text)
+    }
+
+    @Test
+    fun `a run with nothing to say about it is never sent`() = runTest {
+        val client = modelSayingInTurn("words")
+
+        val outcome = repository(client = client).writeRunSummary(7, promptsInTurn(null))
+
+        assertEquals(RunSummaryOutcome.REFUSED, outcome)
+        verify(client, never()).summariseRun(any())
+        verify(summaries, never()).put(any())
+    }
+
+    @Test
+    fun `a run that is gone by the time the words land is not written about`() = runTest {
+        val client = modelSayingInTurn("words")
+
+        val outcome = repository(client = client).writeRunSummary(7, promptsInTurn("a prompt", null))
+
+        assertEquals(RunSummaryOutcome.REFUSED, outcome)
+        verify(summaries, never()).put(any())
+    }
+
+    @Test
+    fun `words written for facts that moved take a fresh snapshot, and only one`() = runTest {
+        var snapshots = 0
+        val repository = repository(
+            client = modelSayingInTurn("old", "new"),
+            refreshHistoryBackup = { snapshots++ },
+        )
+
+        assertEquals(
+            RunSummaryOutcome.WRITTEN,
+            repository.writeRunSummary(7, promptsInTurn("before", "after")),
+        )
+        assertEquals(1, snapshots)
     }
 }

@@ -3195,7 +3195,38 @@ class SessionRepository(
      *
      * The prompt is built by the caller and is a pure function of stored facts
      * ([com.example.runningapp.ui.buildRunSummaryPrompt]); this is the half that consents, calls out,
-     * and writes down.
+     * and writes down. It is handed in as something to *run* rather than as a finished string,
+     * which is what makes the check below possible: the same builder run twice is the whole
+     * fingerprint of the facts, exactly and for free, with nothing to hash and nothing to keep in
+     * step with the prompt itself. The price of that is that a change to the prompt's *wording*
+     * reads here as a change to the Run, which costs one extra ask on a build nobody has shipped
+     * yet and nothing at all afterwards.
+     *
+     * **The builder is expected to be settle-gated by whoever passes it in**
+     * ([com.example.runningapp.ui.SessionDetailViewModel]), because it is run again at the one
+     * moment a measurement pass is most likely to be mid-flight — see below.
+     *
+     * **The facts are read again once the model has answered, and words about facts that moved are
+     * not kept (#350).** Everything above is read before the ask; the ask is a network call, and in
+     * the second or two it takes, the runner can mark the Run a Walk, correct a treadmill distance,
+     * state a best effort, or finish another Run that outranks this one. Each of those raises a
+     * measurement debt and repays it, so the settled-facts gate the caller waited on goes false and
+     * true again while the model is still typing — and the reply describes a Run that no longer
+     * exists. These words are kept for ever, so the card would sit permanently above a page that
+     * disagrees with it. That window is between the read and the write, where no re-reading of the
+     * gate reaches, which is why the answer here is to rebuild the prompt and compare it.
+     *
+     * **A mismatch asks once more rather than discarding, and once more only.** Discarding would
+     * lose words the runner waited for and paid for; asking again in a loop would chase a history
+     * that a launch backfill can keep moving for a minute. So the second answer is kept whatever the
+     * facts do during *that* ask — the same bet the first ask makes, taken once.
+     *
+     * Two things it deliberately does not do:
+     * - *It does not re-read consent before the second ask.* The second ask is the same ask, made
+     *   for the same Run, on facts the first read already authorised sending. A switch moved in
+     *   between would leave paid-for words with nowhere to go and no way to tell the runner why.
+     * - *It does not cover a fact changed after the write* — a Walk marked a week later. Nothing
+     *   inside an ask can, and the runner has **Write it again** on the card for it.
      *
      * **Consent is asked twice, and both answers have to be yes.** The Run carries the answer the
      * runner gave when they pressed START ([RunnerSession.includeInAiTraining]), which is the rule
@@ -3222,7 +3253,10 @@ class SessionRepository(
      * would cost the runner a second paid ask — or the summary altogether, if sharing has been
      * turned off since it was written and asking again would now be refused.
      */
-    suspend fun writeRunSummary(sessionId: Long, prompt: String): RunSummaryOutcome {
+    suspend fun writeRunSummary(
+        sessionId: Long,
+        buildPrompt: suspend () -> String?,
+    ): RunSummaryOutcome {
         val summaries = runSummaryDao ?: return RunSummaryOutcome.REFUSED
         val client = aiCoachClient?.takeIf { it.canBeAsked } ?: return RunSummaryOutcome.REFUSED
         val session = sessionDao.getSessionById(sessionId) ?: return RunSummaryOutcome.REFUSED
@@ -3230,7 +3264,19 @@ class SessionRepository(
         val settings = settingsRepository?.userSettingsFlow?.first() ?: return RunSummaryOutcome.REFUSED
         if (!settings.aiDataSharingEnabled || settings.testingModeEnabled) return RunSummaryOutcome.REFUSED
 
-        val text = client.summariseRun(prompt) ?: return RunSummaryOutcome.FAILED
+        val promptSent = buildPrompt() ?: return RunSummaryOutcome.REFUSED
+        val firstAnswer = client.summariseRun(promptSent) ?: return RunSummaryOutcome.FAILED
+
+        // The facts as they stand now the model has answered. A Run that has gone in the meantime
+        // has nothing to be written about, which is a refusal rather than a failure: trying again
+        // could not work.
+        val promptNow = buildPrompt() ?: return RunSummaryOutcome.REFUSED
+        val text = if (promptNow == promptSent) {
+            firstAnswer
+        } else {
+            client.summariseRun(promptNow) ?: return RunSummaryOutcome.FAILED
+        }
+
         summaries.put(
             RunSummaryRow(
                 sessionId = sessionId,

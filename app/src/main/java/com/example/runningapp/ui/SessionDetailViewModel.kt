@@ -317,9 +317,12 @@ class SessionDetailViewModel(
                 // spinner is already up while this waits, which is the truth: the app is working on
                 // it.
                 sessionRepository.runSummaryFactsSettledFlow(sessionId).first { it }
-                val prompt = runSummaryPrompt(sessionId)
-                if (prompt == null) RunSummaryOutcome.REFUSED
-                else sessionRepository.writeRunSummary(sessionId, prompt)
+                // Handed over as something to run, not as a finished prompt: the repository builds
+                // it again once the model has answered, and keeps no words written out of facts
+                // that moved while it was answering (#350). The wait above still earns its place —
+                // it is what holds the ask before the repository reads consent, so the switch is
+                // read at the moment of sending rather than at the moment of opening the page.
+                sessionRepository.writeRunSummary(sessionId) { settledRunSummaryPrompt(sessionId) }
             } catch (e: Exception) {
                 Log.e("RunSummary", "Failed to write a summary for sessionId=$sessionId", e)
                 RunSummaryOutcome.FAILED
@@ -349,7 +352,31 @@ class SessionDetailViewModel(
      * So the facts are read fresh, one-shot, after the Run's debts are settled
      * ([SessionRepository.runSummaryFactsSettledFlow]) — which is when there is nothing left to find
      * out about it. Null where the Run itself is gone.
+     *
+     * Run more than once for a single ask (#350): the repository runs it again after the model has
+     * answered, and a prompt that has changed in between says the Run has changed. So it must read
+     * the store every time rather than remember what it read — which is what it already does, and
+     * why it is the fingerprint of the facts as well as the prompt.
      */
+    /**
+     * The prompt, built only once this Run's facts have settled (#350).
+     *
+     * Every build waits, not just the first. The repository builds this again after the model has
+     * answered, to see whether the Run changed while it was answering — and the changes that make
+     * it change are exactly the ones that *raise a measurement debt and repay it*: a Run marked a
+     * Walk, a treadmill distance corrected, another Run finished that outranks this one. So a
+     * rebuild that finds a difference is the strongest sign there is that a pass is mid-flight, and
+     * a prompt built at that instant would describe a half-measured Run — the very thing the first
+     * ask waits to avoid, reached the back way. It waits for the same all-clear instead.
+     *
+     * The wait is normally over before it starts, because the page asks nothing until the facts
+     * have settled. Where it is not, the spinner is already up and saying the truth.
+     */
+    private suspend fun settledRunSummaryPrompt(sessionId: Long): String? {
+        sessionRepository.runSummaryFactsSettledFlow(sessionId).first { it }
+        return runSummaryPrompt(sessionId)
+    }
+
     private suspend fun runSummaryPrompt(sessionId: Long): String? {
         val session = sessionRepository.getSession(sessionId) ?: return null
         return buildRunSummaryPrompt(
