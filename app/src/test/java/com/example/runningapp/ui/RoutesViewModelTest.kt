@@ -266,6 +266,23 @@ class RoutesViewModelTest {
         assertTrue("the row is still drawing the old line", northward != eastward)
     }
 
+    /**
+     * The screen says "No routes yet" when this list is empty, so the list must not be empty merely
+     * because nobody has looked at it yet — a runner with a library would be told they have none for
+     * the first frames of every visit.
+     */
+    @Test
+    fun `has the library in hand before the screen asks for it`() = runTest {
+        dao.insertRoute(aCourseWithAShape())
+        val viewModel = viewModelReading(aRealGpx)
+
+        // Nothing collects, and the shapes are never asked for: only the rows themselves.
+        advanceUntilIdle()
+
+        assertEquals(1, viewModel.rows.value.size)
+        assertNull("nothing should be drawn until it is asked for", viewModel.rows.value.single().thumbnail)
+    }
+
     /** Opening the library twice must not set two passes going over the same courses. */
     @Test
     fun `works the shapes out once however often the library is opened`() = runTest {

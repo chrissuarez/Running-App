@@ -86,10 +86,16 @@ private val SHAPE_MINIMUM_METERS = 2 * SessionRecorder.ACCURACY_THRESHOLD_METERS
  * — no drawing, rather than a dot claiming to be a route.
  */
 fun routeThumbnailOf(measured: MeasuredTrack): RouteThumbnail? =
-    thumbnailOf(recordedStretches(measured).map { stretch -> stretch.map { it.place() } })
+    thumbnailOf(recordedStretches(measured).map { stretch -> stretch.map { it.shapePoint() } })
 
-/** A place on a course, which is all a drawing of one needs off it — no height, and no time. */
-data class CoursePoint(val latitude: Double, val longitude: Double)
+/**
+ * A place on the line being drawn, which is all a drawing of it needs — no height, and no time.
+ *
+ * Deliberately neither a Track's point nor a Route's: a Run's Track and a kept course are different
+ * things and must not be confused even in code (CONTEXT.md, **Route**), and this is the one thing
+ * both have to offer a drawing. Each side turns its own points into these at its own door.
+ */
+data class ShapePoint(val latitude: Double, val longitude: Double)
 
 /**
  * The shape of a Route the runner keeps, drawn beside it in the library (#59).
@@ -110,7 +116,7 @@ data class CoursePoint(val latitude: Double, val longitude: Double)
  * ([com.example.runningapp.routes.RoutePolyline]); the row then keeps its empty square and its name
  * and numbers, which is more than a dot claiming to be a route would be worth.
  */
-fun courseThumbnailOf(course: List<CoursePoint>): RouteThumbnail? = thumbnailOf(listOf(course))
+fun courseThumbnailOf(course: List<ShapePoint>): RouteThumbnail? = thumbnailOf(listOf(course))
 
 /**
  * The shape shared by both drawings: the strokes fitted into the square, thinned, and centred.
@@ -119,7 +125,7 @@ fun courseThumbnailOf(course: List<CoursePoint>): RouteThumbnail? = thumbnailOf(
  * has no shape, and letting it through would let a course of one point set the span everything else
  * is scaled against.
  */
-private fun thumbnailOf(strokes: List<List<CoursePoint>>): RouteThumbnail? {
+private fun thumbnailOf(strokes: List<List<ShapePoint>>): RouteThumbnail? {
     val lines = strokes.filter { it.size >= 2 }
     if (lines.isEmpty()) return null
 
@@ -156,7 +162,8 @@ private fun thumbnailOf(strokes: List<List<CoursePoint>>): RouteThumbnail? {
     return if (drawn.isEmpty()) null else RouteThumbnail(drawn)
 }
 
-private fun TrackPoint.place() = CoursePoint(latitude, longitude)
+/** A recorded fix as a place on the line, dropping everything the Run knows about it. */
+private fun TrackPoint.shapePoint() = ShapePoint(latitude, longitude)
 
 /** The track cut at its breaks: the fixes of each stretch the recording covers. */
 private fun recordedStretches(measured: MeasuredTrack): List<List<TrackPoint>> =

@@ -175,7 +175,7 @@ fun RoutesScreen(
         }
     }
 
-    rows.map { it.route }.firstOrNull { it.id == renaming }?.let { route ->
+    rows.firstOrNull { it.route.id == renaming }?.route?.let { route ->
         RenameRouteDialog(
             route = route,
             onDismiss = { renaming = null },
@@ -186,7 +186,7 @@ fun RoutesScreen(
         )
     }
 
-    rows.map { it.route }.firstOrNull { it.id == deleting }?.let { route ->
+    rows.firstOrNull { it.route.id == deleting }?.route?.let { route ->
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text("Delete this route?") },

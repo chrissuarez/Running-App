@@ -1,5 +1,6 @@
 package com.example.runningapp.routes
 
+import com.example.runningapp.analysis.ShapePoint
 import com.example.runningapp.analysis.filledFromNeighbours
 import com.example.runningapp.recording.geodesicDistanceMeters
 
@@ -42,6 +43,14 @@ private const val ROUTE_HYSTERESIS_METERS = 10.0
  */
 private const val ROUTE_SMOOTHING_POINTS = 5
 private const val ROUTE_SMOOTHING_METERS = 15.0
+
+/**
+ * The course as places on a line, for the drawing beside it in the library (#59).
+ *
+ * Here rather than at the screen that wants it, so the one place a Route's points become a shape is
+ * beside the other things worked out from those points.
+ */
+fun List<RoutePoint>.asShape(): List<ShapePoint> = map { ShapePoint(it.latitude, it.longitude) }
 
 /** How far the course goes: every step of it, first point to last (#54). */
 fun routeDistanceMeters(points: List<RoutePoint>): Double =
