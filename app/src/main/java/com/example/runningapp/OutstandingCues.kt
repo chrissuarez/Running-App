@@ -13,8 +13,9 @@ import com.example.runningapp.run.CueTag
  *
  * Two shapes of taking back, both the producer's:
  *
- * - **By name** ([takeBack]), for a cue the Run has changed its mind about mid-Run — the halfway
- *   turnaround when the Run skips into its cool-down (#208).
+ * - **By name** ([takeBack]), for cues that have stopped being true mid-Run — the halfway
+ *   turnaround when the Run skips into its cool-down (#208), and the course alerts when the course
+ *   they were made about goes (#377).
  * - **All of them** ([takeBackAll]), at the end of the Run, because a cue that has not been spoken
  *   by then is an instruction for a Run that is over (#220).
  *
@@ -32,8 +33,8 @@ class OutstandingCues {
     /** Every ticket issued during this Run, oldest first, spoken or not. */
     private val tickets = LinkedHashSet<Long>()
 
-    /** The tickets of the cues the Run may ask for back by name. */
-    private val byTag = mutableMapOf<CueTag, Long>()
+    /** The tickets of the cues the Run may ask for back by name, oldest first under each name. */
+    private val byTag = mutableMapOf<CueTag, MutableList<Long>>()
 
     /**
      * Enqueue a cue and remember it, under [tag] if the Run named it, as one act — [enqueue] is
@@ -55,20 +56,25 @@ class OutstandingCues {
         synchronized(lock) {
             val ticket = enqueue() ?: return null
             tickets += ticket
-            if (tag != null) byTag[tag] = ticket
+            if (tag != null) byTag.getOrPut(tag) { mutableListOf() } += ticket
             return ticket
         }
     }
 
     /**
-     * The ticket for the cue named [tag], which is now the caller's to withdraw — or null when
-     * there is no such cue outstanding, which is most of the time.
+     * The tickets for every cue named [tag] that is still outstanding, oldest first, now the
+     * caller's to withdraw — empty when there is no such cue, which is most of the time.
+     *
+     * Every one of them, not the last one under the name: a name is a kind of cue ([CueTag]), and
+     * what makes a caller ask for one back is the thing all of them were about stopping being true.
+     * The course alerts are a pair, and a long sentence in front of them can leave both waiting;
+     * handing back only the newer would speak the older about a course that has gone (#377).
      */
-    fun takeBack(tag: CueTag): Long? {
+    fun takeBack(tag: CueTag): List<Long> {
         synchronized(lock) {
-            val ticket = byTag.remove(tag) ?: return null
-            tickets.remove(ticket)
-            return ticket
+            val taken = byTag.remove(tag) ?: return emptyList()
+            tickets.removeAll(taken.toSet())
+            return taken
         }
     }
 

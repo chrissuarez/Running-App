@@ -52,6 +52,7 @@ import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import java.util.UUID
 import com.example.runningapp.recording.LocationFix
+import com.example.runningapp.routes.CourseAlerts
 import com.example.runningapp.routes.OffCourseWatch
 import com.example.runningapp.routes.courseToWatchFlow
 import com.example.runningapp.run.Acquisition
@@ -587,16 +588,24 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var pickedRouteReversed: Boolean = false
 
     /**
-     * The Run's course, watched (#58) — null for a Run following none, and for a routed Run in the
-     * moment between START and the course being read out of the library.
+     * The Run's course, watched, and the sentences it has to say about it (#58, #377) — silent for a
+     * Run following none, and for a routed Run in the moment between START and the course being read
+     * out of the library.
      *
-     * Volatile because the fixes arrive on the tracker's own thread and this is replaced from a
-     * coroutine. Nothing here decides anything: [OffCourseWatch] does, and this file speaks what it
-     * says.
+     * Nothing here decides anything: [OffCourseWatch] decides, [CourseAlerts] holds that judgement
+     * together with the cues it has enqueued, and this file only lends it the queue. The threads it
+     * is reached from — the tracker's, for fixes, and a coroutine's, for the course — are its own
+     * problem and it takes a lock over both.
      */
-    @Volatile private var offCourseWatch: OffCourseWatch? = null
+    private val courseAlerts = CourseAlerts(
+        speak = { alert ->
+            Log.d(TAG, "Course alert: $alert")
+            enqueueCue(alert.spoken, CuePriority.NAVIGATION, CueTag.COURSE)
+        },
+        withdraw = { withdrawCue(CueTag.COURSE) },
+    )
 
-    /** Keeps [offCourseWatch] up with the library while the Run goes on — see [courseToWatchFlow]. */
+    /** Keeps [courseAlerts] up with the library while the Run goes on — see [courseToWatchFlow]. */
     private var courseWatchJob: Job? = null
 
     private lateinit var database: AppDatabase
@@ -1884,10 +1893,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private fun watchTheCourse(routeId: Long?, reversed: Boolean) {
         courseWatchJob?.cancel()
         courseWatchJob = null
-        offCourseWatch = null
+        // Before the new watch begins and after the old collection is cancelled, so that whatever
+        // the course before it left waiting is taken back and nothing can add to it (#377).
+        courseAlerts.stop()
         if (routeId == null) return
         courseWatchJob = serviceScope.launch {
-            courseToWatchFlow(database.routeDao(), routeId, reversed).collect { offCourseWatch = it }
+            courseAlerts.follow(courseToWatchFlow(database.routeDao(), routeId, reversed))
         }
     }
 
@@ -1903,17 +1914,17 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      */
     private fun stopGps() {
         locationTracker?.stop()
-        offCourseWatch?.recordingBroke()
+        courseAlerts.recordingBroke()
     }
 
     /**
      * A fix has landed on a routed Run: say whatever the course has to say about it, if anything
      * (#58).
      *
-     * Untagged, unlike the turnaround (#208): there is nothing to take one back for. A cue is
-     * withdrawn when the Run moves on underneath it, and both of these are true the moment they are
-     * made — the runner *is* off the line, or *is* back on it — so the worst a queue can do to one is
-     * speak it a sentence late. The end of a Run sweeps out whatever is still waiting anyway (#220).
+     * Tagged [CueTag.COURSE], like the turnaround is tagged and unlike what #376 shipped: both of
+     * these are true the moment they are made, but a cue waits its turn and the line can go out from
+     * under it while it waits, which is the one thing that stops one being true (#377).
+     * [CourseAlerts] is where that is handled; this only hands it the fix.
      *
      * [CuePriority.NAVIGATION], which is the top of the queue: a runner going the wrong way is going
      * further the wrong way for as long as a split announcement takes to finish. It still never cuts
@@ -1921,21 +1932,24 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * waiting.
      */
     private fun onFixForCourse(fix: LocationFix, autoPaused: Boolean) {
-        val alert = offCourseWatch?.onFix(fix, System.currentTimeMillis(), autoPaused) ?: return
-        Log.d(TAG, "Course alert: $alert")
-        enqueueCue(alert.spoken, CuePriority.NAVIGATION)
+        courseAlerts.onFix(fix, autoPaused)
     }
 
     /**
-     * Take back a cue that has not been spoken: whatever it was going to say is no longer true
-     * (#208). Asked for by the Run ([RunEffect.WithdrawCue]).
+     * Take back the cues under a name that have not been spoken: whatever they were going to say is
+     * no longer true (#208, #377). Asked for by the Run ([RunEffect.WithdrawCue]), and by the course
+     * going away underneath what it had waiting ([CourseAlerts]).
      *
      * Inert when there is nothing to take back, and inert in the queue when the cue has already
      * gone out — so no caller has to know which of those it is.
      */
     private fun withdrawCue(tag: CueTag) {
-        val ticket = outstandingCues.takeBack(tag) ?: return
-        audioCueManager?.withdraw(ticket)
+        val tickets = outstandingCues.takeBack(tag)
+        if (tickets.isEmpty()) return
+        // In one act, for the reason [AudioCueManager.withdrawAll] gives: taken back one at a time,
+        // the engine can finish its sentence between two of them and hand the next out before its
+        // own withdrawal reaches it.
+        audioCueManager?.withdrawAll(tickets)
     }
 
     /**

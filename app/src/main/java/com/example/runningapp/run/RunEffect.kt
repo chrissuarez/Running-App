@@ -6,12 +6,23 @@ import com.example.runningapp.RunType
 import com.example.runningapp.ZoneSeconds
 
 /**
- * A name for a cue the Run may want back before it is spoken, so the service knows which one
- * [RunEffect.WithdrawCue] means. There is one of them, and the Run can have at most one outstanding.
+ * A name for a cue that may be wanted back before it is spoken, so the service knows which ones to
+ * take back — the Run's own by [RunEffect.WithdrawCue], the course's by the course going away.
+ *
+ * A name covers a kind of cue and not one cue: withdrawing by name takes back every cue under that
+ * name that is still waiting. [TURNAROUND] is only ever one; [COURSE] can be two, because "Off
+ * course." and "Back on course." are a pair and a slow sentence in front of them can hold both.
  */
 enum class CueTag {
     /** The halfway turnaround (#208), taken back when the Run enters its cool-down. */
     TURNAROUND,
+
+    /**
+     * Either of the two course alerts (#58), taken back when the course they were made about
+     * changes shape or leaves the library (#377). One name for both: what stops being true when
+     * the line goes is anything the app was about to say about that line.
+     */
+    COURSE,
 }
 
 /**
