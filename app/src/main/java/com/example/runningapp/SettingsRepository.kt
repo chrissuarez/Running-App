@@ -57,13 +57,16 @@ data class UserSettings(
     val autoPauseEnabled: Boolean = true,
     val savedDevices: List<SavedDevice> = emptyList(),
     val activeDeviceAddress: String? = null,
+    // The Plan the runner is on, and null where the preference names one this build no longer
+    // holds — a Plan that is not here is not a Plan they can be standing in (#381).
     val activePlanId: String? = null,
-    // The Stage the runner is actually in, not the string the preference happens to hold: resolved
-    // against the attached plan on the way out of storage, so a preference naming no Stage or one
-    // the plan does not hold reads as the plan's first — the Stage the card shows and the Workouts
-    // come from. Resolved here rather than by each reader because a Stage the readers can disagree
-    // about is how a Run got stamped with one it was never shown (#234), and every disagreement
-    // after that is the same bug wearing a different reader's clothes.
+    // The Stage the runner is actually in, not the string the preference happens to hold: read
+    // against the attached plan on the way out of storage, so a preference naming no Stage reads as
+    // the plan's first — the Stage the card shows and the Workouts come from — while one naming a
+    // Stage the plan does not hold reads as no Stage, and detaches the Plan with it. Read here
+    // rather than by each reader because a Stage the readers can disagree about is how a Run got
+    // stamped with one it was never shown (#234), and every disagreement after that is the same bug
+    // wearing a different reader's clothes. The pair is [activePlanAndStage].
     val activeStageId: String? = null,
     // The Plan the runner has finished, if they have finished one (#294). Recorded by the
     // graduation rule at the moment it grants on a Plan's last Stage, and never worked out from
@@ -272,10 +275,13 @@ internal suspend fun DataStore<Preferences>.editCoachWrite(
  *
  * An unset testing-mode key is off, not unknown: absent means never turned on.
  *
- * [activeStageId] arrives raw from storage while [scope] carries a resolved one
- * ([UserSettings.activeStageId]), so it is resolved here before the two are compared. Comparing
- * them as they stand would refuse every coach write on a plan whose stage preference names nothing
- * — the runner has not moved at all, which is exactly the case this is meant to let through.
+ * The pair arrives raw from storage while [scope] carries the read one
+ * ([UserSettings.activeStageId]), so it is put through [activePlanAndStage] — the one reading the
+ * rest of the app gets — before the two are compared. Comparing them as they stand would refuse
+ * every coach write on a plan whose stage preference names nothing, and the runner has not moved at
+ * all, which is exactly the case this is meant to let through. Reading it any *other* way would be
+ * worse than a wrong answer: this is the check that decides whether the coach's work lands, so it
+ * has to be looking at the settings the runner is actually on, not a second opinion about them.
  */
 internal fun coachWriteAllowed(
     testingModeEnabled: Boolean?,
@@ -284,8 +290,7 @@ internal fun coachWriteAllowed(
     scope: CoachWriteScope
 ): Boolean =
     testingModeEnabled != true &&
-        activePlanId == scope.planId &&
-        TrainingPlanProvider.resolveActiveStage(activePlanId, activeStageId)?.id == scope.stageId
+        activePlanAndStage(activePlanId, activeStageId) == (scope.planId to scope.stageId)
 
 /**
  * Everything the coach left behind, dropped together (#113).
@@ -390,6 +395,48 @@ internal fun recognisedPlanAndStage(planId: String?, stageId: String?): Pair<Str
 }
 
 /**
+ * Where the runner is standing, from the two strings storage holds: the Plan and the Stage as the
+ * rest of the app is entitled to read them (#381).
+ *
+ * Two rules, in this order, and both of them are already written down elsewhere:
+ *
+ * 1. **Both or neither** ([recognisedPlanAndStage]). An id this build does not hold names nothing,
+ *    and takes its partner with it. #262 gave that answer at the restore door; the same stale pair
+ *    arrives without any restore, on a plain in-place upgrade that renamed a Stage or dropped a
+ *    Plan — live settings keep the old id, the Plan no longer does.
+ * 2. **Then resolve** ([TrainingPlanProvider.resolveActiveStage]). A recognised Plan with *no*
+ *    Stage named is the ordinary state of a Plan just picked, and it reads as that Plan's first.
+ *
+ * The order is the whole point, because `resolveActiveStage` answers both of those cases with the
+ * Plan's first Stage and cannot tell them apart. Run second, it never sees the unrecognised one.
+ * An id naming nothing is not the same as no id: the first is a Plan the runner is halfway through
+ * whose landmark has gone, and putting them back at its start would stamp their next Run with a
+ * Stage they were never shown (#234) — a stamp nothing can correct afterwards. With neither
+ * attached the app is in the state a fresh install is in, and the runner picks their Plan again on
+ * the Training screen, which is a thing they can see and do.
+ *
+ * Applied on the way *out* of storage rather than by a pass that rewrites it, so there is no window
+ * before the pass runs and no reader that has to remember to wait for it. The stale strings stay
+ * where they are and are simply never believed; the next Plan the runner picks overwrites them.
+ *
+ * The restore door additionally drops the coach's work ([clearCoachWork]) when it detaches a Plan,
+ * and this does not — knowingly. A prescription is stored per Run Type and read back without asking
+ * which Stage produced it, so a leftover one is only dangerous while there is a Workout for it to
+ * modify: with no Plan attached there are no Stage Workouts, [TrainingPlanProvider.resolvePickedWorkout]
+ * answers null, and nothing reaches [WorkoutTemplate.withCoachPrescription] at all. The moment a
+ * Workout exists again is the moment [SettingsRepository.setActivePlan] runs, and that clears the
+ * coach's work in the same write. So the leftover is unreachable rather than tolerated — and this
+ * stays a pure read, which is what lets it sit in front of every reader with no ordering to get
+ * right. The restore door drops the work for a different reason anyway: the *history* it explains
+ * has been replaced.
+ */
+internal fun activePlanAndStage(planId: String?, stageId: String?): Pair<String?, String?> {
+    val (recognisedPlanId, recognisedStageId) = recognisedPlanAndStage(planId, stageId)
+    return recognisedPlanId to
+        TrainingPlanProvider.resolveActiveStage(recognisedPlanId, recognisedStageId)?.id
+}
+
+/**
  * A finished Plan recorded and the runner told so, or nothing at all where this Plan is already
  * recorded as finished (#294).
  *
@@ -441,6 +488,11 @@ internal fun userSettingsOf(preferences: Preferences): UserSettings {
         if (parts.size == 2) SavedDevice(parts[0], parts[1]) else null
     }
 
+    val (activePlanId, activeStageId) = activePlanAndStage(
+        preferences[PreferencesKeys.ACTIVE_PLAN_ID],
+        preferences[PreferencesKeys.ACTIVE_STAGE_ID]
+    )
+
     return UserSettings(
         maxHr = preferences[PreferencesKeys.MAX_HR] ?: DEFAULT_MAX_HR,
         maxHrEverSet = maxHrEverSet(
@@ -467,14 +519,11 @@ internal fun userSettingsOf(preferences: Preferences): UserSettings {
         autoPauseEnabled = preferences[PreferencesKeys.AUTO_PAUSE_ENABLED] ?: true,
         savedDevices = savedDevices,
         activeDeviceAddress = preferences[PreferencesKeys.ACTIVE_DEVICE_ADDRESS],
-        activePlanId = preferences[PreferencesKeys.ACTIVE_PLAN_ID],
+        activePlanId = activePlanId,
         // Resolved on read, the same way the target zone is sanitized on read above: the stored
-        // string is where the Stage is kept, and the Stage the runner is in is what everything
-        // downstream asks for. See [UserSettings.activeStageId].
-        activeStageId = TrainingPlanProvider.resolveActiveStage(
-            preferences[PreferencesKeys.ACTIVE_PLAN_ID],
-            preferences[PreferencesKeys.ACTIVE_STAGE_ID]
-        )?.id,
+        // strings are where the pair is kept, and where the runner is standing is what everything
+        // downstream asks for. See [activePlanAndStage] and [UserSettings.activeStageId].
+        activeStageId = activeStageId,
         planCompletion = planCompletionOf(preferences),
         latestDebrief = preferences[PreferencesKeys.LATEST_COACH_MESSAGE],
         latestDebriefAuthor = debriefAuthorOf(preferences),
