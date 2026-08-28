@@ -57,6 +57,7 @@ import com.example.runningapp.segments.RunShapeStore
 import com.example.runningapp.segments.RunShaping
 import com.example.runningapp.segments.SegmentTiming
 import com.example.runningapp.segments.SegmentTimingStore
+import com.example.runningapp.segments.holdsEffortsAs
 import com.example.runningapp.segments.shapesAs
 import com.example.runningapp.recording.SessionRecorder
 import kotlinx.coroutines.CancellationException
@@ -1684,11 +1685,29 @@ class SessionRepository(
             // so a wild fix the Run itself refused cannot put an effort on a Segment nobody ran.
             override suspend fun track(sessionId: Long) = getTrackPointsForMap(sessionId)
 
-            override suspend fun replaceEfforts(
+            // The Run is read again *inside* the transaction that writes, so a mark landing while
+            // the track was being measured cannot be overwritten by the measurement it invalidated
+            // (#338, #343). A check anywhere earlier is a check with a window after it.
+            override suspend fun replaceEffortsUnlessTheRunMoved(
                 segmentId: Long,
                 sessionId: Long,
                 efforts: List<SegmentEffort>,
-            ) = effortRows.replaceEffortsOf(segmentId, sessionId, efforts)
+                measuredAs: RunnerSession?,
+            ): Boolean {
+                var written = false
+                inTransaction {
+                    val now = sessionDao.getSessionById(sessionId)
+                    // A Run that was gone when it was measured must still be gone, for the reason a
+                    // Run that was there must still be the same one: a deletion and a restore in
+                    // that window leave a row this measurement never looked at.
+                    val stillTheSameRun =
+                        if (measuredAs == null) now == null else now != null && now.holdsEffortsAs(measuredAs)
+                    if (!stillTheSameRun) return@inTransaction
+                    effortRows.replaceEffortsOf(segmentId, sessionId, efforts)
+                    written = true
+                }
+                return written
+            }
 
             override suspend fun markSegmentTimed(segmentId: Long) = segmentRows.setHistoryTimed(segmentId)
             override suspend fun markRunTimed(sessionId: Long) = sessionDao.setSegmentsTimed(sessionId)

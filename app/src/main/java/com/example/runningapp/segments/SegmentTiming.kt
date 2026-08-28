@@ -30,7 +30,29 @@ interface SegmentTimingStore {
     /** The finished Runs nobody has walked against the Segments — every debt, oldest first. */
     suspend fun runsMissingTiming(): List<Long>
     suspend fun track(sessionId: Long): List<TrackPoint>
-    suspend fun replaceEfforts(segmentId: Long, sessionId: Long, efforts: List<SegmentEffort>)
+
+    /**
+     * Writes what one Run is worth at one Segment — **unless the Run stopped being the one that was
+     * measured**.
+     *
+     * The check and the write are one operation because they have to be: a re-read on this side of
+     * the database only narrows the window, it does not close it (#338, #343). Implementations do
+     * the reading inside the same transaction as the write, the way a Run's shape is written
+     * ([RunShapeStore.putShapeUnlessTheRunMoved]) and the way its scoring is (#210).
+     *
+     * [measuredAs] is the row [SegmentTiming.time] measured from, and null where it found no Run at
+     * all. Null is a reading like any other and is checked like one: a Run that has since come back
+     * is a Run this measurement knows nothing about.
+     *
+     * Returns false where the write was abandoned, which leaves both debts standing.
+     */
+    suspend fun replaceEffortsUnlessTheRunMoved(
+        segmentId: Long,
+        sessionId: Long,
+        efforts: List<SegmentEffort>,
+        measuredAs: RunnerSession?,
+    ): Boolean
+
     suspend fun markSegmentTimed(segmentId: Long)
     suspend fun markRunTimed(sessionId: Long)
 }
@@ -70,16 +92,27 @@ class SegmentTiming(private val store: SegmentTimingStore) {
      * The list read at the top says which Runs to visit, and nothing more than that: what each one
      * *is* comes from the row read at the moment of timing ([time]), because this walk can be minutes
      * long and the runner is free the whole time.
+     *
+     * **The debt is left standing where any one Run moved under the measuring**, rather than the walk
+     * claiming to have covered a Run whose efforts it abandoned. The cost is one repeated walk at the
+     * next launch, which is arithmetic and nothing else; the cost of marking it anyway is a Segment
+     * that says the whole of history has been put to it while one Run's answer is missing.
      */
     suspend fun timeAgainstHistory(segmentId: Long) {
         val segment = store.segment(segmentId) ?: return
         val ground = groundOf(segment)
 
         var efforts = 0
+        var abandoned = false
         if (ground != null) {
             store.runs().filter { it.mayHoldSegmentEfforts() }.forEach { listed ->
-                efforts += time(segment.id, listed.id, ground)
+                val held = time(segment.id, listed.id, ground)
+                if (held == null) abandoned = true else efforts += held
             }
+        }
+        if (abandoned) {
+            Log.d(TAG, "Segment $segmentId still owes a walk of history; a Run moved while it ran")
+            return
         }
         store.markSegmentTimed(segment.id)
         Log.d(TAG, "Segment $segmentId has $efforts effort(s) in history")
@@ -102,9 +135,19 @@ class SegmentTiming(private val store: SegmentTimingStore) {
         store.run(sessionId) ?: return
 
         var efforts = 0
+        var abandoned = false
         store.segments().forEach { segment ->
             val ground = groundOf(segment) ?: return@forEach
-            efforts += time(segment.id, sessionId, ground)
+            val held = time(segment.id, sessionId, ground)
+            if (held == null) abandoned = true else efforts += held
+        }
+        if (abandoned) {
+            // Left owing a walk, which is the safe thing to be left holding: the runner's own mark
+            // lifted this debt before it changed the row ([SessionDao.clearSegmentsTimed]) and its
+            // own walk is what pays it, so a debt marked here would be this pass claiming to have
+            // covered an answer it threw away.
+            Log.d(TAG, "Run $sessionId still owes a walk of the Segments; it moved while one ran")
+            return
         }
         store.markRunTimed(sessionId)
         Log.d(TAG, "Run $sessionId holds $efforts segment effort(s)")
@@ -130,7 +173,8 @@ class SegmentTiming(private val store: SegmentTimingStore) {
     }
 
     /**
-     * One Run against one Segment, written down. Returns how many efforts it turned out to hold.
+     * One Run against one Segment, written down. Returns how many efforts it turned out to hold, or
+     * null where the write was abandoned because the Run moved.
      *
      * **The Run is asked about by id and read afresh here**, immediately before its efforts are
      * replaced, and neither walk above may hand a row down instead. Both walks run outside any screen
@@ -140,17 +184,30 @@ class SegmentTiming(private val store: SegmentTimingStore) {
      * later launch to mend it. Stating the rule at the one door both walks come through is what stops
      * a third walk added later from reintroducing that.
      *
+     * **And the read is not the whole of it, because the measuring sits between the read and the
+     * write** (#338, #343). Measuring one long track is seconds and a Segment's walk of history is
+     * minutes of them, and the runner is free in that window too: a Walk marked there has its efforts
+     * deleted by its own pass and then written straight back by this one. No third re-read closes
+     * that — every read has a window after it — so the check travels *into* the write
+     * ([SegmentTimingStore.replaceEffortsUnlessTheRunMoved]), where the row cannot move between being
+     * looked at and being acted on.
+     *
+     * Abandoning is safe, and is why both walks above leave their debt standing when it happens: the
+     * mark that overtook this measurement lifts the Run's own Segment debt before it changes the row
+     * and re-walks it afterwards, and the launch pass sweeps up whatever is still owed. An effort
+     * banked for a Run nobody has is what could not be undone.
+     *
      * A Run that is gone, or that may hold no efforts, is written as nothing rather than skipped —
      * that empty write is how a Walk's times come off the leaderboards it was on.
      */
-    private suspend fun time(segmentId: Long, sessionId: Long, ground: List<MapFix>): Int {
+    private suspend fun time(segmentId: Long, sessionId: Long, ground: List<MapFix>): Int? {
         val run = store.run(sessionId)
         val traversals = if (run != null && run.mayHoldSegmentEfforts()) {
             segmentTraversalsIn(ground, segmentTrackOf(measureTrack(store.track(sessionId))))
         } else {
             emptyList()
         }
-        store.replaceEfforts(
+        val written = store.replaceEffortsUnlessTheRunMoved(
             segmentId,
             sessionId,
             traversals.map {
@@ -161,7 +218,12 @@ class SegmentTiming(private val store: SegmentTimingStore) {
                     finishedAtMillis = it.finishedAtMillis,
                 )
             },
+            measuredAs = run,
         )
+        if (!written) {
+            Log.d(TAG, "Run $sessionId changed while segment $segmentId was measuring it; wrote nothing")
+            return null
+        }
         return traversals.size
     }
 
@@ -193,3 +255,18 @@ class SegmentTiming(private val store: SegmentTimingStore) {
  *   know it was on the runner's hill.
  */
 fun RunnerSession.mayHoldSegmentEfforts(): Boolean = isFinished() && !isWalk && !isTreadmill()
+
+/**
+ * Whether two readings of the same Run would be worth the same at a Segment — everything the timing
+ * decides by, and nothing else (#338, #343).
+ *
+ * The three things [mayHoldSegmentEfforts] asks, because those are the three that can turn a Run's
+ * efforts into no efforts or back: a Run finishing, being marked a Walk, becoming a treadmill Run.
+ * A feel, a note or an Effort Score written while a track is being measured moves no waypoint and is
+ * therefore no reason to throw a measurement away.
+ *
+ * The track is not among them, and cannot be. A Run's fixes stop arriving when it ends, and the end
+ * is [RunnerSession.endTime], which is here.
+ */
+fun RunnerSession.holdsEffortsAs(other: RunnerSession): Boolean =
+    endTime == other.endTime && isWalk == other.isWalk && runMode == other.runMode

@@ -83,9 +83,24 @@ class SegmentTimingTest {
         var runsChangeAtRead = 0
         private var runReads = 0
 
+        /**
+         * Which *write* [runsNow] arrives at instead — the window no re-read reaches (#338, #343).
+         *
+         * The word lands after the row was read and after the track was measured, so every read the
+         * pass takes still sees the old table and only the read inside the write finds the new one.
+         * Set, it takes over from [runsChangeAtRead] entirely, because a table that had already
+         * changed at a read is not this window.
+         */
+        var runsChangeAtWrite: Int? = null
+        private var writes = 0
+
+        /** Whether the runner's newer word has landed. Once it has, every read sees it. */
+        private var wordLanded = false
+        private val table: List<RunnerSession> get() = if (wordLanded) runsNow ?: runs else runs
+
         override suspend fun runs() = runs
         override suspend fun run(sessionId: Long): RunnerSession? {
-            val table = if (runReads++ >= runsChangeAtRead) runsNow ?: runs else runs
+            if (runsChangeAtWrite == null && runReads++ >= runsChangeAtRead) wordLanded = true
             return table.firstOrNull { it.id == sessionId }
         }
         override suspend fun runsMissingTiming() =
@@ -93,8 +108,23 @@ class SegmentTimingTest {
 
         override suspend fun track(sessionId: Long) = tracks[sessionId].orEmpty()
 
-        override suspend fun replaceEfforts(segmentId: Long, sessionId: Long, efforts: List<SegmentEffort>) {
+        /**
+         * The row read and the efforts written as one step, the way the real transaction does it —
+         * which is what lets a test put the runner's word *between* the measuring and the write.
+         */
+        override suspend fun replaceEffortsUnlessTheRunMoved(
+            segmentId: Long,
+            sessionId: Long,
+            efforts: List<SegmentEffort>,
+            measuredAs: RunnerSession?,
+        ): Boolean {
+            if (writes++ == runsChangeAtWrite) wordLanded = true
+            val now = table.firstOrNull { it.id == sessionId }
+            val stillTheSameRun =
+                if (measuredAs == null) now == null else now != null && now.holdsEffortsAs(measuredAs)
+            if (!stillTheSameRun) return false
             rows[segmentId to sessionId] = efforts
+            return true
         }
 
         override suspend fun markSegmentTimed(segmentId: Long) {
@@ -302,5 +332,86 @@ class SegmentTimingTest {
         SegmentTiming(book).payWhatIsOwed()
 
         assertEquals(emptyList<SegmentEffort>(), book.all)
+    }
+
+    // --- The window between the measuring and the write (#338, #343) ---
+
+    @Test
+    fun `a Run marked a Walk between the measuring and the write keeps no efforts`() = runTest {
+        // The pass read a Run, measured its track, and only then went to write. The runner said
+        // "that was a walk" in that gap — their own pass has already taken the efforts off, and this
+        // write would put them straight back on.
+        val book = book(listOf(aRun(1)))
+        book.runsNow = listOf(aRun(1, isWalk = true))
+        book.runsChangeAtWrite = 0
+
+        SegmentTiming(book).timeAgainstEverySegment(1)
+
+        assertEquals(emptyList<SegmentEffort>(), book.all)
+    }
+
+    @Test
+    fun `a Run that moved under the measuring is left owing a walk of the Segments`() = runTest {
+        val book = book(listOf(aRun(1)))
+        book.runsNow = listOf(aRun(1, isWalk = true))
+        book.runsChangeAtWrite = 0
+
+        SegmentTiming(book).timeAgainstEverySegment(1)
+
+        // Marked timed, nothing would ever come back for it — and the leaderboard it was measured
+        // against is the one the runner has just changed their mind about.
+        assertEquals(listOf(1L), book.runsMissingTiming())
+    }
+
+    @Test
+    fun `a Run unmarked between the measuring and the write is not left with no efforts`() = runTest {
+        // The same race the other way: measured as a Walk, so nothing was found, and the runner took
+        // the mark off before the empty write landed.
+        val book = book(listOf(aRun(1, isWalk = true)))
+        book.runsNow = listOf(aRun(1))
+        book.runsChangeAtWrite = 0
+
+        SegmentTiming(book).timeAgainstEverySegment(1)
+
+        assertEquals(emptyList<SegmentEffort>(), book.all)
+        assertEquals(listOf(1L), book.runsMissingTiming())
+    }
+
+    @Test
+    fun `a Run deleted between the measuring and the write writes nothing`() = runTest {
+        val book = book(listOf(aRun(1)))
+        book.runsNow = emptyList()
+        book.runsChangeAtWrite = 0
+
+        SegmentTiming(book).timeAgainstEverySegment(1)
+
+        assertEquals(emptyList<SegmentEffort>(), book.all)
+    }
+
+    @Test
+    fun `a Segment whose history moved under it is left owing that history`() = runTest {
+        val book = book(listOf(aRun(1), aRun(2)))
+        book.runsNow = listOf(aRun(1, isWalk = true), aRun(2))
+        // Run 1 is measured first; the mark lands between that measurement and its write.
+        book.runsChangeAtWrite = 0
+
+        SegmentTiming(book).timeAgainstHistory(segment.id)
+
+        assertEquals(listOf(2L), book.all.map { it.sessionId })
+        assertEquals(listOf(segment), book.segmentsMissingHistory())
+    }
+
+    @Test
+    fun `a Run that stays put has its efforts written and its debt marked`() = runTest {
+        // The same lever wired up and never pulled, so the tests above are about the window rather
+        // than about the check refusing everything.
+        val book = book(listOf(aRun(1)))
+        book.runsNow = listOf(aRun(1))
+        book.runsChangeAtWrite = 0
+
+        SegmentTiming(book).timeAgainstEverySegment(1)
+
+        assertEquals(1, book.all.size)
+        assertEquals(emptyList<Long>(), book.runsMissingTiming())
     }
 }

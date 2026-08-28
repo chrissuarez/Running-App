@@ -476,6 +476,9 @@ class MainActivity : ComponentActivity() {
                             // On the container's scope, not this one: the creation screen is popped
                             // the instant a Segment is saved (#70).
                             onSegmentSaved = { appContainer.timeSegmentAgainstHistory(it) },
+                            // So a Segment's dated efforts follow the phone across a zone change,
+                            // the way the Progress screen's readers do (#320, #343).
+                            zoneChanges = appContainer.zoneChanges,
                         )
                     )
                     // "*/*", like the restore picker, and for the same reason: a `.gpx` in Downloads
@@ -1243,7 +1246,7 @@ class MainActivity : ComponentActivity() {
                             // Watched too, and for a reason of its own: a Segment cut a moment ago
                             // is still being put to history on the container's scope, so its
                             // efforts land one Run at a time under an open page (#70).
-                            val efforts by produceState<List<com.example.runningapp.data.SegmentEffortRow>>(
+                            val efforts by produceState<List<com.example.runningapp.ui.SegmentEffortUi>>(
                                 initialValue = emptyList(),
                                 key1 = segmentId
                             ) {

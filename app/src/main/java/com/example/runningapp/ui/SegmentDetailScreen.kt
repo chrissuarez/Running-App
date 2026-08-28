@@ -51,7 +51,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.data.Segment
-import com.example.runningapp.data.SegmentEffortRow
 import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.ui.theme.RunningUiTokens
 
@@ -81,7 +80,7 @@ private val MapHeight = 220.dp
 @Composable
 fun SegmentDetailScreen(
     segment: Segment?,
-    efforts: List<SegmentEffortRow>,
+    efforts: List<SegmentEffortUi>,
     onRename: (Segment, String) -> Unit,
     onDelete: (Segment) -> Unit,
     onOpenRun: (Long) -> Unit,
@@ -125,9 +124,9 @@ fun SegmentDetailScreen(
         val ground = remember(segment.polyline) {
             RoutePolyline.decode(segment.polyline).map { MapFix(it.latitude, it.longitude) }
         }
-        val shown = remember(efforts, segment.distanceMeters) {
-            segmentEffortsUi(efforts, segment.distanceMeters)
-        }
+        // Already dated and paced by the ViewModel, which is where the live time zone can be
+        // watched (#343) — a `remember` here would sit still through a zone change.
+        val shown = efforts
         val record = remember(shown) { segmentRecordOf(shown) }
         val ranked = remember(shown) { segmentTopEfforts(shown) }
         val trend = remember(shown) { segmentTrendPoints(shown) }
