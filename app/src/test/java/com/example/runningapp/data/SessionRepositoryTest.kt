@@ -3651,6 +3651,27 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `a finalize that lost its Run's row hands the Stage question back, and judges nothing`() = runTest {
+        // The rescue that won the row wrote the Stage question closed, because a Run put back from
+        // its record is a Run nobody closed and the graduation rule may not judge one of those
+        // (ADR 0016). Here the runner did close it: their STOP's finalize was still in flight when
+        // the teardown's bounded joins gave up, so the rescue wrote first and this finalize was
+        // told it lost. The premise the mark rests on is false, and the finalize is the only settler
+        // that can know it (#383).
+        //
+        // Judging the Run from that branch was the other candidate, and it is refused twice over:
+        // the graduation rule stated in a second place is a rule free to drift from the first, and
+        // the winner's after-run measurements are still running behind this call, so a judgement
+        // made here reads a Run only half measured. Handing the debt back is what a rescued Run its
+        // runner closed should always have got, and the launch pass is what pays it.
+        repository.handTheStageQuestionBack(7L)
+
+        verify(mockDao).setStageUnsettled(7L)
+        verify(mockDao, never()).setStageSettled(any())
+        verify(mockSettingsRepo, never()).graduateStage(any(), any(), any(), any())
+    }
+
+    @Test
     fun `a word is forgotten with the Run it was said about`() = runTest {
         // Kept in memory against the Run's id, and a deleted Run's id can be handed to the next Run
         // Room writes. A word left behind would then be the wrong runner's word about a different

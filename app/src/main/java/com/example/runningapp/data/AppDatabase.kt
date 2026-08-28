@@ -98,6 +98,71 @@ const val SETTLE_RUN_ROW_IF_UNSETTLED = """
 """
 
 /**
+ * The Runs the launch pass owes a Stage settlement — see [SessionDao.getSessionIdsOwingStageSettlement].
+ *
+ * Named here rather than written inline so the test that proves what the mark does can run the very
+ * question the phone asks, alongside the two statements that write it
+ * ([SETTLE_RUN_ROW_IF_UNSETTLED], [HAND_THE_STAGE_QUESTION_BACK]). A hand-copied `WHERE` in a test
+ * is free to drift from the one the pass runs, and then the mark is proved against a question
+ * nobody asks (#383).
+ */
+const val RUNS_OWING_A_STAGE_SETTLEMENT =
+    "SELECT id FROM sessions WHERE stageSettled = 0 AND endTime > 0 ORDER BY startTime ASC"
+
+/**
+ * Reopen a Run's Stage question, for the one settler that can know the mark on it was never a
+ * judgement (#383).
+ *
+ * The rescue writes `stageSettled = 1` on every Run it puts back, and it is right to: a Run
+ * rebuilt from its record reached no finish and no finish sheet, and a graduation granted off one a
+ * launch later would be the app judging a Run nobody closed — the pass over history the graduation
+ * rule refuses to make (ADR 0016, [finishedFromRecord]).
+ *
+ * One Run breaks that premise, and only since the row became the settlers' mutual exclusion
+ * ([SETTLE_RUN_ROW_IF_UNSETTLED]): a Run its runner **did** close, whose own finalize lost the race
+ * for the row. The rescue cannot tell it from any other — it sees the row and the record, and
+ * neither says a runner ever closed the Run — so the mark goes on, the launch pass looks for
+ * `stageSettled = 0` and never sees it, and the Run gets no Stage credit and no coach evaluation,
+ * ever. The Run's own finalize is the only settler that knows better, and it knows only once it has
+ * been told it lost.
+ *
+ * So this is that finalize's answer, and it is deliberately the smallest one: it reopens the
+ * question and leaves every total the winner wrote exactly where it is. Nothing is judged from here
+ * — the graduation rule stated in a second place is a rule free to drift from the first, and the
+ * winner's after-run measurements are still running behind this call. The launch pass pays the debt
+ * ([SessionRepository.settleStagesMissedAtTheFinish]), which is what a rescued Run its runner closed
+ * should always have got.
+ *
+ * **Unconditional beyond the id, because nothing can have judged this Run.** Every settlement there
+ * is refuses a Run already carrying the mark ([SessionRepository.settleUnderSettling]), and every
+ * one of them needs a finished row before it will judge at all. The rescue wrote `endTime` and
+ * `stageSettled` in the one statement ([SETTLE_RUN_ROW_IF_UNSETTLED]), so there is no instant in
+ * which a row reads as finished and unjudged: not for the launch pass, which asks for exactly that
+ * pair ([RUNS_OWING_A_STAGE_SETTLEMENT]), and not for the finish sheet, whose wait for the finalize
+ * is satisfied by that same write and which then reads the mark under its own lock and stands down.
+ * A sheet answered *after* this write finds the question open and judges it carrying the runner's
+ * word, which is the better of the two settlements and the one it should always have been.
+ *
+ * **Not carried into the rescue instead**, which is the other shape this could have taken: teach
+ * the teardown the fact and stamp `stageSettled` from it, the way [RunLostToTeardown
+ * .AwaitingItsRow.runnerStopped] already does for a Run with no row. It cannot be. That Run's stop
+ * is visible because a Run with no id *holds* its finalize in a buffer the teardown reads; a Run
+ * with a row performs its effects the moment they are produced, so at the instant the teardown
+ * takes its snapshot there is nothing to see — the STOP publishes the Run's state before it walks
+ * its effects, and a snapshot from that beat says RUNNING and no more. The fact exists only on the
+ * finalize's side, and only after it has lost.
+ *
+ * **What is knowingly left** is a process reclaimed between the rescue's write and the losing
+ * finalize reaching this statement. The mark then stands and the Run's Stage is lost, which is the
+ * ticket's own harm surviving in the one window where nothing in a dying process could close it.
+ * It is an instant rather than the seconds the unfixed case ran to, and nothing durable can be
+ * written earlier: until the finalize is told it lost, it has nothing to say.
+ */
+const val HAND_THE_STAGE_QUESTION_BACK = """
+    UPDATE sessions SET stageSettled = 0 WHERE id = :sessionId
+"""
+
+/**
  * Settle a Run's row from a settler's finished copy of it, if no other settler has already (#382).
  *
  * The one door both settlers go through — the Run's own finalize
@@ -993,12 +1058,20 @@ interface SessionDao {
      * and settles itself when it finishes. Oldest first, so a launch paying more than one debt puts
      * the Runs to the rule in the order they were run — which is the order the Stages moved in.
      */
-    @Query("SELECT id FROM sessions WHERE stageSettled = 0 AND endTime > 0 ORDER BY startTime ASC")
+    @Query(RUNS_OWING_A_STAGE_SETTLEMENT)
     suspend fun getSessionIdsOwingStageSettlement(): List<Long>
 
     /** Closes a Run's Stage question — written only once the settlement has returned. */
     @Query("UPDATE sessions SET stageSettled = 1 WHERE id = :sessionId")
     suspend fun setStageSettled(sessionId: Long)
+
+    /**
+     * Reopens a Run's Stage question — the rule and every reason for it are on
+     * [HAND_THE_STAGE_QUESTION_BACK] (#383). Called through
+     * [SessionRepository.handTheStageQuestionBack], which is the only door.
+     */
+    @Query(HAND_THE_STAGE_QUESTION_BACK)
+    suspend fun setStageUnsettled(sessionId: Long)
 
     /**
      * Writes a Stated Distance and the pace that follows from it (#231).
