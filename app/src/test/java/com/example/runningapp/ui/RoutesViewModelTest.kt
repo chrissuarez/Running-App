@@ -12,9 +12,12 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.launch
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -46,7 +49,13 @@ class RoutesViewModelTest {
         whenever(resolver.openInputStream(eq(uri))).doAnswer { gpx?.byteInputStream() as InputStream? }
         whenever(resolver.query(eq(uri), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()))
             .doReturn(null)
-        return RoutesViewModel(dao, RouteImporter(resolver, dao, now = { 1_700_000_000_000L }), io = dispatcher)
+        return RoutesViewModel(
+            dao,
+            RouteImporter(resolver, dao, now = { 1_700_000_000_000L }),
+            io = dispatcher,
+            // The shapes too, so a test can see a pass finish rather than wait on a real thread.
+            courseDispatcher = dispatcher,
+        )
     }
 
     private val aRealGpx = """
@@ -177,5 +186,106 @@ class RoutesViewModelTest {
         viewModel.messageShown()
 
         assertNull(viewModel.message.value)
+    }
+
+    // ---- The shape drawn beside each row (#59) ----------------------------------------------
+
+    /**
+     * A course long enough to have a shape: about a hundred and forty metres east, which clears the
+     * sixty metres a drawing needs before it is a shape rather than a scatter.
+     */
+    private fun aCourseWithAShape(id: Long = 1, polyline: String = EAST) = Route(
+        id = id,
+        name = "Park loop",
+        distanceMeters = 139.0,
+        elevationGainMeters = null,
+        polyline = polyline,
+        createdAtMillis = 0,
+        source = RouteSource.IMPORTED,
+    )
+
+    /**
+     * Watches the rows for as long as the test runs.
+     *
+     * The rows are only worked out while something is looking, exactly as they are on the phone, so
+     * a test that read [RoutesViewModel.rows] without collecting it would be reading the empty list
+     * the flow starts at and would pass whatever the code did.
+     */
+    private fun TestScope.rowsOf(viewModel: RoutesViewModel): () -> List<RouteRowUi> {
+        backgroundScope.launch { viewModel.rows.collect { } }
+        return { viewModel.rows.value }
+    }
+
+    @Test
+    fun `draws the shape of each kept course`() = runTest {
+        dao.insertRoute(aCourseWithAShape())
+        val viewModel = viewModelReading(aRealGpx)
+        val rows = rowsOf(viewModel)
+
+        viewModel.drawCoursesWhileLibraryIsOpen()
+        advanceUntilIdle()
+
+        assertNotNull("the row should have a shape to draw", rows().single().thumbnail)
+    }
+
+    /**
+     * A row is still a row without a drawing. A course that covers no ground — a damaged line, or
+     * one point left after a lenient read — has no shape, and the library must still list it under
+     * its name rather than dropping it.
+     */
+    @Test
+    fun `lists a course that has no shape, with nothing drawn`() = runTest {
+        dao.insertRoute(aCourseWithAShape(polyline = "51.5000000,-0.1000000"))
+        val viewModel = viewModelReading(aRealGpx)
+        val rows = rowsOf(viewModel)
+
+        viewModel.drawCoursesWhileLibraryIsOpen()
+        advanceUntilIdle()
+
+        assertEquals("Park loop", rows().single().route.name)
+        assertNull(rows().single().thumbnail)
+    }
+
+    /**
+     * The case a cache keyed by id alone would get wrong: re-importing a course already kept can
+     * write a new line onto the same row, and the library would go on drawing the old shape.
+     */
+    @Test
+    fun `redraws a course whose line has been re-measured`() = runTest {
+        dao.insertRoute(aCourseWithAShape(polyline = EAST))
+        val viewModel = viewModelReading(aRealGpx)
+        val rows = rowsOf(viewModel)
+        viewModel.drawCoursesWhileLibraryIsOpen()
+        advanceUntilIdle()
+        val eastward = requireNotNull(rows().single().thumbnail)
+
+        dao.replaceLine(rows().single().route.id, NORTH)
+        advanceUntilIdle()
+
+        val northward = requireNotNull(rows().single().thumbnail)
+        assertTrue("the row is still drawing the old line", northward != eastward)
+    }
+
+    /** Opening the library twice must not set two passes going over the same courses. */
+    @Test
+    fun `works the shapes out once however often the library is opened`() = runTest {
+        dao.insertRoute(aCourseWithAShape())
+        val viewModel = viewModelReading(aRealGpx)
+        val rows = rowsOf(viewModel)
+
+        viewModel.drawCoursesWhileLibraryIsOpen()
+        viewModel.drawCoursesWhileLibraryIsOpen()
+        advanceUntilIdle()
+
+        assertEquals(1, rows().size)
+        assertNotNull(rows().single().thumbnail)
+    }
+
+    private companion object {
+        /** About 140 m east of Regent's Park. */
+        const val EAST = "51.5000000,-0.1000000 51.5000000,-0.0980000"
+
+        /** The same length of course, turned a quarter — a different shape at the same size. */
+        const val NORTH = "51.5000000,-0.1000000 51.5012500,-0.1000000"
     }
 }

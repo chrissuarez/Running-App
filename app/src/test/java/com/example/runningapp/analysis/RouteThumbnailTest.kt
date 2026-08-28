@@ -283,3 +283,60 @@ internal class RouteScript(private val startLatitude: Double) {
         )
     }
 }
+
+/**
+ * The same little drawing, made from a Route the runner keeps rather than from a Run they went for
+ * (#59).
+ *
+ * The shape rules are [RouteThumbnailTest]'s and are not restated here: both drawings come out of
+ * the one piece of arithmetic, and testing the box fit twice would only pin the copy. What is left
+ * is what a course has that a Run does not — no breaks in it, and no track behind it to fall back
+ * on when the row's own line is too short or too damaged to draw.
+ */
+class CourseThumbnailTest {
+
+    @Test
+    fun `a course is drawn the same way a run's route is`() {
+        val course = route { east(200.0); north(200.0) }
+
+        val drawn = requireNotNull(courseThumbnailOf(course.map { it.asCoursePoint() }))
+        val run = requireNotNull(routeThumbnailOf(measureTrack(course)))
+
+        assertEquals(run.strokes, drawn.strokes)
+    }
+
+    /**
+     * A course is one line by the time it is kept: the reader joins the segments a GPX arrives in,
+     * and a Run kept as a course is thinned into a single course as well. So there is no gap to
+     * draw, and a course that doubles back on itself must not be mistaken for two strokes.
+     */
+    @Test
+    fun `a course is one unbroken line however far apart its points sit`() {
+        val far = listOf(
+            CoursePoint(51.5, -0.1),
+            CoursePoint(51.5, -0.05),
+            CoursePoint(51.53, -0.05),
+        )
+
+        assertEquals(1, requireNotNull(courseThumbnailOf(far)).strokes.size)
+    }
+
+    @Test
+    fun `a course of one point has no shape to draw`() {
+        assertNull(courseThumbnailOf(listOf(CoursePoint(51.5, -0.1))))
+    }
+
+    @Test
+    fun `a course with nothing readable left in it has no shape to draw`() {
+        assertNull(courseThumbnailOf(emptyList()))
+    }
+
+    @Test
+    fun `a course that covers no ground has no shape to draw`() {
+        val onTheSpot = route { standingStill(seconds = 10) }.map { it.asCoursePoint() }
+
+        assertNull(courseThumbnailOf(onTheSpot))
+    }
+}
+
+private fun TrackPoint.asCoursePoint() = CoursePoint(latitude, longitude)
