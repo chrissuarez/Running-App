@@ -8,6 +8,7 @@ import com.example.runningapp.recording.degreesEastOf
 import com.example.runningapp.recording.geodesicDistanceMeters
 import kotlin.math.cos
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -319,6 +320,51 @@ class CourseTest {
         )
 
         assertEquals(500.0, courseSpanMeters(runAsCourse(lap).line), 2.0)
+    }
+
+    /**
+     * The one test both doors ask (#397). A lap is a course; the two shapes below are not, and the
+     * file door has to turn them away for the same reason the Run door always has.
+     */
+    @Test
+    fun `a lap holds a course and a standstill does not`() {
+        val lap = listOf(
+            fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = 0),
+            fix(northMeters = 300.0, eastMeters = 0.0, secondsIn = 60),
+            fix(northMeters = 300.0, eastMeters = 500.0, secondsIn = 120),
+        )
+        assertTrue(runAsCourse(lap).holdsACourse())
+
+        // Every place the same place, so the line is one point and there is nothing to draw.
+        val oneSpot = (0..9).map { fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = it.toLong()) }
+        assertEquals(1, runAsCourse(oneSpot).line.size)
+        assertFalse(runAsCourse(oneSpot).holdsACourse())
+
+        // A line of real places that never reaches outside the width of a fix's own error.
+        val scatter = listOf(
+            fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = 0),
+            fix(northMeters = 40.0, eastMeters = 0.0, secondsIn = 60),
+            fix(northMeters = 0.0, eastMeters = 25.0, secondsIn = 120),
+        )
+        assertTrue(runAsCourse(scatter).line.size >= 2)
+        assertFalse(runAsCourse(scatter).holdsACourse())
+    }
+
+    /**
+     * The bar is a floor rather than a fence: a course that reaches it is kept. Pinned half a metre
+     * either side of it, because which side the boundary falls on is the whole of the rule — and
+     * half a metre rather than a centimetre because [RoutePolyline.snapped] rounds a place to about
+     * a centimetre first, and a gap that fine could round across the bar on its own.
+     */
+    @Test
+    fun `the bar is the width a course is kept at`() {
+        fun straightLine(wideMeters: Double) = listOf(
+            fix(northMeters = 0.0, eastMeters = 0.0, secondsIn = 0),
+            fix(northMeters = wideMeters, eastMeters = 0.0, secondsIn = 60),
+        )
+
+        assertTrue(runAsCourse(straightLine(ROUTE_MINIMUM_METERS + 0.5)).holdsACourse())
+        assertFalse(runAsCourse(straightLine(ROUTE_MINIMUM_METERS - 0.5)).holdsACourse())
     }
 
     /**

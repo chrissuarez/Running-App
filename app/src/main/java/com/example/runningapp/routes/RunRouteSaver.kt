@@ -7,22 +7,7 @@ import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.export.RunExportName
-import com.example.runningapp.recording.SessionRecorder
 import java.time.ZoneId
-
-/**
- * How far a Run has to reach across the ground before it holds a course worth keeping (#55).
- *
- * The same width, and for the same reason, as the drawing on a History row
- * ([com.example.runningapp.analysis.routeThumbnailOf]): a fix is accepted at up to
- * [SessionRecorder.ACCURACY_THRESHOLD_METERS] of error, so two accepted fixes from a runner who
- * never moved can sit twice that apart. Anything that never reaches outside that width is the error
- * alone, and a Route made of it would be a course the runner could never follow.
- *
- * Measured across rather than along, because the Run this turns away is the one that stood still
- * and the length of *that* line is the length of ten minutes of wandering — see [courseSpanMeters].
- */
-private val ROUTE_MINIMUM_METERS = 2 * SessionRecorder.ACCURACY_THRESHOLD_METERS
 
 /** What became of a Run the runner asked to keep as a course. */
 sealed interface RunRouteOutcome {
@@ -90,8 +75,9 @@ class RunRouteSaver(
         if (!run.isFinished()) return RunRouteOutcome.StillRunning
 
         val course = runAsCourse(trackPoints)
-        if (course.line.size < 2) return RunRouteOutcome.NoGround
-        if (courseSpanMeters(course.line) < ROUTE_MINIMUM_METERS) return RunRouteOutcome.NoGround
+        // What counts as a course at all is one question, asked here and at the file door in the
+        // same place, so the two cannot come to disagree about it (#397) — see [holdsACourse].
+        if (!course.holdsACourse()) return RunRouteOutcome.NoGround
 
         // Offered rather than asked about first: the line is the course's identity, and the library
         // itself decides in one go whether this one is new — asking and then writing would leave a
