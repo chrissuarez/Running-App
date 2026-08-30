@@ -107,21 +107,35 @@ data class RouteMerged(val lostId: Long, val keptId: Long)
  * A row whose line will not decode at all is left completely alone and takes no part in the
  * merging. There is no line there to redraw, and an upgrade is the wrong moment to decide what a
  * damaged row meant.
+ *
+ * **The one rule about what the pass may hold: nothing here grows with how long the library's lines
+ * are, only with how many rows it has.** A line kept before #354 holds every point its file held,
+ * and a file may hold two hundred thousand of them — megabytes of text in one row, and more again
+ * while it is decoded. The rows therefore arrive as a [Sequence], each line fetched as it is reached
+ * and dropped when the next one is: one line at a time is in hand, and what is kept from it is the
+ * *thinned* line and a handful of numbers. Anything that failed this rule would fail it inside the
+ * upgrade, which rolls back and is tried again at every launch — an app that never opens, for the
+ * one runner whose library is the reason the pass exists.
+ *
+ * The sequence must arrive in id order, which is checked rather than assumed: the id order is what
+ * decides which row of a collision survives, and sorting it here would mean holding all of it at
+ * once. [com.example.runningapp.data.READ_LIBRARY_AS_KEPT_SQL] reads it that way.
  */
-fun libraryRedrawn(rows: List<RouteAsKept>): LibraryRedrawn {
-    // In id order, because the id order is what decides which row of a collision survives. Sorted
-    // here as well as asked for in the read ([READ_LIBRARY_AS_KEPT_SQL]) because the two say
-    // different things: the query says what the upgrade reads, and this says what the answer
-    // depends on — so a caller handing the rows over in any order gets the same library back.
-    val inIdOrder = rows.sortedBy { it.id }
-
+fun libraryRedrawn(rows: Sequence<RouteAsKept>): LibraryRedrawn {
     val redrawn = ArrayList<RouteRedrawn>()
     val merged = ArrayList<RouteMerged>()
-    // The row already holding each redrawn line, and what it will end up banking. Kept as a map from
-    // the new line so the second row to land on one is recognised as it arrives.
-    val holderOfLine = LinkedHashMap<String, RouteRedrawn>()
+    // The row already holding each redrawn line, and what it will end up banking, beside whether
+    // that row was already right. Kept as a map from the *new* line, so the second row to land on
+    // one is recognised as it arrives — and the new line is a thinned one, so the map grows with
+    // the shape of the library rather than with the size of the lines that made it.
+    val holderOfLine = LinkedHashMap<String, RowSoFar>()
 
-    for (row in inIdOrder) {
+    var lastId = Long.MIN_VALUE
+    for (row in rows) {
+        require(row.id > lastId) {
+            "The library is redrawn in id order: id ${row.id} arrived after $lastId"
+        }
+        lastId = row.id
         val points = RoutePolyline.decode(row.polyline)
         if (points.isEmpty()) continue
 
@@ -129,32 +143,54 @@ fun libraryRedrawn(rows: List<RouteAsKept>): LibraryRedrawn {
         val polyline = RoutePolyline.encode(line)
         val held = holderOfLine[polyline]
         if (held != null) {
-            merged += RouteMerged(lostId = row.id, keptId = held.id)
+            merged += RouteMerged(lostId = row.id, keptId = held.row.id)
             // The absorbed row's climb, but only where the survivor has none to lose (#355).
-            if (held.elevationGainMeters == null && row.elevationGainMeters != null) {
-                holderOfLine[polyline] = held.copy(elevationGainMeters = row.elevationGainMeters)
+            if (held.row.elevationGainMeters == null && row.elevationGainMeters != null) {
+                holderOfLine[polyline] = held.copy(
+                    row = held.row.copy(elevationGainMeters = row.elevationGainMeters),
+                )
             }
             continue
         }
-        holderOfLine[polyline] = RouteRedrawn(
-            id = row.id,
-            polyline = polyline,
-            distanceMeters = routeDistanceMeters(line),
-            elevationGainMeters = row.elevationGainMeters,
+        // Whether anything moved is decided here, while the row as it was found is still to hand,
+        // and only the answer is kept: comparing later would mean holding every line the library
+        // arrived with — see [libraryRedrawn]'s rule about what the pass may hold.
+        holderOfLine[polyline] = RowSoFar(
+            row = RouteRedrawn(
+                id = row.id,
+                polyline = polyline,
+                distanceMeters = routeDistanceMeters(line),
+                elevationGainMeters = row.elevationGainMeters,
+            ),
+            lineWasAlreadyRight = polyline == row.polyline,
+            distanceAsKept = row.distanceMeters,
+            climbAsKept = row.elevationGainMeters,
         )
     }
 
     // Written back only where something actually moved, so a library already in the new form — every
     // library that never held a Route before the upgrade, which is most of them — is not touched at
     // all. Compared against the row as it was found, not against the row beside it.
-    val asKept = inIdOrder.associateBy { it.id }
-    for (row in holderOfLine.values) {
-        val was = asKept.getValue(row.id)
-        val moved = row.polyline != was.polyline ||
-            row.distanceMeters != was.distanceMeters ||
-            row.elevationGainMeters != was.elevationGainMeters
-        if (moved) redrawn += row
+    for (soFar in holderOfLine.values) {
+        val moved = !soFar.lineWasAlreadyRight ||
+            soFar.row.distanceMeters != soFar.distanceAsKept ||
+            soFar.row.elevationGainMeters != soFar.climbAsKept
+        if (moved) redrawn += soFar.row
     }
 
     return LibraryRedrawn(redrawn = redrawn.sortedBy { it.id }, merged = merged)
 }
+
+/**
+ * A row redrawn, beside just enough of the row as it was found to say whether anything moved.
+ *
+ * The line as it was found is deliberately *not* here. Whether the line moved is a yes or a no, and
+ * that is settled the moment the row is redrawn — so the answer is kept and the line itself is let
+ * go, which is what stops the pass holding the whole library's text at once.
+ */
+private data class RowSoFar(
+    val row: RouteRedrawn,
+    val lineWasAlreadyRight: Boolean,
+    val distanceAsKept: Double,
+    val climbAsKept: Double?,
+)

@@ -2938,6 +2938,19 @@ const val REDRAW_ROUTE_SQL =
  * is rewritten here ([REDIRECT_RAN_ALONG_MERGED_ROUTE_SQL]).
  */
 /**
+ * One row of `routes` as the upgrade first sees it: everything about it except its line (#399).
+ *
+ * The line is the one thing that can be big, so it is not read with the rest — how long it is comes
+ * back instead, and the line itself is fetched when the pass reaches that row ([lineOfRoute]).
+ */
+private data class RouteAsFound(
+    val id: Long,
+    val distanceMeters: Double,
+    val elevationGainMeters: Double?,
+    val lineCharacters: Long,
+)
+
+/**
  * One Route's line, carried back a piece at a time (#399).
  *
  * The pieces are joined in the order they were taken, so what comes back is the column's own text —
@@ -2962,21 +2975,33 @@ private fun lineOfRoute(database: SupportSQLiteDatabase, id: Long, characters: L
 
 val MIGRATION_41_42 = object : Migration(41, 42) {
     override fun migrate(database: SupportSQLiteDatabase) {
-        val kept = ArrayList<RouteAsKept>()
+        // The library without its lines: four small numbers a row, in the order that decides which
+        // row of a collision survives. The lines are fetched below, one at a time.
+        val headers = ArrayList<RouteAsFound>()
         database.query(READ_LIBRARY_AS_KEPT_SQL).use { row ->
             while (row.moveToNext()) {
-                kept += RouteAsKept(
+                headers += RouteAsFound(
                     id = row.getLong(0),
                     distanceMeters = row.getDouble(1),
                     elevationGainMeters = if (row.isNull(2)) null else row.getDouble(2),
-                    // Read in pieces, never whole: see [MOST_CHARACTERS_OF_A_LINE_READ_AT_ONCE].
-                    polyline = lineOfRoute(database, id = row.getLong(0), characters = row.getLong(3)),
+                    lineCharacters = row.getLong(3),
                 )
             }
         }
-        if (kept.isEmpty()) return
+        if (headers.isEmpty()) return
 
-        val redrawn = libraryRedrawn(kept)
+        // Lazily, so exactly one line is in hand at a time — the rule stated at [libraryRedrawn].
+        val redrawn = libraryRedrawn(
+            headers.asSequence().map { found ->
+                RouteAsKept(
+                    id = found.id,
+                    distanceMeters = found.distanceMeters,
+                    elevationGainMeters = found.elevationGainMeters,
+                    // In pieces, never whole: see [MOST_CHARACTERS_OF_A_LINE_READ_AT_ONCE].
+                    polyline = lineOfRoute(database, id = found.id, characters = found.lineCharacters),
+                )
+            }
+        )
         // The merges first, so no row is ever redrawn onto a line another row still holds.
         for (merge in redrawn.merged) {
             database.execSQL(
