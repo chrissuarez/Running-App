@@ -48,12 +48,14 @@ data class RouteRowUi(
  * one thing held is the shape of each course (#59), which is worked out from the table rather than
  * stored in it.
  *
- * **No course's line is ever held here, and never two at once** (#403). The library arrives without
- * its lines ([RouteDao.getLibraryFlow]), and a line is fetched only to be drawn from and is let go
- * as soon as it has been: what stays is the thumbnail, which is a few dozen points whatever the
- * course. Holding the lines would mean holding tens of megabytes for as long as the Routes screen is
- * open, for a library of many high-detail courses — the same total that would put the upgrade out of
- * memory, moved from launch to the moment the runner opens Routes.
+ * **No course's line is ever held here, and never two at once** — the rule and its sizes are at
+ * [com.example.runningapp.data.Route.polyline] (#403). The library arrives without its lines
+ * ([RouteDao.getLibraryFlow]), and a line is fetched only to be drawn from and is let go as soon as
+ * it has been: what stays is the thumbnail, which is a few dozen points whatever the course.
+ *
+ * Every course's line is still read once, the first time the library is opened — a thumbnail is a
+ * drawing of the line, so there is no getting one without it. What the rule asks is that they are
+ * not in hand together, and they never are.
  */
 class RoutesViewModel(
     private val routeDao: RouteDao,
@@ -82,11 +84,10 @@ class RoutesViewModel(
      * the library on each of those is arithmetic the runner is waiting on.
      *
      * Keyed by the Route's id alone, and the line it was drawn from is deliberately not kept beside
-     * it. A Route's line is written once, when the row is inserted, and nothing in the app rewrites
-     * it (the rule is stated at [com.example.runningapp.data.Route.polyline]) — so an id names one
-     * line for as long as the row exists, and a shape looked up by id is that line's shape. Keeping
-     * the line here to check against would be keeping every line in the library, which is the one
-     * thing this view model must not do.
+     * it. That rests on [com.example.runningapp.data.Route.polyline]'s second rule — a line is
+     * written once and never rewritten — so an id names one line for as long as the row exists, and
+     * a shape looked up by id is that line's shape. Keeping the line here to check against would be
+     * keeping every line in the library, which is what its first rule forbids.
      *
      * A course with nothing to draw is kept as a null against its id rather than left out, so
      * "asked, and there is no shape" is not read back as "not asked yet" and re-asked for the life

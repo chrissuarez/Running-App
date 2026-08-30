@@ -2992,10 +2992,10 @@ val MIGRATION_41_42 = object : Migration(41, 42) {
     override fun migrate(database: SupportSQLiteDatabase) {
         // The library without its lines: four small numbers a row, in the order that decides which
         // row of a collision survives. The lines are fetched below, one at a time.
-        val headers = ArrayList<RouteAsFound>()
+        val rowsAsFound = ArrayList<RouteAsFound>()
         database.query(READ_LIBRARY_AS_KEPT_SQL).use { row ->
             while (row.moveToNext()) {
-                headers += RouteAsFound(
+                rowsAsFound += RouteAsFound(
                     id = row.getLong(0),
                     distanceMeters = row.getDouble(1),
                     elevationGainMeters = if (row.isNull(2)) null else row.getDouble(2),
@@ -3003,7 +3003,7 @@ val MIGRATION_41_42 = object : Migration(41, 42) {
                 )
             }
         }
-        if (headers.isEmpty()) return
+        if (rowsAsFound.isEmpty()) return
 
         // Lazily on both sides — one stored line fetched at a time, and one redrawn line written at
         // a time. That is the rule stated at [libraryRedrawn], and it is why the writing is a walk
@@ -3016,7 +3016,7 @@ val MIGRATION_41_42 = object : Migration(41, 42) {
         // ([com.example.runningapp.data.RouteDao.keepRoute]) — so a moment where two rows share a
         // line is a moment inside a write that has not landed yet.
         val steps = libraryRedrawn(
-            headers.asSequence().map { found ->
+            rowsAsFound.asSequence().map { found ->
                 RouteAsKept(
                     id = found.id,
                     distanceMeters = found.distanceMeters,

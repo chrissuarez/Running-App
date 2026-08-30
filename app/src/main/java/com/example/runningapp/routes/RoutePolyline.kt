@@ -1,5 +1,6 @@
 package com.example.runningapp.routes
 
+import java.security.MessageDigest
 import java.util.Locale
 
 /**
@@ -16,6 +17,30 @@ import java.util.Locale
  * profile as well would treble the size of every row to answer a question nothing asks.
  */
 object RoutePolyline {
+
+    /**
+     * A fixed-length stand-in for one line, equal exactly when the lines are (#403).
+     *
+     * Here, beside the encoding itself, because it is a fact about the written line and nothing
+     * else knows how a line is written. What it buys is a reader that has to tell many lines apart
+     * without holding them: `libraryRedrawn` keeps one of these per surviving course — sixty-four
+     * characters — where it used to keep the course's whole redrawn line.
+     *
+     * SHA-256, and the choice matters. This is what decides that two rows are the same course and
+     * that one of them may be deleted, so a digest two different courses could share would lose a
+     * runner a Route. Two different lines sharing a SHA-256 is not something that happens to a
+     * library; it is something no one has ever produced for any pair of inputs at all.
+     *
+     * The alternative — keeping the digest as a hint and then reading the candidate row's line back
+     * out of the table to confirm — was declined. The candidate was decided and written some rows
+     * ago, so confirming would mean reading a line back out of a half-written table, which makes a
+     * pure decision depend on the order the writer happened to get to. A cheaper digest defended by
+     * a read is a worse trade than a digest that needs no defending.
+     */
+    fun digestOf(polyline: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(polyline.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
 
     fun encode(points: List<RoutePoint>): String =
         points.joinToString(" ") { "${format(it.latitude)},${formatLongitude(it.longitude)}" }
