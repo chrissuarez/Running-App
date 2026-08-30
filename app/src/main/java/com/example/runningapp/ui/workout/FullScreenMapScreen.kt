@@ -51,6 +51,10 @@ fun FullScreenMapScreen(
             MapSurface(
                 sessionId = sessionId,
                 sessionRepository = sessionRepository,
+                // Panning and zooming belong here and not on the card (#357): this is where the
+                // runner comes to see the part of their course the follow-puck camera does not hold.
+                // Nothing is set on this map's gestures — it keeps the Mapbox defaults it always had.
+                interactive = true,
                 modifier = Modifier.fillMaxSize()
             )
         }

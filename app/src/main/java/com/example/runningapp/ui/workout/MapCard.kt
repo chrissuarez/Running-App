@@ -29,12 +29,14 @@ import com.example.runningapp.routes.courseRemainingMeters
 import com.mapbox.geojson.Point
 import com.mapbox.maps.extension.compose.MapEffect
 import com.mapbox.maps.extension.compose.MapboxMap
+import com.mapbox.maps.extension.compose.rememberMapState
 import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
 import com.mapbox.maps.extension.compose.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.extension.compose.style.standard.LightPresetValue
 import com.mapbox.maps.extension.compose.style.standard.MapboxStandardStyle
 import com.mapbox.maps.extension.compose.style.standard.rememberStandardStyleState
 import com.mapbox.maps.plugin.PuckBearing
+import com.mapbox.maps.plugin.gestures.generated.GesturesSettings
 import com.mapbox.maps.plugin.locationcomponent.createDefault2DPuck
 import com.mapbox.maps.plugin.locationcomponent.location
 import java.util.Locale
@@ -67,18 +69,28 @@ fun MapCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClickLabel = "Open full-screen map", onClick = onClick)
-    ) {
-        MapSurface(
-            sessionId = sessionId,
-            sessionRepository = sessionRepository,
+    Card(modifier = modifier.fillMaxWidth()) {
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(MapCardHeight)
-        )
+        ) {
+            MapSurface(
+                sessionId = sessionId,
+                sessionRepository = sessionRepository,
+                interactive = false,
+                modifier = Modifier.fillMaxSize()
+            )
+            // The tap lives on a layer over the map, not on the Card under it. A Mapbox map is an
+            // Android View inside this composition and it takes the touch before anything wrapped
+            // around it hears about it — which is why a [clickable] on the Card did nothing (#357).
+            // The same shape the Run-detail map already uses ([com.example.runningapp.ui.RunTrackMapCard]).
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clickable(onClickLabel = "Open full-screen map", onClick = onClick)
+            )
+        }
     }
 }
 
@@ -94,7 +106,13 @@ fun MapCard(
  * the map itself says.
  */
 @Composable
-fun MapSurface(sessionId: Long, sessionRepository: SessionRepository, modifier: Modifier = Modifier) {
+fun MapSurface(
+    sessionId: Long,
+    sessionRepository: SessionRepository,
+    /** Whether the runner may pan and zoom this map by hand — see [NoGestures]. */
+    interactive: Boolean,
+    modifier: Modifier = Modifier
+) {
     val trackPoints by produceState(initialValue = emptyList<TrackPoint>(), sessionId, sessionRepository) {
         sessionRepository.getTrackPointsForMapFlow(sessionId).collect { value = it }
     }
@@ -136,6 +154,11 @@ fun MapSurface(sessionId: Long, sessionRepository: SessionRepository, modifier: 
     }
 
     val mapViewportState = rememberMapViewportState()
+    val mapState = rememberMapState {
+        // The full-screen map keeps Mapbox's own defaults, untouched: this ticket is about the card,
+        // and a live map the runner came to explore should still turn and tilt the way it always has.
+        if (!interactive) gesturesSettings = NoGestures
+    }
     val trailColor = MaterialTheme.colorScheme.primary
     // Blue against the trail's amber: the two lines have to be told apart at a glance, in daylight,
     // at arm's length, by someone running.
@@ -145,6 +168,7 @@ fun MapSurface(sessionId: Long, sessionRepository: SessionRepository, modifier: 
         MapboxMap(
             modifier = Modifier.fillMaxSize(),
             mapViewportState = mapViewportState,
+            mapState = mapState,
             style = { MapboxStandardStyle(standardStyleState = standardStyleState) }
         ) {
             MapEffect(Unit) { mapView ->
@@ -243,3 +267,32 @@ internal fun courseRemainingLabel(remainingMeters: Double?): String? {
     return if (meters >= 1000) String.format(Locale.UK, "%.2f km to go", meters / 1000.0)
     else "$meters m to go"
 }
+
+/**
+ * A map that answers no touch of its own (#357).
+ *
+ * The card's map is a preview, and a Mapbox map is an Android View: every gesture it is allowed to
+ * keep is a touch the layer above it never sees. That is what broke the card — a scroll the runner
+ * meant as "open this" was eaten by a map they had no reason to pan, on a card too small to pan
+ * usefully. So the card's map takes nothing, and the full-screen map, which is reached by that tap,
+ * is where panning belongs.
+ *
+ * Off here rather than an "expand" button drawn on the card, which the ticket also offered. The
+ * button is the more discoverable of the two, but it is one more thing to hit with a wet thumb while
+ * running, on a card that has room for a map and little else — and the whole-card tap is already the
+ * shape the Run-detail map uses ([com.example.runningapp.ui.RunTrackMapCard]), so a runner who has
+ * opened one map in this app has already been taught this one.
+ */
+private val NoGestures = GesturesSettings {
+    scrollEnabled = false
+    pinchToZoomEnabled = false
+    doubleTapToZoomInEnabled = false
+    doubleTouchToZoomOutEnabled = false
+    quickZoomEnabled = false
+    simultaneousRotateAndPinchToZoomEnabled = false
+    rotateEnabled = false
+    pitchEnabled = false
+}
+
+/** [NoGestures], for the test that keeps every one of them off. */
+internal fun noGesturesSettings(): GesturesSettings = NoGestures
