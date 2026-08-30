@@ -403,13 +403,15 @@ private fun StringBuilder.appendStageTraining(
     // so a Sunday first Run and three Mondays after it puts four rows on the board fifteen days in
     // — and "across 4 weeks" is then a graduation granted a fortnight early, which cannot be taken
     // back.
+    val since = when (record.daysSinceFirstRun) {
+        0 -> "which was today"
+        else -> "which was ${record.daysSinceFirstRun} ${"day".s(record.daysSinceFirstRun)} ago"
+    }
     appendLine(
         "The runner's training record in this stage, counted by the app from their own recorded " +
             "runs: ${record.qualifyingRuns} qualifying ${"run".s(record.qualifyingRuns)} since " +
-            "${record.firstRunOn}, which was ${record.daysTrained} " +
-            "${"day".s(record.daysTrained)} ago counting today — " +
-            "${record.weeksTrained} full ${"week".s(record.weeksTrained)} of training completed " +
-            "so far."
+            "${record.firstRunOn}, $since — ${record.weeksTrained} full " +
+            "${"week".s(record.weeksTrained)} of training completed so far."
     )
     appendLine(
         (if (record.weeksAreATail) {

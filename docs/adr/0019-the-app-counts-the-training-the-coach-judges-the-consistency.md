@@ -39,7 +39,8 @@ becomes arithmetic the app does; "consistent" stays a judgement, exactly as ADR 
 to put a Run, not a week of training: a first Run on a Sunday followed by one on each of the next
 three Mondays touches four buckets fifteen days in. Handed "across 4 weeks", a coach could grant the
 four-week requirement a fortnight early, and a graduation cannot be taken back. So the length the
-coach is told is `daysTrained` and the full seven-day weeks they make (`weeksTrained`), and the rule
+coach is told is `daysSinceFirstRun` — days gone by, not an inclusive span, so the fourth week lands
+on day 28 and not on day 27 — and the full seven-day weeks they make (`weeksTrained`), and the rule
 beside the record refuses the rows as an answer. The bucket count survives only as
 `calendarWeeksSpanned`, which decides whether the listed weeks are the whole record or its tail.
 
