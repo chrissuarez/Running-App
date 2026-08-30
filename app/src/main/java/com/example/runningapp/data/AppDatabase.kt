@@ -9,6 +9,8 @@ import com.example.runningapp.HrProfile
 import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.hrZoneOf
+import com.example.runningapp.routes.RouteAsKept
+import com.example.runningapp.routes.libraryRedrawn
 import com.example.runningapp.run.RunMode
 import com.example.runningapp.run.RunRoute
 import com.example.runningapp.training.HistoryBestEffort
@@ -1566,7 +1568,7 @@ interface RunPauseDao {
         WalkMarkDebtRow::class,
         HistoryDebtRow::class
     ],
-    version = 41,
+    version = 42,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1681,7 +1683,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_37_38,
     MIGRATION_38_39,
     MIGRATION_39_40,
-    MIGRATION_40_41
+    MIGRATION_40_41,
+    MIGRATION_41_42
 )
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -2833,5 +2836,109 @@ val MIGRATION_40_41 = object : Migration(40, 41) {
         database.execSQL(HISTORY_DEBTS_TABLE_SQL)
         database.execSQL(RAISE_MOVING_TIME_DEBT_SQL)
         database.execSQL(RAISE_EFFORT_SCORE_DEBT_SQL)
+    }
+}
+
+/**
+ * The library as the upgrade at #399 finds it, in the order that decides which row of a collision
+ * survives — see [com.example.runningapp.routes.libraryRedrawn].
+ *
+ * The name, the source and `createdAtMillis` are not read because the pass never moves them.
+ */
+const val READ_LIBRARY_AS_KEPT_SQL =
+    "SELECT id, distanceMeters, elevationGainMeters, polyline FROM routes ORDER BY id"
+
+/**
+ * A past Run sent to the Route that survived a merge (#399).
+ *
+ * `sessions.ranAlongRouteId` is the one place outside the `routes` table where a Route's id is
+ * durably held (#56), and it is read to draw the course beside a Run that followed it
+ * ([SessionRepository.routeLineForRunFlow]). Left alone, a Run that followed the losing row would
+ * point at a row that is gone and its page would draw no course — so it is pointed at the row that
+ * holds that very same line instead, which is the course it actually ran.
+ *
+ * Run before the row is dropped, and in the same transaction as the drop, because between the two
+ * the Run would be pointing at nothing.
+ */
+const val REDIRECT_RAN_ALONG_MERGED_ROUTE_SQL =
+    "UPDATE sessions SET ranAlongRouteId = ? WHERE ranAlongRouteId = ?"
+
+/** The losing row of a merged pair, once every Run following it has been sent to the winner. */
+const val DROP_MERGED_ROUTE_SQL = "DELETE FROM routes WHERE id = ?"
+
+/**
+ * One row's line and numbers rewritten where it stands (#399).
+ *
+ * The name and `createdAtMillis` are deliberately not in the `SET`: the name is the runner's, and
+ * when they kept the course is a fact about their library rather than about the rule that draws it.
+ */
+const val REDRAW_ROUTE_SQL =
+    "UPDATE routes SET polyline = ?, distanceMeters = ?, elevationGainMeters = ? WHERE id = ?"
+
+/**
+ * The Route library redrawn by #354's rule, so the library has one identity rule and not two (#399).
+ *
+ * #354 made both doors into the library draw a Route's line the one way, and rows kept before it
+ * were not written that way — an imported row holds every point its file held, unthinned. A Route's
+ * identity is the exact text of its line, so handing the app a file it had already imported would
+ * find nothing to re-measure and keep a second row under the same name (#304): the very fault #354
+ * closed, arriving by the upgrade instead of by the two doors.
+ *
+ * **A backfill and nothing else** — no table, no column. What is written is decided entirely by
+ * [com.example.runningapp.routes.libraryRedrawn], which is pure Kotlin and where every decision the
+ * pass makes is argued and tested; all that happens here is a read, a call, and the writes. It has
+ * to be Kotlin rather than SQL because redrawing a line means running the very thinning both doors
+ * run, and a rule written a second time in SQL is a rule that will eventually be changed once.
+ *
+ * A library that never held a Route — most of them — reads no rows and writes nothing.
+ *
+ * It runs before the first read of the upgraded file, so what it costs is a delay to that read. The
+ * thinning is what costs, and it is bounded on both axes: a library holds a handful of courses, and
+ * each is thinned from a bounded number of places
+ * (`MOST_POINTS_A_COURSE_IS_THINNED_FROM` in [com.example.runningapp.routes.courseOf]), however many
+ * its file once held. That bound is why the pass can be a redraw of everything rather than a debt written
+ * down and worked off later ([HistoryDebtRow]) — there is no history here, only the library.
+ *
+ * Nothing outside the database holds a Route's id: the course picked for the next Run lives in
+ * Compose's saved state and is looked up by id against the library each time it is drawn
+ * (`MainActivity`), so a picked row that is gone shows as no course picked rather than as a Run set
+ * out on a course that does not exist. The one durable holder is `sessions.ranAlongRouteId`, and it
+ * is rewritten here ([REDIRECT_RAN_ALONG_MERGED_ROUTE_SQL]).
+ */
+val MIGRATION_41_42 = object : Migration(41, 42) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        val kept = ArrayList<RouteAsKept>()
+        database.query(READ_LIBRARY_AS_KEPT_SQL).use { row ->
+            while (row.moveToNext()) {
+                kept += RouteAsKept(
+                    id = row.getLong(0),
+                    distanceMeters = row.getDouble(1),
+                    elevationGainMeters = if (row.isNull(2)) null else row.getDouble(2),
+                    polyline = row.getString(3),
+                )
+            }
+        }
+        if (kept.isEmpty()) return
+
+        val redrawn = libraryRedrawn(kept)
+        // The merges first, so no row is ever redrawn onto a line another row still holds.
+        for (merge in redrawn.merged) {
+            database.execSQL(
+                REDIRECT_RAN_ALONG_MERGED_ROUTE_SQL,
+                arrayOf<Any?>(merge.keptId, merge.lostId),
+            )
+            database.execSQL(DROP_MERGED_ROUTE_SQL, arrayOf<Any?>(merge.lostId))
+        }
+        for (route in redrawn.redrawn) {
+            database.execSQL(
+                REDRAW_ROUTE_SQL,
+                arrayOf(
+                    route.polyline,
+                    route.distanceMeters,
+                    route.elevationGainMeters,
+                    route.id,
+                ),
+            )
+        }
     }
 }

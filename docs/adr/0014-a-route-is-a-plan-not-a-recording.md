@@ -127,6 +127,46 @@ simplification is not this one, so a course exported there and imported here rem
   would have to answer what "the same course" means for two genuinely different files — a question
   nothing has asked yet. Identity stays the stored line, exactly as written.
 
+### The rows kept before it are redrawn once, at the upgrade
+
+Added by #399. The rule above is about the two doors, and it left a third way in: the library a
+runner already had. An imported row held *every point its file held*, unthinned, and a Run-saved row
+was thinned from places that had not been snapped first. A Route's identity is the exact text of its
+line, so those rows are different Routes from the ones their own files make today — hand the app a
+file it had already imported and it finds nothing to re-measure and keeps a second row, under the
+same name (#304). The fault #354 closed, arriving by the upgrade instead of by the two doors.
+
+**Every row is redrawn once, through `courseOf`, by the migration to v42. Its distance is measured
+again along the line it now holds; its climb is left exactly as it was banked; and two rows landing
+on one line become one, the lower `id` surviving.**
+
+Redrawn through `courseOf` and not a copy of it, for the reason the two doors share it. The distance
+is measured again because a Route's distance is the distance along the line kept, and a row left with
+its old number would state a distance along a line it no longer has — and because re-measuring is
+what makes the pass finish its job: afterwards each row is exactly what its own file would produce
+today, so handing that file back is a true no-op rather than a re-measure the runner is told about.
+
+The climb is the one number the pass cannot bring into line, and this ADR is why: the row keeps no
+height profile and the file is gone. It is left standing, and a re-import re-measures it when it
+arrives — the remedy named above, unchanged.
+
+The lower `id` survives a merge because it is the tiebreak the library already uses when one line
+somehow has two rows (`findRouteByPolyline` orders by `id`), so the survivor is the row an importer
+would have been sent to anyway, and it is the one the runner has had longest, under the name they
+have been seeing. A survivor with no climb takes the climb of a row it absorbed, which is #355's
+rule: a null is silence about the course, not a claim that it is flat.
+
+`sessions.ranAlongRouteId` (#56) is the one place outside the table where a Route's id is durably
+held, and a Run that followed the losing row is pointed at the winner in the same transaction as the
+drop. Nothing else holds one: the course picked for the next Run lives in Compose's saved state and
+is looked up against the library each time it is drawn, so a row that has gone reads as no course
+picked.
+
+The alternative — leaving the table alone and teaching the importer to look for the old encoding as
+well — was rejected because it is this ADR's own argument turned round. It would put a second way of
+saying "the same course" into the library permanently, to spare a one-off pass over a table holding
+a handful of rows.
+
 ## The #20 rules restated on the axes a Route has
 
 The gain itself follows the GPS tier of #20 — ten metres of hysteresis above the last low point —
