@@ -785,7 +785,7 @@ class AiCoachClientTest {
 
     private val threeWeeksOfTraining = StageTrainingRecord(
         firstRunOn = LocalDate.parse("2026-08-10"),
-        daysTrained = 21,
+        daysSinceFirstRun = 21,
         qualifyingRuns = 5,
         weeks = listOf(
             StageWeek(LocalDate.parse("2026-08-10"), 2),
@@ -803,8 +803,8 @@ class AiCoachClientTest {
 
         assertTrue(
             prompt.contains(
-                "5 qualifying runs since 2026-08-10, which was 21 days ago counting today — " +
-                    "3 full weeks of training completed so far."
+                "5 qualifying runs since 2026-08-10, which was 21 days ago — 3 full weeks of " +
+                    "training completed so far."
             )
         )
         assertTrue(prompt.contains("2026-08-10 — 2; 2026-08-17 — 1; 2026-08-24 — 2"))
@@ -883,7 +883,7 @@ class AiCoachClientTest {
             oneRunWalkSession.copy(
                 stageTraining = StageTrainingRecord(
                     firstRunOn = LocalDate.parse("2026-08-24"),
-                    daysTrained = 7,
+                    daysSinceFirstRun = 7,
                     qualifyingRuns = 1,
                     weeks = listOf(StageWeek(LocalDate.parse("2026-08-24"), 1)),
                     calendarWeeksSpanned = 1,
@@ -893,8 +893,8 @@ class AiCoachClientTest {
 
         assertTrue(
             prompt.contains(
-                "1 qualifying run since 2026-08-24, which was 7 days ago counting today — " +
-                    "1 full week of training completed so far."
+                "1 qualifying run since 2026-08-24, which was 7 days ago — 1 full week of " +
+                    "training completed so far."
             )
         )
     }
@@ -905,7 +905,7 @@ class AiCoachClientTest {
             oneRunWalkSession.copy(
                 stageTraining = StageTrainingRecord(
                     firstRunOn = LocalDate.parse("2026-01-05"),
-                    daysTrained = 140,
+                    daysSinceFirstRun = 140,
                     qualifyingRuns = 20,
                     weeks = (0 until 12).map {
                         StageWeek(LocalDate.parse("2026-03-02").plusWeeks(it.toLong()), 1)
@@ -917,8 +917,8 @@ class AiCoachClientTest {
 
         assertTrue(
             prompt.contains(
-                "20 qualifying runs since 2026-01-05, which was 140 days ago counting today — " +
-                    "20 full weeks of training completed so far."
+                "20 qualifying runs since 2026-01-05, which was 140 days ago — 20 full weeks " +
+                    "of training completed so far."
             )
         )
         assertTrue(
@@ -938,7 +938,7 @@ class AiCoachClientTest {
             oneRunWalkSession.copy(
                 stageTraining = StageTrainingRecord(
                     firstRunOn = LocalDate.parse("2026-08-09"),
-                    daysTrained = 16,
+                    daysSinceFirstRun = 15,
                     qualifyingRuns = 4,
                     weeks = (0 until 4).map {
                         StageWeek(LocalDate.parse("2026-08-03").plusWeeks(it.toLong()), 1)

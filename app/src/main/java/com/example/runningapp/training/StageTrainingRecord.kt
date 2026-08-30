@@ -48,21 +48,25 @@ data class StageWeek(
  * [ADR 0019](docs/adr/0019-the-app-counts-the-training-the-coach-judges-the-consistency.md), which
  * also records the three designs this one was chosen over.
  *
- * [daysTrained], [weeksTrained] and [qualifyingRuns] describe the whole Stage. [weeks] is the tail
+ * [daysSinceFirstRun], [weeksTrained] and [qualifyingRuns] describe the whole Stage. [weeks] is the tail
  * of it, at most [WEEKS_SHOWN] long.
  */
 data class StageTrainingRecord(
     /** The day the Stage's first qualifying Run fell on, or null when it has had none. */
     val firstRunOn: LocalDate?,
     /**
-     * How many days the record spans: the day of the first qualifying Run through today, both
-     * counted. Zero when there has been no qualifying Run.
+     * How many days have passed since the first qualifying Run: zero on the day of it, one the day
+     * after. Zero when there has been no qualifying Run at all.
      *
-     * Counted through today and not through the last Run, because a Stage whose training stopped
-     * three weeks ago is not a three-weeks-shorter Stage — it is a Stage with three empty weeks on
-     * the end, and that is the half of "consistent" a total can never say.
+     * Elapsed and not inclusive, because [weeksTrained] divides it and a graduation cannot be taken
+     * back. Counting the first day as one puts four weeks on the board on day 28 — twenty-seven
+     * days after training began — and a week the runner has not finished is not a week they trained.
+     *
+     * Measured to today and not to the last Run, because a Stage whose training stopped three weeks
+     * ago is not a three-weeks-shorter Stage — it is a Stage with three empty weeks on the end, and
+     * that is the half of "consistent" a total can never say.
      */
-    val daysTrained: Int,
+    val daysSinceFirstRun: Int,
     /** Every qualifying Run of the Stage, counted — including any in weeks [weeks] does not list. */
     val qualifyingRuns: Int,
     /** The most recent [WEEKS_SHOWN] weeks or fewer, oldest first, ending with the week in progress. */
@@ -81,14 +85,14 @@ data class StageTrainingRecord(
 
     /**
      * How many FULL weeks of training the record covers: whole seven-day weeks elapsed since the
-     * first qualifying Run. Zero for the first six days.
+     * first qualifying Run. Zero until the seventh day after it, four on the twenty-eighth.
      *
      * This, and never the number of week rows in [weeks], is what a requirement written in weeks is
      * answered from — [calendarWeeksSpanned] counts buckets, not training. A first Run on a Sunday
      * followed by Runs on the next three Mondays touches four buckets fifteen days in, and a coach
      * handed that as "four weeks" could grant an irreversible graduation nearly a fortnight early.
      */
-    val weeksTrained: Int get() = daysTrained / 7
+    val weeksTrained: Int get() = daysSinceFirstRun / 7
 
     /**
      * Whether [weeks] is only the tail of the record — a Stage longer than [WEEKS_SHOWN] weeks.
@@ -103,7 +107,7 @@ data class StageTrainingRecord(
     companion object {
         val NONE = StageTrainingRecord(
             firstRunOn = null,
-            daysTrained = 0,
+            daysSinceFirstRun = 0,
             qualifyingRuns = 0,
             weeks = emptyList(),
             calendarWeeksSpanned = 0,
@@ -138,9 +142,9 @@ fun stageTrainingRecordOf(
 
     return StageTrainingRecord(
         firstRunOn = firstRunOn,
-        // Elapsed days, not touched buckets: the length of training the coach is given has to be
-        // one the calendar cannot inflate.
-        daysTrained = (ChronoUnit.DAYS.between(firstRunOn, through) + 1).coerceAtLeast(1).toInt(),
+        // Elapsed days, not touched buckets and not an inclusive span: the length of training the
+        // coach is given has to be one neither the calendar nor an off-by-one can inflate.
+        daysSinceFirstRun = ChronoUnit.DAYS.between(firstRunOn, through).coerceAtLeast(0).toInt(),
         qualifyingRuns = counted.size,
         weeks = weeks.takeLast(WEEKS_SHOWN),
         calendarWeeksSpanned = weeks.size,

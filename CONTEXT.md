@@ -76,7 +76,7 @@ half of "consistent" a total cannot say. It exists because the coach is shown
 only the Stage's last three sessions of any kind, so a requirement written in
 weeks was judged through a keyhole barely a week wide — and told a runner three
 weeks into a block that it was only just beginning. How long the training has
-run is measured in whole seven-day weeks since the first qualifying Run, never
+run is measured in whole seven-day weeks gone by since the first qualifying Run, never
 in the number of Monday-starting rows: a Sunday start puts four rows on the list
 a fortnight in, and a graduation cannot be taken back. The app counts; whether
 the count is *consistent* stays the coach's judgement

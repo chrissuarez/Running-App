@@ -20,7 +20,7 @@ class StageTrainingRecordTest {
 
         assertTrue(record.isEmpty)
         assertNull(record.firstRunOn)
-        assertEquals(0, record.daysTrained)
+        assertEquals(0, record.daysSinceFirstRun)
         assertEquals(0, record.weeksTrained)
         assertEquals(0, record.qualifyingRuns)
     }
@@ -43,7 +43,7 @@ class StageTrainingRecordTest {
         assertEquals(4, record.qualifyingRuns)
         // Two calendar rows, but eight days: one full week of training, not two.
         assertEquals(2, record.calendarWeeksSpanned)
-        assertEquals(8, record.daysTrained)
+        assertEquals(7, record.daysSinceFirstRun)
         assertEquals(1, record.weeksTrained)
         assertEquals(day("2026-08-17"), record.firstRunOn)
     }
@@ -64,7 +64,7 @@ class StageTrainingRecordTest {
             record.weeks
         )
         assertEquals(3, record.calendarWeeksSpanned)
-        assertEquals(2, record.weeksTrained) // 2026-08-03 through 2026-08-19 is 17 days.
+        assertEquals(2, record.weeksTrained) // 2026-08-19 is 16 days after 2026-08-03.
     }
 
     @Test
@@ -87,7 +87,7 @@ class StageTrainingRecordTest {
         )
         assertEquals(1, record.qualifyingRuns)
         assertEquals(4, record.calendarWeeksSpanned)
-        assertEquals(3, record.weeksTrained) // 2026-08-03 through 2026-08-27 is 25 days.
+        assertEquals(3, record.weeksTrained) // 2026-08-27 is 24 days after 2026-08-03.
     }
 
     @Test
@@ -102,8 +102,23 @@ class StageTrainingRecordTest {
 
         assertEquals(4, record.weeks.size)
         assertEquals(4, record.calendarWeeksSpanned)
-        assertEquals(16, record.daysTrained)
+        assertEquals(15, record.daysSinceFirstRun)
         assertEquals(2, record.weeksTrained)
+    }
+
+    @Test
+    fun `a full week is seven days gone by, so the fourth lands on day twenty-eight`() {
+        // The day before is the whole point: the coach is told a number a graduation may rest on,
+        // and a graduation cannot be taken back. A week the runner has not finished is not a week
+        // they trained.
+        val first = day("2026-08-01")
+        val dayTwentySeven = stageTrainingRecordOf(days = listOf(first), through = first.plusDays(27))
+        val dayTwentyEight = stageTrainingRecordOf(days = listOf(first), through = first.plusDays(28))
+
+        assertEquals(27, dayTwentySeven.daysSinceFirstRun)
+        assertEquals(3, dayTwentySeven.weeksTrained)
+        assertEquals(28, dayTwentyEight.daysSinceFirstRun)
+        assertEquals(4, dayTwentyEight.weeksTrained)
     }
 
     @Test
