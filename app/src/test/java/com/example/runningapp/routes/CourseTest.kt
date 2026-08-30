@@ -14,7 +14,7 @@ import org.junit.Test
  * Every rule here is about the line that is written down and never re-measured, so each one is
  * pinned in the JVM rather than found on a phone — the bargain [GpxRouteReader] makes on the way in.
  */
-class RunAsRouteTest {
+class CourseTest {
 
     /** A degree of latitude is about this many metres, which is how the spacings below are chosen. */
     private val metersPerDegree = 111_320.0

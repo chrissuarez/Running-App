@@ -54,6 +54,13 @@ class OneRunOneRouteTest {
         startsAfterPause = startsAfterPause,
     )
 
+    /** A place on the ground, so far north and east of where the fixes above start. */
+    private fun place(northMeters: Double, eastMeters: Double) = RoutePoint(
+        latitude = 51.5 + northMeters / metersPerDegree,
+        longitude = -0.1 + eastMeters / (metersPerDegree * 0.6225),
+        elevationMeters = 10.0,
+    )
+
     /** The line the library would store for the file this Run exports. */
     private fun lineFromTheSharedFile(trackPoints: List<TrackPoint>): List<RoutePoint> {
         val gpx = GpxWriter.write(
@@ -91,6 +98,86 @@ class OneRunOneRouteTest {
         val fromTheFile = lineFromTheSharedFile(trackPoints)
 
         assertEquals(RoutePolyline.encode(savedOffTheRun), RoutePolyline.encode(fromTheFile))
+    }
+
+    /**
+     * A track of raw fixes, wobbling the way a real one does, so the agreement is not an artefact of
+     * fixes placed on tidy round numbers.
+     *
+     * This is the case the file's own precision could break. A GPX writes a position to seven
+     * decimal places, so the file door thins places rounded to a centimetre while the Run door holds
+     * the fix as it was measured — and thinning asks how far a place sits from a line, a question
+     * whose answer changes in that last centimetre. Every place is moved to where the row will keep
+     * it before any of it is asked ([RoutePolyline.snapped]), and this is what says so.
+     */
+    @Test
+    fun `a wobbling run saved and re-imported is one line`() {
+        // A fixed, ordinary-looking wobble rather than tidy metres: repeatable, and nowhere near a
+        // round number of anything.
+        var wobble = 0.0
+        val trackPoints = (0..300).map {
+            wobble = (wobble * 7.3 + 0.61) % 1.0
+            fix(
+                northMeters = it * 1.4 + wobble * 0.9,
+                eastMeters = it * 0.31 + wobble * 1.7,
+                secondsIn = it.toLong(),
+                altitudeMeters = 10.0 + wobble * 3.0,
+            )
+        }
+
+        assertEquals(
+            RoutePolyline.encode(runAsCourse(trackPoints).line),
+            RoutePolyline.encode(lineFromTheSharedFile(trackPoints)),
+        )
+    }
+
+    /**
+     * A place sitting a *fraction of a centimetre* off the two-metre line, which is the case the
+     * file's own precision breaks.
+     *
+     * A GPX writes a position to seven decimal places, a little over a centimetre, so the same place
+     * reaches the two doors as two numbers a hair apart — and thinning asks how far that place sits
+     * from a line, a question whose answer changes in exactly that hair. Here the raw place is just
+     * inside the two metres and would be thrown away, while the same place written down as a file
+     * writes it is just outside and would be kept: one line of two points, one of three, and the
+     * library holding one course twice. Snapping every place to where the row will keep it, before
+     * any of it is asked, is what makes the two the same ([RoutePolyline.snapped]).
+     */
+    @Test
+    fun `a place a hair off the line is kept or dropped the same way by both doors`() {
+        val places = listOf(
+            place(northMeters = 0.0, eastMeters = 0.0),
+            place(northMeters = 100.0, eastMeters = 1.9995),
+            place(northMeters = 200.0, eastMeters = 0.0),
+        )
+
+        assertEquals(
+            RoutePolyline.encode(courseOf(places).line),
+            RoutePolyline.encode(courseOf(RoutePolyline.snapped(places)).line),
+        )
+    }
+
+    /**
+     * Rounding a course's places before handing them over changes nothing, which is the property the
+     * two doors rest on: whatever precision a course arrives at, it is thinned at the precision it
+     * will be stored at.
+     */
+    @Test
+    fun `a course is the same whether or not its places arrived rounded`() {
+        var wobble = 0.3
+        val places = (0..200).map {
+            wobble = (wobble * 5.7 + 0.29) % 1.0
+            RoutePoint(
+                latitude = 51.5 + (it * 2.2 + wobble) / metersPerDegree,
+                longitude = -0.1 + (it * 0.8 + wobble * 2) / (metersPerDegree * 0.6225),
+                elevationMeters = 10.0,
+            )
+        }
+
+        assertEquals(
+            RoutePolyline.encode(courseOf(places).line),
+            RoutePolyline.encode(courseOf(RoutePolyline.snapped(places)).line),
+        )
     }
 
     /**
