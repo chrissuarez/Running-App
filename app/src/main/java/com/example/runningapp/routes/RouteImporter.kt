@@ -4,7 +4,6 @@ import android.content.ContentResolver
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
-import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteDao
 import com.example.runningapp.data.RouteKeeping
 import com.example.runningapp.data.RouteSource
@@ -114,18 +113,7 @@ class RouteImporter(
         // keep it, leave the row already holding it alone, or write this file's better numbers onto
         // that row. Whatever comes back names the row the runner has, under whatever they call it.
         val kept = routeDao.keepRoute(
-            Route(
-                name = name,
-                // Along the line that was kept, and up the hills the file recorded — the two are
-                // measured off different readings of the walk, and [RunCourse] is where that is
-                // argued. The same pair the Run's own door banks ([RunRouteSaver]), so one evening
-                // measures the same however it reached the library.
-                distanceMeters = routeDistanceMeters(course.line),
-                elevationGainMeters = routeElevationGainMeters(course.asRecorded),
-                polyline = RoutePolyline.encode(course.line),
-                createdAtMillis = now(),
-                source = RouteSource.IMPORTED,
-            ),
+            course.asRoute(name, createdAtMillis = now(), source = RouteSource.IMPORTED),
             remeasuring = true,
         )
         return when (kept.keeping) {

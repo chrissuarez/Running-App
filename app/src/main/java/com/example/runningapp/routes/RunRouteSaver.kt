@@ -1,6 +1,5 @@
 package com.example.runningapp.routes
 
-import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteDao
 import com.example.runningapp.data.RouteKeeping
 import com.example.runningapp.data.RouteSource
@@ -98,22 +97,15 @@ class RunRouteSaver(
         // itself decides in one go whether this one is new — asking and then writing would leave a
         // gap for a second tap to walk into, and the runner would have two rows of the same course.
         // What comes back names the row they have, which after a rename is not the Run's own name.
-        val polyline = RoutePolyline.encode(course.line)
+        //
+        // The row itself is built by [asRoute], the one place that decides which reading of the walk
+        // feeds which number, so this door and the file door cannot come to disagree (#354).
+        //
         // The Run's own name, in the same words it is exported under, so a course saved off a Run
         // and a file shared from it cannot disagree about which evening they came from (#304).
         val name = RunExportName.runName(run, zoneId)
         val kept = routeDao.keepRoute(
-            Route(
-                name = name,
-                // Along the line that was kept, and up the hills that were recorded — the two are
-                // measured off different readings of the walk, and [RunCourse] is where that is
-                // argued.
-                distanceMeters = routeDistanceMeters(course.line),
-                elevationGainMeters = routeElevationGainMeters(course.asRecorded),
-                polyline = polyline,
-                createdAtMillis = now(),
-                source = RouteSource.FROM_RUN,
-            ),
+            course.asRoute(name, createdAtMillis = now(), source = RouteSource.FROM_RUN),
             // A Run brings nothing new to a course already kept, so the row is left as it stands.
             // An import can arrive carrying better heights than the file before it; a Run measured
             // twice by the same rules off the same fixes can only ever repeat itself.

@@ -61,13 +61,22 @@ Added by #354. There are two doors into the library and they described the same 
 A runner who saves a Run as a course (#55) and *also* shares that Run as a GPX (#84) and hands the
 file back (#54) is one runner with one evening, and they were getting two rows.
 
-**Every Route's line is thinned to its shape — two metres — before it is stored, on both doors.
-Its distance is measured along that line. Its climb is measured off the places before thinning.**
+**Every place is moved to the seven decimal places the row keeps it at, and then the line is thinned
+to its shape — two metres — before it is stored, on both doors. Its distance is measured along that
+line. Its climb is measured off the places before thinning.**
 
 The line is a Route's identity, so the doors cannot merely be *near* to agreeing: one point of
 difference is a second row of a course the runner already has. They agree by being the same code
 (`courseOf`), not by two copies of a rule being kept in step, because a rule written twice is a rule
 that will eventually be changed once.
+
+Same code is not enough on its own, which is why the snapping is part of the rule and comes first. A
+GPX writes a position to seven decimal places, so a Run's own file hands the importer places a
+centimetre from the ones the Run holds — and thinning asks how far a place sits from a line, a
+question whose answer changes in that last centimetre. A place a fraction of a centimetre inside the
+two metres on one door is a fraction outside it on the other, and one line then has a point the
+other does not. So every place is moved to where it will be *kept* before anything is asked of it,
+and the two doors thin the very same numbers.
 
 Thinning is the right form for both because of what a Route is *for*. A straight road recorded once
 a second is a thousand points saying nothing a pair of them do not, and every one of them is carried
@@ -91,6 +100,14 @@ down here rather than discovered.
 from the file's own total by the corners the thinning cut. At two metres that is a handful of metres
 over a long course, and it is the honest number for the question a Route answers: how far the
 runner following this course will go.
+
+**The line agrees; the numbers on the row need not.** A GPX states its heights to a tenth of a metre
+and a Run holds them as it measured them, so a Run's own file handed back finds the Route that Run
+saved and *re-measures* it rather than being waved through untouched. That is one row, which is what
+#354 was about, and it is the remedy this ADR already names for a banked number, working as intended.
+The runner is told the numbers now come from the file. Making the heights agree too would mean
+rounding a Run's own measurements to the precision of a file format it may never be written to, and
+the course is the thing being made canonical here, not the arithmetic about it.
 
 **A file simplified by another app is still its own Route.** Thinning makes two lines the same only
 when they were the same ground drawn at different densities by *this* app's rules. Strava's
@@ -190,4 +207,5 @@ metres that never happened.
 - **Saving a Run as a Route (#55) already has its answer.** It takes the Run's track and joins across
   its Breaks, exactly as an import does — because at the moment a runner keeps it, it stops being a
   recording of where they went and becomes a line they mean to go again. Since #354 the two doors
-  share the code that does it, so "exactly as an import does" is true by construction.
+  share the code that does it, and are fed places snapped to the same precision first, so "exactly as
+  an import does" is true of the line by construction.

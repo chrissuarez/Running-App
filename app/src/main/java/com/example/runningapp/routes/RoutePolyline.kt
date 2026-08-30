@@ -17,8 +17,44 @@ import java.util.Locale
  */
 object RoutePolyline {
 
-    fun encode(points: List<RoutePoint>): String = points.joinToString(" ") { point ->
-        String.format(Locale.US, "%.7f,%.7f", point.latitude, point.longitude)
+    fun encode(points: List<RoutePoint>): String =
+        points.joinToString(" ") { "${format(it.latitude)},${formatLongitude(it.longitude)}" }
+
+    /**
+     * The same places, each moved to the position the row would write it at (#354).
+     *
+     * A course is thinned to its shape before it is stored ([com.example.runningapp.routes.courseOf]),
+     * and thinning asks how far a place sits from a line — a question whose answer changes in the
+     * last centimetre. So the places are moved to where they will be *kept* before that is asked,
+     * and not afterwards: a Run's fixes carry a dozen more decimal places than the row has room for,
+     * a file's points arrive already rounded to seven by whatever wrote them, and the same course
+     * coming in by those two doors has to thin to the very same line or the library keeps it twice.
+     *
+     * The heights are left alone. They are not written here — a Route's row keeps no profile — and
+     * the climb is banked off them before ever reaching the line ([com.example.runningapp.routes.Course]).
+     */
+    fun snapped(points: List<RoutePoint>): List<RoutePoint> = points.map { point ->
+        RoutePoint(
+            latitude = format(point.latitude).toDouble(),
+            longitude = formatLongitude(point.longitude).toDouble(),
+            elevationMeters = point.elevationMeters,
+        )
+    }
+
+    private fun format(value: Double): String = String.format(Locale.US, "%.7f", value)
+
+    /**
+     * Longitude written the one way this app writes it.
+     *
+     * 180 and -180 are the same meridian under two names, and a course whose identity is the text of
+     * its line cannot hold both: a place a hair west of the antimeridian rounds up to "180.0000000",
+     * which is also the name the place a hair east of it goes by. The eastern name is the one kept,
+     * the same choice [com.example.runningapp.export.GpxWriter] makes and for the same reason — GPX
+     * bounds longitude at 180 exclusive, so a file has no other name available.
+     */
+    private fun formatLongitude(value: Double): String {
+        val formatted = format(value)
+        return if (formatted == "180.0000000") "-180.0000000" else formatted
     }
 
     /**
