@@ -17,12 +17,15 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.doThrow
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import java.io.FileNotFoundException
 import java.io.InputStream
@@ -277,6 +280,74 @@ class RouteImporterTest {
 
         assertEquals(RouteImportOutcome.Refused(GpxRefusal.NO_POINTS), outcome)
         assertTrue(dao.stored.isEmpty())
+    }
+
+    /**
+     * A file describing one place. Readable, real, and not a course — the Run door has always
+     * turned this away, and since #397 so does the file door.
+     */
+    @Test
+    fun `writes nothing when the gpx holds a single place`() = runTest {
+        val outcome = importerFor(
+            """<gpx version="1.1"><trk><trkseg>""" +
+                """<trkpt lat="51.5" lon="-0.1"/>""" +
+                """</trkseg></trk></gpx>"""
+        ).import(uri)
+
+        assertEquals(RouteImportOutcome.Refused(GpxRefusal.NO_GROUND), outcome)
+        assertTrue(dao.stored.isEmpty())
+    }
+
+    /**
+     * A recorder left running on one spot: many points, all at the same place. Since #354 they fold
+     * into one place, so this is the file the widened door would have kept as a Route (#397).
+     */
+    @Test
+    fun `writes nothing when every place in the gpx is the same place`() = runTest {
+        val standingStill = (1..20).joinToString("") {
+            """<trkpt lat="51.5000000" lon="-0.1000000"><ele>10.0</ele></trkpt>"""
+        }
+        val outcome = importerFor(
+            """<gpx version="1.1"><trk><trkseg>$standingStill</trkseg></trk></gpx>"""
+        ).import(uri)
+
+        assertEquals(RouteImportOutcome.Refused(GpxRefusal.NO_GROUND), outcome)
+        assertTrue(dao.stored.isEmpty())
+    }
+
+    /**
+     * A scatter wider than nothing but narrower than the error a fix is allowed: still not a course,
+     * however long the path through it.
+     */
+    @Test
+    fun `writes nothing when the gpx never reaches across the ground`() = runTest {
+        val scatter = listOf(
+            "51.5000000" to "-0.1000000",
+            "51.5004000" to "-0.1000000",
+            "51.5000000" to "-0.1004000",
+            "51.5004000" to "-0.1004000",
+        ).joinToString("") { (lat, lon) -> """<trkpt lat="$lat" lon="$lon"/>""" }
+        val outcome = importerFor(
+            """<gpx version="1.1"><trk><trkseg>$scatter</trkseg></trk></gpx>"""
+        ).import(uri)
+
+        assertEquals(RouteImportOutcome.Refused(GpxRefusal.NO_GROUND), outcome)
+        assertTrue(dao.stored.isEmpty())
+    }
+
+    /** A file that is not a course is refused without the provider ever being asked its name. */
+    @Test
+    fun `does not ask what a file with no course is called`() = runTest {
+        val resolver: ContentResolver = mock()
+        whenever(resolver.openInputStream(eq(uri))).doAnswer {
+            """<gpx version="1.1"><trk><trkseg><trkpt lat="51.5" lon="-0.1"/></trkseg></trk></gpx>"""
+                .byteInputStream() as InputStream?
+        }
+
+        val outcome = RouteImporter(resolver, dao, now = { 1L }).import(uri)
+
+        assertEquals(RouteImportOutcome.Refused(GpxRefusal.NO_GROUND), outcome)
+        verify(resolver, never()).query(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull())
     }
 
     /** A half-downloaded file, truncated mid-track. Nothing of it is kept. */

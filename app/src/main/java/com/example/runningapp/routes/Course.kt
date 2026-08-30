@@ -4,6 +4,7 @@ import com.example.runningapp.analysis.thinnedLineIndices
 import com.example.runningapp.data.Route
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.recording.METERS_PER_DEGREE
+import com.example.runningapp.recording.SessionRecorder
 import com.example.runningapp.recording.degreesEastOf
 import kotlin.math.cos
 
@@ -308,3 +309,42 @@ fun courseSpanMeters(points: List<RoutePoint>): Double {
         METERS_PER_DEGREE * cos(Math.toRadians(points.first().latitude))
     return maxOf(northSouth, eastWest)
 }
+
+/**
+ * How far a course has to reach across the ground before it is a course at all (#55, #397).
+ *
+ * Twice [SessionRecorder.ACCURACY_THRESHOLD_METERS], the widest error a fix is accepted with, so two
+ * accepted fixes from a runner who never moved can sit exactly this far apart. Anything that never
+ * reaches outside that width is the error alone, and a Route made of it would be a course nobody
+ * could follow.
+ *
+ * A file has no accuracy to argue from — a GPX states a position and nothing about how well it was
+ * known — so the bar reaching the file door is borrowed rather than derived. That is the point of
+ * it: what counts as a course is one question, and the two doors into the library answering it
+ * differently is the fault #397 names.
+ *
+ * The drawing on a History row asks for the same width and is *not* this number
+ * ([com.example.runningapp.analysis.routeThumbnailOf], which argues its own). The two agree today
+ * and are still two, because they are asked for different reasons: that one decides whether there
+ * is a shape worth drawing a centimetre wide, this one whether there is ground worth sending a
+ * runner over. Folding them together would make either reason able to move the other.
+ */
+internal val ROUTE_MINIMUM_METERS = 2 * SessionRecorder.ACCURACY_THRESHOLD_METERS
+
+/**
+ * Whether there is a course here to keep, asked in the one place both doors reach (#397).
+ *
+ * Two tests, and they are not the same one twice. A line of fewer than two places is not a line:
+ * every place recorded was the same place, so there is nothing to draw and [CourseLine.of] would
+ * refuse it. A line that reaches nowhere is a scatter: it has places, in order, and it is still not
+ * ground anyone can be sent over.
+ *
+ * Measured across rather than along, because the walk this turns away is the one that stood still,
+ * and the length of *that* line is the length of ten minutes of wandering — see [courseSpanMeters].
+ *
+ * Asked of [line] rather than [asRecorded], because the line is what a Route is stored as: a Route
+ * whose line is one point is the row #397 exists to stop being written, however many points the
+ * file or the track behind it held.
+ */
+fun Course.holdsACourse(): Boolean =
+    line.size >= 2 && courseSpanMeters(line) >= ROUTE_MINIMUM_METERS

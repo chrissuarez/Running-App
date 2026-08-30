@@ -42,6 +42,12 @@ fun gpxRefusalMessage(reason: GpxRefusal): String = when (reason) {
             "Connect and Komoot export."
     GpxRefusal.NO_POINTS ->
         "That GPX has no route in it — no track and no route to follow. Try exporting it again."
+    GpxRefusal.NO_GROUND ->
+        // The Run door's words for the same rule ([runHasNoRouteToSaveMessage]), because it is the
+        // same rule (#397). Not "it stays on one spot": a file of places spread fifty metres about
+        // is turned away too, and telling the runner it is all one place would be untrue of it.
+        "That GPX doesn’t go far enough from where it starts to keep as a route. Nothing has " +
+            "been added to your routes."
     GpxRefusal.TOO_LARGE ->
         "That GPX is too big to keep as a route. Try exporting a shorter one, or one recorded less often."
     GpxRefusal.UNREADABLE ->

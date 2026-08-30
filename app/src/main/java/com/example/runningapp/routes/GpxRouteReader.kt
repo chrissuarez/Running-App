@@ -29,6 +29,21 @@ enum class GpxRefusal {
     /** A real GPX carrying no course: waypoints only, or empty segments. */
     NO_POINTS,
 
+    /**
+     * A real GPX carrying places, but not enough of them in enough places to be a course to follow
+     * (#397): one place, the same place recorded over and over, or a scatter that never reaches
+     * across the ground by [com.example.runningapp.routes.ROUTE_MINIMUM_METERS].
+     *
+     * Raised by [RouteImporter] rather than by the reader, which is why it sits with the other
+     * reasons rather than with the code that returns them: this enum says why a *file* could not
+     * become a Route, and the importer already refuses files the reader never sees — one it cannot
+     * open is [UNREADABLE] before a byte is parsed. This is a question about the line a Route would
+     * be stored as rather than about the file's own text, so it can only be asked once the places
+     * have been made into a course — see [com.example.runningapp.routes.holdsACourse], the one
+     * place both doors ask it.
+     */
+    NO_GROUND,
+
     /** More points than any route needs — see [MOST_POINTS_A_ROUTE_MAY_HAVE]. */
     TOO_LARGE,
 
