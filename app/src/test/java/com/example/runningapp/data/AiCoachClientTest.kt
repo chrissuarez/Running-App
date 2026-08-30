@@ -785,13 +785,14 @@ class AiCoachClientTest {
 
     private val threeWeeksOfTraining = StageTrainingRecord(
         firstRunOn = LocalDate.parse("2026-08-10"),
-        weeksTrained = 3,
+        daysTrained = 21,
         qualifyingRuns = 5,
         weeks = listOf(
             StageWeek(LocalDate.parse("2026-08-10"), 2),
             StageWeek(LocalDate.parse("2026-08-17"), 1),
             StageWeek(LocalDate.parse("2026-08-24"), 2),
         ),
+        calendarWeeksSpanned = 3,
     )
 
     @Test
@@ -800,7 +801,12 @@ class AiCoachClientTest {
             oneRunWalkSession.copy(stageTraining = threeWeeksOfTraining)
         )
 
-        assertTrue(prompt.contains("5 qualifying runs since 2026-08-10, across 3 weeks"))
+        assertTrue(
+            prompt.contains(
+                "5 qualifying runs since 2026-08-10, which was 21 days ago counting today — " +
+                    "3 full weeks of training completed so far."
+            )
+        )
         assertTrue(prompt.contains("2026-08-10 — 2; 2026-08-17 — 1; 2026-08-24 — 2"))
     }
 
@@ -845,14 +851,20 @@ class AiCoachClientTest {
             oneRunWalkSession.copy(
                 stageTraining = StageTrainingRecord(
                     firstRunOn = LocalDate.parse("2026-08-24"),
-                    weeksTrained = 1,
+                    daysTrained = 7,
                     qualifyingRuns = 1,
                     weeks = listOf(StageWeek(LocalDate.parse("2026-08-24"), 1)),
+                    calendarWeeksSpanned = 1,
                 )
             )
         )
 
-        assertTrue(prompt.contains("1 qualifying run since 2026-08-24, across 1 week."))
+        assertTrue(
+            prompt.contains(
+                "1 qualifying run since 2026-08-24, which was 7 days ago counting today — " +
+                    "1 full week of training completed so far."
+            )
+        )
     }
 
     @Test
@@ -861,23 +873,58 @@ class AiCoachClientTest {
             oneRunWalkSession.copy(
                 stageTraining = StageTrainingRecord(
                     firstRunOn = LocalDate.parse("2026-01-05"),
-                    weeksTrained = 20,
+                    daysTrained = 140,
                     qualifyingRuns = 20,
                     weeks = (0 until 12).map {
                         StageWeek(LocalDate.parse("2026-03-02").plusWeeks(it.toLong()), 1)
                     },
+                    calendarWeeksSpanned = 20,
                 )
             )
         )
 
-        assertTrue(prompt.contains("20 qualifying runs since 2026-01-05, across 20 weeks."))
         assertTrue(
             prompt.contains(
-                "The most recent 12 of those weeks, oldest first, each week starting on the " +
+                "20 qualifying runs since 2026-01-05, which was 140 days ago counting today — " +
+                    "20 full weeks of training completed so far."
+            )
+        )
+        assertTrue(
+            prompt.contains(
+                "The most recent 12 weeks of the record, oldest first, each week starting on the " +
                     "Monday shown — the earlier weeks are not listed, so these counts add up to " +
                     "less than the total above:"
             )
         )
+    }
+
+    @Test
+    fun `a weeks requirement is fenced to full weeks elapsed, never to the rows listed`() {
+        // Four Monday rows can be on the list little over two weeks in, and a graduation cannot be
+        // taken back — so the length is stated in full weeks and the rows are refused as an answer.
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                stageTraining = StageTrainingRecord(
+                    firstRunOn = LocalDate.parse("2026-08-09"),
+                    daysTrained = 16,
+                    qualifyingRuns = 4,
+                    weeks = (0 until 4).map {
+                        StageWeek(LocalDate.parse("2026-08-03").plusWeeks(it.toLong()), 1)
+                    },
+                    calendarWeeksSpanned = 4,
+                )
+            )
+        )
+
+        assertTrue(prompt.contains("2 full weeks of training completed so far."))
+        assertFalse(prompt.contains("4 full weeks"))
+        assertTrue(
+            prompt.contains(
+                "a requirement asking for a number of weeks of training is met only once at " +
+                    "least that many full weeks of training have been completed"
+            )
+        )
+        assertTrue(prompt.contains("Never answer it by counting the week rows listed here"))
     }
 
     @Test

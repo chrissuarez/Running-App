@@ -2,6 +2,7 @@ package com.example.runningapp.training
 
 import com.example.runningapp.isBeyondAnyonesToday
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 
 /**
  * How many weeks of a Stage's training record the coach is shown one by one (#289).
@@ -47,28 +48,47 @@ data class StageWeek(
  * [ADR 0019](docs/adr/0019-the-app-counts-the-training-the-coach-judges-the-consistency.md), which
  * also records the three designs this one was chosen over.
  *
- * [weeksTrained] and [qualifyingRuns] describe the whole Stage. [weeks] is the tail of it, at most
- * [WEEKS_SHOWN] long.
+ * [daysTrained], [weeksTrained] and [qualifyingRuns] describe the whole Stage. [weeks] is the tail
+ * of it, at most [WEEKS_SHOWN] long.
  */
 data class StageTrainingRecord(
     /** The day the Stage's first qualifying Run fell on, or null when it has had none. */
     val firstRunOn: LocalDate?,
     /**
-     * How many weeks the record spans: from the week of the first qualifying Run through the week
-     * the runner is in now. Zero when there has been no qualifying Run.
+     * How many days the record spans: the day of the first qualifying Run through today, both
+     * counted. Zero when there has been no qualifying Run.
      *
      * Counted through today and not through the last Run, because a Stage whose training stopped
      * three weeks ago is not a three-weeks-shorter Stage — it is a Stage with three empty weeks on
      * the end, and that is the half of "consistent" a total can never say.
      */
-    val weeksTrained: Int,
+    val daysTrained: Int,
     /** Every qualifying Run of the Stage, counted — including any in weeks [weeks] does not list. */
     val qualifyingRuns: Int,
     /** The most recent [WEEKS_SHOWN] weeks or fewer, oldest first, ending with the week in progress. */
     val weeks: List<StageWeek>,
+    /**
+     * How many Monday-starting weeks the record touches, first qualifying Run's week through the
+     * week in progress. Only ever used to say whether [weeks] is the whole record or its tail.
+     *
+     * It is deliberately not told to the coach as a length of training, because it is not one: a
+     * calendar week turns over on a Monday whatever day the runner started on. See [weeksTrained].
+     */
+    val calendarWeeksSpanned: Int,
 ) {
     /** Nothing to tell the coach: this Stage has no qualifying Run behind it at all. */
     val isEmpty: Boolean get() = weeks.isEmpty()
+
+    /**
+     * How many FULL weeks of training the record covers: whole seven-day weeks elapsed since the
+     * first qualifying Run. Zero for the first six days.
+     *
+     * This, and never the number of week rows in [weeks], is what a requirement written in weeks is
+     * answered from — [calendarWeeksSpanned] counts buckets, not training. A first Run on a Sunday
+     * followed by Runs on the next three Mondays touches four buckets fifteen days in, and a coach
+     * handed that as "four weeks" could grant an irreversible graduation nearly a fortnight early.
+     */
+    val weeksTrained: Int get() = daysTrained / 7
 
     /**
      * Whether [weeks] is only the tail of the record — a Stage longer than [WEEKS_SHOWN] weeks.
@@ -78,10 +98,16 @@ data class StageTrainingRecord(
      * itself — most likely by reading the smaller number as the true one, which is the whole fault
      * this record exists to undo.
      */
-    val weeksAreATail: Boolean get() = weeks.size < weeksTrained
+    val weeksAreATail: Boolean get() = weeks.size < calendarWeeksSpanned
 
     companion object {
-        val NONE = StageTrainingRecord(firstRunOn = null, weeksTrained = 0, qualifyingRuns = 0, weeks = emptyList())
+        val NONE = StageTrainingRecord(
+            firstRunOn = null,
+            daysTrained = 0,
+            qualifyingRuns = 0,
+            weeks = emptyList(),
+            calendarWeeksSpanned = 0,
+        )
     }
 }
 
@@ -112,8 +138,11 @@ fun stageTrainingRecordOf(
 
     return StageTrainingRecord(
         firstRunOn = firstRunOn,
-        weeksTrained = weeks.size,
+        // Elapsed days, not touched buckets: the length of training the coach is given has to be
+        // one the calendar cannot inflate.
+        daysTrained = (ChronoUnit.DAYS.between(firstRunOn, through) + 1).coerceAtLeast(1).toInt(),
         qualifyingRuns = counted.size,
         weeks = weeks.takeLast(WEEKS_SHOWN),
+        calendarWeeksSpanned = weeks.size,
     )
 }

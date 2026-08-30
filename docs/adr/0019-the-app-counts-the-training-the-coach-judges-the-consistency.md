@@ -35,6 +35,14 @@ and `stageTrainingRecordOf` buckets them into Monday-starting weeks. The prompt 
 the span, and the per-week counts, and asked to judge whether that is *consistent*. "Four weeks"
 becomes arithmetic the app does; "consistent" stays a judgement, exactly as ADR 0016 said it should.
 
+**The span is elapsed training, never the number of week rows.** A Monday-starting bucket is a place
+to put a Run, not a week of training: a first Run on a Sunday followed by one on each of the next
+three Mondays touches four buckets fifteen days in. Handed "across 4 weeks", a coach could grant the
+four-week requirement a fortnight early, and a graduation cannot be taken back. So the length the
+coach is told is `daysTrained` and the full seven-day weeks they make (`weeksTrained`), and the rule
+beside the record refuses the rows as an answer. The bucket count survives only as
+`calendarWeeksSpanned`, which decides whether the listed weeks are the whole record or its tail.
+
 The three alternatives, and why not:
 
 - **Show more Runs.** It grows the prompt and does not scale: four weeks of training is more than

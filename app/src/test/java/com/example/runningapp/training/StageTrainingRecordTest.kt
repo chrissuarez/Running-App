@@ -20,6 +20,7 @@ class StageTrainingRecordTest {
 
         assertTrue(record.isEmpty)
         assertNull(record.firstRunOn)
+        assertEquals(0, record.daysTrained)
         assertEquals(0, record.weeksTrained)
         assertEquals(0, record.qualifyingRuns)
     }
@@ -40,7 +41,10 @@ class StageTrainingRecordTest {
             record.weeks
         )
         assertEquals(4, record.qualifyingRuns)
-        assertEquals(2, record.weeksTrained)
+        // Two calendar rows, but eight days: one full week of training, not two.
+        assertEquals(2, record.calendarWeeksSpanned)
+        assertEquals(8, record.daysTrained)
+        assertEquals(1, record.weeksTrained)
         assertEquals(day("2026-08-17"), record.firstRunOn)
     }
 
@@ -59,7 +63,8 @@ class StageTrainingRecordTest {
             ),
             record.weeks
         )
-        assertEquals(3, record.weeksTrained)
+        assertEquals(3, record.calendarWeeksSpanned)
+        assertEquals(2, record.weeksTrained) // 2026-08-03 through 2026-08-19 is 17 days.
     }
 
     @Test
@@ -81,7 +86,24 @@ class StageTrainingRecordTest {
             record.weeks
         )
         assertEquals(1, record.qualifyingRuns)
-        assertEquals(4, record.weeksTrained)
+        assertEquals(4, record.calendarWeeksSpanned)
+        assertEquals(3, record.weeksTrained) // 2026-08-03 through 2026-08-27 is 25 days.
+    }
+
+    @Test
+    fun `four calendar weeks are not four weeks of training when the first run was a Sunday`() {
+        // The fault this separation exists to stop: a first Run on a Sunday and one on each of the
+        // next three Mondays touches four Monday-starting rows fifteen days in. Told "4 weeks", a
+        // coach could grant a four-week requirement — irreversibly — a fortnight early.
+        val record = stageTrainingRecordOf(
+            days = listOf(day("2026-08-09"), day("2026-08-10"), day("2026-08-17"), day("2026-08-24")),
+            through = day("2026-08-24"),
+        )
+
+        assertEquals(4, record.weeks.size)
+        assertEquals(4, record.calendarWeeksSpanned)
+        assertEquals(16, record.daysTrained)
+        assertEquals(2, record.weeksTrained)
     }
 
     @Test
@@ -123,7 +145,9 @@ class StageTrainingRecordTest {
         val record = stageTrainingRecordOf(days = days, through = start.plusWeeks(19))
 
         assertEquals(20, record.qualifyingRuns)
-        assertEquals(20, record.weeksTrained)
+        assertEquals(20, record.calendarWeeksSpanned)
+        // Nineteen full weeks: the twentieth week is the one in progress.
+        assertEquals(19, record.weeksTrained)
         assertEquals(12, record.weeks.size)
         assertEquals(start.plusWeeks(8), record.weeks.first().startingOn)
         assertEquals(start.plusWeeks(19), record.weeks.last().startingOn)
