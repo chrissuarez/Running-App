@@ -181,6 +181,35 @@ class OneRunOneRouteTest {
     }
 
     /**
+     * A Run longer than the shaping will thin from, out through the file and back.
+     *
+     * Above that many places the line is shortened before it is thinned, and that is exactly where
+     * the two doors could part company again: a bound written at the file door alone would shorten
+     * a long course coming in from a file and not the same course saved off the Run, and the library
+     * would hold it twice — the fault #354 exists to fix, returning at a length nobody would think
+     * to test. So the bound lives in the shaping both doors go through, and this is what says so.
+     */
+    @Test
+    fun `a run longer than the thinning's bound is one line by either door`() {
+        // Half a metre a fix, which is what the pre-pass drops on: 25,000 places, above the bound,
+        // and a wobble so the line is not a straight road the thinning would answer in two points.
+        var wobble = 0.0
+        val trackPoints = (0 until 25_000).map {
+            wobble = (wobble * 7.3 + 0.61) % 1.0
+            fix(
+                northMeters = it * 0.5 + wobble * 1.1,
+                eastMeters = it * 0.2 + wobble * 2.4,
+                secondsIn = it.toLong(),
+            )
+        }
+
+        assertEquals(
+            RoutePolyline.encode(runAsCourse(trackPoints).line),
+            RoutePolyline.encode(lineFromTheSharedFile(trackPoints)),
+        )
+    }
+
+    /**
      * A Run with a Pause in it. The export breaks the file where the runner stopped and the reader
      * joins it back up (ADR 0014), so the two doors must still agree — the thinning being the only
      * thing that ever separated them.

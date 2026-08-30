@@ -156,10 +156,42 @@ private fun List<RoutePoint>.withoutRepeatedPlaces(): List<RoutePoint> = filterI
 }
 
 /**
+ * The most points one course's line is thinned from.
+ *
+ * The thinning walk is quadratic in the worst case — a line that keeps bending splits into a stretch
+ * of one point and a stretch of the rest — so the number of points handed to it has to be bounded by
+ * something, and on this side it was bounded by accident until #354. A Run's own track bounds itself
+ * at about a fix a second; a file's points are bounded by nothing but the reader's refusal at
+ * 200,000 ([GpxRouteReader]), and before #354 no thinning was asked of them at all. Sharing the
+ * shaping between the two doors is what brought a file's every point to this walk, so the bound
+ * arrives with it.
+ *
+ * Twenty thousand is far above anything anyone runs. An hour at a fix a second is some 3,600 places
+ * and a marathon some 15,000, so no course a runner recorded or drew reaches this, and the bound
+ * changes no result they will ever see. What it buys is an end to the arithmetic: two hundred
+ * million distance measurements at the very worst rather than twenty billion, a second or so of one
+ * import rather than an import worker that never finishes.
+ *
+ * It is deliberately not the [com.example.runningapp.analysis.routeThumbnailOf] bound of two
+ * thousand, though the rule below is that one's: a thumbnail is a smudge on a History row and can
+ * throw away almost everything, while a course is a line to follow. The bound is the same idea at
+ * the size this side of the app works at.
+ */
+private const val MOST_POINTS_A_COURSE_IS_THINNED_FROM = 20_000
+
+/**
  * The same line with everything finer than [ROUTE_DETAIL_METERS] taken out of it.
  *
  * The thinning itself is [thinnedLineIndices], shared with the drawing beside a Run in History; all
  * that is decided here is what the line is measured in, which is metres on the ground.
+ *
+ * A line longer than [MOST_POINTS_A_COURSE_IS_THINNED_FROM] is shortened first by
+ * [spacedOutEnoughToThin], which drops only places the thinning was already allowed to lose. This
+ * lives here, in the shaping both doors go through, rather than at the file door where the long
+ * lines come from: the line is a Route's identity, so a bound on one door alone would mean a long
+ * enough course thinning differently depending on which door it came in by, and the library keeping
+ * it twice — the very fault #354 fixes. A bound that is part of the shape must be part of the
+ * shaping.
  */
 private fun List<RoutePoint>.thinnedToItsShape(): List<RoutePoint> {
     if (size <= 2) return this
@@ -172,14 +204,83 @@ private fun List<RoutePoint>.thinnedToItsShape(): List<RoutePoint> {
     // and that "how far east" is asked of [degreesEastOf] so that a Run over the date line is laid
     // out on the sheet the way it was run rather than flung most of the way round the world.
     val cosLatitude = cos(Math.toRadians(first().latitude))
+    val x = DoubleArray(size) {
+        degreesEastOf(first().longitude, this[it].longitude) * METERS_PER_DEGREE * cosLatitude
+    }
+    val y = DoubleArray(size) { (this[it].latitude - first().latitude) * METERS_PER_DEGREE }
+
+    // Shortened first if it is too long to thin, and only then. Everything below reads the line
+    // through [thinnable], which is every place there is whenever the line was short enough — so a
+    // course anyone actually recorded is thinned from exactly the places it always was.
+    val thinnable = spacedOutEnoughToThin(x, y)
     val kept = thinnedLineIndices(
-        x = DoubleArray(size) {
-            degreesEastOf(first().longitude, this[it].longitude) * METERS_PER_DEGREE * cosLatitude
-        },
-        y = DoubleArray(size) { (this[it].latitude - first().latitude) * METERS_PER_DEGREE },
+        x = DoubleArray(thinnable.size) { x[thinnable[it]] },
+        y = DoubleArray(thinnable.size) { y[thinnable[it]] },
         detail = ROUTE_DETAIL_METERS,
     )
-    return kept.map { this[it] }
+    return kept.map { this[thinnable[it]] }
+}
+
+/**
+ * The places of the line, with the ones the thinning was already allowed to lose taken out of it,
+ * and no others — and only when there are more of them than [MOST_POINTS_A_COURSE_IS_THINNED_FROM].
+ *
+ * The rule is [com.example.runningapp.analysis.routeThumbnailOf]'s, and deliberately so: it is the
+ * only rule that shortens a line without drawing a different one, and the argument for it is made in
+ * full at `spacedOutEnoughToThin` there. In short, a line cannot be shortened by counting — a course
+ * may spend a hundred thousand places shuffling round a park and fifty on the kilometre of road out
+ * to it, and every rule that picks places by their position in the list throws that kilometre away.
+ * So the only place dropped is one sitting within [gap] of the last place kept, which moves the line
+ * by less than [gap] and so cannot lose a feature bigger than [gap], however the file spread its
+ * points. Both ends are always kept.
+ *
+ * What differs here is the unit and the starting gap. The thumbnail measures in fractions of its own
+ * square; this measures in metres on the flat sheet the thinning itself is laid out on, and starts
+ * at [ROUTE_DETAIL_METERS]. That start gives away nothing: a place dropped for sitting within two
+ * metres of the last one kept moves the line by less than the detail the thinning is already
+ * entitled to throw away, so at the starting gap this pre-pass can only remove what the walk it
+ * feeds could have removed anyway.
+ *
+ * Wider gaps are a different bargain, and are only ever reached by a line that is still tens of
+ * thousands of places long once everything within two metres of its neighbour has gone — a scribble
+ * built to be dense rather than a course anyone ran or drew. Widening is the honest answer to that:
+ * it keeps the scribble's shape to within the gap it settled at instead of never finishing.
+ */
+private fun spacedOutEnoughToThin(x: DoubleArray, y: DoubleArray): List<Int> {
+    if (x.size <= MOST_POINTS_A_COURSE_IS_THINNED_FROM) return x.indices.toList()
+
+    // Doubled until the line is short enough, each pass one walk down it. It gets there in a handful
+    // of passes — a gap doubling from two metres is a kilometre wide within nine — and it ends
+    // whatever it is handed: each doubling at least halves what a stretch of ground can hold, and a
+    // gap wide enough that nothing clears it leaves the two ends, which is two. So the bound is this
+    // loop's post-condition rather than something the caller has to check again — the thumbnail
+    // checks a second time, and there is nothing left there for the check to catch either.
+    var gap = ROUTE_DETAIL_METERS
+    var kept = separatedByAtLeast(x, y, gap)
+    while (kept.size > MOST_POINTS_A_COURSE_IS_THINNED_FROM) {
+        gap *= 2
+        kept = separatedByAtLeast(x, y, gap)
+    }
+    return kept
+}
+
+/** The line walked once, keeping each place that lands at least [gap] from the last one kept. */
+private fun separatedByAtLeast(x: DoubleArray, y: DoubleArray, gap: Double): List<Int> {
+    val kept = ArrayList<Int>()
+    var last = 0
+    kept += last
+    for (i in x.indices) {
+        val dx = x[i] - x[last]
+        val dy = y[i] - y[last]
+        if (dx * dx + dy * dy >= gap * gap) {
+            kept += i
+            last = i
+        }
+    }
+    // The far end is kept whether or not it earned its place, so the course still ends where the
+    // runner did rather than at whichever place last cleared the gap.
+    if (kept.last() != x.lastIndex) kept += x.lastIndex
+    return kept
 }
 
 /**
