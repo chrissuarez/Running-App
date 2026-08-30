@@ -32,7 +32,12 @@ implementation detail.
 2. Republish to the **same URL** so Chris's bookmark keeps working:
    `Artifact` with `file_path: docs/guide/index.html` and
    `url: https://claude.ai/code/artifact/5e644405-c86f-4fe6-a798-711c224d5902`.
-3. Commit the file with the feature's own work where possible.
+3. **Refresh the roadmap in the same sitting** — it is the second half of this step, not a separate
+   errand. Rebuild it from live `gh issue list` (close what shipped, add every ticket the work spun
+   off, re-count the columns) and republish to
+   `url: https://claude.ai/code/artifact/da0c235c-48da-4b02-8754-b9f4ca99cd50`. A roadmap still
+   naming a shipped ticket as the next job is worse than no roadmap.
+4. Commit the file with the feature's own work where possible.
 
 A change nobody can see from the app — refactors, test-only work, internal tickets — does not belong
 in it. If a chapter is missing for the feature, add one and add its jump link.
