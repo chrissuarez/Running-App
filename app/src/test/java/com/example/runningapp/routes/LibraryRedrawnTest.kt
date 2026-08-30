@@ -170,4 +170,53 @@ class LibraryRedrawnTest {
         assertEquals(emptyList<RouteMerged>(), redrawn.merged)
         assertEquals(listOf(1L, 2L), redrawn.redrawn.map { it.id })
     }
+
+    /**
+     * A place on the ground, so far north and east of one corner of London — the same sheet
+     * `OneRunOneRouteTest` lays its boundary case out on.
+     */
+    private fun place(northMeters: Double, eastMeters: Double) = RoutePoint(
+        latitude = 51.5 + northMeters / 111_320.0,
+        longitude = -0.1 + eastMeters / (111_320.0 * 0.6225),
+        elevationMeters = null,
+    )
+
+    /**
+     * The one thing this pass cannot reach: a place a pre-#354 Run door had already thrown away.
+     *
+     * That door thinned before it snapped, so a place a hair inside the two metres was dropped and
+     * never written down — while the same place, snapped first as both doors snap it today, sits a
+     * hair *outside* and is kept (`OneRunOneRouteTest` pins that pair). Thinning only removes, so
+     * the redraw has nothing to put back: the row keeps its two points, and that Run's own GPX
+     * handed back still draws three. The library still holds that course twice, and #402 holds the
+     * question of what to do about it. Written down here so the pass is not read as promising more
+     * than it does.
+     */
+    @Test
+    fun `a place the old Run door threw away is not brought back by the redraw`() {
+        val walk = listOf(
+            place(northMeters = 0.0, eastMeters = 0.0),
+            place(northMeters = 100.0, eastMeters = 1.9995),
+            place(northMeters = 200.0, eastMeters = 0.0),
+        )
+        // The row as that door left it: the ends only, the middle place already gone.
+        val asTheOldDoorLeftIt = RouteAsKept(
+            id = 1,
+            distanceMeters = routeDistanceMeters(listOf(walk.first(), walk.last())),
+            elevationGainMeters = null,
+            polyline = RoutePolyline.encode(listOf(walk.first(), walk.last())),
+        )
+
+        val redrawn = libraryRedrawn(listOf(asTheOldDoorLeftIt))
+
+        // The line does not move, because there is nothing left in the row for the redraw to work
+        // on — only the distance is re-measured along it.
+        assertEquals(asTheOldDoorLeftIt.polyline, redrawn.redrawn.single().polyline)
+        // And the walk itself, drawn today, is a longer line — so the two do not match, which is
+        // exactly the residue #402 is about.
+        assertEquals(3, courseOf(walk).line.size)
+        assertTrue(
+            RoutePolyline.encode(courseOf(walk).line) != asTheOldDoorLeftIt.polyline
+        )
+    }
 }
