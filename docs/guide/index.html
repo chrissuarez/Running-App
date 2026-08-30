@@ -177,6 +177,7 @@
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
+      <p><strong>The map card opens the full-screen map again.</strong> Tapping the small map during an outdoor run was supposed to open a full-screen version, and did nothing at all &mdash; a fault that had been there since the map was built. The map itself was taking your finger before the tap could be heard. The card's own map now answers no touch of its own, and the tap gets through: the map fills the screen, with your heart rate, pace, distance and time in a strip across the top, and the back arrow to come back. See <em>The map, while you run</em> in <a href="#during">during the run</a>.</p>
       <p><strong>A GPX that goes nowhere is turned away, instead of becoming a route you could never run.</strong> Hand the app a <span class="mono">.gpx</span> of one place, of the same place recorded over and over, or of points scattered inside sixty metres, and it used to be kept as a route all the same &mdash; a row in your library with no line and no distance, which nothing could be started on. It is now refused, and told to you the way the app has always turned away a run that only wandered on the spot &mdash; the same sentence, naming the file instead of the run. Any row already in your library from the old behaviour stays put and is yours to delete; handing its file over again now refuses it. See <em>Getting a route in</em> in <a href="#routes">routes</a>.</p>
       <p><strong>Your whole route library has been brought into line, in one go.</strong> The app changed how it tidies a course, but only for courses arriving after that &mdash; everything already in your library was still stored the old way, so the app could be handed one of your own route files and not recognise it. Updating the app redraws every route once, the new way. A distance can come out slightly shorter (about 47 m on one real 4.20 km course &mdash; the corners the tidying cuts), a course you happened to keep twice becomes one row under the name you have had longest, and no climb is worked out again, because a route keeps no heights to work one out from &mdash; the only climb that moves is a merged row that had none taking the one its copy had. Names, dates and your runs are untouched. See <em>What this update did to your library</em> in <a href="#routes">routes</a>.</p>
       <p><strong>One run gives you one route, however you save it.</strong> If you saved a run as a route <em>and</em> shared that same run as a <span class="mono">.gpx</span> and imported the file back, you used to end up with two routes, both named after the same evening, with no way to tell them apart. The two doors tidied the course differently &mdash; one kept every point the run recorded, the other trimmed it to its shape &mdash; so the app read them as two different courses. Both doors now tidy it the same way, so the second one is recognised as the route you already have and its numbers are refreshed from the file, instead of a new row appearing. Files from other apps are unchanged: Strava and Komoot trim by their own rules, so a course brought back from one of them is still a route of its own. See <em>Keeping a run as a route</em> and <em>Importing the same course again</em> in <a href="#routes">routes</a>.</p>
@@ -302,6 +303,13 @@
       <div class="e">
         <h3>What the screen shows</h3>
         <p>Top: the phase you are in and the countdown to the next change. Middle: your heart rate and whether it is below, in, or above the target zone. Bottom: elapsed time, distance and pace. Structured workouts also get a timeline strip with a marker where you are, and a chip saying <em>why</em> the last thing happened — a planned change, heart rate too high, heart rate recovered, strap lost.</p>
+      </div>
+
+      <div class="e">
+        <h3>The map, while you run</h3>
+        <p>An outdoor run gets a small map card, with an amber line of where you have been and a marker for where you are. <strong>Tap it and the map fills the screen</strong>, with a slim strip across the top carrying your heart rate, pace, distance and elapsed time. The back arrow in the top-left, and your phone's own back gesture, both return you to the run screen. The back arrow is the only control on it, so a wet thumb cannot pause or stop the run from there. (Mapbox's own small &ldquo;i&rdquo; in the bottom corner is theirs, and stays where it is.)</p>
+        <p class="note"><b>The small card does not move under your finger.</b> It is a picture, and its only job is to open the big one &mdash; a drag on it scrolls the run screen, the way a drag anywhere else on that screen does.</p>
+        <div class="where"><b>Where</b> During an outdoor run &rarr; the map card</div>
       </div>
 
       <div class="e">
@@ -716,7 +724,7 @@
         <p class="note"><b>It keeps counting when you are nowhere near the course.</b> Wander off and the number carries on measuring to the end from the nearest bit of course to you. Being <em>told</em> you have strayed is a separate thing, and it is spoken rather than shown — see <em>Off course</em> below.</p>
         <p class="note"><b>The distance left is never spoken.</b> It is on the screen only — no cue, no milestone. The only things the app says out loud about a route are the two in <em>Off course</em> below, and neither of them mentions how far is left.</p>
         <p class="note"><b>Delete a route mid-run and the run is fine.</b> The blue line stops being drawn and the corner number goes with it. The run carries on recording where you actually go, which was never the route&rsquo;s business.</p>
-        <p class="note"><b>The full-screen map is not reachable at the moment.</b> Tapping the map card is meant to open it, and does nothing — a fault that has been there since the map was built, not something this brought in. The course is drawn there too, so it will simply appear once tapping works again. Until then the card is the whole of it, and the camera stays close to you rather than pulling back to hold the whole course.</p>
+        <p><strong>Tap the map card for the full-screen map</strong>, where the same blue course line and amber trail fill the screen. The camera still stays close to you on both, so on a long course the full-screen map is where there is room to see more of it. The back arrow in the top-left brings you back to the run screen.</p>
         <div class="where"><b>Where</b> During an outdoor run → the map card</div>
       </div>
 
@@ -857,7 +865,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>30 August 2026</strong>, when a GPX that never leaves the spot it starts on began being refused instead of kept as a route nothing could be run on. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>30 August 2026</strong>, when tapping the map card during a run began opening the full-screen map again. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
