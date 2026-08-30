@@ -97,6 +97,9 @@ class SessionRepositoryTest {
         mockDao.stub {
             onBlocking { getAiEligibleIdsIn(any()) }
                 .thenAnswer { it.getArgument<List<Long>>(0) }
+            // A Stage with no training recorded under it, for the same reason as the two flows
+            // above: the tests that are about the record (#289) stub this over.
+            onBlocking { getAiEvidenceRunDaysOfStage(any()) }.thenReturn(emptyList())
         }
     }
 
@@ -1322,6 +1325,128 @@ class SessionRepositoryTest {
         // Keyed by the timestamp the coach is shown, so a reply naming one comes back to it (#287).
         assertEquals(mapOf(3_000L to 10L), context.requirementEvidenceRunIdsByTimestamp)
     }
+
+    @Test
+    fun `the Stage's whole training record reaches the coach, not just the three Runs shown`() = runTest {
+        // The keyhole #289 is about: the coach is shown three sessions of any kind, so a runner
+        // doing a Long, an Easy and a Walk each week can never present a fourth week — and the
+        // debrief then tells them a Stage they have trained for a month is only just beginning.
+        // The record is counted off every qualifying Run of the Stage instead.
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
+        mockDao.stub {
+            onBlocking { getAiEvidenceRunDaysOfStage("sub_30_bridge") }.thenReturn(
+                listOf(
+                    // Mon 2026-08-10 week holds two Runs; the next holds one, the next two.
+                    aStageEvidenceDay("2026-08-11"),
+                    aStageEvidenceDay("2026-08-13"),
+                    aStageEvidenceDay("2026-08-18"),
+                    aStageEvidenceDay("2026-08-25"),
+                    aStageEvidenceDay("2026-08-29"),
+                )
+            )
+        }
+
+        val record = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            zone = ZoneId.of("UTC"),
+            today = LocalDate.parse("2026-08-30"),
+        ).stageTraining
+
+        assertEquals(5, record.qualifyingRuns)
+        assertEquals(3, record.weeksTrained)
+        assertEquals(LocalDate.parse("2026-08-11"), record.firstRunOn)
+        assertEquals(
+            listOf(2, 1, 2),
+            record.weeks.map { it.qualifyingRuns }
+        )
+    }
+
+    @Test
+    fun `a Stage with no qualifying Run behind it has no training record`() = runTest {
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(emptyList())
+
+        assertTrue(repository.getAiTrainingContext("sub_30_bridge").stageTraining.isEmpty)
+    }
+
+    @Test
+    fun `a Run marked a Walk on the finish sheet is not counted, though its stored row still says otherwise`() = runTest {
+        // The back door #289 opened and this closes: the record is read off stored rows, and the row
+        // of the Run that has just finished can still be the one written before the sheet was
+        // answered. Counted from it, a Walk would be evidence for the Stage — beside a guard that
+        // refuses to name it (#275, #287).
+        val storedBeforeTheSheet = aTreadmillRun(id = 42, seconds = 1_800)
+            .copy(isRunWalkMode = true, startTime = 3_000L)
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(storedBeforeTheSheet))
+        mockDao.stub {
+            onBlocking { getAiEvidenceRunDaysOfStage(any()) }.thenReturn(
+                listOf(aStageEvidenceDay("2026-08-29", id = 42))
+            )
+        }
+
+        val context = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            asFinalized = storedBeforeTheSheet.copy(isWalk = true),
+            zone = ZoneId.of("UTC"),
+            today = LocalDate.parse("2026-08-30"),
+        )
+
+        assertTrue(context.stageTraining.isEmpty)
+        // And the guard says the same thing about the same Run, which is the whole point.
+        assertEquals(emptyMap<Long, Long>(), context.requirementEvidenceRunIdsByTimestamp)
+    }
+
+    @Test
+    fun `a Run the runner opted out of on the finish sheet is not counted either`() = runTest {
+        val storedBeforeTheSheet = aTreadmillRun(id = 43, seconds = 1_800)
+            .copy(isRunWalkMode = true, startTime = 3_000L)
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(storedBeforeTheSheet))
+        mockDao.stub {
+            onBlocking { getAiEvidenceRunDaysOfStage(any()) }.thenReturn(
+                listOf(aStageEvidenceDay("2026-08-29", id = 43))
+            )
+        }
+
+        val context = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            asFinalized = storedBeforeTheSheet.copy(includeInAiTraining = false),
+            zone = ZoneId.of("UTC"),
+            today = LocalDate.parse("2026-08-30"),
+        )
+
+        assertTrue(context.stageTraining.isEmpty)
+        assertEquals(emptyMap<Long, Long>(), context.requirementEvidenceRunIdsByTimestamp)
+    }
+
+    @Test
+    fun `the Runs the finish sheet did not touch are counted exactly as stored`() = runTest {
+        val finished = aTreadmillRun(id = 44, seconds = 1_800)
+            .copy(isRunWalkMode = true, startTime = 3_000L)
+        whenever(mockDao.getLast3AiEligibleRunsOfStage(any())).thenReturn(listOf(finished))
+        mockDao.stub {
+            onBlocking { getAiEvidenceRunDaysOfStage(any()) }.thenReturn(
+                listOf(
+                    aStageEvidenceDay("2026-08-26", id = 43),
+                    aStageEvidenceDay("2026-08-29", id = 44),
+                )
+            )
+        }
+
+        val record = repository.getAiTrainingContext(
+            "sub_30_bridge",
+            asFinalized = finished,
+            zone = ZoneId.of("UTC"),
+            today = LocalDate.parse("2026-08-30"),
+        ).stageTraining
+
+        assertEquals(2, record.qualifyingRuns)
+    }
+
+    /** One qualifying Run, on [isoDay] at noon UTC — the day is all the record reads. */
+    private fun aStageEvidenceDay(isoDay: String, id: Long = 0) = StageEvidenceDayProjection(
+        id = id,
+        startTime = LocalDate.parse(isoDay).atTime(12, 0).toInstant(ZoneOffset.UTC).toEpochMilli(),
+        ranAtUtcOffsetSeconds = 0,
+    )
 
     @Test
     fun `two Runs that started at the same instant are named by neither of their timestamps`() = runTest {

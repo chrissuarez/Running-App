@@ -625,6 +625,24 @@ data class RunPause(
     val endTimeMillis: Long,
 )
 
+/**
+ * A Run reduced to the one thing a Stage's training record counts it in (#289): the day it fell on.
+ *
+ * Which Runs are in this set is the query's business — see
+ * [SessionDao.getAiEvidenceRunDaysOfStage] — so nothing about *qualifying* is decided here.
+ */
+data class StageEvidenceDayProjection(
+    /**
+     * Which Run this is, so the caller can put the Run that has just finished back the way the
+     * runner left it — see `SessionRepository.getAiTrainingContext`. The row this read returns can
+     * be the pre-sheet one, and the sheet is where a Walk is marked.
+     */
+    val id: Long,
+    val startTime: Long,
+    /** The Run's own stamp — see [RunnerSession.ranAtUtcOffsetSeconds] and [com.example.runningapp.ranOn]. */
+    val ranAtUtcOffsetSeconds: Int? = null,
+)
+
 data class MaxSessionLoad30dProjection(
     val maxDistanceKm: Double?,
     val maxDurationSeconds: Long?
@@ -1154,6 +1172,39 @@ interface SessionDao {
         """
     )
     suspend fun getLast3AiEligibleRunsOfStage(stageId: String): List<RunnerSession>
+
+    /**
+     * The day every qualifying Run of a Stage fell on — the Stage's training record (#289).
+     *
+     * The same Run this app will let a Stage be graduated on, and no other. Beside
+     * [getLast3AiEligibleRunsOfStage]'s four conditions it adds the two that decide whether a Run
+     * followed a structure the runner did not later call a walk (#275) — the same question
+     * `SessionRepository.isStageEvidence` asks of the three shown Runs, asked here of the whole
+     * Stage instead of the last three.
+     *
+     * Asked of *stored* rows, which is the one way the two can still differ: the Run that has just
+     * finished may not have had the finish sheet's answers written to it yet, and the sheet is where
+     * a Walk is marked. `getAiTrainingContext` closes that by dropping the just-finished Run from
+     * this list when the row it was handed says it is no longer evidence.
+     *
+     * Unbounded on purpose. A LIMIT here would be a second keyhole in front of the fix for the first
+     * one: what this answers is how long the runner has been training in this Stage, and a bound
+     * would silently shorten it. The projection is two columns, and a Stage holds a season of Runs
+     * at most.
+     */
+    @Query(
+        """
+        SELECT id, startTime, ranAtUtcOffsetSeconds FROM sessions
+        WHERE endTime > 0
+          AND durationSeconds > 120
+          AND includeInAiTraining = 1
+          AND ranUnderStageId = :stageId
+          AND isRunWalkMode = 1
+          AND isWalk = 0
+        ORDER BY startTime ASC
+        """
+    )
+    suspend fun getAiEvidenceRunDaysOfStage(stageId: String): List<StageEvidenceDayProjection>
 
     /**
      * Which of [sessionIds] the coach was allowed to be shown, asked while the rows are still there
