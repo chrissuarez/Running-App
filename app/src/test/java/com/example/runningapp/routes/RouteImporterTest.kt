@@ -83,10 +83,11 @@ class RouteImporterTest {
         // That the heights reached the row at all. What they add up to is the shape module's
         // question, and RouteShapeTest is where it is asked.
         assertNotNull(route.elevationGainMeters)
-        assertEquals(
-            "51.5000000,-0.1000000 51.5010000,-0.1000000 51.5020000,-0.1000000",
-            route.polyline,
-        )
+        // Two points, not the file's three: the middle one sits on the straight line between the
+        // other two, and a Route is stored as the shape of its course rather than as every point
+        // the file put on it (#354). The climb is still read off all three — the height at the
+        // point thinned away is not lost, only its position on a line it does not bend.
+        assertEquals("51.5000000,-0.1000000 51.5020000,-0.1000000", route.polyline)
         assertEquals(1_700_000_000_000L, route.createdAtMillis)
         assertEquals(RouteSource.IMPORTED, route.source)
     }

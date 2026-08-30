@@ -7,7 +7,7 @@ import com.example.runningapp.recording.degreesEastOf
 import kotlin.math.cos
 
 /**
- * How far a fix may sit from the line drawn without it before the course keeps it (#55).
+ * How far a place may sit from the line drawn without it before the course keeps it (#55).
  *
  * Two metres, which is finer than any corner a path actually turns and coarser than the wandering
  * of a fix standing still. It is not the accuracy gate: every fix reaching here has already passed
@@ -23,7 +23,7 @@ import kotlin.math.cos
 private const val ROUTE_DETAIL_METERS = 2.0
 
 /**
- * The course a Run went over, taken out of what it recorded (#55).
+ * The course a walk went over, taken out of the places it was recorded at (#55).
  *
  * Two readings of one walk, because the Route's line and the Route's climb are not answered by the
  * same points — see [line] and [asRecorded].
@@ -34,16 +34,17 @@ data class RunCourse(
      * whole thinned to its shape ([ROUTE_DETAIL_METERS]).
      *
      * This is what is written into the row and what a runner following the Route covers, so it is
-     * what the Route's distance is measured along.
+     * what the Route's distance is measured along — and, being the row's `polyline`, it is the
+     * Route's identity, which is why both doors into the library draw it here (#354).
      */
     val line: List<RoutePoint>,
     /**
      * The same walk before it was thinned: every place the Run recorded, in order.
      *
-     * What the climb is worked out from, because thinning is a judgement about where the line
-     * *bends* and a hill is not a bend. A road running straight up one side of a hill and down the
-     * other is two points once it is thinned, and its crest — the whole of the climb — is one of the
-     * points thrown away. The heights never reach the row in any case ([RoutePolyline] keeps none),
+     * What the climb is worked out from, by both doors, because thinning is a judgement about where
+     * the line *bends* and a hill is not a bend. A road running straight up one side of a hill and
+     * down the other is two points once it is thinned, and its crest — the whole of the climb — is
+     * one of the points thrown away. The heights never reach the row in any case ([RoutePolyline] keeps none),
      * so nothing is served by measuring them off the shortened line.
      */
     val asRecorded: List<RoutePoint>,
@@ -52,32 +53,51 @@ data class RunCourse(
 /**
  * What a Run's recorded track becomes when it is kept as a course (#55).
  *
- * Three things happen to the track on the way, and each of them is about what a Route *is*:
+ * The time is the whole of what this adds to [courseOf]: a Run's fixes carry the moment each one
+ * arrived, and that is used to put them in the order the runner covered the ground and is then
+ * dropped, a Route carrying no time at all ([RoutePoint]). Everything else a course is made of is
+ * [courseOf]'s, and is shared with the file door for the reason argued there.
+ */
+fun runAsCourse(trackPoints: List<TrackPoint>): RunCourse = courseOf(
+    trackPoints.sortedBy { it.timestampMillis }
+        .map { RoutePoint(it.latitude, it.longitude, it.altitudeMeters) }
+)
+
+/**
+ * The course a list of places describes: the one form every Route is stored in, whichever door it
+ * came in by (#354).
  *
- *  - **Time orders it, and then goes.** A Route carries no time — it may be run again tomorrow or
- *    never — so the stamps are used to put the fixes in the order the runner covered them and are
- *    then dropped ([RoutePoint]).
+ * Two things happen to the places on the way, and each of them is about what a Route *is*:
+ *
  *  - **A place recorded twice is one place.** A runner waiting at a crossing writes the same
  *    position down thirty times, and thirty copies of one point are thirty chances for anything
  *    reading the line to divide by a zero-length step.
  *  - **The line is thinned to its shape.** A straight road recorded once a second is a thousand
  *    fixes saying nothing a pair of them do not; see [ROUTE_DETAIL_METERS].
  *
+ * **Both doors, and that is the point of it being one function.** A runner may save a Run as a
+ * course here on its page (#55) and also share it as a GPX (#84) and hand that file back to the
+ * library (#54) — one evening, two doors. The line is a Route's identity
+ * ([com.example.runningapp.data.RouteDao.keepRoute]), so two doors drawing the line differently is
+ * two rows of one course, which is what #354 found. They agree by being the same code, not by two
+ * copies of a rule being kept in step.
+ *
+ * The price is named in [ADR 0014](../../../../../../../docs/adr/0014-a-route-is-a-plan-not-a-recording.md):
+ * an imported Route's stored line is the file's shape rather than the file's every point, and its
+ * banked distance is measured along the line that was kept. The file itself is not the thing being
+ * preserved — a Route is a course to follow, and following it is what the line is for.
+ *
  * What does *not* happen is a break. A Run's track is cut at every Pause and every Outage by
  * everything that draws or measures it, because the straight line over one is ground nothing
  * witnessed — but a Route makes no claim about ground covered. It is a course to follow, and the
- * runner who stopped for a coffee halfway round still went round. So the stretches are joined here
- * exactly as a GPX file's segments are joined on the way in ([GpxRouteReader],
- * [ADR 0014](../../../../../../../docs/adr/0014-a-route-is-a-plan-not-a-recording.md)).
+ * runner who stopped for a coffee halfway round still went round. So a Run's stretches are joined
+ * here exactly as a GPX file's segments are joined on the way in ([GpxRouteReader], ADR 0014).
  *
- * Pure and free of Android, so all of the above is pinned by `RunAsRouteTest` rather than found on a
- * phone.
+ * Pure and free of Android, so all of the above is pinned by `RunAsRouteTest` and
+ * `OneRunOneRouteTest` rather than found on a phone.
  */
-fun runAsCourse(trackPoints: List<TrackPoint>): RunCourse {
-    val walked = trackPoints
-        .sortedBy { it.timestampMillis }
-        .map { RoutePoint(it.latitude, it.longitude, it.altitudeMeters) }
-        .withoutRepeatedPlaces()
+fun courseOf(points: List<RoutePoint>): RunCourse {
+    val walked = points.withoutRepeatedPlaces()
     return RunCourse(line = walked.thinnedToItsShape(), asRecorded = walked)
 }
 

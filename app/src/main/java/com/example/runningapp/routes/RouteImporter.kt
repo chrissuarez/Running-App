@@ -105,15 +105,24 @@ class RouteImporter(
         // runner a second row of the same course, and nothing in the table would tell the two apart.
         val name = routeName(fileSuggested = read.name, fileNamed = displayNameOf(uri))
 
+        // The file's places become a course by the one rule every Route is stored under, so a file
+        // shared from a Run of this app's own draws the very line that Run's page would save (#354)
+        // — see [courseOf], where what that costs the file's own points is argued.
+        val course = courseOf(read.points)
+
         // The line is the course's identity, and the library decides in one go what to do with it:
         // keep it, leave the row already holding it alone, or write this file's better numbers onto
         // that row. Whatever comes back names the row the runner has, under whatever they call it.
         val kept = routeDao.keepRoute(
             Route(
                 name = name,
-                distanceMeters = routeDistanceMeters(read.points),
-                elevationGainMeters = routeElevationGainMeters(read.points),
-                polyline = RoutePolyline.encode(read.points),
+                // Along the line that was kept, and up the hills the file recorded — the two are
+                // measured off different readings of the walk, and [RunCourse] is where that is
+                // argued. The same pair the Run's own door banks ([RunRouteSaver]), so one evening
+                // measures the same however it reached the library.
+                distanceMeters = routeDistanceMeters(course.line),
+                elevationGainMeters = routeElevationGainMeters(course.asRecorded),
+                polyline = RoutePolyline.encode(course.line),
                 createdAtMillis = now(),
                 source = RouteSource.IMPORTED,
             ),

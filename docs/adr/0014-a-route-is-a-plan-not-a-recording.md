@@ -55,6 +55,61 @@ email, and the read grant lapsed the moment the import finished.
 So the profile is dropped and the two numbers are kept. Carrying the heights as well would treble the
 size of every row to answer a question nothing will ask again.
 
+## A Route is stored in one form, whichever door it came in by
+
+Added by #354. There are two doors into the library and they described the same ground differently.
+A runner who saves a Run as a course (#55) and *also* shares that Run as a GPX (#84) and hands the
+file back (#54) is one runner with one evening, and they were getting two rows.
+
+**Every Route's line is thinned to its shape — two metres — before it is stored, on both doors.
+Its distance is measured along that line. Its climb is measured off the places before thinning.**
+
+The line is a Route's identity, so the doors cannot merely be *near* to agreeing: one point of
+difference is a second row of a course the runner already has. They agree by being the same code
+(`courseOf`), not by two copies of a rule being kept in step, because a rule written twice is a rule
+that will eventually be changed once.
+
+Thinning is the right form for both because of what a Route is *for*. A straight road recorded once
+a second is a thousand points saying nothing a pair of them do not, and every one of them is carried
+by every screen that draws the course and read by the off-course rules on every fix of every Run.
+Two metres is finer than any corner a path turns and coarser than the wandering of a fix standing
+still, so the course a runner follows is unchanged by it.
+
+The climb is measured before thinning, on both doors, for the reason the run door already had:
+thinning is a judgement about where the line *bends*, and a hill is not a bend. A road straight up
+one side and down the other is two points once thinned, and its crest — the whole of the climb — is
+one of the points thrown away.
+
+### What this costs
+
+**An imported Route's stored line is no longer the file's line.** It is the file's shape. The file
+is not the thing being preserved — the app never keeps the file, and re-import is the only way back
+to it — but this is a real narrowing of what "the line exactly as written" meant, and it is written
+down here rather than discovered.
+
+**An imported Route's banked distance is measured along the line that was kept**, so it can differ
+from the file's own total by the corners the thinning cut. At two metres that is a handful of metres
+over a long course, and it is the honest number for the question a Route answers: how far the
+runner following this course will go.
+
+**A file simplified by another app is still its own Route.** Thinning makes two lines the same only
+when they were the same ground drawn at different densities by *this* app's rules. Strava's
+simplification is not this one, so a course exported there and imported here remains a separate row
+— exactly as it was before #354, and for the same reason.
+
+### What was rejected
+
+- **Leaving it, and letting the runner delete one row.** Cheapest, and nothing was broken: both rows
+  were correct Routes and either could be followed. Rejected because the two rows carry the same
+  name — the Run's own evening (#304) — so the runner is asked to choose between two identical-looking
+  rows with no way to tell which is which.
+- **Not thinning the Run-saved line**, so the doors agree the other way. That is the same one-form
+  rule with the form chosen the other way round, and the argument for thinning above still stands:
+  it would put a thousand needless points into the library and into every reader of a course.
+- **Matching on shape or on endpoints-and-length instead of on the line.** The largest change, and it
+  would have to answer what "the same course" means for two genuinely different files — a question
+  nothing has asked yet. Identity stays the stored line, exactly as written.
+
 ## The #20 rules restated on the axes a Route has
 
 The gain itself follows the GPS tier of #20 — ten metres of hysteresis above the last low point —
@@ -111,6 +166,8 @@ metres that never happened.
 - **A Route is its line, so importing the same line twice keeps one Route and re-measures it.**
   Identity is the stored `lat,lon` line exactly as written, not a likeness: the same course exported
   again by another app, simplified differently, is a different line and becomes a Route of its own.
+  What *is* stored is the course thinned to its shape, on both doors, so a file this app exported
+  from a Run finds the Route that Run's own page saved (#354, above).
   Two consequences follow. A file handed over a second time adds nothing — which is what makes the
   remedy above safe to reach for, and what makes Android replaying an "Open with" intent from the
   recents list after the app is killed cost the library nothing. And when that file measures the
@@ -132,4 +189,5 @@ metres that never happened.
   different amounts depending on which door it came in by.
 - **Saving a Run as a Route (#55) already has its answer.** It takes the Run's track and joins across
   its Breaks, exactly as an import does — because at the moment a runner keeps it, it stops being a
-  recording of where they went and becomes a line they mean to go again.
+  recording of where they went and becomes a line they mean to go again. Since #354 the two doors
+  share the code that does it, so "exactly as an import does" is true by construction.
