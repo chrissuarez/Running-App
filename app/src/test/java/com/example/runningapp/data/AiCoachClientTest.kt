@@ -3,6 +3,9 @@ package com.example.runningapp.data
 import com.example.runningapp.RunType
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.training.FormVerdict
+import com.example.runningapp.training.StageTrainingRecord
+import com.example.runningapp.training.StageWeek
+import java.time.LocalDate
 import com.google.gson.Gson
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -213,13 +216,14 @@ class AiCoachClientTest {
 
         assertTrue(
             prompt.contains(
-                "there are at most three of them, and a requirement covering more training than " +
-                    "they show is still judged on them"
+                "there are at most three of them, so a requirement covering more training than " +
+                    "they show is judged on them together with the app's own count of this " +
+                    "stage's training where one is given below"
             )
         )
-        // And the fence that keeps the weekly totals out of the judgement is still the reason it
-        // has to be the runs: they are the only evidence, and the only thing nameable.
-        assertTrue(prompt.contains("These recent runs are the only evidence there is and the only thing you may name"))
+        // Naming is still fenced to the three runs shown — what #289 widened is the evidence, not
+        // the set of rows a name can resolve against.
+        assertTrue(prompt.contains("These recent runs are the only runs you may name"))
     }
 
     @Test
@@ -776,4 +780,166 @@ class AiCoachClientTest {
         assertEquals(emptyList<Long>(), empty?.graduationEvidenceRunTimestamps)
         assertNull(explicitNull?.graduationEvidenceRunTimestamps)
     }
+
+    // --- The Stage's training record (#289) ---------------------------------------------------
+
+    private val threeWeeksOfTraining = StageTrainingRecord(
+        firstRunOn = LocalDate.parse("2026-08-10"),
+        weeksTrained = 3,
+        qualifyingRuns = 5,
+        weeks = listOf(
+            StageWeek(LocalDate.parse("2026-08-10"), 2),
+            StageWeek(LocalDate.parse("2026-08-17"), 1),
+            StageWeek(LocalDate.parse("2026-08-24"), 2),
+        ),
+    )
+
+    @Test
+    fun `the stage's whole training record is told to the coach, week by week`() {
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(stageTraining = threeWeeksOfTraining)
+        )
+
+        assertTrue(prompt.contains("5 qualifying runs since 2026-08-10, across 3 weeks"))
+        assertTrue(prompt.contains("2026-08-10 — 2; 2026-08-17 — 1; 2026-08-24 — 2"))
+    }
+
+    @Test
+    fun `the record is named as evidence a requirement written in weeks may be judged from`() {
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(stageTraining = threeWeeksOfTraining)
+        )
+
+        assertTrue(prompt.contains("It is evidence for such a requirement"))
+        assertTrue(prompt.contains("A week showing 0 is a week they did not train in this stage."))
+    }
+
+    @Test
+    fun `the record may not answer a distance-in-a-time requirement, nor name a run`() {
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(stageTraining = threeWeeksOfTraining)
+        )
+
+        assertTrue(prompt.contains("this record counts runs and measures none of them"))
+        assertTrue(prompt.contains("never answer a requirement about a distance in a time from it"))
+        assertTrue(
+            prompt.contains(
+                "graduationEvidenceRunTimestamps must still be filled from the timestamps of the " +
+                    "recent runs above, and never with a date from this record"
+            )
+        )
+    }
+
+    @Test
+    fun `a stage with no qualifying run behind it says nothing about weeks at all`() {
+        val prompt = buildEvaluationPrompt(oneRunWalkSession)
+
+        assertFalse(prompt.contains("qualifying run"))
+        assertFalse(prompt.contains("Week by week"))
+        assertFalse(prompt.contains("The runner's training record in this stage"))
+    }
+
+    @Test
+    fun `one run in one week is said in the singular`() {
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                stageTraining = StageTrainingRecord(
+                    firstRunOn = LocalDate.parse("2026-08-24"),
+                    weeksTrained = 1,
+                    qualifyingRuns = 1,
+                    weeks = listOf(StageWeek(LocalDate.parse("2026-08-24"), 1)),
+                )
+            )
+        )
+
+        assertTrue(prompt.contains("1 qualifying run since 2026-08-24, across 1 week."))
+    }
+
+    @Test
+    fun `a stage longer than the weeks listed says so, so the counts are not read as the whole`() {
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                stageTraining = StageTrainingRecord(
+                    firstRunOn = LocalDate.parse("2026-01-05"),
+                    weeksTrained = 20,
+                    qualifyingRuns = 20,
+                    weeks = (0 until 12).map {
+                        StageWeek(LocalDate.parse("2026-03-02").plusWeeks(it.toLong()), 1)
+                    },
+                )
+            )
+        )
+
+        assertTrue(prompt.contains("20 qualifying runs since 2026-01-05, across 20 weeks."))
+        assertTrue(
+            prompt.contains(
+                "The most recent 12 of those weeks, oldest first, each week starting on the " +
+                    "Monday shown — the earlier weeks are not listed, so these counts add up to " +
+                    "less than the total above:"
+            )
+        )
+    }
+
+    @Test
+    fun `where the app answers the requirement itself, the record is context and not an invitation`() {
+        // A Stage stating its bar in numbers fences the coach out of graduating entirely (#290);
+        // a line telling it to judge a requirement from this record would invite it back in.
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                requirementIsTheAppsToAnswer = true,
+                stageTraining = threeWeeksOfTraining,
+            )
+        )
+
+        assertFalse(prompt.contains("Use it to judge a requirement written in weeks"))
+        assertTrue(prompt.contains("It is not something to graduate them on"))
+    }
+
+    @Test
+    fun `no rule left in the prompt says a graduation is judged from the recent runs only`() {
+        // Two fences said it before #289 — the workout's and the fatigue block's. A rule that
+        // contradicts another is a rule the model gets to choose between.
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(
+                stageWorkout = longRunWorkout,
+                fitnessAndForm = AiFitnessAndForm(
+                    fitness = 30,
+                    fatigue = 20,
+                    form = 10,
+                    verdict = FormVerdict.FRESH,
+                    weeklyEfforts = efforts(40, 50, 60, 70),
+                    todaysRunIsInTheNumbers = true,
+                ),
+                stageTraining = threeWeeksOfTraining,
+            )
+        )
+
+        assertFalse(prompt.contains("judged from the recent runs alone"))
+        assertFalse(prompt.contains("only from the recent runs' evidence"))
+        assertTrue(
+            prompt.contains(
+                "Graduation is judged from the runs the runner actually ran under this stage — " +
+                    "the recent runs above and the stage's training record"
+            )
+        )
+        assertTrue(
+            prompt.contains(
+                "that is judged from the recent runs above and the stage's training record, " +
+                    "never from this workout"
+            )
+        )
+    }
+
+    @Test
+    fun `the three recent runs are no longer called the only evidence there is`() {
+        // They are still the only runs a graduation may NAME (#287) — what changed is that the
+        // record below them can now answer a requirement they cannot reach (#289).
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(stageTraining = threeWeeksOfTraining)
+        )
+
+        assertFalse(prompt.contains("the only evidence there is"))
+        assertTrue(prompt.contains("These recent runs are the only runs you may name"))
+    }
+
 }

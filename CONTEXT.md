@@ -65,6 +65,23 @@ Completion rather than moving the runner anywhere (#294).
 _Avoid_: graduation criteria, goal (a Goal is the runner's own distance or time
 target), unlock condition
 
+**Stage Training Record**:
+What the app has recorded under the Stage the runner is in, counted week by week
+and handed to the coach as a fact (#289). Only qualifying Runs are in it: a
+structured Run recorded under that Stage that the runner did not mark a Walk and
+did not keep from the coach — the same Runs a graduation may rest on, and the
+same test the graduation guard applies to the three Runs the coach is shown. A
+week nobody ran in is a week counted as nought, because an empty week is the
+half of "consistent" a total cannot say. It exists because the coach is shown
+only the Stage's last three sessions of any kind, so a requirement written in
+weeks was judged through a keyhole barely a week wide — and told a runner three
+weeks into a block that it was only just beginning. The app counts; whether the
+count is *consistent* stays the coach's judgement
+([ADR 0019](docs/adr/0019-the-app-counts-the-training-the-coach-judges-the-consistency.md)).
+_Avoid_: training history (the whole record book, across every Stage), streak,
+weekly volume (the bars on the Progress screen, which count every Run and are
+never evidence)
+
 **Plan Completion**:
 The runner finishing a whole Plan: they cleared the last Stage's Requirement and
 there was no Stage after it. Recorded at the moment it is granted — the Plan, the

@@ -2,10 +2,8 @@ package com.example.runningapp.training
 
 import com.example.runningapp.isBeyondAnyonesToday
 import com.example.runningapp.ranOn
-import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
-import java.time.temporal.TemporalAdjusters
 import kotlin.math.roundToInt
 
 /**
@@ -22,7 +20,7 @@ enum class GoalPeriod(val label: String, val thisPeriod: String) {
 
     /** The first day of the period [date] falls in. */
     fun startOn(date: LocalDate): LocalDate = when (this) {
-        WEEK -> date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        WEEK -> date.mondayOfWeek()
         MONTH -> date.withDayOfMonth(1)
         YEAR -> date.withDayOfYear(1)
     }

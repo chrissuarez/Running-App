@@ -41,6 +41,8 @@ import com.example.runningapp.training.formVerdictOf
 import com.example.runningapp.training.testIsDue
 import com.example.runningapp.training.wasRunFarEnough
 import com.example.runningapp.training.progressCurve
+import com.example.runningapp.training.StageTrainingRecord
+import com.example.runningapp.training.stageTrainingRecordOf
 import com.example.runningapp.training.weeklyVolumeOf
 import com.example.runningapp.analysis.BestEffort
 import com.example.runningapp.analysis.RecordType
@@ -328,6 +330,30 @@ data class AiGoal(
     internal fun forPrompt(): String = "$period — $metric: $done of $target $unit"
 }
 
+/**
+ * Whether this Run, as the runner has left it, is one this Stage could be graduated on (#289).
+ *
+ * The rule stated once, because two places ask it and a Stage graduated on evidence the other would
+ * have refused is exactly what asking it twice buys. The graduation guard asks it of the three Runs
+ * the coach was shown ([AiTrainingContext.requirementEvidenceRunIdsByTimestamp]); the Stage's
+ * training record asks it of the Run that has just finished, to correct a stored row the finish
+ * sheet has since overtaken.
+ *
+ * Three conditions, and each is a thing the runner said:
+ * - **It followed a structure.** An unplanned Open Run completed no Workout, so nothing can be said
+ *   about what it finished.
+ * - **They did not mark it a Walk** (#275). A week of post-lifting walks must not push the plan on.
+ * - **They let it be shared** (#156). A Run kept out of the coach's sight cannot be the thing that
+ *   moved them a Stage.
+ *
+ * It deliberately does not restate the Stage, the length or the finish that
+ * [SessionDao.getLast3AiEligibleRunsOfStage] and [SessionDao.getAiEvidenceRunDaysOfStage] already
+ * settle in SQL. Both callers hold rows those queries chose, so asking again here would be a second
+ * copy of a filter to drift from — and this is only ever used to *remove* a Run, never to add one.
+ */
+internal val RunnerSession.isStageEvidence: Boolean
+    get() = isRunWalkMode && !isWalk && includeInAiTraining
+
 data class AiTrainingContext(
     val currentStageTitle: String,
     val graduationRequirement: String,
@@ -427,7 +453,43 @@ data class AiTrainingContext(
      * one by one are the eligible ones and only those (`getLast3AiEligibleRunsOfStage`), which is
      * where that switch has always done its work.
      */
-    val goals: List<AiGoal> = emptyList()
+    val goals: List<AiGoal> = emptyList(),
+    /**
+     * How much training this Stage has actually held, week by week (#289) — see
+     * [StageTrainingRecord].
+     *
+     * The counterweight to [recentRuns] being three Runs long. Every eligible session competes for
+     * those three slots while only a Long Run triggers an evaluation, so a runner training three
+     * times a week presents a window barely a week wide — and a requirement written in weeks then
+     * reads as a Stage only just beginning, which is what the runner is told on the home screen.
+     *
+     * This is a count and not a judgement: the app says how many qualifying Runs fell in each week,
+     * and whether that is *consistent* stays with the coach, which is the part of the requirement
+     * that genuinely holds a judgement ([BestEffortRequirement]).
+     *
+     * Unlike the weekly Effort totals in [fitnessAndForm], it is deliberately **not** fenced out of
+     * the graduation: it counts the very Runs the graduation guard accepts as evidence
+     * ([isStageEvidence], asked of the whole Stage), measured by the app rather than estimated by
+     * the model. What stays fenced is the naming — a graduation must still name Runs out of
+     * [recentRuns], because those are the only rows a name can be resolved against (#287).
+     *
+     * **The residue, named rather than hidden.** A Prescription stands on the Runs it was shown, and
+     * deleting one of them unwinds it (ADR 0013, #156). The Runs counted here are not in
+     * [sourceRunIds] and so are not in that provenance, which means a graduation can rest in part on
+     * a Run whose later deletion unwinds nothing. Three reasons it stays that way, and the ADR's own
+     * argument is the first: what the ADR excludes is a Run that only moved a *measurement* — the
+     * Fitness and Fatigue curves — and this is a count of Runs, not a description of any one of
+     * them. Second, a graduation is never taken back at all (#290), so there is nothing for a
+     * deletion to unwind on that side; what #156 unwinds is a standing Prescription, which still
+     * stands on the three Runs it was shown. Third, putting the counted Runs into [sourceRunIds]
+     * would throw a sound Prescription away because one Run of a twenty-Run Stage was deleted — a
+     * far worse trade than the one this leaves open.
+     *
+     * [StageTrainingRecord.NONE] where the Stage has no qualifying Run behind it, and the prompt
+     * then says nothing about weeks at all rather than saying there are none — the empty case is
+     * already spelled out by the rule about an empty [recentRuns].
+     */
+    val stageTraining: StageTrainingRecord = StageTrainingRecord.NONE,
 ) {
     /**
      * The Runs the coach named as what it graduated the Stage on, or null when it named anything
@@ -3925,6 +3987,28 @@ class SessionRepository(
             }
         }
 
+        // How long the runner has actually been training in this Stage, counted off every
+        // qualifying Run of it rather than off the three that fit in the window above (#289).
+        // Read here, beside the window it exists to widen, and through the same [today] and [zone]
+        // the curves are read through — a record and a set of curves disagreeing about which week
+        // it is would be two answers to one question inside one prompt.
+        //
+        // The Run that has just finished is put back the way the runner left it, exactly as it is
+        // in the list above. The query reads stored rows, and the row this Run has *stored* can
+        // still be the one written before the finish sheet was answered — so a Run the runner has
+        // just marked a Walk, or just opted out of sharing, would be counted here while the
+        // graduation guard beside it refuses to name it. That is a Walk becoming evidence by the
+        // back door, which is the substitution #275 and #287 exist to refuse. Only ever a removal:
+        // the sheet can turn a Run into a Walk and never back, so a stored row that already fails
+        // [isStageEvidence] fails it after the sheet too.
+        val notEvidenceAfterAll = finalizedRun?.takeIf { !it.isStageEvidence }?.id
+        val stageTraining = stageTrainingRecordOf(
+            days = sessionDao.getAiEvidenceRunDaysOfStage(stageId)
+                .filterNot { it.id == notEvidenceAfterAll }
+                .map { ranOn(it.startTime, it.ranAtUtcOffsetSeconds, zone) },
+            through = today,
+        )
+
         return AiTrainingContext(
             currentStageTitle = stage.title,
             graduationRequirement = stage.graduationRequirementText,
@@ -3951,11 +4035,12 @@ class SessionRepository(
                 .groupBy { it.startTime }
                 .filterValues { sharingAStart -> sharingAStart.size == 1 }
                 .mapValues { (_, sharingAStart) -> sharingAStart.single() }
-                // The same three answers [aiSessionTypeOf] gives, asked as one question: only a
-                // structured Run/Walk is evidence. The prompt says both halves of this — an Open
-                // Run may not progress a Stage, a Walk may not either — and a prompt sentence is a
-                // promise the code has to keep, because a graduation cannot be taken back.
-                .filterValues { it.isRunWalkMode && !it.isWalk }
+                // What a Run has to be to answer a Stage at all, asked once for the whole app
+                // ([isStageEvidence]): a structured Run the runner did not mark a Walk and did not
+                // keep from the coach. The prompt says the first two halves of it — an Open Run may
+                // not progress a Stage, a Walk may not either — and a prompt sentence is a promise
+                // the code has to keep, because a graduation cannot be taken back.
+                .filterValues { it.isStageEvidence }
                 .mapValues { (_, evidence) -> evidence.id },
             fitnessAndForm = fitnessAndFormThrough(
                 today = today,
@@ -3972,7 +4057,8 @@ class SessionRepository(
                     )
             ),
             stageWorkout = stageWorkout,
-            goals = goalProgress
+            goals = goalProgress,
+            stageTraining = stageTraining
         )
     }
 

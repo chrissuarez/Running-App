@@ -3,6 +3,7 @@ package com.example.runningapp.data
 import android.util.Log
 import com.example.runningapp.BuildConfig
 import com.example.runningapp.WorkoutTemplate
+import com.example.runningapp.training.StageTrainingRecord
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
@@ -221,10 +222,17 @@ internal fun buildEvaluationPrompt(
     // requirement, because at most three are ever shown (`getLast3AiEligibleRunsOfStage`) and four
     // weeks of training is more than three runs. Asked to account for every week, a coach reading
     // the rule strictly would refuse a stage it has plainly earned — the same dead end as naming
-    // exactly one, one step further out. The three runs are what graduation has always been judged
-    // on here, and the weekly totals are fenced out of that judgement further down; this field
-    // records which of the three the answer came from, and nothing about how far they reach.
-    appendLine("CRITICAL RULE: If you set graduatedToNextStage to true, you MUST also set graduationEvidenceRunTimestamps to the list of exact 'timestamp' values, copied digit for digit, of the runs above that your decision rests on. Name every run you are relying on and name no others: one run where the requirement is met by one, several where it takes several. These recent runs are the only evidence there is and the only thing you may name — there are at most three of them, and a requirement covering more training than they show is still judged on them, exactly as it would be if this field had not been asked for. Every run you name must be a 'Run/Walk' session — a 'Walk' or an 'Open Run' can never be named, and naming one refuses the whole graduation. If not one 'Run/Walk' run above is something your decision rests on, set graduatedToNextStage to false and leave graduationEvidenceRunTimestamps empty — a run that meets the requirement standing beside a different run that does not is not evidence, only the run that met it is.")
+    // exactly one, one step further out.
+    //
+    // Naming and evidence part company here, and the rule says which is which (#289). The three
+    // runs are still the only rows a *name* can resolve against, because a name is checked against
+    // the map built from them and a date offered from anywhere else resolves to nothing. What they
+    // are no longer is the whole of the *evidence*: the stage's training record — the app's own
+    // count of every qualifying Run of the stage, appended by `appendStageTraining` — answers the
+    // weeks the three runs cannot reach. So the rule no longer calls them the only evidence there
+    // is, and points at the count instead; the weekly Effort totals and the Goals stay fenced out,
+    // because those measure something else and this is the same evidence, counted.
+    appendLine("CRITICAL RULE: If you set graduatedToNextStage to true, you MUST also set graduationEvidenceRunTimestamps to the list of exact 'timestamp' values, copied digit for digit, of the runs above that your decision rests on. Name every run you are relying on and name no others: one run where the requirement is met by one, several where it takes several. These recent runs are the only runs you may name — there are at most three of them, so a requirement covering more training than they show is judged on them together with the app's own count of this stage's training where one is given below, and the runs you name are whichever of these three your decision rests on. Every run you name must be a 'Run/Walk' session — a 'Walk' or an 'Open Run' can never be named, and naming one refuses the whole graduation. If not one 'Run/Walk' run above is something your decision rests on, set graduatedToNextStage to false and leave graduationEvidenceRunTimestamps empty — a run that meets the requirement standing beside a different run that does not is not evidence, only the run that met it is.")
     // No Interval-quality metric is sent, and none is described here (#168) — see AiRecentRun.
     appendLine("Judge a duration-and-heart-rate requirement from the run's duration and average heart rate.")
     // The evidence a 5K-in-a-time requirement needs, and the rule that stops it being answered from
@@ -310,6 +318,7 @@ internal fun buildEvaluationPrompt(
     context.stageWorkout?.let { appendStageWorkout(it) }
     context.fitnessAndForm?.let { appendFitnessAndForm(it) }
     appendGoals(context.goals)
+    appendStageTraining(context.stageTraining, context.requirementIsTheAppsToAnswer)
     appendLine("Current stage title: ${context.currentStageTitle}")
     appendLine("Recent runs (JSON):")
     appendLine(gson.toJson(context.recentRuns))
@@ -355,6 +364,93 @@ private fun StringBuilder.appendGoals(goals: List<AiGoal>) {
 }
 
 /**
+ * The Stage's training record, told to the coach so a requirement written in weeks stops being
+ * judged through a three-Run keyhole (#289).
+ *
+ * The three Runs above are the last three sessions of *any* kind recorded under the Stage, and only
+ * a Long Run is ever evaluated — so a runner doing a Long, an Easy and a Walk each week hands the
+ * coach a window about a week wide, whatever they have really done. Asked "4 weeks of consistent
+ * Zone 2 training" through it, an honest coach can only answer that the Stage is barely started,
+ * which is the sentence the runner reads on the home screen while holding five Runs of evidence.
+ *
+ * So the app counts and the coach judges. The count is of exactly the Runs a graduation may rest on
+ * — structured, recorded under this Stage, not marked a Walk — asked of the whole Stage instead of
+ * the last three, which is why it may be evidence where the weekly Effort totals and the Goals may
+ * not: those are measurements of something else, and this is the same evidence, counted.
+ *
+ * Three things are fenced, and each has a way of going wrong behind it:
+ * - **It is a count, never a measurement.** A record of nine Runs says nothing about how far or how
+ *   fast any of them went, and a requirement written as a distance in a time must not be answered
+ *   from it. (Such a Stage is fenced out of the coach entirely anyway (#290) — this holds for the
+ *   ones that are not.)
+ * - **It names no Runs.** A graduation still names timestamps out of the three Runs above, because
+ *   those are the only rows a name resolves against (#287). A model handed dates here could offer
+ *   them instead, and every one would fail to resolve — refusing a graduation the runner earned.
+ * - **A zero is a week they did not train**, said plainly, because the empty weeks are the half of
+ *   "consistent" the total cannot say.
+ *
+ * Nothing at all for a Stage with no qualifying Run behind it: the empty case is already spelled out
+ * where it belongs, in the rule about an empty list of recent runs, and a second sentence saying the
+ * record is empty is a second place for it to be said differently.
+ */
+private fun StringBuilder.appendStageTraining(
+    record: StageTrainingRecord,
+    requirementIsTheAppsToAnswer: Boolean,
+) {
+    if (record.isEmpty) return
+    appendLine(
+        "The runner's training record in this stage, counted by the app from their own recorded " +
+            "runs: ${record.qualifyingRuns} qualifying ${"run".s(record.qualifyingRuns)} since " +
+            "${record.firstRunOn}, across ${record.weeksTrained} ${"week".s(record.weeksTrained)}."
+    )
+    appendLine(
+        (if (record.weeksAreATail) {
+            "The most recent ${record.weeks.size} of those weeks, oldest first, each week " +
+                "starting on the Monday shown — the earlier weeks are not listed, so these counts " +
+                "add up to less than the total above: "
+        } else {
+            "Week by week, oldest first, each week starting on the Monday shown: "
+        }) + record.weeks.joinToString("; ") { "${it.startingOn} — ${it.qualifyingRuns}" } + "."
+    )
+    appendLine(
+        "A qualifying run is a structured plan run recorded under this stage that the runner did " +
+            "not mark as a walk — the only kind of session that is ever evidence for this stage's " +
+            "requirement. This is the app's own count of every one of them across the whole stage, " +
+            "not an estimate, and it is not limited to the three recent runs above. A week showing " +
+            "0 is a week they did not train in this stage."
+    )
+    // What it may be used for, and only where graduating is the coach's to do at all. On a Stage
+    // the app answers itself (#290) the coach has just been forbidden to graduate, and a line
+    // telling it to judge a requirement from this record would be the one sentence inviting it
+    // back in — so the record stays, as something true to write a debrief from, and the invitation
+    // goes.
+    if (requirementIsTheAppsToAnswer) {
+        appendLine(
+            "Use it in coachMessage to describe how their training in this stage has been going. " +
+                "It is not something to graduate them on: this stage's requirement is not yours " +
+                "to judge, as stated above."
+        )
+    } else {
+        appendLine(
+            "Use it to judge a requirement written in weeks of training — how many weeks they " +
+                "have trained, and how consistently. It is evidence for such a requirement, and " +
+                "it is the only thing here that can answer one that reaches further back than the " +
+                "three recent runs."
+        )
+    }
+    appendLine(
+        "CRITICAL RULE: this record counts runs and measures none of them. It says nothing about " +
+            "distance, time or heart rate, so never answer a requirement about a distance in a " +
+            "time from it. It also names no runs: if you set graduatedToNextStage to true, " +
+            "graduationEvidenceRunTimestamps must still be filled from the timestamps of the " +
+            "recent runs above, and never with a date from this record."
+    )
+}
+
+/** "run" or "runs" — the plural said once, because this block counts three different things. */
+private fun String.s(count: Int): String = if (count == 1) this else this + "s"
+
+/**
  * The Workout the coach's three numbers replace, told to it before it picks them (#246).
  *
  * Both clamps are measured against this Workout — the floor discards anything asking for less work
@@ -396,7 +492,7 @@ private fun StringBuilder.appendStageWorkout(workout: WorkoutTemplate) {
     appendLine(
         "CRITICAL RULE: this workout is the plan's intention, not a record of anything the runner " +
             "did. It is what you prescribe against, never evidence about any run, and must never " +
-            "change graduatedToNextStage — that is judged from the recent runs alone."
+            "change graduatedToNextStage — that is judged from the recent runs above and the stage's training record, never from this workout."
     )
 }
 
@@ -542,14 +638,22 @@ private fun StringBuilder.appendFitnessAndForm(state: AiFitnessAndForm) {
     )
     // The one case where the sentence above would be describing a run nobody is going to do: a
     // graduation clears every prescription and moves the stage on, so there is no held workout left
-    // to have been unchanged. Graduation is judged from the runs alone (the rule below), so a
-    // fatigued runner can still earn one — and then the debrief has to be about that.
+    // to have been unchanged. Graduation is judged from the runs, not from these numbers (the
+    // rule below), so a fatigued runner can still earn one — and then the debrief is about that.
     appendLine(
         "That last paragraph is about the next run under THIS stage. If you are graduating them, " +
             "say nothing about holding the workout: the stage is changing and so are its intervals."
     )
+    // The fence, and the one word in it that had to move (#289). These numbers stay out of the
+    // graduation for the reason they always did — Fitness, Fatigue and Form are a measurement of
+    // load and say nothing about whether a requirement was met. What they are no longer fenced
+    // *against* is "the recent runs alone": the stage's training record is evidence too, and a rule
+    // still saying only the three runs count would be a rule contradicting the one below it, which
+    // is a rule the model gets to choose between.
     appendLine(
         "CRITICAL RULE: These numbers must never change graduatedToNextStage. Graduation is judged " +
-            "only from the recent runs' evidence against the stage requirement, exactly as above."
+            "from the runs the runner actually ran under this stage — the recent runs above and " +
+            "the stage's training record — against the stage requirement, and never from Fitness, " +
+            "Fatigue or Form."
     )
 }

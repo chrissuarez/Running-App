@@ -2,10 +2,8 @@ package com.example.runningapp.training
 
 import com.example.runningapp.isBeyondAnyonesToday
 import com.example.runningapp.ranOn
-import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
-import java.time.temporal.TemporalAdjusters
 
 /**
  * One finished Run as the weekly bars see it: when it began, and the three things a week can be
@@ -120,7 +118,7 @@ fun weeklyVolumeOf(
         // current week's Monday, so a week-level guard would let tomorrow into today's bar.
         val day = ranOn(run.startedAtMillis, run.ranAtUtcOffsetSeconds, zone)
         if (day.isBeyondAnyonesToday(through)) return@forEach
-        val weekStart = day.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+        val weekStart = day.mondayOfWeek()
         val soFar = totals[weekStart] ?: emptyWeek(weekStart)
         totals[weekStart] = soFar.copy(
             distanceKm = soFar.distanceKm + run.distanceKm,
@@ -144,17 +142,12 @@ fun weeklyVolumeOf(
     // Run accepted above and then left out of the range would be counted and never drawn — with one
     // such Run and no others, the chart would come back empty.
     val lastWeek = maxOf(
-        through.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)),
+        through.mondayOfWeek(),
         totals.keys.maxOrNull() ?: LocalDate.MIN,
     )
 
-    var week = totals.keys.minOrNull() ?: return emptyList()
-    val weeks = mutableListOf<TrainingWeek>()
-    while (!week.isAfter(lastWeek)) {
-        weeks += totals[week] ?: emptyWeek(week)
-        week = week.plusWeeks(1)
-    }
-    return weeks
+    val firstWeek = totals.keys.minOrNull() ?: return emptyList()
+    return weeksFrom(firstWeek, lastWeek).map { totals[it] ?: emptyWeek(it) }
 }
 
 private fun emptyWeek(startingOn: LocalDate) =
