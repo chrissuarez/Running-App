@@ -2846,7 +2846,34 @@ val MIGRATION_40_41 = object : Migration(40, 41) {
  * The name, the source and `createdAtMillis` are not read because the pass never moves them.
  */
 const val READ_LIBRARY_AS_KEPT_SQL =
-    "SELECT id, distanceMeters, elevationGainMeters, polyline FROM routes ORDER BY id"
+    "SELECT id, distanceMeters, elevationGainMeters, length(polyline) FROM routes ORDER BY id"
+
+/**
+ * How much of a Route's line is carried back from the database at a time (#399).
+ *
+ * A cursor hands a row over through a window of a couple of megabytes, and it is the *value* that
+ * has to fit in it, not the app's memory. A line kept before #354 holds every point its file held,
+ * unthinned, and a file may hold two hundred thousand of them
+ * (`MOST_POINTS_A_ROUTE_MAY_HAVE` in [com.example.runningapp.routes.GpxRouteReader]) — twenty-odd
+ * characters each, so four megabytes of text in one column. Asking a cursor for that whole value
+ * throws, and thrown here it is thrown inside the upgrade, which then rolls back and is tried again
+ * at the next launch: an app that will not open, for the one runner whose library holds the very row
+ * this pass exists to thin.
+ *
+ * So the line is fetched a piece at a time and joined here. A hundred thousand characters is far
+ * under the window and few enough pieces that the longest line a reader will accept costs a handful
+ * of queries.
+ */
+private const val MOST_CHARACTERS_OF_A_LINE_READ_AT_ONCE = 100_000
+
+/**
+ * One piece of one Route's line, by character (#399).
+ *
+ * `substr` counts characters rather than bytes on a text value, which is what `length` above counts
+ * too, so the two agree about where a line ends — see [MOST_CHARACTERS_OF_A_LINE_READ_AT_ONCE] for
+ * why the line is not simply read whole.
+ */
+const val READ_ROUTE_LINE_PIECE_SQL = "SELECT substr(polyline, ?, ?) FROM routes WHERE id = ?"
 
 /**
  * A past Run sent to the Route that survived a merge (#399).
@@ -2892,6 +2919,11 @@ const val REDRAW_ROUTE_SQL =
  *
  * A library that never held a Route — most of them — reads no rows and writes nothing.
  *
+ * The lines are carried back in pieces rather than asked for whole
+ * ([MOST_CHARACTERS_OF_A_LINE_READ_AT_ONCE]): the one row this pass most needs to reach — a big
+ * pre-#354 import, every point of its file still in it — is exactly the row a cursor cannot hand
+ * over in one value. Thinning it here is also what makes it readable by everything else afterwards.
+ *
  * It runs before the first read of the upgraded file, so what it costs is a delay to that read. The
  * thinning is what costs, and it is bounded on both axes: a library holds a handful of courses, and
  * each is thinned from a bounded number of places
@@ -2905,6 +2937,29 @@ const val REDRAW_ROUTE_SQL =
  * out on a course that does not exist. The one durable holder is `sessions.ranAlongRouteId`, and it
  * is rewritten here ([REDIRECT_RAN_ALONG_MERGED_ROUTE_SQL]).
  */
+/**
+ * One Route's line, carried back a piece at a time (#399).
+ *
+ * The pieces are joined in the order they were taken, so what comes back is the column's own text —
+ * [MOST_CHARACTERS_OF_A_LINE_READ_AT_ONCE] says why it may not simply be asked for at once. A line
+ * of no characters is no line, and asks for nothing.
+ */
+private fun lineOfRoute(database: SupportSQLiteDatabase, id: Long, characters: Long): String {
+    if (characters <= 0L) return ""
+    val line = StringBuilder(characters.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+    var from = 1L
+    while (from <= characters) {
+        database.query(
+            READ_ROUTE_LINE_PIECE_SQL,
+            arrayOf<Any?>(from, MOST_CHARACTERS_OF_A_LINE_READ_AT_ONCE, id),
+        ).use { piece ->
+            if (piece.moveToFirst() && !piece.isNull(0)) line.append(piece.getString(0))
+        }
+        from += MOST_CHARACTERS_OF_A_LINE_READ_AT_ONCE
+    }
+    return line.toString()
+}
+
 val MIGRATION_41_42 = object : Migration(41, 42) {
     override fun migrate(database: SupportSQLiteDatabase) {
         val kept = ArrayList<RouteAsKept>()
@@ -2914,7 +2969,8 @@ val MIGRATION_41_42 = object : Migration(41, 42) {
                     id = row.getLong(0),
                     distanceMeters = row.getDouble(1),
                     elevationGainMeters = if (row.isNull(2)) null else row.getDouble(2),
-                    polyline = row.getString(3),
+                    // Read in pieces, never whole: see [MOST_CHARACTERS_OF_A_LINE_READ_AT_ONCE].
+                    polyline = lineOfRoute(database, id = row.getLong(0), characters = row.getLong(3)),
                 )
             }
         }

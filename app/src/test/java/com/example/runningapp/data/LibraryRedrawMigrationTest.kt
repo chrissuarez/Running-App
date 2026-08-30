@@ -153,6 +153,71 @@ class LibraryRedrawMigrationTest {
         }
     }
 
+    /**
+     * A line as long as a pre-#354 import could leave one, in the pieces the pass reads it in.
+     *
+     * The character-counting is `substr`'s: the first character is 1, and the count is characters
+     * rather than bytes — the same thing `length(polyline)` in [READ_LIBRARY_AS_KEPT_SQL] counts, so
+     * the two agree about where the line ends.
+     */
+    private fun lineInPieces(id: Long, characters: Long, piece: Int): String {
+        val line = StringBuilder()
+        var from = 1L
+        while (from <= characters) {
+            db.prepareStatement(READ_ROUTE_LINE_PIECE_SQL).use {
+                it.setLong(1, from)
+                it.setInt(2, piece)
+                it.setLong(3, id)
+                it.executeQuery().use { rows -> if (rows.next()) line.append(rows.getString(1)) }
+            }
+            from += piece
+        }
+        return line.toString()
+    }
+
+    /**
+     * The read the upgrade opens carries no line in it at all — only how long each one is.
+     *
+     * A cursor hands a row over through a window of a couple of megabytes, and a line kept before
+     * #354 holds every point its file held: two hundred thousand of them at twenty-odd characters
+     * each is four megabytes in one column. Asked for whole, it throws — and thrown inside the
+     * upgrade it rolls the upgrade back, at every launch, leaving an app that will not open. So the
+     * value never goes through the window; its length does, and the line itself comes back in
+     * pieces ([lineInPieces]).
+     */
+    @Test
+    fun `the library read carries lengths, never the lines themselves`() {
+        val long = (0 until 6_000).joinToString(" ") { "51.5000000,-0.1000000" }
+        route(id = 1, name = "a big import", polyline = long)
+
+        db.createStatement().executeQuery(READ_LIBRARY_AS_KEPT_SQL).use {
+            it.next()
+            assertEquals(long.length.toLong(), it.getLong(4))
+            for (column in 1..it.metaData.columnCount) {
+                val value = it.getString(column) ?: continue
+                assertEquals("column $column is small", true, value.length < 100)
+            }
+        }
+    }
+
+    @Test
+    fun `a line longer than one piece comes back whole and in order`() {
+        val long = (0 until 6_000).joinToString(" ") { "51.5000000,-0.1000000" }
+        route(id = 1, name = "a big import", polyline = long)
+
+        assertEquals(long, lineInPieces(id = 1, characters = long.length.toLong(), piece = 10_000))
+    }
+
+    @Test
+    fun `a line shorter than one piece comes back in a single ask`() {
+        route(id = 1, name = "a small one", polyline = "51.5000000,-0.1000000")
+
+        assertEquals(
+            "51.5000000,-0.1000000",
+            lineInPieces(id = 1, characters = 21, piece = 100_000),
+        )
+    }
+
     private fun Connection.exec(sql: String) = createStatement().use { it.execute(sql) }
 
     private fun ranAlongRouteIds(): List<Long> {
