@@ -56,18 +56,33 @@ data class Route(
     /**
      * The course itself — see [com.example.runningapp.routes.RoutePolyline] for the writing of it.
      *
-     * **Written once, when the row is inserted, and never again while the app is running** (#403).
-     * Nothing in [RouteDao] updates it: [RouteDao.remeasureRoute] writes the two numbers and
-     * [RouteDao.renameRoute] the name, and a re-import that finds a Route already kept found it *by
-     * this very text* ([RouteDao.findRouteByPolyline]), so what it would write back is what is
-     * already there. The one thing that ever rewrites a line is the upgrade at `MIGRATION_41_42`,
-     * which runs before the database is opened for reading.
+     * **This is the one column on the row that can be big, and the two rules about it are stated
+     * here** (#403). Everything that reads a Route cites them from here rather than arguing them
+     * again: [RouteDao.getLibraryFlow], [RouteDao.getRoutePolyline],
+     * [com.example.runningapp.routes.libraryRedrawn] and `RoutesViewModel`.
      *
-     * Two things lean on that. A reader may leave the line out of a query and fetch it by id when it
-     * actually needs it, knowing the row it gets is the row it listed ([RouteDao.getRoutePolyline]);
-     * and anything worked out from a line — a thumbnail, say — may be kept against the Route's id
-     * alone. Add an update that touches this column and both become wrong, so it is a rule to keep
-     * rather than an accident to lean on.
+     * How big: a line kept before #354 holds every point its file held, and a file may hold two
+     * hundred thousand of them — some four megabytes of text in one row. A line written since is
+     * thinned, but thinned to twenty thousand places is still four hundred thousand characters. So a
+     * library of many high-detail courses is tens of megabytes, all of it in this column.
+     *
+     * **One: no reader may hold two lines at once.** A line is fetched when it is about to be used
+     * and let go before the next one is, and what is kept from it is bounded — a thumbnail, a
+     * digest, a handful of numbers, never the text. That is why nothing that *lists* Routes selects
+     * this column at all. Broken, it is broken in the upgrade first, and an upgrade that runs out of
+     * memory rolls back and is tried again at every launch: an app that never opens.
+     *
+     * **Two: it is written once, when the row is inserted, and never again while the app is
+     * running.** Nothing in [RouteDao] updates it — [RouteDao.remeasureRoute] writes the two numbers
+     * and [RouteDao.renameRoute] the name, and a re-import that finds a Route already kept found it
+     * *by this very text* ([RouteDao.findRouteByPolyline]), so what it would write back is what is
+     * already there. The one thing that ever rewrites a line is the upgrade at `MIGRATION_41_42`,
+     * which runs before the database is opened for reading. `RouteLineIsWrittenOnceTest` keeps this
+     * rule rather than leaving it to be remembered.
+     *
+     * The two together are what lets a reader list rows without their lines and fetch one by id
+     * later, knowing the row it gets is the row it listed; and lets anything worked out from a line
+     * be kept against the Route's id alone.
      */
     val polyline: String,
     val createdAtMillis: Long,
@@ -136,14 +151,13 @@ interface RouteDao {
     /**
      * The library, newest first — the order a runner who has just imported one expects.
      *
-     * Every row **except its line** (#403). A course's line is the one thing on the row that can be
-     * big: a library of hundreds of high-detail courses is tens of megabytes of text, and
-     * `SELECT *` would hold all of it for as long as the screen is open — the same total that would
-     * put the upgrade out of memory, moved from launch to the moment the runner opens Routes.
+     * Every row **except its line**, because no reader may hold two lines at once and a list is
+     * every line at once — the rule and its size are at [Route.polyline] (#403). `SELECT *` here
+     * would hold the whole library's text for as long as the screen is open.
      *
-     * Nothing that lists Routes needs a line. The library screen draws a name, two numbers and a
-     * thumbnail; the pre-run picker draws a name and two numbers. The line is read one course at a
-     * time, by whatever actually needs it ([getRoutePolyline], [getRoute], [getRouteFlow]).
+     * Nothing that lists Routes needs a line anyway. The library screen draws a name, two numbers
+     * and a thumbnail; the pre-run picker draws a name and two numbers. The line is read one course
+     * at a time, by whatever actually needs it ([getRoutePolyline], [getRoute], [getRouteFlow]).
      */
     @Query(
         "SELECT id, name, distanceMeters, elevationGainMeters, createdAtMillis, source FROM routes " +
@@ -155,9 +169,9 @@ interface RouteDao {
      * One course's line, on its own (#403).
      *
      * The other half of [getLibraryFlow]: a reader lists the library without its lines and then asks
-     * for one line at a time, so at no point does it hold two. Null is the row having gone since it
-     * was listed, which is an ordinary thing — the runner can delete a course while the list is on
-     * screen.
+     * for one line at a time, which is how it keeps [Route.polyline]'s first rule. Null is the row
+     * having gone since it was listed, which is an ordinary thing — the runner can delete a course
+     * while the list is on screen.
      */
     @Query("SELECT polyline FROM routes WHERE id = :routeId")
     suspend fun getRoutePolyline(routeId: Long): String?

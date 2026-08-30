@@ -1,7 +1,5 @@
 package com.example.runningapp.routes
 
-import java.security.MessageDigest
-
 /** One row of `routes` as the upgrade finds it. The name and dates are not read: they never move. */
 data class RouteAsKept(
     val id: Long,
@@ -13,12 +11,10 @@ data class RouteAsKept(
 /**
  * One thing the upgrade does to one row, handed over the moment it is decided (#403).
  *
- * A step rather than a list of them because of the rule this pass lives under: nothing it holds may
- * grow with how long the library's lines are. A redrawn line is *thinned*, so it is bounded — but
- * bounded is not small, and a few hundred courses recorded at high detail is still tens of megabytes
- * if every redrawn line is kept until the pass ends. So each row's line leaves the pass as it is
- * decided and is let go, and what stays behind is [RouteLine.digestOf] it: sixty-four characters,
- * whatever the course.
+ * A step rather than a list of them because of the rule this pass lives under: no reader may hold
+ * two lines at once ([com.example.runningapp.data.Route.polyline]). So each row's redrawn line
+ * leaves the pass as it is decided and is let go, rather than being kept in a list until the pass
+ * ends and every one of them with it.
  *
  * The steps are given in the order they must be carried out.
  */
@@ -127,23 +123,18 @@ data class RouteClimbBanked(val id: Long, val elevationGainMeters: Double) : Rou
  * merging. There is no line there to redraw, and an upgrade is the wrong moment to decide what a
  * damaged row meant.
  *
- * **The one rule about what the pass may hold: nothing here grows with how long the library's lines
- * are, only with how many rows it has** (#403). A line kept before #354 holds every point its file
- * held, and a file may hold two hundred thousand of them — megabytes of text in one row, and more
- * again while it is decoded. So:
+ * **The rule this pass lives under is [com.example.runningapp.data.Route.polyline]'s first: no
+ * reader may hold two lines at once** (#403). It is stated there, with the sizes; what it costs
+ * here is the whole shape of this function.
  *
- * - The rows arrive as a [Sequence], each line fetched as it is reached and dropped when the next
- *   one is: one stored line at a time is in hand.
+ * - The rows arrive as a [Sequence], each stored line fetched as it is reached and dropped when the
+ *   next one is.
  * - The steps leave as a [Sequence] too, each row's redrawn line handed to the writer and let go.
- *   A redrawn line is thinned and therefore bounded, but a bound of twenty thousand places is still
- *   some four hundred thousand characters, and a library of hundreds of high-detail courses held
- *   together is tens of megabytes.
- * - What stays behind between rows is a digest of each surviving line ([RouteLine.digestOf]) and two
- *   numbers, which is what "grows only with how many rows" means.
+ * - What stays behind between rows is [RoutePolyline.digestOf] each surviving line and two numbers,
+ *   so the pass grows with how many rows the library has and not with how long its lines are.
  *
- * Anything that failed this rule would fail it inside the upgrade, which rolls back and is tried
- * again at every launch — an app that never opens, for the one runner whose library is the reason
- * the pass exists.
+ * Broken here it is broken inside the upgrade, which rolls back and is tried again at every
+ * launch — an app that never opens, for the one runner whose library is the reason the pass exists.
  *
  * The sequence must arrive in id order, which is checked rather than assumed: the id order is what
  * decides which row of a collision survives, and sorting it here would mean holding all of it at
@@ -169,7 +160,7 @@ fun libraryRedrawn(rows: Sequence<RouteAsKept>): Sequence<RouteRedrawStep> = seq
 
         val line = courseOf(points).line
         val polyline = RoutePolyline.encode(line)
-        val digest = RouteLine.digestOf(polyline)
+        val digest = RoutePolyline.digestOf(polyline)
         val held = holderOfLine[digest]
         if (held != null) {
             yield(RouteMerged(lostId = row.id, keptId = held.id))
@@ -208,26 +199,3 @@ fun libraryRedrawn(rows: Sequence<RouteAsKept>): Sequence<RouteRedrawStep> = seq
  * depends on whether an earlier one already was (#355).
  */
 private class Survivor(val id: Long, var climb: Double?)
-
-/** How a Route's line is told from another's without holding either of them. */
-object RouteLine {
-
-    /**
-     * A fixed-length stand-in for one line, equal exactly when the lines are (#403).
-     *
-     * SHA-256, and the choice matters. This is what decides that two rows are the same course and
-     * that one of them may be deleted, so a digest two different courses could share would lose a
-     * runner a Route. Two different lines sharing a SHA-256 is not something that happens to a
-     * library; it is something no one has ever produced for any pair of inputs at all.
-     *
-     * The alternative — keeping the digest as a hint and then reading the candidate row's line back
-     * out of the table to confirm — was declined. The candidate was decided and written some rows
-     * ago, so confirming would mean reading a line back out of a half-written table, which makes a
-     * pure decision depend on the order the writer happened to get to. A cheaper digest defended by
-     * a read is a worse trade than a digest that needs no defending.
-     */
-    fun digestOf(polyline: String): String =
-        MessageDigest.getInstance("SHA-256")
-            .digest(polyline.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-}
