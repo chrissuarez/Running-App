@@ -1,7 +1,60 @@
 package com.example.runningapp.routes
 
+import java.security.MessageDigest
+
+/** One row of `routes` as the upgrade finds it. The name and dates are not read: they never move. */
+data class RouteAsKept(
+    val id: Long,
+    val distanceMeters: Double,
+    val elevationGainMeters: Double?,
+    val polyline: String,
+)
+
 /**
- * What the upgrade does to a library kept before #354, and the whole of the deciding of it (#399).
+ * One thing the upgrade does to one row, handed over the moment it is decided (#403).
+ *
+ * A step rather than a list of them because of the rule this pass lives under: nothing it holds may
+ * grow with how long the library's lines are. A redrawn line is *thinned*, so it is bounded — but
+ * bounded is not small, and a few hundred courses recorded at high detail is still tens of megabytes
+ * if every redrawn line is kept until the pass ends. So each row's line leaves the pass as it is
+ * decided and is let go, and what stays behind is [RouteLine.digestOf] it: sixty-four characters,
+ * whatever the course.
+ *
+ * The steps are given in the order they must be carried out.
+ */
+sealed interface RouteRedrawStep
+
+/**
+ * One row rewritten where it stands.
+ *
+ * The name, the source and `createdAtMillis` are absent because the upgrade does not touch them: the
+ * name is the runner's, and when the row was kept is a fact about their library, not about the rule
+ * that draws its line.
+ */
+data class RouteRedrawn(
+    val id: Long,
+    val polyline: String,
+    val distanceMeters: Double,
+    val elevationGainMeters: Double?,
+) : RouteRedrawStep
+
+/** One row that redraws onto a line [keptId] already holds, so [lostId] goes and [keptId] stays. */
+data class RouteMerged(val lostId: Long, val keptId: Long) : RouteRedrawStep
+
+/**
+ * A climb moved onto the row that survived a merge, from the row it absorbed (#355).
+ *
+ * Its own step rather than a field on [RouteRedrawn] because the survivor is decided, and written,
+ * long before the row that hands it a climb arrives — that is what handing each row over as it is
+ * decided costs, and it costs nothing else. A survivor whose line and distance were already right is
+ * never redrawn at all, so for that row this is the only write there is.
+ */
+data class RouteClimbBanked(val id: Long, val elevationGainMeters: Double) : RouteRedrawStep
+
+/**
+ * The library as #354's rule draws it, out of the library as it was kept.
+ *
+ * A library kept before #354 is redrawn once, here, and the whole of the deciding of it is here (#399).
  *
  * #354 made both doors into the library draw a Route's line the one way: every place snapped to the
  * seven decimal places the row keeps it at, a place recorded twice written once, and the whole
@@ -22,45 +75,10 @@ package com.example.runningapp.routes
  * in it.
  *
  * Pure and free of Android and of SQL, so all of the below is pinned by `LibraryRedrawnTest` rather
- * than found on a phone. `MIGRATION_41_42` is the cursor loop that hands it the rows and writes back
+ * than found on a phone. `MIGRATION_41_42` is the cursor loop that hands it the rows and carries out
  * what it decides.
- */
-data class LibraryRedrawn(
-    /** The rows whose stored numbers or line moved. A row already in the new form is not here. */
-    val redrawn: List<RouteRedrawn>,
-    /** The rows that turned out to be a second copy of another and are dropped. */
-    val merged: List<RouteMerged>,
-)
-
-/** One row of `routes` as the upgrade finds it. The name and dates are not read: they never move. */
-data class RouteAsKept(
-    val id: Long,
-    val distanceMeters: Double,
-    val elevationGainMeters: Double?,
-    val polyline: String,
-)
-
-/**
- * One row rewritten where it stands.
  *
- * The name, the source and `createdAtMillis` are absent because the upgrade does not touch them: the
- * name is the runner's, and when the row was kept is a fact about their library, not about the rule
- * that draws its line.
- */
-data class RouteRedrawn(
-    val id: Long,
-    val polyline: String,
-    val distanceMeters: Double,
-    val elevationGainMeters: Double?,
-)
-
-/** One row that redraws onto a line [keptId] already holds, so [lostId] goes and [keptId] stays. */
-data class RouteMerged(val lostId: Long, val keptId: Long)
-
-/**
- * The library as #354's rule draws it, out of the library as it was kept.
- *
- * Four decisions, and each of them is one the upgrade is forced to make rather than one it chooses.
+ * **Four decisions**, and each of them is one the upgrade is forced to make rather than one it chooses.
  *
  * **The line is redrawn through [courseOf], the same function both doors use.** Nothing else would
  * do: the point of the pass is that afterwards there is one rule, so it has to be *that* rule and
@@ -100,35 +118,45 @@ data class RouteMerged(val lostId: Long, val keptId: Long)
  * survives here is the row the library would have sent an importer to anyway; and because it is the
  * one the runner has had longest, under the name they have been seeing for it.
  *
- * A survivor with no climb takes the first climb any of the rows it absorbed had. That is #355's
- * rule, and for #355's reason: a null is silence about a course that may well go over a hill, not a
- * statement that it is flat, so it does not get to take a real answer away.
+ * A survivor with no climb takes the first climb any of the rows it absorbed had, as a
+ * [RouteClimbBanked] step of its own. That is #355's rule, and for #355's reason: a null is silence
+ * about a course that may well go over a hill, not a statement that it is flat, so it does not get
+ * to take a real answer away.
  *
  * A row whose line will not decode at all is left completely alone and takes no part in the
  * merging. There is no line there to redraw, and an upgrade is the wrong moment to decide what a
  * damaged row meant.
  *
  * **The one rule about what the pass may hold: nothing here grows with how long the library's lines
- * are, only with how many rows it has.** A line kept before #354 holds every point its file held,
- * and a file may hold two hundred thousand of them — megabytes of text in one row, and more again
- * while it is decoded. The rows therefore arrive as a [Sequence], each line fetched as it is reached
- * and dropped when the next one is: one line at a time is in hand, and what is kept from it is the
- * *thinned* line and a handful of numbers. Anything that failed this rule would fail it inside the
- * upgrade, which rolls back and is tried again at every launch — an app that never opens, for the
- * one runner whose library is the reason the pass exists.
+ * are, only with how many rows it has** (#403). A line kept before #354 holds every point its file
+ * held, and a file may hold two hundred thousand of them — megabytes of text in one row, and more
+ * again while it is decoded. So:
+ *
+ * - The rows arrive as a [Sequence], each line fetched as it is reached and dropped when the next
+ *   one is: one stored line at a time is in hand.
+ * - The steps leave as a [Sequence] too, each row's redrawn line handed to the writer and let go.
+ *   A redrawn line is thinned and therefore bounded, but a bound of twenty thousand places is still
+ *   some four hundred thousand characters, and a library of hundreds of high-detail courses held
+ *   together is tens of megabytes.
+ * - What stays behind between rows is a digest of each surviving line ([RouteLine.digestOf]) and two
+ *   numbers, which is what "grows only with how many rows" means.
+ *
+ * Anything that failed this rule would fail it inside the upgrade, which rolls back and is tried
+ * again at every launch — an app that never opens, for the one runner whose library is the reason
+ * the pass exists.
  *
  * The sequence must arrive in id order, which is checked rather than assumed: the id order is what
  * decides which row of a collision survives, and sorting it here would mean holding all of it at
  * once. [com.example.runningapp.data.READ_LIBRARY_AS_KEPT_SQL] reads it that way.
+ *
+ * Nothing is decided until the returned sequence is walked, and it may be walked only once — it
+ * fetches each stored line as it goes, which is the whole of why the rows are a sequence too.
  */
-fun libraryRedrawn(rows: Sequence<RouteAsKept>): LibraryRedrawn {
-    val redrawn = ArrayList<RouteRedrawn>()
-    val merged = ArrayList<RouteMerged>()
-    // The row already holding each redrawn line, and what it will end up banking, beside whether
-    // that row was already right. Kept as a map from the *new* line, so the second row to land on
-    // one is recognised as it arrives — and the new line is a thinned one, so the map grows with
-    // the shape of the library rather than with the size of the lines that made it.
-    val holderOfLine = LinkedHashMap<String, RowSoFar>()
+fun libraryRedrawn(rows: Sequence<RouteAsKept>): Sequence<RouteRedrawStep> = sequence {
+    // The row holding each redrawn line, found by a digest of that line rather than by the line
+    // itself: sixty-four characters a row, so the pass grows with the shape of the library and not
+    // with the size of the lines that made it.
+    val holderOfLine = HashMap<String, Survivor>()
 
     var lastId = Long.MIN_VALUE
     for (row in rows) {
@@ -141,56 +169,65 @@ fun libraryRedrawn(rows: Sequence<RouteAsKept>): LibraryRedrawn {
 
         val line = courseOf(points).line
         val polyline = RoutePolyline.encode(line)
-        val held = holderOfLine[polyline]
+        val digest = RouteLine.digestOf(polyline)
+        val held = holderOfLine[digest]
         if (held != null) {
-            merged += RouteMerged(lostId = row.id, keptId = held.row.id)
+            yield(RouteMerged(lostId = row.id, keptId = held.id))
             // The absorbed row's climb, but only where the survivor has none to lose (#355).
-            if (held.row.elevationGainMeters == null && row.elevationGainMeters != null) {
-                holderOfLine[polyline] = held.copy(
-                    row = held.row.copy(elevationGainMeters = row.elevationGainMeters),
-                )
+            val climb = row.elevationGainMeters
+            if (held.climb == null && climb != null) {
+                held.climb = climb
+                yield(RouteClimbBanked(id = held.id, elevationGainMeters = climb))
             }
             continue
         }
-        // Whether anything moved is decided here, while the row as it was found is still to hand,
-        // and only the answer is kept: comparing later would mean holding every line the library
-        // arrived with — see [libraryRedrawn]'s rule about what the pass may hold.
-        holderOfLine[polyline] = RowSoFar(
-            row = RouteRedrawn(
-                id = row.id,
-                polyline = polyline,
-                distanceMeters = routeDistanceMeters(line),
-                elevationGainMeters = row.elevationGainMeters,
-            ),
-            lineWasAlreadyRight = polyline == row.polyline,
-            distanceAsKept = row.distanceMeters,
-            climbAsKept = row.elevationGainMeters,
-        )
+        holderOfLine[digest] = Survivor(id = row.id, climb = row.elevationGainMeters)
+        // Whether anything moved is decided here, while the row as it was found is still to hand.
+        // The climb is not in the comparison because the redraw never touches it: a climb that
+        // moves does so later, when a merge hands one over, and says so as its own step.
+        val distanceMeters = routeDistanceMeters(line)
+        val moved = polyline != row.polyline || distanceMeters != row.distanceMeters
+        if (moved) {
+            yield(
+                RouteRedrawn(
+                    id = row.id,
+                    polyline = polyline,
+                    distanceMeters = distanceMeters,
+                    elevationGainMeters = row.elevationGainMeters,
+                )
+            )
+        }
     }
-
-    // Written back only where something actually moved, so a library already in the new form — every
-    // library that never held a Route before the upgrade, which is most of them — is not touched at
-    // all. Compared against the row as it was found, not against the row beside it.
-    for (soFar in holderOfLine.values) {
-        val moved = !soFar.lineWasAlreadyRight ||
-            soFar.row.distanceMeters != soFar.distanceAsKept ||
-            soFar.row.elevationGainMeters != soFar.climbAsKept
-        if (moved) redrawn += soFar.row
-    }
-
-    return LibraryRedrawn(redrawn = redrawn.sortedBy { it.id }, merged = merged)
 }
 
 /**
- * A row redrawn, beside just enough of the row as it was found to say whether anything moved.
+ * A row that has survived to hold one line, and the climb it holds as things stand.
  *
- * The line as it was found is deliberately *not* here. Whether the line moved is a yes or a no, and
- * that is settled the moment the row is redrawn — so the answer is kept and the line itself is let
- * go, which is what stops the pass holding the whole library's text at once.
+ * The line itself is deliberately not here — see the rule at [libraryRedrawn] about what the pass
+ * may hold. The climb is, and it is mutable, because whether a later row's climb may be taken
+ * depends on whether an earlier one already was (#355).
  */
-private data class RowSoFar(
-    val row: RouteRedrawn,
-    val lineWasAlreadyRight: Boolean,
-    val distanceAsKept: Double,
-    val climbAsKept: Double?,
-)
+private class Survivor(val id: Long, var climb: Double?)
+
+/** How a Route's line is told from another's without holding either of them. */
+object RouteLine {
+
+    /**
+     * A fixed-length stand-in for one line, equal exactly when the lines are (#403).
+     *
+     * SHA-256, and the choice matters. This is what decides that two rows are the same course and
+     * that one of them may be deleted, so a digest two different courses could share would lose a
+     * runner a Route. Two different lines sharing a SHA-256 is not something that happens to a
+     * library; it is something no one has ever produced for any pair of inputs at all.
+     *
+     * The alternative — keeping the digest as a hint and then reading the candidate row's line back
+     * out of the table to confirm — was declined. The candidate was decided and written some rows
+     * ago, so confirming would mean reading a line back out of a half-written table, which makes a
+     * pure decision depend on the order the writer happened to get to. A cheaper digest defended by
+     * a read is a worse trade than a digest that needs no defending.
+     */
+    fun digestOf(polyline: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(polyline.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+}

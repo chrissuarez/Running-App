@@ -66,7 +66,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import com.example.runningapp.archive.MonthlyArchiveWorker
 import com.example.runningapp.archive.SafArchiveFolder
-import com.example.runningapp.data.Route
+import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.export.ExportFormat
@@ -1499,7 +1499,7 @@ fun MainScreen(
      * nothing to pick, and because a Route deleted while this screen sits open must drop out of the
      * pick rather than be started on.
      */
-    routes: List<Route>,
+    routes: List<RouteHeader>,
     /**
      * The course picked for the next Run, and which way round — null for none picked (#56).
      *

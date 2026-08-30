@@ -1,6 +1,6 @@
 package com.example.runningapp.ui
 
-import com.example.runningapp.data.Route
+import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.data.RouteSource
 import com.example.runningapp.routes.GpxRefusal
 import org.junit.Assert.assertEquals
@@ -10,12 +10,11 @@ import java.util.Locale
 
 class RouteModelsTest {
 
-    private fun route(distanceMeters: Double, elevationGainMeters: Double?) = Route(
+    private fun route(distanceMeters: Double, elevationGainMeters: Double?) = RouteHeader(
         id = 1,
         name = "Regent's Park loop",
         distanceMeters = distanceMeters,
         elevationGainMeters = elevationGainMeters,
-        polyline = "51.5000000,-0.1000000 51.5010000,-0.1010000",
         createdAtMillis = 1_700_000_000_000L,
         source = RouteSource.IMPORTED,
     )

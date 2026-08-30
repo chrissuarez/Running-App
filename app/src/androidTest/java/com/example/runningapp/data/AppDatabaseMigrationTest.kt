@@ -536,13 +536,13 @@ class AppDatabaseMigrationTest {
         val migratedDb = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
             .addMigrations(*appDatabaseMigrations { HrProfile(190) })
             .build()
-        val routes = runBlockingGet { migratedDb.routeDao().getAllRoutesFlow().first() }
+        val routes = runBlockingGet { migratedDb.routeDao().getLibraryFlow().first() }
         val run = runBlockingGet { migratedDb.sessionDao().getSessionById(1) }!!
         val samples = runBlockingGet { migratedDb.sampleDao().getSamplesForSessionOnce(1) }
 
         // Empty, and nothing could have filled it: no earlier version of the app kept a Route, and
         // turning a past Run into one is a thing the runner asks for a Run at a time (#55).
-        assertEquals(emptyList<Route>(), routes)
+        assertEquals(emptyList<RouteHeader>(), routes)
 
         // And the library can be written to and emptied without a Run noticing — the point of it
         // having no key into `sessions` in either direction (#54).
@@ -558,13 +558,13 @@ class AppDatabaseMigrationTest {
                 )
             )
         }
-        val stored = runBlockingGet { migratedDb.routeDao().getAllRoutesFlow().first() }.single()
+        val stored = runBlockingGet { migratedDb.routeDao().getLibraryFlow().first() }.single()
         assertEquals("Regent's Park loop", stored.name)
         assertNull(stored.elevationGainMeters)
         runBlockingGet { migratedDb.routeDao().deleteRoute(stored.id) }
         assertEquals(
-            emptyList<Route>(),
-            runBlockingGet { migratedDb.routeDao().getAllRoutesFlow().first() },
+            emptyList<RouteHeader>(),
+            runBlockingGet { migratedDb.routeDao().getLibraryFlow().first() },
         )
 
         migratedDb.close()

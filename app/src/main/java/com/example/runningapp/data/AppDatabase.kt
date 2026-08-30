@@ -10,6 +10,9 @@ import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.hrZoneOf
 import com.example.runningapp.routes.RouteAsKept
+import com.example.runningapp.routes.RouteClimbBanked
+import com.example.runningapp.routes.RouteMerged
+import com.example.runningapp.routes.RouteRedrawn
 import com.example.runningapp.routes.libraryRedrawn
 import com.example.runningapp.run.RunMode
 import com.example.runningapp.run.RunRoute
@@ -2894,6 +2897,18 @@ const val REDIRECT_RAN_ALONG_MERGED_ROUTE_SQL =
 const val DROP_MERGED_ROUTE_SQL = "DELETE FROM routes WHERE id = ?"
 
 /**
+ * A climb handed to the survivor of a merge by the row it absorbed (#355, #403).
+ *
+ * On its own rather than folded into [REDRAW_ROUTE_SQL] because the survivor was decided, and
+ * written, before the row that hands it a climb was even read — and a survivor whose line and
+ * distance were already right is never redrawn at all, so for that row this is the only write there
+ * is. Only the climb is in the `SET`: the line and the distance of the surviving row are settled
+ * and this must not disturb them.
+ */
+const val BANK_MERGED_ROUTE_CLIMB_SQL =
+    "UPDATE routes SET elevationGainMeters = ? WHERE id = ?"
+
+/**
  * One row's line and numbers rewritten where it stands (#399).
  *
  * The name and `createdAtMillis` are deliberately not in the `SET`: the name is the runner's, and
@@ -2990,8 +3005,17 @@ val MIGRATION_41_42 = object : Migration(41, 42) {
         }
         if (headers.isEmpty()) return
 
-        // Lazily, so exactly one line is in hand at a time — the rule stated at [libraryRedrawn].
-        val redrawn = libraryRedrawn(
+        // Lazily on both sides — one stored line fetched at a time, and one redrawn line written at
+        // a time. That is the rule stated at [libraryRedrawn], and it is why the writing is a walk
+        // over a sequence rather than a walk over lists the pass has finished building.
+        //
+        // The steps arrive in the order they must be carried out, which is not "every merge, then
+        // every redraw": a row is redrawn as it is reached, so a later row can still redraw onto the
+        // line a losing row is holding at that moment. Nothing sees it. The whole pass is one
+        // transaction, and the column deliberately carries no unique constraint
+        // ([com.example.runningapp.data.RouteDao.keepRoute]) — so a moment where two rows share a
+        // line is a moment inside a write that has not landed yet.
+        val steps = libraryRedrawn(
             headers.asSequence().map { found ->
                 RouteAsKept(
                     id = found.id,
@@ -3002,24 +3026,33 @@ val MIGRATION_41_42 = object : Migration(41, 42) {
                 )
             }
         )
-        // The merges first, so no row is ever redrawn onto a line another row still holds.
-        for (merge in redrawn.merged) {
-            database.execSQL(
-                REDIRECT_RAN_ALONG_MERGED_ROUTE_SQL,
-                arrayOf<Any?>(merge.keptId, merge.lostId),
-            )
-            database.execSQL(DROP_MERGED_ROUTE_SQL, arrayOf<Any?>(merge.lostId))
-        }
-        for (route in redrawn.redrawn) {
-            database.execSQL(
-                REDRAW_ROUTE_SQL,
-                arrayOf(
-                    route.polyline,
-                    route.distanceMeters,
-                    route.elevationGainMeters,
-                    route.id,
-                ),
-            )
+        for (step in steps) {
+            when (step) {
+                is RouteRedrawn -> database.execSQL(
+                    REDRAW_ROUTE_SQL,
+                    arrayOf(
+                        step.polyline,
+                        step.distanceMeters,
+                        step.elevationGainMeters,
+                        step.id,
+                    ),
+                )
+
+                is RouteMerged -> {
+                    // The redirect first and in the same transaction as the drop, because between
+                    // the two a Run would be pointing at nothing.
+                    database.execSQL(
+                        REDIRECT_RAN_ALONG_MERGED_ROUTE_SQL,
+                        arrayOf<Any?>(step.keptId, step.lostId),
+                    )
+                    database.execSQL(DROP_MERGED_ROUTE_SQL, arrayOf<Any?>(step.lostId))
+                }
+
+                is RouteClimbBanked -> database.execSQL(
+                    BANK_MERGED_ROUTE_CLIMB_SQL,
+                    arrayOf<Any?>(step.elevationGainMeters, step.id),
+                )
+            }
         }
     }
 }

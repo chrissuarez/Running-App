@@ -53,10 +53,41 @@ data class Route(
      * a route that may well go over a hill, and the screen says as much rather than printing a nought.
      */
     val elevationGainMeters: Double? = null,
-    /** The course itself — see [com.example.runningapp.routes.RoutePolyline] for the writing of it. */
+    /**
+     * The course itself — see [com.example.runningapp.routes.RoutePolyline] for the writing of it.
+     *
+     * **Written once, when the row is inserted, and never again while the app is running** (#403).
+     * Nothing in [RouteDao] updates it: [RouteDao.remeasureRoute] writes the two numbers and
+     * [RouteDao.renameRoute] the name, and a re-import that finds a Route already kept found it *by
+     * this very text* ([RouteDao.findRouteByPolyline]), so what it would write back is what is
+     * already there. The one thing that ever rewrites a line is the upgrade at `MIGRATION_41_42`,
+     * which runs before the database is opened for reading.
+     *
+     * Two things lean on that. A reader may leave the line out of a query and fetch it by id when it
+     * actually needs it, knowing the row it gets is the row it listed ([RouteDao.getRoutePolyline]);
+     * and anything worked out from a line — a thumbnail, say — may be kept against the Route's id
+     * alone. Add an update that touches this column and both become wrong, so it is a rule to keep
+     * rather than an accident to lean on.
+     */
     val polyline: String,
     val createdAtMillis: Long,
     /** One of [RouteSource]. Text rather than a number so a row still reads plainly in a backup. */
+    val source: String,
+)
+
+/**
+ * One Route as a list of them shows it: the whole row except the line (#403).
+ *
+ * The library screen and the pre-run picker both draw a name and two numbers, and neither has any
+ * use for the course itself — so neither is handed it. See [RouteDao.getLibraryFlow] for why that
+ * matters and [RouteDao.getRoutePolyline] for how the line is fetched when one is wanted.
+ */
+data class RouteHeader(
+    val id: Long,
+    val name: String,
+    val distanceMeters: Double,
+    val elevationGainMeters: Double?,
+    val createdAtMillis: Long,
     val source: String,
 )
 
@@ -102,9 +133,34 @@ data class KeptRoute(val id: Long, val name: String, val keeping: RouteKeeping)
 @Dao
 interface RouteDao {
 
-    /** The library, newest first — the order a runner who has just imported one expects. */
-    @Query("SELECT * FROM routes ORDER BY createdAtMillis DESC, id DESC")
-    fun getAllRoutesFlow(): Flow<List<Route>>
+    /**
+     * The library, newest first — the order a runner who has just imported one expects.
+     *
+     * Every row **except its line** (#403). A course's line is the one thing on the row that can be
+     * big: a library of hundreds of high-detail courses is tens of megabytes of text, and
+     * `SELECT *` would hold all of it for as long as the screen is open — the same total that would
+     * put the upgrade out of memory, moved from launch to the moment the runner opens Routes.
+     *
+     * Nothing that lists Routes needs a line. The library screen draws a name, two numbers and a
+     * thumbnail; the pre-run picker draws a name and two numbers. The line is read one course at a
+     * time, by whatever actually needs it ([getRoutePolyline], [getRoute], [getRouteFlow]).
+     */
+    @Query(
+        "SELECT id, name, distanceMeters, elevationGainMeters, createdAtMillis, source FROM routes " +
+            "ORDER BY createdAtMillis DESC, id DESC"
+    )
+    fun getLibraryFlow(): Flow<List<RouteHeader>>
+
+    /**
+     * One course's line, on its own (#403).
+     *
+     * The other half of [getLibraryFlow]: a reader lists the library without its lines and then asks
+     * for one line at a time, so at no point does it hold two. Null is the row having gone since it
+     * was listed, which is an ordinary thing — the runner can delete a course while the list is on
+     * screen.
+     */
+    @Query("SELECT polyline FROM routes WHERE id = :routeId")
+    suspend fun getRoutePolyline(routeId: Long): String?
 
     @Insert
     suspend fun insertRoute(route: Route): Long

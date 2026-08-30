@@ -3,6 +3,7 @@ package com.example.runningapp.routes
 import com.example.runningapp.data.KeptRoute
 import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteDao
+import com.example.runningapp.data.RouteHeader
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -31,8 +32,38 @@ class FakeRouteDao : RouteDao {
      */
     var findDelayMillis: Long = 0L
 
-    override fun getAllRoutesFlow(): Flow<List<Route>> =
-        rows.map { it.sortedWith(compareByDescending<Route> { row -> row.createdAtMillis }.thenByDescending { row -> row.id }) }
+    /** The library without its lines, in the real DAO's order — see [RouteDao.getLibraryFlow]. */
+    override fun getLibraryFlow(): Flow<List<RouteHeader>> = rows.map { table ->
+        table
+            .sortedWith(
+                compareByDescending<Route> { row -> row.createdAtMillis }
+                    .thenByDescending { row -> row.id }
+            )
+            .map { row ->
+                RouteHeader(
+                    id = row.id,
+                    name = row.name,
+                    distanceMeters = row.distanceMeters,
+                    elevationGainMeters = row.elevationGainMeters,
+                    createdAtMillis = row.createdAtMillis,
+                    source = row.source,
+                )
+            }
+    }
+
+    /**
+     * One row's line, and how many times one has been asked for.
+     *
+     * Counted because the rule #403 states is about what a reader *holds*, and the way a reader
+     * keeps to it is by asking for one line at a time and letting it go. A test that wants to prove
+     * the drawing pass does that has to be able to see the asks.
+     */
+    val lineAsks = ArrayList<Long>()
+
+    override suspend fun getRoutePolyline(routeId: Long): String? {
+        lineAsks += routeId
+        return rows.value.firstOrNull { it.id == routeId }?.polyline
+    }
 
     override suspend fun insertRoute(route: Route): Long {
         val id = nextId++
@@ -86,12 +117,15 @@ class FakeRouteDao : RouteDao {
         rows.value = rows.value.filterNot { it.id == routeId }
     }
 
+
     /**
-     * A row's course replaced under the same id, which is what re-importing a kept Route does.
+     * A row's course replaced under the same id.
      *
-     * The real DAO reaches this state through [keepRoute], which matches a file to a Route by its
-     * line and then re-measures the row it found. There is no one query to imitate, so a test that
-     * cares only that the row's line moved says so directly.
+     * A state the real table cannot reach: a Route's line is written once, when the row is inserted
+     * (the rule is stated at [com.example.runningapp.data.Route.polyline]). It is staged here all
+     * the same, for `CourseAlertsTest`: what that watch has to do when the course it is following
+     * changes under it is a branch of its own, and a test that could only reach it by deleting the
+     * row would be testing the deletion instead.
      */
     fun replaceLine(routeId: Long, polyline: String) {
         rows.value = rows.value.map { if (it.id == routeId) it.copy(polyline = polyline) else it }

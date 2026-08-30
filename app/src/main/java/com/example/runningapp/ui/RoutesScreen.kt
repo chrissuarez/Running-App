@@ -53,7 +53,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.analysis.RouteThumbnail
 import com.example.runningapp.analysis.ThumbPoint
-import com.example.runningapp.data.Route
+import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.data.RouteSource
 import com.example.runningapp.ui.theme.RunningAppTheme
 import com.example.runningapp.ui.theme.RunningUiTokens
@@ -74,8 +74,8 @@ fun RoutesScreen(
     isImporting: Boolean,
     message: String?,
     onImport: () -> Unit,
-    onRename: (Route, String) -> Unit,
-    onDelete: (Route) -> Unit,
+    onRename: (RouteHeader, String) -> Unit,
+    onDelete: (RouteHeader) -> Unit,
     onMessageShown: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -256,7 +256,7 @@ private fun RouteRow(row: RouteRowUi, onRename: () -> Unit, onDelete: () -> Unit
 }
 
 @Composable
-private fun RenameRouteDialog(route: Route, onDismiss: () -> Unit, onRename: (String) -> Unit) {
+private fun RenameRouteDialog(route: RouteHeader, onDismiss: () -> Unit, onRename: (String) -> Unit) {
     var name by rememberSaveable(route.id) { mutableStateOf(route.name) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -297,12 +297,11 @@ private fun RoutesScreenPreview() {
         RoutesScreen(
             rows = listOf(
                 RouteRowUi(
-                    route = Route(
+                    route = RouteHeader(
                         id = 1,
                         name = "Regent's Park outer loop",
                         distanceMeters = 4_215.0,
                         elevationGainMeters = 27.4,
-                        polyline = "",
                         createdAtMillis = 0,
                         source = RouteSource.IMPORTED,
                     ),
@@ -317,12 +316,11 @@ private fun RoutesScreenPreview() {
                     ),
                 ),
                 RouteRowUi(
-                    route = Route(
+                    route = RouteHeader(
                         id = 2,
                         name = "Canal towpath out and back",
                         distanceMeters = 10_050.0,
                         elevationGainMeters = null,
-                        polyline = "",
                         createdAtMillis = 0,
                         source = RouteSource.IMPORTED,
                     ),
