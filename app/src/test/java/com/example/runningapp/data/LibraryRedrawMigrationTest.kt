@@ -10,9 +10,10 @@ import org.junit.Test
 /**
  * What the v41 to v42 upgrade writes, against a real SQLite database held in memory (#399).
  *
- * [READ_LIBRARY_AS_KEPT_SQL], [REDIRECT_RAN_ALONG_MERGED_ROUTE_SQL], [DROP_MERGED_ROUTE_SQL] and
- * [REDRAW_ROUTE_SQL] are the exact strings `MIGRATION_41_42` executes, so they are put to a real
- * database here rather than described in prose — [HistoryDebtMigrationTest]'s reason exactly.
+ * [READ_LIBRARY_AS_KEPT_SQL], [REDIRECT_RAN_ALONG_MERGED_ROUTE_SQL], [DROP_MERGED_ROUTE_SQL],
+ * [REDRAW_ROUTE_SQL] and [BANK_MERGED_ROUTE_CLIMB_SQL] are the exact strings `MIGRATION_41_42`
+ * executes, so they are put to a real database here rather than described in prose —
+ * [HistoryDebtMigrationTest]'s reason exactly.
  *
  * What the pass *decides* is not tested here: that is pure Kotlin and is pinned by
  * `LibraryRedrawnTest`. What is tested here is the half only a database can answer — that dropping
@@ -150,6 +151,33 @@ class LibraryRedrawMigrationTest {
             assertEquals("imported", it.getString("source"))
             assertEquals("51.5000000,-0.1000000", it.getString("polyline"))
             assertEquals(42.0, it.getDouble("distanceMeters"), 0.000_001)
+        }
+    }
+
+    /**
+     * A climb handed over by a merge lands on the survivor and moves nothing else (#403).
+     *
+     * The survivor may already have been redrawn rows earlier — or, where its line and distance were
+     * already right, never written at all — so this write has to be able to arrive on its own and
+     * has to leave the line and the distance exactly as they stand.
+     */
+    @Test
+    fun `banking an absorbed climb writes the climb and nothing else`() {
+        route(id = 1, name = "Tuesday hill loop", polyline = "51.5000000,-0.1000000", climb = "NULL")
+
+        db.prepareStatement(BANK_MERGED_ROUTE_CLIMB_SQL).use {
+            it.setDouble(1, 61.0)
+            it.setLong(2, 1)
+            it.executeUpdate()
+        }
+
+        db.createStatement().executeQuery("SELECT * FROM routes WHERE id = 1").use {
+            it.next()
+            assertEquals(61.0, it.getDouble("elevationGainMeters"), 0.000_001)
+            assertEquals("Tuesday hill loop", it.getString("name"))
+            assertEquals("51.5000000,-0.1000000", it.getString("polyline"))
+            assertEquals(100.0, it.getDouble("distanceMeters"), 0.000_001)
+            assertEquals(7L, it.getLong("createdAtMillis"))
         }
     }
 

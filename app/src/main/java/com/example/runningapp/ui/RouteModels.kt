@@ -1,6 +1,6 @@
 package com.example.runningapp.ui
 
-import com.example.runningapp.data.Route
+import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.routes.GpxRefusal
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -14,7 +14,7 @@ import kotlin.math.roundToInt
  */
 
 /** The line under a Route's name: how far it goes, and how much of that is climbing. */
-fun routeRowSubtitle(route: Route): String =
+fun routeRowSubtitle(route: RouteHeader): String =
     routeDistanceLabel(route.distanceMeters) + " · " + routeElevationLabel(route.elevationGainMeters)
 
 /** Kilometres to two places, as every other distance in the app is written. */
@@ -129,7 +129,7 @@ fun routeRemeasuredKeepingClimbMessage(name: String): String =
  * One line rather than a name alone, because the two things a runner checks on the start line are
  * that it is the right course and that it is pointing the way they mean to set off.
  */
-fun runRouteChoiceSummary(route: Route?, reversed: Boolean): String {
+fun runRouteChoiceSummary(route: RouteHeader?, reversed: Boolean): String {
     if (route == null) return "No route — just go for a run"
     val direction = if (reversed) "backwards" else "as drawn"
     return "${route.name} · ${routeDistanceLabel(route.distanceMeters)} · $direction"

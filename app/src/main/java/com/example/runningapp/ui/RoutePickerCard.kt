@@ -30,7 +30,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
-import com.example.runningapp.data.Route
+import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.run.RunRoute
 import com.example.runningapp.ui.theme.RunningUiTokens
 
@@ -63,8 +63,8 @@ val RunRouteSaver: Saver<RunRoute?, Any> = listSaver(
  */
 @Composable
 fun RoutePickerCard(
-    routes: List<Route>,
-    picked: Route?,
+    routes: List<RouteHeader>,
+    picked: RouteHeader?,
     reversed: Boolean,
     onPick: (Long?) -> Unit,
     onReversedChange: (Boolean) -> Unit

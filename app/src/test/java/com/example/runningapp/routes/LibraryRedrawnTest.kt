@@ -15,6 +15,26 @@ import org.junit.Test
  */
 class LibraryRedrawnTest {
 
+    /**
+     * The pass walked to the end, so a test can look at every step it decided.
+     *
+     * The pass hands its steps over one at a time and lets each redrawn line go
+     * ([libraryRedrawn]'s rule about what it may hold), which is exactly what a test must not do to
+     * it — so the walking is here, in one place, and a test that wants a library the size of a
+     * runner's own may hold all of it.
+     */
+    private fun stepsOf(rows: Sequence<RouteAsKept>): List<RouteRedrawStep> =
+        libraryRedrawn(rows).toList()
+
+    private val List<RouteRedrawStep>.redrawn: List<RouteRedrawn>
+        get() = filterIsInstance<RouteRedrawn>()
+
+    private val List<RouteRedrawStep>.merged: List<RouteMerged>
+        get() = filterIsInstance<RouteMerged>()
+
+    private val List<RouteRedrawStep>.climbsBanked: List<RouteClimbBanked>
+        get() = filterIsInstance<RouteClimbBanked>()
+
     /** A line of places along a road, dense enough that thinning has something to take out. */
     private fun straightRoad(points: Int): List<RoutePoint> = (0 until points).map {
         RoutePoint(51.5 + it * 0.000_01, -0.12, elevationMeters = null)
@@ -31,7 +51,7 @@ class LibraryRedrawnTest {
 
     @Test
     fun `an empty library is left alone`() {
-        val redrawn = libraryRedrawn(emptySequence())
+        val redrawn = stepsOf(emptySequence())
 
         assertEquals(emptyList<RouteRedrawn>(), redrawn.redrawn)
         assertEquals(emptyList<RouteMerged>(), redrawn.merged)
@@ -47,7 +67,7 @@ class LibraryRedrawnTest {
             polyline = RoutePolyline.encode(course.line),
         )
 
-        val redrawn = libraryRedrawn(listOf(alreadyRight).asSequence())
+        val redrawn = stepsOf(listOf(alreadyRight).asSequence())
 
         assertEquals(emptyList<RouteRedrawn>(), redrawn.redrawn)
         assertEquals(emptyList<RouteMerged>(), redrawn.merged)
@@ -57,7 +77,7 @@ class LibraryRedrawnTest {
     fun `an imported row is redrawn onto the line its own file makes today`() {
         val file = straightRoad(points = 200)
 
-        val redrawn = libraryRedrawn(listOf(importedBefore354(id = 1, points = file)).asSequence())
+        val redrawn = stepsOf(listOf(importedBefore354(id = 1, points = file)).asSequence())
 
         assertEquals(1, redrawn.redrawn.size)
         // The whole point of the pass: the row now holds the very text a re-import would look for.
@@ -72,7 +92,7 @@ class LibraryRedrawnTest {
         val file = straightRoad(points = 200)
         val kept = importedBefore354(id = 1, points = file)
 
-        val row = libraryRedrawn(listOf(kept).asSequence()).redrawn.single()
+        val row = stepsOf(listOf(kept).asSequence()).redrawn.single()
 
         assertEquals(
             routeDistanceMeters(courseOf(file).line),
@@ -87,7 +107,7 @@ class LibraryRedrawnTest {
     fun `a redrawn row keeps the climb it banked, which no pass can measure again`() {
         val kept = importedBefore354(id = 1, points = straightRoad(points = 200), climb = 84.0)
 
-        val row = libraryRedrawn(listOf(kept).asSequence()).redrawn.single()
+        val row = stepsOf(listOf(kept).asSequence()).redrawn.single()
 
         assertEquals(84.0, row.elevationGainMeters)
     }
@@ -96,7 +116,7 @@ class LibraryRedrawnTest {
     fun `a row whose line will not decode is left completely alone`() {
         val damaged = RouteAsKept(id = 1, distanceMeters = 900.0, elevationGainMeters = null, polyline = "junk")
 
-        val redrawn = libraryRedrawn(listOf(damaged).asSequence())
+        val redrawn = stepsOf(listOf(damaged).asSequence())
 
         assertEquals(emptyList<RouteRedrawn>(), redrawn.redrawn)
         assertEquals(emptyList<RouteMerged>(), redrawn.merged)
@@ -114,7 +134,7 @@ class LibraryRedrawnTest {
         )
         val imported = importedBefore354(id = 2, points = file)
 
-        val redrawn = libraryRedrawn(listOf(fromRun, imported).asSequence())
+        val redrawn = stepsOf(listOf(fromRun, imported).asSequence())
 
         assertEquals(listOf(RouteMerged(lostId = 2, keptId = 1)), redrawn.merged)
     }
@@ -125,7 +145,7 @@ class LibraryRedrawnTest {
         val older = importedBefore354(id = 3, points = file)
         val newer = importedBefore354(id = 9, points = file)
 
-        val redrawn = libraryRedrawn(listOf(older, newer).asSequence())
+        val redrawn = stepsOf(listOf(older, newer).asSequence())
 
         assertEquals(listOf(RouteMerged(lostId = 9, keptId = 3)), redrawn.merged)
         assertEquals(listOf(3L), redrawn.redrawn.map { it.id })
@@ -144,7 +164,7 @@ class LibraryRedrawnTest {
         val file = straightRoad(points = 200)
 
         val thrown = runCatching {
-            libraryRedrawn(
+            stepsOf(
                 listOf(
                     importedBefore354(id = 9, points = file),
                     importedBefore354(id = 3, points = file),
@@ -172,21 +192,60 @@ class LibraryRedrawnTest {
             importedBefore354(id = id, points = file)
         }.constrainOnce()
 
-        val redrawn = libraryRedrawn(rows)
+        val redrawn = stepsOf(rows)
 
         assertEquals(mapOf(1L to 1, 2L to 1, 3L to 1), asks)
         assertEquals(listOf(1L), redrawn.redrawn.map { it.id })
     }
 
+    /**
+     * The absorbed climb arrives as its own step, after the merge that brings it.
+     *
+     * It cannot be a field on the survivor's [RouteRedrawn]: that row was decided and handed over
+     * before the row carrying the climb had even been read — which is what handing each row over as
+     * it is decided costs (#403), and the whole of what it costs.
+     */
     @Test
     fun `a survivor with no climb takes the climb of a row it absorbed`() {
         val file = straightRoad(points = 200)
         val silent = importedBefore354(id = 1, points = file, climb = null)
         val measured = importedBefore354(id = 2, points = file, climb = 61.0)
 
-        val row = libraryRedrawn(listOf(silent, measured).asSequence()).redrawn.single()
+        val steps = stepsOf(listOf(silent, measured).asSequence())
 
-        assertEquals(61.0, row.elevationGainMeters)
+        assertEquals(null, steps.redrawn.single().elevationGainMeters)
+        assertEquals(
+            listOf(
+                RouteMerged(lostId = 2, keptId = 1),
+                RouteClimbBanked(id = 1, elevationGainMeters = 61.0),
+            ),
+            steps.filter { it !is RouteRedrawn },
+        )
+    }
+
+    /**
+     * A survivor whose line and distance were already right is never redrawn, so the climb it
+     * absorbs is the only write there is for it.
+     */
+    @Test
+    fun `a survivor already drawn right still banks the climb of a row it absorbed`() {
+        val file = straightRoad(points = 200)
+        val course = courseOf(file)
+        val alreadyRight = RouteAsKept(
+            id = 1,
+            distanceMeters = routeDistanceMeters(course.line),
+            elevationGainMeters = null,
+            polyline = RoutePolyline.encode(course.line),
+        )
+        val measured = importedBefore354(id = 2, points = file, climb = 61.0)
+
+        val steps = stepsOf(listOf(alreadyRight, measured).asSequence())
+
+        assertEquals(emptyList<RouteRedrawn>(), steps.redrawn)
+        assertEquals(
+            listOf(RouteClimbBanked(id = 1, elevationGainMeters = 61.0)),
+            steps.climbsBanked,
+        )
     }
 
     @Test
@@ -195,9 +254,40 @@ class LibraryRedrawnTest {
         val measured = importedBefore354(id = 1, points = file, climb = 61.0)
         val silent = importedBefore354(id = 2, points = file, climb = null)
 
-        val row = libraryRedrawn(listOf(measured, silent).asSequence()).redrawn.single()
+        val steps = stepsOf(listOf(measured, silent).asSequence())
 
-        assertEquals(61.0, row.elevationGainMeters)
+        assertEquals(61.0, steps.redrawn.single().elevationGainMeters)
+        assertEquals(emptyList<RouteClimbBanked>(), steps.climbsBanked)
+    }
+
+    /**
+     * A row's redrawn line leaves the pass before the next row's line is read (#403).
+     *
+     * This is the half of the memory rule the pass could not keep before: the rows already arrived
+     * one line at a time, but every *redrawn* line was kept until the pass finished, because that is
+     * what a duplicate used to be recognised by. A redrawn line is thinned and so bounded, but a
+     * bound of twenty thousand places is four hundred thousand characters, and a few hundred of them
+     * held together is tens of megabytes — inside an upgrade that rolls back and is tried again at
+     * every launch.
+     *
+     * Proved by walking the steps one at a time and counting how much of the library has been read:
+     * a pass holding its answers back until the end would have read all three rows before handing
+     * over the first.
+     */
+    @Test
+    fun `a step is handed over before the next row is read`() {
+        val file = straightRoad(points = 200)
+        var rowsRead = 0
+        val rows = (1L..3L).asSequence().map { id ->
+            rowsRead++
+            importedBefore354(id = id, points = file)
+        }.constrainOnce()
+
+        val steps = libraryRedrawn(rows).iterator()
+        val first = steps.next()
+
+        assertEquals(1L, (first as RouteRedrawn).id)
+        assertEquals(1, rowsRead)
     }
 
     @Test
@@ -212,7 +302,7 @@ class LibraryRedrawnTest {
             ),
         )
 
-        val redrawn = libraryRedrawn(listOf(here, elsewhere).asSequence())
+        val redrawn = stepsOf(listOf(here, elsewhere).asSequence())
 
         assertEquals(emptyList<RouteMerged>(), redrawn.merged)
         assertEquals(listOf(1L, 2L), redrawn.redrawn.map { it.id })
@@ -254,7 +344,7 @@ class LibraryRedrawnTest {
             polyline = RoutePolyline.encode(listOf(walk.first(), walk.last())),
         )
 
-        val redrawn = libraryRedrawn(listOf(asTheOldDoorLeftIt).asSequence())
+        val redrawn = stepsOf(listOf(asTheOldDoorLeftIt).asSequence())
 
         // The line does not move, because there is nothing left in the row for the redraw to work
         // on — only the distance is re-measured along it.

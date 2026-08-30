@@ -147,7 +147,9 @@ class RoutesViewModelTest {
         dao.insertRoute(aStoredRoute())
         val viewModel = viewModelReading(aRealGpx)
 
-        viewModel.rename(dao.stored.single(), "  Canal towpath  ")
+        advanceUntilIdle()
+
+        viewModel.rename(viewModel.rows.value.single().route, "  Canal towpath  ")
         advanceUntilIdle()
 
         // Trimmed: the surrounding spaces are a slip of the keyboard, not part of the name.
@@ -160,7 +162,9 @@ class RoutesViewModelTest {
         dao.insertRoute(aStoredRoute())
         val viewModel = viewModelReading(aRealGpx)
 
-        viewModel.rename(dao.stored.single(), "   ")
+        advanceUntilIdle()
+
+        viewModel.rename(viewModel.rows.value.single().route, "   ")
         advanceUntilIdle()
 
         assertEquals("Park loop", dao.stored.single().name)
@@ -171,7 +175,9 @@ class RoutesViewModelTest {
         dao.insertRoute(aStoredRoute())
         val viewModel = viewModelReading(aRealGpx)
 
-        viewModel.delete(dao.stored.single())
+        advanceUntilIdle()
+
+        viewModel.delete(viewModel.rows.value.single().route)
         advanceUntilIdle()
 
         assertTrue(dao.stored.isEmpty())
@@ -247,23 +253,46 @@ class RoutesViewModelTest {
     }
 
     /**
-     * The case a cache keyed by id alone would get wrong: re-importing a course already kept can
-     * write a new line onto the same row, and the library would go on drawing the old shape.
+     * The lines are read one at a time and never listed, which is the rule #403 states.
+     *
+     * The library arrives without its lines, and the drawing pass asks for each course's line as it
+     * reaches it. So a library of many high-detail courses costs one course's text at a time rather
+     * than all of it for as long as the Routes screen is open. Each line is asked for once, because
+     * what the pass keeps is the drawing.
      */
     @Test
-    fun `redraws a course whose line has been re-measured`() = runTest {
+    fun `asks for each course's line once and never lists them`() = runTest {
         dao.insertRoute(aCourseWithAShape(polyline = EAST))
+        dao.insertRoute(aCourseWithAShape(polyline = NORTH))
         val viewModel = viewModelReading(aRealGpx)
         val rows = rowsOf(viewModel)
+
         viewModel.drawCoursesWhileLibraryIsOpen()
         advanceUntilIdle()
-        val eastward = requireNotNull(rows().single().thumbnail)
 
-        dao.replaceLine(rows().single().route.id, NORTH)
+        assertEquals(2, rows().count { it.thumbnail != null })
+        assertEquals(listOf(2L, 1L), dao.lineAsks)
+    }
+
+    /**
+     * A course deleted between the list arriving and its line being asked for is not a crash.
+     *
+     * The two are separate reads now, so the row can go between them — the runner can delete a
+     * course while the library is on screen. The row simply has no shape, and the next emission
+     * drops it from the list altogether.
+     */
+    @Test
+    fun `a course deleted before its line is read leaves nothing drawn`() = runTest {
+        dao.insertRoute(aCourseWithAShape())
+        val viewModel = viewModelReading(aRealGpx)
+        val rows = rowsOf(viewModel)
         advanceUntilIdle()
 
-        val northward = requireNotNull(rows().single().thumbnail)
-        assertTrue("the row is still drawing the old line", northward != eastward)
+        dao.deleteRoute(1)
+        viewModel.drawCoursesWhileLibraryIsOpen()
+        advanceUntilIdle()
+
+        assertTrue(rows().isEmpty())
     }
 
     /**

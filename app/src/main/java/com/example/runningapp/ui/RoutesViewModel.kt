@@ -6,8 +6,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.runningapp.analysis.RouteThumbnail
 import com.example.runningapp.analysis.courseThumbnailOf
-import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteDao
+import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.routes.RouteImportOutcome
 import com.example.runningapp.routes.RouteImporter
 import com.example.runningapp.routes.RoutePolyline
@@ -24,14 +24,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * One Route as the library shows it (#59): the row, and the shape of the course on it.
+ * One Route as the library shows it (#59): the row without its line, and the shape of the course.
  *
  * [thumbnail] is null for a course with no shape worth drawing, and — briefly — for one whose shape
  * is still being worked out. The row keeps its empty square in both cases, so a drawing arriving a
  * moment after the list does is a drawing appearing rather than a row moving.
  */
 data class RouteRowUi(
-    val route: Route,
+    val route: RouteHeader,
     val thumbnail: RouteThumbnail?,
 )
 
@@ -47,6 +47,13 @@ data class RouteRowUi(
  * of its own to keep in step: the table is the one copy of the truth and the screen watches it. The
  * one thing held is the shape of each course (#59), which is worked out from the table rather than
  * stored in it.
+ *
+ * **No course's line is ever held here, and never two at once** (#403). The library arrives without
+ * its lines ([RouteDao.getLibraryFlow]), and a line is fetched only to be drawn from and is let go
+ * as soon as it has been: what stays is the thumbnail, which is a few dozen points whatever the
+ * course. Holding the lines would mean holding tens of megabytes for as long as the Routes screen is
+ * open, for a library of many high-detail courses — the same total that would put the upgrade out of
+ * memory, moved from launch to the moment the runner opens Routes.
  */
 class RoutesViewModel(
     private val routeDao: RouteDao,
@@ -58,12 +65,13 @@ class RoutesViewModel(
 ) : ViewModel() {
 
     /**
-     * The library as it is stored, watched by the pre-run picker (#56) and by everything below.
+     * The library as it is stored, minus the lines, watched by the pre-run picker (#56) and by
+     * everything below.
      *
      * Read from the database once however many things here want it — the picker, the rows the
      * library screen shows, and the pass that works the shapes out.
      */
-    val routes = routeDao.getAllRoutesFlow()
+    val routes = routeDao.getLibraryFlow()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
@@ -73,14 +81,18 @@ class RoutesViewModel(
      * have nothing to do with shapes — a rename, a delete, an import — and redrawing every course in
      * the library on each of those is arithmetic the runner is waiting on.
      *
-     * Keyed by Route, and the course is carried beside the drawing rather than the id alone: a
-     * re-import re-measures a Route already kept and can hand it a new line under the same id
-     * ([RouteDao.keepRoute]), and a shape looked up by id alone would be the old line's.
+     * Keyed by the Route's id alone, and the line it was drawn from is deliberately not kept beside
+     * it. A Route's line is written once, when the row is inserted, and nothing in the app rewrites
+     * it (the rule is stated at [com.example.runningapp.data.Route.polyline]) — so an id names one
+     * line for as long as the row exists, and a shape looked up by id is that line's shape. Keeping
+     * the line here to check against would be keeping every line in the library, which is the one
+     * thing this view model must not do.
+     *
+     * A course with nothing to draw is kept as a null against its id rather than left out, so
+     * "asked, and there is no shape" is not read back as "not asked yet" and re-asked for the life
+     * of the screen.
      */
-    private val thumbnails = MutableStateFlow<Map<Long, DrawnCourse>>(emptyMap())
-
-    /** A course already drawn, and the line it was drawn from — see [thumbnails]. */
-    private data class DrawnCourse(val polyline: String, val thumbnail: RouteThumbnail?)
+    private val thumbnails = MutableStateFlow<Map<Long, RouteThumbnail?>>(emptyMap())
 
     /**
      * The rows the library shows: what is stored, with each course's shape as it is worked out.
@@ -93,12 +105,7 @@ class RoutesViewModel(
      * ([drawCoursesWhileLibraryIsOpen]); this is one small query.
      */
     val rows: StateFlow<List<RouteRowUi>> = combine(routes, thumbnails) { routes, drawn ->
-        routes.map { route ->
-            // The line is checked as well as the id, so a Route re-measured under the same id is
-            // drawn blank until its new shape arrives rather than keeping the old one on screen.
-            val course = drawn[route.id]?.takeIf { it.polyline == route.polyline }
-            RouteRowUi(route = route, thumbnail = course?.thumbnail)
-        }
+        routes.map { route -> RouteRowUi(route = route, thumbnail = drawn[route.id]) }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /** Whether the pass below has been set going, so opening the library twice does not start two. */
@@ -125,7 +132,7 @@ class RoutesViewModel(
                 // Courses already drawn are dropped as their Routes are, so a library emptied and
                 // filled again does not carry the old shapes about for the life of the screen.
                 thumbnails.value = thumbnails.value.filterKeys { id -> library.any { it.id == id } }
-                val pending = library.filter { needsDrawing(it) }
+                val pending = library.map { it.id }.filter { it !in thumbnails.value }
                 if (pending.isEmpty()) return@collect
                 // Worked out in one pass and published once, rather than a row at a time. Every
                 // publish rebuilds the whole row list on the thread drawing it, so publishing per
@@ -134,28 +141,24 @@ class RoutesViewModel(
                 // appears, and each course is bounded work: an imported course is stored exactly
                 // as its file drew it, but the drawing samples any line down before it thins it,
                 // so what one costs is bounded whatever the file held (`courseThumbnailOf`).
+                //
+                // One line at a time, fetched here rather than carried in on the list (#403): the
+                // line is asked for, drawn from, and let go before the next id is reached, so the
+                // pass holds one course's text however many the library has. What it keeps is the
+                // thumbnail.
                 val drawn = withContext(courseDispatcher) {
-                    pending.associate { route ->
-                        route.id to DrawnCourse(
-                            polyline = route.polyline,
-                            thumbnail = courseThumbnailOf(RoutePolyline.decode(route.polyline).asShape()),
-                        )
+                    pending.associateWith { id ->
+                        // Null is the row having been deleted since the list arrived, which the
+                        // sweep above will drop on the next emission — there is nothing to draw.
+                        routeDao.getRoutePolyline(id)?.let { polyline ->
+                            courseThumbnailOf(RoutePolyline.decode(polyline).asShape())
+                        }
                     }
                 }
                 thumbnails.value += drawn
             }
         }
     }
-
-    /**
-     * Whether this Route's shape still has to be worked out.
-     *
-     * A course with nothing to draw is kept as a null against its line rather than left out, so
-     * "asked, and there is no shape" is not read back as "not asked yet" and re-asked for the life
-     * of the screen.
-     */
-    private fun needsDrawing(route: Route): Boolean =
-        thumbnails.value[route.id]?.polyline != route.polyline
 
     private val _importing = MutableStateFlow(false)
     val importing = _importing.asStateFlow()
@@ -189,7 +192,7 @@ class RoutesViewModel(
     }
 
     /** A blank name is no name, so an empty box leaves the Route called what it was called. */
-    fun rename(route: Route, name: String) {
+    fun rename(route: RouteHeader, name: String) {
         val trimmed = name.trim()
         if (trimmed.isEmpty() || trimmed == route.name) return
         viewModelScope.launch { routeDao.renameRoute(route.id, trimmed) }
@@ -201,7 +204,7 @@ class RoutesViewModel(
      * It takes nothing else with it. A Route has no key into `sessions` and none out of it, so a Run
      * that followed this course keeps its own recording of where it went, which was never this row.
      */
-    fun delete(route: Route) {
+    fun delete(route: RouteHeader) {
         viewModelScope.launch { routeDao.deleteRoute(route.id) }
     }
 
