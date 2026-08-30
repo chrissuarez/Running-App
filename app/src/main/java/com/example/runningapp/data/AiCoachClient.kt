@@ -453,10 +453,27 @@ private fun StringBuilder.appendStageTraining(
                 "row days later and four rows can be on the list little more than two weeks in."
         )
     }
+    // The class the record cannot speak to, not one example of it. A requirement is two halves —
+    // how much training, and what kind — and this record answers only the first: it is a list of
+    // dates, so a Run above Zone 2 and a Run of two minutes and one second are each one tick in a
+    // week. Told only that it may not answer "a distance in a time", a model reading "4 weeks of
+    // consistent Zone 2 training" would find nothing forbidding it to read those ticks as Zone 2
+    // weeks and graduate — irreversibly — on intensity nobody sent it. So the how-hard half is
+    // pinned to the recent runs, which are the only rows here that carry a heart rate at all.
     appendLine(
-        "CRITICAL RULE: this record counts runs and measures none of them. It says nothing about " +
-            "distance, time or heart rate, so never answer a requirement about a distance in a " +
-            "time from it. It also names no runs: if you set graduatedToNextStage to true, " +
+        "CRITICAL RULE: this record counts runs and measures none of them. It says how much " +
+            "training there was and how it was spread out, and nothing whatever about how hard, " +
+            "how far or how fast any of it was: it carries no heart rate, no zone, no distance " +
+            "and no duration. Never assume a run counted here was run in any particular zone, at " +
+            "any particular effort or over any particular distance. Where a stage requirement " +
+            "asks both how much training and what kind of training — \"4 weeks of consistent " +
+            "Zone 2 training\" asks both — answer how much from this record and what kind only " +
+            "from the recent runs above, whose heart rates and durations you can see, and " +
+            "graduate only if both halves are answered. Never answer a requirement about a " +
+            "distance in a time from this record at all."
+    )
+    appendLine(
+        "CRITICAL RULE: this record names no runs: if you set graduatedToNextStage to true, " +
             "graduationEvidenceRunTimestamps must still be filled from the timestamps of the " +
             "recent runs above, and never with a date from this record."
     )

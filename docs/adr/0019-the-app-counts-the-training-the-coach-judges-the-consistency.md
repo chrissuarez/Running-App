@@ -75,9 +75,16 @@ Run into a Walk and never back.
 - **The record names no Runs.** A graduation still names timestamps out of the three Runs shown,
   because those are the only rows a name can be resolved against (#287). A date from the record
   resolves to nothing and would refuse a graduation the runner earned.
-- **It counts and measures nothing.** It says nothing about distance, time or heart rate, so it can
-  never answer a requirement written as a distance in a time — which is the coach's to judge in any
-  case only where ADR 0016 has not already taken it away.
+- **It counts and measures nothing.** It carries a date per Run and nothing else — no heart rate, no
+  zone, no distance, no duration — so it can never answer a requirement written as a distance in a
+  time, which is the coach's to judge in any case only where ADR 0016 has not already taken it away.
+- **A requirement has two halves, and the record answers only one.** "4 weeks of consistent Zone 2
+  training" asks how much training there was *and* what kind it was. The record answers how much;
+  what kind is answered only from the three recent Runs, which are the only rows in the prompt
+  carrying a heart rate at all. Fenced as the whole class rather than as the distance-in-a-time
+  instance, because the instance is the one a model reading "Zone 2" would not recognise itself in:
+  an above-Zone-2 Run and a two-minute-and-one-second Run are each one tick in a week here, and
+  ticks read as Zone 2 weeks are an irreversible graduation granted on intensity nobody sent.
 - **The weekly Effort totals and the Goals stay out of the graduation**, on their old terms. Those
   measure something else. This is the same evidence, counted.
 

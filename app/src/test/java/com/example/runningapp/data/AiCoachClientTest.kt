@@ -827,11 +827,43 @@ class AiCoachClientTest {
         )
 
         assertTrue(prompt.contains("this record counts runs and measures none of them"))
-        assertTrue(prompt.contains("never answer a requirement about a distance in a time from it"))
+        assertTrue(
+            prompt.contains("Never answer a requirement about a distance in a time from this record")
+        )
         assertTrue(
             prompt.contains(
                 "graduationEvidenceRunTimestamps must still be filled from the timestamps of the " +
                     "recent runs above, and never with a date from this record"
+            )
+        )
+    }
+
+    @Test
+    fun `the record answers how much training, and the recent runs answer what kind`() {
+        // A date is all this record holds, so a Run above Zone 2 and a Run of two minutes and one
+        // second are each one tick in a week. A coach left to read the ticks as Zone 2 weeks could
+        // graduate a "4 weeks of consistent Zone 2 training" stage — irreversibly — on intensity
+        // nobody ever sent it.
+        val prompt = buildEvaluationPrompt(
+            oneRunWalkSession.copy(stageTraining = threeWeeksOfTraining)
+        )
+
+        assertTrue(
+            prompt.contains(
+                "it carries no heart rate, no zone, no distance and no duration"
+            )
+        )
+        assertTrue(
+            prompt.contains(
+                "Never assume a run counted here was run in any particular zone, at any " +
+                    "particular effort or over any particular distance."
+            )
+        )
+        assertTrue(
+            prompt.contains(
+                "answer how much from this record and what kind only from the recent runs above, " +
+                    "whose heart rates and durations you can see, and graduate only if both " +
+                    "halves are answered"
             )
         )
     }
