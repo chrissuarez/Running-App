@@ -1,8 +1,12 @@
 package com.example.runningapp.routes
 
+import com.example.runningapp.analysis.thinnedLineIndices
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointSource
+import com.example.runningapp.recording.METERS_PER_DEGREE
+import com.example.runningapp.recording.degreesEastOf
 import com.example.runningapp.recording.geodesicDistanceMeters
+import kotlin.math.cos
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -58,6 +62,96 @@ class CourseTest {
     private fun datelineLongitude(eastMeters: Double): Double {
         val raw = 180.0 + eastMeters / metersPerDegree
         return if (raw > 180.0) raw - 360.0 else raw
+    }
+
+    /** A place on the ground, so far north and east of where the fixes above start. */
+    private fun place(northMeters: Double, eastMeters: Double) = RoutePoint(
+        latitude = 51.5 + northMeters / metersPerDegree,
+        longitude = -0.1 + eastMeters / (metersPerDegree * 0.6225),
+        elevationMeters = null,
+    )
+
+    /**
+     * The line the course would have kept before there was any bound on how many places reach the
+     * thinning: every place there is, laid out on the same flat sheet and walked by the same
+     * thinning.
+     *
+     * Written out here rather than reached for in the shaping because it is the thing the bound
+     * could have changed, and a test that asked the shaping what it did would agree with whatever
+     * the shaping does.
+     */
+    private fun thinnedWithoutTheBound(points: List<RoutePoint>): List<RoutePoint> {
+        val snapped = RoutePolyline.snapped(points)
+        val walked = snapped.filterIndexed { i, point ->
+            i == 0 || point.latitude != snapped[i - 1].latitude ||
+                point.longitude != snapped[i - 1].longitude
+        }
+        val cosLatitude = cos(Math.toRadians(walked.first().latitude))
+        val kept = thinnedLineIndices(
+            x = DoubleArray(walked.size) {
+                degreesEastOf(walked.first().longitude, walked[it].longitude) *
+                    METERS_PER_DEGREE * cosLatitude
+            },
+            y = DoubleArray(walked.size) {
+                (walked[it].latitude - walked.first().latitude) * METERS_PER_DEGREE
+            },
+            detail = 2.0,
+        )
+        return kept.map { walked[it] }
+    }
+
+    /**
+     * A course of ordinary length is thinned from every place it has, exactly as it was before there
+     * was a bound at all.
+     *
+     * Five thousand places is an hour and a half of running at a fix a second, comfortably above
+     * anything but an ultra and comfortably below the bound, so nothing here may be shortened before
+     * the thinning sees it — a bound that changed a real course's line would be a second row of
+     * every course the runner had already kept.
+     */
+    @Test
+    fun `a course of ordinary length is thinned from every place it has`() {
+        var wobble = 0.11
+        val ordinary = (0 until 5_000).map {
+            wobble = (wobble * 7.3 + 0.61) % 1.0
+            place(northMeters = it * 1.7 + wobble * 1.4, eastMeters = it * 0.9 + wobble * 2.2)
+        }
+
+        assertEquals(
+            RoutePolyline.encode(thinnedWithoutTheBound(ordinary)),
+            RoutePolyline.encode(courseOf(ordinary).line),
+        )
+    }
+
+    /**
+     * A file at the reader's own limit, shaped so that the thinning is at its worst, still becomes a
+     * course.
+     *
+     * The thinning walk is quadratic when each split peels a place off one end and leaves the rest,
+     * which is what a zigzag of steadily shrinking amplitude does: the furthest place from every
+     * chord is the next one along, every time. At the 200,000 places [GpxRouteReader] will accept,
+     * that is twenty billion distance measurements — an import worker pinned to a core for the rest
+     * of the afternoon. Nothing shaped like this was ever run or drawn; it is what a damaged or
+     * hostile file puts in front of the shaping, and the only honest proof that the bound holds is
+     * that this now finishes at all.
+     */
+    @Test(timeout = 30_000)
+    fun `a course built to be dense is thinned rather than walked for ever`() {
+        val amplitude = 0.05 * 200_000
+        val dense = (0 until 200_000).map {
+            place(
+                northMeters = it.toDouble(),
+                eastMeters = (if (it % 2 == 0) 1 else -1) * (amplitude - 0.05 * it),
+            )
+        }
+
+        val line = courseOf(dense).line
+
+        // A line, with its two ends where the file's are — not the file back again.
+        assertTrue(line.size >= 2)
+        assertTrue(line.size <= 20_000)
+        assertEquals(dense.first().latitude, line.first().latitude, 0.0000001)
+        assertEquals(dense.last().latitude, line.last().latitude, 0.0000001)
     }
 
     @Test
