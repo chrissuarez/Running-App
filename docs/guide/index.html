@@ -172,17 +172,17 @@
 <div class="wrap">
 
   <header class="mast">
-    <div class="kicker">Handbook · updated 28 August 2026</div>
+    <div class="kicker">Handbook · updated 30 August 2026</div>
     <h1>Everything the app does, and where to find it.</h1>
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
+      <p><strong>The coach can finally see how long you have been training.</strong> A stage that asks for &ldquo;four weeks of consistent Zone 2 training&rdquo; was being judged on your last three sessions, which reach back about a week &mdash; so it could never confirm four, and it told you three weeks in that your block was only just beginning. The app now counts every run you have done in the stage, week by week, and hands the coach the count. A week means seven days gone by from your first run in the stage, so four weeks arrive on day 28 &mdash; never early, because moving you up a stage is never undone. The count says how much you trained and never how hard: the recent runs still answer the Zone 2 half. See <em>The coach is shown all of your training in this stage</em> in <a href="#plan">the training plan</a>.</p>
       <p><strong>Delete a route mid-run and it stops talking about it &mdash; even a sentence already lined up.</strong> If the app had just decided to tell you &ldquo;Off course.&rdquo; and that sentence was waiting behind another one, deleting the route used to leave it in the queue, and you heard it seconds later about a course the app no longer had. It is now taken back with the route. The only sentence that still finishes is one already being spoken out loud, because nothing in the app ever cuts a sentence off. See <em>Off course</em> in <a href="#routes">routes</a>.</p>
       <p><strong>Your routes are drawings now, not just names.</strong> Every course in your library has a small drawing of its shape beside it &mdash; the same drawing your runs have in History, in the same amber line. You can pick the park loop out from the canal out-and-back without reading a word. A course too small to have a shape &mdash; one whose whole course fits inside sixty metres across &mdash; keeps an empty square rather than a dot pretending to be a route. See <em>The library</em> in <a href="#routes">routes</a>.</p>
       <p><strong>Two things the app does when nobody is watching, done better.</strong> Every time you open the app it quietly finishes off jobs left over from last time &mdash; filling in old numbers, rescuing a run that was never finished. If the very first step of one of those jobs failed, the whole app used to shut itself down before you saw a screen. It now writes the failure down, leaves that job&rsquo;s work for the next time you open the app, and carries on. What it catches is a job going wrong, which is what a job does. It does not catch the app or the phone being in real trouble underneath &mdash; out of room to work in, or something broken in the app itself &mdash; and it deliberately does not, because carrying on past one of those is worse than stopping. Separately: stop a run from the notification at the same moment the app is being shut down, and the app&rsquo;s own rescue can save the run first &mdash; correctly, but without knowing you stopped it yourself, so your stage credit was held back until you next fully restarted the app &mdash; and, after a Long run, the coach&rsquo;s words with it. They now arrive straight away, while the app is still open. See <em>If something goes wrong</em> in <a href="#during">during the run</a>.</p>
       <p><strong>A route file with no heights in it no longer takes your climb away.</strong> Import a <span class="mono">.gpx</span> drawn along a course you already keep and the app refreshes that course’s numbers from the new file rather than making a second copy. If the new file carries no heights, it used to write your climb away to nothing &mdash; a course with 43 m of climb became &ldquo;no elevation recorded&rdquo;, and the only way back was finding the first file again. Now the climb stays, and the message tells you: <em>&ldquo;Its distance now comes from this file. The file carries no heights, so its climb is unchanged.&rdquo;</em> See <em>Importing the same course again</em> in <a href="#routes">routes</a>.</p>
-      <p><strong>The app tells you when you have come off your route, and when you are back on it.</strong> On a run following a route, stray more than <strong>50 m</strong> from the course and stay there for <strong>10 seconds</strong> and it says <em>&ldquo;Off course.&rdquo;</em> Come back within <strong>30 m</strong> of it and it says <em>&ldquo;Back on course.&rdquo;</em> Two sentences, and nothing in between &mdash; a detour you meant to take costs you exactly two, however long you are away. It never tells you which way to turn. It stays quiet until you have actually reached the course, so the walk from your front door is silent however far off the line it is. See <em>Off course</em> in <a href="#routes">routes</a>.</p>
-    </div>
+          </div>
   </header>
 
   <!-- ============ SETUP ============ -->
@@ -539,8 +539,17 @@
         <p>A stage asks for something before it lets go of you.</p>
         <p>Where the ask is written in <strong>numbers</strong> — "a 5K under 30 minutes" — the app measures it and decides it, and the coach is fenced out entirely. It works with AI sharing switched off, and any run can answer it: an open run counts, because a parkrun is the truest 5K there is and a time is a time wherever it turned up.</p>
         <p class="note"><b>On a treadmill, type the time, not just the distance.</b> A distance on the finish sheet is a total, and the app will not divide a total by a duration to invent a 5K time. So a treadmill run answers a timed requirement only once you have entered the console's own time for that distance under <strong>Best efforts</strong> on the run's page. Do that and it graduates you exactly like a measured one.</p>
-        <p>Where the ask holds a <strong>judgement</strong> — "four weeks of consistent Zone 2 training" — the coach decides.</p>
+        <p>Where the ask holds a <strong>judgement</strong> — "four weeks of consistent Zone 2 training" — the coach decides, but not on its own: the app counts the four weeks for it and it judges the <em>consistent</em>. See below.</p>
         <p class="note"><b>It is asked late, on purpose.</b> Never at STOP, but once you can no longer change what the run was — so a run you are about to mark a walk cannot graduate anything. Granted forwards only, and never taken back.</p>
+      </div>
+
+      <div class="e">
+        <h3>The coach is shown all of your training in this stage</h3>
+        <p>A stage that asks for <strong>weeks</strong> of training needs to be judged on weeks of training. The coach only ever sees your last three sessions, and with a long run, an easy run and a walk in a week those three reach back about a week &mdash; so it could never confirm four, and it kept telling you the block was only just beginning.</p>
+        <p>So the app counts it instead. Every run you have done in the stage is counted, week by week, and the count is handed to the coach as a fact. A week you did not run in is shown as a zero rather than left out, because a gap is exactly what <em>consistent</em> is asking about.</p>
+        <p>What gets counted is a plan run you did under this stage, that you did not mark a walk and did not keep from the coach &mdash; the same runs the app would let a stage be graduated on, and no others.</p>
+        <p class="note"><b>A week means seven days gone by.</b> Counted from your first run in the stage, not from the Monday of that week. Start on a Sunday and four Mondays go past in a fortnight; four <em>weeks</em> of training arrive on day 28 and not a day sooner. The coach is given the number of whole weeks, and it is told not to count the weeks in the list instead.</p>
+        <p class="note"><b>The count says how much, never how hard.</b> It is a list of dates and nothing else &mdash; no heart rate, no distance, no times. Where a stage asks for both, like &ldquo;four weeks of consistent Zone 2 training&rdquo;, the count answers the four weeks and the recent runs answer the Zone 2, and it takes both.</p>
       </div>
 
       <div class="e">
@@ -802,6 +811,9 @@
       <dt>Stage</dt>
       <dd>One block of the training plan. You are in exactly one at a time, and every run records which.</dd>
 
+      <dt>Stage training record</dt>
+      <dd>The app's own count of every run you have done in the stage you are in, week by week, handed to the AI coach as a fact. It counts plan runs under that stage you did not mark a walk and did not keep from the coach &mdash; the same runs a stage can be graduated on. A week you did not run in is a zero, not a gap. It says <em>how much</em> you trained and never how hard, and a week in it means seven days gone by from your first run in the stage, so four weeks arrive on day 28.</dd>
+
       <dt>Prescription</dt>
       <dd>The intervals and target zone the AI coach wrote for your next Long run. Written only after you finish a Long run, and it stands on the runs it was shown.</dd>
 
@@ -827,7 +839,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>28 August 2026</strong>, when a route deleted mid-run stopped being able to leave a sentence behind it. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>30 August 2026</strong>, when the coach was first shown how many weeks of training you have actually done in your stage. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
