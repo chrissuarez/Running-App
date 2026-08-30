@@ -1353,7 +1353,10 @@ class SessionRepositoryTest {
         ).stageTraining
 
         assertEquals(5, record.qualifyingRuns)
-        assertEquals(3, record.weeksTrained)
+        // 2026-08-11 through 2026-08-30 is 20 days: two full weeks, across three calendar rows.
+        assertEquals(20, record.daysTrained)
+        assertEquals(2, record.weeksTrained)
+        assertEquals(3, record.calendarWeeksSpanned)
         assertEquals(LocalDate.parse("2026-08-11"), record.firstRunOn)
         assertEquals(
             listOf(2, 1, 2),

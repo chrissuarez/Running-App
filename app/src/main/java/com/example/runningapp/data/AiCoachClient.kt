@@ -398,14 +398,22 @@ private fun StringBuilder.appendStageTraining(
     requirementIsTheAppsToAnswer: Boolean,
 ) {
     if (record.isEmpty) return
+    // The length is stated in elapsed days and the FULL weeks they make, never in the number of
+    // week rows below. A calendar week turns over on a Monday whatever day the runner started on,
+    // so a Sunday first Run and three Mondays after it puts four rows on the board fifteen days in
+    // — and "across 4 weeks" is then a graduation granted a fortnight early, which cannot be taken
+    // back.
     appendLine(
         "The runner's training record in this stage, counted by the app from their own recorded " +
             "runs: ${record.qualifyingRuns} qualifying ${"run".s(record.qualifyingRuns)} since " +
-            "${record.firstRunOn}, across ${record.weeksTrained} ${"week".s(record.weeksTrained)}."
+            "${record.firstRunOn}, which was ${record.daysTrained} " +
+            "${"day".s(record.daysTrained)} ago counting today — " +
+            "${record.weeksTrained} full ${"week".s(record.weeksTrained)} of training completed " +
+            "so far."
     )
     appendLine(
         (if (record.weeksAreATail) {
-            "The most recent ${record.weeks.size} of those weeks, oldest first, each week " +
+            "The most recent ${record.weeks.size} weeks of the record, oldest first, each week " +
                 "starting on the Monday shown — the earlier weeks are not listed, so these counts " +
                 "add up to less than the total above: "
         } else {
@@ -436,6 +444,13 @@ private fun StringBuilder.appendStageTraining(
                 "have trained, and how consistently. It is evidence for such a requirement, and " +
                 "it is the only thing here that can answer one that reaches further back than the " +
                 "three recent runs."
+        )
+        appendLine(
+            "CRITICAL RULE: a requirement asking for a number of weeks of training is met only " +
+                "once at least that many full weeks of training have been completed, as counted " +
+                "above. Never answer it by counting the week rows listed here: those rows are " +
+                "calendar weeks starting on a Monday, so a first run late in a week starts a new " +
+                "row days later and four rows can be on the list little more than two weeks in."
         )
     }
     appendLine(
