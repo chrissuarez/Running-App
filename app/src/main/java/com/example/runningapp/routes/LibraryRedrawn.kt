@@ -74,6 +74,18 @@ data class RouteMerged(val lostId: Long, val keptId: Long)
  * handing that file back is a true no-op rather than a re-measure the runner is told about. The cost
  * is named in ADR 0014 and is a handful of metres over a long course — the corners the thinning cut.
  *
+ * That "exactly what its own file would make" is the whole truth for a row that came in from a file:
+ * such a row holds every point the file held, so redrawing it here is the arithmetic a re-import
+ * does. It is not the whole truth for a row saved from a Run *before* #354. That row was thinned
+ * from places that had not been snapped first, and thinning only ever removes — so a place the old
+ * rule dropped is gone from the row, and no pass over what is left can put it back. Where that
+ * dropped place is one today's rule would have kept (a place sitting within a centimetre of the
+ * two-metre line, the case `OneRunOneRouteTest` pins), that Run's own GPX handed back still draws a
+ * line one point longer than the row, and the library still keeps it twice. Rare, not made worse by
+ * this pass, and not closed by it either: #402 holds it, because both remedies — a second permanent
+ * identity rule, or a link from a Route back to the Run it was saved from — are larger than an
+ * upgrade.
+ *
  * **The climb is left exactly as it was banked.** It cannot be measured again: a row keeps no height
  * profile, only the line ([RoutePolyline]), and the file it came from is gone. This is the one
  * number the pass cannot bring into line with what a re-import would produce, and it does not
