@@ -252,7 +252,7 @@
 
       <div class="e">
         <h3>Going back</h3>
-        <p>Every page you can open has a back arrow at the top left, and your phone's own back &mdash; the gesture from the edge of the screen, or the button, whichever you use &mdash; now does the same thing. Both take you back <em>one page</em>, to the page you came from. The home screen is the exception, and has neither: there is nothing behind it.</p>
+        <p>Every page you can open has a back arrow at the top left, and your phone's own back &mdash; the gesture from the edge of the screen, or the button, whichever you use &mdash; now does the same thing. Both take you back <em>one page</em>, to the page you came from. The home screen has neither, because there is nothing behind it, and Prefs can hold you for one press &mdash; both are below.</p>
         <p>That means you can go as deep as you like and walk back out the way you came. Open a run from History, open the list of your other runs on that route, open one of those, and four backs bring you home &mdash; one for each page you passed.</p>
         <p class="note"><b>It used to close the app.</b> Pressing back anywhere except the home screen shut the app down instead of going back. That was the app throwing away the page behind you every time you moved, so back had nothing to return to. It now keeps them.</p>
         <p class="note"><b>Back from the home screen still leaves the app.</b> That one is on purpose &mdash; it is what back means on a home screen, and your run is not affected: a run in progress keeps recording whether the app is open or not.</p>
@@ -264,6 +264,18 @@
         <h3>When a page's subject disappears</h3>
         <p>Delete a run while you are looking at it, or a segment, and that page closes itself rather than waiting behind you, so back does not land you on it afterwards. You end up wherever you opened it from.</p>
         <p>If you had that same thing open twice &mdash; easily done, since a run's page links to the other runs on its route and that list links back to the run &mdash; both are cleared, not just the one on top.</p>
+      </div>
+
+      <div class="e">
+        <h3>Prefs can refuse the first back</h3>
+        <p>Prefs is the one page that checks something before it lets you leave, because your two heart rates are committed on the way out rather than by a Save button. Both the arrow and your phone's back go through that check.</p>
+        <p>Two things hold it open, and only for as long as they need to:</p>
+        <ul class="plain">
+          <li><strong>A number it cannot use.</strong> Back is refused <em>once</em>, and the field says what it will take &mdash; <em>&ldquo;Enter a heart rate between 115 and 230&hellip;&rdquo;</em>. Press back again and it lets you go, leaving that number uncommitted. So it makes you read the message once; it never traps you.</li>
+          <li><strong>Clearing your resting rate.</strong> Back puts the confirming question on screen instead of leaving, because that clear moves every zone edge. Answer it and back works normally.</li>
+        </ul>
+        <p class="note"><b>Nothing is lost either way.</b> Both fields are asked on the way out, so a good number typed in one is still committed when the other is the one being refused. See <em>Your heart rates</em> in <a href="#setup">setting up</a>.</p>
+        <div class="where"><b>Where</b> Home &rarr; Prefs</div>
       </div>
 
       <div class="e">
