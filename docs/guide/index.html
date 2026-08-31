@@ -155,6 +155,7 @@
     <div class="mark">Running<span>App</span></div>
     <nav class="jump">
       <a href="#setup">Setup</a>
+      <a href="#moving">Getting around</a>
       <a href="#before">Before a run</a>
       <a href="#during">During</a>
       <a href="#after">After</a>
@@ -177,6 +178,7 @@
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
+      <p><strong>Back goes back a page now, from every page in the app.</strong> Pressing your phone's back &mdash; the edge gesture or the button &mdash; anywhere except the home screen used to close the app outright. The app was throwing away the page behind you every time you moved, so back had nothing to return to and fell through to the phone. It now keeps them, so you can go as deep as you like and walk back out the way you came, one page per press. Back from the home screen still leaves the app, which is what back means there. Two things came with it: back now returns you to where you actually came from &mdash; open a run from your Records and it goes back to that Record, where before it always claimed you had come from History &mdash; and a page whose subject you have just deleted closes itself, so back can never land you on a page for a run or segment that no longer exists. See <a href="#moving">getting around the app</a>.</p>
       <p><strong>Opening the app again after an &ldquo;Open with&rdquo; no longer drags the file back with it.</strong> Once you had opened a <span class="mono">.gpx</span> with this app, the phone remembered that as the way your app opens. Tapping it days later &mdash; or picking it out of the recent-apps list &mdash; handed the app the same file again, so it went to your route library and gave you whichever of the three import messages that file earned &mdash; usually <em>&ldquo;That route is already in your routes&hellip; Nothing was added.&rdquo;</em>, but sometimes one saying its numbers had been refreshed &mdash; about a file you had long forgotten. Nothing was ever added twice, so no route was ever harmed by it; the app was just going somewhere you had not asked to go. The file now comes in through a door of its own, and the phone remembers only the ordinary way in. Opening the app is opening the app: it comes up where it always comes up, and says nothing about any file. Handing it a <span class="mono">.gpx</span> still works exactly as before, whether the app is closed or already open &mdash; including when you had left the file picker open and walked away, which used to leave a stray picker sitting behind the Back arrow. See <em>Getting a route in</em> in <a href="#routes">routes</a>.</p>
       <p><strong>The map card opens the full-screen map again.</strong> Tapping the small map during an outdoor run was supposed to open a full-screen version, and did nothing at all &mdash; a fault that had been there since the map was built. The map itself was taking your finger before the tap could be heard. The card's own map now answers no touch of its own, and the tap gets through: the map fills the screen, with your heart rate, pace, distance and time in a strip across the top, and the back arrow to come back. See <em>The map, while you run</em> in <a href="#during">during the run</a>.</p>
       <p><strong>A GPX that goes nowhere is turned away, instead of becoming a route you could never run.</strong> Hand the app a <span class="mono">.gpx</span> of one place, of the same place recorded over and over, or of points scattered inside sixty metres, and it used to be kept as a route all the same &mdash; a row in your library with no line and no distance, which nothing could be started on. It is now refused, and told to you the way the app has always turned away a run that only wandered on the spot &mdash; the same sentence, naming the file instead of the run. Any row already in your library from the old behaviour stays put and is yours to delete; handing its file over again now refuses it. See <em>Getting a route in</em> in <a href="#routes">routes</a>.</p>
@@ -235,6 +237,38 @@
         <h3>Where to keep your backups</h3>
         <p>Pick a folder once — a Google Drive folder is the sensible choice, because then the backup lives somewhere other than the phone. The app writes a full archive there every month and keeps the last three. See <a href="#data">Your data</a>.</p>
         <div class="where"><b>Where</b> Home → Prefs → Backup</div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ MOVING ============ -->
+  <section class="ch" id="moving">
+    <div class="ch-head">
+      <h2>Getting around the app</h2>
+      <p class="sub">One rule: back goes back one page, from anywhere.</p>
+    </div>
+    <div class="entries">
+
+      <div class="e">
+        <h3>Going back</h3>
+        <p>Every page has a back arrow at the top left, and your phone's own back &mdash; the gesture from the edge of the screen, or the button, whichever you use &mdash; now does the same thing. Both take you back <em>one page</em>, to the page you came from.</p>
+        <p>That means you can go as deep as you like and walk back out the way you came. Open a run from History, open the list of your other runs on that route, open one of those, and three backs bring you home through every page you passed.</p>
+        <p class="note"><b>It used to close the app.</b> Pressing back anywhere except the home screen shut the app down instead of going back. That was the app throwing away the page behind you every time you moved, so back had nothing to return to. It now keeps them.</p>
+        <p class="note"><b>Back from the home screen still leaves the app.</b> That one is on purpose &mdash; it is what back means on a home screen, and your run is not affected: a run in progress keeps recording whether the app is open or not.</p>
+        <p class="note"><b>Where back takes you is where you came from, not a fixed page.</b> Open a run from your Records and back returns you to that Record. Open the same run from History and back returns you to History. Before, it always claimed you had come from History.</p>
+        <div class="where"><b>Where</b> Every page</div>
+      </div>
+
+      <div class="e">
+        <h3>When a page's subject disappears</h3>
+        <p>Delete a run while you are looking at it, or a segment, and that page closes itself rather than waiting behind you. Back can never land you on a page for something that no longer exists.</p>
+        <p>If you had that same thing open twice &mdash; easily done, since a run's page links to the other runs on its route and that list links back to the run &mdash; both are cleared, not just the one on top.</p>
+      </div>
+
+      <div class="e">
+        <h3>The keyboard takes the first back</h3>
+        <p>If the on-screen keyboard is up, back closes the keyboard and leaves you on the page. Press it again to leave the page. Normal phone behaviour, worth knowing when you are typing a name or a distance.</p>
       </div>
 
     </div>
@@ -867,7 +901,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>31 August 2026</strong>, when opening the app stopped re-opening the last <span class="mono">.gpx</span> you had handed it. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>31 August 2026</strong>, when back started going back a page from every page in the app. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
