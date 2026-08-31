@@ -206,13 +206,10 @@ class MainActivity : ComponentActivity() {
      * So the file comes out of the intent as it is read. What is left behind is an ACTION_VIEW
      * intent with no data, which asks for nothing.
      *
-     * This reaches only as far as this process. The system keeps its own copy of the intent that
-     * started the task, which no app can edit: killing the app and reopening it from the recents
-     * list hands this Activity the original file again, and on the phone that put a second copy of
-     * the route in the library. What makes that harmless is not here but in
-     * [com.example.runningapp.routes.RouteImporter] — importing a course already in the library
-     * adds nothing. This clearing is still worth doing for the ordinary recreations above, which
-     * are frequent and would otherwise announce an import the runner did not ask for.
+     * This reaches only as far as this process, and since #277 that is all it has to reach: a file
+     * no longer gets into the copy of the intent the system keeps, because this Activity no longer
+     * owns the `.gpx` filters — [com.example.runningapp.OpenRouteFileActivity] does. See
+     * [com.example.runningapp.routes.RouteFileLaunch].
      */
     private fun takeRouteFileIn(intent: Intent?): Uri? {
         if (intent?.action != Intent.ACTION_VIEW) return null
@@ -287,7 +284,14 @@ class MainActivity : ComponentActivity() {
 
         // A `.gpx` this launch was started by (#54). Read before anything else so it is already
         // parked by the time the Route library's view model exists to be handed it.
-        pendingRouteFile = takeRouteFileIn(intent)
+        //
+        // Not when this Activity is its task's root, though. Since #277 the root is always started
+        // by [OpenRouteFileActivity]'s plain Home launch, so a file in a root launch intent can only
+        // be Android replaying a task that an "Open with" rooted before that fix landed — a task
+        // that outlives an app update, and heals the first time it is created afresh. The runner
+        // tapped their own app, not a file, and the file's read grant died with the process that was
+        // given it, so there is nothing here to do but let them have Home.
+        pendingRouteFile = takeRouteFileIn(intent)?.takeUnless { isTaskRoot }
 
         // Runs already in history predate moving time, so their pace would be measured against a
         // different clock from today's runs until this fills them in (#163). Off the main thread and

@@ -42,10 +42,27 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+        </activity>
 
+        <!-- Owns the .gpx "Open with" filters so MainActivity never does (#277). Invisible, kept
+             out of recents, and gone the moment it has handed the file on; the rule it exists for is
+             stated on RouteFileLaunch.
+
+             taskAffinity is emptied deliberately. Left at the package default it would match
+             MainActivity's, and a chooser that launches with FLAG_ACTIVITY_NEW_TASK would drop this
+             activity — carrying the file — into the app's own task, which is the one place the file
+             must never be. -->
+        <activity
+            android:name=".OpenRouteFileActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.RunningAppInvisible">
             <!-- "Open with" on a .gpx, from Files, Downloads, or an email attachment (#54). It
-                 lands in the same import flow the in-app picker does; MainActivity.onNewIntent
-                 hands it over, which is why the activity is singleTop. -->
+                 lands in the same import flow the in-app picker does: this activity hands the file
+                 to MainActivity, which is singleTop so the hand-off reaches the screen the runner
+                 already has rather than building a second one. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

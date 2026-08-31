@@ -2,4 +2,14 @@
     <style name="Theme.RunningApp" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:statusBarColor">@android:color/black</item>
     </style>
+
+    <!-- A door, not a screen (#277). OpenRouteFileActivity hands a .gpx to MainActivity and
+         finishes inside onCreate; the runner must never see it happen. Translucent rather than
+         android:Theme.NoDisplay, which crashes an activity that reaches onResume without
+         finishing. -->
+    <style name="Theme.RunningAppInvisible" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>
