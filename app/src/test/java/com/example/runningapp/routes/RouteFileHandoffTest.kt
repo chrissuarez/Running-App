@@ -51,6 +51,16 @@ class RouteFileHandoffTest {
     }
 
     @Test
+    fun `the file reaches the screen even when a chooser is sitting over it`() {
+        val handover = routeFileHandoff(file).last()
+
+        assertTrue(
+            "A picker left open above the screen must be cleared, not built on top of",
+            handover.flags and Intent.FLAG_ACTIVITY_CLEAR_TOP != 0,
+        )
+    }
+
+    @Test
     fun `the file's read is passed on with it`() {
         val handover = routeFileHandoff(file).last()
 
