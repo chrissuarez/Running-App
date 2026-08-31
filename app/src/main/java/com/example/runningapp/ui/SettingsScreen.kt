@@ -181,9 +181,10 @@ fun SettingsScreen(
     // top bar arrow and the system back button/gesture, the latter intercepted via [BackHandler]
     // so it cannot dispose the screen behind the check.
     //
-    // Intercepting also repairs where the system back went from here, as on [FullScreenMapScreen]:
-    // `navigateTo` clears the back stack, so an unhandled back popped the only destination and
-    // left the app rather than returning to the main screen.
+    // Intercepting is what puts the check in front of the system back at all: an unintercepted
+    // back pops this screen straight off the stack, and the two fields would be committed by
+    // nobody. Where it lands is Navigation's business since #412; whether it may land is this
+    // screen's.
     //
     // Both fields are asked before the answer is used, so a pending edit in one is never dropped
     // because the other refused — `&&` would short-circuit past it.

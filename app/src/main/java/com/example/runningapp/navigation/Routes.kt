@@ -52,5 +52,12 @@ object Routes {
 
     fun segmentCreate(sessionId: Long): String = "segment_create/$sessionId"
 
-    fun recordDetail(type: RecordType): String = "record_detail/${type.name}"
+    fun recordDetail(type: RecordType): String = recordDetail(type.name)
+
+    /**
+     * The same address spelled from a Record's name alone, for the one caller that holds the name
+     * but no [RecordType] to go with it: a page opened for a Record this app can no longer name has
+     * to be able to close itself, and it closes by the address that opened it (#412).
+     */
+    fun recordDetail(typeName: String): String = "record_detail/$typeName"
 }
