@@ -369,17 +369,34 @@ class MainActivity : ComponentActivity() {
                     var feelSheetRunMode by rememberSaveable { mutableStateOf<String?>(null) }
 
                     // The course picked for the next Run, and which way round (#56). Above the
-                    // NavHost, not inside the record screen, because [navigateTo] below pops the
-                    // whole graph inclusively and takes any state the popped screen was holding
-                    // with it — and checking a course in the Routes library before setting off on
-                    // it is the very trip that would then have thrown the pick away.
+                    // NavHost, not inside the record screen, because the record screen is disposed
+                    // whenever another one is on top of it, and [navigateHome] below clears the
+                    // state saved for it as well — and checking a course in the Routes library
+                    // before setting off on it is the very trip that would throw the pick away.
                     var routeChoice by rememberSaveable(stateSaver = RunRouteSaver) {
                         mutableStateOf<RunRoute?>(null)
                     }
 
                     val navController = rememberNavController()
+                    // Moving forward stacks. The screen being left stays underneath the new one, so
+                    // the phone's Back button and the arrow in each top bar both have somewhere to
+                    // return to. Replacing the graph on every move instead — which is what this did
+                    // before #412 — left exactly one screen alive, so Back had nothing to pop and
+                    // closed the app from every page in the app.
                     val navigateTo: (String) -> Unit = { route ->
-                        navController.navigate(route) {
+                        navController.navigate(route) { launchSingleTop = true }
+                    }
+                    // One step back the way the runner actually came. Off the stack rather than to a
+                    // named address, because most of these pages are reached from more than one
+                    // place: a Run opened from a Record has to return to that Record, and naming
+                    // History here would land the runner on a page they were never on.
+                    val goBack: () -> Unit = { navController.popBackStack() }
+                    // Home with the stack behind it cleared: the record screen taking the app over,
+                    // not a screen stacked on top of one. Only for the moves that mean "the app is
+                    // back at the start" — a Run beginning, a strap picked. Back from Home leaves
+                    // the app, which is what Back on a home screen means.
+                    val navigateHome: () -> Unit = {
+                        navController.navigate(Routes.MAIN) {
                             popUpTo(navController.graph.id) { inclusive = true }
                             launchSingleTop = true
                         }
@@ -533,13 +550,22 @@ class MainActivity : ComponentActivity() {
                     val forceMainSignal by forceMainToken
                     LaunchedEffect(forceMainSignal) {
                         if (forceMainSignal > 0) {
-                            navigateTo(Routes.MAIN)
+                            // The record screen taking the app over, so whatever the runner had
+                            // stacked up goes with it: this fires because the app has been aimed at
+                            // Home from outside, and Back must not walk back into the pile behind.
+                            navigateHome()
                         }
                     }
 
                     LaunchedEffect(sessionDetailViewModel) {
                         sessionDetailViewModel.deleteCompleted.collect {
-                            navigateTo(Routes.HISTORY)
+                            // The page for a Run that no longer exists is taken off the stack rather
+                            // than covered over, so Back can never walk back onto it. Where it came
+                            // from is where the runner lands, which is History for a Run opened from
+                            // History and the Record for one opened from a Record.
+                            if (!navController.popBackStack(Routes.SESSION_DETAIL, inclusive = true)) {
+                                navigateHome()
+                            }
                         }
                     }
 
@@ -729,7 +755,7 @@ class MainActivity : ComponentActivity() {
                                         putExtra(HrForegroundService.EXTRA_MAKE_ACTIVE, true)
                                     }
                                     ContextCompat.startForegroundService(this@MainActivity, intent)
-                                    navigateTo(Routes.MAIN)
+                                    navigateHome()
                                 },
                                 onScan = {
                                     // A fresh scan so a first (or replacement) strap can be discovered
@@ -749,7 +775,7 @@ class MainActivity : ComponentActivity() {
                                         sendForceScan()
                                     }
                                 },
-                                onBack = { navigateTo(Routes.MAIN) }
+                                onBack = goBack
                             )
                         }
                         composable(Routes.SETTINGS) {
@@ -829,7 +855,7 @@ class MainActivity : ComponentActivity() {
                                     // back to Settings later should read the last-backup time, not
                                     // an announcement about a backup made some time ago.
                                     backupViewModel.resultShown()
-                                    navigateTo(Routes.MAIN)
+                                    goBack()
                                 }
                             )
                         }
@@ -847,7 +873,7 @@ class MainActivity : ComponentActivity() {
                                 onSessionClick = { id ->
                                     navigateTo(Routes.sessionDetail(id))
                                 },
-                                onBack = { navigateTo(Routes.MAIN) }
+                                onBack = goBack
                             )
                         }
                         composable(
@@ -1018,7 +1044,7 @@ class MainActivity : ComponentActivity() {
                                 onDeleteSession = { id ->
                                     sessionDetailViewModel.deleteSession(id)
                                 },
-                                onBack = { navigateTo(Routes.HISTORY) },
+                                onBack = goBack,
                                 onStateDistance = { id, distanceKm ->
                                     sessionDetailViewModel.stateDistance(id, distanceKm)
                                 },
@@ -1114,7 +1140,7 @@ class MainActivity : ComponentActivity() {
                                         settingsRepository.setActivePlan(planId, stageId)
                                     }
                                 },
-                                onBack = { navigateTo(Routes.MAIN) }
+                                onBack = goBack
                             )
                         }
                         composable(Routes.PROGRESS) {
@@ -1158,7 +1184,7 @@ class MainActivity : ComponentActivity() {
                                     progressViewModel.goalSet(period, metric, target)
                                 },
                                 onGoalRemoved = { goal -> progressViewModel.goalRemoved(goal) },
-                                onBack = { navigateTo(Routes.MAIN) }
+                                onBack = goBack
                             )
                         }
                         composable(
@@ -1180,7 +1206,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             )
                             LaunchedEffect(recordType) {
-                                if (recordType == null) navigateTo(Routes.PROGRESS)
+                                if (recordType == null) goBack()
                             }
                             recordType?.let { type ->
                                 // Watched, like the grid that led here: a Run finishing, a
@@ -1202,7 +1228,7 @@ class MainActivity : ComponentActivity() {
                                 RecordDetailScreen(
                                     detail = detail,
                                     onOpenRun = { navigateTo(Routes.sessionDetail(it)) },
-                                    onBack = { navigateTo(Routes.PROGRESS) },
+                                    onBack = goBack,
                                 )
                             }
                         }
@@ -1222,7 +1248,7 @@ class MainActivity : ComponentActivity() {
                                 onRename = { route, name -> routesViewModel.rename(route, name) },
                                 onDelete = { route -> routesViewModel.delete(route) },
                                 onMessageShown = { routesViewModel.messageShown() },
-                                onBack = { navigateTo(Routes.MAIN) }
+                                onBack = goBack
                             )
                         }
                         composable(Routes.SEGMENTS) {
@@ -1235,7 +1261,7 @@ class MainActivity : ComponentActivity() {
                                 onRename = { segment, name -> segmentsViewModel.rename(segment, name) },
                                 onDelete = { segment -> segmentsViewModel.delete(segment) },
                                 onMessageShown = { segmentsViewModel.messageShown() },
-                                onBack = { navigateTo(Routes.MAIN) }
+                                onBack = goBack
                             )
                         }
                         composable(
@@ -1266,12 +1292,17 @@ class MainActivity : ComponentActivity() {
                                 onRename = { row, name -> segmentsViewModel.rename(row, name) },
                                 onDelete = { row ->
                                     segmentsViewModel.delete(row)
-                                    navigateTo(Routes.SEGMENTS)
+                                    // Off the stack, not covered over: the Segment this page is for
+                                    // has just been thrown away, so Back must not be able to walk
+                                    // back onto it.
+                                    if (!navController.popBackStack(Routes.SEGMENT_DETAIL, inclusive = true)) {
+                                        navigateHome()
+                                    }
                                 },
                                 // A time on a hill belongs to a morning, and the page that holds
                                 // the morning is the Run's own (#72).
                                 onOpenRun = { runId -> navigateTo(Routes.sessionDetail(runId)) },
-                                onBack = { navigateTo(Routes.SEGMENTS) }
+                                onBack = goBack
                             )
                         }
                         composable(
@@ -1297,10 +1328,9 @@ class MainActivity : ComponentActivity() {
                                     sessionDetailViewModel.matchedRuns(id).collect { value = Answered(it) }
                                 }
                             }
-                            val backToTheRun: () -> Unit = {
-                                sessionId?.let { navigateTo(Routes.sessionDetail(it)) }
-                                    ?: navigateTo(Routes.HISTORY)
-                            }
+                            // Back the way the runner came, which is the Run's own page: this list
+                            // is only ever reached from it.
+                            val backToTheRun: () -> Unit = goBack
                             // A group the read has answered "none" to closes the page, the way a
                             // deleted Segment's does (#70): the Run this list belongs to has been
                             // thrown away, or has left its own group, and a screen for a group
@@ -1356,24 +1386,23 @@ class MainActivity : ComponentActivity() {
                                     // has just made a thing, and this is where it is. Cancelling
                                     // goes back the way they came, which is the difference between
                                     // having made one and not.
-                                    navigateTo(Routes.SEGMENTS)
+                                    //
+                                    // The cutting screen comes off the stack on the way, so Back
+                                    // from the collection returns to the Run rather than re-opening
+                                    // a cut that has already been made.
+                                    navController.navigate(Routes.SEGMENTS) {
+                                        popUpTo(Routes.SEGMENT_CREATE) { inclusive = true }
+                                        launchSingleTop = true
+                                    }
                                 },
-                                // Explicitly back to the Run rather than off the back stack:
-                                // every move in this app replaces the graph rather than stacking
-                                // on it, so there is nothing behind this screen to pop to, and a
-                                // cancel that popped would leave the runner nowhere at all.
-                                onBack = {
-                                    navigateTo(
-                                        sessionId?.let { Routes.sessionDetail(it) } ?: Routes.MAIN
-                                    )
-                                }
+                                onBack = goBack
                             )
                         }
                         composable(Routes.MAP) {
                             FullScreenMapScreen(
                                 state = serviceState.value,
                                 sessionRepository = sessionRepository,
-                                onBack = { navigateTo(Routes.MAIN) }
+                                onBack = goBack
                             )
                         }
                     }
@@ -1508,9 +1537,10 @@ fun MainScreen(
      * The course picked for the next Run, and which way round — null for none picked (#56).
      *
      * Held above this screen rather than in it, because this screen does not survive being left:
-     * `navigateTo` pops the whole graph inclusively, so a walk to the Routes library to check which
-     * course is which builds a fresh MainScreen on the way back, and a pick kept here would be
-     * silently dropped by exactly the trip a runner makes to make it.
+     * another screen on top of it disposes it, and `navigateHome` clears the state saved for it as
+     * well, so a walk to the Routes library to check which course is which can build a fresh
+     * MainScreen — and a pick kept here would be silently dropped by exactly the trip a runner
+     * makes to make it.
      */
     routeChoice: RunRoute?,
     onRouteChoiceChange: (RunRoute?) -> Unit,
