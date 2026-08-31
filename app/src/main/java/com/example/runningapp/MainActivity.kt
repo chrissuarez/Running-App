@@ -1226,7 +1226,7 @@ class MainActivity : ComponentActivity() {
                                     ?.getString(Routes.ARG_RECORD_TYPE)
                                 if (recordType == null && unknownRecord != null) {
                                     navController.popBackStack(
-                                        "record_detail/$unknownRecord",
+                                        Routes.recordDetail(unknownRecord),
                                         inclusive = true,
                                     )
                                 }

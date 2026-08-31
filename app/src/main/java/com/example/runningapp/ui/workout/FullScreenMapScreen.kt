@@ -33,8 +33,9 @@ import com.example.runningapp.ui.theme.RunningUiTokens
  * as the in-run [MapCard], full-bleed, with a slim high-contrast stats strip overlaid on top. Back is
  * the only tappable control, so sweaty thumbs can't reach pause/stop from here. The system
  * back button/gesture is intercepted via [BackHandler] and routed through the same [onBack] as
- * the strip's back arrow — otherwise it would pop this destination off Navigation-Compose's
- * `navigateTo`-cleared back stack and exit the app mid-run instead of returning to coaching.
+ * the strip's back arrow, so both ways out of this screen are one call. Since #412 an
+ * unintercepted back would return to coaching by itself, but routing it here keeps the two
+ * exits from ever drifting apart.
  */
 @Composable
 fun FullScreenMapScreen(
