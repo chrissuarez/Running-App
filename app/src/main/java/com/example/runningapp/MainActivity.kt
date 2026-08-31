@@ -558,17 +558,24 @@ class MainActivity : ComponentActivity() {
                     }
 
                     LaunchedEffect(sessionDetailViewModel) {
-                        sessionDetailViewModel.deleteCompleted.collect {
+                        sessionDetailViewModel.deleteCompleted.collect { deletedSessionId ->
                             // The page for a Run that no longer exists is taken off the stack rather
                             // than covered over, so Back can never walk back onto it. Where it came
                             // from is where the runner lands, which is History for a Run opened from
                             // History and the Record for one opened from a Record.
                             //
-                            // Named rather than a bare pop, and with nothing done when the name is
-                            // not found: a bare pop would take a screen off wherever it fired
-                            // twice, and a pop that finds no such page has nothing to correct —
-                            // the runner has already left it.
-                            navController.popBackStack(Routes.SESSION_DETAIL, inclusive = true)
+                            // Addressed by the deleted Run rather than by the shape of a Run's page,
+                            // because the delete lands after a wait the runner can walk away during:
+                            // the shape would match the topmost Run's page of any Run, so a Back
+                            // pressed while the delete was still going would drop somebody else's
+                            // page and everything above it. A filled address matches only the entry
+                            // holding that id (NavDestination.hasRoute compares the arguments), and
+                            // an id no longer on the stack pops nothing — which is right, because
+                            // the runner has already left the page there was to correct.
+                            navController.popBackStack(
+                                Routes.sessionDetail(deletedSessionId),
+                                inclusive = true,
+                            )
                         }
                     }
 
@@ -1209,11 +1216,19 @@ class MainActivity : ComponentActivity() {
                                 )
                             )
                             LaunchedEffect(recordType) {
-                                // This page by name, not one step off the stack: a screen that
-                                // closes itself has to be able to run twice without taking the page
-                                // underneath with it, and only the name says which page to drop.
-                                if (recordType == null) {
-                                    navController.popBackStack(Routes.RECORD_DETAIL, inclusive = true)
+                                // This page by its own address, not one step off the stack: a
+                                // screen that closes itself has to be able to run twice without
+                                // taking the page underneath with it. The address is spelled from
+                                // the argument this entry was given rather than from [recordType],
+                                // which is null here by definition — that argument is what puts
+                                // this entry on the stack, so it is what takes it off again.
+                                val unknownRecord = backStackEntry.arguments
+                                    ?.getString(Routes.ARG_RECORD_TYPE)
+                                if (recordType == null && unknownRecord != null) {
+                                    navController.popBackStack(
+                                        "record_detail/$unknownRecord",
+                                        inclusive = true,
+                                    )
                                 }
                             }
                             recordType?.let { type ->
@@ -1302,9 +1317,13 @@ class MainActivity : ComponentActivity() {
                                     segmentsViewModel.delete(row)
                                     // Off the stack, not covered over: the Segment this page is for
                                     // has just been thrown away, so Back must not be able to walk
-                                    // back onto it. Named rather than a bare pop, for the reason
-                                    // the deleted Run's page is.
-                                    navController.popBackStack(Routes.SEGMENT_DETAIL, inclusive = true)
+                                    // back onto it. Addressed by the Segment, for the reason the
+                                    // deleted Run's page is — one Segment's page reached from
+                                    // another's must drop the one deleted, not the topmost.
+                                    navController.popBackStack(
+                                        Routes.segmentDetail(row.id),
+                                        inclusive = true,
+                                    )
                                 },
                                 // A time on a hill belongs to a morning, and the page that holds
                                 // the morning is the Run's own (#72).
@@ -1342,14 +1361,17 @@ class MainActivity : ComponentActivity() {
                             // deleted Segment's does (#70): the Run this list belongs to has been
                             // thrown away, or has left its own group, and a screen for a group
                             // nobody has has nothing to show.
-                            // This page by name, not [backToTheRun]: the group is re-read on every
-                            // write to the runs it is drawn from, so "there is no such group" can
-                            // arrive more than once, and a second step off the stack would take the
-                            // Run's own page with it. A name that is no longer on the stack pops
-                            // nothing.
+                            // This page by its own address, not [backToTheRun]: the group is
+                            // re-read on every write to the Runs it is drawn from, so "there is no
+                            // such group" can arrive more than once, and a second step off the
+                            // stack would take the Run's own page with it. An address no longer on
+                            // the stack pops nothing, which is exactly what a repeat should do.
                             LaunchedEffect(answered) {
-                                if (answered != null && answered?.value == null) {
-                                    navController.popBackStack(Routes.MATCHED_RUNS, inclusive = true)
+                                if (answered != null && answered?.value == null && sessionId != null) {
+                                    navController.popBackStack(
+                                        Routes.matchedRuns(sessionId),
+                                        inclusive = true,
+                                    )
                                 }
                             }
                             MatchedRunsScreen(
