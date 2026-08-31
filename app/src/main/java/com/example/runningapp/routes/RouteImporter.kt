@@ -59,9 +59,13 @@ sealed interface RouteImportOutcome {
  * Importing is repeatable: the same course handed over twice is one Route, not two. That is a rule
  * about what a Route is — a course, not an act of importing — and it is also what makes the library
  * safe from Android handing this app the same file a second time without the runner asking. An
- * "Open with" leaves its intent sitting in the task; reopening the app from the recents list days
- * later replays it, and nothing in this app can reach into the system and take it back. So the
- * import is written to be harmless when repeated rather than guarded against being repeated.
+ * Activity is handed its launch intent again on every recreation, which a change of text size is
+ * enough to cause. So the import is written to be harmless when repeated rather than guarded
+ * against being repeated.
+ *
+ * It used to have to be harmless across a reopen from the recents list too. It is not any more:
+ * [com.example.runningapp.routes.RouteFileLaunch] says why. Nothing here changed for it — repeatable
+ * is still the rule — but the repeat that reached furthest no longer happens (#277).
  *
  * Repeatable is not inert. A file that draws a course already kept but measures it differently
  * writes its numbers onto that Route, which is what makes re-importing the remedy ADR 0014 says it
