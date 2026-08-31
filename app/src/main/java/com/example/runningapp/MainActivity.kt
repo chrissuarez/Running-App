@@ -563,9 +563,12 @@ class MainActivity : ComponentActivity() {
                             // than covered over, so Back can never walk back onto it. Where it came
                             // from is where the runner lands, which is History for a Run opened from
                             // History and the Record for one opened from a Record.
-                            if (!navController.popBackStack(Routes.SESSION_DETAIL, inclusive = true)) {
-                                navigateHome()
-                            }
+                            //
+                            // Named rather than a bare pop, and with nothing done when the name is
+                            // not found: a bare pop would take a screen off wherever it fired
+                            // twice, and a pop that finds no such page has nothing to correct —
+                            // the runner has already left it.
+                            navController.popBackStack(Routes.SESSION_DETAIL, inclusive = true)
                         }
                     }
 
@@ -1206,7 +1209,12 @@ class MainActivity : ComponentActivity() {
                                 )
                             )
                             LaunchedEffect(recordType) {
-                                if (recordType == null) goBack()
+                                // This page by name, not one step off the stack: a screen that
+                                // closes itself has to be able to run twice without taking the page
+                                // underneath with it, and only the name says which page to drop.
+                                if (recordType == null) {
+                                    navController.popBackStack(Routes.RECORD_DETAIL, inclusive = true)
+                                }
                             }
                             recordType?.let { type ->
                                 // Watched, like the grid that led here: a Run finishing, a
@@ -1294,10 +1302,9 @@ class MainActivity : ComponentActivity() {
                                     segmentsViewModel.delete(row)
                                     // Off the stack, not covered over: the Segment this page is for
                                     // has just been thrown away, so Back must not be able to walk
-                                    // back onto it.
-                                    if (!navController.popBackStack(Routes.SEGMENT_DETAIL, inclusive = true)) {
-                                        navigateHome()
-                                    }
+                                    // back onto it. Named rather than a bare pop, for the reason
+                                    // the deleted Run's page is.
+                                    navController.popBackStack(Routes.SEGMENT_DETAIL, inclusive = true)
                                 },
                                 // A time on a hill belongs to a morning, and the page that holds
                                 // the morning is the Run's own (#72).
@@ -1335,8 +1342,15 @@ class MainActivity : ComponentActivity() {
                             // deleted Segment's does (#70): the Run this list belongs to has been
                             // thrown away, or has left its own group, and a screen for a group
                             // nobody has has nothing to show.
+                            // This page by name, not [backToTheRun]: the group is re-read on every
+                            // write to the runs it is drawn from, so "there is no such group" can
+                            // arrive more than once, and a second step off the stack would take the
+                            // Run's own page with it. A name that is no longer on the stack pops
+                            // nothing.
                             LaunchedEffect(answered) {
-                                if (answered != null && answered?.value == null) backToTheRun()
+                                if (answered != null && answered?.value == null) {
+                                    navController.popBackStack(Routes.MATCHED_RUNS, inclusive = true)
+                                }
                             }
                             MatchedRunsScreen(
                                 matched = answered?.value,
