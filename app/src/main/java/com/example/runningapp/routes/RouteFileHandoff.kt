@@ -47,8 +47,14 @@ internal sealed interface RouteFileLaunch {
     /**
      * The file, delivered onto the [Home] launch rather than starting a task of its own.
      *
-     * `FLAG_ACTIVITY_SINGLE_TOP` is what makes "onto" true: it reaches the MainActivity the [Home]
-     * launch just put there instead of building a second one on top of it.
+     * `FLAG_ACTIVITY_CLEAR_TOP` and `FLAG_ACTIVITY_SINGLE_TOP` together are what make "onto" true.
+     * SINGLE_TOP alone only reuses the screen when it is the top of its task, and it often is not:
+     * the file picker, the archive folder chooser and the share sheet are all started into
+     * MainActivity's own task and sit above it. A runner who leaves the app with one of those open
+     * and then opens a `.gpx` would get a SECOND MainActivity built on top of the stale chooser —
+     * two screens bound to the service, and a Back that walks through a picker nobody asked for.
+     * CLEAR_TOP finishes whatever is above the screen instead, and SINGLE_TOP then hands the file to
+     * the screen itself rather than rebuilding it.
      *
      * `FLAG_GRANT_READ_URI_PERMISSION` is what makes the file readable. The read was granted to the
      * activity Android handed the file to, and a grant belongs to the activity it was given to, so
@@ -59,7 +65,9 @@ internal sealed interface RouteFileLaunch {
         override val action: String = Intent.ACTION_VIEW
         override val category: String? = null
         override val flags: Int =
-            Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
     }
 }
 
