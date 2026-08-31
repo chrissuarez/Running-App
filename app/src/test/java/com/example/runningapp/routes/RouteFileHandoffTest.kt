@@ -36,6 +36,23 @@ class RouteFileHandoffTest {
     }
 
     @Test
+    fun `the first launch reuses the screen the runner has rather than stacking on a chooser`() {
+        val first = routeFileHandoff(file).first()
+
+        // This launch goes first, so it is the one that would build a second MainActivity above a
+        // picker the runner left open — and once it has, the file's own CLEAR_TOP finds that new
+        // screen at the top and clears nothing. Verified on the phone (API 37).
+        assertTrue(
+            "The first launch must finish whatever sits above the screen",
+            first.flags and Intent.FLAG_ACTIVITY_CLEAR_TOP != 0,
+        )
+        assertTrue(
+            "The first launch must reach the existing screen, not rebuild it",
+            first.flags and Intent.FLAG_ACTIVITY_SINGLE_TOP != 0,
+        )
+    }
+
+    @Test
     fun `the file lands on the launch before it rather than making a task`() {
         val handover = routeFileHandoff(file).last()
 
