@@ -36,11 +36,26 @@ internal sealed interface RouteFileLaunch {
     /**
      * The app opened as the launcher opens it. This is the one that may create the task, so it
      * carries no file — see above.
+     *
+     * It clears the task down to the existing screen for the same reason [Handover] does, and it
+     * has to be the one that does it. This launch goes first, and if it builds a SECOND MainActivity
+     * above a chooser the runner left open, then by the time [Handover] arrives that new screen is
+     * the top of the task: `FLAG_ACTIVITY_CLEAR_TOP` finds it there, has nothing above it to
+     * finish, and leaves the stale chooser buried underneath — a Back that walks into a file picker
+     * nobody asked for. Verified on the phone (API 37) before these flags were here.
+     *
+     * With `FLAG_ACTIVITY_CLEAR_TOP` and `FLAG_ACTIVITY_SINGLE_TOP` on this launch instead, the
+     * chooser is finished and the screen the runner already has is the one both launches reach.
+     * On a cold start there is no task and no instance, so the two flags do nothing and this is the
+     * plain launcher intent it must be — which is the whole point of it.
      */
     data object Home : RouteFileLaunch {
         override val action: String = Intent.ACTION_MAIN
         override val category: String = Intent.CATEGORY_LAUNCHER
-        override val flags: Int = Intent.FLAG_ACTIVITY_NEW_TASK
+        override val flags: Int =
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
         override val file: Uri? = null
     }
 
@@ -54,7 +69,8 @@ internal sealed interface RouteFileLaunch {
      * and then opens a `.gpx` would get a SECOND MainActivity built on top of the stale chooser —
      * two screens bound to the service, and a Back that walks through a picker nobody asked for.
      * CLEAR_TOP finishes whatever is above the screen instead, and SINGLE_TOP then hands the file to
-     * the screen itself rather than rebuilding it.
+     * the screen itself rather than rebuilding it. [Home] carries the same two flags, and must: it
+     * is started first, so it is the launch that would otherwise build that second screen.
      *
      * `FLAG_GRANT_READ_URI_PERMISSION` is what makes the file readable. The read was granted to the
      * activity Android handed the file to, and a grant belongs to the activity it was given to, so
