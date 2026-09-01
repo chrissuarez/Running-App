@@ -1,6 +1,5 @@
 package com.example.runningapp.ui.workout
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +25,7 @@ import com.example.runningapp.map.SunriseSunsetCalculator
 import com.example.runningapp.routes.CourseLine
 import com.example.runningapp.routes.RoutePoint
 import com.example.runningapp.routes.courseRemainingMeters
+import com.example.runningapp.ui.MapCardTapOverlay
 import com.mapbox.geojson.Point
 import com.mapbox.maps.extension.compose.MapEffect
 import com.mapbox.maps.extension.compose.MapboxMap
@@ -81,15 +81,11 @@ fun MapCard(
                 interactive = false,
                 modifier = Modifier.fillMaxSize()
             )
-            // The tap lives on a layer over the map, not on the Card under it. A Mapbox map is an
-            // Android View inside this composition and it takes the touch before anything wrapped
-            // around it hears about it — which is why a [clickable] on the Card did nothing (#357).
-            // The same shape the Run-detail map already uses ([com.example.runningapp.ui.RunTrackMapCard]).
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .clickable(onClickLabel = "Open full-screen map", onClick = onClick)
-            )
+            // The tap lives on a layer over the map, not on the Card under it, and that layer
+            // leaves Mapbox's own bottom-left corner alone — see [MapCardTapOverlay], which states
+            // both rules once for this card and the Run-detail one
+            // ([com.example.runningapp.ui.RunTrackMapCard]).
+            MapCardTapOverlay(onClick = onClick)
         }
     }
 }

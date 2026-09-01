@@ -1,7 +1,6 @@
 package com.example.runningapp.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -75,8 +74,10 @@ private const val ScrubDotStrokeWidth = 3.0
  *
  * The preview never pans. It sits inside a page that scrolls, and a map that swallowed the drag
  * would trap the runner's finger halfway down their own run. Two things hold that: the map's own
- * gestures are off, and a transparent layer over it takes the taps — [clickable] hands vertical
- * drags back to the scrolling column rather than claiming them.
+ * gestures are off, and a transparent layer over it takes the taps — [MapCardTapOverlay] hands
+ * vertical drags back to the scrolling column rather than claiming them. That layer has a hole in
+ * it at Mapbox's own bottom-left corner, so the attribution "i" it draws there can still be tapped
+ * (#409).
  *
  * [scrubber] is where the runner's finger is on the chart further down the page, and it is what puts
  * the dot on the route (#48) — so a pace dip or a heart-rate spike is answered with the place it
@@ -102,11 +103,10 @@ fun RunTrackMapCard(
                 scrubbedFix = { scrubber.distanceMeters?.let(trackMap::fixAt) },
                 modifier = Modifier.fillMaxSize()
             )
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .clickable(onClickLabel = "Open full-screen map", onClick = onOpenFullScreen)
-            )
+            // Over the map, and holed at Mapbox's own corner — see [MapCardTapOverlay], which
+            // states both rules once for this card and the in-run one
+            // ([com.example.runningapp.ui.workout.MapCard]).
+            MapCardTapOverlay(onClick = onOpenFullScreen)
         }
     }
 }
