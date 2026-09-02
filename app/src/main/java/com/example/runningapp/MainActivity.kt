@@ -19,6 +19,7 @@ import android.os.Build
 import android.util.Log
 import android.os.Bundle
 import android.os.IBinder
+import androidx.room.withTransaction
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.ui.platform.LocalContext
@@ -459,6 +460,11 @@ class MainActivity : ComponentActivity() {
                                 // is remembered there and then (#420) — see the DAO for why the
                                 // "unless it already names one" lives inside the write.
                                 appContainer.database.sessionDao()::rememberRunAlongRoute,
+                                // Both writes or neither — see RunRouteSaver.inTransaction. The
+                                // line AppContainer already runs for a re-tally of history.
+                                inTransaction = { block ->
+                                    appContainer.database.withTransaction { block() }
+                                },
                             ),
                             zoneChanges = appContainer.zoneChanges,
                             // Watched, not read once: a refusal that was only ever the switch's

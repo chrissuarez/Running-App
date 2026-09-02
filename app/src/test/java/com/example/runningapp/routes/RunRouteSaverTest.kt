@@ -26,11 +26,34 @@ class RunRouteSaverTest {
      * of the same Run is visible as a second write rather than folded into the first.
      */
     private val remembered = mutableListOf<Pair<Long, Long>>()
+
+    /** How many transactions the saver is inside of right now — nought outside one. */
+    private var depth = 0
+
+    /** How deep the keep was, and how deep the stamp was. Nought is "not in a transaction". */
+    private var depthAtKeep = -1
+    private var depthAtRemember = -1
+
     private val saver = RunRouteSaver(
         dao,
-        rememberRunAlongRoute = { sessionId, routeId -> remembered += sessionId to routeId },
+        rememberRunAlongRoute = { sessionId, routeId ->
+            depthAtRemember = depth
+            remembered += sessionId to routeId
+        },
+        inTransaction = { block ->
+            depth++
+            try {
+                block()
+            } finally {
+                depth--
+            }
+        },
         now = { 1_700_000_500_000L },
     )
+
+    init {
+        dao.onKeepRoute = { depthAtKeep = depth }
+    }
     private val london = ZoneId.of("Europe/London")
 
     private val aRun = RunnerSession(
@@ -225,4 +248,22 @@ class RunRouteSaverTest {
 
         assertTrue(remembered.isEmpty())
     }
+
+    /**
+     * The kept row and the stamp on the Run it was traced from are one commit (#420).
+     *
+     * Not two. A commit that landed the row and lost the stamp would give the runner a course whose
+     * own page opens with an empty history — made from a Run that is plainly on it — and nothing on
+     * screen to say why. The gap is between the two commits, so only one commit closes it.
+     */
+    @Test
+    fun `keeps the course and stamps its Run in one transaction`() = runTest {
+        val outcome = saver.save(aRun, aLap(), london)
+
+        assertTrue(outcome is RunRouteOutcome.Saved)
+        assertEquals(listOf(7L to 1L), remembered)
+        assertEquals("the keep ran outside a transaction", 1, depthAtKeep)
+        assertEquals("the stamp ran outside a transaction", 1, depthAtRemember)
+    }
+
 }
