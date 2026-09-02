@@ -738,6 +738,19 @@ data class RouteRunRow(
     val durationSeconds: Long,
     val movingTimeSeconds: Long?,
     val distanceKm: Double,
+    /**
+     * The runner's own word about this outing — see [RunnerSession.isWalk] (#275).
+     *
+     * Carried rather than filtered out of the query, because **a Walk contests no record** and a
+     * course's best time is a record over one piece of ground, exactly as a Segment's PR is
+     * ([com.example.runningapp.segments.mayHoldSegmentEfforts]). It still belongs on the page: a Run
+     * that vanished from its own course's list with no explanation reads as lost data, so the row is
+     * printed and told why it takes no part ([com.example.runningapp.ui.routeRunsUi]).
+     *
+     * Defaulted to a Run, which is what the column defaults to and what every Run recorded before
+     * v29 comes back as; Room fills it from the query either way.
+     */
+    val isWalk: Boolean = false,
 )
 
 /** How many medals one Run holds — what the medal badge on its History row counts (#51). */
@@ -983,10 +996,14 @@ interface SessionDao {
      * `endTime > 0` for the reason every other query here reads it that way: a Run still being
      * recorded is stamped with its course at START, and its totals are all noughts until it settles.
      * Listed then, it would be a 0:00 that took the best time off the runner.
+     *
+     * A Walk is listed and not filtered, because it is still a Run on this ground the runner went
+     * for — what it may not do is hold the best time, which is decided where the page is built
+     * ([RouteRunRow.isWalk], [com.example.runningapp.ui.routeRunsUi]).
      */
     @Query(
         "SELECT id AS sessionId, startTime, ranAtUtcOffsetSeconds, durationSeconds, " +
-            "movingTimeSeconds, distanceKm FROM sessions " +
+            "movingTimeSeconds, distanceKm, isWalk FROM sessions " +
             "WHERE ranAlongRouteId = :routeId AND endTime > 0 ORDER BY startTime DESC"
     )
     fun getRunsAlongRouteFlow(routeId: Long): Flow<List<RouteRunRow>>

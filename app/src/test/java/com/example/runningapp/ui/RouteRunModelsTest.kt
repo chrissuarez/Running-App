@@ -29,6 +29,7 @@ class RouteRunModelsTest {
         distanceKm: Double,
         durationSeconds: Long,
         movingTimeSeconds: Long? = null,
+        isWalk: Boolean = false,
     ) = RouteRunRow(
         sessionId = sessionId,
         startTime = firstStart + daysOn * aDay,
@@ -36,6 +37,7 @@ class RouteRunModelsTest {
         durationSeconds = durationSeconds,
         movingTimeSeconds = movingTimeSeconds,
         distanceKm = distanceKm,
+        isWalk = isWalk,
     )
 
     @Test
@@ -184,4 +186,85 @@ class RouteRunModelsTest {
         assertEquals("1 run on this route", routeRunCountLabel(1))
         assertEquals("14 runs on this route", routeRunCountLabel(14))
     }
+
+    /**
+     * A Walk holds no best time on a course, and is not in the average (#275, #420).
+     *
+     * The app's rule for every record over one piece of ground: a Walk contests no record
+     * ([com.example.runningapp.data.RunnerSession.isWalk],
+     * [com.example.runningapp.segments.mayHoldSegmentEfforts]). A course's best is that same claim,
+     * so the quickest lap round it cannot be one the runner walked — even a quick one, and even
+     * where its distance is exactly the course's.
+     */
+    @Test
+    fun `a walk holds no best time and is not in the average`() {
+        val runs = routeRunsUi(
+            rows = listOf(
+                run(sessionId = 1, daysOn = 0, distanceKm = 5.0, durationSeconds = 1_800),
+                // Quicker than the Run above and dead on the course's length — and still not the
+                // best, because the runner called it a walk.
+                run(sessionId = 2, daysOn = 1, distanceKm = 5.0, durationSeconds = 600, isWalk = true),
+            ),
+            routeDistanceMeters = 5_000.0,
+            zone = london,
+        )
+
+        val walk = runs.single { it.sessionId == 2L }
+        assertFalse("a walk was allowed to hold the best time", walk.isBest)
+        assertFalse(walk.countsForBest)
+        assertEquals(ROUTE_RUN_WALK_NOTE, walk.notCountedNote)
+
+        val ran = runs.single { it.sessionId == 1L }
+        assertTrue(ran.isBest)
+        assertNull(ran.notCountedNote)
+
+        // The average is the Run's own time alone, not the mean of the two.
+        assertEquals("30:00", routeAverageTimeLabel(runs))
+        assertEquals(1L, routeBestOf(runs)?.sessionId)
+    }
+
+    /**
+     * A walk still keeps its row on the page.
+     *
+     * Never dropped: a Run that vanished from its own course's list with no explanation reads as
+     * lost data, so it is printed with its time, its distance and the reason it takes no part.
+     */
+    @Test
+    fun `a walk keeps its row, with its time and its distance`() {
+        val runs = routeRunsUi(
+            rows = listOf(run(sessionId = 2, daysOn = 1, distanceKm = 5.0, durationSeconds = 600, isWalk = true)),
+            routeDistanceMeters = 5_000.0,
+            zone = london,
+        )
+
+        val walk = runs.single()
+        assertEquals("10:00", walk.timeLabel)
+        assertEquals(ROUTE_RUN_WALK_NOTE, walk.notCountedNote)
+        // Nothing to compare it against, and the page says so rather than showing a best.
+        assertNull(routeBestOf(runs))
+        assertNull(routeAverageTimeLabel(runs))
+    }
+
+    /**
+     * The two reasons a Run takes no part are told apart in the runner's own words.
+     *
+     * "Too far off this route's distance" said about a lap somebody walked the whole way round would
+     * simply be untrue, and the two are not the same news: one is about the outing, the other about
+     * a mark the runner made and can unmake on the Run's own page.
+     */
+    @Test
+    fun `the reason a run takes no part names the reason`() {
+        val runs = routeRunsUi(
+            rows = listOf(
+                run(sessionId = 1, daysOn = 0, distanceKm = 2.0, durationSeconds = 900),
+                run(sessionId = 2, daysOn = 1, distanceKm = 5.0, durationSeconds = 600, isWalk = true),
+            ),
+            routeDistanceMeters = 5_000.0,
+            zone = london,
+        )
+
+        assertEquals(ROUTE_RUN_NOT_COUNTED_NOTE, runs.single { it.sessionId == 1L }.notCountedNote)
+        assertEquals(ROUTE_RUN_WALK_NOTE, runs.single { it.sessionId == 2L }.notCountedNote)
+    }
+
 }

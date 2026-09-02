@@ -79,7 +79,15 @@ fun RouteDetailScreen(
      * from the row it belongs to ([com.example.runningapp.data.RouteDao.getRouteHeaderFlow]).
      */
     line: List<MapFix>,
-    runs: List<RouteRunUi>,
+    /**
+     * Every Run remembered on this course, or **null while that has not been read yet**.
+     *
+     * Told apart from an empty list on purpose, the rule the record book's own page keeps
+     * (`recordDetailNotReadYet`): the row and the Runs are two reads, the row can land first, and an
+     * empty list drawn in the gap would tell a runner who has been round this course fifty times
+     * that they never had — in the moment right after they tapped it.
+     */
+    runs: List<RouteRunUi>?,
     onRename: (RouteHeader, String) -> Unit,
     onOpenRun: (Long) -> Unit,
     onBack: () -> Unit,
@@ -119,8 +127,8 @@ fun RouteDetailScreen(
             return@Scaffold
         }
 
-        val best = remember(runs) { routeBestOf(runs) }
-        val average = remember(runs) { routeAverageTimeLabel(runs) }
+        val best = remember(runs) { runs?.let(::routeBestOf) }
+        val average = remember(runs) { runs?.let(::routeAverageTimeLabel) }
 
         LazyColumn(
             modifier = Modifier
@@ -164,7 +172,7 @@ fun RouteDetailScreen(
             // Runs on the course, but not one of them inside the band. Said in words rather than
             // left as a missing card: the runner can see their times in the list below and would
             // otherwise be left wondering why none of them is a best (#420).
-            if (best == null && runs.isNotEmpty()) {
+            if (best == null && !runs.isNullOrEmpty()) {
                 item {
                     Text(
                         text = NO_COUNTED_ROUTE_RUNS_MESSAGE,
@@ -201,7 +209,16 @@ fun RouteDetailScreen(
             }
 
             item {
-                if (runs.isEmpty()) {
+                if (runs == null) {
+                    // Not read yet, which is not "none" — see the [runs] parameter. Nothing is said
+                    // either way until the read lands.
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                } else if (runs.isEmpty()) {
                     Text(
                         text = NO_ROUTE_RUNS_MESSAGE,
                         style = MaterialTheme.typography.bodyMedium,
@@ -221,7 +238,7 @@ fun RouteDetailScreen(
                 }
             }
 
-            items(runs, key = { it.sessionId }) { run ->
+            items(runs.orEmpty(), key = { it.sessionId }) { run ->
                 RouteRunRowUi(run = run, onOpen = { onOpenRun(run.sessionId) })
             }
         }
@@ -258,9 +275,9 @@ private fun TimeStat(title: String, value: String, modifier: Modifier = Modifier
 /**
  * One Run on the course: when it was, how far it actually went, and what it took.
  *
- * A Run outside the distance band keeps its row and is told, in words, that it takes no part in the
- * best or the average ([ROUTE_RUN_NOT_COUNTED_NOTE]) — never dropped. A run that vanished from its
- * own course's page with no explanation reads as lost data.
+ * A Run that takes no part in the best or the average keeps its row and is told so in words, in the
+ * words of its own reason ([RouteRunUi.notCountedNote]) — never dropped. A run that vanished from
+ * its own course's page with no explanation reads as lost data.
  */
 @Composable
 private fun RouteRunRowUi(run: RouteRunUi, onOpen: () -> Unit) {
@@ -272,7 +289,7 @@ private fun RouteRunRowUi(run: RouteRunUi, onOpen: () -> Unit) {
             .semantics {
                 contentDescription = (if (run.isBest) "Best time, " else "") +
                     "${run.dateLabel}, ${run.timeLabel}, ${run.distanceLabel}" +
-                    (if (run.countsForBest) "" else ". $ROUTE_RUN_NOT_COUNTED_NOTE")
+                    (run.notCountedNote?.let { ". $it" } ?: "")
             },
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -287,9 +304,9 @@ private fun RouteRunRowUi(run: RouteRunUi, onOpen: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (!run.countsForBest) {
+            run.notCountedNote?.let { note ->
                 Text(
-                    text = ROUTE_RUN_NOT_COUNTED_NOTE,
+                    text = note,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

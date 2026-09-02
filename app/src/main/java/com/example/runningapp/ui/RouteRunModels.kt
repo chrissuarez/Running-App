@@ -19,6 +19,11 @@ import kotlin.math.roundToLong
  * at the moment the course was traced off that very Run (#55). Nothing here matches a shape to a
  * course: two Runs are matched to each other by geometry elsewhere (#73), and that rule deliberately
  * never reaches into the library.
+ *
+ * **A Walk holds no best time.** A course's best is a record over one piece of ground, exactly as a
+ * Segment's PR is, and the app's rule for both is that a Walk contests no record
+ * ([com.example.runningapp.data.RunnerSession.isWalk], #275). The Walk keeps its row and is told
+ * why ([ROUTE_RUN_WALK_NOTE]).
  */
 
 /**
@@ -45,13 +50,20 @@ data class RouteRunUi(
      */
     val elapsedSeconds: Long,
     /**
-     * Whether this Run is inside [ROUTE_BEST_DISTANCE_TOLERANCE] of the course, and so is one of the
-     * Runs the best and the average are drawn from.
+     * Whether this Run is one of the Runs the best and the average are drawn from.
      *
-     * False is printed rather than hidden ([ROUTE_RUN_NOT_COUNTED_NOTE]). A Run that vanished from
-     * its own course's page with no explanation reads as lost data.
+     * False is printed rather than hidden ([notCountedNote]). A Run that vanished from its own
+     * course's page with no explanation reads as lost data.
      */
     val countsForBest: Boolean,
+    /**
+     * Why it takes no part, in the runner's words — null exactly where [countsForBest] is true.
+     *
+     * A reason rather than a flag, because there is more than one and they are not the same news:
+     * "you did not run this far" is about the outing, and "you called this a walk" is about a mark
+     * the runner made and can unmake on the Run's own page.
+     */
+    val notCountedNote: String?,
     /** Whether this is the quickest of the Runs that count — the one the page calls the best. */
     val isBest: Boolean,
 )
@@ -77,21 +89,30 @@ fun routeRunsUi(
     // boundary is the same arithmetic in both directions.
     val tolerance = routeDistanceMeters * ROUTE_BEST_DISTANCE_TOLERANCE
 
-    fun counts(row: RouteRunRow): Boolean {
+    /** Why this Run takes no part in the best or the average, or null where it does. */
+    fun whyNotCounted(row: RouteRunRow): String? {
+        // A Walk contests no record, and a best time over one course is a record over one piece of
+        // ground exactly as a Segment's PR is ([RunnerSession.isWalk],
+        // [com.example.runningapp.segments.mayHoldSegmentEfforts], #275). Asked first, because it is
+        // the runner's own word about the outing and it is true whatever ground they covered.
+        if (row.isWalk) return ROUTE_RUN_WALK_NOTE
         // A course with no length of its own has no band, so nothing is inside it. Reachable: a row
         // is only ever measured off the line it was kept with, and a line that measured nothing is
         // a course nothing can be raced over.
-        if (routeDistanceMeters <= 0.0) return false
+        if (routeDistanceMeters <= 0.0) return ROUTE_RUN_NOT_COUNTED_NOTE
         // A Run with no clock cannot be raced whatever ground it covered — the Run that died in its
         // first seconds, and treadmill history with nothing on it.
-        if (row.clockSeconds() <= 0L) return false
-        return abs(row.distanceKm * 1_000.0 - routeDistanceMeters) <= tolerance
+        if (row.clockSeconds() <= 0L) return ROUTE_RUN_NOT_COUNTED_NOTE
+        if (abs(row.distanceKm * 1_000.0 - routeDistanceMeters) > tolerance) {
+            return ROUTE_RUN_NOT_COUNTED_NOTE
+        }
+        return null
     }
 
     // The app's one rule for placing times over one piece of ground ([quickestFirst]), rather than
     // a fourth spelling of it: a tie leaves the best with the earlier Run, because matching a time
     // you already ran is not beating it.
-    val best = rows.filter(::counts).minWithOrNull(
+    val best = rows.filter { whyNotCounted(it) == null }.minWithOrNull(
         quickestFirst(
             elapsed = { it.clockSeconds() },
             startedAt = { it.startTime },
@@ -105,13 +126,15 @@ fun routeRunsUi(
         .sortedByDescending { it.startTime }
         .map { row ->
             val day = ranOn(row.startTime, row.ranAtUtcOffsetSeconds, zone)
+            val why = whyNotCounted(row)
             RouteRunUi(
                 sessionId = row.sessionId,
                 dateLabel = ROUTE_RUN_DATE_FORMAT.format(day),
                 distanceLabel = routeDistanceLabel(row.distanceKm * 1_000.0),
                 timeLabel = formatDuration(row.clockSeconds()),
                 elapsedSeconds = row.clockSeconds(),
-                countsForBest = counts(row),
+                countsForBest = why == null,
+                notCountedNote = why,
                 isBest = row.sessionId == best?.sessionId,
             )
         }
@@ -150,7 +173,7 @@ const val ROUTE_AVERAGE_TIME_TITLE: String = "Average time"
 const val ROUTE_RUNS_TITLE: String = "Your runs on this route"
 
 /**
- * Why a Run in the list has no part in the best or the average.
+ * Why a Run in the list has no part in the best or the average: it did not cover this course.
  *
  * Said on the row itself rather than left to be worked out from two distances, because the runner's
  * question at that moment is "why is my quickest time not the best" and the answer is here.
@@ -158,15 +181,26 @@ const val ROUTE_RUNS_TITLE: String = "Your runs on this route"
 const val ROUTE_RUN_NOT_COUNTED_NOTE: String = "Not counted — too far off this route's distance"
 
 /**
+ * The other reason: the runner marked this outing a Walk.
+ *
+ * Its own words rather than [ROUTE_RUN_NOT_COUNTED_NOTE], because it is different news. The
+ * distance note is about the outing and nothing can be done about it; this is about a mark the
+ * runner made on the finish sheet and can unmake on the Run's own page, and saying "too far off
+ * this route's distance" about a lap they walked the whole way round would simply be untrue.
+ */
+const val ROUTE_RUN_WALK_NOTE: String = "Not counted — marked as a walk"
+
+/**
  * What the page says where Runs have been remembered on this course but not one of them came close
  * enough to its length to be raced.
  *
- * Said rather than left as two missing numbers. The runner can see their times in the list, so a
- * page with no best on it owes them the reason — and the reason is about distance, not about them.
+ * Said rather than left as two missing numbers: the runner can see their times in the list, so a
+ * page with no best on it owes them the reason. It points at the rows rather than naming one cause,
+ * because there is more than one ([ROUTE_RUN_NOT_COUNTED_NOTE], [ROUTE_RUN_WALK_NOTE]) and the rows
+ * are where each Run's own is written.
  */
 const val NO_COUNTED_ROUTE_RUNS_MESSAGE: String =
-    "No best time yet. None of these runs came within a tenth of this route's distance, so there " +
-        "is nothing to compare them on."
+    "No best time yet. None of these runs counts towards one — each row says why."
 
 /**
  * What the page says where no Run has ever been remembered on this course.
