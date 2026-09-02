@@ -7,12 +7,33 @@ import com.example.runningapp.recording.geodesicDistanceMeters
 /**
  * How far the runner must climb above the last low point before it is banked as gain.
  *
- * The GPS tier's ten metres, and it is the only tier a Route has: a GPX file carries a height per
- * point and never says where it came from, so the reader has to assume the noisier of the two
- * instruments. Ten metres is roughly one standard deviation of a GPS fix's vertical error — see
- * [com.example.runningapp.analysis.elevationOf], where the same number is argued at length (#20).
+ * Three metres, because ten was not a threshold but a ruler with one mark on it (#419). Gain is
+ * banked in whole steps of this number, so at ten metres the smallest reportable climb was ten
+ * metres and every rolling route in the library read exactly `10 m up` — the same figure for a flat
+ * canal path and for a hill. Three metres reports the hill.
+ *
+ * It is deliberately below the GPS tier's ten metres, which [com.example.runningapp.analysis.elevationOf]
+ * still uses for a Run (#20), and the two are answering different questions. That ten metres is one
+ * standard deviation of a *single* GPS fix's vertical error, and a Run bands raw fixes. A Route's
+ * heights are smoothed first, by [smoothedAlong], which folds each height into at least five of its
+ * neighbours; what reaches this rule is a mean, whose error is several times smaller than a fix's.
+ * Measured on the nine tracks exported from this phone, three metres over that smoothing reports
+ * between twelve and forty-seven metres of climbing on runs of two to six kilometres — a spread
+ * that follows the ground, where ten metres reported ten on almost every one of them.
+ *
+ * **What this number does not cover.** A five-point mean over a file that alternates by some amount
+ * a point leaves about a fifth of that amount behind, so this rule protects the reading only from a
+ * per-point wobble of *under* fifteen metres. At fifteen the residual is three exactly, and the
+ * comparison below is `>=`, so it banks. A file noisier than that banks its noise as climbing, over
+ * and over, all route long — the #20 defect, reached at a lower noise floor than ten metres reached
+ * it. That is a known, accepted limit rather than an oversight: nothing this phone or a route
+ * builder exports comes close to it, and widening the window instead is no fix, because killing a
+ * twenty-metre alternation with a plain mean takes eleven points, which on a route whose points sit
+ * a hundred metres apart averages over a kilometre and rubs real hills out with the noise. #424
+ * holds the proper fix; `RouteShapeTest.a wobble the smoothing cannot absorb is still banked` pins
+ * the limit in the meantime.
  */
-private const val ROUTE_HYSTERESIS_METERS = 10.0
+private const val ROUTE_HYSTERESIS_METERS = 3.0
 
 /**
  * How many points each height is averaged with before it is judged a climb, and how much ground the

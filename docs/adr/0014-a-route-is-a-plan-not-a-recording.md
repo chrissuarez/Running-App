@@ -169,8 +169,40 @@ a handful of rows.
 
 ## The #20 rules restated on the axes a Route has
 
-The gain itself follows the GPS tier of #20 — ten metres of hysteresis above the last low point —
-smoothed first, because a sum of positive differences banks every metre of noise.
+The gain itself follows the shape of the GPS tier of #20 — hysteresis above the last low point,
+smoothed first, because a sum of positive differences banks every metre of noise — but at **three
+metres**, not that tier's ten.
+
+Ten was tried first and was wrong for a reason that only shows up in a library (#419): gain is banked
+in whole steps of the threshold, so ten metres made ten metres the smallest reportable climb, and
+every rolling route in the library read exactly `10 m up`. The two numbers are also answering
+different questions. #20's ten metres is one standard deviation of a *single* GPS fix's vertical
+error, and a Run bands raw fixes; a Route's heights are smoothed before this rule sees them, so what
+it judges is a mean, whose error is several times smaller. Against the nine tracks exported from this
+phone, three metres over that smoothing reports twelve to forty-seven metres of climbing on runs of
+two to six kilometres, where ten reported ten on almost all of them.
+
+Three is also close to the floor, and the floor is where the accepted cost of this change sits. A
+five-point mean leaves about a fifth of a per-point wobble behind, so three metres protects the
+reading only from a wobble of *under* fifteen metres a point; at fifteen the residual is three
+exactly, which the rule banks. Ten metres protected it up to about fifty. So the noise floor this
+tier tolerates has come down, and a file noisier than fifteen metres a point now banks its noise as
+climbing — the #20 defect, at a lower threshold of noise.
+
+That was accepted rather than solved, because the two obvious solutions are both worse. Going lower
+still, to the barometric tier's one or two metres, banks the residual of an ordinary file. Widening
+the smoothing to cover a twenty-metre alternation takes an eleven-point mean, which on a route whose
+points sit a hundred metres apart averages over a kilometre and rubs real hills out with the noise.
+The evidence that the cost is affordable is the nine exported tracks above: none of them is anywhere
+near that noisy, and real GPS vertical error is correlated between neighbouring fixes rather than
+alternating point by point, which is the shape that defeats a mean. #424 holds the proper fix — a
+second smoothing pass, which leaves a twenty-fifth rather than a fifth — and a test asserting the
+wrong figure on purpose pins the limit until it lands.
+
+Nothing recomputes the routes already in the library: `Route.elevationGainMeters` is banked once at
+write time and a `RoutePolyline` stores no heights to re-read, so the old ten-metre figures stand
+until each route is imported again. That is the ADR's "banked, not re-derived" rule doing what it
+says, and re-importing is the only rewrite path there has ever been.
 
 A Run smooths a GPS height over five seconds, in time rather than in fixes, precisely because noise
 arrives at a rate. A Route has no times: a planned one was never run, and an exported one's timestamps
@@ -183,7 +215,9 @@ smoothing the moment a file's points are more than seven metres apart — which 
 tracks, since Strava and Komoot simplify the *positions* they export and keep the heights as
 recorded. A simplified track is exactly the jittery case #20 exists for, and the ground rule on its
 own would have handed it back untouched: sixty points of twenty-metre wobble over flat ground banked
-six hundred metres of climbing.
+six hundred metres of climbing. The point rule cuts that to about a fifth — which was under the old
+ten-metre threshold and is over the new three-metre one, so that particular file is no longer
+rescued outright. See the noise floor argued above, and #424.
 
 The cost is that a widely spaced route has the shoulders of a real hill averaged off it, a five-point
 mean over half a kilometre being a great deal of smoothing. That is the right way to be wrong.
