@@ -1,5 +1,6 @@
 package com.example.runningapp.routes
 
+import com.example.runningapp.data.KeptRoute
 import com.example.runningapp.data.RouteDao
 import com.example.runningapp.data.RouteKeeping
 import com.example.runningapp.data.RouteSource
@@ -81,6 +82,20 @@ class RunRouteSaver(
      * forgot it would not compile.
      */
     private val rememberRunAlongRoute: suspend (sessionId: Long, routeId: Long) -> Unit,
+    /**
+     * Runs the keep and the stamp as one commit (#420) — `database.withTransaction`, wired in
+     * `AppContainer`/`MainActivity`, the shape [com.example.runningapp.data.SessionRepository]
+     * already uses.
+     *
+     * The two writes are one fact. A course kept off a Run *is* a Run on that course, so a commit
+     * that landed the row and lost the stamp would open the new course's page with an empty history
+     * and nothing on screen to say why. Read-then-write cannot close that: the gap is not in the
+     * deciding, it is between the two commits, and only one commit removes it.
+     *
+     * No default, for [rememberRunAlongRoute]'s reason: a default would run the block as-is, which
+     * is atomic-looking code that is not atomic, and nothing would fail to compile to say so.
+     */
+    private val inTransaction: suspend (suspend () -> KeptRoute) -> KeptRoute,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
 
@@ -107,18 +122,25 @@ class RunRouteSaver(
         // The Run's own name, in the same words it is exported under, so a course saved off a Run
         // and a file shared from it cannot disagree about which evening they came from (#304).
         val name = RunExportName.runName(run, zoneId)
-        val kept = routeDao.keepRoute(
-            course.asRoute(name, createdAtMillis = now(), source = RouteSource.FROM_RUN),
-            // A Run brings nothing new to a course already kept, so the row is left as it stands.
-            // An import can arrive carrying better heights than the file before it; a Run measured
-            // twice by the same rules off the same fixes can only ever repeat itself.
-            remeasuring = false,
-        )
-        // After the row is settled, and for both answers. A course the library already held is the
-        // very ground this Run covered — the line is a Route's identity, so an identical line is not
-        // a lookalike — and a runner who saves the same lap twice should find both Runs on its page.
-        // A Run already stamped with a course keeps it: the write says so, not this call site.
-        rememberRunAlongRoute(run.id, kept.id)
+        // Both writes or neither ([inTransaction]): the row and the stamp on the Run it was traced
+        // from are one fact, and half of it is a course that opens with an empty history.
+        val kept = inTransaction {
+            val kept = routeDao.keepRoute(
+                course.asRoute(name, createdAtMillis = now(), source = RouteSource.FROM_RUN),
+                // A Run brings nothing new to a course already kept, so the row is left as it
+                // stands. An import can arrive carrying better heights than the file before it; a
+                // Run measured twice by the same rules off the same fixes can only ever repeat
+                // itself.
+                remeasuring = false,
+            )
+            // After the row is settled, and for both answers. A course the library already held is
+            // the very ground this Run covered — the line is a Route's identity, so an identical
+            // line is not a lookalike — and a runner who saves the same lap twice should find both
+            // Runs on its page. A Run already stamped with a course keeps it: the write says so,
+            // not this call site.
+            rememberRunAlongRoute(run.id, kept.id)
+            kept
+        }
 
         return if (kept.keeping == RouteKeeping.KEPT) {
             RunRouteOutcome.Saved(routeId = kept.id, name = kept.name)

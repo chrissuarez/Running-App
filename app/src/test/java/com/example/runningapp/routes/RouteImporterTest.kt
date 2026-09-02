@@ -440,7 +440,7 @@ class RouteImporterTest {
         // there, so the file is written out of the line itself rather than out of the fixes: these
         // two must be handing the library the same course, or the test is about nothing.
         val rehearsal = FakeRouteDao()
-        RunRouteSaver(rehearsal, rememberRunAlongRoute = { _, _ -> }, now = { 1_700_000_500_000L }).save(run, lap, london)
+        RunRouteSaver(rehearsal, rememberRunAlongRoute = { _, _ -> }, inTransaction = { it() }, now = { 1_700_000_500_000L }).save(run, lap, london)
         val theSameCourse = rehearsal.stored.single().polyline
         val fileOfTheSameCourse = theSameCourse.split(' ').joinToString(
             separator = "\n",
@@ -454,7 +454,7 @@ class RouteImporterTest {
         // Long enough that each is still deciding when the other arrives.
         dao.findDelayMillis = 50
         val importer = importerFor(fileOfTheSameCourse)
-        val saver = RunRouteSaver(dao, rememberRunAlongRoute = { _, _ -> }, now = { 1_700_000_500_000L })
+        val saver = RunRouteSaver(dao, rememberRunAlongRoute = { _, _ -> }, inTransaction = { it() }, now = { 1_700_000_500_000L })
 
         val outcomes = listOf(
             async { importer.import(uri) },

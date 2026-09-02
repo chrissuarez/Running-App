@@ -106,8 +106,19 @@ class FakeRouteDao : RouteDao {
      * the code under it: a caller that goes around this method, asking and then writing, gets the
      * doubled row it has earned.
      */
+    /**
+     * Run the moment a keep begins, before anything is written (#420).
+     *
+     * A test's window onto what the caller was *inside* when it wrote — the only way to see from
+     * out here that the keep and the stamp on the source Run share one commit.
+     */
+    var onKeepRoute: () -> Unit = {}
+
     override suspend fun keepRoute(route: Route, remeasuring: Boolean): KeptRoute =
-        transaction.withLock { super<RouteDao>.keepRoute(route, remeasuring) }
+        transaction.withLock {
+            onKeepRoute()
+            super<RouteDao>.keepRoute(route, remeasuring)
+        }
 
     override suspend fun remeasureRoute(
         routeId: Long,
