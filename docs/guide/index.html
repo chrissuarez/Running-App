@@ -173,12 +173,12 @@
 <div class="wrap">
 
   <header class="mast">
-    <div class="kicker">Handbook · updated 31 August 2026</div>
+    <div class="kicker">Handbook · updated 2 September 2026</div>
     <h1>Everything the app does, and where to find it.</h1>
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
-      <p><strong>Back goes back a page now, from every page in the app.</strong> Pressing your phone's back &mdash; the edge gesture or the button &mdash; anywhere except the home screen used to close the app outright. The app was throwing away the page behind you every time you moved, so back had nothing to return to and fell through to the phone. It now keeps them, so you can go as deep as you like and walk back out the way you came, one page per press. Back from the home screen still leaves the app, which is what back means there. Two things came with it: back now returns you to where you actually came from &mdash; open a run from your Records and it goes back to that Record, where before it always claimed you had come from History &mdash; and a page whose subject you have just deleted closes itself rather than waiting behind you, so back does not land you on a run or segment you have just thrown away. See <a href="#moving">getting around the app</a>.</p>
+      <p><strong>Your routes have stopped all saying the same thing about climb.</strong> Every rolling course in the library read exactly <span class="mono">10 m up</span> &mdash; the flat canal path and the hilly loop, the same figure &mdash; because the app counted climb in whole ten-metre steps, so ten metres was the smallest hill it could report. It now counts in three-metre steps, and the figure follows the ground: on nine real courses it came out anywhere from twelve to forty-seven metres. A climb is worked out once, when a route is made, so routes you already keep still read <span class="mono">10 m up</span> until you import their file again. See <em>Small climbs are counted now</em> in <a href="#routes">routes</a>.</p>
       <p><strong>Opening the app again after an &ldquo;Open with&rdquo; no longer drags the file back with it.</strong> Once you had opened a <span class="mono">.gpx</span> with this app, the phone remembered that as the way your app opens. Tapping it days later &mdash; or picking it out of the recent-apps list &mdash; handed the app the same file again, so it went to your route library and gave you whichever of the three import messages that file earned &mdash; usually <em>&ldquo;That route is already in your routes&hellip; Nothing was added.&rdquo;</em>, but sometimes one saying its numbers had been refreshed &mdash; about a file you had long forgotten. Nothing was ever added twice, so no route was ever harmed by it; the app was just going somewhere you had not asked to go. The file now comes in through a door of its own, and the phone remembers only the ordinary way in. Opening the app is opening the app: it comes up where it always comes up, and says nothing about any file. Handing it a <span class="mono">.gpx</span> still works exactly as before, whether the app is closed or already open &mdash; including when you had left the file picker open and walked away, which used to leave a stray picker sitting behind the Back arrow. See <em>Getting a route in</em> in <a href="#routes">routes</a>.</p>
       <p><strong>The map card opens the full-screen map again.</strong> Tapping the small map during an outdoor run was supposed to open a full-screen version, and did nothing at all &mdash; a fault that had been there since the map was built. The map itself was taking your finger before the tap could be heard. The card's own map now answers no touch of its own, and the tap gets through: the map fills the screen, with your heart rate, pace, distance and time in a strip across the top, and the back arrow to come back. See <em>The map, while you run</em> in <a href="#during">during the run</a>.</p>
       <p><strong>A GPX that goes nowhere is turned away, instead of becoming a route you could never run.</strong> Hand the app a <span class="mono">.gpx</span> of one place, of the same place recorded over and over, or of points scattered inside sixty metres, and it used to be kept as a route all the same &mdash; a row in your library with no line and no distance, which nothing could be started on. It is now refused, and told to you the way the app has always turned away a run that only wandered on the spot &mdash; the same sentence, naming the file instead of the run. Any row already in your library from the old behaviour stays put and is yours to delete; handing its file over again now refuses it. See <em>Getting a route in</em> in <a href="#routes">routes</a>.</p>
@@ -721,6 +721,15 @@
       </div>
 
       <div class="e">
+        <h3>Small climbs are counted now</h3>
+        <p>Every rolling course in the library used to read exactly <span class="mono">10 m up</span>. The flat canal path and the hilly loop, the same figure. The app counted climb in whole ten-metre steps, so ten metres was the smallest hill it could report, and almost every course landed on it.</p>
+        <p><strong>It now counts in three-metre steps</strong>, and the figure follows the ground. On the nine real courses this was checked against, it came out anywhere from twelve to forty-seven metres over runs of two to six kilometres, where before nearly all of them said ten.</p>
+        <p class="note"><b>Routes you already keep still say <span class="mono">10 m up</span>.</b> A climb is worked out once, when the route is made, and a route keeps a number rather than the heights the number came from &mdash; so nothing already in your library is re-measured. Only routes arriving from here on get the new figure. To bring an old one up to date, import its file again: the climb is then measured afresh from that file, under the new rule.</p>
+        <p class="note"><b>Where it can still be wrong.</b> If a file&rsquo;s heights jump about by more than roughly fifteen metres from one point to the next, that jumping is counted as climbing and the figure comes out far too high. Nothing this phone records comes near that, and neither do the usual route builders &mdash; but a rough file from elsewhere can. A proper fix is on the list.</p>
+        <div class="where"><b>Where</b> Home → Open Routes</div>
+      </div>
+
+      <div class="e">
         <h3>What this update did to your library</h3>
         <p>The app changed how it tidies a course, and that change only reached courses arriving from then on. Everything already in your library was still stored the old way, so the app could be handed one of your own route files and fail to recognise its own library. <strong>Updating the app redraws every route once, the new way</strong>, so from here on a course is stored one way and recognised one way.</p>
         <p>Three things you may notice, each of them once:</p>
@@ -920,7 +929,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>31 August 2026</strong>, when back started going back a page from every page in the app. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>2 September 2026</strong>, when routes stopped all reporting the same ten metres of climb. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
