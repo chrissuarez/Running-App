@@ -5,6 +5,7 @@ import com.example.runningapp.analysis.RecordType
 object Routes {
     const val ARG_SESSION_ID = "sessionId"
     const val ARG_SEGMENT_ID = "segmentId"
+    const val ARG_ROUTE_ID = "routeId"
 
     const val MAIN = "main"
     const val SETTINGS = "settings"
@@ -17,6 +18,12 @@ object Routes {
 
     /** The Route library (#54) — the courses the runner keeps, not one of these screen addresses. */
     const val ROUTE_LIBRARY = "route_library"
+
+    /**
+     * One course's own page (#420) — its map, its numbers and the Runs remembered on it, addressed
+     * by the course itself.
+     */
+    const val ROUTE_DETAIL = "route_detail/{$ARG_ROUTE_ID}"
 
     /** The Segments collection (#69) — the stretches of ground the runner has named. */
     const val SEGMENTS = "segments"
@@ -49,6 +56,8 @@ object Routes {
     fun matchedRuns(sessionId: Long): String = "matched_runs/$sessionId"
 
     fun segmentDetail(segmentId: Long): String = "segment_detail/$segmentId"
+
+    fun routeDetail(routeId: Long): String = "route_detail/$routeId"
 
     fun segmentCreate(sessionId: Long): String = "segment_create/$sessionId"
 

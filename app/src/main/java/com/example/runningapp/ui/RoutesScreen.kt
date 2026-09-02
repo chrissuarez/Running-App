@@ -1,5 +1,6 @@
 package com.example.runningapp.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,13 +13,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -27,7 +25,6 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
@@ -47,7 +44,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -74,7 +70,7 @@ fun RoutesScreen(
     isImporting: Boolean,
     message: String?,
     onImport: () -> Unit,
-    onRename: (RouteHeader, String) -> Unit,
+    onOpen: (RouteHeader) -> Unit,
     onDelete: (RouteHeader) -> Unit,
     onMessageShown: () -> Unit,
     onBack: () -> Unit,
@@ -89,7 +85,6 @@ fun RoutesScreen(
         }
     }
 
-    var renaming by rememberSaveable(stateSaver = RouteIdSaver) { mutableStateOf<Long?>(null) }
     var deleting by rememberSaveable(stateSaver = RouteIdSaver) { mutableStateOf<Long?>(null) }
 
     // The Import button floats over the list rather than in it, so the list has to be told how tall
@@ -167,23 +162,12 @@ fun RoutesScreen(
                 items(rows, key = { it.route.id }) { row ->
                     RouteRow(
                         row = row,
-                        onRename = { renaming = row.route.id },
+                        onOpen = { onOpen(row.route) },
                         onDelete = { deleting = row.route.id },
                     )
                 }
             }
         }
-    }
-
-    rows.firstOrNull { it.route.id == renaming }?.route?.let { route ->
-        RenameRouteDialog(
-            route = route,
-            onDismiss = { renaming = null },
-            onRename = { name ->
-                onRename(route, name)
-                renaming = null
-            },
-        )
     }
 
     rows.firstOrNull { it.route.id == deleting }?.route?.let { route ->
@@ -206,10 +190,18 @@ fun RoutesScreen(
     }
 }
 
+/**
+ * One course in the library.
+ *
+ * The row itself is the tap, and it opens the course's own page (#420) — one primary target per row,
+ * which is why renaming moved onto that page and left the pencil behind. The bin stays: forgetting a
+ * course is a thing a runner does *to* a list, and making them open a page to do it would make
+ * tidying up a library a page at a time.
+ */
 @Composable
-private fun RouteRow(row: RouteRowUi, onRename: () -> Unit, onDelete: () -> Unit) {
+private fun RouteRow(row: RouteRowUi, onOpen: () -> Unit, onDelete: () -> Unit) {
     val route = row.route
-    Card(modifier = Modifier.fillMaxWidth()) {
+    Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -240,12 +232,6 @@ private fun RouteRow(row: RouteRowUi, onRename: () -> Unit, onDelete: () -> Unit
                 )
             }
             IconButton(
-                onClick = onRename,
-                modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
-            ) {
-                Icon(Icons.Default.Edit, contentDescription = "Rename ${route.name}")
-            }
-            IconButton(
                 onClick = onDelete,
                 modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
             ) {
@@ -255,35 +241,12 @@ private fun RouteRow(row: RouteRowUi, onRename: () -> Unit, onDelete: () -> Unit
     }
 }
 
-@Composable
-private fun RenameRouteDialog(route: RouteHeader, onDismiss: () -> Unit, onRename: (String) -> Unit) {
-    var name by rememberSaveable(route.id) { mutableStateOf(route.name) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Rename route") },
-        text = {
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                singleLine = true,
-                label = { Text("Name") },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { onRename(name) }),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onRename(name) }, enabled = name.isNotBlank()) { Text("Save") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
-}
-
 /**
- * Which Route a dialog is open for, kept across a rotation and a process death.
+ * Which Route the delete dialog is open for, kept across a rotation and a process death.
  *
- * The id rather than the row: a Route that is renamed or deleted underneath an open dialog would
- * otherwise leave a stale copy of itself on screen, and the screen looks the row up afresh.
+ * The id rather than the row: a Route renamed on its own page (#420), or deleted underneath the
+ * open dialog, would otherwise leave a stale copy of itself on screen, and the screen looks the row
+ * up afresh — which is what makes the dialog name the course by the name the library holds now.
  */
 private val RouteIdSaver = androidx.compose.runtime.saveable.Saver<Long?, Long>(
     save = { it ?: -1L },
@@ -337,7 +300,7 @@ private fun RoutesScreenPreview() {
             isImporting = false,
             message = null,
             onImport = {},
-            onRename = { _, _ -> },
+            onOpen = {},
             onDelete = {},
             onMessageShown = {},
             onBack = {},
@@ -354,7 +317,7 @@ private fun EmptyRoutesScreenPreview() {
             isImporting = false,
             message = null,
             onImport = {},
-            onRename = { _, _ -> },
+            onOpen = {},
             onDelete = {},
             onMessageShown = {},
             onBack = {},

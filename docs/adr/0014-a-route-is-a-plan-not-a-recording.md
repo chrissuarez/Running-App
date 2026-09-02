@@ -249,6 +249,15 @@ metres that never happened.
 - **The library and history are unconnected in both directions.** `MIGRATION_25_26` adds a table
   with no foreign keys and touches nothing else. Emptying the library costs no Run anything, and
   deleting every Run leaves the library standing.
+
+  Amended by #420. `sessions.ranAlongRouteId` (#56) is a Run naming the course it set out to
+  follow, and saving a Run's ground as a course now writes that column too: the Run a course was
+  traced off is the plainest Run on it, and without the stamp every course saved that way opens its
+  own page with an empty history. This is still not a key — there is no foreign key, the `routes`
+  table names no Run, and deleting a Route leaves the column naming a row that is gone, which reads
+  as "the course this Run followed is no longer kept". What has changed is only that saving is no
+  longer silent about the Run: it writes one id, and only where the Run does not already name a
+  course, so what the Run set out to do is never moved (`REMEMBER_RUN_ALONG_ROUTE`).
 - **A change to the elevation rules will not reach an imported Route.** This is the price of banking
   the number, and it is a real one. The remedy is to re-import the file, and it is the runner's to
   reach for; nothing in the app will re-measure a Route behind them. If that ever stops being good

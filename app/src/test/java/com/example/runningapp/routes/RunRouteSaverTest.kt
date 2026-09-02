@@ -18,7 +18,19 @@ import java.time.ZoneId
 class RunRouteSaverTest {
 
     private val dao = FakeRouteDao()
-    private val saver = RunRouteSaver(dao, now = { 1_700_000_500_000L })
+
+    /**
+     * What the saver remembered about which Run went along which course (#420).
+     *
+     * The Run's own column, in the order it was written — a list rather than a map, so a second save
+     * of the same Run is visible as a second write rather than folded into the first.
+     */
+    private val remembered = mutableListOf<Pair<Long, Long>>()
+    private val saver = RunRouteSaver(
+        dao,
+        rememberRunAlongRoute = { sessionId, routeId -> remembered += sessionId to routeId },
+        now = { 1_700_000_500_000L },
+    )
     private val london = ZoneId.of("Europe/London")
 
     private val aRun = RunnerSession(
@@ -176,5 +188,41 @@ class RunRouteSaverTest {
         saver.save(aRun, flat, london)
 
         assertNull(dao.stored.single().elevationGainMeters)
+    }
+
+    /**
+     * The Run a course was traced off is remembered on it (#420).
+     *
+     * Without this, every course Chris owns opens its own page with an empty history — made from a
+     * Run that is plainly on it.
+     */
+    @Test
+    fun `the run a course was traced off is remembered on it`() = runTest {
+        val outcome = saver.save(aRun, aLap(), london) as RunRouteOutcome.Saved
+
+        assertEquals(listOf(aRun.id to outcome.routeId), remembered)
+    }
+
+    /**
+     * The course was already in the library, from a lap saved last week. The line is a Route's
+     * identity, so this is the very same ground — and both Runs belong on its page.
+     */
+    @Test
+    fun `a run saved onto a course already kept is remembered on it too`() = runTest {
+        val first = saver.save(aRun, aLap(), london) as RunRouteOutcome.Saved
+        val secondRun = aRun.copy(id = 8)
+
+        saver.save(secondRun, aLap(), london)
+
+        assertEquals(listOf(aRun.id to first.routeId, secondRun.id to first.routeId), remembered)
+    }
+
+    /** Nothing was kept, so there is nothing for the Run to be remembered on. */
+    @Test
+    fun `a run with no course in it is remembered nowhere`() = runTest {
+        saver.save(aRun, emptyList(), london)
+        saver.save(aRun.copy(endTime = 0L), aLap(), london)
+
+        assertTrue(remembered.isEmpty())
     }
 }

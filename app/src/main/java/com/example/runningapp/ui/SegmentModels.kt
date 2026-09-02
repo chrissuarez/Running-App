@@ -123,7 +123,7 @@ fun segmentEffortsUi(
         quickestFirst(
             elapsed = { it.elapsedMillis },
             startedAt = { it.startedAtMillis },
-            effortId = { it.effortId },
+            rowId = { it.effortId },
         )
     )
     return efforts
@@ -220,7 +220,7 @@ fun runSegmentEffortsUi(rows: List<RunSegmentEffortRow>, sessionId: Long): List<
     val order = quickestFirst<RunSegmentEffortRow>(
         elapsed = { it.elapsedMillis },
         startedAt = { it.startedAtMillis },
-        effortId = { it.effortId },
+        rowId = { it.effortId },
     )
     val placesBySegment = rows.groupBy { it.segmentId }
         .mapValues { (_, atSegment) ->
@@ -246,19 +246,22 @@ fun runSegmentEffortsUi(rows: List<RunSegmentEffortRow>, sessionId: Long): List<
 }
 
 /**
- * How efforts at one Segment are placed against each other — quickest first, and a tie kept by
- * whoever ran it first.
+ * How times over one piece of ground are placed against each other — quickest first, and a tie kept
+ * by whoever ran it first.
  *
- * Written once and read by both pages that rank efforts, because a Segment's page calling one time
- * the PR while the Run's page hands the medal to another would be the same question answered twice.
- * The effort id is the last word so the order is total: two Runs *can* carry the same start instant,
- * and an order that left them tied would place them differently on two reads of the same rows.
+ * Written once and read by every page that ranks them: both Segment pages (#70, #71) and a Route's
+ * own page (#420). A Segment's page calling one time the PR while the Run's page hands the medal to
+ * another would be the same question answered twice, and a course crowning a different best on two
+ * reads of the same Runs would be the same fault again.
+ *
+ * [rowId] is the last word so the order is total: two Runs *can* carry the same start instant, and
+ * an order that left them tied would place them differently on two reads of the same rows.
  */
-private fun <T> quickestFirst(
+internal fun <T> quickestFirst(
     elapsed: (T) -> Long,
     startedAt: (T) -> Long,
-    effortId: (T) -> Long,
-): Comparator<T> = compareBy(elapsed).thenBy(startedAt).thenBy(effortId)
+    rowId: (T) -> Long,
+): Comparator<T> = compareBy(elapsed).thenBy(startedAt).thenBy(rowId)
 
 
 // --- The full trophy view: the all-time top ten, and the trend behind it (#72) ---
@@ -296,7 +299,7 @@ fun segmentTopEfforts(efforts: List<SegmentEffortUi>): List<SegmentRankedEffortU
         quickestFirst(
             elapsed = { it.elapsedMillis },
             startedAt = { it.startedAtMillis },
-            effortId = { it.effortId },
+            rowId = { it.effortId },
         )
     )
     .take(SEGMENT_TOP_COUNT)
@@ -348,7 +351,7 @@ fun segmentTrendPoints(efforts: List<SegmentEffortUi>): List<SegmentTrendPoint> 
     val quickest = quickestFirst<SegmentEffortUi>(
         elapsed = { it.elapsedMillis },
         startedAt = { it.startedAtMillis },
-        effortId = { it.effortId },
+        rowId = { it.effortId },
     )
     val bestPerDay = bestEachDay(efforts, day = { it.date }, better = quickest)
     if (bestPerDay.isEmpty()) return emptyList()

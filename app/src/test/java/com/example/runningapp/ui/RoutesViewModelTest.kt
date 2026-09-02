@@ -8,6 +8,7 @@ import com.example.runningapp.routes.FakeRouteDao
 import com.example.runningapp.routes.RouteImporter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -52,6 +53,8 @@ class RoutesViewModelTest {
         return RoutesViewModel(
             dao,
             RouteImporter(resolver, dao, now = { 1_700_000_000_000L }),
+            // No Run is remembered on any course in these tests: what they are about is the library.
+            runsAlongRoute = { flowOf(emptyList()) },
             io = dispatcher,
             // The shapes too, so a test can see a pass finish rather than wait on a real thread.
             courseDispatcher = dispatcher,

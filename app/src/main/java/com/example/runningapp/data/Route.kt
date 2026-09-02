@@ -176,6 +176,25 @@ interface RouteDao {
     @Query("SELECT polyline FROM routes WHERE id = :routeId")
     suspend fun getRoutePolyline(routeId: Long): String?
 
+    /**
+     * One course as its own page shows it: the row without its line, watched (#420).
+     *
+     * The other half of [getRoutePolyline], and the pair is how the detail page keeps
+     * [Route.polyline]'s first rule while still drawing the course. The name and the two numbers are
+     * watched, because a rename made on that very page has to reach its title; the line is fetched
+     * once and separately, because [Route.polyline]'s second rule says it never changes, so
+     * re-delivering it on every rename would be carrying the biggest thing on the row about for the
+     * sake of the smallest.
+     *
+     * Null is the row having gone — deleted from the library on another screen while this one is
+     * open — which the page draws as nothing rather than as a course.
+     */
+    @Query(
+        "SELECT id, name, distanceMeters, elevationGainMeters, createdAtMillis, source FROM routes " +
+            "WHERE id = :routeId"
+    )
+    fun getRouteHeaderFlow(routeId: Long): Flow<RouteHeader?>
+
     @Insert
     suspend fun insertRoute(route: Route): Long
 

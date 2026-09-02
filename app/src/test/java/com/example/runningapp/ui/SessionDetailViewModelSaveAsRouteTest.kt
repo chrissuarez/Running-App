@@ -95,7 +95,7 @@ class SessionDetailViewModelSaveAsRouteTest {
             },
         ),
         assemblyDispatcher = assembly,
-        runRouteSaver = RunRouteSaver(routeDao),
+        runRouteSaver = RunRouteSaver(routeDao, rememberRunAlongRoute = { _, _ -> }),
     )
 
     @Test

@@ -45,10 +45,16 @@ sealed interface RunRouteOutcome {
 /**
  * Keeps the ground a Run went over as a Route to run again (#55).
  *
- * The Run is untouched by it. A Route is a plan and a Run is a recording, and this makes a new plan
- * that happens to have been traced off one — nothing is written back to the Run, nothing in the new
- * row points at it, and deleting either costs the other nothing
- * ([ADR 0014](../../../../../../../docs/adr/0014-a-route-is-a-plan-not-a-recording.md)).
+ * A Route is a plan and a Run is a recording, and this makes a new plan that happens to have been
+ * traced off one: nothing in the new row points at the Run, and deleting either costs the other
+ * nothing ([ADR 0014](../../../../../../../docs/adr/0014-a-route-is-a-plan-not-a-recording.md)).
+ *
+ * **The one thing written back to the Run is that it went this way** ([rememberRunAlongRoute],
+ * #420). That is not a link from the plan to the recording — the Route knows nothing about it, and
+ * still deletes without touching a Run — it is the Run remembering its own course, in the very
+ * column START writes when the runner picks one (`RunnerSession.ranAlongRouteId`, #56). Without it
+ * every course traced off a Run opens its own page with an empty history, having been made from a
+ * Run that is plainly on it.
  *
  * Saving twice is saving once. The line is a Route's identity, exactly as it is for an imported file
  * ([RouteImporter]), so a runner who taps the button again — or saves the same lap they ran last
@@ -64,6 +70,17 @@ sealed interface RunRouteOutcome {
  */
 class RunRouteSaver(
     private val routeDao: RouteDao,
+    /**
+     * Writes the kept course's id onto the Run it was traced from, unless that Run already names a
+     * course (#420) — [com.example.runningapp.data.SessionDao.rememberRunAlongRoute], where the
+     * "unless" lives inside the write and every reason for that is argued.
+     *
+     * Handed in rather than a second DAO on the constructor, the bargain
+     * [com.example.runningapp.ui.SegmentsViewModel] makes with `onSegmentSaved`: this class is about
+     * the library, and what it wants of `sessions` is one sentence. No default, so a wiring that
+     * forgot it would not compile.
+     */
+    private val rememberRunAlongRoute: suspend (sessionId: Long, routeId: Long) -> Unit,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
 
@@ -97,6 +114,12 @@ class RunRouteSaver(
             // twice by the same rules off the same fixes can only ever repeat itself.
             remeasuring = false,
         )
+        // After the row is settled, and for both answers. A course the library already held is the
+        // very ground this Run covered — the line is a Route's identity, so an identical line is not
+        // a lookalike — and a runner who saves the same lap twice should find both Runs on its page.
+        // A Run already stamped with a course keeps it: the write says so, not this call site.
+        rememberRunAlongRoute(run.id, kept.id)
+
         return if (kept.keeping == RouteKeeping.KEPT) {
             RunRouteOutcome.Saved(routeId = kept.id, name = kept.name)
         } else {

@@ -87,6 +87,7 @@ import com.example.runningapp.ui.SegmentsViewModelFactory
 import com.example.runningapp.routes.RunRouteSaver
 import com.example.runningapp.ui.RoutePickerCard
 import com.example.runningapp.ui.RunRouteSaver
+import com.example.runningapp.ui.RouteDetailScreen
 import com.example.runningapp.ui.RoutesScreen
 import com.example.runningapp.ui.RoutesViewModel
 import com.example.runningapp.ui.RoutesViewModelFactory
@@ -452,7 +453,13 @@ class MainActivity : ComponentActivity() {
                             appContainer.exportFileStore,
                             // The same library the Routes screen imports into (#55): a course kept
                             // off a Run is a Route like any other, and lands in the one list.
-                            runRouteSaver = RunRouteSaver(appContainer.database.routeDao()),
+                            runRouteSaver = RunRouteSaver(
+                                appContainer.database.routeDao(),
+                                // The Run a course is traced off is the plainest Run on it, so it
+                                // is remembered there and then (#420) — see the DAO for why the
+                                // "unless it already names one" lives inside the write.
+                                appContainer.database.sessionDao()::rememberRunAlongRoute,
+                            ),
                             zoneChanges = appContainer.zoneChanges,
                             // Watched, not read once: a refusal that was only ever the switch's
                             // doing must stop being a refusal the moment the runner moves the
@@ -517,6 +524,9 @@ class MainActivity : ComponentActivity() {
                         factory = RoutesViewModelFactory(
                             appContainer.database.routeDao(),
                             appContainer.routeImporter,
+                            // One question of `sessions`, handed over as one function (#420).
+                            appContainer.database.sessionDao()::getRunsAlongRouteFlow,
+                            zoneChanges = appContainer.zoneChanges,
                         )
                     )
                     // Scoped to the Activity rather than to a destination, because saving a
@@ -1287,9 +1297,52 @@ class MainActivity : ComponentActivity() {
                                 isImporting = importingRoute,
                                 message = routeMessage,
                                 onImport = { pickRouteFile.launch(arrayOf("*/*")) },
-                                onRename = { route, name -> routesViewModel.rename(route, name) },
+                                onOpen = { route -> navigateTo(Routes.routeDetail(route.id)) },
                                 onDelete = { route -> routesViewModel.delete(route) },
                                 onMessageShown = { routesViewModel.messageShown() },
+                                onBack = goBack
+                            )
+                        }
+                        composable(
+                            route = Routes.ROUTE_DETAIL,
+                            arguments = listOf(navArgument(Routes.ARG_ROUTE_ID) { type = NavType.LongType })
+                        ) { backStackEntry ->
+                            val routeId = backStackEntry.arguments?.getLong(Routes.ARG_ROUTE_ID)
+                            // Watched rather than read once, so a rename made here reaches the title
+                            // and a delete made in the library empties the page the same instant it
+                            // empties the row.
+                            val route by produceState<com.example.runningapp.data.RouteHeader?>(
+                                initialValue = null,
+                                key1 = routeId
+                            ) {
+                                routeId?.let { id -> routesViewModel.route(id).collect { value = it } }
+                            }
+                            // Read once and not watched: a Route's line is written when the row is
+                            // inserted and never rewritten, so there is nothing to watch for — see
+                            // [com.example.runningapp.data.Route.polyline].
+                            val line by produceState<List<com.example.runningapp.analysis.MapFix>>(
+                                initialValue = emptyList(),
+                                key1 = routeId
+                            ) {
+                                routeId?.let { id -> value = routesViewModel.line(id) }
+                            }
+                            // Watched too, and for a reason of its own: a Run finishing on this
+                            // course, or being saved as it, puts a row on this list under an open
+                            // page (#420).
+                            val runs by produceState<List<com.example.runningapp.ui.RouteRunUi>>(
+                                initialValue = emptyList(),
+                                key1 = routeId
+                            ) {
+                                routeId?.let { id -> routesViewModel.runsOnRoute(id).collect { value = it } }
+                            }
+                            RouteDetailScreen(
+                                route = route,
+                                line = line,
+                                runs = runs,
+                                onRename = { row, name -> routesViewModel.rename(row, name) },
+                                // A time on a course belongs to a morning, and the page that holds
+                                // the morning is the Run's own (#72, #420).
+                                onOpenRun = { runId -> navigateTo(Routes.sessionDetail(runId)) },
                                 onBack = goBack
                             )
                         }
