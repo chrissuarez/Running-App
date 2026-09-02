@@ -55,6 +55,8 @@ class RoutesViewModelTest {
             RouteImporter(resolver, dao, now = { 1_700_000_000_000L }),
             // No Run is remembered on any course in these tests: what they are about is the library.
             runsAlongRoute = { flowOf(emptyList()) },
+            // Nor has any been run: none of these tests opens a family's page.
+            lastRunOnRoutes = { emptyList() },
             io = dispatcher,
             // The shapes too, so a test can see a pass finish rather than wait on a real thread.
             courseDispatcher = dispatcher,

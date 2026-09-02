@@ -88,6 +88,27 @@ data class Route(
     val createdAtMillis: Long,
     /** One of [RouteSource]. Text rather than a number so a row still reads plainly in a backup. */
     val source: String,
+    /**
+     * The family this course belongs to, or null for a course that belongs to none (#421).
+     *
+     * **A family is a name the runner typed, and nothing cleverer.** Two Routes are siblings because
+     * they carry the very same text here — never because their names look alike. Guessing a group
+     * from lookalike names would split what the runner meant and join what they did not, and a wrong
+     * guess is worse than none, so no such guess is made anywhere.
+     *
+     * Each sibling is a whole course in its own right: its own line, its own honest distance and
+     * climb, its own remembered Runs. Nothing here is a parent, a child, or a truncation of another
+     * sibling — the 8 km version is a real line drawn over the 8 km of ground, which is the only way
+     * its climb and its map can be true of it.
+     *
+     * Stored on the row rather than in a table of its own for the same reason [source] is: it is one
+     * short piece of text about this course, and a second table would buy nothing but a join and a
+     * second place for the truth to live.
+     *
+     * Null and blank are the same thing — no family — and the writer is the one that settles it
+     * ([RouteDao.setRouteFamily]), so nothing that reads this column has to know that twice.
+     */
+    val family: String? = null,
 )
 
 /**
@@ -104,6 +125,8 @@ data class RouteHeader(
     val elevationGainMeters: Double?,
     val createdAtMillis: Long,
     val source: String,
+    /** The family the course was put in, or null — see [Route.family] (#421). */
+    val family: String? = null,
 )
 
 /** What keeping a course came to: the four things that can become of one line offered to the table. */
@@ -160,8 +183,8 @@ interface RouteDao {
      * at a time, by whatever actually needs it ([getRoutePolyline], [getRoute], [getRouteFlow]).
      */
     @Query(
-        "SELECT id, name, distanceMeters, elevationGainMeters, createdAtMillis, source FROM routes " +
-            "ORDER BY createdAtMillis DESC, id DESC"
+        "SELECT id, name, distanceMeters, elevationGainMeters, createdAtMillis, source, family " +
+            "FROM routes ORDER BY createdAtMillis DESC, id DESC"
     )
     fun getLibraryFlow(): Flow<List<RouteHeader>>
 
@@ -190,8 +213,8 @@ interface RouteDao {
      * open — which the page draws as nothing rather than as a course.
      */
     @Query(
-        "SELECT id, name, distanceMeters, elevationGainMeters, createdAtMillis, source FROM routes " +
-            "WHERE id = :routeId"
+        "SELECT id, name, distanceMeters, elevationGainMeters, createdAtMillis, source, family " +
+            "FROM routes WHERE id = :routeId"
     )
     fun getRouteHeaderFlow(routeId: Long): Flow<RouteHeader?>
 
@@ -304,6 +327,27 @@ interface RouteDao {
 
     @Query("UPDATE routes SET name = :name WHERE id = :routeId")
     suspend fun renameRoute(routeId: Long, name: String)
+
+    /**
+     * Puts a course into a family, or takes it out of one (#421).
+     *
+     * The only writer of [Route.family], and it is where blank is settled into null so that every
+     * reader below can ask one question — is this column null? — instead of two. A runner who clears
+     * the box has taken the course out of its family, and a row holding an empty string would be a
+     * family whose name is nothing: it would collect every other course cleared the same way.
+     *
+     * Not folded into [renameRoute]. The two are different edits made at different moments — a
+     * course is renamed once and re-familied as the runner's plans grow — and one method writing
+     * both would make each of them carry the other's value about.
+     */
+    @Transaction
+    suspend fun setRouteFamily(routeId: Long, family: String?) {
+        writeRouteFamily(routeId, family?.trim()?.takeIf { it.isNotEmpty() })
+    }
+
+    /** The write [setRouteFamily] makes, once it has settled blank into null. */
+    @Query("UPDATE routes SET family = :family WHERE id = :routeId")
+    suspend fun writeRouteFamily(routeId: Long, family: String?)
 
     @Query("DELETE FROM routes WHERE id = :routeId")
     suspend fun deleteRoute(routeId: Long)

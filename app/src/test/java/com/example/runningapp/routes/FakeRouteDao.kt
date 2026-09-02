@@ -47,6 +47,7 @@ class FakeRouteDao : RouteDao {
                     elevationGainMeters = row.elevationGainMeters,
                     createdAtMillis = row.createdAtMillis,
                     source = row.source,
+                    family = row.family,
                 )
             }
     }
@@ -83,6 +84,7 @@ class FakeRouteDao : RouteDao {
                 elevationGainMeters = row.elevationGainMeters,
                 createdAtMillis = row.createdAtMillis,
                 source = row.source,
+                family = row.family,
             )
         }
     }
@@ -136,6 +138,14 @@ class FakeRouteDao : RouteDao {
 
     override suspend fun renameRoute(routeId: Long, name: String) {
         rows.value = rows.value.map { if (it.id == routeId) it.copy(name = name) else it }
+    }
+
+    /**
+     * The write behind [RouteDao.setRouteFamily], which is inherited so that the settling of blank
+     * into null is the code under test rather than a second copy of it here.
+     */
+    override suspend fun writeRouteFamily(routeId: Long, family: String?) {
+        rows.value = rows.value.map { if (it.id == routeId) it.copy(family = family) else it }
     }
 
     override suspend fun deleteRoute(routeId: Long) {

@@ -66,11 +66,15 @@ import com.example.runningapp.ui.theme.RunningUiTokens
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RoutesScreen(
-    rows: List<RouteRowUi>,
+    /**
+     * The library already folded: one row per family, the rest a row each (#421) — see
+     * [routeLibraryRows].
+     */
+    rows: List<RouteLibraryRow>,
     isImporting: Boolean,
     message: String?,
     onImport: () -> Unit,
-    onOpen: (RouteHeader) -> Unit,
+    onOpen: (Long) -> Unit,
     onDelete: (RouteHeader) -> Unit,
     onMessageShown: () -> Unit,
     onBack: () -> Unit,
@@ -159,18 +163,26 @@ fun RoutesScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(RunningUiTokens.SectionSpacing),
             ) {
-                items(rows, key = { it.route.id }) { row ->
+                // Told apart by kind as well as by value, so a family a runner named "5" and the
+                // course whose id is 5 cannot be handed the same key.
+                items(rows, key = { row -> row.family?.let { "family:$it" } ?: "route:${row.openRouteId}" }) { row ->
                     RouteRow(
                         row = row,
-                        onOpen = { onOpen(row.route) },
-                        onDelete = { deleting = row.route.id },
+                        onOpen = { onOpen(row.openRouteId) },
+                        // A family row has no bin: it stands for several courses, and one tap that
+                        // forgot all of them would be the most destructive thing on the screen
+                        // wearing the same icon as the least. Each length is forgotten from its own
+                        // page, where the runner can see which one they are looking at (#421).
+                        onDelete = row.route?.let { route -> { deleting = route.id } },
                     )
                 }
             }
         }
     }
 
-    rows.firstOrNull { it.route.id == deleting }?.route?.let { route ->
+    // Against the id rather than the row, and only once there is one: `it.route?.id == deleting`
+    // with nothing being deleted would match the first family row, whose course is null.
+    deleting?.let { id -> rows.firstOrNull { it.route?.id == id }?.route }?.let { route ->
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text("Delete this route?") },
@@ -191,16 +203,16 @@ fun RoutesScreen(
 }
 
 /**
- * One course in the library.
+ * One row of the library: a course, or a whole family of lengths (#54, #421).
  *
- * The row itself is the tap, and it opens the course's own page (#420) — one primary target per row,
- * which is why renaming moved onto that page and left the pencil behind. The bin stays: forgetting a
- * course is a thing a runner does *to* a list, and making them open a page to do it would make
- * tidying up a library a page at a time.
+ * The row itself is the tap, and it opens a course's own page (#420) — one primary target per row,
+ * which is why renaming moved onto that page and left the pencil behind. The bin stays on a lone
+ * course: forgetting one is a thing a runner does *to* a list, and making them open a page to do it
+ * would make tidying up a library a page at a time. A family row has no bin
+ * ([onDelete] is null there), because the row is not one course to forget.
  */
 @Composable
-private fun RouteRow(row: RouteRowUi, onOpen: () -> Unit, onDelete: () -> Unit) {
-    val route = row.route
+private fun RouteRow(row: RouteLibraryRow, onOpen: () -> Unit, onDelete: (() -> Unit)?) {
     Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen)) {
         Row(
             modifier = Modifier
@@ -221,21 +233,23 @@ private fun RouteRow(row: RouteRowUi, onOpen: () -> Unit, onDelete: () -> Unit) 
             // large text scale must push the buttons nowhere (#63).
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = route.name,
+                    text = row.title,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = routeRowSubtitle(route),
+                    text = row.subtitle,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
-            ) {
-                Icon(Icons.Default.Delete, contentDescription = "Delete ${route.name}")
+            onDelete?.let { forget ->
+                IconButton(
+                    onClick = forget,
+                    modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete ${row.title}")
+                }
             }
         }
     }
@@ -259,15 +273,9 @@ private fun RoutesScreenPreview() {
     RunningAppTheme {
         RoutesScreen(
             rows = listOf(
-                RouteRowUi(
-                    route = RouteHeader(
-                        id = 1,
-                        name = "Regent's Park outer loop",
-                        distanceMeters = 4_215.0,
-                        elevationGainMeters = 27.4,
-                        createdAtMillis = 0,
-                        source = RouteSource.IMPORTED,
-                    ),
+                RouteLibraryRow(
+                    title = "Regent's Park outer loop",
+                    subtitle = "4.22 km · 27 m up",
                     thumbnail = RouteThumbnail(
                         listOf(
                             listOf(
@@ -277,16 +285,21 @@ private fun RoutesScreenPreview() {
                             )
                         )
                     ),
-                ),
-                RouteRowUi(
+                    openRouteId = 1,
+                    family = null,
+                    lengthCount = 1,
                     route = RouteHeader(
-                        id = 2,
-                        name = "Canal towpath out and back",
-                        distanceMeters = 10_050.0,
-                        elevationGainMeters = null,
+                        id = 1,
+                        name = "Regent's Park outer loop",
+                        distanceMeters = 4_215.0,
+                        elevationGainMeters = 27.4,
                         createdAtMillis = 0,
                         source = RouteSource.IMPORTED,
                     ),
+                ),
+                RouteLibraryRow(
+                    title = "Cuckoo Trail",
+                    subtitle = "3 lengths · 5.00–12.00 km",
                     thumbnail = RouteThumbnail(
                         listOf(
                             listOf(
@@ -295,6 +308,10 @@ private fun RoutesScreenPreview() {
                             )
                         )
                     ),
+                    openRouteId = 2,
+                    family = "Cuckoo Trail",
+                    lengthCount = 3,
+                    route = null,
                 ),
             ),
             isImporting = false,

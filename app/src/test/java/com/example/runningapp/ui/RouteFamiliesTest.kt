@@ -1,0 +1,287 @@
+package com.example.runningapp.ui
+
+import com.example.runningapp.analysis.RouteThumbnail
+import com.example.runningapp.analysis.ThumbPoint
+import com.example.runningapp.data.RouteHeader
+import com.example.runningapp.data.RouteLastRunRow
+import com.example.runningapp.data.RouteSource
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+/**
+ * One route, many lengths (#421) — the folding, the words and the landing.
+ *
+ * Every claim here is one a runner can see: how many rows the library has, what the row says, and
+ * which length the page opens on. Nothing about the table.
+ */
+class RouteFamiliesTest {
+
+    private fun header(
+        id: Long,
+        name: String = "Route $id",
+        distanceMeters: Double = 5_000.0,
+        family: String? = null,
+        createdAtMillis: Long = id,
+    ) = RouteHeader(
+        id = id,
+        name = name,
+        distanceMeters = distanceMeters,
+        elevationGainMeters = null,
+        createdAtMillis = createdAtMillis,
+        source = RouteSource.IMPORTED,
+        family = family,
+    )
+
+    private fun row(header: RouteHeader, thumbnail: RouteThumbnail? = null) =
+        RouteRowUi(route = header, thumbnail = thumbnail)
+
+    private fun drawing(x: Float) = RouteThumbnail(listOf(listOf(ThumbPoint(x, x))))
+
+    // --- The library list ---
+
+    @Test
+    fun `three lengths of one route collapse to a single row`() {
+        val rows = routeLibraryRows(
+            listOf(
+                row(header(3, distanceMeters = 12_000.0, family = "Cuckoo Trail")),
+                row(header(2, distanceMeters = 8_000.0, family = "Cuckoo Trail")),
+                row(header(1, distanceMeters = 5_000.0, family = "Cuckoo Trail")),
+            )
+        )
+
+        assertEquals(1, rows.size)
+        assertEquals("Cuckoo Trail", rows.single().title)
+        assertEquals("3 lengths · 5.00–12.00 km", rows.single().subtitle)
+        assertEquals(3, rows.single().lengthCount)
+    }
+
+    @Test
+    fun `a course in no family keeps its own row exactly as before`() {
+        val lone = header(1, name = "Regent's Park loop", distanceMeters = 4_215.0)
+
+        val rows = routeLibraryRows(listOf(row(lone)))
+
+        assertEquals("Regent's Park loop", rows.single().title)
+        assertEquals(routeRowSubtitle(lone), rows.single().subtitle)
+        assertNull(rows.single().family)
+        assertEquals(lone, rows.single().route)
+    }
+
+    @Test
+    fun `a family with only one length so far is drawn as a plain course`() {
+        val only = header(1, name = "Cuckoo Trail 5k", family = "Cuckoo Trail")
+
+        val rows = routeLibraryRows(listOf(row(only)))
+
+        assertEquals("Cuckoo Trail 5k", rows.single().title)
+        assertNull(rows.single().family)
+        assertEquals(1, rows.single().lengthCount)
+    }
+
+    @Test
+    fun `a family sits where its newest length sits, and the others leave no gap`() {
+        val rows = routeLibraryRows(
+            listOf(
+                row(header(4, name = "Beachy Head", createdAtMillis = 40)),
+                row(header(3, distanceMeters = 12_000.0, family = "Cuckoo Trail", createdAtMillis = 30)),
+                row(header(2, name = "Ashdown", createdAtMillis = 20)),
+                row(header(1, distanceMeters = 5_000.0, family = "Cuckoo Trail", createdAtMillis = 10)),
+            )
+        )
+
+        assertEquals(listOf("Beachy Head", "Cuckoo Trail", "Ashdown"), rows.map { it.title })
+    }
+
+    @Test
+    fun `two families in one library are two rows`() {
+        val rows = routeLibraryRows(
+            listOf(
+                row(header(4, distanceMeters = 10_000.0, family = "Downs")),
+                row(header(3, distanceMeters = 12_000.0, family = "Cuckoo Trail")),
+                row(header(2, distanceMeters = 6_000.0, family = "Downs")),
+                row(header(1, distanceMeters = 5_000.0, family = "Cuckoo Trail")),
+            )
+        )
+
+        assertEquals(listOf("Downs", "Cuckoo Trail"), rows.map { it.title })
+        assertEquals(listOf(2, 2), rows.map { it.lengthCount })
+    }
+
+    @Test
+    fun `the family row is drawn with its longest length's shape`() {
+        val rows = routeLibraryRows(
+            listOf(
+                row(header(2, distanceMeters = 12_000.0, family = "Cuckoo Trail"), drawing(0.9f)),
+                row(header(1, distanceMeters = 5_000.0, family = "Cuckoo Trail"), drawing(0.1f)),
+            )
+        )
+
+        assertEquals(drawing(0.9f), rows.single().thumbnail)
+    }
+
+    @Test
+    fun `the family row opens on its shortest length`() {
+        val rows = routeLibraryRows(
+            listOf(
+                row(header(2, distanceMeters = 12_000.0, family = "Cuckoo Trail")),
+                row(header(1, distanceMeters = 5_000.0, family = "Cuckoo Trail")),
+            )
+        )
+
+        assertEquals(1L, rows.single().openRouteId)
+    }
+
+    @Test
+    fun `lookalike names are not a family`() {
+        val rows = routeLibraryRows(
+            listOf(
+                row(header(2, name = "Cuckoo Trail 12k")),
+                row(header(1, name = "Cuckoo Trail 5k")),
+            )
+        )
+
+        assertEquals(2, rows.size)
+    }
+
+    /**
+     * The write trims, but it is not the only way a row reaches the table — an import or a restore
+     * puts one there without passing through it. Grouped by the trimmed name all the same, so such a
+     * row joins its family rather than sitting ungroupable beside it.
+     */
+    @Test
+    fun `a family name with space around it is still that family`() {
+        val rows = routeLibraryRows(
+            listOf(
+                row(header(2, distanceMeters = 12_000.0, family = " Cuckoo Trail ")),
+                row(header(1, distanceMeters = 5_000.0, family = "Cuckoo Trail")),
+            )
+        )
+
+        assertEquals("Cuckoo Trail", rows.single().title)
+        assertEquals(2, rows.single().lengthCount)
+    }
+
+    @Test
+    fun `a family name of nothing but space is no family`() {
+        val rows = routeLibraryRows(
+            listOf(
+                row(header(2, name = "Two", family = "   ")),
+                row(header(1, name = "One", family = "   ")),
+            )
+        )
+
+        assertEquals(listOf("Two", "One"), rows.map { it.title })
+    }
+
+    // --- The words ---
+
+    @Test
+    fun `a family whose lengths measure the same prints one distance`() {
+        assertEquals("2 lengths · 5.00 km", routeFamilySubtitle(2, 5_000.0, 5_000.0))
+    }
+
+    @Test
+    fun `a chip drops a trailing nought`() {
+        assertEquals("8k", routeLengthChipLabel(8_040.0))
+        assertEquals("5k", routeLengthChipLabel(5_000.0))
+        assertEquals("12.5k", routeLengthChipLabel(12_460.0))
+    }
+
+    // --- Siblings and where a page lands ---
+
+    @Test
+    fun `siblings come back shortest first`() {
+        val library = listOf(
+            header(3, distanceMeters = 8_000.0, family = "Cuckoo Trail"),
+            header(2, distanceMeters = 12_000.0, family = "Cuckoo Trail"),
+            header(1, distanceMeters = 5_000.0, family = "Cuckoo Trail"),
+        )
+
+        assertEquals(listOf(1L, 3L, 2L), routeSiblings(library, routeId = 2).map { it.id })
+    }
+
+    @Test
+    fun `a course with no family is its own only sibling`() {
+        val library = listOf(header(1), header(2, family = "Cuckoo Trail"))
+
+        assertEquals(listOf(1L), routeSiblings(library, routeId = 1).map { it.id })
+    }
+
+    @Test
+    fun `a deleted course has no siblings at all`() {
+        assertEquals(emptyList<RouteHeader>(), routeSiblings(listOf(header(1)), routeId = 9))
+    }
+
+    @Test
+    fun `a family opens on the length run most recently`() {
+        val siblings = listOf(
+            header(1, distanceMeters = 5_000.0, family = "Cuckoo Trail"),
+            header(2, distanceMeters = 8_000.0, family = "Cuckoo Trail"),
+            header(3, distanceMeters = 12_000.0, family = "Cuckoo Trail"),
+        )
+
+        val landing = routeFamilyLandingId(
+            siblings,
+            listOf(RouteLastRunRow(1, 1_000), RouteLastRunRow(2, 9_000)),
+        )
+
+        assertEquals(2L, landing)
+    }
+
+    @Test
+    fun `a family nobody has run opens on the shortest`() {
+        val siblings = listOf(
+            header(1, distanceMeters = 5_000.0, family = "Cuckoo Trail"),
+            header(2, distanceMeters = 8_000.0, family = "Cuckoo Trail"),
+        )
+
+        assertEquals(1L, routeFamilyLandingId(siblings, emptyList()))
+    }
+
+    @Test
+    fun `a Run on a course outside the family cannot decide where the page lands`() {
+        val siblings = listOf(
+            header(1, distanceMeters = 5_000.0, family = "Cuckoo Trail"),
+            header(2, distanceMeters = 8_000.0, family = "Cuckoo Trail"),
+        )
+
+        val landing = routeFamilyLandingId(siblings, listOf(RouteLastRunRow(routeId = 99, 9_000)))
+
+        assertEquals(1L, landing)
+    }
+
+    @Test
+    fun `two lengths last run on the same millisecond fall to the shorter`() {
+        val siblings = listOf(
+            header(1, distanceMeters = 5_000.0, family = "Cuckoo Trail"),
+            header(2, distanceMeters = 8_000.0, family = "Cuckoo Trail"),
+        )
+
+        val landing = routeFamilyLandingId(
+            siblings,
+            listOf(RouteLastRunRow(1, 5_000), RouteLastRunRow(2, 5_000)),
+        )
+
+        assertEquals(1L, landing)
+    }
+
+    @Test
+    fun `a course deleted out from under the page lands nowhere`() {
+        assertNull(routeFamilyLandingId(emptyList(), emptyList()))
+    }
+
+    // --- The names the box offers ---
+
+    @Test
+    fun `the box offers each family name once, in order`() {
+        val library = listOf(
+            header(1, family = "Downs"),
+            header(2, family = "Cuckoo Trail"),
+            header(3, family = "Downs"),
+            header(4),
+        )
+
+        assertEquals(listOf("Cuckoo Trail", "Downs"), routeFamilyNames(library))
+    }
+}

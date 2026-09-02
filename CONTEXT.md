@@ -222,12 +222,36 @@ measures the line differently it re-measures the Route the runner already has. I
 file (#54), or traced off a Run the runner has already been for (#55) — the same course either way,
 thinned to its shape and joined across the Pauses, because a Route is where the line goes and not
 what happened on it. A course already kept is not kept twice, whichever door it comes in by. Deleting one costs no Run
-anything: nothing in the library points at history and nothing in history points back.
+anything: nothing in the library points at history and nothing in history points back. A Route may
+carry a **Family** name, which groups it with the other lengths of the same route (#421) and changes
+nothing else about it — its line, its numbers and its Runs stay wholly its own.
 _Avoid_: path, and **track** — a Track is what a Run recorded of where it went, and the two must
 not be confused even in code (`TrackPoint` belongs to a Run). "Course" is fine, and is the word for
 the line itself as against the whole record of it. The `Routes` object under
 `navigation/` is the app's list of screen addresses and is a different word that happens to be
 spelled the same.
+
+**Family**:
+A name the runner types onto two or more Routes to say they are the same route at different
+**lengths** (#421) — the Cuckoo Trail at 5 km, 8 km and 12 km, as the same trail run further each
+time. A name and nothing cleverer: two Routes are siblings because they carry the very same family
+text, never because their names look alike, and nothing in the app ever guesses a family from a
+Route's name. A wrong guess splits what the runner meant and joins what they did not, which is worse
+than no grouping at all.
+
+Each **length** is a whole Route in its own right — its own line, its own banked distance and climb,
+its own remembered Runs and its own best time. No length is a parent, a child, or a truncation of
+another: the 8 km version is a real line drawn over the 8 km of ground, which is the only way its map
+and its climb can be true of it. A family therefore owns no distance, no climb and no best time of
+its own; it is a heading over Routes, not a Route.
+
+What it buys is the library, which shows one row per family — the name, how many lengths, and the
+range they run between — instead of one row per length; and the Route's own page, which grows a row
+of length chips and opens on the length run most recently, or the shortest where none has been run.
+A family of one is drawn as a plain Route, because there is nothing to group and "1 length" would be
+a heading over a single course. The name stays on the row, so drawing the second length turns it back
+into a family with no retyping.
+_Avoid_: route group, variant, sub-route, parent route, child route, and auto-grouping of any kind.
 
 **Routed Run**:
 A Run started on a Route (#56) — the runner picked a course on the record screen before pressing
