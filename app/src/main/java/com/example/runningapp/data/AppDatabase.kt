@@ -753,6 +753,14 @@ data class RouteRunRow(
     val isWalk: Boolean = false,
 )
 
+/**
+ * The last time one course was run — see [SessionDao.lastRunOnRoutes] (#421).
+ *
+ * A time and an id, nothing else: what it settles is which of a family's lengths a page opens on,
+ * and every other thing about that Run is read by the page once it has landed there.
+ */
+data class RouteLastRunRow(val routeId: Long, val lastRunStartTime: Long)
+
 /** How many medals one Run holds — what the medal badge on its History row counts (#51). */
 data class SessionMedalCount(
     val sessionId: Long,
@@ -1007,6 +1015,35 @@ interface SessionDao {
             "WHERE ranAlongRouteId = :routeId AND endTime > 0 ORDER BY startTime DESC"
     )
     fun getRunsAlongRouteFlow(routeId: Long): Flow<List<RouteRunRow>>
+
+    /**
+     * When each of these courses was last run, for the courses that have been run at all (#421).
+     *
+     * What a family's page opens on. A course the runner was on last week is the one they mean by
+     * the family name, so the page lands there rather than on whichever sibling happens to be
+     * shortest or was imported first.
+     *
+     * `endTime > 0` for [getRunsAlongRouteFlow]'s reason — a Run still being recorded is stamped
+     * with its course at START, and landing on it would be answering "which did you last run" with
+     * one that is not run yet.
+     *
+     * **A Walk counts here, and that is not the [RouteRunRow.isWalk] rule being broken.** That rule
+     * is about records: a Walk holds no best time. This is not a record — it is the question "which
+     * of these lengths were you last out on", and a runner who walked the 8 km yesterday was out on
+     * the 8 km yesterday.
+     *
+     * Read once when a page opens rather than watched: it settles which sibling to show first, and a
+     * page that re-chose under the runner's finger every time a Run landed would move the course out
+     * from under them.
+     *
+     * Courses never run are simply absent — grouped rows only exist where a row was found — so the
+     * caller reads "not in this list" as "never run", which is what it means.
+     */
+    @Query(
+        "SELECT ranAlongRouteId AS routeId, MAX(startTime) AS lastRunStartTime FROM sessions " +
+            "WHERE ranAlongRouteId IN (:routeIds) AND endTime > 0 GROUP BY ranAlongRouteId"
+    )
+    suspend fun lastRunOnRoutes(routeIds: List<Long>): List<RouteLastRunRow>
 
     /**
      * Remembers that this Run went over this course — but only if it is not already remembered on
@@ -1658,7 +1695,7 @@ interface RunPauseDao {
         WalkMarkDebtRow::class,
         HistoryDebtRow::class
     ],
-    version = 42,
+    version = 43,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1774,8 +1811,28 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_38_39,
     MIGRATION_39_40,
     MIGRATION_40_41,
-    MIGRATION_41_42
+    MIGRATION_41_42,
+    MIGRATION_42_43
 )
+
+/**
+ * The one column a family needs, added empty (#421).
+ *
+ * `ADD COLUMN` with no `NOT NULL` and no default, which is the whole of the upgrade: every Route
+ * already kept comes through it belonging to no family, which is exactly what was true of it before
+ * — the runner had never been offered a family to put it in. Nothing is guessed from the names the
+ * rows already carry ([Route.family] says why), so there is nothing else for this to do.
+ *
+ * Cheap in the way `MIGRATION_41_42` was not: no row is read and none is rewritten, so a library of
+ * high-detail courses costs nothing here however big its lines are ([Route.polyline]).
+ */
+const val ADD_ROUTE_FAMILY_SQL = "ALTER TABLE routes ADD COLUMN family TEXT"
+
+val MIGRATION_42_43 = object : Migration(42, 43) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(ADD_ROUTE_FAMILY_SQL)
+    }
+}
 
 val MIGRATION_1_2 = object : Migration(1, 2) {
     override fun migrate(database: SupportSQLiteDatabase) {

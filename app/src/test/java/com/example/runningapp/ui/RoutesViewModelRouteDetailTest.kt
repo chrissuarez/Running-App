@@ -1,6 +1,7 @@
 package com.example.runningapp.ui
 
 import com.example.runningapp.data.Route
+import com.example.runningapp.data.RouteLastRunRow
 import com.example.runningapp.data.RouteRunRow
 import com.example.runningapp.data.RouteSource
 import com.example.runningapp.routes.FakeRouteDao
@@ -44,10 +45,14 @@ class RoutesViewModelRouteDetailTest {
     private val dao = FakeRouteDao()
     private val runs = MutableStateFlow<List<RouteRunRow>>(emptyList())
 
+    /** When each course was last run, as a family's page asks it — see `lastRunOnRoutes` (#421). */
+    var lastRuns = emptyList<RouteLastRunRow>()
+
     private fun viewModel() = RoutesViewModel(
         dao,
         RouteImporter(mock(), dao, now = { 1_700_000_000_000L }),
         runsAlongRoute = { runs },
+        lastRunOnRoutes = { ids -> lastRuns.filter { it.routeId in ids } },
         io = dispatcher,
         courseDispatcher = dispatcher,
     )

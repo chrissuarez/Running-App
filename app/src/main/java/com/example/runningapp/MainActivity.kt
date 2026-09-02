@@ -532,6 +532,9 @@ class MainActivity : ComponentActivity() {
                             appContainer.routeImporter,
                             // One question of `sessions`, handed over as one function (#420).
                             appContainer.database.sessionDao()::getRunsAlongRouteFlow,
+                            // The second, and the last: which of a family's lengths was run most
+                            // recently, which is what its page opens on (#421).
+                            appContainer.database.sessionDao()::lastRunOnRoutes,
                             zoneChanges = appContainer.zoneChanges,
                         )
                     )
@@ -1291,7 +1294,8 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         composable(Routes.ROUTE_LIBRARY) {
-                            val routeRows by routesViewModel.rows.collectAsState()
+                            // Folded: one row per family, the rest a row each (#421).
+                            val routeRows by routesViewModel.libraryRows.collectAsState()
                             val importingRoute by routesViewModel.importing.collectAsState()
                             val routeMessage by routesViewModel.message.collectAsState()
                             // Asked for here rather than at launch: working out the shape of every
@@ -1303,7 +1307,7 @@ class MainActivity : ComponentActivity() {
                                 isImporting = importingRoute,
                                 message = routeMessage,
                                 onImport = { pickRouteFile.launch(arrayOf("*/*")) },
-                                onOpen = { route -> navigateTo(Routes.routeDetail(route.id)) },
+                                onOpen = { routeId -> navigateTo(Routes.routeDetail(routeId)) },
                                 onDelete = { route -> routesViewModel.delete(route) },
                                 onMessageShown = { routesViewModel.messageShown() },
                                 onBack = goBack
@@ -1314,23 +1318,65 @@ class MainActivity : ComponentActivity() {
                             arguments = listOf(navArgument(Routes.ARG_ROUTE_ID) { type = NavType.LongType })
                         ) { backStackEntry ->
                             val routeId = backStackEntry.arguments?.getLong(Routes.ARG_ROUTE_ID)
+                            // Which of the family's lengths the page is showing (#421).
+                            //
+                            // Held by the destination rather than by the screen, and remembered
+                            // across a rotation, so the length the runner tapped survives one. It
+                            // starts as nothing and is settled once, by the read below: a family
+                            // opens on the length run most recently.
+                            var selectedRouteId by rememberSaveable(routeId) {
+                                mutableStateOf<Long?>(null)
+                            }
+                            LaunchedEffect(routeId) {
+                                if (selectedRouteId != null) return@LaunchedEffect
+                                // Back to the id the row opened where the landing read finds
+                                // nothing, which is the course having been deleted. Left as null it
+                                // would leave the page on its opening spinner for good; settled on
+                                // the id, the page draws exactly what #420 already drew for a course
+                                // that is not there.
+                                selectedRouteId = routeId?.let { routesViewModel.landingSibling(it) ?: it }
+                            }
+                            // Everything below follows the *chosen* length rather than the one the
+                            // library row opened, which is what makes a chip switch the whole page.
+                            val shownRouteId = selectedRouteId
+                            // The chips, watched: a length imported or deleted, or given this very
+                            // family name on this very page, belongs on the row without the runner
+                            // leaving and coming back.
+                            //
+                            // Asked about the length being *shown*, not the one the library row
+                            // opened. A runner who chips to the 8k and then clears its family is
+                            // asking about the 8k, and chips still drawn from the 5k's family would
+                            // leave the page showing a course that none of its own chips names.
+                            val siblings by produceState(
+                                initialValue = emptyList<com.example.runningapp.data.RouteHeader>(),
+                                key1 = shownRouteId
+                            ) {
+                                shownRouteId?.let { id ->
+                                    routesViewModel.siblings(id).collect { value = it }
+                                }
+                            }
+                            val familyNames by routesViewModel.familyNames
+                                .collectAsState(initial = emptyList())
                             // Watched rather than read once, so a rename made here reaches the title
                             // and a delete made in the library empties the page the same instant it
                             // empties the row.
                             val route by produceState<com.example.runningapp.data.RouteHeader?>(
                                 initialValue = null,
-                                key1 = routeId
+                                key1 = shownRouteId
                             ) {
-                                routeId?.let { id -> routesViewModel.route(id).collect { value = it } }
+                                shownRouteId?.let { id -> routesViewModel.route(id).collect { value = it } }
                             }
                             // Read once and not watched: a Route's line is written when the row is
                             // inserted and never rewritten, so there is nothing to watch for — see
                             // [com.example.runningapp.data.Route.polyline].
                             val line by produceState<List<com.example.runningapp.analysis.MapFix>>(
                                 initialValue = emptyList(),
-                                key1 = routeId
+                                key1 = shownRouteId
                             ) {
-                                routeId?.let { id -> value = routesViewModel.line(id) }
+                                // Emptied first, so a chip tapped shows no map for a frame rather
+                                // than the previous length's map under the new length's numbers.
+                                value = emptyList()
+                                shownRouteId?.let { id -> value = routesViewModel.line(id) }
                             }
                             // Watched too, and for a reason of its own: a Run finishing on this
                             // course, or being saved as it, puts a row on this list under an open
@@ -1341,15 +1387,26 @@ class MainActivity : ComponentActivity() {
                             // The rule the record book's own page keeps — recordDetailNotReadYet.
                             val runs by produceState<List<com.example.runningapp.ui.RouteRunUi>?>(
                                 initialValue = null,
-                                key1 = routeId
+                                key1 = shownRouteId
                             ) {
-                                routeId?.let { id -> routesViewModel.runsOnRoute(id).collect { value = it } }
+                                value = null
+                                shownRouteId?.let { id ->
+                                    routesViewModel.runsOnRoute(id).collect { value = it }
+                                }
                             }
                             RouteDetailScreen(
                                 route = route,
+                                siblings = siblings,
+                                selectedId = shownRouteId,
+                                onSelectLength = { id -> selectedRouteId = id },
+                                familyNames = familyNames,
+                                onSetFamily = { row, family ->
+                                    routesViewModel.setFamily(row, family)
+                                },
                                 line = line,
                                 runs = runs,
                                 onRename = { row, name -> routesViewModel.rename(row, name) },
+                                onDelete = { row -> routesViewModel.delete(row) },
                                 // A time on a course belongs to a morning, and the page that holds
                                 // the morning is the Run's own (#72, #420).
                                 onOpenRun = { runId -> navigateTo(Routes.sessionDetail(runId)) },

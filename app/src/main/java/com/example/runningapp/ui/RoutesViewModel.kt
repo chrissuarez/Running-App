@@ -9,6 +9,7 @@ import com.example.runningapp.analysis.RouteThumbnail
 import com.example.runningapp.analysis.courseThumbnailOf
 import com.example.runningapp.data.RouteDao
 import com.example.runningapp.data.RouteHeader
+import com.example.runningapp.data.RouteLastRunRow
 import com.example.runningapp.data.RouteRunRow
 import com.example.runningapp.repeatedOn
 import com.example.runningapp.routes.RouteImportOutcome
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -78,6 +80,17 @@ class RoutesViewModel(
      * an empty history.
      */
     private val runsAlongRoute: (routeId: Long) -> Flow<List<RouteRunRow>>,
+    /**
+     * When each of a family's lengths was last run, asked once when a page opens (#421).
+     *
+     * A function rather than the DAO, the bargain [runsAlongRoute] already makes. It is
+     * [com.example.runningapp.data.SessionDao.lastRunOnRoutes] and only that, and it settles which
+     * length a family's page lands on ([routeFamilyLandingId]).
+     *
+     * No default, so a wiring that forgot it would not compile rather than quietly land every family
+     * on its shortest length.
+     */
+    private val lastRunOnRoutes: suspend (routeIds: List<Long>) -> List<RouteLastRunRow>,
     /**
      * Ticks whenever the phone's time zone changes
      * ([com.example.runningapp.AppContainer.zoneChanges]).
@@ -136,6 +149,31 @@ class RoutesViewModel(
     val rows: StateFlow<List<RouteRowUi>> = combine(routes, thumbnails) { routes, drawn ->
         routes.map { route -> RouteRowUi(route = route, thumbnail = drawn[route.id]) }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * The library as the screen lists it: one row per family, the rest a row each (#421).
+     *
+     * Folded here rather than in the composable so the folding is a pure function with a test on it
+     * ([routeLibraryRows]) — the same bargain [rows] and every other word on these screens make.
+     *
+     * Eagerly, for [rows]'s reason: the screen says "No routes yet" when this is empty, and that is
+     * a claim about the table rather than about how long the read has had.
+     */
+    val libraryRows: StateFlow<List<RouteLibraryRow>> = rows
+        .map { routeLibraryRows(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /**
+     * Every family name the library already holds, for the box that offers them (#421).
+     *
+     * Read off the library rather than asked of the table as a question of its own: the names *are*
+     * the library's families, so a separate query would be a second answer that could disagree with
+     * the rows on screen.
+     *
+     * A plain Flow rather than a StateFlow, for [siblings]'s reason: what it must never do is answer
+     * "no families yet" before the first read has landed.
+     */
+    val familyNames: Flow<List<String>> = routeDao.getLibraryFlow().map { routeFamilyNames(it) }
 
     /** Whether the pass below has been set going, so opening the library twice does not start two. */
     private var drawing = false
@@ -243,6 +281,58 @@ class RoutesViewModel(
                 if (row == null) emptyList() else routeRunsUi(rows, row.distanceMeters)
             }
 
+    /**
+     * Every length of one course's family, shortest first — itself alone where it has none (#421).
+     *
+     * Watched, because the chips move under an open page: a length imported, deleted, or given this
+     * very family name on this very page has to appear on the row of chips without the runner
+     * leaving and coming back.
+     *
+     * Read off the library flow rather than asked for by family name, and folded by the same
+     * [routeFamilyKey] the library row uses — so the chips and the row settle on one answer to "how
+     * many lengths is this" rather than two rules that could drift apart. They are separate reads of
+     * one table, so they agree once both have caught up, not within a single frame; nothing here
+     * needs them to, because the two are never on screen together.
+     *
+     * From the table rather than from [routes], which is a StateFlow and so answers with the empty
+     * list it was seeded with until its first read lands — a page opened on that answer would draw
+     * no chips at all on a course that has three.
+     */
+    fun siblings(routeId: Long): Flow<List<RouteHeader>> =
+        routeDao.getLibraryFlow().map { library -> routeSiblings(library, routeId) }
+
+    /**
+     * Which of a family's lengths the page should open on — see [routeFamilyLandingId] (#421).
+     *
+     * Asked once, when the page opens, rather than watched: it settles where the runner lands, and a
+     * page that re-landed every time a Run finished would move the course out from under them.
+     *
+     * The library is read afresh here rather than taken from [routes], which is a StateFlow that
+     * answers with whatever it last held — an empty list, on a page opened before the first read
+     * lands, would land every family on nothing.
+     *
+     * Null is the course having gone from the library, which the page draws as no course.
+     */
+    suspend fun landingSibling(routeId: Long): Long? {
+        val siblings = routeSiblings(routeDao.getLibraryFlow().first(), routeId)
+        if (siblings.size < 2) return siblings.firstOrNull()?.id
+        return routeFamilyLandingId(siblings, lastRunOnRoutes(siblings.map { it.id }))
+    }
+
+    /**
+     * Puts a course in a family, or takes it out of one (#421).
+     *
+     * A blank box is no family, and it is [RouteDao.setRouteFamily] that settles that rather than
+     * this — so the rule holds for every caller of the table, not only for this screen.
+     *
+     * Unlike [rename], an unchanged value is still written. There is nothing to protect: the write
+     * is one short column on one row, and comparing first would mean deciding here what "unchanged"
+     * means about a value the table trims.
+     */
+    fun setFamily(route: RouteHeader, family: String?) {
+        viewModelScope.launch { routeDao.setRouteFamily(route.id, family) }
+    }
+
     private val _importing = MutableStateFlow(false)
     val importing = _importing.asStateFlow()
 
@@ -300,12 +390,19 @@ class RoutesViewModelFactory(
     private val routeDao: RouteDao,
     private val importer: RouteImporter,
     private val runsAlongRoute: (routeId: Long) -> Flow<List<RouteRunRow>>,
+    private val lastRunOnRoutes: suspend (routeIds: List<Long>) -> List<RouteLastRunRow>,
     private val zoneChanges: Flow<Unit> = emptyFlow(),
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(RoutesViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return RoutesViewModel(routeDao, importer, runsAlongRoute, zoneChanges) as T
+            return RoutesViewModel(
+                routeDao,
+                importer,
+                runsAlongRoute,
+                lastRunOnRoutes,
+                zoneChanges,
+            ) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }
