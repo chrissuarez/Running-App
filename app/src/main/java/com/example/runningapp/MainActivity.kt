@@ -1335,8 +1335,12 @@ class MainActivity : ComponentActivity() {
                             // Watched too, and for a reason of its own: a Run finishing on this
                             // course, or being saved as it, puts a row on this list under an open
                             // page (#420).
-                            val runs by produceState<List<com.example.runningapp.ui.RouteRunUi>>(
-                                initialValue = emptyList(),
+                            // Null is "not read yet", never "none": the row and the Runs are two
+                            // reads and the row can land first, so an empty list here would tell a
+                            // runner who has been round this course fifty times that they never had.
+                            // The rule the record book's own page keeps — recordDetailNotReadYet.
+                            val runs by produceState<List<com.example.runningapp.ui.RouteRunUi>?>(
+                                initialValue = null,
                                 key1 = routeId
                             ) {
                                 routeId?.let { id -> routesViewModel.runsOnRoute(id).collect { value = it } }
