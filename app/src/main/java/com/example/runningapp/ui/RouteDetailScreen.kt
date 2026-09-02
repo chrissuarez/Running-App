@@ -174,24 +174,6 @@ fun RouteDetailScreen(
                 .padding(RunningUiTokens.PagePadding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Box(modifier = Modifier.fillMaxWidth().height(MapHeight)) {
-                        // The Segments' surface rather than a new one (#69, #420): a course is a
-                        // piece of ground with no heart rate on it, exactly as a Segment is, so the
-                        // zone-coloured map a Run gets would be inventing a reading this row does
-                        // not hold. Nothing drawn behind it — there is no Run this course sits
-                        // inside of.
-                        SegmentMapSurface(
-                            segment = line,
-                            runBehind = emptyList(),
-                            interactive = false,
-                            modifier = Modifier.fillMaxSize(),
-                        )
-                    }
-                }
-            }
-
             if (siblings.size > 1) {
                 item {
                     // Above the map rather than below it, because the chip is what the map, the
@@ -215,6 +197,24 @@ fun RouteDetailScreen(
                                 modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
                             )
                         }
+                    }
+                }
+            }
+
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Box(modifier = Modifier.fillMaxWidth().height(MapHeight)) {
+                        // The Segments' surface rather than a new one (#69, #420): a course is a
+                        // piece of ground with no heart rate on it, exactly as a Segment is, so the
+                        // zone-coloured map a Run gets would be inventing a reading this row does
+                        // not hold. Nothing drawn behind it — there is no Run this course sits
+                        // inside of.
+                        SegmentMapSurface(
+                            segment = line,
+                            runBehind = emptyList(),
+                            interactive = false,
+                            modifier = Modifier.fillMaxSize(),
+                        )
                     }
                 }
             }
