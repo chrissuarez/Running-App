@@ -4,21 +4,27 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.analysis.RouteThumbnail
 import com.example.runningapp.analysis.courseThumbnailOf
 import com.example.runningapp.data.RouteDao
 import com.example.runningapp.data.RouteHeader
+import com.example.runningapp.data.RouteRunRow
+import com.example.runningapp.repeatedOn
 import com.example.runningapp.routes.RouteImportOutcome
 import com.example.runningapp.routes.RouteImporter
 import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.routes.asShape
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -60,6 +66,28 @@ data class RouteRowUi(
 class RoutesViewModel(
     private val routeDao: RouteDao,
     private val importer: RouteImporter,
+    /**
+     * Every finished Run remembered on one course, watched — for that course's own page (#420).
+     *
+     * A function rather than the whole `SessionDao`, the bargain `onSegmentSaved` makes in
+     * [SegmentsViewModel]: what the library wants of `sessions` is one question, and asking for the
+     * DAO would hand this class every other one. It is
+     * [com.example.runningapp.data.SessionDao.getRunsAlongRouteFlow], and only that.
+     *
+     * No default, so a wiring that forgot it would not compile rather than quietly show every course
+     * an empty history.
+     */
+    private val runsAlongRoute: (routeId: Long) -> Flow<List<RouteRunRow>>,
+    /**
+     * Ticks whenever the phone's time zone changes
+     * ([com.example.runningapp.AppContainer.zoneChanges]).
+     *
+     * A Run on a course is dated, and a Run recorded before #304 carries no offset of its own, so
+     * its day is whatever the *live* zone says. Without this a phone that flies while a course's
+     * page is open goes on showing the zone it left until the sessions table happens to change
+     * (#320, #343) — the same tick [SegmentsViewModel] takes for the same reason.
+     */
+    private val zoneChanges: Flow<Unit> = emptyFlow(),
     /** Where the file is read. Injected so a test can watch an import finish on its own scheduler. */
     private val io: CoroutineDispatcher = Dispatchers.IO,
     /** Where a course's shape is worked out — anywhere but the thread drawing the list. */
@@ -161,6 +189,60 @@ class RoutesViewModel(
         }
     }
 
+    // --- One course's own page (#420) ---
+    //
+    // Here rather than in a ViewModel of its own, the arrangement [SegmentsViewModel] already makes
+    // for the Segments collection and one Segment's page. The two screens are one subject: the page
+    // renames a course and the library lists it under its new name, and both read the same table
+    // through the same rules about a Route's line. A second ViewModel would be a second place those
+    // rules are stated, and it would be built and thrown away with each visit to a page reached from
+    // a list this one is already watching.
+    //
+    // Nothing below is held. Every one of them is asked for by the page, per course — this ViewModel
+    // belongs to the activity and there is no "current course" for it to keep.
+
+    /**
+     * One course as its page shows it, watched: a rename made on the page reaches its own title, and
+     * a delete made in the library empties it.
+     *
+     * The row without its line ([RouteDao.getRouteHeaderFlow]) — the line comes back on its own from
+     * [line], because it never changes and the row does. See [com.example.runningapp.data.Route.polyline].
+     */
+    fun route(routeId: Long): Flow<RouteHeader?> = routeDao.getRouteHeaderFlow(routeId)
+
+    /**
+     * One course's line, drawn — read once, because a Route's line is written once and never
+     * rewritten ([com.example.runningapp.data.Route.polyline]).
+     *
+     * Empty for a row that has gone, which the page draws as no map rather than as an empty course.
+     * Decoded off the thread drawing the page: a course kept before #354 holds every point its file
+     * held.
+     */
+    suspend fun line(routeId: Long): List<MapFix> = withContext(courseDispatcher) {
+        routeDao.getRoutePolyline(routeId)
+            ?.let { RoutePolyline.decode(it).map { point -> MapFix(point.latitude, point.longitude) } }
+            .orEmpty()
+    }
+
+    /**
+     * Every Run remembered on one course, as its page prints them (#420).
+     *
+     * The course travels with the Runs because the best-time band is measured against the course's
+     * own length, so the row and the Runs have to come from one read rather than two taken a moment
+     * apart. Empty where the row is gone — a Run on ground the library no longer keeps is nothing
+     * this page can rank.
+     *
+     * Built here rather than in the composable so [repeatedOn] can do its work: a zone change emits
+     * the same rows again, which a `remember` keyed on those rows would pass straight over, and the
+     * dates are read where the mapping runs ([routeRunsUi]).
+     */
+    fun runsOnRoute(routeId: Long): Flow<List<RouteRunUi>> =
+        combine(routeDao.getRouteHeaderFlow(routeId), runsAlongRoute(routeId)) { row, rows -> row to rows }
+            .repeatedOn(zoneChanges)
+            .map { (row, rows) ->
+                if (row == null) emptyList() else routeRunsUi(rows, row.distanceMeters)
+            }
+
     private val _importing = MutableStateFlow(false)
     val importing = _importing.asStateFlow()
 
@@ -217,11 +299,13 @@ class RoutesViewModel(
 class RoutesViewModelFactory(
     private val routeDao: RouteDao,
     private val importer: RouteImporter,
+    private val runsAlongRoute: (routeId: Long) -> Flow<List<RouteRunRow>>,
+    private val zoneChanges: Flow<Unit> = emptyFlow(),
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(RoutesViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return RoutesViewModel(routeDao, importer) as T
+            return RoutesViewModel(routeDao, importer, runsAlongRoute, zoneChanges) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

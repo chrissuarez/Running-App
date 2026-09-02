@@ -103,6 +103,18 @@ const val SETTLE_RUN_ROW_IF_UNSETTLED = """
 """
 
 /**
+ * The statement behind [SessionDao.rememberRunAlongRoute] (#420) — a constant of its own so it can
+ * be run against a real engine (`RememberRunAlongRouteQueryTest`).
+ *
+ * Named here because the `WHERE` is the whole rule and not a filter: `ranAlongRouteId IS NULL` is
+ * how "nothing ever moves this column" is made true of the write rather than promised in front of
+ * it. Every other shape — read it, decide, then write — leaves a gap two savers can both walk into.
+ */
+const val REMEMBER_RUN_ALONG_ROUTE =
+    "UPDATE sessions SET ranAlongRouteId = :routeId " +
+        "WHERE id = :sessionId AND ranAlongRouteId IS NULL"
+
+/**
  * The Runs the launch pass owes a Stage settlement — see [SessionDao.getSessionIdsOwingStageSettlement].
  *
  * Named here rather than written inline so the test that proves what the mark does can run the very
@@ -709,6 +721,25 @@ data class RunVolumeProjection(
     val ranAtUtcOffsetSeconds: Int? = null,
 )
 
+/**
+ * One remembered Run on a Route, as that Route's own page prints it (#420).
+ *
+ * [movingTimeSeconds] comes back beside [durationSeconds] rather than instead of it, the bargain
+ * [RunVolumeProjection] makes: a Run recorded before #163 has no moving time at all, so the reader
+ * picks ([com.example.runningapp.ui.routeRunsUi]).
+ *
+ * The Run's own offset travels with the row because a date is the runner's date
+ * ([com.example.runningapp.ranOn], #304).
+ */
+data class RouteRunRow(
+    val sessionId: Long,
+    val startTime: Long,
+    val ranAtUtcOffsetSeconds: Int?,
+    val durationSeconds: Long,
+    val movingTimeSeconds: Long?,
+    val distanceKm: Double,
+)
+
 /** How many medals one Run holds — what the medal badge on its History row counts (#51). */
 data class SessionMedalCount(
     val sessionId: Long,
@@ -940,6 +971,45 @@ interface SessionDao {
     /** When the most recent run started, or null when there is no history at all. */
     @Query("SELECT MAX(startTime) FROM sessions")
     suspend fun newestSessionStartTime(): Long?
+
+    /**
+     * Every finished Run remembered on one course, newest first — a Route's own history (#420).
+     *
+     * The first reader of `ranAlongRouteId` (#56), and a reader of nothing else: a Run is on this
+     * course because the app wrote it down, never because its shape looks like the line. Watched,
+     * because the list moves under an open page — a Run finishing, a Run deleted, a run just saved
+     * as this very course.
+     *
+     * `endTime > 0` for the reason every other query here reads it that way: a Run still being
+     * recorded is stamped with its course at START, and its totals are all noughts until it settles.
+     * Listed then, it would be a 0:00 that took the best time off the runner.
+     */
+    @Query(
+        "SELECT id AS sessionId, startTime, ranAtUtcOffsetSeconds, durationSeconds, " +
+            "movingTimeSeconds, distanceKm FROM sessions " +
+            "WHERE ranAlongRouteId = :routeId AND endTime > 0 ORDER BY startTime DESC"
+    )
+    fun getRunsAlongRouteFlow(routeId: Long): Flow<List<RouteRunRow>>
+
+    /**
+     * Remembers that this Run went over this course — but only if it is not already remembered on
+     * one (#420).
+     *
+     * The one thing that ever writes `ranAlongRouteId` outside START, and the caller is saving the
+     * Run's own ground as a course ([com.example.runningapp.routes.RunRouteSaver]): the Run a course
+     * was traced off is the plainest case of a Run on it, and without this every course Chris owns
+     * would open with an empty history.
+     *
+     * **`ranAlongRouteId IS NULL` is in the write rather than in a read before it**, because that is
+     * the whole of the promise the column makes: nothing moves it, it is what the Run set out to do
+     * ([RunnerSession.ranAlongRouteId]). A Run that set out along course A and is later saved as a
+     * course of its own keeps A — asked and then written, two taps could each find it null and the
+     * second would overwrite the first's answer.
+     *
+     * @return 1 where the Run was remembered here, 0 where it already named a course — or is gone.
+     */
+    @Query(REMEMBER_RUN_ALONG_ROUTE)
+    suspend fun rememberRunAlongRoute(sessionId: Long, routeId: Long): Int
 
     /** Finished outdoor runs whose moving time has not been computed yet (#163 backfill). */
     @Query("SELECT id FROM sessions WHERE movingTimeSeconds IS NULL AND endTime > 0 AND runMode = 'outdoor' ORDER BY startTime DESC")

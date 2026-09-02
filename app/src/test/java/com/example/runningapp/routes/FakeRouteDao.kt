@@ -73,6 +73,20 @@ class FakeRouteDao : RouteDao {
 
     override suspend fun getRoute(routeId: Long): Route? = rows.value.firstOrNull { it.id == routeId }
 
+    /** The row without its line, watched — see [RouteDao.getRouteHeaderFlow]. */
+    override fun getRouteHeaderFlow(routeId: Long): Flow<RouteHeader?> = rows.map { table ->
+        table.firstOrNull { it.id == routeId }?.let { row ->
+            RouteHeader(
+                id = row.id,
+                name = row.name,
+                distanceMeters = row.distanceMeters,
+                elevationGainMeters = row.elevationGainMeters,
+                createdAtMillis = row.createdAtMillis,
+                source = row.source,
+            )
+        }
+    }
+
     /** One row, and again every time the table moves — a delete included, which is the point. */
     override fun getRouteFlow(routeId: Long): Flow<Route?> =
         rows.map { table -> table.firstOrNull { it.id == routeId } }
