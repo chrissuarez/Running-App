@@ -178,6 +178,7 @@
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
+      <p><strong>A route is a page now, not just a row.</strong> Tap any course in your library and it opens: the course drawn on a map, how far it goes and how much it climbs, your <strong>best time</strong> and your <strong>average time</strong> over it, and a list of every run you have done on it &mdash; newest first, tap one to open that run. Renaming moved onto that page, so the pencil has gone from the library row and the row itself is what you tap; the bin stays where it was. A run gets onto the list one of two ways and no others: you picked the route before you pressed START, or you saved that run as the route. Nothing matches runs to courses by shape. Two things worth knowing before you look: your courses saved off runs <em>before</em> this update open empty, because runs only started remembering their course now and there is no filling the old ones in &mdash; every one of those runs is still in History, untouched; and only runs that came within a tenth of the course&rsquo;s distance count towards the best and the average, with a walk counting towards neither. A run that does not count is never dropped from the list &mdash; it keeps its row and says why. See <em>A route&rsquo;s own page</em> in <a href="#routes">routes</a>.</p>
       <p><strong>Your routes have stopped all saying the same thing about climb.</strong> Climb is counted by a threshold: nothing is counted until you have risen a set amount above the lowest point you had come down to. That amount was ten metres, so a rise of nine counted as nothing and an ordinary rolling course cleared the ten just once &mdash; which is why all three of yours read <span class="mono">10 m up</span>, the flat canal path and the hilly loop alike. The amount is three metres now, and the figure follows the ground: on nine real courses it came out anywhere from twelve to forty-seven metres. A climb is worked out once, when a route is made, so a route you already keep is unchanged &mdash; it holds whatever figure it was saved with until you import its file again. See <em>Small climbs are counted now</em> in <a href="#routes">routes</a>.</p>
       <p><strong>Opening the app again after an &ldquo;Open with&rdquo; no longer drags the file back with it.</strong> Once you had opened a <span class="mono">.gpx</span> with this app, the phone remembered that as the way your app opens. Tapping it days later &mdash; or picking it out of the recent-apps list &mdash; handed the app the same file again, so it went to your route library and gave you whichever of the three import messages that file earned &mdash; usually <em>&ldquo;That route is already in your routes&hellip; Nothing was added.&rdquo;</em>, but sometimes one saying its numbers had been refreshed &mdash; about a file you had long forgotten. Nothing was ever added twice, so no route was ever harmed by it; the app was just going somewhere you had not asked to go. The file now comes in through a door of its own, and the phone remembers only the ordinary way in. Opening the app is opening the app: it comes up where it always comes up, and says nothing about any file. Handing it a <span class="mono">.gpx</span> still works exactly as before, whether the app is closed or already open &mdash; including when you had left the file picker open and walked away, which used to leave a stray picker sitting behind the Back arrow. See <em>Getting a route in</em> in <a href="#routes">routes</a>.</p>
       <p><strong>The map card opens the full-screen map again.</strong> Tapping the small map during an outdoor run was supposed to open a full-screen version, and did nothing at all &mdash; a fault that had been there since the map was built. The map itself was taking your finger before the tap could be heard. The card's own map now answers no touch of its own, and the tap gets through: the map fills the screen, with your heart rate, pace, distance and time in a strip across the top, and the back arrow to come back. See <em>The map, while you run</em> in <a href="#during">during the run</a>.</p>
@@ -721,6 +722,22 @@
       </div>
 
       <div class="e">
+        <h3>A route&rsquo;s own page</h3>
+        <p><strong>Tap any route in the library and it opens its own page.</strong> The course drawn on a proper map, how far it goes and how much it climbs, and &mdash; the point of it &mdash; <strong>every run you have done on that course</strong>, newest first, with the day, how far you actually went and what it took you.</p>
+        <p>Above the list, two numbers: your <strong>best time</strong> on the course and your <strong>average time</strong> over it. Tap any run in the list to open that run&rsquo;s own page.</p>
+        <p>The map here is a picture, not something to drag about &mdash; the page scrolls under your finger instead, so you can always reach the runs.</p>
+        <p class="note"><b>A run is on a route because the app wrote it down, never because it looks similar.</b> There are exactly two ways a run lands on this list: you <em>picked that route before you pressed START</em>, or you <em>saved that run as the route</em> with <strong>Save as route</strong>. Nothing here compares shapes. A run that happened to go the same way but was started without the route picked is not on the list, and never will be.</p>
+        <p class="note"><b>Routes you kept before this update start empty.</b> Runs only began remembering their course when this arrived, and there is no going back to fill in the old ones. Your two courses saved off runs will open with <em>no runs on this route yet</em> until you next run them with the route picked. That is not lost data &mdash; the runs are all still in History, exactly as they were.</p>
+        <p class="note"><b>Which runs count towards the best and the average.</b> Only the ones that came <strong>within a tenth of the route&rsquo;s own distance</strong>. A run is never exactly the course &mdash; the GPS wanders, you overshoot the finish &mdash; so there has to be some room. But a 2 km jog that set off down a 5 km course is a different outing, not a slow attempt at this one, and crowning it would hand you a best time you never ran.</p>
+        <p class="note"><b>A run that does not count still keeps its row, and is told why.</b> Under its distance you will see either <em>Not counted &mdash; too far off this route&rsquo;s distance</em> or <em>Not counted &mdash; marked as a walk</em>. Nothing is ever dropped off this list quietly: a run that vanished from its own course&rsquo;s page with no explanation would read like lost data.</p>
+        <p class="note"><b>A walk holds no best time.</b> Mark a run as a walk on the finish sheet or on its own page, and it takes no part in the best or the average here &mdash; the same rule that has always kept a walk from taking a medal. It still shows in the list with its time. Un-mark it and it counts again.</p>
+        <p class="note"><b>The time used is your moving time.</b> The clock the page ranks you on is the same one the run&rsquo;s own page shows: moving time where the run has one, and the plain elapsed time for older runs recorded before the app worked moving time out. If two runs tie exactly, the best stays with the earlier one &mdash; matching a time you already ran is not beating it.</p>
+        <p class="note"><b>A run still being recorded is not listed.</b> Its distance and its time are all noughts until you stop, so listing it would put a 0:00 at the top and take the best off you. It appears when the run finishes.</p>
+        <p class="note"><b>There is no &ldquo;start a run on this course&rdquo; button here.</b> A course is picked before you set off, on the home screen &mdash; see <a href="#before">Following a route</a>.</p>
+        <div class="where"><b>Where</b> Home → Open Routes → tap a route</div>
+      </div>
+
+      <div class="e">
         <h3>Small climbs are counted now</h3>
         <p>Climb is counted by a threshold. The app walks the course remembering the lowest point you have come down to, counts nothing while you are climbing back out of it, and only when you have risen a set amount above that low point does it count the rise &mdash; all of it &mdash; and start again from where you now are. The set amount is what keeps GPS wobble out of the figure, and it <strong>used to be ten metres</strong>. So a rise of nine metres counted as nothing at all, and an ordinary rolling course of the sort most of yours are cleared the ten once and read <span class="mono">10 m up</span>. All three of yours do. A hillier course counted more, and one whose file carried no heights read <em>no elevation recorded</em>.</p>
         <p><strong>The set amount is three metres now</strong>, so a small real hill is counted instead of thrown away, and the figure follows the ground. On the nine real courses this was checked against it came out anywhere from twelve to forty-seven metres over runs of two to six kilometres, where before nearly all of them said ten.</p>
@@ -766,15 +783,17 @@
 
       <div class="e">
         <h3>Keeping a run as a route</h3>
-        <p>On a finished run's page, under the map, <strong>Save as route</strong> keeps the ground that run went over as a course you can keep and rename. The run itself is not touched and nothing links the two afterwards — delete either and the other is unharmed.</p>
+        <p>On a finished run's page, under the map, <strong>Save as route</strong> keeps the ground that run went over as a course you can keep and rename.</p>
+        <p><strong>The run is left as it was, with one thing added: it now remembers it went that way.</strong> So the moment you save it, that run is already on the new route&rsquo;s page &mdash; which is only right, since the course was traced off it. Deleting either still leaves the other unharmed: the route knows nothing about the run, and deleting the route takes nothing off it.</p>
         <p>You are told which of three things happened, in words:</p>
         <ul>
           <li><strong>Kept.</strong> It names what the course is called, which is what the run is called — <em>Run 22 Aug 2026, 06:21</em>, the same words the run is shared under.</li>
-          <li><strong>Already kept.</strong> Saving the same run twice makes one course, not two, and the message names the row you already have. If you have since renamed it, that is the name you are told.</li>
+          <li><strong>Already kept.</strong> Saving the same run twice makes one course, not two, and the message names the row you already have. If you have since renamed it, that is the name you are told. The run is still added to that course&rsquo;s page &mdash; so if you save this week&rsquo;s lap and it matches the one you saved last month, you end up with one course and both runs on it.</li>
           <li><strong>Nothing to keep.</strong> A run that never got a fix, or one that only ever wandered on the spot.</li>
         </ul>
         <p class="note"><b>The distance shown is not the run's distance.</b> A route's distance is how far the course <em>goes</em> for whoever follows it — one clean line, straightened out and joined across any pause. Your run counted every metre it actually covered. The two are close, and they are not meant to match.</p>
         <p class="note"><b>Only where there is a track.</b> A treadmill run has no ground to keep, so it gets no button rather than a button that refuses. The same goes for history from before the app recorded tracks.</p>
+        <p class="note"><b>A run that already had a course keeps it.</b> If you set off following one route and later save that same run as a course of its own, the run goes on belonging to the route you actually chose to run. It will not quietly move to the new one.</p>
         <p class="note"><b>Saving a run and importing that same run&rsquo;s GPX gives you one route, not two.</b> Both doors now tidy the course to its shape the same way, so the app sees one course and points you at the route you already have, rather than adding a second. It will usually say the route&rsquo;s numbers have been refreshed from the file &mdash; a <span class="mono">.gpx</span> states heights a little more roughly than the run itself held them, so the climb it works out is a shade different. That is one route, brought up to date, not two. This holds for a run you save from here on; a run you saved as a course before 30 August 2026 is the rare exception above. It is also only true of files this app made: a course you exported to Strava or Komoot and brought back is tidied by <em>their</em> rules, which draw a different line, so that arrives as a route of its own.</p>
         <div class="where"><b>Where</b> History → any run with a map → under the map</div>
       </div>
@@ -812,7 +831,10 @@
 
       <div class="e">
         <h3>Rename and delete</h3>
-        <p>Any route can be renamed and deleted, however it got in. Deleting a route never touches a run — including the run it was saved off.</p>
+        <p>Any route can be renamed and deleted, however it got in.</p>
+        <p><strong>Renaming is on the route&rsquo;s own page</strong> &mdash; the pencil in the top right corner. It used to be a pencil on the library row; that has gone, so that a row in the library has one thing to tap, which is the row itself. The new name appears on the page and in the library straight away.</p>
+        <p><strong>Deleting stays in the library</strong> &mdash; the bin on the row. Tidying up a library is something you do to a list, and making you open each course to clear one out would be a page at a time.</p>
+        <p class="note"><b>Deleting a route never touches a run</b> &mdash; including the run it was saved off, and including every run listed on its page. Those runs stay in History exactly as they are; they simply have no course page to appear on any more.</p>
       </div>
 
     </div>
@@ -908,7 +930,7 @@
       <dd>The intervals and target zone the AI coach wrote for your next Long run. Written only after you finish a Long run, and it stands on the runs it was shown.</dd>
 
       <dt>Route</dt>
-      <dd>A course in your library: a line to follow and what following it costs. A plan, not a recording — it carries no date, no heart rate and no times, and it may be run any number of times or never. It gets in from a GPX file or off a run you have already been for, and both doors turn away a course that never leaves the spot it starts on. The app knows one by its <em>line</em>, so a second file drawn along the same course refreshes the one you have rather than making a copy. Deleting one touches no run.</dd>
+      <dd>A course in your library: a line to follow and what following it costs. A plan, not a recording — it holds no date, no heart rate and no times of its own, and it may be run any number of times or never. Its own page shows a best and an average time all the same, but those are worked out from <em>your runs</em> each time you look; nothing of them is kept on the route. It gets in from a GPX file or off a run you have already been for, and both doors turn away a course that never leaves the spot it starts on. The app knows one by its <em>line</em>, so a second file drawn along the same course refreshes the one you have rather than making a copy. Deleting one touches no run.</dd>
 
       <dt>Segment</dt>
       <dd>A stretch of ground you marked and named. Every run that crosses it is timed. Part of a run, where a <strong>route</strong> is a whole course.</dd>
@@ -917,19 +939,19 @@
       <dd>The few sentences the AI writes about one run, at the top of that run's own page. Written the first time you open the run and kept. It describes that run and nothing else — it never prescribes a workout; that is the coach's job.</dd>
 
       <dt>Routed run</dt>
-      <dd>A run you started on a <strong>route</strong>. An ordinary run with a course written on it and a second, blue line on its live map. Which route is fixed the moment you press START.</dd>
+      <dd>A run you started on a <strong>route</strong>. An ordinary run with a course written on it and a second, blue line on its live map. Which route is fixed the moment you press START. It is also what puts the run on that route&rsquo;s own page — the one other way is saving a run as a route, which writes the same thing.</dd>
 
       <dt>Off course</dt>
       <dd>More than <strong>50 m</strong> from the route you are following, for <strong>10 seconds</strong> or more &mdash; and only once you have actually reached that course. Something the app says about <em>you</em>, during one run; it is never a thing that is true of a route. You stop being off course when you come back within <strong>30 m</strong> of the line.</dd>
 
       <dt>Matched runs</dt>
-      <dd>Runs the app worked out are the same course, by shape alone. Nothing named, nothing saved, and no <strong>route</strong> in your library is involved. Runs under half a kilometre have no shape and join nothing.</dd>
+      <dd>Runs the app worked out are the same course, by shape alone. Nothing named, nothing saved, and no <strong>route</strong> in your library is involved — matching by shape never puts a run on a route&rsquo;s page. Runs under half a kilometre have no shape and join nothing.</dd>
     </dl>
   </section>
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>2 September 2026</strong>, when routes stopped all reporting the same ten metres of climb. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>2 September 2026</strong>, when a route became a page of its own &mdash; its map, its numbers and your runs on it. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
