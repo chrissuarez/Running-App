@@ -1847,7 +1847,26 @@ fun MainScreen(
     // Written from composition, which is safe here only because nothing reads it from composition:
     // the id is read inside the effect below, so no recomposition is recorded against it and the
     // write cannot loop.
-    var lastRunRowId by remember(sessionRepository) { mutableStateOf<Long?>(null) }
+    //
+    // Saved rather than merely remembered, because a plain `remember` is thrown away when the
+    // activity is recreated — a rotation while the finish sheet is still open is enough — and the
+    // service state restored alongside it no longer names the Run either: activeDbSessionId went
+    // null the moment the Run stopped being live, so there is nothing left to latch the id back
+    // from and it would come back null. The read below would then be handed no Run to wait for and
+    // would count the just-finished row while its record is still half-written, taking its default
+    // isWalk = false; the Walk mark the sheet writes afterwards moves neither key of the effect, so
+    // the suggestion would stay wrong for the rest of the day. The rule the gate states — that this
+    // screen reads a Run's history only once that Run's record is complete — is right as it stands
+    // in [SessionRepository.recentMeasuredRunsOnceTheRecordIsComplete]; what went missing was this
+    // caller's half of it, the id, so the fix is to keep the id, not to add another case to the
+    // rule. Kept the same way the finish sheet keeps its own pending id above, for the same reason:
+    // "which Run is still owed a word" outlives the activity that asked the question.
+    //
+    // Deriving it from the restored finish-sheet state instead was declined: that id lives above
+    // the NavHost and is cleared the moment the sheet is answered, while this screen still has to
+    // wait for the totals of a Run whose sheet was dismissed — and a Run recorded with no sheet at
+    // all would never set it.
+    var lastRunRowId by rememberSaveable(sessionRepository) { mutableStateOf<Long?>(null) }
     state.activeDbSessionId?.let { lastRunRowId = it }
 
     // The Runs today's likely distance is derived from (#422). Read at a few moments rather than
