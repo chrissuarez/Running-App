@@ -78,6 +78,8 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.time.Clock
@@ -1147,7 +1149,40 @@ class SessionRepository(
         sessionDao.recentMeasuredRuns(sinceMillis)
 
     /**
-     * The same recent Runs, but read only once the Run that has just ended is on the page (#422).
+     * The same recent Runs, but read only once the Run that has just ended has a complete
+     * **record** (#422).
+     *
+     * **The rule, in one place: the picker reads a Run's history only once that Run's record is
+     * complete — the row is finalized *and* the runner's word about it is in.** The two halves are
+     * one rule and not two special cases, because the query the suggestion stands on
+     * ([SessionDao.recentMeasuredRuns]) asks the row two things — has this Run finished, and was it
+     * a Walk — and each half of the record is what answers one of them. A read taken before either
+     * has landed is a read of a Run the runner has not finished describing yet. Anything else ever
+     * written about a Run *after* its finish belongs in the same predicate below, alongside these
+     * two, and nowhere else.
+     *
+     * The two halves, and how each of them can be missed:
+     *
+     * * **The row is finalized.** `HrForegroundService` publishes STOPPED *before* it performs a
+     *   stop's effects, so at the instant the session reads idle the just-finished Run's row still
+     *   has `endTime = 0` — and the query asks for `endTime > 0`, so a read taken then misses
+     *   precisely the Run it was re-taken for, and nothing would fire again to fix it.
+     * * **The runner's word about it is in.** The finish sheet is on screen from the moment STOP is
+     *   pressed, while `finalizeRun` is still writing the row, and the Walk mark is written only
+     *   when the sheet is answered ([finishSheetAnswered]) — which is *after* the finalize. A wait
+     *   that ended at the finalize would read the row in between, with its default `isWalk = 0`,
+     *   and count a Walk as a Run: enough on its own to carry the history over the three-Run
+     *   threshold the suggestion needs, or to drag the median pace the distance is drawn from. And
+     *   saving the sheet changes neither the screen's resumed-ness nor the session's activeness, so
+     *   nothing would re-read it until the runner left the screen and came back.
+     *
+     * The gate for that second half is [awaitingTheRunnersWord], which already says exactly this
+     * and nothing else — "a word about this Run is still coming" — rather than a second flag of this
+     * function's own; a Run nobody is waiting on is already complete. It is an in-memory set with no
+     * Flow behind it, so [theRunnersWordLanding] is what ends the wait: a bump per open and close,
+     * combined below so the predicate is re-asked each time one lands. A poll of the set would have
+     * been the other way, and it would trade a guaranteed answer for a sampled one — the runner
+     * answers the sheet in the same second they are looking at the picker.
      *
      * The picker's read is still a **one-shot** read and not a watched Flow, for the reason set out
      * on [recentMeasuredRuns]: the suggestion is advice on the start line, and a list that re-sorted
@@ -1158,30 +1193,24 @@ class SessionRepository(
      * screen's resumed-ness, so the suggestion went on being worked out from a history one Run
      * short until the runner happened to background the app.
      *
-     * Keying that read on "the session went idle" alone is not enough, and this is the whole reason
-     * this function exists rather than a second key on the composable. `HrForegroundService`
-     * publishes STOPPED *before* it performs a stop's effects, so at the instant the session reads
-     * idle the just-finished Run's row still has `endTime = 0` — and [SessionDao.recentMeasuredRuns]
-     * asks for `endTime > 0`, so a read taken then misses precisely the Run it was re-taken for, and
-     * nothing would fire again to fix it. So the settling is *waited* for, not raced.
-     *
      * [justFinishedRunId] is the last Run this screen saw live, or null when the screen has not
      * watched one end — a fresh launch, a rotation after the fact. Null waits for nothing.
      *
-     * **An absent row ends the wait.** The predicate accepts null as well as a finished row,
-     * because the id may name a Run that is no longer there: deleted from history while the screen
-     * sat open, or discarded for recording nothing. A predicate that only accepted a finished row
-     * would wait out the whole timeout on a Run that is never coming, and this app has been bitten
-     * before by waiting on a subject that had already gone.
+     * **An absent row ends the wait**, whatever the gate says. The predicate accepts null as well as
+     * a complete record, because the id may name a Run that is no longer there: deleted from history
+     * while the screen sat open, or discarded for recording nothing. A word about a Run that has
+     * gone is never coming either, so waiting on the gate for it would wait out the whole timeout —
+     * and this app has been bitten before by waiting on a subject that had already gone.
      *
      * **The wait is bounded, and the read goes ahead when it expires.** A finalize that never lands
-     * — the process reclaimed mid-write, a write that threw — must not cost the runner the
-     * suggestion altogether; the lesser loss is a suggestion drawn from a history missing its newest
-     * Run, which is exactly what the screen showed before this existed. That is the same bargain
-     * [awaitFinalized] makes for the feel sheet, and the timeout is generous for the same reason:
-     * only a finalize that has genuinely failed should ever reach it.
+     * — the process reclaimed mid-write, a write that threw — or a sheet the runner walks away from
+     * without answering must not cost them the suggestion altogether; the lesser loss is a
+     * suggestion drawn from a history missing its newest Run, which is exactly what the screen
+     * showed before this existed. That is the same bargain [awaitFinalized] makes for the feel
+     * sheet, and the timeout is generous for the same reason: only a record that has genuinely
+     * stalled should ever reach it.
      */
-    suspend fun recentMeasuredRunsOnceSettled(
+    suspend fun recentMeasuredRunsOnceTheRecordIsComplete(
         justFinishedRunId: Long?,
         sinceMillis: Long,
     ): List<RunPaceRow> {
@@ -1190,20 +1219,26 @@ class SessionRepository(
             // Run has gone), and a null returned from the block would be indistinguishable from the
             // timeout's null.
             val waitEnded = withTimeoutOrNull(SETTLE_WAIT_FOR_PICKER_MILLIS) {
-                sessionDao.getSessionByIdFlow(justFinishedRunId)
-                    .first { it == null || it.isFinished() }
+                combine(
+                    sessionDao.getSessionByIdFlow(justFinishedRunId),
+                    // A [StateFlow], so collecting it re-asks the gate immediately and a word that
+                    // landed between this call and this collection cannot be missed.
+                    theRunnersWordLanding,
+                ) { session, _ ->
+                    session == null ||
+                        (session.isFinished() && justFinishedRunId !in awaitingTheRunnersWord)
+                }.first { it }
                 true
             }
             if (waitEnded == null) {
                 Log.w(
                     "SessionRepository",
-                    "Run $justFinishedRunId had not settled in time; suggesting a route without it"
+                    "Run $justFinishedRunId's record was not complete in time; suggesting a route without it"
                 )
             }
         }
         return sessionDao.recentMeasuredRuns(sinceMillis)
     }
-
     /**
      * Whether the runner's Test is due, for the Today card to say so (#292).
      *
@@ -4245,6 +4280,27 @@ class SessionRepository(
         Collections.newSetFromMap(ConcurrentHashMap<Long, Boolean>())
 
     /**
+     * That [awaitingTheRunnersWord] has just changed — the signal a waiter can be woken by (#422).
+     *
+     * The set itself is a plain concurrent set with nothing to collect, which is right for its own
+     * readers: every settlement tests it under [settling] at the moment it needs the answer and has
+     * no reason to be told when it changes. The pre-run route picker is the one reader that must
+     * *wait* for it ([recentMeasuredRunsOnceTheRecordIsComplete]), and the rule it keeps — a Run's
+     * record is complete only once its row is finalized and the runner's word is in — is a wait on
+     * two things at once.
+     *
+     * A counter and not the set's contents, because no waiter wants the whole set: each of them has
+     * one id in mind and reads the set itself for that id. What this has to carry is only "ask
+     * again". A [MutableStateFlow] rather than a [kotlinx.coroutines.flow.MutableSharedFlow] so that
+     * collecting it asks once immediately: a waiter that subscribed after the word had already
+     * landed would otherwise wait out its whole timeout for a bump that has been and gone.
+     *
+     * Bumped on both edges — the sheet opening and the sheet closing — because a waiter's predicate
+     * reads the set and not this value, and an edge it is not told about is an answer it gives late.
+     */
+    private val theRunnersWordLanding: MutableStateFlow<Long> = MutableStateFlow(0L)
+
+    /**
      * The runner's word about a Run whose settlement could not use it, kept for the next one (#317).
      *
      * [finishSheetClosed]'s wait for the finalize is bounded, and a finalize blocked on a slow
@@ -4297,6 +4353,7 @@ class SessionRepository(
      */
     fun finishSheetOpened(sessionId: Long) {
         awaitingTheRunnersWord.add(sessionId)
+        theRunnersWordLanding.update { it + 1 }
     }
 
     /**
@@ -4363,6 +4420,9 @@ class SessionRepository(
             // Run written — the wrong runner's word about a different Run.
             if (markedAsWalk != null && finalized != null) theRunnersWordFor[sessionId] = markedAsWalk
             awaitingTheRunnersWord.remove(sessionId)
+            // After the removal and inside the same lock, so nobody can be told to look at a gate
+            // that has not opened yet — see [theRunnersWordLanding].
+            theRunnersWordLanding.update { it + 1 }
             finalized != null && settleUnderSettling(sessionId, zone, markedAsWalk)
         }
         // Outside the lock, for the reason [settleStageForRun] gives: the snapshot copies the whole

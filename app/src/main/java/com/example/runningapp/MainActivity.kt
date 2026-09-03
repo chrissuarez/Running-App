@@ -1857,10 +1857,13 @@ fun MainScreen(
     // lifecycle resumed and the repository unchanged, so the suggestion went on being worked out
     // from a history one Run short until the app was backgrounded.
     //
-    // The wait for the finished row lives in the repository rather than here
-    // ([SessionRepository.recentMeasuredRunsOnceSettled]): the stop publishes STOPPED before it
-    // writes the Run's totals, so a read taken the instant the session goes idle would miss the very
-    // Run it was re-taken for — and that rule is worth a unit test, which a composable is not.
+    // The wait for that Run's record to be complete lives in the repository rather than here
+    // ([SessionRepository.recentMeasuredRunsOnceTheRecordIsComplete]): the stop publishes STOPPED
+    // before it writes the Run's totals, and the finish sheet's Walk mark is written after them, so
+    // a read taken the instant the session goes idle would miss the very Run it was re-taken for or
+    // count a Walk as a Run — and that rule is worth a unit test, which a composable is not. The
+    // finish sheet lives above this screen and cannot be seen from here, which is the other reason
+    // the whole rule is stated there.
     var recentRuns by remember(sessionRepository) { mutableStateOf(emptyList<RunPaceRow>()) }
     LaunchedEffect(sessionRepository, screenIsResumed, isSessionActive) {
         if (!screenIsResumed) return@LaunchedEffect
@@ -1869,7 +1872,7 @@ fun MainScreen(
         if (isSessionActive) return@LaunchedEffect
         // The clock read here rather than taken from composition: this runs when the screen comes
         // back, which may be days after the frame that started it.
-        recentRuns = sessionRepository.recentMeasuredRunsOnceSettled(
+        recentRuns = sessionRepository.recentMeasuredRunsOnceTheRecordIsComplete(
             justFinishedRunId = lastRunRowId,
             sinceMillis = routeSuggestionSinceMillis(System.currentTimeMillis())
         )
