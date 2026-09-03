@@ -38,7 +38,9 @@ class RouteSuggestionTest {
         minutes: Double,
         distanceKm: Double,
         stageId: String? = stage,
+        sessionId: Long = 0L,
     ) = RunPaceRow(
+        sessionId = sessionId,
         ranUnderStageId = stageId,
         ranUnderWorkoutId = workoutId,
         durationSeconds = (minutes * 60.0).toLong(),

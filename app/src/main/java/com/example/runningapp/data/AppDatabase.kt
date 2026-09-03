@@ -765,9 +765,17 @@ data class RouteLastRunRow(val routeId: Long, val lastRunStartTime: Long)
  * One finished Run, reduced to what a suggested distance is worked out from — see
  * [SessionDao.recentMeasuredRuns] (#422).
  *
- * Four columns and no more. The question is "how far does this runner cover in an hour on a day of
- * this kind", so the row carries the ground covered, the clock it was covered against, and the two
- * ids the Run's kind is recovered from ([com.example.runningapp.TrainingPlanProvider.runTypeOfRecordedRun]).
+ * The question is "how far does this runner cover in an hour on a day of this kind", so the row
+ * carries the ground covered, the clock it was covered against, and the two ids the Run's kind is
+ * recovered from ([com.example.runningapp.TrainingPlanProvider.runTypeOfRecordedRun]).
+ *
+ * [sessionId] answers none of that, and is here for the one reader that must be able to say *which*
+ * Run a row is: [SessionRepository.recentMeasuredRunsOnceTheRecordIsComplete], which drops the
+ * just-finished Run from the list when it gives up waiting for that Run's record to be completed. It
+ * is a column on this row rather than a second query asked beside this one, because a Run this
+ * projection admits and a second query's would not is a Run the caller cannot recognise — the guards
+ * that decide which Runs count live in [SessionDao.recentMeasuredRuns]'s own `WHERE` and nowhere
+ * else, and a second query is a second copy of them to keep in step.
  *
  * The clock is [durationSeconds] and deliberately not `movingTimeSeconds`. What the suggestion
  * multiplies is a *planned* duration — warm-up, walks, cool-down and all
@@ -777,6 +785,7 @@ data class RouteLastRunRow(val routeId: Long, val lastRunStartTime: Long)
  * out on a route longer than the session they planned.
  */
 data class RunPaceRow(
+    val sessionId: Long,
     val ranUnderStageId: String?,
     val ranUnderWorkoutId: String?,
     val durationSeconds: Long,
@@ -1099,7 +1108,8 @@ interface SessionDao {
      */
     @Query(
         """
-        SELECT ranUnderStageId, ranUnderWorkoutId, durationSeconds, distanceKm FROM sessions
+        SELECT id AS sessionId, ranUnderStageId, ranUnderWorkoutId, durationSeconds, distanceKm
+        FROM sessions
         WHERE endTime > 0
           AND startTime >= :sinceMillis
           AND runMode = 'outdoor'
