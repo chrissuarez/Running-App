@@ -1835,16 +1835,43 @@ fun MainScreen(
         ?.let { id -> stageWorkouts.firstOrNull { it.id == id } }
         ?.withCoachPrescription(coachPrescriptions, nowMillis)
 
-    // The Runs today's likely distance is derived from (#422). Read when the screen comes to the
-    // front rather than watched, so the picker does not re-sort under the runner's finger — and
-    // re-read on the way back, so the Run they have just finished counts towards the next one.
+    // Declared here rather than beside the strap effect below because the route suggestion's read
+    // is keyed on it: a Run ending is one of the moments that read has to be re-taken at.
+    val isSessionActive = state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED
+
+    // The last Run this screen watched go live, kept after the session goes idle so the read below
+    // knows which row to wait for (#422). Held rather than read straight off the state, because by
+    // the time the Run is over the state no longer names it — activeDbSessionId is null the moment
+    // the Run stops being live, which is exactly when the read wants it.
+    //
+    // Written from composition, which is safe here only because nothing reads it from composition:
+    // the id is read inside the effect below, so no recomposition is recorded against it and the
+    // write cannot loop.
+    var lastRunRowId by remember(sessionRepository) { mutableStateOf<Long?>(null) }
+    state.activeDbSessionId?.let { lastRunRowId = it }
+
+    // The Runs today's likely distance is derived from (#422). Read at a few moments rather than
+    // watched, so the picker does not re-sort under the runner's finger: when the screen comes to
+    // the front, and when a Run ends with the screen still in front of the runner. That second
+    // moment is the one a resumed-only key missed — a Run started and finished here left the
+    // lifecycle resumed and the repository unchanged, so the suggestion went on being worked out
+    // from a history one Run short until the app was backgrounded.
+    //
+    // The wait for the finished row lives in the repository rather than here
+    // ([SessionRepository.recentMeasuredRunsOnceSettled]): the stop publishes STOPPED before it
+    // writes the Run's totals, so a read taken the instant the session goes idle would miss the very
+    // Run it was re-taken for — and that rule is worth a unit test, which a composable is not.
     var recentRuns by remember(sessionRepository) { mutableStateOf(emptyList<RunPaceRow>()) }
-    LaunchedEffect(sessionRepository, screenIsResumed) {
+    LaunchedEffect(sessionRepository, screenIsResumed, isSessionActive) {
         if (!screenIsResumed) return@LaunchedEffect
+        // Nothing to read for while a Run is on: the picker is not on screen then, and the Run that
+        // would answer the question is the one still being run.
+        if (isSessionActive) return@LaunchedEffect
         // The clock read here rather than taken from composition: this runs when the screen comes
         // back, which may be days after the frame that started it.
-        recentRuns = sessionRepository.recentMeasuredRuns(
-            routeSuggestionSinceMillis(System.currentTimeMillis())
+        recentRuns = sessionRepository.recentMeasuredRunsOnceSettled(
+            justFinishedRunId = lastRunRowId,
+            sinceMillis = routeSuggestionSinceMillis(System.currentTimeMillis())
         )
     }
     // Plain arithmetic on this phone: no network, no AI coach, no consent gate (#422).
@@ -1870,8 +1897,6 @@ fun MainScreen(
     // conditioned on the Run actually beginning: a START that is refused was still the runner
     // saying "that Run, now", and a refusal they have to notice is better than a course they do not.
     val spendRouteChoice = { onRouteChoiceChange(null) }
-
-    val isSessionActive = state.sessionStatus != SessionStatus.IDLE && state.sessionStatus != SessionStatus.STOPPED
 
     // Reach for the saved strap in the background while the record screen is up (#110): heart
     // rate is a sensor, so the app connects to it before you start and reports progress on the
