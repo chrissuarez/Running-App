@@ -49,13 +49,13 @@ import kotlin.math.abs
 const val ROUTE_SUGGESTION_MIN_RUNS = 3
 
 /**
- * How many Runs of today's kind the median is taken over, newest first.
+ * How many Runs of today's kind are counted towards the median, newest first.
  *
  * A bound rather than the whole window, because the window is a limit on how *old* a Run may be and
  * this is a limit on how many of them one answer rests on. A runner deep in a heavy block would
  * otherwise have a fortnight of Runs outvoted by the two months in front of them.
  */
-const val ROUTE_SUGGESTION_RUNS_READ = 10
+const val ROUTE_SUGGESTION_RUNS_COUNTED = 10
 
 /**
  * How far back a Run may be and still count towards today's pace: ninety days.
@@ -102,7 +102,7 @@ fun suggestedRouteDistanceMeters(
 }
 
 /**
- * The middle pace of the newest [ROUTE_SUGGESTION_RUNS_READ] Runs of [runType] — null where there
+ * The middle pace of the newest [ROUTE_SUGGESTION_RUNS_COUNTED] Runs of [runType] — null where there
  * are too few of them.
  *
  * The median and not the mean, because the thing being guarded against is one unusual Run, and a
@@ -118,7 +118,7 @@ fun recentMedianPaceMinPerKm(recentRuns: List<RunPaceRow>, runType: RunType): Do
             TrainingPlanProvider.runTypeOfRecordedRun(row.ranUnderStageId, row.ranUnderWorkoutId) ==
                 runType
         }
-        .take(ROUTE_SUGGESTION_RUNS_READ)
+        .take(ROUTE_SUGGESTION_RUNS_COUNTED)
     if (ofType.size < ROUTE_SUGGESTION_MIN_RUNS) return null
     // Measured against the Run's own duration, not its moving time — see [RunPaceRow].
     val paces = ofType

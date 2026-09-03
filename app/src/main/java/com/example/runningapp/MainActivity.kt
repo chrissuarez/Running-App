@@ -1809,13 +1809,16 @@ fun MainScreen(
     val debrief = userSettings.latestDebrief?.takeIf { it.isNotBlank() }
     // The card resolves today's workout itself (adaptation included) so the screen and the run
     // read the same numbers — see withCoachPrescription (#111).
+    // One reading of the clock for the card and for the route suggestion below it, so the seconds
+    // the picker multiplies are the seconds the card is promising and not a moment later's (#422).
+    val nowMillis = System.currentTimeMillis()
     val todayCard = todayCardUiState(
         stageTitle = activeStage?.title,
         stageWorkouts = stageWorkouts,
         pickedWorkoutId = pickedWorkoutId,
         settings = userSettings,
         prescriptions = coachPrescriptions,
-        nowEpochMillis = System.currentTimeMillis(),
+        nowEpochMillis = nowMillis,
         runMode = selectedRunMode,
         skippedToday = skipPlanToday,
         testDue = testDue
@@ -1830,7 +1833,7 @@ fun MainScreen(
     // skipped or plan-less day, which is an open run and has no planned time to derive from.
     val todaysWorkout = todaysWorkoutId
         ?.let { id -> stageWorkouts.firstOrNull { it.id == id } }
-        ?.withCoachPrescription(coachPrescriptions, System.currentTimeMillis())
+        ?.withCoachPrescription(coachPrescriptions, nowMillis)
 
     // The Runs today's likely distance is derived from (#422). Read when the screen comes to the
     // front rather than watched, so the picker does not re-sort under the runner's finger — and
@@ -1838,6 +1841,8 @@ fun MainScreen(
     var recentRuns by remember(sessionRepository) { mutableStateOf(emptyList<RunPaceRow>()) }
     LaunchedEffect(sessionRepository, screenIsResumed) {
         if (!screenIsResumed) return@LaunchedEffect
+        // The clock read here rather than taken from composition: this runs when the screen comes
+        // back, which may be days after the frame that started it.
         recentRuns = sessionRepository.recentMeasuredRuns(
             routeSuggestionSinceMillis(System.currentTimeMillis())
         )

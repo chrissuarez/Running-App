@@ -22,6 +22,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -77,7 +78,9 @@ fun RoutePickerCard(
     onReversedChange: (Boolean) -> Unit
 ) {
     var choosing by rememberSaveable { mutableStateOf(false) }
-    val offered = routesNearestFirst(routes, targetMeters)
+    // Remembered rather than sorted on every recomposition: the library re-emits for reasons that
+    // have nothing to do with today's distance, and the order only moves when one of these two does.
+    val offered = remember(routes, targetMeters) { routesNearestFirst(routes, targetMeters) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
@@ -98,11 +101,7 @@ fun RoutePickerCard(
                 // "you have no routes yet" is advice about a library that holds nothing to take it.
                 if (targetMeters != null) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = routeSuggestionHint(targetMeters),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    RouteSuggestionHintLine(targetMeters)
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
@@ -147,10 +146,8 @@ fun RoutePickerCard(
                     // no reason on screen reads as a list in no order at all (#422).
                     if (targetMeters != null) {
                         item {
-                            Text(
-                                text = routeSuggestionHint(targetMeters),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
+                            RouteSuggestionHintLine(
+                                targetMeters = targetMeters,
                                 modifier = Modifier.padding(bottom = 4.dp)
                             )
                         }
@@ -186,6 +183,23 @@ fun RoutePickerCard(
             }
         )
     }
+}
+
+/**
+ * How far today's session is likely to cover, said once and drawn in both places it belongs (#422).
+ *
+ * One composable rather than the same three lines on the card and in the dialog, because the two are
+ * deliberately the same line: a runner who reads `Today ≈ 7 km` on the card and something styled
+ * differently inside the dialog would take them for two different claims.
+ */
+@Composable
+private fun RouteSuggestionHintLine(targetMeters: Double, modifier: Modifier = Modifier) {
+    Text(
+        text = routeSuggestionHint(targetMeters),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = modifier
+    )
 }
 
 @Composable
