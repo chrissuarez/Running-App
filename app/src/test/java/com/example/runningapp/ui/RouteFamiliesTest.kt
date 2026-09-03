@@ -251,6 +251,31 @@ class RouteFamiliesTest {
         assertEquals(listOf("5k Out and back", "5k Loop"), labels)
     }
 
+    @Test
+    fun `two lengths matching in distance and name are told apart by their place in the row`() {
+        val labels = routeLengthChipLabels(
+            listOf(
+                header(1, name = "Park loop", distanceMeters = 5_000.2),
+                header(2, name = "Park loop", distanceMeters = 5_000.2),
+            )
+        )
+
+        assertEquals(listOf("5k Park loop (1)", "5k Park loop (2)"), labels)
+    }
+
+    @Test
+    fun `a name that already looks numbered still gets a place of its own`() {
+        val labels = routeLengthChipLabels(
+            listOf(
+                header(1, name = "Park loop", distanceMeters = 5_000.0),
+                header(2, name = "Park loop", distanceMeters = 5_000.0),
+                header(3, name = "Park loop (1)", distanceMeters = 5_000.0),
+            )
+        )
+
+        assertEquals(labels.distinct(), labels)
+    }
+
     // --- Siblings and where a page lands ---
 
     @Test
