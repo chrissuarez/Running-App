@@ -189,11 +189,15 @@ fun RouteDetailScreen(
                             .semantics { contentDescription = ROUTE_FAMILY_LENGTHS_LABEL },
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        siblings.forEach { sibling ->
+                        // Labelled as a row rather than one chip at a time: two lengths that round
+                        // to the same word would otherwise both read `5k`, and a chip's label is
+                        // the whole of what a screen reader is given to choose by (#421).
+                        val chipLabels = routeLengthChipLabels(siblings)
+                        siblings.forEachIndexed { index, sibling ->
                             FilterChip(
                                 selected = sibling.id == selectedId,
                                 onClick = { onSelectLength(sibling.id) },
-                                label = { Text(routeLengthChipLabel(sibling.distanceMeters)) },
+                                label = { Text(chipLabels[index]) },
                                 modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
                             )
                         }

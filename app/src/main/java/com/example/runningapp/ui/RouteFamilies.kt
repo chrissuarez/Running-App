@@ -191,10 +191,44 @@ fun routeFamilyLandingId(siblings: List<RouteHeader>, lastRuns: List<RouteLastRu
  * siblings. The honest distance is still printed in full under the map once a chip is tapped.
  *
  * A trailing nought is dropped so a 8.04 km course reads as `8k`, which is what the runner calls it.
+ *
+ * One length on its own. A *row* of chips must go through [routeLengthChipLabels], which is the
+ * only thing that can see whether this rounding leaves two chips saying the same word.
  */
-fun routeLengthChipLabel(distanceMeters: Double): String {
-    val km = String.format(Locale.UK, "%.1f", distanceMeters / 1000.0)
-    return km.removeSuffix(".0") + "k"
+fun routeLengthChipLabel(distanceMeters: Double, decimals: Int = 1): String {
+    val km = String.format(Locale.UK, "%.${decimals}f", distanceMeters / 1000.0)
+    return km.trimEnd('0').trimEnd('.') + "k"
+}
+
+/** How many decimals a chip may grow to before the name is what tells two lengths apart. */
+private val CHIP_DECIMALS = listOf(1, 2, 3)
+
+/**
+ * The whole row of chips, one label per sibling, in the order given — every one of them different
+ * (#421).
+ *
+ * A chip is the only thing the runner taps to choose a length, so two chips reading `5k` is a
+ * choice nobody can make: not by eye, and not by ear, because the label is also all a screen reader
+ * gets. Siblings 5.01 km and 5.04 km round to the same word at one decimal, and the rounding is
+ * what the short label is *for* — so the row is written at whatever precision separates it,
+ * one decimal where that is enough and more where it is not.
+ *
+ * The whole row moves together rather than only the pair that collided: `5k` sitting beside
+ * `5.01k` would read as a course that is exactly five, which is a claim the first chip's rounding
+ * never made.
+ *
+ * Two courses measuring the same to the metre are not separable by any number of decimals, so
+ * there the runner's own name for each is appended — the last thing left that differs, and if the
+ * names match too then the two rows are the same course said twice, which is theirs to sort out.
+ */
+fun routeLengthChipLabels(siblings: List<RouteHeader>): List<String> {
+    for (decimals in CHIP_DECIMALS) {
+        val labels = siblings.map { routeLengthChipLabel(it.distanceMeters, decimals) }
+        if (labels.distinct().size == labels.size) return labels
+    }
+    return siblings.map {
+        routeLengthChipLabel(it.distanceMeters, CHIP_DECIMALS.last()) + " " + it.name
+    }
 }
 
 /** Every family name the library already holds, in order, for the box that offers them (#421). */

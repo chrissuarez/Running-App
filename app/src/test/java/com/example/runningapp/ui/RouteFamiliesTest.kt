@@ -188,6 +188,69 @@ class RouteFamiliesTest {
         assertEquals("12.5k", routeLengthChipLabel(12_460.0))
     }
 
+    @Test
+    fun `a row of chips whose lengths round apart stays short`() {
+        val labels = routeLengthChipLabels(
+            listOf(
+                header(1, distanceMeters = 5_000.0),
+                header(2, distanceMeters = 8_040.0),
+                header(3, distanceMeters = 12_460.0),
+            )
+        )
+
+        assertEquals(listOf("5k", "8k", "12.5k"), labels)
+    }
+
+    @Test
+    fun `two lengths that round to the same word are told apart by the row`() {
+        val labels = routeLengthChipLabels(
+            listOf(
+                header(1, distanceMeters = 5_010.0),
+                header(2, distanceMeters = 5_040.0),
+            )
+        )
+
+        assertEquals(listOf("5.01k", "5.04k"), labels)
+        assertEquals(labels.distinct(), labels)
+    }
+
+    @Test
+    fun `the whole row grows together rather than only the pair that collided`() {
+        val labels = routeLengthChipLabels(
+            listOf(
+                header(1, distanceMeters = 5_010.0),
+                header(2, distanceMeters = 5_040.0),
+                header(3, distanceMeters = 12_000.0),
+            )
+        )
+
+        assertEquals(listOf("5.01k", "5.04k", "12k"), labels)
+    }
+
+    @Test
+    fun `three decimals separate lengths a metre apart`() {
+        val labels = routeLengthChipLabels(
+            listOf(
+                header(1, distanceMeters = 5_000.0),
+                header(2, distanceMeters = 5_001.0),
+            )
+        )
+
+        assertEquals(listOf("5k", "5.001k"), labels)
+    }
+
+    @Test
+    fun `two lengths measuring the same fall back to their own names`() {
+        val labels = routeLengthChipLabels(
+            listOf(
+                header(1, name = "Out and back", distanceMeters = 5_000.0),
+                header(2, name = "Loop", distanceMeters = 5_000.0),
+            )
+        )
+
+        assertEquals(listOf("5k Out and back", "5k Loop"), labels)
+    }
+
     // --- Siblings and where a page lands ---
 
     @Test
