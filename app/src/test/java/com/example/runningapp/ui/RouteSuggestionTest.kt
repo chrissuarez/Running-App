@@ -276,6 +276,84 @@ class RouteSuggestionTest {
         assertEquals(2L, offered.first().id)
     }
 
+    @Test
+    fun `on a 5K test a course just too short is offered after one long enough`() {
+        // The 4.9 km course is nearer 5 km than the 5.2 km one, and the Test cannot be run on it.
+        val routes = listOf(
+            header(id = 1, distanceMeters = 4_900.0),
+            header(id = 2, distanceMeters = 5_200.0),
+        )
+
+        val offered = routesNearestFirst(routes, targetMeters = 5_000.0, targetIsFixed = true)
+
+        assertEquals(listOf(2L, 1L), offered.map { it.id })
+    }
+
+    @Test
+    fun `a course measured a metre under the test distance is still too short`() {
+        // No tolerance: 4999 m against a 5 km Test ranks behind every course that reaches it.
+        val routes = listOf(
+            header(id = 1, distanceMeters = 4_999.0),
+            header(id = 2, distanceMeters = 6_500.0),
+        )
+
+        val offered = routesNearestFirst(routes, targetMeters = 5_000.0, targetIsFixed = true)
+
+        assertEquals(listOf(2L, 1L), offered.map { it.id })
+    }
+
+    @Test
+    fun `a course measured at exactly the test distance is long enough`() {
+        val routes = listOf(
+            header(id = 1, distanceMeters = 4_990.0),
+            header(id = 2, distanceMeters = 5_000.0),
+        )
+
+        val offered = routesNearestFirst(routes, targetMeters = 5_000.0, targetIsFixed = true)
+
+        assertEquals(listOf(2L, 1L), offered.map { it.id })
+    }
+
+    @Test
+    fun `an estimated distance still offers the nearest course either side`() {
+        val routes = listOf(
+            header(id = 1, distanceMeters = 5_200.0),
+            header(id = 2, distanceMeters = 4_900.0),
+        )
+
+        val offered = routesNearestFirst(routes, targetMeters = 5_000.0)
+
+        assertEquals(listOf(2L, 1L), offered.map { it.id })
+    }
+
+    @Test
+    fun `with no course long enough for the test the least short one comes first`() {
+        val routes = listOf(
+            header(id = 1, distanceMeters = 3_000.0),
+            header(id = 2, distanceMeters = 4_800.0),
+            header(id = 3, distanceMeters = 4_000.0),
+        )
+
+        val offered = routesNearestFirst(routes, targetMeters = 5_000.0, targetIsFixed = true)
+
+        assertEquals(listOf(2L, 3L, 1L), offered.map { it.id })
+    }
+
+    @Test
+    fun `on a test two courses the same distance from today keep the order they came in`() {
+        // Both long enough and both 500 m over: nothing to choose between them, so nothing moves.
+        val routes = listOf(
+            header(id = 1, distanceMeters = 5_500.0),
+            header(id = 2, distanceMeters = 5_500.0),
+            header(id = 3, distanceMeters = 4_500.0),
+            header(id = 4, distanceMeters = 4_500.0),
+        )
+
+        val offered = routesNearestFirst(routes, targetMeters = 5_000.0, targetIsFixed = true)
+
+        assertEquals(listOf(1L, 2L, 3L, 4L), offered.map { it.id })
+    }
+
     // ---- the runs a kind is recovered from ----
 
     @Test

@@ -202,16 +202,53 @@ fun routeSuggestionHint(targetMeters: Double, targetIsFixed: Boolean = false): S
  * order of the library screen either way. Only the picker ever re-sorts, and only when it has
  * something to sort towards.
  *
+ * **An estimate is a middle; a stated distance is a floor.** [targetIsFixed] is the whole
+ * difference, and it is the same flag [routeSuggestionHint] prints its `≈` from. Where the number
+ * is estimated, "nearest" means nearest in either direction: the target is a median multiplied by a
+ * planned duration, so a course a hundred metres short and a course a hundred metres long are both
+ * about right and the symmetry is the honest answer. Where the plan *stated* the distance — a Test,
+ * whose Stage graduates on a time at a set distance — that symmetry offers a course the session
+ * cannot be finished on: on a 5 km Test a 4.9 km course is not "as good as" a 5.2 km one, it is a
+ * course on which the Test does not happen. So a stated distance ranks every course that reaches it
+ * ahead of every course that does not, and only then nearest-first.
+ *
+ * **The short ones are still ordered, not buried.** Within each of the two groups the order is the
+ * same nearest-first it always was, so a runner whose library holds nothing long enough is offered
+ * the least-short course first. That is the best of a bad set, and shuffling it would hide the one
+ * useful fact left — how far short they are about to be.
+ *
+ * **"Reaches it" is `>=` with no tolerance.** The alternative considered was to forgive a course
+ * measured a little under — 4999 m against a 5000 m Test — on the grounds that these distances come
+ * out of imported GPX files and are not exact. It was declined, because a tolerance honest about
+ * GPX error would have to be tens of metres wide, and a tolerance that wide is itself a decision to
+ * offer a course that may genuinely be short of the Test: it would re-introduce the bug at a size
+ * nobody can see. Being strict costs the runner one row of ordering — a 4999 m course drops behind
+ * the long-enough ones and sits at the top of the short ones, where nearest-first puts it — and
+ * being lax costs them a Test they cannot complete. Neither number is exact either way, so the
+ * cheaper mistake is the one that only moves a row.
+ *
  * A family needs no case of its own here. The picker lists every length as its own row, so
  * siblings are ranked one by one against the target and the closest of them is simply the one that
  * comes first — which is both "rank on the closest sibling" and "open on it", with no folding for
  * the runner to reach through on a start line.
  *
- * Ties keep the order they arrived in: `sortedBy` is stable, so two courses the same distance from
- * today's target stay newest-first between themselves rather than swapping between two draws of the
- * same list.
+ * Ties keep the order they arrived in, fixed target or not: `sortedWith` is stable (it is
+ * `java.util.List.sort`, a merge sort), and the comparator below only ever compares the two derived
+ * numbers — the reach group and the gap — so two courses equal on both are left in the order they
+ * arrived in rather than swapping between two draws of the same list.
  */
-fun routesNearestFirst(routes: List<RouteHeader>, targetMeters: Double?): List<RouteHeader> {
+fun routesNearestFirst(
+    routes: List<RouteHeader>,
+    targetMeters: Double?,
+    targetIsFixed: Boolean = false,
+): List<RouteHeader> {
     if (targetMeters == null) return routes
-    return routes.sortedBy { abs(it.distanceMeters - targetMeters) }
+    if (!targetIsFixed) return routes.sortedBy { abs(it.distanceMeters - targetMeters) }
+    return routes.sortedWith(
+        // 0 for a course that reaches the stated distance, 1 for one that does not: the whole of
+        // "long enough first", written as the first key so nearest-first only ever decides between
+        // courses on the same side of it.
+        compareBy<RouteHeader> { if (it.distanceMeters >= targetMeters) 0 else 1 }
+            .thenBy { abs(it.distanceMeters - targetMeters) }
+    )
 }

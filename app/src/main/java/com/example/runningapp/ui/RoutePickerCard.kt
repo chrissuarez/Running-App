@@ -69,9 +69,12 @@ val RunRouteSaver: Saver<RunRoute?, Any> = listSaver(
  * today that the median does not.
  *
  * [targetIsFixed] says the plan stated that distance rather than the phone estimating it, which is
- * the Test days. It changes the hint's wording and nothing else — see [routeSuggestionHint] — and it
- * is carried as its own flag rather than worked out from the number here, because "is this a
- * distance the plan holds" is a question about the plan and this card cannot see one.
+ * the Test days. It changes both the things [targetMeters] does: the hint's wording
+ * ([routeSuggestionHint]) and the order ([routesNearestFirst]), because a stated distance is a floor
+ * the Run has to reach rather than a middle to be nearest to, so a course short of it is offered
+ * after every course that is long enough. It is carried as its own flag rather than worked out from
+ * the number here, because "is this a distance the plan holds" is a question about the plan and this
+ * card cannot see one.
  */
 @Composable
 fun RoutePickerCard(
@@ -85,8 +88,12 @@ fun RoutePickerCard(
 ) {
     var choosing by rememberSaveable { mutableStateOf(false) }
     // Remembered rather than sorted on every recomposition: the library re-emits for reasons that
-    // have nothing to do with today's distance, and the order only moves when one of these two does.
-    val offered = remember(routes, targetMeters) { routesNearestFirst(routes, targetMeters) }
+    // have nothing to do with today's distance, and the order only moves when one of these three
+    // does. targetIsFixed is a key because it changes the order and not only the words: leave it out
+    // and a target that becomes stated keeps yesterday's symmetric order.
+    val offered = remember(routes, targetMeters, targetIsFixed) {
+        routesNearestFirst(routes, targetMeters, targetIsFixed)
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
