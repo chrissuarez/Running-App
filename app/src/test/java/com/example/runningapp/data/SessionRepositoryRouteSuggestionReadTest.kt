@@ -13,6 +13,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.doAnswer
+import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.stub
 import org.mockito.kotlin.whenever
@@ -64,6 +65,7 @@ class SessionRepositoryRouteSuggestionReadTest {
     )
 
     private val pace = RunPaceRow(
+        sessionId = 67L,
         ranUnderStageId = null,
         ranUnderWorkoutId = null,
         durationSeconds = 1_800,
@@ -208,7 +210,11 @@ class SessionRepositoryRouteSuggestionReadTest {
     @Test
     fun `a sheet the runner never answers costs the newest Run, not the suggestion`() = runTest {
         // The other half of the same bound: a runner who walks away from the finish sheet must not
-        // hang the picker for ever. The read goes ahead on expiry with the history it can see.
+        // hang the picker for ever. The read goes ahead on expiry — and *without* the Run it gave up
+        // on, because that Run's record is exactly the one the rule says must not be counted. Its
+        // row is finalized and passes the query, but its `isWalk` is still the default no-one has
+        // answered yet, so counting it here would be the wait's own expiry delivering the miscount
+        // the wait exists to prevent.
         whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
         historyFollowsTheRow()
         repository.finishSheetOpened(67L)
@@ -216,7 +222,30 @@ class SessionRepositoryRouteSuggestionReadTest {
 
         val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since)
 
-        assertEquals(listOf(pace), runs)
+        assertEquals(
+            "the unanswered Run was counted, so a Walk the runner had not marked yet would have " +
+                "gone into the history as a Run",
+            emptyList<RunPaceRow>(),
+            runs
+        )
         assertTrue("the read gave up without waiting at all", testScheduler.currentTime > 0L)
+    }
+
+    @Test
+    fun `giving up on one Run leaves the rest of the history alone`() = runTest {
+        // The expiry drops the Run whose record is incomplete and nothing else: every other Run in
+        // the window was answered long ago, and losing them would cost the suggestion the history it
+        // is drawn from rather than one row of it.
+        val answeredLastWeek = pace.copy(sessionId = 12L, durationSeconds = 2_400, distanceKm = 6.0)
+        whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
+        sessionDao.stub {
+            onBlocking { recentMeasuredRuns(any()) } doReturn listOf(pace, answeredLastWeek)
+        }
+        repository.finishSheetOpened(67L)
+        row.value = finishedRun()
+
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since)
+
+        assertEquals(listOf(answeredLastWeek), runs)
     }
 }

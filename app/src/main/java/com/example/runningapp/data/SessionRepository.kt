@@ -1202,13 +1202,30 @@ class SessionRepository(
      * gone is never coming either, so waiting on the gate for it would wait out the whole timeout —
      * and this app has been bitten before by waiting on a subject that had already gone.
      *
-     * **The wait is bounded, and the read goes ahead when it expires.** A finalize that never lands
-     * — the process reclaimed mid-write, a write that threw — or a sheet the runner walks away from
-     * without answering must not cost them the suggestion altogether; the lesser loss is a
-     * suggestion drawn from a history missing its newest Run, which is exactly what the screen
-     * showed before this existed. That is the same bargain [awaitFinalized] makes for the feel
-     * sheet, and the timeout is generous for the same reason: only a record that has genuinely
-     * stalled should ever reach it.
+     * **The wait is bounded, and the read goes ahead when it expires — without the Run it gave up
+     * on.** A finalize that never lands — the process reclaimed mid-write, a write that threw — or a
+     * sheet the runner walks away from without answering must not cost them the suggestion
+     * altogether; the lesser loss is a suggestion drawn from a history missing its newest Run, which
+     * is exactly what the screen showed before this existed. That is the same bargain
+     * [awaitFinalized] makes for the feel sheet, and the timeout is generous for the same reason:
+     * only a record that has genuinely stalled should ever reach it.
+     *
+     * **Dropping the row is what makes that the bargain it claims to be.** Giving up on the wait and
+     * then reading the row anyway would hand the picker the one Run the rule above says must not be
+     * counted, and hand it *silently*: an unanswered sheet leaves the row's `isWalk` at its default
+     * 0, so a Walk the runner had not yet marked would arrive in the history as a Run — the very
+     * miscount the wait exists to prevent, delivered by the wait's own expiry. Ten seconds is a
+     * runner glancing away, not a stalled record. So the expiry drops [justFinishedRunId] from what
+     * the query returned, and the rule reads the same either way: a Run whose record is not complete
+     * does not count, whether the read waited for it or gave up on it. Which is also why the row
+     * carries an id at all — see [RunPaceRow].
+     *
+     * The other way out would have been to **keep waiting while the finish sheet is open**, on the
+     * grounds that a sheet on screen is a word still coming. That is declined: it is the unbounded
+     * wait wearing a condition. A sheet is open until it is answered, and nothing in the app
+     * guarantees it ever is — the runner pockets the phone, the process is reclaimed with the sheet
+     * up — so the picker would hang on exactly the cases the bound was put there for, and hang
+     * behind a screen the runner is no longer looking at.
      */
     suspend fun recentMeasuredRunsOnceTheRecordIsComplete(
         justFinishedRunId: Long?,
@@ -1235,6 +1252,10 @@ class SessionRepository(
                     "SessionRepository",
                     "Run $justFinishedRunId's record was not complete in time; suggesting a route without it"
                 )
+                // Only here: a wait that ended properly ended because the record *is* complete, so
+                // there is nothing to leave out and the row belongs in the history like any other.
+                return sessionDao.recentMeasuredRuns(sinceMillis)
+                    .filterNot { it.sessionId == justFinishedRunId }
             }
         }
         return sessionDao.recentMeasuredRuns(sinceMillis)
