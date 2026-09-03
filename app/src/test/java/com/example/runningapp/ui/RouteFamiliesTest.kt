@@ -182,6 +182,16 @@ class RouteFamiliesTest {
     }
 
     @Test
+    fun `a family whose lengths print the same prints one distance`() {
+        assertEquals("2 lengths · 5.00 km", routeFamilySubtitle(2, 5_000.1, 5_000.2))
+    }
+
+    @Test
+    fun `a family whose lengths print apart prints a range`() {
+        assertEquals("2 lengths · 5.00–12.00 km", routeFamilySubtitle(2, 5_000.0, 12_000.0))
+    }
+
+    @Test
     fun `a chip drops a trailing nought`() {
         assertEquals("8k", routeLengthChipLabel(8_040.0))
         assertEquals("5k", routeLengthChipLabel(5_000.0))

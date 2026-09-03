@@ -129,10 +129,15 @@ fun routeFamilySubtitle(lengthCount: Int, shortestMeters: Double, longestMeters:
     // Both ends written by [routeDistanceLabel] rather than formatted again here, so a change to
     // how a course's length is printed moves the whole range rather than one end of it. The unit is
     // dropped from the first, because "5.00 km–12.00 km" says the same thing twice.
-    val range = if (shortestMeters == longestMeters) {
-        routeDistanceLabel(shortestMeters)
+    val shortest = routeDistanceLabel(shortestMeters)
+    val longest = routeDistanceLabel(longestMeters)
+    // The two *labels* compared, not the two measurements: 5,000.1 m and 5,000.2 m are different
+    // numbers that this line prints identically, and "5.00–5.00 km" is a range the runner would
+    // read as a fault in the app. A range is only worth printing where its ends read apart.
+    val range = if (shortest == longest) {
+        shortest
     } else {
-        routeDistanceLabel(shortestMeters).removeSuffix(" km") + "–" + routeDistanceLabel(longestMeters)
+        shortest.removeSuffix(" km") + "–" + longest
     }
     return "$lengths · $range"
 }
