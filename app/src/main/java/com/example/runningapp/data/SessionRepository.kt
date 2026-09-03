@@ -68,6 +68,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -101,6 +102,14 @@ import kotlin.math.roundToInt
  * cut fine.
  */
 private const val MAX_SESSION_IDS_PER_QUERY = 500
+
+/**
+ * How long the route picker's read will wait for a just-finished Run's row to be settled (#422).
+ *
+ * A ceiling on a failure, not a budget for the happy path: a finalize that is going to land lands in
+ * well under a second, and this is only ever reached by one that is not going to land at all.
+ */
+private const val SETTLE_WAIT_FOR_PICKER_MILLIS = 10_000L
 
 /**
  * How many banked seconds a heart rate has to have been held at to count as one this runner has
@@ -1136,6 +1145,64 @@ class SessionRepository(
      */
     suspend fun recentMeasuredRuns(sinceMillis: Long): List<RunPaceRow> =
         sessionDao.recentMeasuredRuns(sinceMillis)
+
+    /**
+     * The same recent Runs, but read only once the Run that has just ended is on the page (#422).
+     *
+     * The picker's read is still a **one-shot** read and not a watched Flow, for the reason set out
+     * on [recentMeasuredRuns]: the suggestion is advice on the start line, and a list that re-sorted
+     * under the runner's finger would move the course out from under them. What this adds is another
+     * *moment* at which that one-shot read is taken — the moment a Run finishes with the record
+     * screen still in front of the runner, which until now was no moment at all. A Run started and
+     * finished without the app ever leaving that screen changed neither the repository nor the
+     * screen's resumed-ness, so the suggestion went on being worked out from a history one Run
+     * short until the runner happened to background the app.
+     *
+     * Keying that read on "the session went idle" alone is not enough, and this is the whole reason
+     * this function exists rather than a second key on the composable. `HrForegroundService`
+     * publishes STOPPED *before* it performs a stop's effects, so at the instant the session reads
+     * idle the just-finished Run's row still has `endTime = 0` — and [SessionDao.recentMeasuredRuns]
+     * asks for `endTime > 0`, so a read taken then misses precisely the Run it was re-taken for, and
+     * nothing would fire again to fix it. So the settling is *waited* for, not raced.
+     *
+     * [justFinishedRunId] is the last Run this screen saw live, or null when the screen has not
+     * watched one end — a fresh launch, a rotation after the fact. Null waits for nothing.
+     *
+     * **An absent row ends the wait.** The predicate accepts null as well as a finished row,
+     * because the id may name a Run that is no longer there: deleted from history while the screen
+     * sat open, or discarded for recording nothing. A predicate that only accepted a finished row
+     * would wait out the whole timeout on a Run that is never coming, and this app has been bitten
+     * before by waiting on a subject that had already gone.
+     *
+     * **The wait is bounded, and the read goes ahead when it expires.** A finalize that never lands
+     * — the process reclaimed mid-write, a write that threw — must not cost the runner the
+     * suggestion altogether; the lesser loss is a suggestion drawn from a history missing its newest
+     * Run, which is exactly what the screen showed before this existed. That is the same bargain
+     * [awaitFinalized] makes for the feel sheet, and the timeout is generous for the same reason:
+     * only a finalize that has genuinely failed should ever reach it.
+     */
+    suspend fun recentMeasuredRunsOnceSettled(
+        justFinishedRunId: Long?,
+        sinceMillis: Long,
+    ): List<RunPaceRow> {
+        if (justFinishedRunId != null) {
+            // The wait's own answer, not the row's: `first` legitimately ends on a null row (the
+            // Run has gone), and a null returned from the block would be indistinguishable from the
+            // timeout's null.
+            val waitEnded = withTimeoutOrNull(SETTLE_WAIT_FOR_PICKER_MILLIS) {
+                sessionDao.getSessionByIdFlow(justFinishedRunId)
+                    .first { it == null || it.isFinished() }
+                true
+            }
+            if (waitEnded == null) {
+                Log.w(
+                    "SessionRepository",
+                    "Run $justFinishedRunId had not settled in time; suggesting a route without it"
+                )
+            }
+        }
+        return sessionDao.recentMeasuredRuns(sinceMillis)
+    }
 
     /**
      * Whether the runner's Test is due, for the Today card to say so (#292).
