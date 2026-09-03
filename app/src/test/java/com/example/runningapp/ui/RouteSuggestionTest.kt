@@ -153,6 +153,58 @@ class RouteSuggestionTest {
         assertTrue(long > easy)
     }
 
+    // ---- the day the plan states the distance ----
+
+    @Test
+    fun `a 5K test suggests five kilometres, not what today's pace would cover`() {
+        // The bar is 25 minutes and this runner's Quality Runs are 6:00 /km, so multiplying would
+        // advertise about 4.2 km — a course the prescribed Test cannot be finished on.
+        val peakStage = TrainingPlanProvider.stageById("sub_25_peak")!!
+        val test = peakStage.workouts.first { it.isTest }
+        val runs = List(3) {
+            run(workoutId = "w3_s1", minutes = 30.0, distanceKm = 5.0, stageId = "sub_25_peak")
+        }
+        val fixed = peakStage.bestEffortRequirement!!.record.distanceMeters!!
+
+        val target = suggestedRouteDistanceMeters(test, runs, fixed)!!
+
+        assertEquals(5_000.0, target, 0.001)
+        assertTrue(target > suggestedRouteDistanceMeters(test, runs)!!)
+    }
+
+    @Test
+    fun `a 5K test suggests five kilometres on a phone with no history at all`() {
+        val peakStage = TrainingPlanProvider.stageById("sub_25_peak")!!
+        val test = peakStage.workouts.first { it.isTest }
+        val fixed = peakStage.bestEffortRequirement!!.record.distanceMeters!!
+
+        val target = suggestedRouteDistanceMeters(test, recentRuns = emptyList(), fixedDistanceMeters = fixed)
+
+        assertEquals(5_000.0, target!!, 0.001)
+    }
+
+    @Test
+    fun `an ordinary day is still worked out from the runner's own pace`() {
+        // The same call, with no stated distance: nothing about the Test day changes this one.
+        val runs = List(3) { run(easyRun, minutes = 30.0, distanceKm = 5.0) }
+        val easy = workout(easyRun)
+
+        val target = suggestedRouteDistanceMeters(easy, runs, fixedDistanceMeters = null)!!
+
+        assertEquals((easy.plannedSeconds / 60.0) / 6.0 * 1000.0, target, 0.001)
+    }
+
+    @Test
+    fun `a stated distance is written without the about sign`() {
+        assertEquals("Today 5 km", routeSuggestionHint(5_000.0, targetIsFixed = true))
+    }
+
+    @Test
+    fun `a stated distance the line has to round keeps the about sign`() {
+        // A mile is 1609.344 m and prints as 1.6 km, which is not the distance whatever states it.
+        assertEquals("Today ≈ 1.6 km", routeSuggestionHint(1_609.344, targetIsFixed = true))
+    }
+
     @Test
     fun `the window reaches ninety days back`() {
         val now = 1_000_000_000_000L

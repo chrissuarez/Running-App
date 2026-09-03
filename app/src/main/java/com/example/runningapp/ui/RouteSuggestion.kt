@@ -17,12 +17,18 @@ import kotlin.math.abs
  * number the runner is shown and the order they are shown their courses in are the feature, so both
  * are pinned by unit tests rather than by opening the record screen on a phone.
  *
- * **The plan never states a distance.** A Workout prescribes seconds and a heart-rate zone
- * ([WorkoutTemplate]) and nothing anywhere in it says metres. So the target has to be derived, and
- * it is derived by plain arithmetic on this phone: today's planned seconds × a pace off the
- * runner's own recent Runs. Nothing here reaches the network, asks the AI coach or reads a consent
- * flag, and it must stay that way — "which of these is nearest seven kilometres" is arithmetic, and
- * the seven is already an estimate, so a second estimate laid on top of it can only make it worse.
+ * **The plan states a distance for one session only, and derives it for the rest.** A Workout
+ * prescribes seconds and a heart-rate zone ([WorkoutTemplate]) and nothing in it says metres, so for
+ * an ordinary session the target has to be derived, by plain arithmetic on this phone: today's
+ * planned seconds × a pace off the runner's own recent Runs. The exception is a Test. A Test exists
+ * to be measured against the Stage's [com.example.runningapp.BestEffortRequirement], which is a time
+ * at a *set distance*, and its `runDurationSeconds` is the clock the runner is trying to beat rather
+ * than a duration to multiply — so multiplying it by a pace answers a question nobody asked and
+ * answers it short. There the distance is a fact the plan already holds, and it is passed in.
+ *
+ * Nothing here reaches the network, asks the AI coach or reads a consent flag, and it must stay that
+ * way — "which of these is nearest seven kilometres" is arithmetic, and where the seven is an
+ * estimate a second estimate laid on top of it can only make it worse.
  *
  * **The pace is taken from Runs of the same kind, never from recent Runs at large.** A Long Run and
  * a set of strides cover ground at paces that are not the same number and were never meant to be;
@@ -31,11 +37,12 @@ import kotlin.math.abs
  * both ends: a Long Run's planned hour includes its walk breaks, and so did the hours the Long Runs
  * behind it were measured over.
  *
- * **Too little history suggests nothing at all.** See [ROUTE_SUGGESTION_MIN_RUNS].
+ * **Too little history estimates nothing at all.** See [ROUTE_SUGGESTION_MIN_RUNS] — and note that
+ * it gates the estimate, not a Test's stated distance.
  */
 
 /**
- * How many Runs of today's kind must be in the window before a distance is suggested.
+ * How many Runs of today's kind must be in the window before a distance is *estimated*.
  *
  * Three, and the alternative considered was one. A single Run is not a pace, it is a day — the day
  * it rained, or the day the runner stopped to tie a lace — and a picker that reordered itself
@@ -45,6 +52,12 @@ import kotlin.math.abs
  *
  * Below it the picker shows no hint and keeps the library's own order, which is what it did before
  * this shipped: no suggestion is a state the runner already understands, and a guess is not.
+ *
+ * It is a bar on the *estimate* and on nothing else. A Test's distance is stated by the plan, not
+ * worked out from Runs, so a runner with no history at all is still told their 5K Test is 5 km —
+ * withholding it until three Quality Runs are on the phone would hide a number the plan has been
+ * printing on the stage card all along, and hide it from exactly the runner most likely to set off
+ * on a course too short to finish the Test on.
  */
 const val ROUTE_SUGGESTION_MIN_RUNS = 3
 
@@ -84,16 +97,33 @@ fun routeSuggestionSinceMillis(nowMillis: Long): Long =
  * every kind of Run together, because the query cannot tell kinds apart. The filtering to today's
  * kind happens here, where the plans can be asked.
  *
- * Null is the honest answer in four cases, and every one of them leaves the picker exactly as it
- * was: no plan today, fewer than [ROUTE_SUGGESTION_MIN_RUNS] Runs of today's kind in the window, a
- * Workout that plans no time at all, and a median pace of nought (a set of Runs that measured a
- * clock but no ground, which the query already refuses but which arithmetic must not depend on).
+ * [fixedDistanceMeters] is the distance the plan itself states for today, where it states one — a
+ * Test, whose Stage graduates on a time at a set distance. Given, it *is* the answer: it is returned
+ * whole, ahead of the pace arithmetic and ahead of the history bar. Passed in as a number rather
+ * than looked up from [workout], because a [WorkoutTemplate] does not know which Stage is holding
+ * it, and reaching for the plan from in here would trade a function whose answer is its arguments
+ * for one that has to be set up before it can be asked. The caller knows both, and says so.
+ *
+ * The alternative considered was to keep multiplying and let a Test take the same estimate as
+ * everything else. It is wrong in the direction that matters: a Test's `runDurationSeconds` is the
+ * time to beat, so unless the runner's median pace happens to be exactly the pace the bar is set at,
+ * the estimate comes out *short* and the picker offers a course the prescribed Test cannot be
+ * completed on — Stage 3's 25-minute bar at a 6:00/km history advertises about 4.2 km.
+ *
+ * Null is the honest answer in four cases, all of them cases with no [fixedDistanceMeters], and
+ * every one of them leaves the picker exactly as it was: no plan today, fewer than
+ * [ROUTE_SUGGESTION_MIN_RUNS] Runs of today's kind in the window, a Workout that plans no time at
+ * all, and a median pace of nought (a set of Runs that measured a clock but no ground, which the
+ * query already refuses but which arithmetic must not depend on).
  */
 fun suggestedRouteDistanceMeters(
     workout: WorkoutTemplate?,
     recentRuns: List<RunPaceRow>,
+    fixedDistanceMeters: Double? = null,
 ): Double? {
-    val plannedSeconds = workout?.plannedSeconds ?: return null
+    if (workout == null) return null
+    if (fixedDistanceMeters != null && fixedDistanceMeters > 0.0) return fixedDistanceMeters
+    val plannedSeconds = workout.plannedSeconds
     if (plannedSeconds <= 0L) return null
     val pace = recentMedianPaceMinPerKm(recentRuns, workout.runType) ?: return null
     if (pace <= 0.0) return null
@@ -135,20 +165,32 @@ fun recentMedianPaceMinPerKm(recentRuns: List<RunPaceRow>, runType: RunType): Do
 }
 
 /**
- * The line above the picker: `Today ≈ 7 km`.
+ * The line above the picker: `Today ≈ 7 km`, or `Today 5 km` where the plan stated the distance.
  *
  * One decimal place, where every other distance in the app is written to two ([routeDistanceLabel]).
- * That is deliberate and it is the whole difference between a measurement and an estimate: this
- * number is a planned duration multiplied by a median, and printing it as `7.24 km` would claim a
- * precision that neither of its two inputs has. A trailing nought goes, so a round answer reads as
- * `Today ≈ 7 km` rather than `Today ≈ 7.0 km`.
+ * That is deliberate and it is the whole difference between a measurement and an estimate: an
+ * estimated number is a planned duration multiplied by a median, and printing it as `7.24 km` would
+ * claim a precision that neither of its two inputs has. A trailing nought goes, so a round answer
+ * reads as `Today ≈ 7 km` rather than `Today ≈ 7.0 km`. A stated distance is written to the same one
+ * place, because two hints in the same slot written to different precisions would read as two
+ * different kinds of claim over and above the one difference actually being drawn.
  *
- * `≈` and not `=`, for the same reason, and it is the first character the runner's eye lands on
- * after the word "Today".
+ * `≈` and not `=` for an estimate, and it is the first character the runner's eye lands on after the
+ * word "Today". [targetIsFixed] drops it: a 5K Test is 5 km because the plan says so, and hedging a
+ * number the plan states would be the app disclaiming its own instruction. The sign is dropped only
+ * when the line can print the stated distance *exactly* — a mile is 1609.344 m and reads as 1.6 km,
+ * which is a rounded number whatever its source, so it keeps the `≈` it has earned. The alternative
+ * considered was to print a stated distance to two places so every fact could be exact; it was
+ * declined because it makes the runner read `5.00 km` on a start line to buy a distinction that
+ * matters only to the one record distance the plan does not use.
  */
-fun routeSuggestionHint(targetMeters: Double): String {
-    val km = String.format(Locale.UK, "%.1f", targetMeters / 1000.0)
-    return "Today ≈ ${km.removeSuffix(".0")} km"
+fun routeSuggestionHint(targetMeters: Double, targetIsFixed: Boolean = false): String {
+    val km = String.format(Locale.UK, "%.1f", targetMeters / 1000.0).removeSuffix(".0")
+    // Against what was printed, not against a rounding rule: the question is whether the runner is
+    // being shown this distance or a near one. Half a metre of slack, because the comparison is
+    // between a decimal read back out of a string and a Double, and a course is not measured to it.
+    val printsItExactly = abs(km.toDouble() * 1000.0 - targetMeters) < 0.5
+    return if (targetIsFixed && printsItExactly) "Today $km km" else "Today ≈ $km km"
 }
 
 /**

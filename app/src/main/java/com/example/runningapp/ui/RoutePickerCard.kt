@@ -65,8 +65,13 @@ val RunRouteSaver: Saver<RunRoute?, Any> = listSaver(
  * [targetMeters] is how far today's session is likely to cover, or null where too little history
  * has been recorded to say (#422) — see [suggestedRouteDistanceMeters]. It does two things and
  * nothing else: it prints a hint, and it orders the list nearest-first. It never picks: the runner
- * still taps, because the target is derived from a median and the runner knows things about today
- * that the median does not.
+ * still taps, because the target is usually derived from a median and the runner knows things about
+ * today that the median does not.
+ *
+ * [targetIsFixed] says the plan stated that distance rather than the phone estimating it, which is
+ * the Test days. It changes the hint's wording and nothing else — see [routeSuggestionHint] — and it
+ * is carried as its own flag rather than worked out from the number here, because "is this a
+ * distance the plan holds" is a question about the plan and this card cannot see one.
  */
 @Composable
 fun RoutePickerCard(
@@ -74,6 +79,7 @@ fun RoutePickerCard(
     picked: RouteHeader?,
     reversed: Boolean,
     targetMeters: Double?,
+    targetIsFixed: Boolean,
     onPick: (Long?) -> Unit,
     onReversedChange: (Boolean) -> Unit
 ) {
@@ -101,7 +107,7 @@ fun RoutePickerCard(
                 // "you have no routes yet" is advice about a library that holds nothing to take it.
                 if (targetMeters != null) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    RouteSuggestionHintLine(targetMeters)
+                    RouteSuggestionHintLine(targetMeters, targetIsFixed)
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
@@ -148,6 +154,7 @@ fun RoutePickerCard(
                         item {
                             RouteSuggestionHintLine(
                                 targetMeters = targetMeters,
+                                targetIsFixed = targetIsFixed,
                                 modifier = Modifier.padding(bottom = 4.dp)
                             )
                         }
@@ -193,9 +200,13 @@ fun RoutePickerCard(
  * differently inside the dialog would take them for two different claims.
  */
 @Composable
-private fun RouteSuggestionHintLine(targetMeters: Double, modifier: Modifier = Modifier) {
+private fun RouteSuggestionHintLine(
+    targetMeters: Double,
+    targetIsFixed: Boolean,
+    modifier: Modifier = Modifier
+) {
     Text(
-        text = routeSuggestionHint(targetMeters),
+        text = routeSuggestionHint(targetMeters, targetIsFixed),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.primary,
         modifier = modifier
