@@ -22,12 +22,17 @@ import org.mockito.kotlin.whenever
  *
  * [com.example.runningapp.ui.RouteSuggestionTest] covers what the recent Runs are turned *into*;
  * this covers the one thing the record screen cannot decide for itself — **when** those Runs may be
- * read. A Run stopped with the record screen still in front of the runner publishes STOPPED before
- * `finalizeRun` writes the row's totals, and the query the suggestion uses asks for a finished Run.
- * So the moment the session reads idle is precisely the moment the just-finished Run is still
- * invisible to it, and a read taken then would miss the Run it was re-taken for with nothing left to
- * fire again. The rule lives in the repository rather than in the composable so it can be pinned
- * here, without a phone.
+ * read: only once that Run's **record is complete** — its row finalized, and the runner's word about
+ * it in.
+ *
+ * Both halves are the same rule and each has its own way of being missed. A Run stopped with the
+ * record screen still in front of the runner publishes STOPPED before `finalizeRun` writes the row's
+ * totals, and the query the suggestion uses asks for a finished Run — so the moment the session
+ * reads idle is precisely the moment the just-finished Run is still invisible to it. And the finish
+ * sheet's Walk mark is written *after* that finalize, so a read that ended at the row would count a
+ * Walk as a Run, with nothing left to fire again either way. The rule lives in the repository rather
+ * than in the composable so it can be pinned here, without a phone — and because the finish sheet
+ * is above that composable and cannot be seen from inside it.
  */
 class SessionRepositoryRouteSuggestionReadTest {
 
@@ -65,14 +70,22 @@ class SessionRepositoryRouteSuggestionReadTest {
         distanceKm = 5.0,
     )
 
+    private fun walkedRun() = finishedRun().copy(isWalk = true)
+
     /**
-     * History as the query would really answer it: the Run counts only once its row is finished,
-     * which is what makes the wait the difference between seeing it and not.
+     * History as the query would really answer it: the Run counts only once its row is finished and
+     * only while that row does not say Walk — the two columns
+     * [SessionDao.recentMeasuredRuns] asks about, which are the two halves of the record. That is
+     * what makes the wait the difference between seeing this Run, seeing it wrongly, and not seeing
+     * it at all.
      */
     private fun historyFollowsTheRow() = sessionDao.stub {
         onBlocking { recentMeasuredRuns(any()) } doAnswer {
-            if (row.value?.isFinished() == true) listOf(pace) else emptyList()
+            val session = row.value
+            if (session?.isFinished() == true && !session.isWalk) listOf(pace) else emptyList()
         }
+        // What the finish sheet's own doors read while they settle the Run: the row as it stands.
+        onBlocking { getSessionById(67L) } doAnswer { row.value }
     }
 
     @Test
@@ -80,7 +93,7 @@ class SessionRepositoryRouteSuggestionReadTest {
         whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
         historyFollowsTheRow()
 
-        val read = async { repository.recentMeasuredRunsOnceSettled(67L, since) }
+        val read = async { repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since) }
         runCurrent()
 
         assertFalse(
@@ -102,7 +115,7 @@ class SessionRepositoryRouteSuggestionReadTest {
         whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(MutableStateFlow(null))
         historyFollowsTheRow()
 
-        val runs = repository.recentMeasuredRunsOnceSettled(67L, since)
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since)
 
         assertTrue(runs.isEmpty())
         assertEquals("an absent row was waited on", 0L, testScheduler.currentTime)
@@ -115,7 +128,7 @@ class SessionRepositoryRouteSuggestionReadTest {
         whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
         historyFollowsTheRow()
 
-        val runs = repository.recentMeasuredRunsOnceSettled(67L, since)
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since)
 
         assertTrue(runs.isEmpty())
         assertTrue("the read gave up without waiting at all", testScheduler.currentTime > 0L)
@@ -126,9 +139,84 @@ class SessionRepositoryRouteSuggestionReadTest {
         // A fresh launch, or a screen that has not watched a Run end. There is no row to settle.
         historyFollowsTheRow()
 
-        val runs = repository.recentMeasuredRunsOnceSettled(null, since)
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(null, since)
 
         assertTrue(runs.isEmpty())
         assertEquals(0L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `the read waits for the runner's word about the finished Run, and a Walk stays out of it`() = runTest {
+        // The row is finalized the instant the session goes idle, but the finish sheet is still on
+        // screen: the Walk mark is written when it is answered, which is after the finalize. A read
+        // taken in between would count this Walk as a Run — enough on its own to carry the history
+        // over the three-Run threshold the suggestion needs, or to drag its median pace.
+        whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
+        historyFollowsTheRow()
+        repository.finishSheetOpened(67L)
+        row.value = finishedRun()
+
+        val read = async { repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since) }
+        runCurrent()
+
+        assertFalse(
+            "history was read while the runner was still answering the finish sheet, so a Walk " +
+                "would have been counted as a Run",
+            read.isCompleted
+        )
+
+        // Save: the mark is written and then the sheet closes, which is the order the answer keeps.
+        row.value = walkedRun()
+        repository.finishSheetClosed(67L, markedAsWalk = true, finalizeWaitStepMillis = 1L)
+
+        assertEquals(emptyList<RunPaceRow>(), read.await())
+    }
+
+    @Test
+    fun `a dismissed sheet is an answer and releases the read`() = runTest {
+        // Swiping the sheet away is the runner saying the Run was what it looks like. The word is in
+        // either way, so the wait ends on the close and not on a Save.
+        whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
+        historyFollowsTheRow()
+        repository.finishSheetOpened(67L)
+        row.value = finishedRun()
+
+        val read = async { repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since) }
+        runCurrent()
+        assertFalse(read.isCompleted)
+
+        repository.finishSheetClosed(67L, finalizeWaitStepMillis = 1L)
+
+        assertEquals(listOf(pace), read.await())
+    }
+
+    @Test
+    fun `a Run nobody is waiting on is read at once`() = runTest {
+        // A record that is already complete: the row is finalized and no sheet is open about it — a
+        // Run answered a while ago, or one the screen watched end after its sheet had been and gone.
+        // There is nothing coming, so nothing to wait for.
+        whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
+        historyFollowsTheRow()
+        row.value = finishedRun()
+
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since)
+
+        assertEquals(listOf(pace), runs)
+        assertEquals("a complete record was waited on", 0L, testScheduler.currentTime)
+    }
+
+    @Test
+    fun `a sheet the runner never answers costs the newest Run, not the suggestion`() = runTest {
+        // The other half of the same bound: a runner who walks away from the finish sheet must not
+        // hang the picker for ever. The read goes ahead on expiry with the history it can see.
+        whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
+        historyFollowsTheRow()
+        repository.finishSheetOpened(67L)
+        row.value = finishedRun()
+
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since)
+
+        assertEquals(listOf(pace), runs)
+        assertTrue("the read gave up without waiting at all", testScheduler.currentTime > 0L)
     }
 }
