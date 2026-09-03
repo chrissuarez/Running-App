@@ -1144,9 +1144,16 @@ class SessionRepository(
      * advice on the start line, and a list that re-sorted under the runner's finger as a Run landed
      * would move the course out from under them — the same bargain
      * [SessionDao.lastRunOnRoutes] makes.
+     *
+     * [sinceMillis] and [untilMillis] are the two ends of the window and both are the caller's, cut
+     * from **one** reading of the clock: the oldest Run that still says anything about today's
+     * fitness ([com.example.runningapp.ui.routeSuggestionSinceMillis]) and the moment of the read
+     * itself, past which a row is a Run that has not happened — see [SessionDao.recentMeasuredRuns]
+     * for both. Reading the clock twice here, once per end, would be this function inventing a
+     * window of its own out of two instants the caller never had.
      */
-    suspend fun recentMeasuredRuns(sinceMillis: Long): List<RunPaceRow> =
-        sessionDao.recentMeasuredRuns(sinceMillis)
+    suspend fun recentMeasuredRuns(sinceMillis: Long, untilMillis: Long): List<RunPaceRow> =
+        sessionDao.recentMeasuredRuns(sinceMillis, untilMillis)
 
     /**
      * The same recent Runs, but read only once the Run that has just ended has a complete
@@ -1196,6 +1203,11 @@ class SessionRepository(
      * [justFinishedRunId] is the last Run this screen saw live, or null when the screen has not
      * watched one end — a fresh launch, a rotation after the fact. Null waits for nothing.
      *
+     * The window ([sinceMillis], [untilMillis]) is the caller's clock as it stood *before* this
+     * wait, and it is not re-cut when the wait ends. It does not need to be: the Run being waited
+     * on started before that reading, so no amount of waiting can push it past the window's end,
+     * and re-reading the clock afterwards would only widen a window the caller sized on purpose.
+     *
      * **An absent row ends the wait**, whatever the gate says. The predicate accepts null as well as
      * a complete record, because the id may name a Run that is no longer there: deleted from history
      * while the screen sat open, or discarded for recording nothing. A word about a Run that has
@@ -1230,6 +1242,7 @@ class SessionRepository(
     suspend fun recentMeasuredRunsOnceTheRecordIsComplete(
         justFinishedRunId: Long?,
         sinceMillis: Long,
+        untilMillis: Long,
     ): List<RunPaceRow> {
         if (justFinishedRunId != null) {
             // The wait's own answer, not the row's: `first` legitimately ends on a null row (the
@@ -1254,11 +1267,11 @@ class SessionRepository(
                 )
                 // Only here: a wait that ended properly ended because the record *is* complete, so
                 // there is nothing to leave out and the row belongs in the history like any other.
-                return sessionDao.recentMeasuredRuns(sinceMillis)
+                return sessionDao.recentMeasuredRuns(sinceMillis, untilMillis)
                     .filterNot { it.sessionId == justFinishedRunId }
             }
         }
-        return sessionDao.recentMeasuredRuns(sinceMillis)
+        return sessionDao.recentMeasuredRuns(sinceMillis, untilMillis)
     }
     /**
      * Whether the runner's Test is due, for the Today card to say so (#292).
