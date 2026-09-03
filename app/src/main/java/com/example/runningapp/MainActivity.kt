@@ -1874,8 +1874,20 @@ fun MainScreen(
             sinceMillis = routeSuggestionSinceMillis(System.currentTimeMillis())
         )
     }
+    // The one distance the plan states outright (#422): a Test is measured against the Stage's Best
+    // Effort requirement, which is a time at a set distance, so the course has to be at least that
+    // far. Asked of the Stage rather than of the Workout, because the requirement belongs to the
+    // Stage and a Workout does not know which Stage is holding it; and asked only of a Test, because
+    // every other session on the stage is prescribed in seconds and the requirement says nothing
+    // about how far those go.
+    val todaysFixedDistanceMeters = if (todaysWorkout?.isTest == true) {
+        activeStage?.bestEffortRequirement?.record?.distanceMeters
+    } else {
+        null
+    }
     // Plain arithmetic on this phone: no network, no AI coach, no consent gate (#422).
-    val routeTargetMeters = suggestedRouteDistanceMeters(todaysWorkout, recentRuns)
+    val routeTargetMeters =
+        suggestedRouteDistanceMeters(todaysWorkout, recentRuns, todaysFixedDistanceMeters)
 
     // Taken from the library rather than from the pick, so a course deleted while this screen sat
     // open is not the course a Run sets off on (#56) — the same rule the Workout pick keeps above.
@@ -2043,6 +2055,7 @@ fun MainScreen(
                             picked = pickedRoute,
                             reversed = pickedRouteReversed,
                             targetMeters = routeTargetMeters,
+                            targetIsFixed = todaysFixedDistanceMeters != null,
                             onPick = { routeId ->
                                 // A different course starts pointing the way it is drawn. Carrying
                                 // the last pick's direction over would send the runner backwards
