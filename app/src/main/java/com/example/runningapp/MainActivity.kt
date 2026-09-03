@@ -1890,10 +1890,16 @@ fun MainScreen(
         // would answer the question is the one still being run.
         if (isSessionActive) return@LaunchedEffect
         // The clock read here rather than taken from composition: this runs when the screen comes
-        // back, which may be days after the frame that started it.
+        // back, which may be days after the frame that started it. Read *once* and used for both
+        // ends of the window — how far back a Run may be and still say anything about today's
+        // fitness, and the moment past which a row is a Run that has not happened (a clock
+        // corrected backwards leaves one stamped there). Two readings would be two windows, and the
+        // pair would disagree about where now is.
+        val nowMillis = System.currentTimeMillis()
         recentRuns = sessionRepository.recentMeasuredRunsOnceTheRecordIsComplete(
             justFinishedRunId = lastRunRowId,
-            sinceMillis = routeSuggestionSinceMillis(System.currentTimeMillis())
+            sinceMillis = routeSuggestionSinceMillis(nowMillis),
+            untilMillis = nowMillis,
         )
     }
     // The one distance the plan states outright (#422): a Test is measured against the Stage's Best

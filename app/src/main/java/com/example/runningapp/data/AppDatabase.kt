@@ -1096,12 +1096,36 @@ interface SessionDao {
      * - `isWalk = 0` — the runner's own word that they walked it (#275). A walked hour covers
      *   ground a run of the same hour would not, and suggesting a route off it under-shoots the
      *   session.
+     * - `startTime <= :untilMillis` — a Run stamped *after* the moment of the read did not happen
+     *   yet, and a clock corrected backwards is enough to leave one there (the same fact
+     *   [SessionRepository.evaluateAndAdjustPlan] and the Progress curves already work around).
+     *   Left in it would sort as the newest Run there is and hold one of the counted places
+     *   ([com.example.runningapp.ui.ROUTE_SUGGESTION_RUNS_COUNTED]) until wall time caught up with
+     *   it — days of suggestions bent by a pace from a Run that is not in the runner's past.
      *
-     * `startTime >= :sinceMillis` is the recency window and belongs to the caller
-     * ([com.example.runningapp.ui.routeSuggestionSinceMillis]): what "recent" means is a rule about
-     * fitness moving on, not a fact about the table.
+     * `startTime BETWEEN :sinceMillis AND :untilMillis` is the recency window, and **both of its
+     * ends belong to the caller** ([com.example.runningapp.ui.routeSuggestionSinceMillis], and the
+     * same clock reading passed as [untilMillis]): what "recent" means is a rule about fitness
+     * moving on, and where "now" is is a fact about the read, neither of them facts about the table.
+     * The two ends are the same reading of the clock and not two, so no Run can fall between a
+     * window that starts at one instant and ends at another.
      *
-     * Unbounded, and the caller takes the newest few it wants *of the kind it is asking about*. A
+     * The bound is **the read's own clock and not the end of today**, because what is being kept out
+     * is a timestamp that has not happened, not a date in the wrong calendar square: a clock nudged
+     * back by ten minutes leaves a Run ten minutes in the future and still comfortably inside today,
+     * and an end-of-day bound would admit it and be a bound about a time zone besides. The Progress
+     * curves compare against the day because what they plot *is* a day; this compares against the
+     * instant because what it takes is a sample.
+     *
+     * **`<=`, so a Run stamped in this very millisecond counts.** It is not in the future — the
+     * lower bound is inclusive too, and a window closed at both ends is one no genuine Run falls out
+     * of on a boundary. `<` would buy nothing it does not already have: a Run started this
+     * millisecond has no `endTime` and no two minutes of clock, so `endTime > 0` and
+     * `durationSeconds > 120` have already refused it, while the row it *could* still cost is a real
+     * finished Run whose write landed a millisecond before a clock read that came back a millisecond
+     * behind it.
+     *
+     * No LIMIT, and the caller takes the newest few it wants *of the kind it is asking about*. A
      * LIMIT here would count Runs of every kind towards a bound that only one kind spends, so a
      * runner with a busy fortnight of Quality Runs would have their Long Runs fall off the end of a
      * list that never mentions kinds.
@@ -1112,6 +1136,7 @@ interface SessionDao {
         FROM sessions
         WHERE endTime > 0
           AND startTime >= :sinceMillis
+          AND startTime <= :untilMillis
           AND runMode = 'outdoor'
           AND distanceKm > 0
           AND durationSeconds > 120
@@ -1119,7 +1144,7 @@ interface SessionDao {
         ORDER BY startTime DESC
         """
     )
-    suspend fun recentMeasuredRuns(sinceMillis: Long): List<RunPaceRow>
+    suspend fun recentMeasuredRuns(sinceMillis: Long, untilMillis: Long): List<RunPaceRow>
 
     /**
      * Remembers that this Run went over this course — but only if it is not already remembered on

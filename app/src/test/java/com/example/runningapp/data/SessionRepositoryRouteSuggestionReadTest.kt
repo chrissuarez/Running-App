@@ -16,6 +16,7 @@ import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.stub
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
 /**
@@ -39,6 +40,9 @@ class SessionRepositoryRouteSuggestionReadTest {
 
     private val startedAt = 1_700_000_000_000L
     private val since = startedAt - 30L * 24 * 60 * 60 * 1000
+
+    /** The moment the read is taken — half an hour after the Run started, which is when it ended. */
+    private val until = startedAt + 1_800_000L
 
     /** The just-finished Run as its row stands right now — the seam the wait watches. */
     private val row = MutableStateFlow<RunnerSession?>(liveRun())
@@ -82,9 +86,15 @@ class SessionRepositoryRouteSuggestionReadTest {
      * it at all.
      */
     private fun historyFollowsTheRow() = sessionDao.stub {
-        onBlocking { recentMeasuredRuns(any()) } doAnswer {
+        onBlocking { recentMeasuredRuns(any(), any()) } doAnswer { invocation ->
+            val windowStart = invocation.arguments[0] as Long
+            val windowEnd = invocation.arguments[1] as Long
             val session = row.value
-            if (session?.isFinished() == true && !session.isWalk) listOf(pace) else emptyList()
+            val counts = session?.isFinished() == true &&
+                !session.isWalk &&
+                session.startTime >= windowStart &&
+                session.startTime <= windowEnd
+            if (counts) listOf(pace) else emptyList()
         }
         // What the finish sheet's own doors read while they settle the Run: the row as it stands.
         onBlocking { getSessionById(67L) } doAnswer { row.value }
@@ -95,7 +105,7 @@ class SessionRepositoryRouteSuggestionReadTest {
         whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
         historyFollowsTheRow()
 
-        val read = async { repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since) }
+        val read = async { repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since, until) }
         runCurrent()
 
         assertFalse(
@@ -117,7 +127,7 @@ class SessionRepositoryRouteSuggestionReadTest {
         whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(MutableStateFlow(null))
         historyFollowsTheRow()
 
-        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since)
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since, until)
 
         assertTrue(runs.isEmpty())
         assertEquals("an absent row was waited on", 0L, testScheduler.currentTime)
@@ -130,7 +140,7 @@ class SessionRepositoryRouteSuggestionReadTest {
         whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
         historyFollowsTheRow()
 
-        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since)
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since, until)
 
         assertTrue(runs.isEmpty())
         assertTrue("the read gave up without waiting at all", testScheduler.currentTime > 0L)
@@ -141,7 +151,7 @@ class SessionRepositoryRouteSuggestionReadTest {
         // A fresh launch, or a screen that has not watched a Run end. There is no row to settle.
         historyFollowsTheRow()
 
-        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(null, since)
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(null, since, until)
 
         assertTrue(runs.isEmpty())
         assertEquals(0L, testScheduler.currentTime)
@@ -158,7 +168,7 @@ class SessionRepositoryRouteSuggestionReadTest {
         repository.finishSheetOpened(67L)
         row.value = finishedRun()
 
-        val read = async { repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since) }
+        val read = async { repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since, until) }
         runCurrent()
 
         assertFalse(
@@ -183,7 +193,7 @@ class SessionRepositoryRouteSuggestionReadTest {
         repository.finishSheetOpened(67L)
         row.value = finishedRun()
 
-        val read = async { repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since) }
+        val read = async { repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since, until) }
         runCurrent()
         assertFalse(read.isCompleted)
 
@@ -201,7 +211,7 @@ class SessionRepositoryRouteSuggestionReadTest {
         historyFollowsTheRow()
         row.value = finishedRun()
 
-        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since)
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since, until)
 
         assertEquals(listOf(pace), runs)
         assertEquals("a complete record was waited on", 0L, testScheduler.currentTime)
@@ -220,7 +230,7 @@ class SessionRepositoryRouteSuggestionReadTest {
         repository.finishSheetOpened(67L)
         row.value = finishedRun()
 
-        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since)
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since, until)
 
         assertEquals(
             "the unanswered Run was counted, so a Walk the runner had not marked yet would have " +
@@ -239,13 +249,62 @@ class SessionRepositoryRouteSuggestionReadTest {
         val answeredLastWeek = pace.copy(sessionId = 12L, durationSeconds = 2_400, distanceKm = 6.0)
         whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
         sessionDao.stub {
-            onBlocking { recentMeasuredRuns(any()) } doReturn listOf(pace, answeredLastWeek)
+            onBlocking { recentMeasuredRuns(any(), any()) } doReturn listOf(pace, answeredLastWeek)
         }
         repository.finishSheetOpened(67L)
         row.value = finishedRun()
 
-        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since)
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since, until)
 
         assertEquals(listOf(answeredLastWeek), runs)
+    }
+
+    /**
+     * The window's far end, which is the moment of the read (#422). A clock corrected backwards
+     * after a Run leaves that Run stamped later than now — the same fact the plan's evaluation and
+     * the Progress curves already work around — and with only a lower bound the row would sort as
+     * the newest Run there is and hold one of the counted places until wall time caught up with it.
+     */
+    @Test
+    fun `a Run stamped after the moment of the read is outside the window`() = runTest {
+        historyFollowsTheRow()
+        // Finished, outdoor, half an hour long, not a Walk: it fails nothing except having happened
+        // after the clock the read was taken by.
+        row.value = finishedRun().copy(startTime = until + 1)
+
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(null, since, until)
+
+        assertEquals(
+            "a Run stamped in the future was counted, so its pace would bend today's suggestion " +
+                "until wall time caught up with it",
+            emptyList<RunPaceRow>(),
+            runs
+        )
+    }
+
+    /** And a Run stamped in the read's own millisecond is not in the future: the end is inclusive. */
+    @Test
+    fun `a Run stamped in the very millisecond of the read still counts`() = runTest {
+        historyFollowsTheRow()
+        row.value = finishedRun().copy(startTime = until)
+
+        assertEquals(
+            listOf(pace),
+            repository.recentMeasuredRunsOnceTheRecordIsComplete(null, since, until)
+        )
+    }
+
+    /**
+     * Both ends are the caller's and reach the query unaltered — the repository is a passthrough,
+     * and a window it re-cut from a clock of its own would be a window the caller never sized.
+     */
+    @Test
+    fun `both ends of the window are handed to the query as given`() = runTest {
+        historyFollowsTheRow()
+        row.value = finishedRun()
+
+        repository.recentMeasuredRunsOnceTheRecordIsComplete(null, since, until)
+
+        verify(sessionDao).recentMeasuredRuns(since, until)
     }
 }
