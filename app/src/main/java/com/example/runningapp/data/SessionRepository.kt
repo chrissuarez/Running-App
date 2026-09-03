@@ -1122,6 +1122,22 @@ class SessionRepository(
     }
 
     /**
+     * The recent Runs a suggested route distance is worked out from (#422) — see
+     * [SessionDao.recentMeasuredRuns].
+     *
+     * A passthrough, and it stays one. Everything that turns these rows into a distance is pure and
+     * lives with the picker that reads it ([com.example.runningapp.ui.suggestedRouteDistanceMeters]),
+     * so the rule can be pinned by a unit test rather than by opening the record screen on a phone.
+     *
+     * Read once when the record screen comes to the front rather than watched: the suggestion is
+     * advice on the start line, and a list that re-sorted under the runner's finger as a Run landed
+     * would move the course out from under them — the same bargain
+     * [SessionDao.lastRunOnRoutes] makes.
+     */
+    suspend fun recentMeasuredRuns(sinceMillis: Long): List<RunPaceRow> =
+        sessionDao.recentMeasuredRuns(sinceMillis)
+
+    /**
      * Whether the runner's Test is due, for the Today card to say so (#292).
      *
      * [planTests] is every Test the active plan holds, or empty for a plan whose Stages offer none —
@@ -1156,22 +1172,6 @@ class SessionRepository(
      * that offers none is a caller with no phone to hear the broadcast from, which is every test
      * here. The one caller with a phone passes it.
      */
-    /**
-     * The recent Runs a suggested route distance is worked out from (#422) — see
-     * [SessionDao.recentMeasuredRuns].
-     *
-     * A passthrough, and it stays one. Everything that turns these rows into a distance is pure and
-     * lives with the picker that reads it ([com.example.runningapp.ui.suggestedRouteDistanceMeters]),
-     * so the rule can be pinned by a unit test rather than by opening the record screen on a phone.
-     *
-     * Read once when the record screen comes to the front rather than watched: the suggestion is
-     * advice on the start line, and a list that re-sorted under the runner's finger as a Run landed
-     * would move the course out from under them — the same bargain
-     * [SessionDao.lastRunOnRoutes] makes.
-     */
-    suspend fun recentMeasuredRuns(sinceMillis: Long): List<RunPaceRow> =
-        sessionDao.recentMeasuredRuns(sinceMillis)
-
     fun testDueFlow(
         planTests: List<PlanTest>,
         zone: () -> ZoneId = ZoneId::systemDefault,
