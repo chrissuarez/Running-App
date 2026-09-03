@@ -761,6 +761,28 @@ data class RouteRunRow(
  */
 data class RouteLastRunRow(val routeId: Long, val lastRunStartTime: Long)
 
+/**
+ * One finished Run, reduced to what a suggested distance is worked out from — see
+ * [SessionDao.recentMeasuredRuns] (#422).
+ *
+ * Four columns and no more. The question is "how far does this runner cover in an hour on a day of
+ * this kind", so the row carries the ground covered, the clock it was covered against, and the two
+ * ids the Run's kind is recovered from ([com.example.runningapp.TrainingPlanProvider.runTypeOfRecordedRun]).
+ *
+ * The clock is [durationSeconds] and deliberately not `movingTimeSeconds`. What the suggestion
+ * multiplies is a *planned* duration — warm-up, walks, cool-down and all
+ * ([com.example.runningapp.plannedSeconds]) — so the pace it must be multiplied by is the pace
+ * measured over the same kind of clock. Moving time takes the standing-about out of the divisor,
+ * which would report a faster pace than the plan's hour will actually produce and send the runner
+ * out on a route longer than the session they planned.
+ */
+data class RunPaceRow(
+    val ranUnderStageId: String?,
+    val ranUnderWorkoutId: String?,
+    val durationSeconds: Long,
+    val distanceKm: Double,
+)
+
 /** How many medals one Run holds — what the medal badge on its History row counts (#51). */
 data class SessionMedalCount(
     val sessionId: Long,
@@ -1044,6 +1066,50 @@ interface SessionDao {
             "WHERE ranAlongRouteId IN (:routeIds) AND endTime > 0 GROUP BY ranAlongRouteId"
     )
     suspend fun lastRunOnRoutes(routeIds: List<Long>): List<RouteLastRunRow>
+
+    /**
+     * Recent Runs that actually measured ground, newest first — what a suggested distance is
+     * derived from (#422).
+     *
+     * Every condition is here to keep a number out of the median that would move it without being
+     * about the runner's pace:
+     *
+     * - `endTime > 0` — a Run still being recorded has covered part of its ground and none of its
+     *   clock, so its pace is a number about a moment rather than about a session.
+     * - `runMode = 'outdoor'` — a treadmill Run's distance is the console's word
+     *   ([StatedBestEffort]) and its pace is whatever belt speed was set, which says nothing
+     *   about how far the runner gets along a road.
+     * - `distanceKm > 0` — an outdoor Run whose GPS never fixed measured no ground; dividing by it
+     *   is dividing by nothing.
+     * - `durationSeconds > 120` — the same floor the coach's reads use
+     *   ([getLast3AiEligibleRunsOfStage]): a two-minute Run is a start that was abandoned, and its
+     *   pace is the first two minutes of one.
+     * - `isWalk = 0` — the runner's own word that they walked it (#275). A walked hour covers
+     *   ground a run of the same hour would not, and suggesting a route off it under-shoots the
+     *   session.
+     *
+     * `startTime >= :sinceMillis` is the recency window and belongs to the caller
+     * ([com.example.runningapp.ui.routeSuggestionSinceMillis]): what "recent" means is a rule about
+     * fitness moving on, not a fact about the table.
+     *
+     * Unbounded, and the caller takes the newest few it wants *of the kind it is asking about*. A
+     * LIMIT here would count Runs of every kind towards a bound that only one kind spends, so a
+     * runner with a busy fortnight of Quality Runs would have their Long Runs fall off the end of a
+     * list that never mentions kinds.
+     */
+    @Query(
+        """
+        SELECT ranUnderStageId, ranUnderWorkoutId, durationSeconds, distanceKm FROM sessions
+        WHERE endTime > 0
+          AND startTime >= :sinceMillis
+          AND runMode = 'outdoor'
+          AND distanceKm > 0
+          AND durationSeconds > 120
+          AND isWalk = 0
+        ORDER BY startTime DESC
+        """
+    )
+    suspend fun recentMeasuredRuns(sinceMillis: Long): List<RunPaceRow>
 
     /**
      * Remembers that this Run went over this course — but only if it is not already remembered on

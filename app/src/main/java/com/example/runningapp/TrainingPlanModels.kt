@@ -506,6 +506,24 @@ object TrainingPlanProvider {
         planHoldingStage(stageId)?.stages?.firstOrNull { it.id == stageId }
 
     /**
+     * The kind of Run a *recorded* Run was, recovered from the Workout it followed (#297, #422).
+     *
+     * A stored Run holds no Run Type of its own: it holds the Stage and the Workout it was started
+     * under, and the kind is the Workout's ([WorkoutTemplate.runType]). Stated once here because
+     * two things now ask it and they must not reach two answers — the settlement that decides
+     * whether the coach is asked about a Run at all, and the pre-run picker working out how far a
+     * runner covers on a day of this kind.
+     *
+     * Null is "no Workout recorded" — a Run with no plan attached, one that skipped today's plan,
+     * or one recorded before v30 — and every caller reads that as "this Run answers nothing",
+     * never as a kind of its own.
+     */
+    fun runTypeOfRecordedRun(stageId: String?, workoutId: String?): RunType? {
+        if (workoutId == null) return null
+        return stageById(stageId)?.workouts?.firstOrNull { it.id == workoutId }?.runType
+    }
+
+    /**
      * Everything a stage offers: all of its workouts, one per Run Type, in the order the plan
      * declares them (#173). Empty when no plan is attached.
      *

@@ -69,6 +69,7 @@ import kotlinx.coroutines.launch
 import com.example.runningapp.archive.MonthlyArchiveWorker
 import com.example.runningapp.archive.SafArchiveFolder
 import com.example.runningapp.data.RouteHeader
+import com.example.runningapp.data.RunPaceRow
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.export.ExportFormat
@@ -87,6 +88,8 @@ import com.example.runningapp.ui.SegmentsViewModel
 import com.example.runningapp.ui.SegmentsViewModelFactory
 import com.example.runningapp.routes.RunRouteSaver
 import com.example.runningapp.ui.RoutePickerCard
+import com.example.runningapp.ui.routeSuggestionSinceMillis
+import com.example.runningapp.ui.suggestedRouteDistanceMeters
 import com.example.runningapp.ui.RunRouteSaver
 import com.example.runningapp.ui.RouteDetailScreen
 import com.example.runningapp.ui.RoutesScreen
@@ -1822,6 +1825,26 @@ fun MainScreen(
     // showing — including where a stale pick has already fallen back to the stage's first (#174).
     val todaysWorkoutId = todayCard.workouts.firstOrNull { it.picked }?.workoutId
 
+    // Today's Run as it will actually be run, prescription applied — taken by the card's own answer
+    // so the seconds the suggestion multiplies are the seconds the card promises (#422). Null on a
+    // skipped or plan-less day, which is an open run and has no planned time to derive from.
+    val todaysWorkout = todaysWorkoutId
+        ?.let { id -> stageWorkouts.firstOrNull { it.id == id } }
+        ?.withCoachPrescription(coachPrescriptions, System.currentTimeMillis())
+
+    // The Runs today's likely distance is derived from (#422). Read when the screen comes to the
+    // front rather than watched, so the picker does not re-sort under the runner's finger — and
+    // re-read on the way back, so the Run they have just finished counts towards the next one.
+    var recentRuns by remember(sessionRepository) { mutableStateOf(emptyList<RunPaceRow>()) }
+    LaunchedEffect(sessionRepository, screenIsResumed) {
+        if (!screenIsResumed) return@LaunchedEffect
+        recentRuns = sessionRepository.recentMeasuredRuns(
+            routeSuggestionSinceMillis(System.currentTimeMillis())
+        )
+    }
+    // Plain arithmetic on this phone: no network, no AI coach, no consent gate (#422).
+    val routeTargetMeters = suggestedRouteDistanceMeters(todaysWorkout, recentRuns)
+
     // Taken from the library rather than from the pick, so a course deleted while this screen sat
     // open is not the course a Run sets off on (#56) — the same rule the Workout pick keeps above.
     val pickedRoute = routes.firstOrNull { it.id == routeChoice?.routeId }
@@ -1989,6 +2012,7 @@ fun MainScreen(
                             routes = routes,
                             picked = pickedRoute,
                             reversed = pickedRouteReversed,
+                            targetMeters = routeTargetMeters,
                             onPick = { routeId ->
                                 // A different course starts pointing the way it is drawn. Carrying
                                 // the last pick's direction over would send the runner backwards

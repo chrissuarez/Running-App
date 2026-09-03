@@ -60,16 +60,24 @@ val RunRouteSaver: Saver<RunRoute?, Any> = listSaver(
  * [picked] is the Route the library actually holds for the runner's pick, not the pick itself: a
  * course deleted from the library while this screen sat open leaves the card saying "No route",
  * which is the truth, rather than naming a row that has gone.
+ *
+ * [targetMeters] is how far today's session is likely to cover, or null where too little history
+ * has been recorded to say (#422) — see [suggestedRouteDistanceMeters]. It does two things and
+ * nothing else: it prints a hint, and it orders the list nearest-first. It never picks: the runner
+ * still taps, because the target is derived from a median and the runner knows things about today
+ * that the median does not.
  */
 @Composable
 fun RoutePickerCard(
     routes: List<RouteHeader>,
     picked: RouteHeader?,
     reversed: Boolean,
+    targetMeters: Double?,
     onPick: (Long?) -> Unit,
     onReversedChange: (Boolean) -> Unit
 ) {
     var choosing by rememberSaveable { mutableStateOf(false) }
+    val offered = routesNearestFirst(routes, targetMeters)
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
@@ -86,6 +94,16 @@ fun RoutePickerCard(
                     text = runRouteChoiceSummary(picked, reversed),
                     style = MaterialTheme.typography.bodyMedium
                 )
+                // Only where there are courses to compare it against (#422). "Today ≈ 7 km" beside
+                // "you have no routes yet" is advice about a library that holds nothing to take it.
+                if (targetMeters != null) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = routeSuggestionHint(targetMeters),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = { choosing = true },
@@ -124,6 +142,19 @@ fun RoutePickerCard(
             title = { Text("Choose a route") },
             text = {
                 LazyColumn {
+                    // Repeated inside the dialog rather than left on the card behind it, because
+                    // this is where the order it explains is actually read: a list re-sorted with
+                    // no reason on screen reads as a list in no order at all (#422).
+                    if (targetMeters != null) {
+                        item {
+                            Text(
+                                text = routeSuggestionHint(targetMeters),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(bottom = 4.dp)
+                            )
+                        }
+                    }
                     // "No route" at the top rather than as a separate button, so following nothing
                     // is one of the choices in the same list and can be got back to the same way.
                     item {
@@ -137,7 +168,7 @@ fun RoutePickerCard(
                             }
                         )
                     }
-                    items(routes, key = { it.id }) { route ->
+                    items(offered, key = { it.id }) { route ->
                         RouteChoiceRow(
                             label = route.name,
                             subtitle = routeRowSubtitle(route),
