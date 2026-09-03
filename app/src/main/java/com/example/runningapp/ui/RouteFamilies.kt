@@ -218,17 +218,26 @@ private val CHIP_DECIMALS = listOf(1, 2, 3)
  * never made.
  *
  * Two courses measuring the same to the metre are not separable by any number of decimals, so
- * there the runner's own name for each is appended — the last thing left that differs, and if the
- * names match too then the two rows are the same course said twice, which is theirs to sort out.
+ * there the runner's own name for each is appended — the last thing left about a course that can
+ * differ. Where even the names match, the chip's own place in the row is appended, which is unique
+ * by construction: nothing about the two rows tells them apart any more, so the row itself does.
+ *
+ * The rule this keeps is one sentence and it is kept here rather than at each step: **the labels
+ * this returns are all different**. Each step is only an attempt at a *readable* way of meeting it,
+ * and the last step meets it whatever the courses hold — a number cannot be the same as the number
+ * beside it.
  */
 fun routeLengthChipLabels(siblings: List<RouteHeader>): List<String> {
-    for (decimals in CHIP_DECIMALS) {
-        val labels = siblings.map { routeLengthChipLabel(it.distanceMeters, decimals) }
-        if (labels.distinct().size == labels.size) return labels
-    }
-    return siblings.map {
-        routeLengthChipLabel(it.distanceMeters, CHIP_DECIMALS.last()) + " " + it.name
-    }
+    val attempts = CHIP_DECIMALS.map { decimals ->
+        siblings.map { routeLengthChipLabel(it.distanceMeters, decimals) }
+    } + listOf(
+        siblings.map { routeLengthChipLabel(it.distanceMeters, CHIP_DECIMALS.last()) + " " + it.name }
+    )
+    attempts.forEach { labels -> if (labels.distinct().size == labels.size) return labels }
+    // Every readable attempt has left two chips saying the same word. Counting the row cannot: the
+    // suffix goes on *every* chip, so two labels that were equal now end in different numbers, and
+    // a label that only looks like one already suffixed gets a number of its own after it.
+    return attempts.last().mapIndexed { index, label -> "$label (${index + 1})" }
 }
 
 /** Every family name the library already holds, in order, for the box that offers them (#421). */
