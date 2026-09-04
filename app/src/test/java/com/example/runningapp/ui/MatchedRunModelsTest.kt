@@ -5,9 +5,12 @@ import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.measureTrack
 import com.example.runningapp.data.runShapeRowOf
 import com.example.runningapp.routes.CourseShape
+import com.example.runningapp.data.decoded
 import com.example.runningapp.routes.RoutePoint
+import com.example.runningapp.routes.runIsOnCourse
 import com.example.runningapp.routes.routeShapeOf
 import com.example.runningapp.segments.runShapeOf
+import com.example.runningapp.segments.runsMatch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -284,5 +287,48 @@ class MatchedRunModelsTest {
         )!!
 
         assertNull(group.courseName)
+    }
+
+    /**
+     * A course that takes this Run but not the Run beside it names neither.
+     *
+     * [com.example.runningapp.segments.runsMatch] is a tolerance, not an equality, so it does not
+     * carry from one pair to the next: a 1.04 km Run is inside a twentieth of this 1.00 km one, and
+     * a 0.96 km course is inside a twentieth of it too, while the two of them are 80 m apart across
+     * a tolerance of 48. The card would otherwise print "2 runs on Round the block" above a Run the
+     * course's own page leaves out.
+     */
+    @Test
+    fun `a course that leaves one of the group out names none of it`() {
+        val shorterCourse = CourseShape(
+            routeId = 5L,
+            name = "Round the block",
+            shape = routeShapeOf(
+                listOf(
+                    RoutePoint(51.5, -0.1, null),
+                    RoutePoint(51.5, -0.1 + 480.0 / 69_000.0, null),
+                    RoutePoint(51.5, -0.1, null),
+                )
+            )!!,
+        )
+        val subject = aRun(2L, day = 7, east = 500.0)
+        val theOther = aRun(1L, day = 0, east = 520.0)
+
+        // The premise, stated where it can be read: the course takes the subject, the subject takes
+        // the other Run, and the course does not take the other Run.
+        assertTrue(runIsOnCourse(subject.decoded()!!, shorterCourse.shape))
+        assertTrue(runsMatch(subject.decoded()!!, theOther.decoded()!!))
+        assertFalse(runIsOnCourse(theOther.decoded()!!, shorterCourse.shape))
+
+        val group = matchedRunsUi(
+            listOf(theOther, subject),
+            sessionId = 2L,
+            zone = zone,
+            courses = listOf(shorterCourse),
+        )!!
+
+        assertEquals(2, group.count)
+        assertNull(group.courseName)
+        assertEquals("2 runs on this route", matchedRunCountLabel(group.count, group.courseName))
     }
 }

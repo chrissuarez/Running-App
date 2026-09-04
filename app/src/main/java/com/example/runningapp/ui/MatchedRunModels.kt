@@ -5,7 +5,7 @@ import com.example.runningapp.data.decoded
 import com.example.runningapp.data.formatMinutesPerKm
 import com.example.runningapp.ranOn
 import com.example.runningapp.routes.CourseShape
-import com.example.runningapp.routes.courseRecognising
+import com.example.runningapp.routes.courseRecognisingGroup
 import com.example.runningapp.segments.runsMatch
 import java.time.LocalDate
 import java.time.ZoneId
@@ -94,15 +94,22 @@ fun matchedRunsUi(
     val subject = candidates.firstOrNull { it.sessionId == sessionId } ?: return null
     val subjectShape = subject.decoded() ?: return null
 
+    // Each member kept with the shape it was let in on, because the course naming below has to ask
+    // the very same shapes again — decoding a second time would be the same answer paid for twice.
     val matched = candidates
-        .filter { it.sessionId == sessionId || it.decoded()?.let { shape -> runsMatch(subjectShape, shape) } == true }
+        .mapNotNull { candidate ->
+            val shape =
+                if (candidate.sessionId == sessionId) subjectShape
+                else candidate.decoded()?.takeIf { runsMatch(subjectShape, it) }
+            shape?.let { candidate to it }
+        }
         // Sorted here as well as in the query behind it, so this says what the page shows rather
         // than inheriting it from whichever reader happens to have supplied the rows.
-        .sortedBy { it.startTime }
+        .sortedBy { (candidate, _) -> candidate.startTime }
     if (matched.size < 2) return null
 
     return MatchedRunsUi(
-        runs = matched.map { run ->
+        runs = matched.map { (run, _) ->
             val day = ranOn(run.startTime, run.ranAtUtcOffsetSeconds, zone)
             MatchedRunUi(
                 sessionId = run.sessionId,
@@ -116,11 +123,13 @@ fun matchedRunsUi(
                 isThisRun = run.sessionId == sessionId,
             )
         },
-        position = matched.indexOfFirst { it.sessionId == sessionId } + 1,
-        // Asked of the Run whose page this is, not of the group. The group's Runs are in it because
-        // they each match this one, so this one is the only shape every member is known to agree
-        // with — asking a different member could name a course the runner is not looking at.
-        courseName = courseRecognising(subjectShape, courses)?.name,
+        position = matched.indexOfFirst { (run, _) -> run.sessionId == sessionId } + 1,
+        // The whole group, not the subject alone. The name goes above a count of every Run listed
+        // here, and the course's own page applies the same rule to each of them one at a time — so a
+        // course that takes this Run but not one of its group would print a sentence that page
+        // contradicts. Which of the courses that take all of them wins is still settled off this
+        // Run, whose page this is (courseRecognisingGroup).
+        courseName = courseRecognisingGroup(subjectShape, matched.map { (_, shape) -> shape }, courses)?.name,
     )
 }
 
