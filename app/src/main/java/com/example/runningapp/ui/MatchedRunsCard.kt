@@ -50,8 +50,8 @@ fun MatchedRunsCard(
     modifier: Modifier = Modifier,
 ) {
     val trend = remember(matched.runs) { matchedRunTrendPoints(matched.runs) }
-    val headline = matchedRunHeadline(matched.position, matched.routeName)
-    val count = matchedRunCountLabel(matched.count, matched.routeName)
+    val headline = matchedRunHeadline(matched.position, matched.courseName)
+    val count = matchedRunCountLabel(matched.count, matched.courseName)
 
     Card(modifier = modifier.fillMaxWidth()) {
         Column(

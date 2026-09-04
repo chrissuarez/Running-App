@@ -550,7 +550,7 @@ class MainActivity : ComponentActivity() {
                             // shows the Runs that covered its ground as well as the Runs the app
                             // wrote it down on (#74).
                             courseShape = appContainer.database.routeShapeDao()::getCourseShapeFlow,
-                            shapedRuns = appContainer.database.runShapeDao()::getShapedRunsForCoursesFlow,
+                            shapedRuns = appContainer.database.runShapeDao().getShapedRunsForCoursesFlow(),
                             zoneChanges = appContainer.zoneChanges,
                         )
                     )

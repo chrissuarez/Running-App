@@ -161,29 +161,45 @@ data class ShapedRunRow(
 )
 
 /** The shape a [ShapedRunRow] holds, or null where what it holds is not a whole shape. */
-fun ShapedRunRow.decoded(): RunShape? = decodeRunShape(shape, shapeDistanceMeters)
+fun ShapedRunRow.decoded(): RunShape? = decodeShapeWaypoints(shape, shapeDistanceMeters)
 
 /** The shape a candidate row holds, or null where what it holds is not a whole shape. */
-fun RunShapeCandidate.decoded(): RunShape? = decodeRunShape(shape, distanceMeters)
+fun RunShapeCandidate.decoded(): RunShape? = decodeShapeWaypoints(shape, distanceMeters)
 
 /** One shape as a row keeps it. */
 fun runShapeRowOf(sessionId: Long, shape: RunShape?): RunShapeRow = RunShapeRow(
     sessionId = sessionId,
-    shape = shape?.let { taken ->
-        RoutePolyline.encode(
-            taken.waypoints.map { RoutePoint(it.latitude, it.longitude, elevationMeters = null) }
-        )
-    },
+    shape = shape.encodedWaypoints(),
     distanceMeters = shape?.distanceMeters ?: 0.0,
 )
 
 /**
- * Read back strictly, unlike a Route's line: a shape with a waypoint missing is not a shorter shape,
- * it is a shape whose waypoints no longer stand for the fractions of a Run they are compared at, and
- * matching on it would put Runs in a group they never ran. A row that cannot be read whole holds
- * nothing, and the Run drops out of every group until it is measured again.
+ * The waypoints as a row keeps them, or null where there was no shape to take.
+ *
+ * Written with [RoutePolyline], the app's one encoding for a line — used by a Route, a Segment and a
+ * shape alike, and naming it twice would be the actual mistake (CONTEXT.md).
+ *
+ * Here rather than beside each row type, because a Run's shape and a course's are the *same five
+ * places* written the same way and read back by the same rule ([decodeShapeWaypoints]): they are
+ * compared with each other (#74), so a second copy of the writing would be free to drift into
+ * writing one of them differently, and the comparison would quietly stop meaning anything.
  */
-private fun decodeRunShape(polyline: String?, distanceMeters: Double): RunShape? {
+fun RunShape?.encodedWaypoints(): String? = this?.let { taken ->
+    RoutePolyline.encode(
+        taken.waypoints.map { RoutePoint(it.latitude, it.longitude, elevationMeters = null) }
+    )
+}
+
+/**
+ * The five places back off a row, or null where what the row holds is not a whole shape.
+ *
+ * Read back strictly, unlike a Route's line: a shape with a waypoint missing is not a shorter shape,
+ * it is a shape whose waypoints no longer stand for the fractions of a line they are compared at,
+ * and matching on it would put Runs in a group they never ran, or on a course they never covered. A
+ * row that cannot be read whole holds nothing, and its Run drops out of every group — or its course
+ * claims nothing — until it is measured again.
+ */
+fun decodeShapeWaypoints(polyline: String?, distanceMeters: Double): RunShape? {
     val waypoints = RoutePolyline.decode(polyline ?: return null)
     if (waypoints.size != RUN_SHAPE_WAYPOINTS) return null
     return RunShape(

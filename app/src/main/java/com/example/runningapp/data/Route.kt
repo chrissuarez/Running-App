@@ -276,6 +276,7 @@ interface RouteDao {
             val measuresTheSame = route.distanceMeters == alreadyHeld.distanceMeters &&
                 climb == alreadyHeld.elevationGainMeters
             if (!remeasuring || measuresTheSame) {
+                rememberTheShapeOf(alreadyHeld.id, route.polyline)
                 return KeptRoute(alreadyHeld.id, alreadyHeld.name, RouteKeeping.ALREADY_KEPT)
             }
             remeasureRoute(alreadyHeld.id, route.distanceMeters, climb)
@@ -289,27 +290,37 @@ interface RouteDao {
             } else {
                 RouteKeeping.REMEASURED
             }
+            rememberTheShapeOf(alreadyHeld.id, route.polyline)
             return KeptRoute(alreadyHeld.id, alreadyHeld.name, keeping)
         }
         val routeId = insertRoute(route)
-        // The shape is taken here rather than after the transaction so that no course ever exists
-        // without one (#74). A gap between the two would be a window in which a Run's page could ask
-        // the library which course it was on and be told "none" about the very course just saved —
-        // which is precisely the case the ticket exists to close. It costs no read: the line is
-        // already in hand, and this is the one place a Route's line is ever written
-        // ([Route.polyline]).
-        insertRouteShape(routeShapeRowOf(routeId, routeShapeOf(RoutePolyline.decode(route.polyline))))
+        rememberTheShapeOf(routeId, route.polyline)
         return KeptRoute(routeId, route.name, RouteKeeping.KEPT)
     }
 
     /**
-     * The shape of a course being kept, written in the same transaction as the course (#74).
+     * Measures the line a course is being kept along, in the same transaction as the keeping (#74).
      *
-     * Here rather than in [RouteShapeDao] because it is part of keeping a Route, and Room will only
-     * join two writes into one transaction where they are on one DAO. Everything that *reads* shapes
-     * reads them there; nothing else writes them but the pass that pays the backfill
+     * **On every way out of [keepRoute], not only on the one that inserts a row.** A course the
+     * library already held may have been kept before shapes existed at all, and a re-import is one
+     * of the few things that reaches it; leaving that path unshaped would make the backfill pass the
+     * only thing that could ever fill it in, which is a rule kept in one place depending on a rule
+     * kept in another. Writing it here costs a decode of a line already in hand, and the row is
+     * replaced rather than added to, so a course already measured is measured to the same answer:
+     * a Route's line is written once and never rewritten ([Route.polyline]).
+     *
+     * In the transaction rather than after it, so no course ever exists without a shape. A gap
+     * between the two would be a window in which a Run's page could ask the library which course it
+     * was on and be told "none" about the very course just saved — precisely the case #74 closes.
+     *
+     * On this DAO rather than in [RouteShapeDao] because Room will only join two writes into one
+     * transaction where they are on one DAO. Everything that *reads* shapes reads them there;
+     * nothing else writes them but the pass that pays the backfill
      * ([com.example.runningapp.routes.RouteShaping]).
      */
+    suspend fun rememberTheShapeOf(routeId: Long, polyline: String) =
+        insertRouteShape(routeShapeRowOf(routeId, routeShapeOf(RoutePolyline.decode(polyline))))
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRouteShape(shape: RouteShapeRow)
 

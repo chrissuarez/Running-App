@@ -70,6 +70,13 @@ fun RunShape.theOtherWayRound(): RunShape = copy(waypoints = waypoints.reversed(
  * one name rather than a list or a silence. Length is the tie-break because it is the one number the
  * two courses differ by that the runner can see for themselves on the library row. The rule is total,
  * so two reads of the same library name the same course.
+ *
+ * **Choosing one here does not take the Run off the other course's page, and must not.** This answers
+ * "what shall I call this ground", which is a sentence and holds one name; a course's page answers
+ * "which Runs covered my ground", and both duplicates really were covered. A Run listed on two pages
+ * while its own card names one is the honest reading of a library that holds the same ground twice —
+ * hiding it from one of them would be the app deciding which of the runner's two courses is the real
+ * one, which is exactly the guess #402 exists to let them settle themselves.
  */
 fun courseRecognising(run: RunShape, courses: List<CourseShape>): CourseShape? = courses
     .filter { runIsOnCourse(run, it.shape) }

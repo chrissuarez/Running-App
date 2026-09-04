@@ -30,7 +30,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -106,18 +105,23 @@ class RoutesViewModel(
      *
      * Null while a course is still owed its measurement, which a page draws as no recognised Runs
      * rather than as a course with none — the remembered ones are printed either way.
+     *
+     * No default, [runsAlongRoute]'s rule and for its reason: a wiring that forgot it would not
+     * compile, rather than quietly showing every course only the Runs written down on it.
      */
-    private val courseShape: (routeId: Long) -> Flow<RouteShapeCandidate?> = { flowOf(null) },
+    private val courseShape: (routeId: Long) -> Flow<RouteShapeCandidate?>,
     /**
      * Every finished Run that holds a shape, watched — the field a course recognises its Runs from
      * (#74).
      *
-     * A function rather than the DAO, and it is
-     * [com.example.runningapp.data.RunShapeDao.getShapedRunsForCoursesFlow] and only that. Defaulted
-     * to nothing, which is what a build with no shapes wired shows: the remembered Runs alone, which
-     * is what this page showed before #74.
+     * The flow itself rather than a function, unlike its two neighbours, because unlike them it
+     * takes no argument: it is
+     * [com.example.runningapp.data.RunShapeDao.getShapedRunsForCoursesFlow] and only that, and a
+     * thunk in front of it would buy nothing a `Flow` does not already give.
+     *
+     * No default, [runsAlongRoute]'s rule and for its reason.
      */
-    private val shapedRuns: () -> Flow<List<ShapedRunRow>> = { flowOf(emptyList()) },
+    private val shapedRuns: Flow<List<ShapedRunRow>>,
     /**
      * Ticks whenever the phone's time zone changes
      * ([com.example.runningapp.AppContainer.zoneChanges]).
@@ -310,7 +314,7 @@ class RoutesViewModel(
             routeDao.getRouteHeaderFlow(routeId),
             runsAlongRoute(routeId),
             courseShape(routeId),
-            shapedRuns(),
+            shapedRuns,
         ) { row, remembered, course, shaped ->
             RunsOnOneCourse(row, remembered, course?.decoded(), shaped)
         }
@@ -451,8 +455,8 @@ class RoutesViewModelFactory(
     private val importer: RouteImporter,
     private val runsAlongRoute: (routeId: Long) -> Flow<List<RouteRunRow>>,
     private val lastRunOnRoutes: suspend (routeIds: List<Long>) -> List<RouteLastRunRow>,
-    private val courseShape: (routeId: Long) -> Flow<RouteShapeCandidate?> = { flowOf(null) },
-    private val shapedRuns: () -> Flow<List<ShapedRunRow>> = { flowOf(emptyList()) },
+    private val courseShape: (routeId: Long) -> Flow<RouteShapeCandidate?>,
+    private val shapedRuns: Flow<List<ShapedRunRow>>,
     private val zoneChanges: Flow<Unit> = emptyFlow(),
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {

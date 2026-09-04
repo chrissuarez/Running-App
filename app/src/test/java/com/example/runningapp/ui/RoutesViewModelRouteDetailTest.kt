@@ -58,6 +58,8 @@ class RoutesViewModelRouteDetailTest {
         RouteImporter(mock(), dao, now = { 1_700_000_000_000L }),
         runsAlongRoute = { runs },
         lastRunOnRoutes = { ids -> lastRuns.filter { it.routeId in ids } },
+        courseShape = { flowOf(null) },
+        shapedRuns = flowOf(emptyList()),
         io = dispatcher,
         courseDispatcher = dispatcher,
     )
@@ -157,7 +159,7 @@ class RoutesViewModelRouteDetailTest {
         runsAlongRoute = { runs },
         lastRunOnRoutes = { ids -> lastRuns.filter { it.routeId in ids } },
         courseShape = { flowOf(course) },
-        shapedRuns = { flowOf(shaped) },
+        shapedRuns = flowOf(shaped),
         io = dispatcher,
         courseDispatcher = dispatcher,
     )

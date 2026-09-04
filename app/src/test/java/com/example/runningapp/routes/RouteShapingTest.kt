@@ -149,4 +149,25 @@ class RouteShapingTest {
                 .decoded()!!.waypoints.size,
         )
     }
+
+    @Test
+    fun `a course the library already held leaves the keeping measured too`() = runTest {
+        val dao = FakeRouteDao()
+        val course = Route(
+            name = "Round the block",
+            distanceMeters = 1000.0,
+            elevationGainMeters = null,
+            polyline = RoutePolyline.encode(theBlock),
+            createdAtMillis = 100L,
+            source = RouteSource.IMPORTED,
+        )
+        val first = dao.keepRoute(course, remeasuring = false)
+        // A course kept before shapes existed at all: the row is there and its shape is not.
+        dao.shapes.clear()
+
+        val again = dao.keepRoute(course, remeasuring = false)
+
+        assertEquals(first.id, again.id)
+        assertNotNull(dao.shapes.getValue(again.id).shape)
+    }
 }
