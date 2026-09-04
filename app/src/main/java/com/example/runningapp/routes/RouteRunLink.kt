@@ -78,6 +78,28 @@ fun RunShape.theOtherWayRound(): RunShape = copy(waypoints = waypoints.reversed(
  * hiding it from one of them would be the app deciding which of the runner's two courses is the real
  * one, which is exactly the guess #402 exists to let them settle themselves.
  */
+/**
+ * Which course a *group* of Runs may be named after (#74).
+ *
+ * Every Run shown on the card has to be on the course before its name goes above them, because the
+ * card's own count says so: "3 runs on the Cuckoo Trail" is a claim about all three, and the
+ * course's page applies [runIsOnCourse] to each of them one at a time. Naming the group off
+ * [subject] alone would print that sentence over a Run the page then left out.
+ *
+ * A group is not a set of Runs that all agree with each other — [runsMatch] is a tolerance, not an
+ * equality, so it does not carry from one pair to the next. Two Runs at opposite edges of the same
+ * hundred metres are both on [subject] and need not both be on any one course.
+ *
+ * The winner among the courses that do take the whole group is chosen by [courseRecognising], off
+ * [subject] — the Run whose page this is, and the one length the card is about.
+ */
+fun courseRecognisingGroup(
+    subject: RunShape,
+    group: List<RunShape>,
+    courses: List<CourseShape>,
+): CourseShape? =
+    courseRecognising(subject, courses.filter { course -> group.all { runIsOnCourse(it, course.shape) } })
+
 fun courseRecognising(run: RunShape, courses: List<CourseShape>): CourseShape? = courses
     .filter { runIsOnCourse(run, it.shape) }
     .minWithOrNull(
