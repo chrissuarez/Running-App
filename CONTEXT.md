@@ -224,7 +224,9 @@ thinned to its shape and joined across the Pauses, because a Route is where the 
 what happened on it. A course already kept is not kept twice, whichever door it comes in by. Deleting one costs no Run
 anything: nothing in the library points at history and nothing in history points back. A Route may
 carry a **Family** name, which groups it with the other lengths of the same route (#421) and changes
-nothing else about it — its line, its numbers and its Runs stay wholly its own.
+nothing else about it — its line, its numbers and its Runs stay wholly its own. Its own page lists the
+Runs on it: the ones remembered on it (**Routed Run**) and, since #74, the ones **recognised** on it
+by shape. Neither writes anything into the library, so deleting a Route still costs no Run anything.
 _Avoid_: path, and **track** — a Track is what a Run recorded of where it went, and the two must
 not be confused even in code (`TrackPoint` belongs to a Run). "Course" is fine, and is the word for
 the line itself as against the whole record of it. The `Routes` object under
@@ -266,7 +268,20 @@ on, and a Route deleted mid-Run leaves the Run drawing its own Track alone, whic
 ([ADR 0014](docs/adr/0014-a-route-is-a-plan-not-a-recording.md)). It is written down at START and
 nothing ever moves it, because what a Run set out to do cannot be recovered afterwards — a Run that
 happens to cross a course's ground is not a Run that was following it, which is also why no Run
-recorded before this shipped is ever matched to a Route retrospectively.
+recorded before this shipped is ever made a Routed Run retrospectively.
+
+A **Recognised Run** is the other, smaller claim, and the two must not be confused (#74). A Run is
+recognised on a Route when its shape covered that Route's ground, by the very rule that puts two Runs
+in one group of Matched Runs and against a course reduced to waypoints by the very same sampler. It
+says where the Run went, which a Track can be asked at any time; being a Routed Run says what the Run
+set out to do, which only START can know. Nothing about recognising is ever written down — it is
+worked out on read, off the banked shapes, so a course saved today is recognised on the Runs that
+already fit it and a course deleted stops being recognised on anything, neither time touching a Run.
+A **Course Shape** is what a Route is reduced to for it: the same five places a Run Shape holds, taken
+off the line once and banked because no reader may hold two lines at once. A course may be recognised
+either way round, because a course is a line with two ends and no arrow on it and the app has let a
+runner set out along one backwards since #56.
+_Avoid_: matched route, auto-linked run, and **Routed Run** for a Run that was merely recognised.
 
 **Distance remaining** is how much of the course is left, shown in the corner of the live map and of
 the full-screen map, and never spoken (#57). Measured from the nearest point on the course to the
@@ -362,7 +377,9 @@ and a Segment is not a **Record**.
 Runs that went over the same ground, recognising each other by their shape alone (#73). Nothing is
 named and nothing is saved: a Segment is a place the runner cut out and named, and a Route is a
 course somebody drew, but a group of Matched Runs is neither — it is a fact about two recordings,
-worked out from them and never declared. Two Runs match when their starts and their ends are within
+worked out from them and never declared. It may be *recognised* as a Route without becoming one
+(#74): the library is asked what this ground is called, and the answer is a name to print, never a
+row written. Two Runs match when their starts and their ends are within
 a hundred metres of each other, their totals within a twentieth, and the ground between them was
 covered in the same order — which is what makes a loop run the other way round a different route,
 and a longer Run through the same two ends a different route again.
@@ -377,10 +394,13 @@ else. A Walk holds no shape, on the rules a Segment Effort keeps, and neither do
 or a Run too short to hold a route.
 
 On screen the runner is told which run of the route this one is — "your 14th run on this route" —
-with their pace over the calendar under it, and the whole card opens the list of them. The word
-"route" is the runner's word here and is the honest one for what they see: a **Route** in this app's
-own language is the kept course of the library (#54), and nothing about a matched group is kept.
-Below two Runs there is no card at all.
+with their pace over the calendar under it, and the whole card opens the list of them. Where the
+library holds a course over that very ground the card uses its name instead — "your 14th run on the
+Cuckoo Trail" — which is the same fact in the runner's own words (#74, **Recognised Run**). "This
+route" is what it says when there is no such course, and it stays the honest word for that case: a
+**Route** in this app's own language is the kept course of the library (#54), and nothing about a
+matched group is kept. Naming one changes nothing about the group, which is still worked out from the
+shapes and would stand if the course were deleted. Below two Runs there is no card at all.
 _Avoid_: route group, auto-route, saved route (nothing is saved), and **Route** as a name in code
 for any of this. Writing a shape down with `RoutePolyline` is not a breach of that: it is the app's
 one encoding for a line, used by a Route, a Segment and a shape alike, and naming it twice would be

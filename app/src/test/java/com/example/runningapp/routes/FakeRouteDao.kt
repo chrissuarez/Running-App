@@ -4,6 +4,7 @@ import com.example.runningapp.data.KeptRoute
 import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteDao
 import com.example.runningapp.data.RouteHeader
+import com.example.runningapp.data.RouteShapeRow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -70,6 +71,18 @@ class FakeRouteDao : RouteDao {
         val id = nextId++
         rows.value = rows.value + route.copy(id = id)
         return id
+    }
+
+    /**
+     * The shapes written beside the courses, by the course they belong to (#74).
+     *
+     * Kept rather than discarded so a test can say that keeping a course measures it in the same
+     * breath — the whole point of the write living inside [RouteDao.keepRoute].
+     */
+    val shapes = mutableMapOf<Long, RouteShapeRow>()
+
+    override suspend fun insertRouteShape(shape: RouteShapeRow) {
+        shapes[shape.routeId] = shape
     }
 
     override suspend fun getRoute(routeId: Long): Route? = rows.value.firstOrNull { it.id == routeId }

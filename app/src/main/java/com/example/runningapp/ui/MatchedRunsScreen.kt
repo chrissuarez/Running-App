@@ -55,7 +55,7 @@ fun MatchedRunsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(MATCHED_RUNS_LIST_TITLE) },
+                title = { Text(matchedRunsListTitle(matched?.routeName)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
@@ -89,7 +89,7 @@ fun MatchedRunsScreen(
         ) {
             item {
                 Text(
-                    text = matchedRunCountLabel(matched.count),
+                    text = matchedRunCountLabel(matched.count, matched.routeName),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

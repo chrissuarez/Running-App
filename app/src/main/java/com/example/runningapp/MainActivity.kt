@@ -380,6 +380,11 @@ class MainActivity : ComponentActivity() {
         // This is the launch that measures them (#73).
         runningAppContainer().takeRunShapesOnce()
 
+        // And every course kept before this shipped has a line and no shape taken off it, so its own
+        // page would open empty however many times the runner has been round it. This is the launch
+        // that measures the library (#74).
+        runningAppContainer().takeRouteShapesOnce()
+
         // Keeps the monthly full archive scheduled (#85). Called on every launch and cheap every
         // time: an existing schedule is left exactly where it is, so this only ever creates the job
         // the first time, or after the runner has cleared the app's data.
@@ -470,6 +475,9 @@ class MainActivity : ComponentActivity() {
                                 },
                             ),
                             zoneChanges = appContainer.zoneChanges,
+                            // The library, so a Run's Matched Runs card can call the ground by the
+                            // runner's own name for it rather than "this route" (#74).
+                            savedCourses = appContainer.savedCourseShapes,
                             // Watched, not read once: a refusal that was only ever the switch's
                             // doing must stop being a refusal the moment the runner moves the
                             // switch back (#76).
@@ -538,6 +546,11 @@ class MainActivity : ComponentActivity() {
                             // The second, and the last: which of a family's lengths was run most
                             // recently, which is what its page opens on (#421).
                             appContainer.database.sessionDao()::lastRunOnRoutes,
+                            // This course's own shape, and every Run that holds one — so its page
+                            // shows the Runs that covered its ground as well as the Runs the app
+                            // wrote it down on (#74).
+                            courseShape = appContainer.database.routeShapeDao()::getCourseShapeFlow,
+                            shapedRuns = appContainer.database.runShapeDao()::getShapedRunsForCoursesFlow,
                             zoneChanges = appContainer.zoneChanges,
                         )
                     )

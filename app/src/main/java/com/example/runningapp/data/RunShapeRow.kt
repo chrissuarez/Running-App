@@ -1,6 +1,7 @@
 package com.example.runningapp.data
 
 import androidx.room.Dao
+import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Insert
@@ -108,6 +109,26 @@ interface RunShapeDao {
     @Query("SELECT EXISTS(SELECT 1 FROM run_shapes WHERE sessionId = :sessionId)")
     fun isShapedFlow(sessionId: Long): Flow<Boolean>
 
+    /**
+     * Every finished Run that holds a shape, newest first, with enough of the Run beside it to print
+     * a row on a course's page (#74).
+     *
+     * The same rows [getShapedRunsFlow] serves, asked for by a different reader and answered with
+     * different columns. A Run's own page needs a pace to draw a trend; a course's page needs the
+     * clock and the distance its best time is judged on, which are the very columns
+     * [SessionDao.getRunsAlongRouteFlow] returns — so those columns are taken whole
+     * ([RouteRunRow]) rather than restated, and the two halves of a course's list are printed by one
+     * piece of code that cannot tell them apart.
+     *
+     * `endTime > 0` for [SessionDao.getRunsAlongRouteFlow]'s reason, and it is belt and braces here:
+     * a Run still being recorded may not be matched at all
+     * ([com.example.runningapp.segments.mayBeMatchedToOtherRuns]), so it holds no shape to be found
+     * by. Stated anyway, because this query's promise to its reader is about which Runs may appear on
+     * a page, and that promise should not rest on a rule kept in another file.
+     */
+    @Query(SHAPED_RUNS_ON_COURSES_SQL)
+    fun getShapedRunsForCoursesFlow(): Flow<List<ShapedRunRow>>
+
     /** Writes what one Run's shape is now, over whatever the last reading of it said. */
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putShape(shape: RunShapeRow)
@@ -123,6 +144,24 @@ interface RunShapeDao {
     @Query("DELETE FROM run_shapes WHERE sessionId = :sessionId")
     suspend fun forgetShape(sessionId: Long)
 }
+
+/**
+ * One finished Run as a course's page would print it, with the shape it is recognised by (#74).
+ *
+ * The printable half is [RouteRunRow] itself rather than a copy of its columns, so a Run recognised
+ * on a course and a Run remembered on one reach [com.example.runningapp.ui.routeRunsUi] as the same
+ * thing — there is no second row type for the page to treat differently, and no second place for the
+ * clock rule to be spelled out.
+ */
+data class ShapedRunRow(
+    @Embedded val run: RouteRunRow,
+    val shape: String,
+    /** How far the Run went as its own legs counted it — the number the shape was matched at. */
+    val shapeDistanceMeters: Double,
+)
+
+/** The shape a [ShapedRunRow] holds, or null where what it holds is not a whole shape. */
+fun ShapedRunRow.decoded(): RunShape? = decodeRunShape(shape, shapeDistanceMeters)
 
 /** The shape a candidate row holds, or null where what it holds is not a whole shape. */
 fun RunShapeCandidate.decoded(): RunShape? = decodeRunShape(shape, distanceMeters)
@@ -177,4 +216,25 @@ const val SHAPED_RUNS_SQL: String =
         JOIN sessions s ON s.id = r.sessionId
         WHERE r.shape IS NOT NULL
         ORDER BY s.startTime ASC
+    """
+
+/**
+ * The read behind [RunShapeDao.getShapedRunsForCoursesFlow], named so a test can put it to a real
+ * SQLite database (#74) — [SHAPED_RUNS_SQL]'s rule and for its reason.
+ */
+const val SHAPED_RUNS_ON_COURSES_SQL: String =
+    """
+        SELECT s.id AS sessionId,
+               s.startTime AS startTime,
+               s.ranAtUtcOffsetSeconds AS ranAtUtcOffsetSeconds,
+               s.durationSeconds AS durationSeconds,
+               s.movingTimeSeconds AS movingTimeSeconds,
+               s.distanceKm AS distanceKm,
+               s.isWalk AS isWalk,
+               r.shape AS shape,
+               r.distanceMeters AS shapeDistanceMeters
+        FROM run_shapes r
+        JOIN sessions s ON s.id = r.sessionId
+        WHERE r.shape IS NOT NULL AND s.endTime > 0
+        ORDER BY s.startTime DESC
     """

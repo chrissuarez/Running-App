@@ -4,6 +4,9 @@ import com.example.runningapp.data.RunShapeCandidate
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.measureTrack
 import com.example.runningapp.data.runShapeRowOf
+import com.example.runningapp.routes.CourseShape
+import com.example.runningapp.routes.RoutePoint
+import com.example.runningapp.routes.routeShapeOf
 import com.example.runningapp.segments.runShapeOf
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -212,5 +215,74 @@ class MatchedRunModelsTest {
     @Test
     fun `nothing plotted is nothing to read out`() {
         assertNull(matchedRunTrendDescription(emptyList()))
+    }
+
+    // -- The saved course the group turns out to be (#74) ---------------------------------------
+
+    /** The library holding one course drawn over the same ground [aRun] covers. */
+    private fun theSameGroundSaved(name: String = "Round the block", routeId: Long = 5L) = CourseShape(
+        routeId = routeId,
+        name = name,
+        shape = routeShapeOf(
+            listOf(
+                RoutePoint(51.5, -0.1, null),
+                RoutePoint(51.5, -0.1 + 500.0 / 69_000.0, null),
+                RoutePoint(51.5, -0.1, null),
+            )
+        )!!,
+    )
+
+    @Test
+    fun `a group over a saved course is called by the course's name`() {
+        val group = matchedRunsUi(
+            listOf(aRun(1L, day = 0), aRun(2L, day = 7)),
+            sessionId = 2L,
+            zone = zone,
+            courses = listOf(theSameGroundSaved(name = "Cuckoo Trail")),
+        )!!
+
+        assertEquals("Cuckoo Trail", group.routeName)
+        assertEquals("Your 2nd run on Cuckoo Trail", matchedRunHeadline(group.position, group.routeName))
+        assertEquals("2 runs on Cuckoo Trail", matchedRunCountLabel(group.count, group.routeName))
+        assertEquals("Runs on Cuckoo Trail", matchedRunsListTitle(group.routeName))
+    }
+
+    @Test
+    fun `a group over ground nobody saved is still called this route`() {
+        val group = matchedRunsUi(
+            listOf(aRun(1L, day = 0), aRun(2L, day = 7)),
+            sessionId = 2L,
+            zone = zone,
+            courses = emptyList(),
+        )!!
+
+        assertNull(group.routeName)
+        assertEquals("Your 2nd run on this route", matchedRunHeadline(group.position, group.routeName))
+        assertEquals("2 runs on this route", matchedRunCountLabel(group.count, group.routeName))
+        assertEquals("Runs on this route", matchedRunsListTitle(group.routeName))
+    }
+
+    @Test
+    fun `a saved course somewhere else does not name this group`() {
+        val somewhereElse = CourseShape(
+            routeId = 9L,
+            name = "The next town over",
+            shape = routeShapeOf(
+                listOf(
+                    RoutePoint(51.6, -0.1, null),
+                    RoutePoint(51.6, -0.1 + 500.0 / 69_000.0, null),
+                    RoutePoint(51.6, -0.1, null),
+                )
+            )!!,
+        )
+
+        val group = matchedRunsUi(
+            listOf(aRun(1L, day = 0), aRun(2L, day = 7)),
+            sessionId = 2L,
+            zone = zone,
+            courses = listOf(somewhereElse),
+        )!!
+
+        assertNull(group.routeName)
     }
 }

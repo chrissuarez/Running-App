@@ -4,6 +4,8 @@ import com.example.runningapp.data.RunShapeCandidate
 import com.example.runningapp.data.decoded
 import com.example.runningapp.data.formatMinutesPerKm
 import com.example.runningapp.ranOn
+import com.example.runningapp.routes.CourseShape
+import com.example.runningapp.routes.courseRecognising
 import com.example.runningapp.segments.runsMatch
 import java.time.LocalDate
 import java.time.ZoneId
@@ -48,6 +50,16 @@ data class MatchedRunsUi(
     val runs: List<MatchedRunUi>,
     /** Which of them this Run is, counting from the first — the number the card is built on. */
     val position: Int,
+    /**
+     * The saved course this ground turns out to be, or null where the library holds none like it
+     * (#74).
+     *
+     * A name is all that is kept of it, because naming is all the card does: the runner reads "your
+     * 3rd run on the Cuckoo Trail" instead of "on this route", which is the same fact told in the
+     * runner's own words rather than the app's. Null is not a failure — a group is a fact about two
+     * recordings and stands on its own whether or not anybody ever drew the line (#73).
+     */
+    val routeName: String? = null,
 ) {
     val count: Int get() = runs.size
 }
@@ -69,6 +81,11 @@ fun matchedRunsUi(
     candidates: List<RunShapeCandidate>,
     sessionId: Long,
     zone: ZoneId = ZoneId.systemDefault(),
+    /**
+     * The saved courses the ground could turn out to be (#74). Empty is the answer for a runner with
+     * an empty library, and it is also what every caller gave before the library was joined up.
+     */
+    courses: List<CourseShape> = emptyList(),
 ): MatchedRunsUi? {
     val subject = candidates.firstOrNull { it.sessionId == sessionId } ?: return null
     val subjectShape = subject.decoded() ?: return null
@@ -96,6 +113,10 @@ fun matchedRunsUi(
             )
         },
         position = matched.indexOfFirst { it.sessionId == sessionId } + 1,
+        // Asked of the Run whose page this is, not of the group. The group's Runs are in it because
+        // they each match this one, so this one is the only shape every member is known to agree
+        // with — asking a different member could name a course the runner is not looking at.
+        routeName = courseRecognising(subjectShape, courses)?.name,
     )
 }
 
@@ -106,7 +127,8 @@ fun matchedRunsUi(
  * printing is that they have been here before and kept coming back. A Run in the middle of a group
  * says the number it was on the day it was run — the page is that Run's page, not today's.
  */
-fun matchedRunHeadline(position: Int): String = "Your ${ordinal(position)} run on this route"
+fun matchedRunHeadline(position: Int, routeName: String? = null): String =
+    "Your ${ordinal(position)} run on ${theRoute(routeName)}"
 
 /**
  * How many Runs have gone this way at all, under the headline.
@@ -114,7 +136,8 @@ fun matchedRunHeadline(position: Int): String = "Your ${ordinal(position)} run o
  * Always plural, because a group is never one: a Run nobody has repeated has no group and no card
  * ([matchedRunsUi]). A singular branch here would be a sentence nothing can print.
  */
-fun matchedRunCountLabel(count: Int): String = "$count runs on this route"
+fun matchedRunCountLabel(count: Int, routeName: String? = null): String =
+    "$count runs on ${theRoute(routeName)}"
 
 /** What the runner is told the card is, above the chart. */
 const val MATCHED_RUNS_TITLE: String = "Matched runs"
@@ -123,7 +146,18 @@ const val MATCHED_RUNS_TITLE: String = "Matched runs"
 const val MATCHED_RUNS_TREND_SUBTITLE: String = "Your quickest pace on each day you ran it."
 
 /** What the page listing the group is called. */
-const val MATCHED_RUNS_LIST_TITLE: String = "Runs on this route"
+fun matchedRunsListTitle(routeName: String? = null): String = "Runs on ${theRoute(routeName)}"
+
+/**
+ * What the ground is called in a sentence: the saved course's own name where the library holds it,
+ * and "this route" where it does not (#74).
+ *
+ * One place, because the card, its count and the page's title all name the same ground and a runner
+ * reading "your 3rd run on the Cuckoo Trail" above "12 runs on this route" would be entitled to think
+ * they were two different things. The runner's name is used verbatim — it is theirs, and a course
+ * called "the hill" reads as "your 3rd run on the hill", which is how they would say it.
+ */
+private fun theRoute(routeName: String?): String = routeName ?: "this route"
 
 /** One day on the pace trend: when it was, how far into the chart it sits, and what it took. */
 data class MatchedRunTrendPoint(

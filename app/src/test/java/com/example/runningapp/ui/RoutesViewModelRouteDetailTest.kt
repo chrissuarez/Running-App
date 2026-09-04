@@ -3,15 +3,20 @@ package com.example.runningapp.ui
 import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteLastRunRow
 import com.example.runningapp.data.RouteRunRow
+import com.example.runningapp.data.RouteShapeCandidate
 import com.example.runningapp.data.RouteSource
+import com.example.runningapp.data.ShapedRunRow
+import com.example.runningapp.data.routeShapeRowOf
 import com.example.runningapp.routes.FakeRouteDao
 import com.example.runningapp.routes.RouteImporter
 import com.example.runningapp.routes.RoutePoint
 import com.example.runningapp.routes.RoutePolyline
+import com.example.runningapp.routes.routeShapeOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -124,5 +129,74 @@ class RoutesViewModelRouteDetailTest {
         val viewModel = viewModel()
 
         assertTrue(viewModel.runsOnRoute(404L).first().isEmpty())
+    }
+
+    // -- Runs recognised on the course, not written down on it (#74) ---------------------------
+
+    /** The course's own line, as the shapes table would hold it once measured. */
+    private val theCourseShape = RouteShapeCandidate(
+        routeId = 1L,
+        name = "Park loop",
+        shape = routeShapeRowOf(1L, routeShapeOf(RoutePolyline.decode(aLine))).shape!!,
+        distanceMeters = routeShapeOf(RoutePolyline.decode(aLine))!!.distanceMeters,
+    )
+
+    /** One Run over that very ground, as the shaped read returns it. */
+    private fun aRunOverTheCourse(sessionId: Long) = ShapedRunRow(
+        run = aRun(sessionId, distanceKm = theCourseShape.distanceMeters / 1000.0, durationSeconds = 300),
+        shape = theCourseShape.shape,
+        shapeDistanceMeters = theCourseShape.distanceMeters,
+    )
+
+    private fun viewModelSeeingShapes(
+        course: RouteShapeCandidate?,
+        shaped: List<ShapedRunRow>,
+    ) = RoutesViewModel(
+        dao,
+        RouteImporter(mock(), dao, now = { 1_700_000_000_000L }),
+        runsAlongRoute = { runs },
+        lastRunOnRoutes = { ids -> lastRuns.filter { it.routeId in ids } },
+        courseShape = { flowOf(course) },
+        shapedRuns = { flowOf(shaped) },
+        io = dispatcher,
+        courseDispatcher = dispatcher,
+    )
+
+    @Test
+    fun `a run that covered this ground is listed though nothing wrote it down`() = runTest(dispatcher) {
+        val routeId = givenACourse(distanceMeters = theCourseShape.distanceMeters)
+
+        val listed = viewModelSeeingShapes(
+            course = theCourseShape.copy(routeId = routeId),
+            shaped = listOf(aRunOverTheCourse(sessionId = 7L)),
+        ).runsOnRoute(routeId).first()
+
+        assertEquals(listOf(7L), listed.map { it.sessionId })
+    }
+
+    @Test
+    fun `a run remembered on the course and recognised on it is listed once`() = runTest(dispatcher) {
+        val routeId = givenACourse(distanceMeters = theCourseShape.distanceMeters)
+        runs.value = listOf(aRun(7L, distanceKm = theCourseShape.distanceMeters / 1000.0, durationSeconds = 300))
+
+        val listed = viewModelSeeingShapes(
+            course = theCourseShape.copy(routeId = routeId),
+            shaped = listOf(aRunOverTheCourse(sessionId = 7L)),
+        ).runsOnRoute(routeId).first()
+
+        assertEquals(listOf(7L), listed.map { it.sessionId })
+    }
+
+    @Test
+    fun `a course still owed its shape shows the runs remembered on it and no others`() = runTest(dispatcher) {
+        val routeId = givenACourse(distanceMeters = theCourseShape.distanceMeters)
+        runs.value = listOf(aRun(4L, distanceKm = theCourseShape.distanceMeters / 1000.0, durationSeconds = 300))
+
+        val listed = viewModelSeeingShapes(
+            course = null,
+            shaped = listOf(aRunOverTheCourse(sessionId = 7L)),
+        ).runsOnRoute(routeId).first()
+
+        assertEquals(listOf(4L), listed.map { it.sessionId })
     }
 }

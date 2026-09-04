@@ -11,11 +11,15 @@ import com.example.runningapp.data.RouteDao
 import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.data.RouteLastRunRow
 import com.example.runningapp.data.RouteRunRow
+import com.example.runningapp.data.RouteShapeCandidate
+import com.example.runningapp.data.ShapedRunRow
+import com.example.runningapp.data.decoded
 import com.example.runningapp.repeatedOn
 import com.example.runningapp.routes.RouteImportOutcome
 import com.example.runningapp.routes.RouteImporter
 import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.routes.asShape
+import com.example.runningapp.segments.RunShape
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -26,6 +30,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -91,6 +96,28 @@ class RoutesViewModel(
      * on its shortest length.
      */
     private val lastRunOnRoutes: suspend (routeIds: List<Long>) -> List<RouteLastRunRow>,
+    /**
+     * One course's shape, watched — what its own page recognises Runs on this ground by (#74).
+     *
+     * A function rather than the DAO, the bargain [runsAlongRoute] makes. It is
+     * [com.example.runningapp.data.RouteShapeDao.getCourseShapeFlow] and only that. Never the line
+     * itself: a shape is five places, and a line is the one column in the app that can be megabytes
+     * ([com.example.runningapp.data.Route.polyline]).
+     *
+     * Null while a course is still owed its measurement, which a page draws as no recognised Runs
+     * rather than as a course with none — the remembered ones are printed either way.
+     */
+    private val courseShape: (routeId: Long) -> Flow<RouteShapeCandidate?> = { flowOf(null) },
+    /**
+     * Every finished Run that holds a shape, watched — the field a course recognises its Runs from
+     * (#74).
+     *
+     * A function rather than the DAO, and it is
+     * [com.example.runningapp.data.RunShapeDao.getShapedRunsForCoursesFlow] and only that. Defaulted
+     * to nothing, which is what a build with no shapes wired shows: the remembered Runs alone, which
+     * is what this page showed before #74.
+     */
+    private val shapedRuns: () -> Flow<List<ShapedRunRow>> = { flowOf(emptyList()) },
     /**
      * Ticks whenever the phone's time zone changes
      * ([com.example.runningapp.AppContainer.zoneChanges]).
@@ -273,13 +300,46 @@ class RoutesViewModel(
      * Built here rather than in the composable so [repeatedOn] can do its work: a zone change emits
      * the same rows again, which a `remember` keyed on those rows would pass straight over, and the
      * dates are read where the mapping runs ([routeRunsUi]).
+     *
+     * Since #74 the Runs recognised on this ground arrive here too, which is why the course's own
+     * shape and every shaped Run are in the same read: the list and the shape it is filtered by must
+     * be one answer, not two taken a moment apart.
      */
     fun runsOnRoute(routeId: Long): Flow<List<RouteRunUi>> =
-        combine(routeDao.getRouteHeaderFlow(routeId), runsAlongRoute(routeId)) { row, rows -> row to rows }
+        combine(
+            routeDao.getRouteHeaderFlow(routeId),
+            runsAlongRoute(routeId),
+            courseShape(routeId),
+            shapedRuns(),
+        ) { row, remembered, course, shaped ->
+            RunsOnOneCourse(row, remembered, course?.decoded(), shaped)
+        }
             .repeatedOn(zoneChanges)
-            .map { (row, rows) ->
-                if (row == null) emptyList() else routeRunsUi(rows, row.distanceMeters)
+            .map { read ->
+                if (read.course == null) {
+                    emptyList()
+                } else {
+                    routeRunsUi(
+                        runsOnCourse(read.remembered, read.shaped, read.shape),
+                        read.course.distanceMeters,
+                    )
+                }
             }
+
+    /**
+     * One read of everything a course's list of Runs is built from.
+     *
+     * A type rather than a nest of Pairs because there are four of them now, and because they must
+     * travel together: the best-time band is measured against the course's own length and the
+     * recognising against the course's own shape, so a row taken a moment apart from the Runs could
+     * rank them against a course the runner has since renamed, re-measured or deleted.
+     */
+    private data class RunsOnOneCourse(
+        val course: RouteHeader?,
+        val remembered: List<RouteRunRow>,
+        val shape: RunShape?,
+        val shaped: List<ShapedRunRow>,
+    )
 
     /**
      * Every length of one course's family, shortest first — itself alone where it has none (#421).
@@ -391,6 +451,8 @@ class RoutesViewModelFactory(
     private val importer: RouteImporter,
     private val runsAlongRoute: (routeId: Long) -> Flow<List<RouteRunRow>>,
     private val lastRunOnRoutes: suspend (routeIds: List<Long>) -> List<RouteLastRunRow>,
+    private val courseShape: (routeId: Long) -> Flow<RouteShapeCandidate?> = { flowOf(null) },
+    private val shapedRuns: () -> Flow<List<ShapedRunRow>> = { flowOf(emptyList()) },
     private val zoneChanges: Flow<Unit> = emptyFlow(),
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -401,6 +463,8 @@ class RoutesViewModelFactory(
                 importer,
                 runsAlongRoute,
                 lastRunOnRoutes,
+                courseShape,
+                shapedRuns,
                 zoneChanges,
             ) as T
         }

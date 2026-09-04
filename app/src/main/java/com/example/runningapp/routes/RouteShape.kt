@@ -1,8 +1,12 @@
 package com.example.runningapp.routes
 
+import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.analysis.ShapePoint
 import com.example.runningapp.analysis.filledFromNeighbours
 import com.example.runningapp.recording.geodesicDistanceMeters
+import com.example.runningapp.segments.RUN_SHAPE_MINIMUM_METERS
+import com.example.runningapp.segments.RunShape
+import com.example.runningapp.segments.shapeAlong
 
 /**
  * How far the runner must climb above the last low point before it is banked as gain.
@@ -163,3 +167,29 @@ private fun List<Double>.smoothedAlong(
         runningTotal / (to - from + 1)
     }
 }
+
+/**
+ * The course reduced to the waypoints a Run is recognised by, or null where there is not enough
+ * line to reduce (#74).
+ *
+ * The very same sampler a Run's own shape is taken with ([shapeAlong]) over the very same legs the
+ * course's distance is counted from ([routeDistanceMeters]) — one arithmetic rather than two. That
+ * is the whole of what makes a Route's page and a Run's page able to agree about which Runs covered
+ * this ground: the comparison at the end of it ([runsMatch]) is written for two shapes taken the
+ * same way, and two samplers that agreed today would be free to drift apart at the next change to
+ * either.
+ *
+ * Null for a course of fewer than two points, and for one under [RUN_SHAPE_MINIMUM_METERS] — a
+ * course too short to hold a route worth recognising, on the Run side's own floor and for its
+ * reason. Such a course simply claims no Runs; its remembered ones are unaffected, because those
+ * were written down rather than recognised.
+ *
+ * Heights are not read. Two lines over the same ground are the same route whether the file that drew
+ * one carried `<ele>` and the file that drew the other did not.
+ */
+fun routeShapeOf(points: List<RoutePoint>): RunShape? = shapeAlong(
+    places = points.map { MapFix(it.latitude, it.longitude) },
+    legMeters = points.zipWithNext { from, to ->
+        geodesicDistanceMeters(from.latitude, from.longitude, to.latitude, to.longitude)
+    },
+)

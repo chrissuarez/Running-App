@@ -1,7 +1,11 @@
 package com.example.runningapp.ui
 
 import com.example.runningapp.data.RouteRunRow
+import com.example.runningapp.data.ShapedRunRow
+import com.example.runningapp.data.decoded
 import com.example.runningapp.ranOn
+import com.example.runningapp.routes.runIsOnCourse
+import com.example.runningapp.segments.RunShape
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -14,11 +18,16 @@ import kotlin.math.roundToLong
  * Pure and outside the composable, the bargain [routeRowSubtitle] and [segmentEffortsUi] make: what
  * the runner reads is the feature, so it is pinned by a unit test rather than by opening the page.
  *
- * **Remembered, never guessed.** A Run is on this course because the app wrote the course's id on
- * the Run — at START, from the course the runner picked (`RunnerSession.ranAlongRouteId`, #56), or
- * at the moment the course was traced off that very Run (#55). Nothing here matches a shape to a
- * course: two Runs are matched to each other by geometry elsewhere (#73), and that rule deliberately
- * never reaches into the library.
+ * **Two ways a Run gets onto this page, and they are different claims.** It was *remembered* — the
+ * app wrote this course's id on the Run, at START from the course the runner picked
+ * (`RunnerSession.ranAlongRouteId`, #56) or at the moment the course was traced off that very Run
+ * (#55) — or it was *recognised*, its shape covering this course's ground by the same rule that puts
+ * two Runs in one group (#74, [runIsOnCourse]). The first says what the Run set out to do and only
+ * START can know it; the second says where the Run went, which the track can be asked at any time.
+ *
+ * The page prints them as one list, because to the runner they are one thing: runs they have been on
+ * this route. Nothing is written down by the recognising, so a course saved today claims the Runs
+ * that already fit it and a course deleted stops claiming them, both with nothing to mend.
  *
  * **A Walk holds no best time.** A course's best is a record over one piece of ground, exactly as a
  * Segment's PR is, and the app's rule for both is that a Walk contests no record
@@ -141,6 +150,33 @@ fun routeRunsUi(
 }
 
 /**
+ * Every Run on one course: the ones remembered on it and the ones recognised on it, each named once
+ * (#74).
+ *
+ * A Run can be both — the runner picked the course and then ran it — and it is one Run, so the
+ * remembered row is the one kept. They carry the same columns either way ([ShapedRunRow] embeds the
+ * very row the remembered read returns), so which copy survives changes nothing the page prints; it
+ * is settled here rather than left to chance so that two reads of the same history cannot come back
+ * in different orders.
+ *
+ * [course] null is a course with no shape to recognise anything by — one still owed its measurement
+ * at the first launch after this shipped, or a line too short to hold a route
+ * ([com.example.runningapp.routes.routeShapeOf]). Its remembered Runs are unaffected, because those
+ * were written down rather than recognised.
+ */
+fun runsOnCourse(
+    remembered: List<RouteRunRow>,
+    shaped: List<ShapedRunRow>,
+    course: RunShape?,
+): List<RouteRunRow> {
+    if (course == null) return remembered
+    val alreadyNamed = remembered.mapTo(mutableSetOf()) { it.sessionId }
+    return remembered + shaped.filter { row ->
+        row.run.sessionId !in alreadyNamed && row.decoded()?.let { runIsOnCourse(it, course) } == true
+    }.map { it.run }
+}
+
+/**
  * The quickest Run of a list [routeRunsUi] has already built, or null where none of them counts.
  *
  * Read off the built list rather than measured again off the rows, so the time at the top of the
@@ -161,7 +197,7 @@ fun routeAverageTimeLabel(runs: List<RouteRunUi>): String? {
     return formatDuration((counted.sumOf { it.elapsedSeconds }.toDouble() / counted.size).roundToLong())
 }
 
-/** How many Runs the runner has been remembered on this course. */
+/** How many Runs the runner has been on this course — remembered on it or recognised on it. */
 fun routeRunCountLabel(runs: Int): String =
     if (runs == 1) "1 run on this route" else "$runs runs on this route"
 
@@ -203,14 +239,17 @@ const val NO_COUNTED_ROUTE_RUNS_MESSAGE: String =
     "No best time yet. None of these runs counts towards one — each row says why."
 
 /**
- * What the page says where no Run has ever been remembered on this course.
+ * What the page says where no Run has ever been on this course.
  *
- * Names how a Run comes to be on a course, because there are exactly two ways and neither is
- * obvious: pick the course before you set off, or save the run you have already been for as one.
+ * Says that a run over this ground lands here by itself, because since #74 it does — the runner no
+ * longer has to pick the course first for the page to fill, and telling them to would be telling
+ * them to do work the app now does. The second half is the honest caveat: an old Run reaches the
+ * page once its shape has been measured, which is a launch pass and not instant
+ * ([com.example.runningapp.routes.RouteShaping], [com.example.runningapp.segments.RunShaping]).
  */
 const val NO_ROUTE_RUNS_MESSAGE: String =
-    "No runs on this route yet. Pick it before you start a run, or save a run you have already " +
-        "been for as a route, and it will show up here."
+    "No runs on this route yet. Any run you go for over this ground will show up here, and so will " +
+        "one you have already been for once its shape is measured."
 
 /** The clock this Run is raced on: its moving time where it has one, its elapsed where it does not. */
 private fun RouteRunRow.clockSeconds(): Long = movingTimeSeconds ?: durationSeconds
