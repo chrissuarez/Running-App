@@ -54,12 +54,16 @@ data class MatchedRunsUi(
      * The saved course this ground turns out to be, or null where the library holds none like it
      * (#74).
      *
-     * A name is all that is kept of it, because naming is all the card does: the runner reads "your
+     * Called a *course* rather than a route in code, the rule CONTEXT.md's Matched Runs entry states:
+ * nothing about a group is a Route, and a name borrowed to print is not one either. The runner still
+ * reads the word "route", because that is their word for the ground.
+ *
+ * A name is all that is kept of it, because naming is all the card does: the runner reads "your
      * 3rd run on the Cuckoo Trail" instead of "on this route", which is the same fact told in the
      * runner's own words rather than the app's. Null is not a failure — a group is a fact about two
      * recordings and stands on its own whether or not anybody ever drew the line (#73).
      */
-    val routeName: String? = null,
+    val courseName: String? = null,
 ) {
     val count: Int get() = runs.size
 }
@@ -116,7 +120,7 @@ fun matchedRunsUi(
         // Asked of the Run whose page this is, not of the group. The group's Runs are in it because
         // they each match this one, so this one is the only shape every member is known to agree
         // with — asking a different member could name a course the runner is not looking at.
-        routeName = courseRecognising(subjectShape, courses)?.name,
+        courseName = courseRecognising(subjectShape, courses)?.name,
     )
 }
 
@@ -127,8 +131,8 @@ fun matchedRunsUi(
  * printing is that they have been here before and kept coming back. A Run in the middle of a group
  * says the number it was on the day it was run — the page is that Run's page, not today's.
  */
-fun matchedRunHeadline(position: Int, routeName: String? = null): String =
-    "Your ${ordinal(position)} run on ${theRoute(routeName)}"
+fun matchedRunHeadline(position: Int, courseName: String? = null): String =
+    "Your ${ordinal(position)} run on ${whatTheGroundIsCalled(courseName)}"
 
 /**
  * How many Runs have gone this way at all, under the headline.
@@ -136,8 +140,8 @@ fun matchedRunHeadline(position: Int, routeName: String? = null): String =
  * Always plural, because a group is never one: a Run nobody has repeated has no group and no card
  * ([matchedRunsUi]). A singular branch here would be a sentence nothing can print.
  */
-fun matchedRunCountLabel(count: Int, routeName: String? = null): String =
-    "$count runs on ${theRoute(routeName)}"
+fun matchedRunCountLabel(count: Int, courseName: String? = null): String =
+    "$count runs on ${whatTheGroundIsCalled(courseName)}"
 
 /** What the runner is told the card is, above the chart. */
 const val MATCHED_RUNS_TITLE: String = "Matched runs"
@@ -146,7 +150,7 @@ const val MATCHED_RUNS_TITLE: String = "Matched runs"
 const val MATCHED_RUNS_TREND_SUBTITLE: String = "Your quickest pace on each day you ran it."
 
 /** What the page listing the group is called. */
-fun matchedRunsListTitle(routeName: String? = null): String = "Runs on ${theRoute(routeName)}"
+fun matchedRunsListTitle(courseName: String? = null): String = "Runs on ${whatTheGroundIsCalled(courseName)}"
 
 /**
  * What the ground is called in a sentence: the saved course's own name where the library holds it,
@@ -157,7 +161,7 @@ fun matchedRunsListTitle(routeName: String? = null): String = "Runs on ${theRout
  * they were two different things. The runner's name is used verbatim — it is theirs, and a course
  * called "the hill" reads as "your 3rd run on the hill", which is how they would say it.
  */
-private fun theRoute(routeName: String?): String = routeName ?: "this route"
+private fun whatTheGroundIsCalled(courseName: String?): String = courseName ?: "this route"
 
 /** One day on the pace trend: when it was, how far into the chart it sits, and what it took. */
 data class MatchedRunTrendPoint(

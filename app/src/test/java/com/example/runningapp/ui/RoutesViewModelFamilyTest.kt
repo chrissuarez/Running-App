@@ -52,6 +52,8 @@ class RoutesViewModelFamilyTest {
         RouteImporter(mock(), dao, now = { 1_700_000_000_000L }),
         runsAlongRoute = { flowOf(emptyList()) },
         lastRunOnRoutes = { ids -> lastRuns.filter { it.routeId in ids } },
+        courseShape = { flowOf(null) },
+        shapedRuns = flowOf(emptyList()),
         io = dispatcher,
         courseDispatcher = dispatcher,
     )

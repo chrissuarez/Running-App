@@ -7,11 +7,8 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
-import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.routes.CourseShape
-import com.example.runningapp.routes.RoutePoint
 import com.example.runningapp.routes.RoutePolyline
-import com.example.runningapp.segments.RUN_SHAPE_WAYPOINTS
 import com.example.runningapp.segments.RunShape
 import kotlinx.coroutines.flow.Flow
 
@@ -144,35 +141,21 @@ const val SHAPED_COURSES_SQL: String =
  */
 const val ONE_COURSE_SHAPE_SQL: String = SHAPED_COURSES_SQL + " AND r.id = :routeId"
 
-/** The shape a candidate row holds, or null where what it holds is not a whole shape. */
-fun RouteShapeCandidate.decoded(): RunShape? = decodeCourseShape(shape, distanceMeters)
+/**
+ * The shape a candidate row holds, or null where what it holds is not a whole shape.
+ *
+ * The Run side's own reading ([decodeShapeWaypoints]), because it is the same five places written the
+ * same way, and the two are compared with each other.
+ */
+fun RouteShapeCandidate.decoded(): RunShape? = decodeShapeWaypoints(shape, distanceMeters)
 
 /** The course as the recognising asks about it, or null where its row holds no whole shape. */
 fun RouteShapeCandidate.asCourseShape(): CourseShape? =
     decoded()?.let { CourseShape(routeId = routeId, name = name, shape = it) }
 
-/** One course's shape as a row keeps it. */
+/** One course's shape as a row keeps it — written the way a Run's is ([encodedWaypoints]). */
 fun routeShapeRowOf(routeId: Long, shape: RunShape?): RouteShapeRow = RouteShapeRow(
     routeId = routeId,
-    shape = shape?.let { taken ->
-        RoutePolyline.encode(
-            taken.waypoints.map { RoutePoint(it.latitude, it.longitude, elevationMeters = null) }
-        )
-    },
+    shape = shape.encodedWaypoints(),
     distanceMeters = shape?.distanceMeters ?: 0.0,
 )
-
-/**
- * Read back strictly, [RunShapeRow]'s rule and for its reason: a shape with a waypoint missing is not
- * a shorter course, it is a shape whose waypoints no longer stand for the fractions of a line they
- * are compared at. A row that cannot be read whole holds nothing, and the course claims no Runs until
- * it is measured again.
- */
-private fun decodeCourseShape(polyline: String?, distanceMeters: Double): RunShape? {
-    val waypoints = RoutePolyline.decode(polyline ?: return null)
-    if (waypoints.size != RUN_SHAPE_WAYPOINTS) return null
-    return RunShape(
-        waypoints = waypoints.map { MapFix(it.latitude, it.longitude) },
-        distanceMeters = distanceMeters,
-    )
-}

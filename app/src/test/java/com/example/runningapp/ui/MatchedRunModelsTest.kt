@@ -241,10 +241,10 @@ class MatchedRunModelsTest {
             courses = listOf(theSameGroundSaved(name = "Cuckoo Trail")),
         )!!
 
-        assertEquals("Cuckoo Trail", group.routeName)
-        assertEquals("Your 2nd run on Cuckoo Trail", matchedRunHeadline(group.position, group.routeName))
-        assertEquals("2 runs on Cuckoo Trail", matchedRunCountLabel(group.count, group.routeName))
-        assertEquals("Runs on Cuckoo Trail", matchedRunsListTitle(group.routeName))
+        assertEquals("Cuckoo Trail", group.courseName)
+        assertEquals("Your 2nd run on Cuckoo Trail", matchedRunHeadline(group.position, group.courseName))
+        assertEquals("2 runs on Cuckoo Trail", matchedRunCountLabel(group.count, group.courseName))
+        assertEquals("Runs on Cuckoo Trail", matchedRunsListTitle(group.courseName))
     }
 
     @Test
@@ -256,10 +256,10 @@ class MatchedRunModelsTest {
             courses = emptyList(),
         )!!
 
-        assertNull(group.routeName)
-        assertEquals("Your 2nd run on this route", matchedRunHeadline(group.position, group.routeName))
-        assertEquals("2 runs on this route", matchedRunCountLabel(group.count, group.routeName))
-        assertEquals("Runs on this route", matchedRunsListTitle(group.routeName))
+        assertNull(group.courseName)
+        assertEquals("Your 2nd run on this route", matchedRunHeadline(group.position, group.courseName))
+        assertEquals("2 runs on this route", matchedRunCountLabel(group.count, group.courseName))
+        assertEquals("Runs on this route", matchedRunsListTitle(group.courseName))
     }
 
     @Test
@@ -283,6 +283,6 @@ class MatchedRunModelsTest {
             courses = listOf(somewhereElse),
         )!!
 
-        assertNull(group.routeName)
+        assertNull(group.courseName)
     }
 }

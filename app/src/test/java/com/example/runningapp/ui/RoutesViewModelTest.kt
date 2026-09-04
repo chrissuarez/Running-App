@@ -57,6 +57,8 @@ class RoutesViewModelTest {
             runsAlongRoute = { flowOf(emptyList()) },
             // Nor has any been run: none of these tests opens a family's page.
             lastRunOnRoutes = { emptyList() },
+            courseShape = { flowOf(null) },
+            shapedRuns = flowOf(emptyList()),
             io = dispatcher,
             // The shapes too, so a test can see a pass finish rather than wait on a real thread.
             courseDispatcher = dispatcher,
