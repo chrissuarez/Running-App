@@ -3,7 +3,6 @@ package com.example.runningapp.segments
 import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.data.MeasuredTrack
 import com.example.runningapp.data.RunnerSession
-import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.recording.geodesicDistanceMeters
 import com.example.runningapp.recording.theShortWayRound
 import kotlin.math.abs
@@ -113,14 +112,40 @@ const val RUN_MATCH_DISTANCE_FRACTION: Double = 0.05
 fun runShapeOf(measured: MeasuredTrack): RunShape? {
     val points = measured.points
     if (points.size < 2 || measured.legs.size < points.size - 1) return null
+    return shapeAlong(
+        places = points.map { MapFix(it.latitude, it.longitude) },
+        legMeters = measured.legs.take(points.size - 1).map { it.meters },
+    )
+}
 
-    val along = DoubleArray(points.size)
-    for (leg in measured.legs.indices) along[leg + 1] = along[leg] + measured.legs[leg].meters
+/**
+ * The shape of a line somebody covered or drew: [places] with the length of the ground between each
+ * pair of them, reduced to [RUN_SHAPE_WAYPOINTS] waypoints evenly spaced by that length.
+ *
+ * Taken out of [runShapeOf] so a saved Route can be reduced by the very same arithmetic (#74). A
+ * Route's page claims the Runs that covered its ground, and that claim is only worth making if the
+ * course and the Run are measured into waypoints one way rather than two: two samplers agreeing
+ * today would be free to drift at the next change to either, and the runner would be shown a route
+ * whose own page disowned the Run they had just been told was on it.
+ *
+ * Null for a line with nothing to sample — fewer than two places, or a total under
+ * [RUN_SHAPE_MINIMUM_METERS], which is the same floor for a course as for a Run and for the same
+ * reason: under half a kilometre the tolerances are a large fraction of the line itself, so
+ * everything would match everything.
+ *
+ * [legMeters] must hold the length of every gap between neighbouring [places]; extra entries are
+ * ignored, and too few is a caller that has not measured its own line.
+ */
+fun shapeAlong(places: List<MapFix>, legMeters: List<Double>): RunShape? {
+    if (places.size < 2 || legMeters.size < places.size - 1) return null
+
+    val along = DoubleArray(places.size)
+    for (leg in 0 until places.lastIndex) along[leg + 1] = along[leg] + legMeters[leg]
     val total = along.last()
     if (total < RUN_SHAPE_MINIMUM_METERS) return null
 
     val waypoints = (0 until RUN_SHAPE_WAYPOINTS).map { at ->
-        fixAt(points, along, total * at / (RUN_SHAPE_WAYPOINTS - 1))
+        fixAt(places, along, total * at / (RUN_SHAPE_WAYPOINTS - 1))
     }
     return RunShape(waypoints = waypoints, distanceMeters = total)
 }
@@ -172,18 +197,18 @@ fun RunnerSession.mayBeMatchedToOtherRuns(): Boolean = mayHoldSegmentEfforts()
  * ground and [runsMatch] would refuse them.
  */
 private fun fixAt(
-    points: List<TrackPoint>,
+    places: List<MapFix>,
     along: DoubleArray,
     target: Double,
 ): MapFix {
-    if (target <= 0.0) return MapFix(points.first().latitude, points.first().longitude)
-    for (leg in 0 until points.lastIndex) {
+    if (target <= 0.0) return places.first()
+    for (leg in 0 until places.lastIndex) {
         val legMeters = along[leg + 1] - along[leg]
         if (legMeters <= 0.0) continue
         if (target > along[leg + 1]) continue
         val fraction = ((target - along[leg]) / legMeters).coerceIn(0.0, 1.0)
-        val from = points[leg]
-        val to = points[leg + 1]
+        val from = places[leg]
+        val to = places[leg + 1]
         return MapFix(
             latitude = from.latitude + (to.latitude - from.latitude) * fraction,
             longitude = theShortWayRound(
@@ -191,7 +216,7 @@ private fun fixAt(
             ),
         )
     }
-    return MapFix(points.last().latitude, points.last().longitude)
+    return places.last()
 }
 
 private fun metersBetween(one: MapFix, other: MapFix): Double =

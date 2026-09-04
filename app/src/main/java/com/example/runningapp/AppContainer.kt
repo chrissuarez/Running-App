@@ -20,13 +20,21 @@ import com.example.runningapp.export.ExportFileStore
 import com.example.runningapp.export.FileProviderExportFileStore
 import com.example.runningapp.restore.PendingRestore
 import com.example.runningapp.restore.migrationHrProfile
+import com.example.runningapp.data.RouteShapeCandidate
+import com.example.runningapp.data.RouteShapeRow
+import com.example.runningapp.data.asCourseShape
+import com.example.runningapp.routes.CourseShape
 import com.example.runningapp.routes.RouteImporter
+import com.example.runningapp.routes.RouteShapeStore
+import com.example.runningapp.routes.RouteShaping
 import com.mapbox.common.MapboxOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -441,6 +449,58 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Takes the shape of every saved course that has never had one, once per process (#74).
+     *
+     * The library's half of [takeRunShapesOnce], and it exists for the same reason: on the first
+     * launch after this shipped that is every course the runner keeps, and a library shaped only from
+     * now on would leave each of those courses opening on the empty page this ticket exists to fill.
+     * Every launch afterwards reads an empty list and returns — a course kept since is shaped in the
+     * transaction that kept it ([com.example.runningapp.data.RouteDao.keepRoute]).
+     *
+     * Cheap beside the Run pass. A course's shape comes off a line already stored rather than off a
+     * whole track of fixes, and a library is a handful of rows where history is thousands.
+     *
+     * On the container's own scope, for the reason the passes above are: each course's row is written
+     * as it is measured, so a pass cancelled by the runner backing out of an Activity keeps
+     * everything it has already done and the next launch takes up the rest.
+     */
+    fun takeRouteShapesOnce() {
+        if (!routeShapesTaken.compareAndSet(false, true)) return
+        passes.launch("Route-shape debt") { routeShaping.payWhatIsOwed() }
+    }
+
+    /**
+     * Every saved course a Run could be recognised on, watched (#74) — the library as the matching
+     * asks about it.
+     *
+     * Mapped here rather than at each reader so the one place a stored row becomes a
+     * [CourseShape] is the one place that decides what an unreadable row means: it is dropped, and
+     * the course claims no Runs until it is measured again ([RouteShapeCandidate.asCourseShape]).
+     *
+     * Never the lines themselves — that is what the shapes table is for
+     * ([com.example.runningapp.data.Route.polyline]).
+     */
+    val savedCourseShapes: Flow<List<CourseShape>> by lazy {
+        database.routeShapeDao().getShapedCoursesFlow()
+            .map { rows -> rows.mapNotNull { it.asCourseShape() } }
+    }
+
+    /** The one taking of course shapes, over this container's own DAOs (#74). */
+    private val routeShaping: RouteShaping by lazy {
+        val routes = database.routeDao()
+        val shapes = database.routeShapeDao()
+        RouteShaping(object : RouteShapeStore {
+            override suspend fun coursesMissingShapes() = shapes.getRouteIdsMissingShapes()
+
+            // One line, fetched to be measured and let go before the next is asked for — the first
+            // rule about this column ([com.example.runningapp.data.Route.polyline]).
+            override suspend fun line(routeId: Long) = routes.getRoutePolyline(routeId)
+
+            override suspend fun putShape(row: RouteShapeRow) = shapes.putShape(row)
+        })
+    }
+
+    /**
      * Stores the runner's answer to a Run's finish sheet and closes the gate behind it, off any
      * screen's lifetime (#297).
      *
@@ -499,6 +559,7 @@ class AppContainer(context: Context) {
     private val coachingReconciled = AtomicBoolean(false)
     private val segmentTimingPaid = AtomicBoolean(false)
     private val runShapesTaken = AtomicBoolean(false)
+    private val routeShapesTaken = AtomicBoolean(false)
 
     /**
      * When this process began, as far as anything here is concerned — the container is built once,

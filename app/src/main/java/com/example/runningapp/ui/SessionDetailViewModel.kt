@@ -17,6 +17,7 @@ import com.example.runningapp.export.GpxWriter
 import com.example.runningapp.export.RunExportName
 import com.example.runningapp.export.RunFitActivity
 import com.example.runningapp.export.RunGpxTrack
+import com.example.runningapp.routes.CourseShape
 import com.example.runningapp.routes.RunRouteOutcome
 import com.example.runningapp.routes.RunRouteSaver
 import com.example.runningapp.repeatedOn
@@ -26,6 +27,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
@@ -61,6 +64,18 @@ class SessionDetailViewModel(
      * runner.
      */
     private val runRouteSaver: RunRouteSaver? = null,
+    /**
+     * The saved courses this Run's ground could turn out to be, watched (#74).
+     *
+     * Empty wherever the library is not wired (tests), which is the same answer a runner with an
+     * empty library gets: the group still stands and is called "this route", the way it was before
+     * the library was joined up.
+     *
+     * Watched rather than read once, because the name on the card moves under an open page — a course
+     * imported, renamed or deleted while the runner is reading a Run changes what that Run should be
+     * calling its own ground.
+     */
+    private val savedCourses: Flow<List<CourseShape>> = flowOf(emptyList()),
 ) : ViewModel() {
 
     private val _deleteCompleted = MutableSharedFlow<Long>(extraBufferCapacity = 1)
@@ -445,9 +460,9 @@ class SessionDetailViewModel(
      * open goes on showing the zone it left until the database happens to change (#320).
      */
     fun matchedRuns(sessionId: Long) =
-        sessionRepository.shapedRunsFlow()
+        combine(sessionRepository.shapedRunsFlow(), savedCourses) { shaped, courses -> shaped to courses }
             .repeatedOn(zoneChanges)
-            .map { shaped -> matchedRunsUi(shaped, sessionId) }
+            .map { (shaped, courses) -> matchedRunsUi(shaped, sessionId, courses = courses) }
 
     /**
      * States the time the console showed for one of the record distances, corrects it, or takes it
@@ -582,6 +597,7 @@ class SessionDetailViewModelFactory(
     private val zoneChanges: Flow<Unit> = emptyFlow(),
     private val aiSummariesAllowed: Flow<Boolean>? = null,
     private val runRouteSaver: RunRouteSaver? = null,
+    private val savedCourses: Flow<List<CourseShape>> = flowOf(emptyList()),
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(SessionDetailViewModel::class.java)) {
@@ -592,6 +608,7 @@ class SessionDetailViewModelFactory(
                 zoneChanges = zoneChanges,
                 aiSummariesAllowed = aiSummariesAllowed,
                 runRouteSaver = runRouteSaver,
+                savedCourses = savedCourses,
             ) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")

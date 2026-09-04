@@ -1790,13 +1790,14 @@ interface RunPauseDao {
         Segment::class,
         SegmentEffort::class,
         RunShapeRow::class,
+        RouteShapeRow::class,
         RunEffortRow::class,
         RecordFillRow::class,
         RunSummaryRow::class,
         WalkMarkDebtRow::class,
         HistoryDebtRow::class
     ],
-    version = 43,
+    version = 44,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1812,6 +1813,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun segmentDao(): SegmentDao
     abstract fun segmentEffortDao(): SegmentEffortDao
     abstract fun runShapeDao(): RunShapeDao
+    abstract fun routeShapeDao(): RouteShapeDao
     abstract fun runEffortDao(): RunEffortDao
     abstract fun recordFillDao(): RecordFillDao
     abstract fun runSummaryDao(): RunSummaryDao
@@ -1913,7 +1915,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_39_40,
     MIGRATION_40_41,
     MIGRATION_41_42,
-    MIGRATION_42_43
+    MIGRATION_42_43,
+    MIGRATION_43_44
 )
 
 /**
@@ -1932,6 +1935,35 @@ const val ADD_ROUTE_FAMILY_SQL = "ALTER TABLE routes ADD COLUMN family TEXT"
 val MIGRATION_42_43 = object : Migration(42, 43) {
     override fun migrate(database: SupportSQLiteDatabase) {
         database.execSQL(ADD_ROUTE_FAMILY_SQL)
+    }
+}
+
+/**
+ * The shapes saved courses are recognised by (#74).
+ *
+ * `run_shapes` at v36 exactly, on the other side of the same match, and with the same emptiness for a
+ * debt: every course already in the library is owed a shape at the first launch after this, which is
+ * the backfill the whole ticket rests on. A library shaped only from now on would leave every course
+ * the runner already keeps opening on the empty page this exists to fill.
+ *
+ * Cheap here and paid later. Nothing is read and nothing is rewritten by the upgrade itself, so a
+ * library of high-detail courses costs it nothing however big its lines are ([Route.polyline]); the
+ * lines are read one at a time, off the main thread, by the pass that pays the debt
+ * ([com.example.runningapp.routes.RouteShaping]).
+ */
+const val CREATE_ROUTE_SHAPES_SQL: String =
+    """
+        CREATE TABLE IF NOT EXISTS `route_shapes` (
+            `routeId` INTEGER PRIMARY KEY NOT NULL,
+            `shape` TEXT,
+            `distanceMeters` REAL NOT NULL,
+            FOREIGN KEY(`routeId`) REFERENCES `routes`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+        )
+    """
+
+val MIGRATION_43_44 = object : Migration(43, 44) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(CREATE_ROUTE_SHAPES_SQL)
     }
 }
 

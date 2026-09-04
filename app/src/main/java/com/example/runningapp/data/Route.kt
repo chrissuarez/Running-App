@@ -3,9 +3,12 @@ package com.example.runningapp.data
 import androidx.room.Dao
 import androidx.room.Entity
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Transaction
+import com.example.runningapp.routes.RoutePolyline
+import com.example.runningapp.routes.routeShapeOf
 import kotlinx.coroutines.flow.Flow
 
 /** Where a Route came from. Stored as text on the row, the way a Run stores its own mode. */
@@ -288,8 +291,27 @@ interface RouteDao {
             }
             return KeptRoute(alreadyHeld.id, alreadyHeld.name, keeping)
         }
-        return KeptRoute(insertRoute(route), route.name, RouteKeeping.KEPT)
+        val routeId = insertRoute(route)
+        // The shape is taken here rather than after the transaction so that no course ever exists
+        // without one (#74). A gap between the two would be a window in which a Run's page could ask
+        // the library which course it was on and be told "none" about the very course just saved —
+        // which is precisely the case the ticket exists to close. It costs no read: the line is
+        // already in hand, and this is the one place a Route's line is ever written
+        // ([Route.polyline]).
+        insertRouteShape(routeShapeRowOf(routeId, routeShapeOf(RoutePolyline.decode(route.polyline))))
+        return KeptRoute(routeId, route.name, RouteKeeping.KEPT)
     }
+
+    /**
+     * The shape of a course being kept, written in the same transaction as the course (#74).
+     *
+     * Here rather than in [RouteShapeDao] because it is part of keeping a Route, and Room will only
+     * join two writes into one transaction where they are on one DAO. Everything that *reads* shapes
+     * reads them there; nothing else writes them but the pass that pays the backfill
+     * ([com.example.runningapp.routes.RouteShaping]).
+     */
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRouteShape(shape: RouteShapeRow)
 
     /**
      * Writes a re-read of the same line's distance and climb onto the Route already kept.

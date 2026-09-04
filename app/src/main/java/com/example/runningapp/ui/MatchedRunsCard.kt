@@ -26,6 +26,11 @@ import com.example.runningapp.ui.theme.RunningUiTokens
  * appeared on every page to say "your 1st run on this route" would be a section that exists to say
  * nothing. The card arrives the day a route becomes a route — the second time it is run.
  *
+ * The headline names the course where the library holds one like this ground (#74), and says "this
+ * route" where it does not. The name is the better word for the same fact: the runner drew or saved
+ * that course and knows what it is called, and "this route" was only ever the app admitting it had
+ * nothing to call it.
+ *
  * The headline is the count, because the count is the news. The chart under it is the reason the
  * count is worth having: repetition on its own is a habit, and repetition with a pace line through
  * it is progress.
@@ -45,8 +50,8 @@ fun MatchedRunsCard(
     modifier: Modifier = Modifier,
 ) {
     val trend = remember(matched.runs) { matchedRunTrendPoints(matched.runs) }
-    val headline = matchedRunHeadline(matched.position)
-    val count = matchedRunCountLabel(matched.count)
+    val headline = matchedRunHeadline(matched.position, matched.routeName)
+    val count = matchedRunCountLabel(matched.count, matched.routeName)
 
     Card(modifier = modifier.fillMaxWidth()) {
         Column(
