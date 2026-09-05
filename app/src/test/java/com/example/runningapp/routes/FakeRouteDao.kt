@@ -86,6 +86,10 @@ class FakeRouteDao : RouteDao {
         shapes[shape.routeId] = shape
     }
 
+    /** The debt as the real query states it: a row with no shape beside it, oldest first. */
+    override suspend fun coursesOwedShapes(): List<Long> =
+        rows.value.map { it.id }.filterNot { it in shapes }.sorted()
+
     /**
      * The shaped courses, as the real read returns them — the name taken from the row rather than
      * kept beside the shape, and a shape of null left out, exactly as `SHAPED_COURSES_SQL` does.
