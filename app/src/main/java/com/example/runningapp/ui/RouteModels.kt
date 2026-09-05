@@ -59,6 +59,24 @@ fun gpxRefusalMessage(reason: GpxRefusal): String = when (reason) {
 fun routeImportedMessage(name: String): String = "Saved “$name” to your routes."
 
 /**
+ * The same news with a warning after it: the library now holds this ground twice (#402).
+ *
+ * Said rather than acted on. The two rows really are two courses by the app's one identity rule —
+ * their lines differ — so merging them would be the app picking which of the runner's courses is the
+ * real one. What it can do is make the pair visible the moment it appears, while the runner still
+ * knows which file they handed over.
+ *
+ * Names the other course, because the name is the only handle they have on it in the library, and
+ * says what to do about it, because "covers the same ground" is a fact and not yet an instruction.
+ *
+ * One sentence for both doors ([runSavedAsRouteMessage] appends it too), so a runner meeting the
+ * same pair from a Run's page and from the file picker is told the same thing.
+ */
+fun routeSameGroundNote(sameGroundAs: String): String =
+    " It covers the same ground as “$sameGroundAs”, which you already keep — " +
+        "you may want to delete one of them."
+
+/**
  * What the screen says when the file was a course the library already holds.
  *
  * Names the kept Route rather than the file, because the two need not agree: a runner who renamed
