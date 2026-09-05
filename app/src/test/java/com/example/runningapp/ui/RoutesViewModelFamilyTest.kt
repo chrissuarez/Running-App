@@ -2,11 +2,17 @@ package com.example.runningapp.ui
 
 import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteLastRunRow
+import com.example.runningapp.data.RouteShapeCandidate
+import com.example.runningapp.data.RouteRunRow
 import com.example.runningapp.data.RouteSource
+import com.example.runningapp.data.ShapedRunRow
+import com.example.runningapp.data.runShapeRowOf
 import com.example.runningapp.routes.FakeRouteDao
+import com.example.runningapp.routes.routeShapeOf
 import com.example.runningapp.routes.RouteImporter
 import com.example.runningapp.routes.RoutePoint
 import com.example.runningapp.routes.RoutePolyline
+import com.example.runningapp.segments.RunShape
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
@@ -165,6 +171,94 @@ class RoutesViewModelFamilyTest {
 
         assertEquals(fiveK, viewModel.landingSibling(twelveK))
     }
+
+    // --- The landing counts a length's recognised Runs too (#436) ---
+
+    /** Ground far enough from [aLine] that the two are different courses. */
+    private fun shapeAt(at: Double): RunShape = routeShapeOf(
+        RoutePolyline.decode(
+            RoutePolyline.encode(
+                listOf(
+                    RoutePoint(at, -0.1, elevationMeters = null),
+                    RoutePoint(at + 0.02, -0.1, elevationMeters = null),
+                )
+            )
+        )
+    )!!
+
+    private fun runOver(shape: RunShape, sessionId: Long, startTime: Long) = ShapedRunRow(
+        run = RouteRunRow(
+            sessionId = sessionId,
+            startTime = startTime,
+            ranAtUtcOffsetSeconds = 0,
+            durationSeconds = 300,
+            movingTimeSeconds = 300,
+            distanceKm = shape.distanceMeters / 1_000.0,
+        ),
+        shape = runShapeRowOf(sessionId, shape).shape!!,
+        shapeDistanceMeters = shape.distanceMeters,
+    )
+
+    private fun viewModelSeeing(
+        shapes: Map<Long, RunShape>,
+        shaped: List<ShapedRunRow>,
+    ) = RoutesViewModel(
+        dao,
+        RouteImporter(mock(), dao, now = { 1_700_000_000_000L }),
+        runsAlongRoute = { flowOf(emptyList()) },
+        lastRunOnRoutes = { ids -> lastRuns.filter { it.routeId in ids } },
+        courseShape = { routeId ->
+            flowOf(
+                shapes[routeId]?.let {
+                    RouteShapeCandidate(
+                        routeId = routeId,
+                        name = "Course $routeId",
+                        shape = runShapeRowOf(routeId, it).shape!!,
+                        distanceMeters = it.distanceMeters,
+                    )
+                }
+            )
+        },
+        shapedRuns = flowOf(shaped),
+        io = dispatcher,
+        courseDispatcher = dispatcher,
+    )
+
+    /**
+     * The whole of #436: a family the runner ran before they imported it, so nothing was ever
+     * written down on any of its lengths. It must still open on the one they ran last.
+     */
+    @Test
+    fun `a family whose lengths were only ever recognised opens on the one run last`() =
+        runTest(dispatcher) {
+            val fiveK = givenACourse("Cuckoo 5k", 5_000.0, family = "Cuckoo Trail")
+            val eightK = givenACourse("Cuckoo 8k", 8_000.0, family = "Cuckoo Trail")
+            val theEightKsGround = shapeAt(52.5)
+
+            val landing = viewModelSeeing(
+                shapes = mapOf(fiveK to shapeAt(51.5), eightK to theEightKsGround),
+                shaped = listOf(runOver(theEightKsGround, sessionId = 7, startTime = 9_000)),
+            ).landingSibling(fiveK)
+
+            assertEquals(eightK, landing)
+        }
+
+    /** A Run written down beats an older Run recognised, and the reverse: the later one wins. */
+    @Test
+    fun `a length remembered more recently than another was recognised still wins`() =
+        runTest(dispatcher) {
+            val fiveK = givenACourse("Cuckoo 5k", 5_000.0, family = "Cuckoo Trail")
+            val eightK = givenACourse("Cuckoo 8k", 8_000.0, family = "Cuckoo Trail")
+            val theEightKsGround = shapeAt(52.5)
+            lastRuns = listOf(RouteLastRunRow(fiveK, 9_000))
+
+            val landing = viewModelSeeing(
+                shapes = mapOf(fiveK to shapeAt(51.5), eightK to theEightKsGround),
+                shaped = listOf(runOver(theEightKsGround, sessionId = 7, startTime = 1_000)),
+            ).landingSibling(eightK)
+
+            assertEquals(fiveK, landing)
+        }
 
     @Test
     fun `a course in no family opens on itself, whatever else has been run`() = runTest(dispatcher) {
