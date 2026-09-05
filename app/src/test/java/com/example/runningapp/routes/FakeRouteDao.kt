@@ -4,6 +4,7 @@ import com.example.runningapp.data.KeptRoute
 import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteDao
 import com.example.runningapp.data.RouteHeader
+import com.example.runningapp.data.RouteShapeCandidate
 import com.example.runningapp.data.RouteShapeRow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -83,6 +84,22 @@ class FakeRouteDao : RouteDao {
 
     override suspend fun insertRouteShape(shape: RouteShapeRow) {
         shapes[shape.routeId] = shape
+    }
+
+    /**
+     * The shaped courses, as the real read returns them — the name taken from the row rather than
+     * kept beside the shape, and a shape of null left out, exactly as `SHAPED_COURSES_SQL` does.
+     */
+    override suspend fun shapedCourses(): List<RouteShapeCandidate> = shapes.values.mapNotNull { row ->
+        val course = rows.value.firstOrNull { it.id == row.routeId } ?: return@mapNotNull null
+        row.shape?.let {
+            RouteShapeCandidate(
+                routeId = row.routeId,
+                name = course.name,
+                shape = it,
+                distanceMeters = row.distanceMeters,
+            )
+        }
     }
 
     override suspend fun getRoute(routeId: Long): Route? = rows.value.firstOrNull { it.id == routeId }

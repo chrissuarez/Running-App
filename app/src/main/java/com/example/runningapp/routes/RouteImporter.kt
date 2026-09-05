@@ -11,7 +11,20 @@ import java.io.IOException
 
 /** What became of a file the runner handed to the library. */
 sealed interface RouteImportOutcome {
-    data class Imported(val routeId: Long, val name: String) : RouteImportOutcome
+    /**
+     * A new Route now holds this file's course.
+     *
+     * [sameGroundAs] names another course the library already keeps over this very ground, where
+     * there is one, and is null otherwise (#402). The import still happened — the file's line is
+     * not the kept row's line, so by the app's one identity rule they are two courses — and saying
+     * so is what lets the runner settle a pair the app is not entitled to merge. See
+     * [com.example.runningapp.data.KeptRoute.sameGroundAs].
+     */
+    data class Imported(
+        val routeId: Long,
+        val name: String,
+        val sameGroundAs: String? = null,
+    ) : RouteImportOutcome
 
     /**
      * The library already held this course, measured exactly as this file measures it.
@@ -137,7 +150,11 @@ class RouteImporter(
             remeasuring = true,
         )
         return when (kept.keeping) {
-            RouteKeeping.KEPT -> RouteImportOutcome.Imported(routeId = kept.id, name = kept.name)
+            RouteKeeping.KEPT -> RouteImportOutcome.Imported(
+                routeId = kept.id,
+                name = kept.name,
+                sameGroundAs = kept.sameGroundAs,
+            )
             RouteKeeping.ALREADY_KEPT -> RouteImportOutcome.AlreadySaved(name = kept.name)
             RouteKeeping.REMEASURED -> RouteImportOutcome.Remeasured(name = kept.name)
             RouteKeeping.REMEASURED_KEEPING_CLIMB ->

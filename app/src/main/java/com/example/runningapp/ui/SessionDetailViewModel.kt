@@ -144,7 +144,9 @@ class SessionDetailViewModel(
             val words = when (val outcome = withContext(assemblyDispatcher) {
                 saver.save(run, trackPoints)
             }) {
-                is RunRouteOutcome.Saved -> runSavedAsRouteMessage(outcome.name)
+                is RunRouteOutcome.Saved ->
+                    runSavedAsRouteMessage(outcome.name) +
+                        outcome.sameGroundAs?.let { routeSameGroundNote(it) }.orEmpty()
                 is RunRouteOutcome.AlreadySaved -> routeAlreadySavedMessage(outcome.name)
                 RunRouteOutcome.NoGround -> runHasNoRouteToSaveMessage()
                 RunRouteOutcome.StillRunning -> runStillRunningMessage()

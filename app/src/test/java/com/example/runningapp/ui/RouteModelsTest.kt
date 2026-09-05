@@ -63,6 +63,19 @@ class RouteModelsTest {
         assertEquals("Saved “Park loop” to your routes.", routeImportedMessage("Park loop"))
     }
 
+    /**
+     * Names the other course and says what to do about it: "covers the same ground" is a fact, and
+     * the runner is being asked to settle a pair the app will not settle for them (#402).
+     */
+    @Test
+    fun `warns that the library now holds one piece of ground twice`() {
+        assertEquals(
+            "Saved “Run 27 Aug 2026, 12:35” to your routes. It covers the same ground as " +
+                "“Cuckoo Trail”, which you already keep — you may want to delete one of them.",
+            routeImportedMessage("Run 27 Aug 2026, 12:35") + routeSameGroundNote("Cuckoo Trail"),
+        )
+    }
+
     /** Says outright that nothing was added, so the runner is not left looking for a new row. */
     @Test
     fun `names the route it already had`() {

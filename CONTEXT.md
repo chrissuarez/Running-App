@@ -221,12 +221,19 @@ drawing a line already kept is that Route rather than a second one — it adds n
 measures the line differently it re-measures the Route the runner already has. Imported from a GPX
 file (#54), or traced off a Run the runner has already been for (#55) — the same course either way,
 thinned to its shape and joined across the Pauses, because a Route is where the line goes and not
-what happened on it. A course already kept is not kept twice, whichever door it comes in by. Deleting one costs no Run
+what happened on it. A course already kept is not kept twice, whichever door it comes in by — with one
+residue: a course saved from a Run before #354 holds a line its own Run's GPX can no longer draw, so
+handing that GPX back writes a second row over the same ground. The app does not merge the pair, which
+would be it choosing which of the runner's courses is the real one; it **says so when the second row
+lands**, naming the course already kept, and the runner deletes whichever they do not want (#402). Deleting one costs no Run
 anything: nothing in the library points at history and nothing in history points back. A Route may
 carry a **Family** name, which groups it with the other lengths of the same route (#421) and changes
 nothing else about it — its line, its numbers and its Runs stay wholly its own. Its own page lists the
 Runs on it: the ones remembered on it (**Routed Run**) and, since #74, the ones **recognised** on it
 by shape. Neither writes anything into the library, so deleting a Route still costs no Run anything.
+Which length of a family its page opens on is the one **run most recently by either reading** (#436):
+"the rung they were on last" is a question about ground covered, so a length nobody ever picked at
+START still wins it.
 _Avoid_: path, and **track** — a Track is what a Run recorded of where it went, and the two must
 not be confused even in code (`TrackPoint` belongs to a Run). "Course" is fine, and is the word for
 the line itself as against the whole record of it. The `Routes` object under

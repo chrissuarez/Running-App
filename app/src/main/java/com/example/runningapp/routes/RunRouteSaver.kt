@@ -12,7 +12,18 @@ import java.time.ZoneId
 
 /** What became of a Run the runner asked to keep as a course. */
 sealed interface RunRouteOutcome {
-    data class Saved(val routeId: Long, val name: String) : RunRouteOutcome
+    /**
+     * The ground this Run covered is now a course of its own.
+     *
+     * [sameGroundAs] names another course the library already keeps over this very ground, or null
+     * (#402) — see [com.example.runningapp.data.KeptRoute.sameGroundAs] for why it is reported
+     * rather than merged.
+     */
+    data class Saved(
+        val routeId: Long,
+        val name: String,
+        val sameGroundAs: String? = null,
+    ) : RunRouteOutcome
 
     /**
      * The library already held this course, drawn exactly as this Run draws it.
@@ -143,7 +154,11 @@ class RunRouteSaver(
         }
 
         return if (kept.keeping == RouteKeeping.KEPT) {
-            RunRouteOutcome.Saved(routeId = kept.id, name = kept.name)
+            RunRouteOutcome.Saved(
+                routeId = kept.id,
+                name = kept.name,
+                sameGroundAs = kept.sameGroundAs,
+            )
         } else {
             RunRouteOutcome.AlreadySaved(name = kept.name)
         }

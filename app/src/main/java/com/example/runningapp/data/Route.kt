@@ -7,7 +7,9 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Transaction
+import com.example.runningapp.routes.CourseShape
 import com.example.runningapp.routes.RoutePolyline
+import com.example.runningapp.routes.courseRecognising
 import com.example.runningapp.routes.routeShapeOf
 import kotlinx.coroutines.flow.Flow
 
@@ -169,7 +171,33 @@ enum class RouteKeeping {
  * [name] is the kept row's name, which for a course already held is the runner's name for it and not
  * whatever the caller was about to call it.
  */
-data class KeptRoute(val id: Long, val name: String, val keeping: RouteKeeping)
+data class KeptRoute(
+    val id: Long,
+    val name: String,
+    val keeping: RouteKeeping,
+    /**
+     * Another course the library already holds over this very ground, or null where there is none
+     * (#402).
+     *
+     * **Only ever set where a row was just written**, because that is the only way the library ends
+     * up holding one piece of ground twice. A file whose line the library already had is that same
+     * row, not a second one, and nothing about it is worth reporting.
+     *
+     * It is a *report*, not a decision. The line stays the one identity a Route has
+     * ([findRouteByPolyline], ADR 0014) and nothing is merged, refused or hidden — the runner is
+     * told what they now have, and settles it themselves. That is the whole of the remedy #402
+     * settled on, and the reading
+     * [com.example.runningapp.routes.courseRecognising] already assumed: two rows over one piece of
+     * ground is a library the app may describe and must not tidy.
+     *
+     * Recognised by the shapes ([RouteShapeRow]), by the same rule a course's page recognises its
+     * Runs with — so a lookalike named here is a course the two rows' pages would both claim.
+     * Where more than one fits, the closest in length is named
+     * ([com.example.runningapp.routes.courseRecognising]): the runner is owed one name rather than
+     * a list.
+     */
+    val sameGroundAs: String? = null,
+)
 
 @Dao
 interface RouteDao {
@@ -295,7 +323,12 @@ interface RouteDao {
         }
         val routeId = insertRoute(route)
         rememberTheShapeOf(routeId, route.polyline)
-        return KeptRoute(routeId, route.name, RouteKeeping.KEPT)
+        return KeptRoute(
+            routeId,
+            route.name,
+            RouteKeeping.KEPT,
+            sameGroundAs = courseAlreadyOverThisGround(routeId)?.name,
+        )
     }
 
     /**
@@ -318,11 +351,65 @@ interface RouteDao {
      * nothing else writes them but the pass that pays the backfill
      * ([com.example.runningapp.routes.RouteShaping]).
      */
+    /**
+     * A course the library already held over the ground [routeId] was just written for, or null
+     * (#402).
+     *
+     * The residue #354 and #399 could not reach. A row saved from a Run before #354 was thinned from
+     * places that had not been snapped first, and thinning only removes — so that row's line can no
+     * longer be drawn from its own Run's GPX, [findRouteByPolyline] misses it, and handing that GPX
+     * back writes a second row over the same ground under the same name.
+     *
+     * **This does not close that door; it puts a light above it.** The alternatives were both worse:
+     * matching the old encoding as well would be a second permanent way of saying "the same course",
+     * which ADR 0014 argues against, and redrawing the row from its Run's track needs a link from a
+     * Route back to a Run that the table has never held. So the runner is told, in the words of the
+     * screen they are looking at, and deletes whichever row they do not want. Nothing is merged
+     * behind them: which of two courses over one piece of ground is the real one is the runner's
+     * call, and it is the very call [com.example.runningapp.routes.courseRecognising] declines to
+     * make on their behalf.
+     *
+     * Read inside [keepRoute]'s own transaction, off the shape written a line above — so what it
+     * compares against is the library as it stood when the row landed, not as it stands after
+     * whoever wrote next.
+     *
+     * Null for a course with no shape at all: a line too short to hold one
+     * ([com.example.runningapp.routes.routeShapeOf]) has no ground to be recognised on.
+     */
+    suspend fun courseAlreadyOverThisGround(routeId: Long): RouteShapeCandidate? {
+        val courses = shapedCourses()
+        val kept = courses.firstOrNull { it.routeId == routeId }?.decoded() ?: return null
+        return courseRecognising(
+            kept,
+            courses.filter { it.routeId != routeId }.mapNotNull { candidate ->
+                candidate.decoded()?.let {
+                    CourseShape(routeId = candidate.routeId, name = candidate.name, shape = it)
+                }
+            },
+        )?.let { named -> courses.first { it.routeId == named.routeId } }
+    }
+
     suspend fun rememberTheShapeOf(routeId: Long, polyline: String) =
         insertRouteShape(routeShapeRowOf(routeId, routeShapeOf(RoutePolyline.decode(polyline))))
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRouteShape(shape: RouteShapeRow)
+
+    /**
+     * Every course the library holds a shape of — what a course just written is compared against
+     * (#402).
+     *
+     * [SHAPED_COURSES_SQL] itself rather than a second query saying the same thing, so what counts
+     * as a shaped course is one answer whoever is asking. On this DAO rather than in
+     * [RouteShapeDao] for [rememberTheShapeOf]'s reason: Room will only put two statements in one
+     * transaction where they sit on one DAO, and this one has to run inside [keepRoute]'s.
+     *
+     * Every course rather than the matching one, because the matching is a geometry rule kept in
+     * one place ([com.example.runningapp.routes.runIsOnCourse]) and SQL cannot ask it. The rows are
+     * five places and a number each, never a line.
+     */
+    @Query(SHAPED_COURSES_SQL)
+    suspend fun shapedCourses(): List<RouteShapeCandidate>
 
     /**
      * Writes a re-read of the same line's distance and climb onto the Route already kept.
