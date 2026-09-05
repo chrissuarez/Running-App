@@ -102,6 +102,25 @@ class SameGroundTwiceTest {
         assertNull(again.sameGroundAs)
     }
 
+    /**
+     * The legacy row is the one likeliest not to be shaped yet, and the timing is not a freak: the
+     * launch pass that pays the shape debt runs on a scope of its own, and a GPX opened with the app
+     * arrives in the very launch that starts it. Lose that race and the pair goes unreported for
+     * ever — handing the file over a second time finds the row just written and says nothing.
+     *
+     * So the debt is paid before the library is asked ([com.example.runningapp.data.RouteDao.takeTheShapesStillOwed]).
+     */
+    @Test
+    fun `a course still owed its shape is still ground already kept`() = runTest {
+        val dao = FakeRouteDao()
+        val legacy = dao.keep("Cuckoo Trail", asThinnedLongAgo)
+        dao.shapes.remove(legacy.id)
+
+        val kept = dao.keep("Run 27 Aug 2026, 12:35", asDrawnToday)
+
+        assertEquals("Cuckoo Trail", kept.sameGroundAs)
+    }
+
     /** A line too short to hold a shape has no ground to be recognised on. */
     @Test
     fun `a course too short to be shaped says nothing`() = runTest {

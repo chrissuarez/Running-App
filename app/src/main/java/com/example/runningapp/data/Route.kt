@@ -323,6 +323,7 @@ interface RouteDao {
         }
         val routeId = insertRoute(route)
         rememberTheShapeOf(routeId, route.polyline)
+        takeTheShapesStillOwed()
         return KeptRoute(
             routeId,
             route.name,
@@ -330,6 +331,47 @@ interface RouteDao {
             sameGroundAs = courseAlreadyOverThisGround(routeId)?.name,
         )
     }
+
+    /**
+     * Takes the shape of every course that has never had one, before the library is asked a question
+     * about the whole of itself (#402).
+     *
+     * A question asked of the shaped courses is answered by the shaped courses, so a debt still
+     * unpaid is a course the answer cannot see. That matters here and only here: the launch pass
+     * ([com.example.runningapp.routes.RouteShaping.payWhatIsOwed]) is started on a scope of its own
+     * and a GPX opened with the app arrives in the very launch that starts it, so the two race. Lose
+     * that race and the pair goes unreported for ever — a second row over the same ground is written
+     * in silence, and handing the same file over again finds that row and returns
+     * [RouteKeeping.ALREADY_KEPT], which says nothing by design.
+     *
+     * Paying the debt here rather than waiting for the pass, because a report about the library has
+     * to be asked of the library. It is not a second shaping rule: the same [rememberTheShapeOf] the
+     * pass uses, off the same lines, and a Route's line is written once and never rewritten
+     * ([Route.polyline]) — so both writers can only ever arrive at the same answer, and the row is
+     * replaced rather than added to. Two of them at once is therefore safe in the one way that
+     * matters: neither can write a shape the other would disagree with.
+     *
+     * One line at a time, fetched and let go before the next is asked for, which is
+     * [Route.polyline]'s first rule. Empty on every launch after the first, where it costs the one
+     * index read that says nothing is owed.
+     */
+    suspend fun takeTheShapesStillOwed() {
+        coursesOwedShapes().forEach { owed ->
+            val line = getRoutePolyline(owed) ?: return@forEach
+            rememberTheShapeOf(owed, line)
+        }
+    }
+
+    /**
+     * Every course still owed a shape, oldest first — the debt as [RouteShapeDao] states it.
+     *
+     * The absence of a row is the debt ([RouteShapeRow]). Written out again on this DAO rather than
+     * borrowed from [RouteShapeDao.getRouteIdsMissingShapes], for [rememberTheShapeOf]'s reason:
+     * Room will only join statements into one transaction where they sit on one DAO, and this one
+     * has to run inside [keepRoute]'s.
+     */
+    @Query("SELECT id FROM routes WHERE id NOT IN (SELECT routeId FROM route_shapes) ORDER BY id ASC")
+    suspend fun coursesOwedShapes(): List<Long>
 
     /**
      * Measures the line a course is being kept along, in the same transaction as the keeping (#74).
