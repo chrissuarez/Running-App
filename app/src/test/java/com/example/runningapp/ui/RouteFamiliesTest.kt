@@ -4,7 +4,15 @@ import com.example.runningapp.analysis.RouteThumbnail
 import com.example.runningapp.analysis.ThumbPoint
 import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.data.RouteLastRunRow
+import com.example.runningapp.data.RouteRunRow
 import com.example.runningapp.data.RouteSource
+import com.example.runningapp.data.ShapedRunRow
+import com.example.runningapp.data.runShapeRowOf
+import com.example.runningapp.routes.CourseShape
+import com.example.runningapp.routes.RoutePoint
+import com.example.runningapp.routes.RoutePolyline
+import com.example.runningapp.routes.routeShapeOf
+import com.example.runningapp.segments.RunShape
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -367,6 +375,106 @@ class RouteFamiliesTest {
     @Test
     fun `a course deleted out from under the page lands nowhere`() {
         assertNull(routeFamilyLandingId(emptyList(), emptyList()))
+    }
+
+    // --- The landing counts the Runs a length only recognises (#436) ---
+
+    /** A line long enough to hold a shape, drawn from [at] so two of them are different ground. */
+    private fun shapeAt(at: Double): RunShape = routeShapeOf(
+        RoutePolyline.decode(
+            RoutePolyline.encode(
+                listOf(
+                    RoutePoint(at, -0.1, elevationMeters = null),
+                    RoutePoint(at + 0.02, -0.1, elevationMeters = null),
+                )
+            )
+        )
+    )!!
+
+    /** One Run over [shape]'s ground, as the shaped read hands it over. */
+    private fun runOver(shape: RunShape, sessionId: Long, startTime: Long) = ShapedRunRow(
+        run = RouteRunRow(
+            sessionId = sessionId,
+            startTime = startTime,
+            ranAtUtcOffsetSeconds = 0,
+            durationSeconds = 300,
+            movingTimeSeconds = 300,
+            distanceKm = shape.distanceMeters / 1_000.0,
+        ),
+        shape = runShapeRowOf(sessionId, shape).shape!!,
+        shapeDistanceMeters = shape.distanceMeters,
+    )
+
+    @Test
+    fun `a length nobody wrote down is still the length run most recently`() {
+        val theFiveK = shapeAt(51.5)
+        val theEightK = shapeAt(52.5)
+
+        val lastRuns = routeFamilyLastRuns(
+            remembered = emptyList(),
+            courses = listOf(
+                CourseShape(routeId = 1, name = "Cuckoo 5k", shape = theFiveK),
+                CourseShape(routeId = 2, name = "Cuckoo 8k", shape = theEightK),
+            ),
+            shaped = listOf(runOver(theEightK, sessionId = 7, startTime = 9_000)),
+        )
+
+        assertEquals(listOf(RouteLastRunRow(2, 9_000)), lastRuns)
+    }
+
+    @Test
+    fun `the later of the two histories is the one a length is judged on`() {
+        val theFiveK = shapeAt(51.5)
+
+        val lastRuns = routeFamilyLastRuns(
+            remembered = listOf(RouteLastRunRow(1, 9_000)),
+            courses = listOf(CourseShape(routeId = 1, name = "Cuckoo 5k", shape = theFiveK)),
+            shaped = listOf(runOver(theFiveK, sessionId = 7, startTime = 1_000)),
+        )
+
+        assertEquals(listOf(RouteLastRunRow(1, 9_000)), lastRuns)
+    }
+
+    @Test
+    fun `a run over other ground does not move the length it is not on`() {
+        val theFiveK = shapeAt(51.5)
+        val elsewhere = shapeAt(53.5)
+
+        val lastRuns = routeFamilyLastRuns(
+            remembered = emptyList(),
+            courses = listOf(CourseShape(routeId = 1, name = "Cuckoo 5k", shape = theFiveK)),
+            shaped = listOf(runOver(elsewhere, sessionId = 7, startTime = 9_000)),
+        )
+
+        assertEquals(emptyList<RouteLastRunRow>(), lastRuns)
+    }
+
+    /** A course still owed its measurement keeps whatever was written down on it. */
+    @Test
+    fun `a length with no shape yet keeps the runs remembered on it`() {
+        val theEightK = shapeAt(52.5)
+
+        val lastRuns = routeFamilyLastRuns(
+            remembered = listOf(RouteLastRunRow(1, 5_000)),
+            courses = listOf(CourseShape(routeId = 2, name = "Cuckoo 8k", shape = theEightK)),
+            shaped = listOf(runOver(theEightK, sessionId = 7, startTime = 1_000)),
+        )
+
+        assertEquals(
+            setOf(RouteLastRunRow(1, 5_000), RouteLastRunRow(2, 1_000)),
+            lastRuns.toSet(),
+        )
+    }
+
+    /** Nothing to recognise against is the read the app made before #436, unchanged. */
+    @Test
+    fun `a family with no shapes at all is judged on what was written down`() {
+        val remembered = listOf(RouteLastRunRow(1, 5_000))
+
+        assertEquals(
+            remembered,
+            routeFamilyLastRuns(remembered, courses = emptyList(), shaped = emptyList()),
+        )
     }
 
     // --- The names the box offers ---
