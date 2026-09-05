@@ -70,11 +70,21 @@ fun routeImportedMessage(name: String): String = "Saved “$name” to your rout
  * says what to do about it, because "covers the same ground" is a fact and not yet an instruction.
  *
  * One sentence for both doors ([runSavedAsRouteMessage] appends it too), so a runner meeting the
- * same pair from a Run's page and from the file picker is told the same thing.
+ * same pair from a Run's page and from the file picker is told the same thing. Null is no such
+ * course and reads as nothing at all, settled here rather than at each door — otherwise two callers
+ * would each decide what an absent twin says.
+ *
+ * **Conditional rather than an instruction.** The ground is recognised by a tolerance, not by an
+ * equality ([com.example.runningapp.routes.runIsOnCourse]), so two courses the runner keeps on
+ * purpose can fit it — two lengths of one family whose difference falls inside it. Telling them
+ * outright to delete one would be wrong advice about a pair they meant to have. The fact is stated,
+ * the remedy is offered for the case where it *was* an accident, and the choice stays theirs.
  */
-fun routeSameGroundNote(sameGroundAs: String): String =
-    " It covers the same ground as “$sameGroundAs”, which you already keep — " +
-        "you may want to delete one of them."
+fun routeSameGroundNote(sameGroundAs: String?): String {
+    if (sameGroundAs == null) return ""
+    return " It covers the same ground as “$sameGroundAs”, which you already keep. " +
+        "If that was not meant to be a second copy, delete whichever one you do not want."
+}
 
 /**
  * What the screen says when the file was a course the library already holds.

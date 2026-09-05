@@ -351,6 +351,12 @@ interface RouteDao {
      * nothing else writes them but the pass that pays the backfill
      * ([com.example.runningapp.routes.RouteShaping]).
      */
+    suspend fun rememberTheShapeOf(routeId: Long, polyline: String) =
+        insertRouteShape(routeShapeRowOf(routeId, routeShapeOf(RoutePolyline.decode(polyline))))
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRouteShape(shape: RouteShapeRow)
+
     /**
      * A course the library already held over the ground [routeId] was just written for, or null
      * (#402).
@@ -376,24 +382,14 @@ interface RouteDao {
      * Null for a course with no shape at all: a line too short to hold one
      * ([com.example.runningapp.routes.routeShapeOf]) has no ground to be recognised on.
      */
-    suspend fun courseAlreadyOverThisGround(routeId: Long): RouteShapeCandidate? {
+    suspend fun courseAlreadyOverThisGround(routeId: Long): CourseShape? {
         val courses = shapedCourses()
         val kept = courses.firstOrNull { it.routeId == routeId }?.decoded() ?: return null
         return courseRecognising(
             kept,
-            courses.filter { it.routeId != routeId }.mapNotNull { candidate ->
-                candidate.decoded()?.let {
-                    CourseShape(routeId = candidate.routeId, name = candidate.name, shape = it)
-                }
-            },
-        )?.let { named -> courses.first { it.routeId == named.routeId } }
+            courses.filter { it.routeId != routeId }.mapNotNull { it.asCourseShape() },
+        )
     }
-
-    suspend fun rememberTheShapeOf(routeId: Long, polyline: String) =
-        insertRouteShape(routeShapeRowOf(routeId, routeShapeOf(RoutePolyline.decode(polyline))))
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertRouteShape(shape: RouteShapeRow)
 
     /**
      * Every course the library holds a shape of — what a course just written is compared against

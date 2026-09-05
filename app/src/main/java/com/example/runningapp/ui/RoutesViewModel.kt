@@ -13,9 +13,9 @@ import com.example.runningapp.data.RouteLastRunRow
 import com.example.runningapp.data.RouteRunRow
 import com.example.runningapp.data.RouteShapeCandidate
 import com.example.runningapp.data.ShapedRunRow
+import com.example.runningapp.data.asCourseShape
 import com.example.runningapp.data.decoded
 import com.example.runningapp.repeatedOn
-import com.example.runningapp.routes.CourseShape
 import com.example.runningapp.routes.RouteImportOutcome
 import com.example.runningapp.routes.RouteImporter
 import com.example.runningapp.routes.RoutePolyline
@@ -385,6 +385,11 @@ class RoutesViewModel(
      * ([com.example.runningapp.data.RunShapeRow]), never a line, so the read is a few kilobytes and
      * a few hundred comparisons — and it happens off the main thread, on [courseDispatcher], like
      * every other measuring this class does.
+     *
+     * The page does wait on it, and that is the choice rather than an oversight. The alternative is
+     * to draw the length the library row opened and re-land once the read comes back, which moves
+     * the course out from under a runner who has already started reading it — the very thing this
+     * being asked *once* rather than watched exists to prevent.
      */
     suspend fun landingSibling(routeId: Long): Long? = withContext(courseDispatcher) {
         val siblings = routeSiblings(routeDao.getLibraryFlow().first(), routeId)
@@ -393,13 +398,7 @@ class RoutesViewModel(
         // no further say, so `first()` on the two flows the page already watches is the one-shot
         // read of them — a second pair of queries would be the same rows asked for again under
         // another name, and two ideas of what a shaped course is.
-        val courses = siblings.mapNotNull { sibling ->
-            courseShape(sibling.id).first()?.let { candidate ->
-                candidate.decoded()?.let { shape ->
-                    CourseShape(routeId = candidate.routeId, name = candidate.name, shape = shape)
-                }
-            }
-        }
+        val courses = siblings.mapNotNull { sibling -> courseShape(sibling.id).first()?.asCourseShape() }
         routeFamilyLandingId(
             siblings,
             routeFamilyLastRuns(
@@ -445,8 +444,7 @@ class RoutesViewModel(
             val outcome = withContext(io) { importer.import(uri) }
             _message.value = when (outcome) {
                 is RouteImportOutcome.Imported ->
-                    routeImportedMessage(outcome.name) +
-                        outcome.sameGroundAs?.let { routeSameGroundNote(it) }.orEmpty()
+                    routeImportedMessage(outcome.name) + routeSameGroundNote(outcome.sameGroundAs)
                 is RouteImportOutcome.AlreadySaved -> routeAlreadySavedMessage(outcome.name)
                 is RouteImportOutcome.Remeasured -> routeRemeasuredMessage(outcome.name)
                 is RouteImportOutcome.RemeasuredKeepingClimb ->

@@ -71,8 +71,18 @@ class RouteModelsTest {
     fun `warns that the library now holds one piece of ground twice`() {
         assertEquals(
             "Saved “Run 27 Aug 2026, 12:35” to your routes. It covers the same ground as " +
-                "“Cuckoo Trail”, which you already keep — you may want to delete one of them.",
+                "“Cuckoo Trail”, which you already keep. If that was not meant to be a second " +
+                "copy, delete whichever one you do not want.",
             routeImportedMessage("Run 27 Aug 2026, 12:35") + routeSameGroundNote("Cuckoo Trail"),
+        )
+    }
+
+    /** No such course reads as nothing at all, so neither door has to decide that for itself. */
+    @Test
+    fun `a course with no twin says only that it was saved`() {
+        assertEquals(
+            "Saved “Park loop” to your routes.",
+            routeImportedMessage("Park loop") + routeSameGroundNote(null),
         )
     }
 
