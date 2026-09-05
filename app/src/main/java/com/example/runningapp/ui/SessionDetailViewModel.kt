@@ -145,8 +145,7 @@ class SessionDetailViewModel(
                 saver.save(run, trackPoints)
             }) {
                 is RunRouteOutcome.Saved ->
-                    runSavedAsRouteMessage(outcome.name) +
-                        outcome.sameGroundAs?.let { routeSameGroundNote(it) }.orEmpty()
+                    runSavedAsRouteMessage(outcome.name) + routeSameGroundNote(outcome.sameGroundAs)
                 is RunRouteOutcome.AlreadySaved -> routeAlreadySavedMessage(outcome.name)
                 RunRouteOutcome.NoGround -> runHasNoRouteToSaveMessage()
                 RunRouteOutcome.StillRunning -> runStillRunningMessage()

@@ -185,6 +185,23 @@ fun routeSiblings(library: List<RouteHeader>, routeId: Long): List<RouteHeader> 
  * is the same tie-break the empty case uses rather than a second rule.
  */
 /**
+ * Which of a family's lengths its page opens on: **the one run most recently, and the shortest
+ * where none has been run** (#421).
+ *
+ * The recent one because that is what the runner means by the family name today — they are working
+ * their way up the ladder, and the rung they were on last is the rung they want to see. The shortest
+ * as the fallback because a family nobody has run yet is a plan, and the plan starts at the bottom.
+ *
+ * [lastRuns] is what [routeFamilyLastRuns] made of the two histories a course has — the Runs
+ * remembered on it and the Runs recognised on it (#436) — and a course missing from it has never
+ * been run, by either reading.
+ * Rows about courses outside this family are ignored rather than trusted, so a caller that asked a
+ * wider question cannot land the page on a course it does not show.
+ *
+ * Ties — two lengths whose last Runs began on the very same millisecond — fall to the shorter, which
+ * is the same tie-break the empty case uses rather than a second rule.
+ */
+/**
  * When each of a family's lengths was last run, counting the Runs it **recognises** as well as the
  * Runs remembered on it (#436).
  *
@@ -222,13 +239,13 @@ fun routeFamilyLastRuns(
     // whole shaped history four times over.
     val runs = shaped.mapNotNull { row -> row.decoded()?.let { it to row.run.startTime } }
     val latest = HashMap<Long, Long>()
-    val remember = { routeId: Long, startTime: Long ->
+    val noteRunOn = { routeId: Long, startTime: Long ->
         latest[routeId] = maxOf(latest[routeId] ?: Long.MIN_VALUE, startTime)
     }
-    remembered.forEach { remember(it.routeId, it.lastRunStartTime) }
+    remembered.forEach { noteRunOn(it.routeId, it.lastRunStartTime) }
     courses.forEach { course ->
         runs.forEach { (shape, startTime) ->
-            if (runIsOnCourse(shape, course.shape)) remember(course.routeId, startTime)
+            if (runIsOnCourse(shape, course.shape)) noteRunOn(course.routeId, startTime)
         }
     }
     return latest.map { (routeId, startTime) -> RouteLastRunRow(routeId, startTime) }
@@ -242,6 +259,8 @@ fun routeFamilyLandingId(siblings: List<RouteHeader>, lastRuns: List<RouteLastRu
     val mostRecent = siblings.filter { it.id in ranAt }.maxByOrNull { ranAt.getValue(it.id) }
     return (mostRecent ?: siblings.first()).id
 }
+
+
 
 /**
  * How a length is written on a chip: `5k`, `8k`, `12.5k` (#421).
