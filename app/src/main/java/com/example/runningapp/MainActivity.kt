@@ -375,6 +375,12 @@ class MainActivity : ComponentActivity() {
         runningAppContainer().backfillEffortScoresOnce()
         runningAppContainer().paySegmentTimingOnce()
 
+        // Every Run recorded before the weather shipped has the position and the time to look one up
+        // and nothing stored, and a Run saved offline has the same gap for a different reason. This
+        // is the launch that asks for both (#81, #79). Off this Activity's lifetime — see the
+        // container: the runner backing out mid-pass must not stop it.
+        runningAppContainer().backfillWeatherOnce()
+
         // Every Run recorded before matched runs shipped has a track and no shape taken off it, so
         // nothing would recognise the route the runner has run fifty times until they ran it again.
         // This is the launch that measures them (#73).
@@ -636,10 +642,6 @@ class MainActivity : ComponentActivity() {
                             // a wait the runner can walk away during. See [popEveryPageFor].
                             navController.popEveryPageFor(Routes.sessionDetail(deletedSessionId))
                         }
-                    }
-
-                    LaunchedEffect(sessionRepository) {
-                        sessionRepository.retryMissingWeather()
                     }
 
                     NavHost(navController = navController, startDestination = Routes.MAIN) {

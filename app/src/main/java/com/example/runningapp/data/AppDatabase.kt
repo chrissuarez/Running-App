@@ -1366,17 +1366,12 @@ interface SessionDao {
         conditionCode: Int
     )
 
-    @Query(
-        """
-        SELECT * FROM sessions
-        WHERE runMode = 'outdoor'
-          AND startLatitude IS NOT NULL
-          AND startLongitude IS NOT NULL
-          AND weatherTempC IS NULL
-          AND endTime > 0
-        """
-    )
-    suspend fun getOutdoorSessionsMissingWeather(): List<RunnerSession>
+    /**
+     * Every Run still owed the weather it was run in, newest first — see [RUNS_OWED_WEATHER_SQL]
+     * for which Runs those are and where each one's position is taken from (#81).
+     */
+    @Query(RUNS_OWED_WEATHER_SQL)
+    suspend fun getRunsOwedWeather(): List<WeatherFillTarget>
 
     @Query("SELECT * FROM sessions WHERE id = :sessionId")
     fun getSessionByIdFlow(sessionId: Long): Flow<RunnerSession?>

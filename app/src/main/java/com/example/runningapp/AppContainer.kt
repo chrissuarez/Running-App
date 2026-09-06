@@ -391,6 +391,25 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Fills in the weather for the Runs in history that have none, once per process (#81).
+     *
+     * On the container's own scope, for the same reason the moving-time backfill is — see above, and
+     * this is the pass that most needed moving there. It shipped with #79 on a `LaunchedEffect` in
+     * the Activity's composition, which is precisely the lifetime that cannot hold it: the pass is
+     * minutes of fetching over a whole history, and the runner backing out of the screen cancelled
+     * it with the work part done and started nothing again for the life of the process. The ticket
+     * asks that killing the app mid-backfill and relaunching finishes the job, and that is only true
+     * of a pass no screen owns.
+     *
+     * Nothing orders this against the passes around it. It writes five columns nothing else reads
+     * and reads none that anything else writes.
+     */
+    fun backfillWeatherOnce() {
+        if (!weatherBackfilled.compareAndSet(false, true)) return
+        passes.launch("weather backfill") { sessionRepository.backfillWeather() }
+    }
+
+    /**
      * Puts a newly cut Segment to every Run in history, so it arrives with its efforts and its PR
      * already on it (#70).
      *
@@ -553,6 +572,7 @@ class AppContainer(context: Context) {
     private val interruptedRunsRescued = AtomicBoolean(false)
     private val recordsSeeded = AtomicBoolean(false)
     private val effortScored = AtomicBoolean(false)
+    private val weatherBackfilled = AtomicBoolean(false)
     private val missedRecordsScored = AtomicBoolean(false)
     private val missedStagesSettled = AtomicBoolean(false)
     private val walkMarkDebtsPaid = AtomicBoolean(false)
