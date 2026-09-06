@@ -2922,7 +2922,7 @@ class SessionRepository(
     /**
      * Fetches and persists the weather snapshot for a session. Never throws — a failed or
      * unreachable weather service must not affect the run save it runs after (#79). Failures are
-     * picked up later by [retryMissingWeather] on a subsequent app launch.
+     * picked up later by [backfillWeather] on a subsequent app launch.
      */
     suspend fun fetchAndSaveWeather(sessionId: Long, latitude: Double, longitude: Double, atEpochMillis: Long) {
         val client = weatherClient ?: return
@@ -2943,14 +2943,57 @@ class SessionRepository(
         )
     }
 
-    /** Retries weather for outdoor sessions that finished without it — called once per app launch. */
-    suspend fun retryMissingWeather() {
+    /**
+     * Fills in the weather for every Run in history that has GPS and does not have it yet (#81) —
+     * the whole of the backfill, and the retry a Run saved offline is mended by (#79) in the same
+     * pass, because they are the same list read the same way.
+     *
+     * **Idempotent and resumable, and both for the same reason: the work list is derived, never
+     * stored.** [RUNS_OWED_WEATHER_SQL] asks the rows themselves which Runs have no weather, so a
+     * Run an *earlier launch* filled is simply not on the list, and a pass killed halfway leaves the
+     * rest of the list exactly as it found it, to be worked out again and finished at the next
+     * launch. There is no cursor to lose and no marker to get out of step with the rows.
+     *
+     * **The one Run this can ask about twice is the Run that has just finished**, whose own fetch
+     * ([AfterRunRoutine]) may still be in flight when the list is read. No lock stands between them,
+     * on purpose: the pass is minutes of network and a lock would make an outdoor finish wait on the
+     * whole of history, which is the trade #382 is a warning about. What the second fetch costs is
+     * one request, and what it writes is the same five readings for the same hour at the same place
+     * — [SessionDao.updateWeather] is a plain overwrite, so neither order of the two leaves the row
+     * saying anything different.
+     *
+     * **A Run whose fetch fails stays on the list** and is tried again at the next launch, which is
+     * what an offline phone needs. [fetchAndSaveWeather] never throws, so one unreachable Run does
+     * not end the pass for the Runs behind it.
+     *
+     * **Nothing counts those attempts or ever gives up on a Run.** A Run could in principle be one
+     * the service has no reading for and be asked about at every launch for ever; the archive covers
+     * the whole globe back to 1940, so a real position is not that Run, and the cost of being wrong
+     * the other way is much worse — a stored give-up would fall on Runs that were only ever offline,
+     * and nothing would go back for them again.
+     *
+     * **No history-wide debt is raised for this** ([HistoryDebtRow]), and that is a decision rather
+     * than an omission. Those debts hold a Run Summary back until history is whole, and every pass
+     * behind one measures something out of rows the phone already has, so it always finishes. Weather
+     * is not measured, it is *asked for*, over a network that may be gone for weeks — a gate waiting
+     * on it would hold every Run Summary hostage to connectivity, for ever on a phone that never
+     * regains it. A Summary written before the weather lands is missing one line; a Summary that is
+     * never written at all is missing everything.
+     *
+     * **A gap between fetches** ([WEATHER_FETCH_GAP_MILLIS]) — a whole history is hundreds of
+     * requests to a free public service, and a refused burst comes back as no weather at all.
+     */
+    suspend fun backfillWeather() {
         if (weatherClient == null) return
-        val sessions = sessionDao.getOutdoorSessionsMissingWeather()
-        for (session in sessions) {
-            val latitude = session.startLatitude ?: continue
-            val longitude = session.startLongitude ?: continue
-            fetchAndSaveWeather(session.id, latitude, longitude, session.startTime)
+        val owed = sessionDao.getRunsOwedWeather()
+        owed.forEachIndexed { index, run ->
+            if (index > 0) delay(WEATHER_FETCH_GAP_MILLIS)
+            fetchAndSaveWeather(run.sessionId, run.latitude, run.longitude, run.startTime)
+        }
+        // What was asked, not what landed: a Run the service had nothing for is on the next
+        // launch's list, and this line must not read as though it had been paid.
+        if (owed.isNotEmpty()) {
+            Log.d("Weather", "Weather backfill asked about ${owed.size} run(s)")
         }
     }
 
@@ -3974,7 +4017,7 @@ class SessionRepository(
      * the coach is usually asked while the fetch is still in flight, and a Run is asked about
      * exactly once and never again ([RunnerSession.stageSettled]) — so a debrief sent a moment too
      * early is a debrief that never mentions the headwind, and no later pass repairs it.
-     * [retryMissingWeather] mends the row at the next launch, which is a fact for the run detail
+     * [backfillWeather] mends the row at the next launch, which is a fact for the run detail
      * page and comes far too late for the coach. So the fetch is pulled forward to here rather than
      * the settlement being made to wait on the worker: the settlement is what puts the runner's
      * next Workout on screen, and holding it behind a backup and an HTTP call would make every

@@ -18,7 +18,7 @@ import com.example.runningapp.run.RunMode
  * than in the worker so the order below can be checked on a laptop.
  *
  * The order is the point, and it is the snapshot that goes first. A missed fetch is retried at the
- * next launch ([SessionRepository.retryMissingWeather]); a missed snapshot is only ever noticed by
+ * next launch ([SessionRepository.backfillWeather]); a missed snapshot is only ever noticed by
  * a runner who has already cleared their storage. Putting the irrecoverable operation behind the
  * recoverable one is what a weather look-up costs when it goes slowly: the client waits ten seconds
  * to connect and ten more to read, with nothing capping the call as a whole, and a Clear storage
