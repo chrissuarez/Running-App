@@ -1184,6 +1184,16 @@ class MainActivity : ComponentActivity() {
                                 sessionRepository,
                                 requirement
                             ) {
+                                // THE RULE, for every read on this screen that is keyed to the
+                                // Stage: clear before reading. `produceState` applies its
+                                // `initialValue` once, when the state is first remembered — a key
+                                // change restarts the producer and KEEPS the last value. So a Stage
+                                // that changes with the screen still open (another plan activated,
+                                // a graduation landing) would leave the Stage just left answering
+                                // for the Stage just entered, until the read returns. The window is
+                                // short and what it shows is a bar the runner has not been measured
+                                // against, which is the one thing this card may never say.
+                                value = null
                                 sessionRepository.bestInHistoryFlow(requirement)
                                     .collect { value = it }
                             }
@@ -1210,6 +1220,10 @@ class MainActivity : ComponentActivity() {
                                 sessionRepository,
                                 activeStage
                             ) {
+                                // Cleared before the read for the reason stated above: a retained
+                                // value here would put the last Stage's weeks and run count on the
+                                // card of the Stage just entered.
+                                value = null
                                 value = activeStage?.let { stage ->
                                     stageTrainingSummaryOf(
                                         record = sessionRepository.stageTrainingRecord(stage.id),
