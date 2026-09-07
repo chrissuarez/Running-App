@@ -70,6 +70,17 @@ fun TrainingPlanScreen(
      */
     stageTraining: StageTrainingSummary?,
     /**
+     * What the active Stage says about a bar written as a time the runner has not beaten yet
+     * (#446), or null where they have beaten it — see
+     * [com.example.runningapp.training.barShortfallLine]. Exclusive with [alreadyBeatenLine] by
+     * construction: both are answers to one comparison of one best effort.
+     *
+     * Shown on the active Stage alone. A shortfall against a Stage the runner has not reached is
+     * the app measuring them against a bar they have not been set, and Stage 3's bar shown as a gap
+     * while they are in Stage 1 is discouragement with no purpose.
+     */
+    barShortfallLine: String?,
+    /**
      * The Plan the runner has finished, if they have finished one (#294) — the whole of what the
      * completed Stage's card says, and the only place this screen learns that anything is complete.
      * It asks history nothing.
@@ -152,11 +163,12 @@ fun TrainingPlanScreen(
                             stage.bestEffortRequirement?.let { planCompleteLine(completion, it) }
                         }
                         // Everything the card says ABOUT the bar — the bar already beaten (#293),
-                        // and the training counted towards it (#445) — stands or falls together,
-                        // and on one rule stated once. It is the Stage the runner is in, and only
-                        // while the plan is unfinished: past the last graduation "run one now and
-                        // it counts" is an offer the rule will not honour, and a progress count
-                        // sits under a congratulation (#294).
+                        // the training counted towards it (#445), the gap still to it (#446) —
+                        // stands or falls together, and on one rule stated once. It is the Stage
+                        // the runner is in, and only while the plan is unfinished: past the last
+                        // graduation "run one now and it counts" is an offer the rule will not
+                        // honour, a progress count sits under a congratulation, and a gap names a
+                        // target nobody is being asked to reach any more (#294).
                         val saysMoreThanTheBar = isActiveStage && completedLine == null
                         StageCard(
                             stage = stage,
@@ -164,6 +176,7 @@ fun TrainingPlanScreen(
                             isLocked = stage.id in lockedStageIds,
                             alreadyBeatenLine = alreadyBeatenLine.takeIf { saysMoreThanTheBar },
                             stageTraining = stageTraining.takeIf { saysMoreThanTheBar },
+                            barShortfallLine = barShortfallLine.takeIf { saysMoreThanTheBar },
                             completedLine = completedLine
                         )
                         Spacer(modifier = Modifier.height(12.dp))
@@ -194,6 +207,12 @@ private fun StageCard(
      * Null on every other card, and while the read is still in flight.
      */
     stageTraining: StageTrainingSummary?,
+    /**
+     * Where this Stage's timed bar stands against the record book (#446), on the Stage the runner
+     * is in and nowhere else. Null on every other card, while the read is still in flight, and on a
+     * bar already beaten — where [alreadyBeatenLine] is what the card says instead.
+     */
+    barShortfallLine: String?,
     /**
      * What this Stage's Requirement has become, on the Stage that finished the plan (#294): the fact
      * that it was met, on a day, in a time. Null on every Stage the runner has not finished a plan
@@ -331,6 +350,18 @@ private fun StageCard(
                             text = alreadyBeatenLine,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    // In the beaten line's own place, because it is the same remark on the same
+                    // sentence with the other answer in it (#446) — and never beside it: one card
+                    // does not both congratulate a time and measure a shortfall against it. Plain
+                    // rather than coloured, because a congratulation is news and a gap is a
+                    // measurement.
+                    if (barShortfallLine != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = barShortfallLine,
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                     // Under the bar it is counting towards, after any remark on that bar, because it

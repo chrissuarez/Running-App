@@ -27,7 +27,7 @@ import com.example.runningapp.historyHrProfile
 import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
 import com.example.runningapp.ranOn
-import com.example.runningapp.training.HistoryBestEffort
+import com.example.runningapp.training.BarStanding
 import com.example.runningapp.training.PlanCompletion
 import com.example.runningapp.training.ScoredRun
 import com.example.runningapp.training.asClock
@@ -1344,28 +1344,43 @@ class SessionRepository(
     }
 
     /**
-     * The best Run in history at [requirement]'s distance, for the Stage card to name where the
-     * runner has already beaten the bar (#293) — and null where there is nothing to name.
+     * What the record book says about a Stage's timed bar — the best Run in history at
+     * [requirement]'s distance, or the reason there is nothing to name (#293, #446).
      *
      * A read and nothing else: nothing here grants, advances or writes anything. The rule stays
      * forwards-only (ADR 0016) and this only says out loud what history already holds, so the card
      * can stop looking like a bug to a runner with a qualifying 5K behind them.
      *
-     * Null [requirement] is a Stage whose requirement is a judgement — stage 1's "4 weeks of
-     * consistent Zone 2 training" — which has no bar to have been beaten and so says nothing.
+     * Three answers and not two.
+     * [BarStanding.Silent] is every reason the app may not speak about this bar — a Stage whose
+     * requirement is a judgement, stage 1's "4 weeks of consistent Zone 2 training", which has no
+     * bar to have been beaten; no record book to ask; and testing mode, the one state where "run
+     * one now and it counts" is not true, since `graduateOnBestEffortRequirement` refuses to grant
+     * while it is on and a card promising a graduation the rule will decline is worse than a card
+     * that says nothing.
      *
-     * Silent under testing mode, which is the one state where "run one now and it counts" is not
-     * true: [graduateOnBestEffortRequirement] refuses to grant while it is on, and a card promising
-     * a graduation the rule will decline is worse than a card that says nothing.
+     * [BarStanding.Unranked] is the book answering that it holds no effort at this distance, which
+     * is a different fact and the one the shortfall line prints in words. A nullable best effort
+     * cannot tell the two apart, and a card that read silence as an empty book would tell a runner
+     * with a 5K in the book that they have never run one.
+     *
+     * One decision, read two ways by the two lines the card can carry: a second flow deciding
+     * silence for itself is a rule with two copies to drift apart.
      */
-    fun bestInHistoryFlow(requirement: BestEffortRequirement?): Flow<HistoryBestEffort?> {
-        if (requirement == null) return flowOf(null)
-        val dao = achievementDao ?: return flowOf(null)
-        val settings = settingsRepository?.userSettingsFlow ?: return flowOf(null)
+    fun barStandingFlow(requirement: BestEffortRequirement?): Flow<BarStanding> {
+        if (requirement == null) return flowOf(BarStanding.Silent)
+        val dao = achievementDao ?: return flowOf(BarStanding.Silent)
+        val settings = settingsRepository?.userSettingsFlow ?: return flowOf(BarStanding.Silent)
         return combine(
             dao.getQuickestInHistoryFlow(requirement.record),
             settings,
-        ) { best, userSettings -> best.takeUnless { userSettings.testingModeEnabled } }
+        ) { best, userSettings ->
+            when {
+                userSettings.testingModeEnabled -> BarStanding.Silent
+                best == null -> BarStanding.Unranked
+                else -> BarStanding.Ranked(best)
+            }
+        }
     }
 
     /**

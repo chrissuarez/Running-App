@@ -25,6 +25,7 @@ import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.training.FormVerdict
 import com.example.runningapp.training.GoalMetric
 import com.example.runningapp.training.GoalPeriod
+import com.example.runningapp.training.BarStanding
 import com.example.runningapp.training.HistoryBestEffort
 import com.example.runningapp.training.PlanCompletion
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -4844,7 +4845,10 @@ class SessionRepositoryTest {
     fun `a Stage whose requirement is a judgement asks the record book nothing`() = runTest {
         val bookDao: AchievementDao = mock()
 
-        assertNull(repositoryReading(bookDao).bestInHistoryFlow(requirement = null).first())
+        assertEquals(
+            BarStanding.Silent,
+            repositoryReading(bookDao).barStandingFlow(requirement = null).first()
+        )
         verifyNoInteractions(bookDao)
     }
 
@@ -4857,9 +4861,9 @@ class SessionRepositoryTest {
             whenever(bookDao.getQuickestInHistoryFlow(RecordType.FASTEST_5K))
                 .thenReturn(flowOf(quickest))
 
-            val best = repositoryReading(bookDao).bestInHistoryFlow(
+            val best = repositoryReading(bookDao).barStandingFlow(
                 BestEffortRequirement(RecordType.FASTEST_5K, 1_799)
-            ).first()
+            ).first().bestOrNull
 
             assertEquals(quickest, best)
             verify(bookDao).getQuickestInHistoryFlow(RecordType.FASTEST_5K)
@@ -4873,13 +4877,48 @@ class SessionRepositoryTest {
         )
 
         repositoryReading(bookDao)
-            .bestInHistoryFlow(BestEffortRequirement(RecordType.FASTEST_5K, 1_799))
+            .barStandingFlow(BestEffortRequirement(RecordType.FASTEST_5K, 1_799))
             .first()
 
         // Forwards only (ADR 0016): the card says the bar was beaten and the app grants nothing on
         // the strength of it — no Stage advanced, no message written, nothing.
         verify(mockSettingsRepo, never()).graduateStage(any(), any(), any(), any())
         verify(mockSettingsRepo, never()).setLatestDebrief(any(), any(), any())
+    }
+
+    @Test
+    fun `a book held back is told apart from a book with nothing in it`() = runTest {
+        val bookDao: AchievementDao = mock()
+        val quickest =
+            HistoryBestEffort(seconds = 1_900.0, runStartedAtMillis = 1_781_434_800_000L)
+        whenever(bookDao.getQuickestInHistoryFlow(any())).thenReturn(flowOf(quickest))
+        val bar = BestEffortRequirement(RecordType.FASTEST_5K, 1_799)
+
+        // Testing mode holds the book back. The runner HAS a 5K, so a card that read this as an
+        // empty book would print "No 5 km in your record book yet." at someone who has run one
+        // (#446).
+        assertEquals(
+            BarStanding.Silent,
+            repositoryReading(bookDao, UserSettings(testingModeEnabled = true))
+                .barStandingFlow(bar).first()
+        )
+        assertEquals(
+            BarStanding.Ranked(quickest),
+            repositoryReading(bookDao).barStandingFlow(bar).first()
+        )
+    }
+
+    @Test
+    fun `an empty book at that distance is unranked, and not silence`() = runTest {
+        val bookDao: AchievementDao = mock()
+        whenever(bookDao.getQuickestInHistoryFlow(any())).thenReturn(flowOf(null))
+
+        assertEquals(
+            BarStanding.Unranked,
+            repositoryReading(bookDao)
+                .barStandingFlow(BestEffortRequirement(RecordType.FASTEST_5K, 1_799))
+                .first()
+        )
     }
 
     @Test
@@ -4892,8 +4931,9 @@ class SessionRepositoryTest {
         // "Run one now and it counts" is the one promise the rule will not keep under testing mode,
         // which refuses to grant at all — so the card says nothing rather than something untrue.
         val best = repositoryReading(bookDao, UserSettings(testingModeEnabled = true))
-            .bestInHistoryFlow(BestEffortRequirement(RecordType.FASTEST_5K, 1_799))
+            .barStandingFlow(BestEffortRequirement(RecordType.FASTEST_5K, 1_799))
             .first()
+            .bestOrNull
 
         assertNull(best)
     }
@@ -4925,9 +4965,9 @@ class SessionRepositoryTest {
             .thenReturn(flowOf(UserSettings(historyRecordsSeeded = false)))
 
         repo.seedRecordsFromHistory()
-        val best = repo.bestInHistoryFlow(
+        val best = repo.barStandingFlow(
             BestEffortRequirement(RecordType.FASTEST_5K, 1_799)
-        ).first()
+        ).first().bestOrNull
 
         // The Walk's 20:00 would be the quickest thing in history if a Walk held a Best Effort at
         // all. It does not, so the bar the card names is the Open Run's 27:41.
