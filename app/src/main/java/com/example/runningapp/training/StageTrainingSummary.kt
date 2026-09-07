@@ -51,9 +51,9 @@ data class StageTrainingSummary(
      * the bar with a judgement left in it, and the figure without the sentence is arithmetic
      * pretending to be the whole answer.
      *
-     * Null exactly where no weeks figure is printed: a Stage whose bar names no weeks, and a Stage
-     * with nothing recorded under it. There is no "rest" for this line to be about, and a Stage
-     * whose bar is a time has the app itself answering it (#290).
+     * Null exactly where no weeks figure is printed, which is the Stage with nothing recorded under
+     * it: there is no "rest" for this line to be about. A Stage whose bar names no weeks has no
+     * summary at all rather than one with this line missing.
      */
     val judgementLine: String?,
     /**
@@ -74,12 +74,12 @@ data class StageTrainingSummary(
  * ([com.example.runningapp.PlanStage.weeksRequirement]), and null where it does not — a Stage whose
  * bar is a time, or the Desk Test plan's *"Complete 2 short run/walk repeats"*.
  *
- * A null bar takes the weeks with it, and leaves the plain count of qualifying Runs. Every figure
- * about weeks — the "of 4", the weeks trained, the row of weeks, and the sentence handing the rest
- * to the coach — is an answer to a bar written in weeks, and printing it against a bar that names
- * none is the card measuring the runner towards something nobody asked of them. The count of Runs
- * is true whatever the bar says, so it stays: a card that went blank there would be the screen
- * refusing to say what it knows.
+ * **A null bar answers null**, and the card says nothing at all. Every figure here answers a bar
+ * written in weeks, the count of Runs included: this record is the set the *coach* is handed, and
+ * against a bar the coach does not judge it is a different set of Runs wearing the word
+ * "qualifying". A Stage whose bar is a time is cleared by a Run this record excludes — see the
+ * rule in the body — and the Desk Test plan's *"Complete 2 short run/walk repeats"* is a judgement
+ * about something this does not measure either.
  *
  * [record] must be built from `SessionDao.getAiEvidenceRunDaysOfStage` — the graduation guard's own
  * filter — and never from a wider read. Two doors that answer "how many weeks" have to be fed the
@@ -88,7 +88,23 @@ data class StageTrainingSummary(
 fun stageTrainingSummaryOf(
     record: StageTrainingRecord,
     weeksRequired: Int?,
-): StageTrainingSummary {
+): StageTrainingSummary? {
+    // A bar that names no weeks is answered by nothing this record holds, so the card says nothing
+    // (Codex P2 on PR #450). It is not a screen refusing to say what it knows: what it knows is the
+    // count behind a WEEKS bar, and against any other bar that count is a different set of Runs
+    // wearing the word "qualifying".
+    //
+    // A Stage whose bar is a time is graduated by `graduateOnBestEffortRequirement`, which is
+    // deliberately NOT gated on `includeInAiTraining` and asks nothing about the plan's Workouts
+    // (ADR 0016): a Run kept back from the coach, or run off-plan, can clear that bar. This record
+    // is `getAiEvidenceRunDaysOfStage` — shared, on-plan, run/walk mode — so a private 5K would
+    // graduate the Stage while the "qualifying runs" figure beside it never moved. And a bar that
+    // is neither weeks nor a time (the Desk Test plan's "Complete 2 short run/walk repeats") is a
+    // judgement the coach makes about something this count does not measure either.
+    //
+    // Both cases are one rule: print this only where the bar it stands under is written in weeks.
+    if (weeksRequired == null) return null
+
     val countedLine = "Counted here: runs you did from this plan's workouts in this stage, " +
         "longer than two minutes, not marked as a walk, and left shared with the coach. " +
         "A run you kept back from the coach is not counted."
@@ -105,16 +121,6 @@ fun stageTrainingSummaryOf(
 
     val runs = record.qualifyingRuns
     val runsPart = "$runs qualifying ${runOrRuns(runs)}"
-
-    if (weeksRequired == null) {
-        return StageTrainingSummary(
-            headline = runsPart,
-            weeks = emptyList(),
-            weeksCaption = null,
-            judgementLine = null,
-            countedLine = countedLine,
-        )
-    }
 
     val trained = record.weeksTrained
     val weeksPart = if (trained < weeksRequired) {
