@@ -5,7 +5,6 @@ import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.data.RunnerSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -297,9 +296,34 @@ class HistoryRunTypeFilterTest {
     }
 
     @Test
-    fun `no measured run says so rather than printing a number`() {
+    fun `a finished run with no distance says so rather than printing a number`() {
         val detail = historyDistanceDetail(historyDistanceSummary(listOf(row(1, distanceKm = 0.0))))
 
-        assertTrue(detail, detail.contains("No distance"))
+        assertEquals("No distance on any of these finished runs.", detail)
+    }
+
+    @Test
+    fun `a run still being recorded is not called a run with no distance`() {
+        // History is reachable while a Run is being recorded, so a chip can narrow the list down to
+        // that Run alone. It is in neither count — it has a distance, just not a final one — so the
+        // line has nothing measured to print, and must not describe it as a Run that measured
+        // nothing.
+        val onlyRunning = historyDistanceSummary(listOf(row(1, distanceKm = 3.2, finished = false)))
+
+        assertEquals(0, onlyRunning.finishedRuns)
+        assertEquals(0, onlyRunning.measuredRuns)
+        assertEquals("No finished runs here yet.", historyDistanceDetail(onlyRunning))
+    }
+
+    @Test
+    fun `the run being recorded does not turn a finished empty list into an unfinished one`() {
+        // One finished Run that measured nothing, alongside the Run in progress: the fact worth
+        // printing is the finished one, and the count on the line stays the count of finished Runs.
+        val mixed = historyDistanceSummary(
+            listOf(row(1, distanceKm = 0.0), row(2, distanceKm = 3.2, finished = false))
+        )
+
+        assertEquals(1, mixed.finishedRuns)
+        assertEquals("No distance on any of these finished runs.", historyDistanceDetail(mixed))
     }
 }

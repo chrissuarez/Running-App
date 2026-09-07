@@ -234,8 +234,9 @@ fun historyDistanceHeadline(
 /**
  * The small line under it: the spread, and how many of the Runs on screen had no distance to give.
  *
- * Three shapes, and each says only what it can:
- * - nothing measured → `No distance on any of these runs.`
+ * Four shapes, and each says only what it can:
+ * - no Run here has finished → `No finished runs here yet.`
+ * - some finished, none of them measured → `No distance on any of these finished runs.`
  * - every measured Run the same length, or only one of them → `5.0 km`
  * - otherwise → `5.0–9.4 km`
  *
@@ -243,14 +244,26 @@ fun historyDistanceHeadline(
  * the line rather than left out because the whole block is a claim about a set, and a claim about
  * twelve Runs printed over a list of fourteen is a claim about the wrong set unless it says so.
  *
- * It counts only finished Runs with no distance, which is what the words say. A Run still being
- * recorded is not one of them — it has a distance, just not a final one — so it is left out of both
- * counts rather than swept into this one and described to the runner as a Run that measured nothing.
+ * **Every shape here says "finished", because that is the only set this line ever measured.**
+ * History is reachable while a Run is being recorded, so a chip can narrow the list to rows that
+ * include one — and where it is the only row, or the only row with anything to give, the line has
+ * nothing measured to print. Saying *"No distance on any of these runs"* there would describe the
+ * Run the runner is out on right now as a Run that measured nothing, which is the one thing
+ * [historyDistanceSummary] takes care not to claim: an unfinished Run is in neither of its counts
+ * because it has a distance, just not a final one. The first two shapes are apart for the same
+ * reason the two counts are: "nothing has finished yet" and "things finished and none of them
+ * measured" are different facts, and folding them would report the first as the second.
  */
 fun historyDistanceDetail(summary: HistoryDistanceSummary): String {
     val shortest = summary.shortestKm
     val longest = summary.longestKm
-    if (shortest == null || longest == null) return "No distance on any of these runs."
+    if (shortest == null || longest == null) {
+        return if (summary.finishedRuns == 0) {
+            "No finished runs here yet."
+        } else {
+            "No distance on any of these finished runs."
+        }
+    }
     val range = if (kmText(shortest) == kmText(longest)) {
         "${kmText(shortest)} km"
     } else {
