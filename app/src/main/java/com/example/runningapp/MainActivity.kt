@@ -114,7 +114,9 @@ import com.example.runningapp.ui.SessionDetailViewModel
 import com.example.runningapp.ui.SessionDetailViewModelFactory
 import com.example.runningapp.ui.SettingsScreen
 import com.example.runningapp.training.HistoryBestEffort
+import com.example.runningapp.training.StageTrainingSummary
 import com.example.runningapp.training.alreadyBeatenLine
+import com.example.runningapp.training.stageTrainingSummaryOf
 import com.example.runningapp.ui.TrainingPlanScreen
 import com.example.runningapp.ui.backupResultMessage
 import com.example.runningapp.ui.strapRowSummary
@@ -1185,6 +1187,28 @@ class MainActivity : ComponentActivity() {
                                 sessionRepository.bestInHistoryFlow(requirement)
                                     .collect { value = it }
                             }
+                            // What the app has already counted under that Stage (#445), read once
+                            // each time this screen is opened, and not watched afterwards. It is a
+                            // statement about stored Runs, and the count is only ever moved by a
+                            // Run finishing — which a runner does not do with the plan screen in
+                            // front of them, and which the rescue pass can only do to a Run whose
+                            // sheet is long since answered. So a stale figure needs the screen to
+                            // have been left open across a whole Run, and leaving the screen
+                            // disposes this and re-reads it. The same bargain the line above makes
+                            // with today's date.
+                            val stageTraining by produceState<StageTrainingSummary?>(
+                                initialValue = null,
+                                sessionRepository,
+                                activeStage
+                            ) {
+                                value = activeStage?.let { stage ->
+                                    stageTrainingSummaryOf(
+                                        record = sessionRepository.stageTrainingRecord(stage.id),
+                                        // The Stage's own bar, where its bar names weeks (#445).
+                                        weeksRequired = stage.weeksRequirement,
+                                    )
+                                }
+                            }
                             TrainingPlanScreen(
                                 activePlanId = userSettings.activePlanId,
                                 activeStageId = activeStage?.id,
@@ -1202,6 +1226,7 @@ class MainActivity : ComponentActivity() {
                                         zone = ZoneId.systemDefault()
                                     )
                                 },
+                                stageTraining = stageTraining,
                                 // Read straight off the settings, which is the only place a
                                 // finished plan is recorded (#294) — nothing here measures or
                                 // infers it.
