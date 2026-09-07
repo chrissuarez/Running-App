@@ -45,31 +45,49 @@ enum class RecordedRunType(val label: String) {
  * [TrainingPlanProvider.runTypeOfRecordedRun] — the same recovery the pre-run picker and the coach's
  * gate use, asked once here so History cannot reach a third answer.
  *
- * There are exactly four cases, and each is [OTHER] for its own stated reason:
+ * There are exactly five cases, and each is [OTHER] for its own stated reason:
  *
  * 1. **A Run under a Workout the plan still holds** → that Workout's [RunType]. The ordinary case.
  * 2. **An Open Run**, or any Run with a null `ranUnderWorkoutId` — one started with no plan
  *    attached, one that skipped the plan that day, or one recorded before the column existed →
  *    [OTHER]. It genuinely has no Run Type. Sweeping it into Easy because it was slow, or into Long
  *    because it was far, would be the app inventing a history the runner never recorded.
- * 3. **A Run under a Workout id no plan holds any more** — the plan was edited, or the Run was made
- *    under the Desk Test plan → [OTHER], for the same reason. The lookup returns nothing, and
- *    nothing is the answer; guessing which of three Run Types a deleted Workout was is a guess dressed
- *    as a fact.
- * 4. **A Run the runner marked a Walk** ([RunnerSession.isWalk]) → [OTHER], *even where the Workout
+ * 3. **A Run under a Workout id no plan holds any more** — the plan was edited → [OTHER], for the
+ *    same reason. The lookup returns nothing, and nothing is the answer; guessing which of three Run
+ *    Types a deleted Workout was is a guess dressed as a fact.
+ * 4. **A Run made under the Desk Test plan** ([TrainingPlanProvider.DESK_TEST_PLAN_ID]) → [OTHER],
+ *    and this one has to be *said*, because the lookup does not fail on it. The Desk Test plan is a
+ *    live member of `TrainingPlanProvider.plans`, its Stage and Workout both resolve, and that
+ *    Workout says [RunType.LONG] — so left alone, ten seconds of running twice over is filed as a
+ *    Long day and drags the typical Long distance down to a number no Long Run has ever measured.
+ *    That plan exists to exercise the interval machine at a desk, not to train anybody, so no Run
+ *    made under it is a Run of any Run Type.
+ * 5. **A Run the runner marked a Walk** ([RunnerSession.isWalk]) → [OTHER], *even where the Workout
  *    is still there and still says Quality*. A Walk completes no prescribed workout, graduates no
  *    Stage and contests no record, so the plan did not get the session it asked for. It also breaks
  *    the one thing this screen is for: walked ground is not run ground, and a walked "Quality day"
  *    dragged into the typical Quality distance would send the runner out to draw a loop shorter
  *    than any Quality day they have actually run.
  *
- * The alternative considered for (4) was to keep a Walk under its Workout's Run Type and leave it out of
+ * (4) is stated here, in History's own filing, rather than pushed down into
+ * [TrainingPlanProvider.runTypeOfRecordedRun]. That function answers the pre-run picker and the
+ * coach's gate, and both of them are asking about the Run being set up *now* under whatever plan is
+ * attached — for them the Desk Test Workout genuinely is the Long one on offer, and refusing it
+ * there would break the very testing the plan exists for. What is different here is only that this
+ * is a *recorded* Run being summarised alongside real training.
+ *
+ * The alternative considered for (5) was to keep a Walk under its Workout's Run Type and leave it out of
  * the distances only. It was declined because it puts two different answers on one screen — the row
  * would be listed as a Quality day by the very filter whose summary refuses to count it — and a
  * runner reading "Usually 7.2 km" over a list of five rows would be reading it off four.
  */
 fun recordedRunTypeOf(session: RunnerSession): RecordedRunType {
     if (session.isWalk) return RecordedRunType.OTHER
+    if (TrainingPlanProvider.planHoldingStage(session.ranUnderStageId)?.id
+        == TrainingPlanProvider.DESK_TEST_PLAN_ID
+    ) {
+        return RecordedRunType.OTHER
+    }
     return when (
         TrainingPlanProvider.runTypeOfRecordedRun(session.ranUnderStageId, session.ranUnderWorkoutId)
     ) {
