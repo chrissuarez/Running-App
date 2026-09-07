@@ -113,9 +113,10 @@ import com.example.runningapp.ui.SessionDetailScreen
 import com.example.runningapp.ui.SessionDetailViewModel
 import com.example.runningapp.ui.SessionDetailViewModelFactory
 import com.example.runningapp.ui.SettingsScreen
-import com.example.runningapp.training.HistoryBestEffort
+import com.example.runningapp.training.BarStanding
 import com.example.runningapp.training.StageTrainingSummary
 import com.example.runningapp.training.alreadyBeatenLine
+import com.example.runningapp.training.barShortfallLine
 import com.example.runningapp.training.stageTrainingSummaryOf
 import com.example.runningapp.ui.TrainingPlanScreen
 import com.example.runningapp.ui.backupResultMessage
@@ -1179,8 +1180,8 @@ class MainActivity : ComponentActivity() {
                             // re-answers itself when a Run is deleted, marked a Walk or told what
                             // the treadmill console said.
                             val requirement = activeStage?.bestEffortRequirement
-                            val bestInHistory by produceState<HistoryBestEffort?>(
-                                initialValue = null,
+                            val barStanding by produceState<BarStanding>(
+                                initialValue = BarStanding.Silent,
                                 sessionRepository,
                                 requirement
                             ) {
@@ -1193,8 +1194,14 @@ class MainActivity : ComponentActivity() {
                                 // for the Stage just entered, until the read returns. The window is
                                 // short and what it shows is a bar the runner has not been measured
                                 // against, which is the one thing this card may never say.
-                                value = null
-                                sessionRepository.bestInHistoryFlow(requirement)
+                                //
+                                // `Silent` is what clearing means here (#446): the standing this
+                                // screen has not read yet is the app having nothing it may say
+                                // about the bar, which is the same answer it gives for a Stage
+                                // carrying no bar at all. Neither line the card can draw is printed
+                                // from it, so the window shows no bar rather than the wrong one.
+                                value = BarStanding.Silent
+                                sessionRepository.barStandingFlow(requirement)
                                     .collect { value = it }
                             }
                             // What the app has already counted under that Stage (#445), read once
@@ -1244,12 +1251,17 @@ class MainActivity : ComponentActivity() {
                                 alreadyBeatenLine = requirement?.let {
                                     alreadyBeatenLine(
                                         requirement = it,
-                                        best = bestInHistory,
+                                        best = barStanding.bestOrNull,
                                         today = LocalDate.now(),
                                         zone = ZoneId.systemDefault()
                                     )
                                 },
                                 stageTraining = stageTraining,
+                                // The other answer to the same comparison, off the same best
+                                // effort (#446), so the card cannot both congratulate and measure.
+                                barShortfallLine = requirement?.let {
+                                    barShortfallLine(requirement = it, standing = barStanding)
+                                },
                                 // Read straight off the settings, which is the only place a
                                 // finished plan is recorded (#294) — nothing here measures or
                                 // infers it.

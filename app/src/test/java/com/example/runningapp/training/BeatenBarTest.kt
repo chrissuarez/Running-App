@@ -3,6 +3,7 @@ package com.example.runningapp.training
 import com.example.runningapp.BestEffortRequirement
 import com.example.runningapp.analysis.RecordType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -100,4 +101,124 @@ class BeatenBarTest {
 
         assertTrue(line!!, line.contains("15 June"))
     }
+}
+
+/**
+ * What the card says about a timed bar the runner has *not* beaten (#446) — the gap, in the same
+ * register as the beaten line and off the same record book.
+ */
+class BarShortfallLineTest {
+
+    @Test
+    fun `names the best effort and the gap to the bar`() {
+        // 31:40 against a bar of 29:59 is 1:41.
+        val best = HistoryBestEffort(seconds = 1900.0, runStartedAtMillis = JUNE_14_2026)
+
+        assertEquals(
+            "Your best 5 km is 31:40 — 1:41 off the bar.",
+            barShortfallLine(SUB_30, BarStanding.Ranked(best))
+        )
+    }
+
+    @Test
+    fun `says nothing where the bar is already beaten, so the congratulation stands alone`() {
+        val best = HistoryBestEffort(seconds = 1661.0, runStartedAtMillis = JUNE_14_2026)
+
+        assertNull(barShortfallLine(SUB_30, BarStanding.Ranked(best)))
+    }
+
+    @Test
+    fun `the slowest time that still passes leaves no gap`() {
+        // Inclusive: 29:59 clears 1799, so there is nothing to be short of.
+        val best = HistoryBestEffort(seconds = 1799.0, runStartedAtMillis = JUNE_14_2026)
+
+        assertNull(barShortfallLine(SUB_30, BarStanding.Ranked(best)))
+    }
+
+    @Test
+    fun `one second the wrong side of the bar is a gap of one second`() {
+        val best = HistoryBestEffort(seconds = 1800.0, runStartedAtMillis = JUNE_14_2026)
+
+        assertEquals(
+            "Your best 5 km is 30:00 — 0:01 off the bar.",
+            barShortfallLine(SUB_30, BarStanding.Ranked(best))
+        )
+    }
+
+    @Test
+    fun `a distance nothing has ever been ranked at is said in words`() {
+        // Not a gap of any size, and not a zero: nothing has ever been ranked here.
+        assertEquals(
+            "No 5 km in your record book yet.",
+            barShortfallLine(SUB_30, BarStanding.Unranked)
+        )
+    }
+
+    @Test
+    fun `exactly one of the two lines is ever on the card`() {
+        val efforts = listOf(null, 1000.0, 1499.0, 1798.9, 1799.0, 1799.1, 1800.0, 3000.0)
+        val bars = listOf(SUB_30, BestEffortRequirement(RecordType.FASTEST_5K, 1499))
+
+        bars.forEach { bar ->
+            efforts.forEach { seconds ->
+                val best = seconds?.let {
+                    HistoryBestEffort(seconds = it, runStartedAtMillis = JUNE_14_2026)
+                }
+                val beaten = alreadyBeatenLine(bar, best, TODAY, ZONE)
+                val shortfall = barShortfallLine(
+                    bar,
+                    best?.let { BarStanding.Ranked(it) } ?: BarStanding.Unranked
+                )
+
+                // One comparison, two branches: a card that both congratulated and measured, or
+                // one that said neither, would be the two lines disagreeing about one time.
+                assertEquals(
+                    "bar ${bar.withinSeconds}, best $seconds",
+                    1,
+                    listOfNotNull(beaten, shortfall).size
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `the gap printed is the difference between the two times printed`() {
+        // Rounded off one double against a whole-second bar, so the clock the runner reads and the
+        // gap under it can never be a second apart.
+        listOf(1800.4, 1800.5, 1800.6, 1861.2, 2400.49).forEach { seconds ->
+            val line = barShortfallLine(
+                SUB_30,
+                BarStanding.Ranked(
+                    HistoryBestEffort(seconds = seconds, runStartedAtMillis = JUNE_14_2026)
+                )
+            )!!
+            val printed = line.substringAfter("is ").substringBefore(" —")
+            val gap = line.substringAfter("— ").substringBefore(" off")
+
+            assertEquals(seconds.toString(), asClock(asSeconds(printed) - 1799.0), gap)
+        }
+    }
+
+    @Test
+    fun `a book the app is holding back says nothing, not that the book is empty`() {
+        // Testing mode silences the record book. "Nothing may be said" must never print as
+        // "you have never run one".
+        assertNull(barShortfallLine(SUB_30, BarStanding.Silent))
+    }
+
+    @Test
+    fun `it offers nothing`() {
+        val best = HistoryBestEffort(seconds = 1900.0, runStartedAtMillis = JUNE_14_2026)
+        val line = barShortfallLine(SUB_30, BarStanding.Ranked(best))!!.lowercase()
+
+        listOf("graduate", "unlock", "counts", "%").forEach {
+            assertFalse(it, line.contains(it))
+        }
+    }
+}
+
+/** "30:00" back to 1800.0, so a test can do arithmetic on what the line printed. */
+private fun asSeconds(clock: String): Double {
+    val (minutes, seconds) = clock.split(":")
+    return minutes.toDouble() * 60 + seconds.toDouble()
 }
