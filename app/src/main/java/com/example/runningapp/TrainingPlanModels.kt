@@ -343,6 +343,18 @@ const val FIVE_K_TEST_INSTRUCTION: String =
         "so press START only when you are ready to go."
 
 object TrainingPlanProvider {
+    /**
+     * The plan that exists to test the app rather than to train anybody.
+     *
+     * It is a real member of [plans] and is reachable exactly like the rest, so every lookup here
+     * answers about it in the ordinary way — its Stage resolves, its Workout resolves, and its
+     * Workout says [RunType.LONG]. Named as a constant because a reader of a *recorded* Run has to
+     * be able to tell a Run made under it from a Run the runner actually trained: ten seconds of
+     * running twice over is a validation of the interval machine, not a Long day, and nothing but
+     * this id distinguishes the two after the fact.
+     */
+    const val DESK_TEST_PLAN_ID = "desk_test_plan"
+
     val plans = listOf(
         TrainingPlan(
             id = "5k_sub_25",
@@ -461,7 +473,7 @@ object TrainingPlanProvider {
             )
         ),
         TrainingPlan(
-            id = "desk_test_plan",
+            id = DESK_TEST_PLAN_ID,
             name = "Desk Test Plan",
             description = "Temporary short-interval plan for desk validation of run/walk transitions.",
             stages = listOf(

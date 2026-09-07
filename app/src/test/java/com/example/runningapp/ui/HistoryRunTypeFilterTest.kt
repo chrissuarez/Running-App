@@ -1,5 +1,7 @@
 package com.example.runningapp.ui
 
+import com.example.runningapp.RunType
+import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.data.RunnerSession
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -71,6 +73,40 @@ class HistoryRunTypeFilterTest {
             RecordedRunType.OTHER,
             recordedRunTypeOf(row(2, stageId = "a_stage_that_was_deleted", workoutId = longRun).session),
         )
+    }
+
+    @Test
+    fun `a run made under the Desk Test plan is Other, not the Long its workout says`() {
+        // The Desk Test plan is a live member of TrainingPlanProvider.plans, so this lookup does
+        // not fail — its Workout resolves and says LONG. Ten seconds of running twice over is a
+        // validation of the interval machine, and filing it as a Long day would drag the typical
+        // Long distance below every Long Run actually run.
+        assertEquals(
+            RunType.LONG,
+            TrainingPlanProvider.runTypeOfRecordedRun("desk_test_stage", "desk_test_workout"),
+        )
+        assertEquals(
+            RecordedRunType.OTHER,
+            recordedRunTypeOf(
+                row(1, stageId = "desk_test_stage", workoutId = "desk_test_workout").session
+            ),
+        )
+    }
+
+    @Test
+    fun `a Desk Test run is kept out of the Long distances`() {
+        val rows = listOf(
+            row(1, workoutId = longRun, distanceKm = 10.0),
+            row(2, workoutId = longRun, distanceKm = 12.0),
+            row(3, workoutId = longRun, distanceKm = 14.0),
+            row(4, stageId = "desk_test_stage", workoutId = "desk_test_workout", distanceKm = 0.1),
+        )
+
+        val long = historyRowsOfType(rows, RecordedRunType.LONG)
+
+        assertEquals(listOf(1L, 2L, 3L), long.map { it.session.id })
+        assertEquals("Usually 12.0 km", historyDistanceHeadline(RecordedRunType.LONG, historyDistanceSummary(long)))
+        assertEquals(listOf(4L), historyRowsOfType(rows, RecordedRunType.OTHER).map { it.session.id })
     }
 
     @Test

@@ -126,8 +126,10 @@ Workout it was started under, and the Run Type is recovered from those, once,
 by `TrainingPlanProvider.runTypeOfRecordedRun`. A recorded Run can therefore
 have no Run Type at all, and that is a fourth answer rather than a missing one:
 an Open Run, a Run that skipped the plan, a Run under a Workout no Plan holds
-any more, and a Walk are all **Other**, which is the word History prints on it
-(#447). Nothing is ever inferred from how far or how fast a Run turned out.
+any more, a Run made under the Desk Test plan, and a Walk are all **Other**,
+which is the word History prints on it (#447). The Desk Test plan has to be
+named: it is still held, so its Workout resolves and says Long, and only its
+plan id tells a validation Run from a day of training. Nothing is ever inferred from how far or how fast a Run turned out.
 _Avoid_: category, workout type, session type
 
 **Pick**:
