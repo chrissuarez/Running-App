@@ -29,23 +29,20 @@ class StageTrainingSummaryTest {
 
     @Test
     fun `names the weeks trained against the weeks the stage asks for`() {
-        val summary = stageTrainingSummaryOf(threeWeeksNineRuns(), weeksRequired = 4)
+        val summary = stageTrainingSummaryOf(threeWeeksNineRuns(), weeksRequired = 4)!!
 
         assertEquals("3 of 4 full weeks trained — 9 qualifying runs", summary.headline)
     }
 
     @Test
-    fun `a stage whose bar names no weeks states the count alone`() {
-        val summary = stageTrainingSummaryOf(threeWeeksNineRuns(), weeksRequired = null)
-
-        // No weeks figure of any kind: the weeks trained, the row of weeks and the sentence handing
-        // the rest to the coach are all answers to a bar written in weeks, and this bar names none.
-        assertEquals("9 qualifying runs", summary.headline)
-        assertTrue(summary.weeks.isEmpty())
-        assertNull(summary.weeksCaption)
-        assertNull(summary.judgementLine)
-        // The Runs are still counted, and the rule that counts them still said.
-        assertTrue(summary.countedLine.contains("shared with the coach"))
+    fun `a stage whose bar names no weeks says nothing at all`() {
+        // Not even the plain count of Runs. This record is the set the COACH is handed
+        // (`getAiEvidenceRunDaysOfStage`: on-plan, shared, run/walk mode), and a Stage whose bar is
+        // a time is cleared by `graduateOnBestEffortRequirement`, which asks for none of those — a
+        // private 5K graduates the Stage while this figure never moves. Printed there, the word
+        // "qualifying" names a set that does not qualify the runner for anything.
+        assertNull(stageTrainingSummaryOf(threeWeeksNineRuns(), weeksRequired = null))
+        assertNull(stageTrainingSummaryOf(StageTrainingRecord.NONE, weeksRequired = null))
     }
 
     @Test
@@ -54,9 +51,7 @@ class StageTrainingSummaryTest {
             .flatMap { it.stages }
             .first { it.graduationRequirementText.contains("repeats") }
 
-        val summary = stageTrainingSummaryOf(threeWeeksNineRuns(), stage.weeksRequirement)
-
-        assertEquals("9 qualifying runs", summary.headline)
+        assertNull(stageTrainingSummaryOf(threeWeeksNineRuns(), stage.weeksRequirement))
     }
 
     @Test
@@ -67,7 +62,7 @@ class StageTrainingSummaryTest {
         val days = (0..13).map { day("2026-05-04").plusWeeks(it.toLong()) }
         val record = stageTrainingRecordOf(days = days, through = day("2026-08-03"))
 
-        val summary = stageTrainingSummaryOf(record, weeksRequired = 4)
+        val summary = stageTrainingSummaryOf(record, weeksRequired = 4)!!
 
         assertEquals(14, summary.headline.substringBefore(" qualifying").takeLastWhile {
             it.isDigit()
@@ -79,7 +74,7 @@ class StageTrainingSummaryTest {
 
     @Test
     fun `a record short enough to be drawn whole names both ends`() {
-        val summary = stageTrainingSummaryOf(threeWeeksNineRuns(), weeksRequired = 4)
+        val summary = stageTrainingSummaryOf(threeWeeksNineRuns(), weeksRequired = 4)!!
 
         assertTrue(summary.weeksCaption!!.contains("oldest on the left"))
     }
@@ -92,7 +87,7 @@ class StageTrainingSummaryTest {
             through = day("2026-08-24"),
         )
 
-        val summary = stageTrainingSummaryOf(record, weeksRequired = 4)
+        val summary = stageTrainingSummaryOf(record, weeksRequired = 4)!!
 
         assertEquals(
             "5 full weeks trained (this stage asks for 4) — 2 qualifying runs",
@@ -102,7 +97,7 @@ class StageTrainingSummaryTest {
 
     @Test
     fun `a stage with nothing recorded says so in words and shows no figure`() {
-        val summary = stageTrainingSummaryOf(StageTrainingRecord.NONE, weeksRequired = 4)
+        val summary = stageTrainingSummaryOf(StageTrainingRecord.NONE, weeksRequired = 4)!!
 
         assertEquals("No qualifying runs recorded in this stage yet.", summary.headline)
         // "Nothing recorded" and "measured at zero" are different facts, and a row of empty weeks
@@ -119,7 +114,7 @@ class StageTrainingSummaryTest {
             through = day("2026-08-24"),
         )
 
-        val summary = stageTrainingSummaryOf(record, weeksRequired = 4)
+        val summary = stageTrainingSummaryOf(record, weeksRequired = 4)!!
 
         assertEquals(listOf(1, 0, 0, 1), summary.weeks.map { it.qualifyingRuns })
     }
@@ -132,18 +127,14 @@ class StageTrainingSummaryTest {
         )
 
         assertEquals(
-            "1 qualifying run",
-            stageTrainingSummaryOf(record, weeksRequired = null).headline
-        )
-        assertEquals(
             "1 full week trained (this stage asks for 1) — 1 qualifying run",
-            stageTrainingSummaryOf(record, weeksRequired = 1).headline
+            stageTrainingSummaryOf(record, weeksRequired = 1)!!.headline
         )
     }
 
     @Test
     fun `the coach is named as the judge of the rest, and nothing is offered`() {
-        val summary = stageTrainingSummaryOf(threeWeeksNineRuns(), weeksRequired = 4)
+        val summary = stageTrainingSummaryOf(threeWeeksNineRuns(), weeksRequired = 4)!!
 
         assertNotNull(summary.judgementLine)
         assertTrue(summary.judgementLine!!.contains("coach"))
@@ -157,7 +148,7 @@ class StageTrainingSummaryTest {
 
     @Test
     fun `the sharing rule the count uses is said on the screen`() {
-        val summary = stageTrainingSummaryOf(threeWeeksNineRuns(), weeksRequired = 4)
+        val summary = stageTrainingSummaryOf(threeWeeksNineRuns(), weeksRequired = 4)!!
 
         // A runner whose count does not move after a Run they kept private is owed the reason here
         // rather than left guessing.
