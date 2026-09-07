@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.TransformOrigin
@@ -35,6 +36,29 @@ import java.time.format.DateTimeFormatter
 import java.util.*
 import kotlin.math.roundToInt
 
+/**
+ * Every Run, newest first — and, on request, only the Runs of one Run Type (#51, #447).
+ *
+ * **The filter starts off, and off is the History that has always been here.** No chip selected
+ * shows every row in the order it arrived, nothing re-sorted and nothing dropped. Each of the four
+ * chips ([RecordedRunType]) then narrows the list to Runs filed under it, and every Run is filed
+ * under exactly one — so a Run can be hidden by a chip but can never be missing from all of them.
+ *
+ * **The filter lives as long as this screen does, and no longer.** It is held here rather than in
+ * the view model, so it survives a rotation and survives opening a Run and coming back — the screen
+ * is still on the back stack for both — and it is gone the next time History is opened from the
+ * menu. That is deliberate and it is the opposite of what a *selection* does (#416), because the two
+ * are different things: a selection is a set of Runs the runner picked out to act on, and losing it
+ * loses work; a filter is only how they are looking at the list this minute, and a narrowed History
+ * silently waiting weeks later is a list with Runs missing from it.
+ *
+ * **Changing the chip clears the selection.** A selected row the filter then hides would leave the
+ * top bar counting Runs nobody can see, and the Delete button acting on them — the one mistake on
+ * this screen that cannot be undone. The alternative considered was to keep the selection and narrow
+ * it to the visible rows; it was declined because it makes Delete's count change on its own while
+ * the runner is looking at the list, which is worse than dropping a selection they can remake.
+ * Nothing else clears it: Back does not, and leaving the screen does not (#416).
+ */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun HistoryScreen(
@@ -47,8 +71,13 @@ fun HistoryScreen(
     onBack: () -> Unit
 ) {
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var selectedType by rememberSaveable { mutableStateOf<RecordedRunType?>(null) }
     val selectedCount = selectedSessionIds.size
     val selectionMode = selectedCount > 0
+    // Held across recompositions because narrowing walks every row's Stage and Workout back through
+    // the plan, and the rows only change when the database says so.
+    val shownRows = remember(rows, selectedType) { historyRowsOfType(rows, selectedType) }
+    val summary = remember(shownRows) { historyDistanceSummary(shownRows) }
 
     Scaffold(
         topBar = {
@@ -83,25 +112,56 @@ fun HistoryScreen(
                 Text("No sessions recorded yet.")
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(RunningUiTokens.PagePadding),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(rows, key = { it.session.id }) { row ->
-                    val sessionId = row.session.id
-                    SessionItem(
-                        row = row,
-                        isSelected = selectedSessionIds.contains(sessionId),
-                        onClick = {
-                            if (selectionMode) {
-                                onToggleSelection(sessionId)
-                            } else {
-                                onSessionClick(sessionId)
+            Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+                RunTypeFilterRow(
+                    selectedType = selectedType,
+                    onTypeClick = { type ->
+                        val next = if (selectedType == type) null else type
+                        if (next != selectedType) {
+                            selectedType = next
+                            // Every change of what is on screen drops the selection — see the
+                            // KDoc on [HistoryScreen].
+                            onClearSelection()
+                        }
+                    },
+                )
+                val emptiedBy = selectedType
+                if (shownRows.isEmpty() && emptiedBy != null) {
+                    // Reachable only with a chip on: unfiltered, an empty list was caught above.
+                    Box(
+                        modifier = Modifier.fillMaxSize().padding(RunningUiTokens.PagePadding),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("No ${emptiedBy.label} runs among these.")
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(RunningUiTokens.PagePadding),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        val narrowedTo = selectedType
+                        if (narrowedTo != null) {
+                            item(key = RunTypeDistanceCardKey) {
+                                RunTypeDistanceCard(type = narrowedTo, summary = summary)
                             }
-                        },
-                        onLongClick = { onToggleSelection(sessionId) }
-                    )
+                        }
+                        items(shownRows, key = { it.session.id }) { row ->
+                            val sessionId = row.session.id
+                            SessionItem(
+                                row = row,
+                                isSelected = selectedSessionIds.contains(sessionId),
+                                onClick = {
+                                    if (selectionMode) {
+                                        onToggleSelection(sessionId)
+                                    } else {
+                                        onSessionClick(sessionId)
+                                    }
+                                },
+                                onLongClick = { onToggleSelection(sessionId) }
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -219,6 +279,104 @@ fun SessionItem(
                 Spacer(modifier = Modifier.height(8.dp))
                 StatsRow(stats = historyRowStats(session), modifier = Modifier.fillMaxWidth())
             }
+        }
+    }
+}
+
+/**
+ * The key the distance block sits under in the list.
+ *
+ * A constant of its own, and not a session id, because the block shares the list with rows keyed by
+ * one: a `Long` id could never collide with a `String`, but writing it down is what makes that
+ * obvious to the next person adding a header here.
+ */
+private const val RunTypeDistanceCardKey = "run-type-distance-summary"
+
+/** How far apart the filter chips sit. */
+private val TypeChipGap = 8.dp
+
+/**
+ * The four chips that narrow the list (#447).
+ *
+ * Laid out in a row that scrolls sideways rather than one that wraps: at 320dp with the system text
+ * turned up, four chips do not fit, and a row that wrapped would push the first Run half a screen
+ * down every time the runner enlarged their text. Scrolling keeps the list where it is and keeps the
+ * chips in one known order.
+ *
+ * Tapping the chip that is already on turns it off, so the way back to the whole list is the same
+ * tap that left it — there is no separate "All" chip to hunt for, and no state in which the runner
+ * has narrowed the list and cannot see how to stop.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RunTypeFilterRow(
+    selectedType: RecordedRunType?,
+    onTypeClick: (RecordedRunType) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = RunningUiTokens.PagePadding, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(TypeChipGap),
+    ) {
+        RecordedRunType.entries.forEach { type ->
+            val on = selectedType == type
+            FilterChip(
+                selected = on,
+                onClick = { onTypeClick(type) },
+                label = { Text(type.label, maxLines = 1, softWrap = false) },
+                modifier = Modifier.semantics {
+                    contentDescription = if (on) {
+                        "Showing ${type.label} runs only. Tap to show every run."
+                    } else {
+                        "Show ${type.label} runs only"
+                    }
+                },
+            )
+        }
+    }
+}
+
+/**
+ * What the Runs now on screen covered — the answer to "how long a loop should I draw?" (#447).
+ *
+ * At the top of the narrowed list rather than pinned above it, because it is a fact *about* this
+ * list: it scrolls away with the rows it was taken from, and a runner who has scrolled past it is
+ * reading the Runs themselves, which is the better answer to the same question.
+ *
+ * It never appears unfiltered. "Usually 7.2 km" over Long, Easy, Quality and Other together is the
+ * middle of four things that were never meant to be one number, and it would be read as an answer.
+ */
+@Composable
+private fun RunTypeDistanceCard(type: RecordedRunType, summary: HistoryDistanceSummary) {
+    val headline = historyDistanceHeadline(type, summary)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.secondaryContainer
+        ),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "${type.label} runs",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
+            if (headline != null) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = headline,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = historyDistanceDetail(summary),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+            )
         }
     }
 }
@@ -511,3 +669,58 @@ private fun PreviewHistoryRowsNarrow() = PreviewHistoryRows()
 @Preview(showBackground = true, widthDp = 320, fontScale = 1.3f, name = "History rows, 320dp at 1.3x text")
 @Composable
 private fun PreviewHistoryRowsNarrowLargeText() = PreviewHistoryRows()
+
+// --- The chips and the block they open (#447) ---
+//
+// Same three widths as the rows above. The chips scroll sideways rather than wrap, so the check is
+// that the first Run stays where it is at 320dp with the text turned up.
+
+@Composable
+private fun PreviewRunTypeFilter() {
+    RunningAppTheme {
+        Column {
+            RunTypeFilterRow(selectedType = RecordedRunType.QUALITY, onTypeClick = {})
+            Column(
+                modifier = Modifier.padding(RunningUiTokens.PagePadding),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                RunTypeDistanceCard(
+                    type = RecordedRunType.QUALITY,
+                    summary = HistoryDistanceSummary(
+                        finishedRuns = 7,
+                        measuredRuns = 6,
+                        typicalKm = 7.24,
+                        shortestKm = 5.1,
+                        longestKm = 9.42,
+                    ),
+                )
+                // Two Runs measured: no distance is called usual, and the spread is all there is.
+                RunTypeDistanceCard(
+                    type = RecordedRunType.LONG,
+                    summary = HistoryDistanceSummary(
+                        finishedRuns = 2,
+                        measuredRuns = 2,
+                        typicalKm = null,
+                        shortestKm = 12.0,
+                        longestKm = 16.5,
+                    ),
+                )
+                previewRows().take(1).forEach { row ->
+                    SessionItem(row = row, isSelected = false, onClick = {}, onLongClick = {})
+                }
+            }
+        }
+    }
+}
+
+@Preview(showBackground = true, name = "History filter")
+@Composable
+private fun PreviewRunTypeFilterDefault() = PreviewRunTypeFilter()
+
+@Preview(showBackground = true, widthDp = 320, name = "History filter, 320dp")
+@Composable
+private fun PreviewRunTypeFilterNarrow() = PreviewRunTypeFilter()
+
+@Preview(showBackground = true, widthDp = 320, fontScale = 1.3f, name = "History filter, 320dp at 1.3x text")
+@Composable
+private fun PreviewRunTypeFilterNarrowLargeText() = PreviewRunTypeFilter()
