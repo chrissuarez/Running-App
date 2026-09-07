@@ -1354,10 +1354,20 @@ class SessionRepository(
      * Three answers and not two.
      * [BarStanding.Silent] is every reason the app may not speak about this bar — a Stage whose
      * requirement is a judgement, stage 1's "4 weeks of consistent Zone 2 training", which has no
-     * bar to have been beaten; no record book to ask; and testing mode, the one state where "run
+     * bar to have been beaten; no record book to ask; testing mode, the one state where "run
      * one now and it counts" is not true, since `graduateOnBestEffortRequirement` refuses to grant
      * while it is on and a card promising a graduation the rule will decline is worse than a card
-     * that says nothing.
+     * that says nothing; and a book history has not been seeded into yet ([seedRecordsFromHistory],
+     * #50), which is the same reason stated about the book instead of the Stage.
+     *
+     * That last one is the whole point of three answers. Until the seeding pass commits, the book
+     * holds only Runs finished since it was installed — after an upgrade, an archive restore, or a
+     * pass the process killed part-way, that can be nothing at all while years of qualifying Runs
+     * sit in history unmeasured. The book is not empty then; it is unread, and it is unread for
+     * every answer it gives, not only the null one: a best it does name may be minutes off the
+     * quickest still waiting to be measured, so a shortfall printed from it would overstate the
+     * gap. So nothing is said from an unseeded book at all. The pass runs at every launch and marks
+     * itself when it commits, so this silence lasts one rebuild and then the card speaks.
      *
      * [BarStanding.Unranked] is the book answering that it holds no effort at this distance, which
      * is a different fact and the one the shortfall line prints in words. A nullable best effort
@@ -1377,6 +1387,7 @@ class SessionRepository(
         ) { best, userSettings ->
             when {
                 userSettings.testingModeEnabled -> BarStanding.Silent
+                !userSettings.historyRecordsSeeded -> BarStanding.Silent
                 best == null -> BarStanding.Unranked
                 else -> BarStanding.Ranked(best)
             }
