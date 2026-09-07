@@ -74,6 +74,22 @@ data class PlanStage(
      * requirement holds a judgement, which leaves it with the coach exactly as before.
      */
     val bestEffortRequirement: BestEffortRequirement? = null,
+    /**
+     * How many full weeks of training this Stage's bar asks for, where its bar names a number of
+     * weeks (#445). Null where it names none — a bar written as a time, or the Desk Test plan's
+     * "Complete 2 short run/walk repeats".
+     *
+     * Declared beside the prose rather than read out of it, exactly as [bestEffortRequirement] is
+     * (#290): a regular expression over [graduationRequirementText] would make every future
+     * requirement's wording load-bearing, and the sentence that broke it would fail silently by
+     * dropping the bar from the card. Two statements of one number is the cost, and it is the cost
+     * this plan already pays for the number in [bestEffortRequirement].
+     *
+     * **It grants nothing.** The count this feeds is a statement of what has been recorded; whether
+     * that training was *consistent* stays with the coach (ADR 0019), and graduation still looks
+     * forwards only (ADR 0016).
+     */
+    val weeksRequirement: Int? = null,
     val workouts: List<WorkoutTemplate>
 )
 
@@ -338,6 +354,9 @@ object TrainingPlanProvider {
                     title = "Stage 1: Base Builder",
                     description = "Focus on building aerobic capacity and consistency.",
                     graduationRequirementText = "Complete 4 weeks of consistent Zone 2 training.",
+                    // The half of that sentence the app measures (#445). "Consistent" is the other
+                    // half and stays with the coach.
+                    weeksRequirement = 4,
                     // One Workout of each Run Type (#173) — the week lives inside the stage, and the
                     // runner picks which of the three they are doing today.
                     workouts = listOf(

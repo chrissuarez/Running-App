@@ -1369,6 +1369,37 @@ class SessionRepository(
     }
 
     /**
+     * The Stage's training record, for the Stage card to say how many weeks are behind it (#445).
+     *
+     * The same read the coach's own record is built from
+     * ([SessionDao.getAiEvidenceRunDaysOfStage], counted by [stageTrainingRecordOf]) — one query,
+     * so the screen and the graduation guard cannot come to different answers about a promotion
+     * that cannot be taken back.
+     *
+     * It differs from `getAiTrainingContext`'s copy in one way, and only one: there is no Run just
+     * finishing here to put back the way the finish sheet left it. This is asked by a screen the
+     * runner opened, long after any sheet was answered, so every row it reads is a stored row that
+     * is already final.
+     *
+     * A read and nothing else. Nothing here grants, advances or writes anything, and a Stage with
+     * no qualifying Run answers [StageTrainingRecord.NONE] rather than a zero.
+     */
+    suspend fun stageTrainingRecord(
+        stageId: String?,
+        /** The zone the runner's calendar days are in — which day and week a Run falls in. */
+        zone: ZoneId = ZoneId.systemDefault(),
+        /** The day the record is counted through, so an idle fortnight shows as empty weeks. */
+        today: LocalDate = LocalDate.now(zone),
+    ): StageTrainingRecord {
+        if (stageId == null) return StageTrainingRecord.NONE
+        return stageTrainingRecordOf(
+            days = sessionDao.getAiEvidenceRunDaysOfStage(stageId)
+                .map { ranOn(it.startTime, it.ranAtUtcOffsetSeconds, zone) },
+            through = today,
+        )
+    }
+
+    /**
      * A nudge now, and another each time the calendar turns over — the passage of time as something
      * a rule can be combined with rather than something it has to remember to read (Codex P2 on
      * #292).
