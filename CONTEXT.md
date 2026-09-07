@@ -121,6 +121,13 @@ _Avoid_: time trial, assessment, benchmark
 What kind of work a Workout is: Long, Easy, or Quality. The Stage offers one of
 each and the runner chooses; it is what makes two Workouts different in kind
 rather than only in length.
+A *recorded* Run holds no Run Type of its own — it holds the Stage and the
+Workout it was started under, and the Run Type is recovered from those, once,
+by `TrainingPlanProvider.runTypeOfRecordedRun`. A recorded Run can therefore
+have no Run Type at all, and that is a fourth answer rather than a missing one:
+an Open Run, a Run that skipped the plan, a Run under a Workout no Plan holds
+any more, and a Walk are all **Other**, which is the word History prints on it
+(#447). Nothing is ever inferred from how far or how fast a Run turned out.
 _Avoid_: category, workout type, session type
 
 **Pick**:
