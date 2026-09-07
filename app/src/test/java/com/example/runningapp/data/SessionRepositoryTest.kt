@@ -4828,10 +4828,16 @@ class SessionRepositoryTest {
 
     // --- A bar already beaten in history is said out loud (#293) --------------------------------
 
-    /** A repository that reads the record book [book] and the settings it is handed. */
+    /**
+     * A repository that reads the record book [book] and the settings it is handed.
+     *
+     * The default settings say history has been seeded, because that is the state every one of
+     * these cases is about: a book that has been measured and can be quoted. The unseeded book is
+     * its own case below.
+     */
     private fun repositoryReading(
         book: AchievementDao,
-        settings: UserSettings = UserSettings(),
+        settings: UserSettings = UserSettings(historyRecordsSeeded = true),
     ): SessionRepository {
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(settings))
         return SessionRepository(
@@ -4899,7 +4905,7 @@ class SessionRepositoryTest {
         // (#446).
         assertEquals(
             BarStanding.Silent,
-            repositoryReading(bookDao, UserSettings(testingModeEnabled = true))
+            repositoryReading(bookDao, UserSettings(testingModeEnabled = true, historyRecordsSeeded = true))
                 .barStandingFlow(bar).first()
         )
         assertEquals(
@@ -4922,6 +4928,35 @@ class SessionRepositoryTest {
     }
 
     @Test
+    fun `an unseeded book is silence, not an empty book`() = runTest {
+        val bookDao: AchievementDao = mock()
+        val bar = BestEffortRequirement(RecordType.FASTEST_5K, 1_799)
+
+        // Until seedRecordsFromHistory commits (#50), the book holds only Runs finished since the
+        // app was installed. After an upgrade or an archive restore that can be nothing, while
+        // years of qualifying Runs sit unmeasured in history — so "No 5 km in your record book
+        // yet." would be said to a runner who has run plenty (#446).
+        whenever(bookDao.getQuickestInHistoryFlow(any())).thenReturn(flowOf(null))
+        assertEquals(
+            BarStanding.Silent,
+            repositoryReading(bookDao, UserSettings(historyRecordsSeeded = false))
+                .barStandingFlow(bar).first()
+        )
+
+        // And not only the null answer. A best the unseeded book does name may be minutes off the
+        // quickest still waiting to be measured, so a shortfall printed from it would overstate
+        // the gap. Nothing is said from an unread book at all.
+        whenever(bookDao.getQuickestInHistoryFlow(any())).thenReturn(
+            flowOf(HistoryBestEffort(seconds = 1_900.0, runStartedAtMillis = 1_781_434_800_000L))
+        )
+        assertEquals(
+            BarStanding.Silent,
+            repositoryReading(bookDao, UserSettings(historyRecordsSeeded = false))
+                .barStandingFlow(bar).first()
+        )
+    }
+
+    @Test
     fun `nothing is said while testing mode is on`() = runTest {
         val bookDao: AchievementDao = mock()
         whenever(bookDao.getQuickestInHistoryFlow(any())).thenReturn(
@@ -4930,7 +4965,7 @@ class SessionRepositoryTest {
 
         // "Run one now and it counts" is the one promise the rule will not keep under testing mode,
         // which refuses to grant at all — so the card says nothing rather than something untrue.
-        val best = repositoryReading(bookDao, UserSettings(testingModeEnabled = true))
+        val best = repositoryReading(bookDao, UserSettings(testingModeEnabled = true, historyRecordsSeeded = true))
             .barStandingFlow(BestEffortRequirement(RecordType.FASTEST_5K, 1_799))
             .first()
             .bestOrNull
@@ -4965,6 +5000,10 @@ class SessionRepositoryTest {
             .thenReturn(flowOf(UserSettings(historyRecordsSeeded = false)))
 
         repo.seedRecordsFromHistory()
+        // The pass marks history seeded as it commits; the mock settings store does not carry the
+        // write, so it is stated here. The card only speaks from a book that has been measured.
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(historyRecordsSeeded = true)))
         val best = repo.barStandingFlow(
             BestEffortRequirement(RecordType.FASTEST_5K, 1_799)
         ).first().bestOrNull
