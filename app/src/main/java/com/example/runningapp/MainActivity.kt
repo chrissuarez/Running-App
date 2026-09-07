@@ -1196,6 +1196,15 @@ class MainActivity : ComponentActivity() {
                             // have been left open across a whole Run, and leaving the screen
                             // disposes this and re-reads it. The same bargain the line above makes
                             // with today's date.
+                            //
+                            // It counts the Stage a Run finishing here would be STAMPED with, and
+                            // that is not a second resolution to keep in step: `activeStageId`
+                            // arrives already resolved, once, on the way out of storage
+                            // ([activePlanAndStage], #381), and `HrForegroundService.pinRunConfig`
+                            // writes `ranUnderStageId` from that same resolved setting (#234). The
+                            // unrecognised-Stage case takes its Plan down with it there too, so
+                            // this card has no Stage to draw rather than a Stage nothing stamps.
+                            // Resolving again above is idempotent, not a second fallback.
                             val stageTraining by produceState<StageTrainingSummary?>(
                                 initialValue = null,
                                 sessionRepository,
