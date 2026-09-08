@@ -26,16 +26,28 @@ class MaxHrCardTest {
     }
 
     @Test
-    fun `a peak too close to a stated resting rate says so, with both numbers`() {
+    fun `a peak with no room above a stated resting rate says so, with both numbers`() {
         // Reachable without staging anything: a resting heart rate of 100 — the highest the app
         // accepts — rules out every recorded peak under 150.
         val text = maxHrEvidenceText(highestRecordedBpm = 145, restingHr = 100)
 
         assertFalse(text, text.contains("not recorded"))
         assertTrue(text, text.contains("145"))
-        assertTrue(text, text.contains("100"))
+        assertTrue(text, text.contains("no room above your resting 100"))
         // And the age question survives, because it is still the right question here.
         assertTrue(text, text.contains("Your age"))
+    }
+
+    @Test
+    fun `a peak below a stated resting rate is not called close to it`() {
+        // A strap that only ever recorded a resting reading. "Too close to your resting 100" would
+        // be false of 60 — it is under that number, not near it — so what is said is the thing that
+        // is true of every peak this branch catches: there is no room left above.
+        val text = maxHrEvidenceText(highestRecordedBpm = 60, restingHr = 100)
+
+        assertFalse(text, text.contains("too close"))
+        assertTrue(text, text.contains("60"))
+        assertTrue(text, text.contains("no room above your resting 100"))
     }
 
     @Test
@@ -66,8 +78,9 @@ class MaxHrCardTest {
         // of them over a perfectly good peak is the failure this test would catch.
         val text = maxHrEvidenceText(highestRecordedBpm = 181, restingHr = 60)
 
+        assertTrue(text, text.contains("181"))
         assertFalse(text, text.contains("too low"))
         assertFalse(text, text.contains("too high"))
-        assertFalse(text, text.contains("too close"))
+        assertFalse(text, text.contains("no room"))
     }
 }

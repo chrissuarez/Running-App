@@ -5,7 +5,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.repeatedOn
-import com.example.runningapp.suggestedMaxHr
 import com.example.runningapp.data.GoalDao
 import com.example.runningapp.data.GoalRow
 import com.example.runningapp.data.SessionRepository
@@ -284,9 +283,8 @@ class ProgressViewModel(
         else MaxHrCardState(
             currentMaxHr = settings.maxHr,
             restingHr = settings.restingHr,
-            suggestedMaxHr = suggestedMaxHr(peak.bpm, settings.restingHr),
-            // Handed over whether or not it could be offered: what the card says when it has
-            // nothing to offer depends on whether there was evidence at all (#280).
+            // The evidence, not what the card makes of it: whether this number can be offered, and
+            // what to say when it cannot, is one question and the card asks it once (#280).
             highestRecordedBpm = peak.bpm,
         )
     }

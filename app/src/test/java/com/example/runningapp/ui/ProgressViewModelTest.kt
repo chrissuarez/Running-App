@@ -2,6 +2,7 @@ package com.example.runningapp.ui
 
 import com.example.runningapp.SettingsRepository
 import com.example.runningapp.UserSettings
+import com.example.runningapp.suggestedMaxHr
 import com.example.runningapp.data.GoalDao
 import com.example.runningapp.data.GoalRow
 import com.example.runningapp.data.RunVolumeProjection
@@ -309,15 +310,7 @@ class ProgressViewModelTest {
         advanceUntilIdle()
 
         val card = viewModel.state.value.maxHrCard
-        assertEquals(
-            MaxHrCardState(
-                currentMaxHr = 190,
-                restingHr = 60,
-                suggestedMaxHr = 181,
-                highestRecordedBpm = 181,
-            ),
-            card,
-        )
+        assertEquals(MaxHrCardState(currentMaxHr = 190, restingHr = 60, highestRecordedBpm = 181), card)
     }
 
     @Test
@@ -328,10 +321,9 @@ class ProgressViewModelTest {
         advanceUntilIdle()
 
         // The card is still asked — it is the number every figure on the screen hangs off. It has
-        // nothing of the runner's own to offer, which is what the age input is for.
-        assertNull(viewModel.state.value.maxHrCard?.suggestedMaxHr)
+        // nothing of the runner's own to offer, which is what the age input is for. Nothing recorded
+        // is passed on as nothing recorded, which is the card's cue to say so.
         assertEquals(190, viewModel.state.value.maxHrCard?.currentMaxHr)
-        // And nothing recorded is passed on as nothing recorded, which is the card's cue to say so.
         assertNull(viewModel.state.value.maxHrCard?.highestRecordedBpm)
     }
 
@@ -347,8 +339,8 @@ class ProgressViewModelTest {
         advanceUntilIdle()
 
         val card = viewModel.state.value.maxHrCard
-        assertNull(card?.suggestedMaxHr)
         assertEquals(145, card?.highestRecordedBpm)
+        assertNull(suggestedMaxHr(145, restingHr = 100))
     }
 
     @Test

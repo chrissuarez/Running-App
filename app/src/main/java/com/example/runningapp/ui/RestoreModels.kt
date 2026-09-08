@@ -43,39 +43,30 @@ fun restoreRowSubtitle(runInProgress: Boolean): String =
  * sure the two dates are on screen together.
  */
 fun restoreConfirmationBody(plan: RestorePlan, zoneId: ZoneId = ZoneId.systemDefault()): String {
-    val incoming = buildString {
-        append("This ")
-        append(if (plan.summary.kind == RestoreFileKind.ARCHIVE) "archive" else "backup")
-        append(" holds ")
-        append(runCountPhrase(plan.summary.runCount))
-        plan.summary.newestRunStartedAtEpochMillis?.let {
-            append(", the most recent on ")
-            append(RUN_DATE_FORMAT.format(Instant.ofEpochMilli(it).atZone(zoneId)))
-        }
-        append(".")
-    }
-    val outgoing = if (plan.replacesExistingHistory) {
-        buildString {
-            append("You have ")
-            append(runCountPhrase(plan.current.runCount))
-            plan.current.newestRunStartedAtEpochMillis?.let {
-                append(", the most recent on ")
-                append(RUN_DATE_FORMAT.format(Instant.ofEpochMilli(it).atZone(zoneId)))
-            }
-            append(if (plan.goingBackInTime) ". Restoring replaces it with older history." else ". Restoring replaces it.")
-        }
-    } else {
+    val fileKind = if (plan.summary.kind == RestoreFileKind.ARCHIVE) "archive" else "backup"
+    val incoming =
+        historyPhrase(plan.summary.runCount, plan.summary.newestRunStartedAtEpochMillis, zoneId)
+    val onThisPhone =
+        historyPhrase(plan.current.runCount, plan.current.newestRunStartedAtEpochMillis, zoneId)
+    val trade = when {
         // Nothing to lose — the state a wiped phone is in, and the case this feature exists for.
         // Saying so removes the fright from a screen that otherwise reads like a warning.
-        "You have no run history on this phone, so nothing will be lost."
+        !plan.replacesExistingHistory ->
+            "This $fileKind holds $incoming. You have no run history on this phone, so nothing " +
+                "will be lost."
+        // Asked of the two sentences as they will be READ, not of the numbers behind them (#279).
+        // The date printed is a day, so a file and a phone can differ by a run deleted and another
+        // recorded the same day and still put the identical sentence on screen twice. What makes
+        // this dialog look like a copy-paste fault is the words being the same, so the words are
+        // what the question is asked about.
+        incoming == onThisPhone ->
+            "This $fileKind and this phone both hold $incoming. Two histories that count the same " +
+                "are not certainly the same runs, so restoring replaces what is on the phone."
+        else ->
+            "This $fileKind holds $incoming. You have $onThisPhone" +
+                if (plan.goingBackInTime) ". Restoring replaces it with older history."
+                else ". Restoring replaces it."
     }
-    // The two sentences are both load-bearing whenever they differ, which is the case this dialog
-    // exists for. They only collapse when the file describes the very history it is about to
-    // replace — which is what a careful runner does first: back up, then test the restore (#279).
-    // Word for word twice reads like a copy-paste fault, in the one dialog whose whole job is to be
-    // believed before something that cannot be undone.
-    val trade =
-        if (plan.describesTheSameHistory) sameHistorySentence(plan, zoneId) else "$incoming $outgoing"
     // Settings are only in an archive, never in a bare database, and after a Clear storage they are
     // gone too — so a runner restoring a .db needs telling that this will not bring them back. An
     // archive can fail to carry them too, when the settings file inside it cannot be read; the
@@ -89,6 +80,31 @@ fun restoreConfirmationBody(plan: RestorePlan, zoneId: ZoneId = ZoneId.systemDef
                 "be read. Your runs will still come back."
     }
     return "$trade\n\n$settings\n\nThis cannot be undone. The app will close and reopen."
+}
+
+/**
+ * A history as this dialog says it: how many runs, and the day of the newest.
+ *
+ * One phrase, built once and printed for either side, because the two sides are compared by their
+ * words (#279) and a comparison of two strings built in two places is a comparison of two things
+ * that can drift apart.
+ *
+ * The claim it supports is exactly what it prints and no more. **A matching count and a matching
+ * newest day is not proof of matching runs** — two histories can agree on both and hold different
+ * Runs — so the sentence #279 suggested, "Restoring replaces it with the same runs", is not
+ * written: it would tell a runner a restore costs them nothing at the one moment they are deciding
+ * whether it does.
+ */
+private fun historyPhrase(
+    runCount: Int,
+    newestRunStartedAtEpochMillis: Long?,
+    zoneId: ZoneId,
+): String = buildString {
+    append(runCountPhrase(runCount))
+    newestRunStartedAtEpochMillis?.let {
+        append(", the most recent on ")
+        append(RUN_DATE_FORMAT.format(Instant.ofEpochMilli(it).atZone(zoneId)))
+    }
 }
 
 /**
@@ -122,44 +138,5 @@ fun restoreRefusalMessage(reason: RestoreRefusal): String = when (reason) {
         "That backup couldn't be read — it may be damaged or only partly copied. Nothing on your " +
             "phone has changed."
 }
-
-/**
- * The trade said once, for a file that describes the history already here (#279).
- *
- * What it claims is exactly what was compared and no more. **A matching count and a matching newest
- * run is not proof of matching runs** — two histories can agree on both and hold different Runs —
- * so the sentence the ticket suggested, "Restoring replaces it with the same runs", is not written:
- * it would promise a runner that a restore costs them nothing at the one moment they are deciding
- * whether it does. The safety half stays, in its own words rather than the pair's, because
- * "replaces it" reads oddly about something described as identical.
- */
-private fun sameHistorySentence(plan: RestorePlan, zoneId: ZoneId): String = buildString {
-    append("This ")
-    append(if (plan.summary.kind == RestoreFileKind.ARCHIVE) "archive" else "backup")
-    append(" and this phone both hold ")
-    append(runCountPhrase(plan.summary.runCount))
-    plan.summary.newestRunStartedAtEpochMillis?.let {
-        append(", the most recent on ")
-        append(RUN_DATE_FORMAT.format(Instant.ofEpochMilli(it).atZone(zoneId)))
-    }
-    append(". Two histories that count the same are not certainly the same runs, so restoring ")
-    append("replaces what is on the phone.")
-}
-
-/**
- * Whether the picked file says the same thing about history as the phone does.
- *
- * Both facts, and both together: a count that matches on another day is the ordinary case — a
- * fortnight-old backup of a runner who has not run since — and there the two sentences must both be
- * readable, because the dates are the difference the runner is being asked about. Only the pair
- * makes a file a snapshot of this phone.
- *
- * Asked only where there is history to lose. An empty phone has its own sentence, and it is not
- * this one.
- */
-private val RestorePlan.describesTheSameHistory: Boolean
-    get() = replacesExistingHistory &&
-        summary.runCount == current.runCount &&
-        summary.newestRunStartedAtEpochMillis == current.newestRunStartedAtEpochMillis
 
 private fun runCountPhrase(count: Int): String = if (count == 1) "1 run" else "$count runs"

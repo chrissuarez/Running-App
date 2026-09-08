@@ -4,6 +4,7 @@ import com.example.runningapp.data.MeasuredTrack
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.TrackPointSource
 import com.example.runningapp.data.measureTrack
+import com.example.runningapp.recording.degreesEastOf
 import com.example.runningapp.recording.geodesicDistanceMeters
 import kotlin.math.abs
 import kotlin.math.cos
@@ -234,7 +235,7 @@ internal fun route(
     build: RouteScript.() -> Unit,
 ): List<TrackPoint> = RouteScript(latitude, longitude).apply(build).points
 
-internal class RouteScript(private val startLatitude: Double, startLongitude: Double = 0.22) {
+internal class RouteScript(private val startLatitude: Double, startLongitude: Double) {
     val points = mutableListOf<TrackPoint>()
     private var latitude = startLatitude
     private var longitude = startLongitude
@@ -323,10 +324,7 @@ internal class RouteScript(private val startLatitude: Double, startLongitude: Do
      * laid out, but no recorded fix says 180.001 — it says -179.999, and a route that steps over
      * the line is the whole subject of one test here (#353).
      */
-    private fun wrapped(degrees: Double): Double {
-        val turned = (degrees + 180.0) % 360.0
-        return (if (turned < 0) turned + 360.0 else turned) - 180.0
-    }
+    private fun wrapped(degrees: Double): Double = degreesEastOf(0.0, degrees)
 
     private fun add(startsAfterPause: Boolean = false) {
         points += TrackPoint(

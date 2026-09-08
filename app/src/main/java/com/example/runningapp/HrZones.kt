@@ -192,18 +192,55 @@ fun parseAge(text: String): Int? =
     text.trim().toIntOrNull()?.takeIf { it in MIN_STATABLE_AGE..MAX_STATABLE_AGE }
 
 /**
+ * Why a recorded heart rate cannot stand as a maximum.
+ *
+ * Named rather than left as a bare null, because the card that cannot offer the number has to tell
+ * the runner which of these it is: a runner told "we have not recorded a heart rate from you yet"
+ * while their history is full of beats has been told something false (#280).
+ */
+enum class UnusableAsMaxHr {
+    /** A strap artefact above [MAX_MAX_HR] that survived the spike guard. */
+    ABOVE_THE_HIGHEST_SETTABLE,
+
+    /** A peak that leaves no [MIN_HR_RESERVE] above the resting heart rate the runner has stated. */
+    LEAVES_NO_ROOM_ABOVE_RESTING,
+
+    /** A peak under [MIN_MAX_HR], which is the floor whether or not a resting rate is stated. */
+    BELOW_THE_LOWEST_SETTABLE,
+}
+
+/**
+ * Why [bpm] cannot stand as a maximum, or null when it can.
+ *
+ * The one place that decides it, so the offer and the sentence explaining the offer's absence
+ * cannot come to disagree — [suggestedMaxHr] is this function, and nothing else may re-derive which
+ * bound was crossed by comparing against the bounds itself.
+ *
+ * The resting rate is named only where it is what raised the floor. Below [MIN_MAX_HR] the floor
+ * stands on its own account, and a runner who has never stated a resting heart rate must not be
+ * shown one — the same rule, in the same words, as [com.example.runningapp.ui.maxHrRefusalText].
+ */
+fun whyUnusableAsMaxHr(bpm: Int, restingHr: Int): UnusableAsMaxHr? {
+    val lowest = lowestStatableMaxHr(restingHr)
+    return when {
+        bpm > MAX_MAX_HR -> UnusableAsMaxHr.ABOVE_THE_HIGHEST_SETTABLE
+        bpm >= lowest -> null
+        lowest > MIN_MAX_HR -> UnusableAsMaxHr.LEAVES_NO_ROOM_ABOVE_RESTING
+        else -> UnusableAsMaxHr.BELOW_THE_LOWEST_SETTABLE
+    }
+}
+
+/**
  * The maximum the confirmation card offers, given the highest heart rate ever recorded and the
  * resting one in force — or null when there is nothing worth offering and the card must ask for an
  * age instead.
  *
  * Judged by [parseMaxHr]'s own rule, and for the same reason: a suggestion the field beneath it
- * would refuse is a button that argues with itself. That also quietly handles the two ways a
- * recorded peak can be unusable — a strap artefact above [MAX_MAX_HR] that survived the spike
- * guard, and a history of gentle walking whose peak leaves no reserve above the runner's stated
- * resting heart rate.
+ * would refuse is a button that argues with itself. Asked through [whyUnusableAsMaxHr], which is
+ * that rule with its reasons named, so the card can say which one applies.
  */
 fun suggestedMaxHr(highestRecordedBpm: Int?, restingHr: Int): Int? =
-    highestRecordedBpm?.takeIf { it in lowestStatableMaxHr(restingHr)..MAX_MAX_HR }
+    highestRecordedBpm?.takeIf { whyUnusableAsMaxHr(it, restingHr) == null }
 
 /**
  * The maximum the card offers from an age, or null when `220 − age` is not a number the field
