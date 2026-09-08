@@ -46,6 +46,41 @@ class RouteFamiliesTest {
 
     private fun drawing(x: Float) = RouteThumbnail(listOf(listOf(ThumbPoint(x, x))))
 
+    // --- Which request a library screen may act on (#458) ---
+
+    /**
+     * The case that forces the count. The runner presses Back while the file is still being read,
+     * so there is no request to hand back on the way out; the import lands afterwards, and the next
+     * visit to the library must not be scrolled for it.
+     */
+    @Test
+    fun `refuses a request that was already standing when the screen arrived`() {
+        // The screen arrives with ask 3 standing, so 3 was made for a screen that has gone.
+        assertNull(courseWorthShowing(CourseToShow(routeId = 7, ask = 3), asksBefore = 3))
+    }
+
+    @Test
+    fun `acts on a request made after the screen arrived`() {
+        assertEquals(
+            CourseToShow(routeId = 7, ask = 4),
+            courseWorthShowing(CourseToShow(routeId = 7, ask = 4), asksBefore = 3),
+        )
+    }
+
+    /** A screen that arrived with nothing standing has seen no asks, and acts on the first. */
+    @Test
+    fun `acts on the first request for a screen that arrived with none standing`() {
+        assertEquals(
+            CourseToShow(routeId = 7, ask = 1),
+            courseWorthShowing(CourseToShow(routeId = 7, ask = 1), asksBefore = 0),
+        )
+    }
+
+    @Test
+    fun `has nothing to act on when no request stands`() {
+        assertNull(courseWorthShowing(null, asksBefore = 0))
+    }
+
     // --- Which row shows one course (#458) ---
 
     @Test

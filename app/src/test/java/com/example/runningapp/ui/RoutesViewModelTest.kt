@@ -43,12 +43,17 @@ class RoutesViewModelTest {
     fun tearDown() = Dispatchers.resetMain()
 
     private val uri: Uri = mock()
+
+    /** A second file drawing different ground, for the tests that need two imports. */
+    private val secondUri: Uri = mock()
     private val dao = FakeRouteDao()
 
     private fun viewModelReading(gpx: String?): RoutesViewModel {
         val resolver: ContentResolver = mock()
         whenever(resolver.openInputStream(eq(uri))).doAnswer { gpx?.byteInputStream() as InputStream? }
-        whenever(resolver.query(eq(uri), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()))
+        whenever(resolver.openInputStream(eq(secondUri)))
+            .doAnswer { anotherRealGpx.byteInputStream() as InputStream? }
+        whenever(resolver.query(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()))
             .doReturn(null)
         return RoutesViewModel(
             dao,
@@ -70,6 +75,16 @@ class RoutesViewModelTest {
           <metadata><name>Park loop</name></metadata>
           <trk><trkseg>
             <trkpt lat="51.5" lon="-0.1"/><trkpt lat="51.501" lon="-0.1"/>
+          </trkseg></trk>
+        </gpx>
+    """.trimIndent()
+
+    /** Different ground from [aRealGpx], so it is a second Route rather than the same one again. */
+    private val anotherRealGpx = """
+        <gpx version="1.1">
+          <metadata><name>Canal towpath</name></metadata>
+          <trk><trkseg>
+            <trkpt lat="52.5" lon="-1.9"/><trkpt lat="52.501" lon="-1.9"/>
           </trkseg></trk>
         </gpx>
     """.trimIndent()
@@ -162,7 +177,7 @@ class RoutesViewModelTest {
         viewModel.fileChosen(uri)
         advanceUntilIdle()
 
-        assertEquals(dao.stored.single().id, viewModel.showImported.value)
+        assertEquals(dao.stored.single().id, viewModel.courseToShow.value!!.routeId)
     }
 
     /** Nothing was added, so nothing on screen should move. The words say what happened. */
@@ -172,11 +187,11 @@ class RoutesViewModelTest {
 
         viewModel.fileChosen(uri)
         advanceUntilIdle()
-        viewModel.importedShown(dao.stored.single().id)
+        viewModel.courseShown(viewModel.courseToShow.value!!.ask)
         viewModel.fileChosen(uri)
         advanceUntilIdle()
 
-        assertNull(viewModel.showImported.value)
+        assertNull(viewModel.courseToShow.value)
     }
 
     @Test
@@ -186,7 +201,7 @@ class RoutesViewModelTest {
         viewModel.fileChosen(uri)
         advanceUntilIdle()
 
-        assertNull(viewModel.showImported.value)
+        assertNull(viewModel.courseToShow.value)
     }
 
     /** The request is spent once the screen has reached the row, and does not fire again. */
@@ -196,14 +211,14 @@ class RoutesViewModelTest {
 
         viewModel.fileChosen(uri)
         advanceUntilIdle()
-        viewModel.importedShown(dao.stored.single().id)
+        viewModel.courseShown(viewModel.courseToShow.value!!.ask)
 
-        assertNull(viewModel.showImported.value)
+        assertNull(viewModel.courseToShow.value)
     }
 
     /**
-     * A screen leaving hands its request back after the screen that replaced it may already have
-     * made a new one, so the hand-back has to name what it is giving up.
+     * A screen that reached one course hands the request back after a second import may already
+     * have made another, so the hand-back has to name the ask it is giving up.
      */
     @Test
     fun `keeps a newer request when an older one is handed back`() = runTest {
@@ -211,11 +226,29 @@ class RoutesViewModelTest {
 
         viewModel.fileChosen(uri)
         advanceUntilIdle()
-        val imported = dao.stored.single().id
-        // A hand-back from a screen that was holding some earlier course.
-        viewModel.importedShown(imported - 1)
+        val first = viewModel.courseToShow.value!!.ask
+        viewModel.courseShown(first)
+        viewModel.fileChosen(secondUri)
+        advanceUntilIdle()
+        // The stale hand-back the first screen makes, after the second import has landed.
+        viewModel.courseShown(first)
 
-        assertEquals(imported, viewModel.showImported.value)
+        assertEquals(2L, viewModel.courseToShow.value!!.ask)
+    }
+
+    /** Each ask is told from the last, which is what keeps a request to the screen it was made for. */
+    @Test
+    fun `counts each ask`() = runTest {
+        val viewModel = viewModelReading(aRealGpx)
+
+        viewModel.fileChosen(uri)
+        advanceUntilIdle()
+        assertEquals(1L, viewModel.courseToShow.value!!.ask)
+
+        viewModel.courseShown(1L)
+        viewModel.fileChosen(secondUri)
+        advanceUntilIdle()
+        assertEquals(2L, viewModel.courseToShow.value!!.ask)
     }
 
     @Test
