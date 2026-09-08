@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
@@ -43,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -133,12 +136,23 @@ fun RoutesScreen(
         },
     ) { padding ->
         if (rows.isEmpty()) {
-            Box(
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
                     .padding(padding)
-                    .padding(RunningUiTokens.PagePadding),
-                contentAlignment = Alignment.Center,
+                    .padding(
+                        start = RunningUiTokens.PagePadding,
+                        end = RunningUiTokens.PagePadding,
+                        top = RunningUiTokens.PagePadding,
+                        // The same room the list leaves for the floating Import button, and for the
+                        // same reason: without it the last thing on the screen sits underneath the
+                        // button, where no tap can reach it (#63).
+                        bottom = RunningUiTokens.PagePadding + importButtonHeight +
+                            RunningUiTokens.SectionSpacing,
+                    ),
+                verticalArrangement = Arrangement.spacedBy(RunningUiTokens.SectionSpacing),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
                     text = "No routes yet.\n\nImport a GPX file — from Strava, Garmin Connect, " +
@@ -146,6 +160,10 @@ fun RoutesScreen(
                     style = MaterialTheme.typography.bodyLarge,
                     textAlign = TextAlign.Center,
                 )
+                // The one place a runner with nothing is told a route can be drawn rather than
+                // found (#448). Scrollable, because this card and that paragraph together are
+                // taller than a small screen at 1.3x text.
+                WhereANewRouteComesFrom()
             }
         } else {
             LazyColumn(
@@ -176,6 +194,11 @@ fun RoutesScreen(
                         onDelete = row.route?.let { route -> { deleting = route.id } },
                     )
                 }
+                // Under the library rather than over it (#448). It is an answer to a question a
+                // runner asks now and then, and the library is what they came to this screen for;
+                // put above the rows it would push every course down the screen for ever. Here it
+                // sits at the end of the list, which is where the Import button floats.
+                item(key = "where-routes-come-from") { WhereANewRouteComesFrom() }
             }
         }
     }
@@ -199,6 +222,57 @@ fun RoutesScreen(
                 TextButton(onClick = { deleting = null }) { Text("Cancel") }
             },
         )
+    }
+}
+
+/**
+ * Where a course comes from when the runner has never run the ground (#448).
+ *
+ * The words are all in `RouteModels.kt` ([ROUTE_BUILDERS_HEADING] and its neighbours), which is this
+ * screen's rule: what a runner reads is pinned by a unit test rather than by opening the screen on a
+ * phone. What is here is only where the taps go.
+ *
+ * The two names are the taps, and they open the phone's browser. Nothing is fetched, parsed or
+ * embedded — the app has no business rendering somebody else's map, and a runner drawing a course
+ * wants the site's own full screen, not a panel inside this one.
+ */
+@Composable
+private fun WhereANewRouteComesFrom() {
+    val browser = LocalUriHandler.current
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(RunningUiTokens.CardPadding),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = ROUTE_BUILDERS_HEADING,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(text = ROUTE_BUILDERS_BLURB, style = MaterialTheme.typography.bodyMedium)
+            routeBuilderPointers.forEach { pointer ->
+                Column(
+                    // The whole block is the target rather than the name alone: a bare word of link
+                    // text is a small thing to hit, and at 1.3x text the note beside it wraps to
+                    // three lines that would not be tappable at all (#63).
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { browser.openUri(pointer.url) }
+                        .padding(vertical = 4.dp),
+                ) {
+                    Text(
+                        text = pointer.name,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(text = pointer.note, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Text(text = ROUTE_BUILDERS_THEN, style = MaterialTheme.typography.bodyMedium)
+        }
     }
 }
 
