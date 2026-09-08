@@ -128,7 +128,7 @@ class SettingsScreenTest {
         // A range that had silently tightened would read as the app changing its mind, and leaves
         // the runner with nothing to act on. Naming the resting number points at what to change.
         assertEquals(
-            "Enter a heart rate between 110 and 230 — anything lower leaves no room above " +
+            "Enter a heart rate between 110 and 230 — anything lower leaves too little room above " +
                 "your resting 60",
             maxHrRefusalText(restingHr = 60)
         )
@@ -146,7 +146,7 @@ class SettingsScreenTest {
         // The mirror of the Max HR message, and it has to stay one: a refusal built by a named
         // rule on one door and spelled out inline on the other is how the two drift apart.
         assertEquals(
-            "Enter a heart rate between 30 and 50 — anything higher leaves no room under your " +
+            "Enter a heart rate between 30 and 50 — anything higher leaves too little room under your " +
                 "Max HR of 100",
             restingHrRefusalText(maxHr = 100)
         )

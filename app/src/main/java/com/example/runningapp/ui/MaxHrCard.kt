@@ -88,12 +88,18 @@ fun maxHrEvidenceText(highestRecordedBpm: Int?, restingHr: Int): String {
         ?: return "We have not recorded a heart rate from you yet. $ageFallback"
     val why = when (whyUnusableAsMaxHr(recorded, restingHr)) {
         UnusableAsMaxHr.ABOVE_THE_HIGHEST_SETTABLE ->
-            "which is too high to be a maximum — a strap misreads a beat now and then"
+            // Not called a strap artefact. [HIGHEST_BELIEVABLE_BPM] deliberately accepts beats
+            // past [MAX_MAX_HR] because a real heart can pass its owner's stated maximum, and
+            // this peak already survived the spike guard. What is certain is only that the
+            // field beneath will not take it.
+            "which is above the highest number this app takes as a maximum"
         // The words [maxHrRefusalText] already uses for this rule, deliberately. "Too close to your
         // resting 100" would be false of a peak of 60, which is under that number rather than near
-        // it; what is true of every peak this branch catches is that there is no room left above.
+        // it. "No room" would be false of a peak of 145 over a resting 100, which leaves 45 — the
+        // rule wants [MIN_HR_RESERVE] of them. What is true of every peak this branch catches is
+        // that the room left above is too little.
         UnusableAsMaxHr.LEAVES_NO_ROOM_ABOVE_RESTING ->
-            "which leaves no room above your resting $restingHr"
+            "which leaves too little room above your resting $restingHr"
         UnusableAsMaxHr.BELOW_THE_LOWEST_SETTABLE -> "which is too low to be a maximum"
         // Unreachable from the card, which offers such a peak rather than explaining it. Read as
         // the recorded number stated plainly, which is the reading that claims least.
@@ -205,7 +211,8 @@ fun MaxHrConfirmationCard(
                                 // from a number that has not been typed yet.
                                 statedAge != null ->
                                     "Age $statedAge gives ${maxHrForAge(statedAge)} BPM, which " +
-                                        "leaves no room above your resting ${state.restingHr}. " +
+                                        "leaves too little room above your resting " +
+                                        "${state.restingHr}. " +
                                         "Type your own number below."
                                 else -> "Between $MIN_STATABLE_AGE and $MAX_STATABLE_AGE"
                             }
