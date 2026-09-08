@@ -70,6 +70,40 @@ class RouteThumbnailTest {
         assertEquals(width, height, SQUARE_TOLERANCE)
     }
 
+    /**
+     * The other thing a thumbnail can get wrong before it has drawn anything, and the twin of the
+     * Norway test above: longitude runs out. It climbs to 180° and starts again at -180° without
+     * the ground changing, so a Run that steps over that line has its smallest and its largest
+     * longitude a stride apart on the ground and 359.9998° apart as numbers. Measured by
+     * subtraction the square is scaled to half the planet and the whole Run is a dot at one edge
+     * of the row (#353).
+     *
+     * Asked as "the same shape anywhere", because that is the whole claim: the drawing may not
+     * depend on where on Earth the run happened.
+     */
+    @Test
+    fun `a run over the antimeridian is drawn the same shape as anywhere else`() {
+        val shape: RouteScript.() -> Unit = { east(200.0); north(200.0); east(-200.0) }
+        val elsewhere = requireNotNull(thumbnailOf(route(latitude = -18.0, longitude = 0.22, build = shape)))
+        // Starting 100 m west of the line, so the run steps over it and back.
+        val overTheLine =
+            requireNotNull(thumbnailOf(route(latitude = -18.0, longitude = 179.99906, build = shape)))
+
+        val there = elsewhere.strokes.flatten()
+        val over = overTheLine.strokes.flatten()
+        // Said first and on its own, because it is the failure itself: scaled against half the
+        // planet the whole run is a dot in one corner, and every point of it has the same x.
+        assertTrue(
+            "the run must fill its square, not collapse into the edge of it",
+            over.maxOf { it.x } - over.minOf { it.x } > 0.9f,
+        )
+        assertEquals("the same run must be drawn from the same number of points", there.size, over.size)
+        there.zip(over).forEach { (expected, actual) ->
+            assertEquals(expected.x, actual.x, ANTIMERIDIAN_TOLERANCE)
+            assertEquals(expected.y, actual.y, ANTIMERIDIAN_TOLERANCE)
+        }
+    }
+
     @Test
     fun `an out-and-back is taller than it is wide, and is drawn that way`() {
         val thumbnail = requireNotNull(thumbnailOf(route { north(400.0); east(50.0); north(-400.0) }))
@@ -181,17 +215,29 @@ class RouteThumbnailTest {
          * an argument about the shape of the planet rather than about the shape of the run.
          */
         const val SQUARE_TOLERANCE = 0.01f
+
+        /**
+         * A hundredth of the square again, for the antimeridian test, and for the same reason as
+         * [SQUARE_TOLERANCE]: the two runs it compares are laid out at the same latitude but a
+         * hundred and eighty degrees apart, and the metres-per-degree the layout uses are not
+         * identical to the third decimal place there. What is under test is a factor of a hundred
+         * thousand, not a fraction of a pixel.
+         */
+        const val ANTIMERIDIAN_TOLERANCE = 0.01f
     }
 }
 
 /** A route laid out in metres east and north of where it started, one fix a second. */
-internal fun route(latitude: Double = 50.79, build: RouteScript.() -> Unit): List<TrackPoint> =
-    RouteScript(latitude).apply(build).points
+internal fun route(
+    latitude: Double = 50.79,
+    longitude: Double = 0.22,
+    build: RouteScript.() -> Unit,
+): List<TrackPoint> = RouteScript(latitude, longitude).apply(build).points
 
-internal class RouteScript(private val startLatitude: Double) {
+internal class RouteScript(private val startLatitude: Double, startLongitude: Double = 0.22) {
     val points = mutableListOf<TrackPoint>()
     private var latitude = startLatitude
-    private var longitude = 0.22
+    private var longitude = startLongitude
     private var timestamp = 1_700_000_000_000L
 
     init {
@@ -271,11 +317,22 @@ internal class RouteScript(private val startLatitude: Double) {
     private fun metersPerDegreeLongitude() =
         geodesicDistanceMeters(latitude, longitude, latitude, longitude + 0.001) * 1_000.0
 
+    /**
+     * Written down the way a phone writes it down: longitude wrapped into the range a fix actually
+     * carries. The layout above keeps counting east past 180 because that is how the metres were
+     * laid out, but no recorded fix says 180.001 — it says -179.999, and a route that steps over
+     * the line is the whole subject of one test here (#353).
+     */
+    private fun wrapped(degrees: Double): Double {
+        val turned = (degrees + 180.0) % 360.0
+        return (if (turned < 0) turned + 360.0 else turned) - 180.0
+    }
+
     private fun add(startsAfterPause: Boolean = false) {
         points += TrackPoint(
             sessionId = 1,
             latitude = latitude,
-            longitude = longitude,
+            longitude = wrapped(longitude),
             horizontalAccuracyMeters = 5f,
             timestampMillis = timestamp,
             source = TrackPointSource.GPS,

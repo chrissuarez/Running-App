@@ -31,12 +31,16 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.runningapp.MAX_MAX_HR
 import com.example.runningapp.MAX_STATABLE_AGE
+import com.example.runningapp.MIN_MAX_HR
 import com.example.runningapp.MIN_STATABLE_AGE
 import com.example.runningapp.RESTING_HR_UNSTATED
+import com.example.runningapp.lowestStatableMaxHr
 import com.example.runningapp.maxHrForAge
 import com.example.runningapp.parseAge
 import com.example.runningapp.parseMaxHr
+import com.example.runningapp.suggestedMaxHr
 import com.example.runningapp.suggestedMaxHrForAge
 import com.example.runningapp.ui.theme.RunningAppTheme
 import com.example.runningapp.ui.theme.RunningUiTokens
@@ -44,14 +48,57 @@ import com.example.runningapp.ui.theme.RunningUiTokens
 /**
  * What the confirmation card needs to know, which is the runner's profile and their own evidence.
  *
- * [suggestedMaxHr] null is a phone with nothing recorded — the card asks for an age there, and
- * offers `220 − age`. Everything else is the same card.
+ * [suggestedMaxHr] null is a card with nothing of the runner's own to offer — it asks for an age
+ * there, and offers `220 − age`. Everything else is the same card.
+ *
+ * [highestRecordedBpm] is the evidence itself, carried beside the offer rather than folded into it,
+ * because the offer being absent has two quite different causes and the card must say which (#280):
+ * nothing was ever recorded, or something was and the field beneath would refuse it. Null here is
+ * the first; a number here with a null [suggestedMaxHr] is the second.
  */
 data class MaxHrCardState(
     val currentMaxHr: Int,
     val restingHr: Int = RESTING_HR_UNSTATED,
     val suggestedMaxHr: Int? = null,
+    val highestRecordedBpm: Int? = null,
 )
+
+/**
+ * What the card says about the runner's own evidence when it has no number to offer them (#280).
+ *
+ * [suggestedMaxHr] comes back null for two reasons, and the sentence that tells the truth about one
+ * tells a lie about the other. A runner with a resting heart rate of 100 — the highest the app
+ * accepts — has every recorded peak under 150 ruled out, and was told their strap had recorded
+ * nothing while their history was full of beats. So the reason is named, and the number they can
+ * check it against is printed beside it.
+ *
+ * The age question is kept in every case, because it is the right question in every case: it is the
+ * only starting point left when the runner's own evidence cannot be used.
+ *
+ * Which case this is, is asked of [suggestedMaxHr] itself rather than re-stated here. One rule about
+ * what the field beneath will take, asked by the offer and by the explanation of its absence, is how
+ * the two cannot come to disagree — the same reason [suggestedMaxHrForAge] goes through it too. A
+ * peak the field *would* take never reaches here, because the card offers it instead; if one did, it
+ * is read as the nothing-recorded case rather than explained away as unusable, which is the reading
+ * that claims least.
+ */
+fun maxHrEvidenceText(highestRecordedBpm: Int?, restingHr: Int): String {
+    val ageFallback =
+        "Your age gives a rough starting point — a proper max HR test beats it whenever you do one."
+    val unusable = highestRecordedBpm?.takeIf { suggestedMaxHr(it, restingHr) == null }
+        ?: return "We have not recorded a heart rate from you yet. $ageFallback"
+    val why = when {
+        unusable > MAX_MAX_HR ->
+            "which is too high to be a maximum — a strap misreads a beat now and then"
+        // Named only where the resting number is what raised the floor, which is the rule
+        // [maxHrRefusalText] states in the same words for the same reason: a runner who has never
+        // stated a resting heart rate would otherwise be shown one they have never seen.
+        lowestStatableMaxHr(restingHr) > MIN_MAX_HR ->
+            "which is too close to your resting $restingHr to use as a maximum"
+        else -> "which is too low to be a maximum"
+    }
+    return "The highest we have recorded from you is $unusable BPM, $why. $ageFallback"
+}
 
 /**
  * The one time this app asks the runner about their heart (#65).
@@ -134,8 +181,7 @@ fun MaxHrConfirmationCard(
                 )
             } else {
                 Text(
-                    "We have not recorded a heart rate from you yet. Your age gives a rough " +
-                        "starting point — a proper max HR test beats it whenever you do one.",
+                    maxHrEvidenceText(state.highestRecordedBpm, state.restingHr),
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 val statedAge = parseAge(age)
@@ -240,6 +286,18 @@ private fun MaxHrCardWithoutHistoryPreview() {
     RunningAppTheme {
         MaxHrConfirmationCard(
             state = MaxHrCardState(currentMaxHr = 190),
+            onConfirm = {},
+            onDismiss = {},
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun MaxHrCardWithAnUnusablePeakPreview() {
+    RunningAppTheme {
+        MaxHrConfirmationCard(
+            state = MaxHrCardState(currentMaxHr = 190, restingHr = 100, highestRecordedBpm = 145),
             onConfirm = {},
             onDismiss = {},
         )

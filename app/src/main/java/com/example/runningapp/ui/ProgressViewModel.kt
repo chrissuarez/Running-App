@@ -285,6 +285,9 @@ class ProgressViewModel(
             currentMaxHr = settings.maxHr,
             restingHr = settings.restingHr,
             suggestedMaxHr = suggestedMaxHr(peak.bpm, settings.restingHr),
+            // Handed over whether or not it could be offered: what the card says when it has
+            // nothing to offer depends on whether there was evidence at all (#280).
+            highestRecordedBpm = peak.bpm,
         )
     }
 

@@ -6,6 +6,7 @@ import com.example.runningapp.restore.RestorePlan
 import com.example.runningapp.restore.RestoreRefusal
 import com.example.runningapp.restore.RestoreSummary
 import java.time.ZoneId
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -115,6 +116,46 @@ class RestoreModelsTest {
         val body = restoreConfirmationBody(plan(), london)
         assertTrue(body, body.contains("cannot be undone"))
         assertTrue(body, body.contains("close and reopen"))
+    }
+
+    /**
+     * The case the runner reaches by backing up and testing the restore straight afterwards, which
+     * is exactly what a careful person does the first time (#279). The two sentences are both
+     * load-bearing whenever they differ; when they do not, printing both word for word reads like a
+     * copy-paste fault in the one dialog whose whole job is to be trusted.
+     */
+    @Test
+    fun `a backup that says the same as the phone says it once`() {
+        val body = restoreConfirmationBody(plan(incomingRuns = 19, incomingNewest = july, currentRuns = 19, currentNewest = july), london)
+
+        assertFalse(body, body.contains("You have 19 runs"))
+        assertTrue(body, body.contains("both hold 19 runs"))
+        // Said once, not twice: the date belongs to both sides now.
+        assertEquals(body, 1, body.split("12 Jul 2024").size - 1)
+    }
+
+    @Test
+    fun `a matching backup still says the phone will be replaced`() {
+        // The safety half of the sentence is the point of the dialog and must survive the tidying.
+        val body = restoreConfirmationBody(plan(incomingRuns = 19, incomingNewest = july, currentRuns = 19, currentNewest = july), london)
+
+        assertTrue(body, body.contains("replaces"))
+        assertTrue(body, body.contains("cannot be undone"))
+        // And it does not promise the runner something the app cannot check. A matching count and a
+        // matching newest run is all that was compared; two different histories can do both, so the
+        // dialog says what was compared and refuses the stronger claim out loud.
+        assertFalse(body, body.contains("replaces it with the same runs"))
+        assertTrue(body, body.contains("not certainly the same runs"))
+    }
+
+    @Test
+    fun `a count that matches on a different day is still two sentences`() {
+        // Only the pair together makes a file a snapshot of this phone. The same count from another
+        // day is the ordinary case this dialog exists for, and both sides must be readable.
+        val body = restoreConfirmationBody(plan(incomingRuns = 19, incomingNewest = june, currentRuns = 19, currentNewest = july), london)
+
+        assertTrue(body, body.contains("holds 19 runs"))
+        assertTrue(body, body.contains("You have 19 runs"))
     }
 
     @Test
