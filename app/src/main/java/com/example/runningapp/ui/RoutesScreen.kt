@@ -36,7 +36,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -82,16 +81,16 @@ fun RoutesScreen(
     /**
      * A course an import has just added, to be brought into view — null when there is none (#458).
      *
-     * See [com.example.runningapp.ui.RoutesViewModel.showImported] for why an added course needs
-     * this and a re-measure does not.
+     * See [com.example.runningapp.ui.RoutesViewModel.courseToShow] for why an added course needs
+     * this and a re-measure does not, and [CourseToShow] for why it carries a count.
      */
-    showRouteId: Long?,
+    courseToShow: CourseToShow?,
     onImport: () -> Unit,
     onOpen: (Long) -> Unit,
     onDelete: (RouteHeader) -> Unit,
     onMessageShown: () -> Unit,
-    /** The request to show that course is spent — see [RoutesViewModel.importedShown]. */
-    onShowRouteDone: (Long) -> Unit,
+    /** That request is spent — see [RoutesViewModel.courseShown]. */
+    onCourseShown: (Long) -> Unit,
     onBack: () -> Unit,
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
@@ -118,28 +117,24 @@ fun RoutesScreen(
     // "the top" would be this file guessing at the library's ORDER BY: see
     // [routeLibraryRowShowing].
     //
+    // A request already standing when this screen arrived was made for a screen that has gone, and
+    // is not this one's to act on — the count is how that is known, and [CourseToShow] argues why
+    // giving the request back on the way out cannot do the job. Saved rather than merely
+    // remembered, so an Activity rebuilt under a screen that is still waiting keeps its place in
+    // the count instead of disowning the request it was made for.
+    val asksBeforeThisScreen = rememberSaveable { courseToShow?.ask ?: 0L }
+    val wanted = courseWorthShowing(courseToShow, asksBeforeThisScreen)
+
     // Keyed on the rows as well as on the request, because the two arrive from different flows and
     // the request can land first. Re-run on each list until the row is there, and spent the moment
     // it is; a request whose row never appears is answered by nothing at all, which is what
-    // [com.example.runningapp.ui.RoutesViewModel.showImported] asks for.
-    LaunchedEffect(showRouteId, rows) {
-        if (showRouteId == null) return@LaunchedEffect
-        val index = routeLibraryRowShowing(rows, showRouteId)
+    // [com.example.runningapp.ui.RoutesViewModel.courseToShow] asks for.
+    LaunchedEffect(wanted, rows) {
+        if (wanted == null) return@LaunchedEffect
+        val index = routeLibraryRowShowing(rows, wanted.routeId)
         if (index < 0) return@LaunchedEffect
         listState.animateScrollToItem(index)
-        onShowRouteDone(showRouteId)
-    }
-
-    // A request that was never reached lapses when this screen goes, rather than moving the list on
-    // the next visit to the library for an import the runner has long since walked away from. The
-    // view model outlives this screen, so it has to: it is the Activity's, not the screen's.
-    //
-    // Keyed on the request so the id being given up is the one this block was made with, which is
-    // what lets the view model refuse a hand-back that is not the request it is holding. The
-    // Activity is not recreated by a rotation (the manifest declares `configChanges` for it), so this fires
-    // when the runner leaves the library, not when they turn the phone.
-    DisposableEffect(showRouteId) {
-        onDispose { showRouteId?.let(onShowRouteDone) }
+        onCourseShown(wanted.ask)
     }
 
     // The Import button floats over the list rather than in it, so the list has to be told how tall
@@ -450,12 +445,12 @@ private fun RoutesScreenPreview() {
             ),
             isImporting = false,
             message = null,
-            showRouteId = null,
+            courseToShow = null,
             onImport = {},
             onOpen = {},
             onDelete = {},
             onMessageShown = {},
-            onShowRouteDone = {},
+            onCourseShown = {},
             onBack = {},
         )
     }
@@ -469,12 +464,12 @@ private fun EmptyRoutesScreenPreview() {
             rows = emptyList(),
             isImporting = false,
             message = null,
-            showRouteId = null,
+            courseToShow = null,
             onImport = {},
             onOpen = {},
             onDelete = {},
             onMessageShown = {},
-            onShowRouteDone = {},
+            onCourseShown = {},
             onBack = {},
         )
     }

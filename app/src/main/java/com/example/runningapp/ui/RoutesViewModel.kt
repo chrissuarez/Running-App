@@ -49,6 +49,34 @@ data class RouteRowUi(
 )
 
 /**
+ * A course the library has been asked to put in front of the runner, and which ask it is (#458).
+ *
+ * [ask] counts the asks one [RoutesViewModel] has made, from 1. It is here because "whose request
+ * is this" cannot be answered by the course alone: the view model belongs to the Activity and
+ * outlives the screen, so a request can be **made while no library screen is watching** — the
+ * runner presses Back while the file is still being read, and the import lands afterwards. The id
+ * on its own cannot tell that request from one made for the screen now on show, and the next visit
+ * to the library would be scrolled for an import the runner walked away from.
+ *
+ * A screen answers that by remembering the count it arrived on: an ask at or below it was made for
+ * a screen that has gone ([courseWorthShowing]). Counting rather than clearing, because clearing
+ * only reaches a request that already exists, and this one does not exist yet when the runner
+ * leaves.
+ */
+data class CourseToShow(val routeId: Long, val ask: Long)
+
+/**
+ * The request a library screen should act on, or null — [request] unless it was already standing
+ * when that screen arrived (#458).
+ *
+ * [asksBefore] is the count the screen saw on arrival, and 0 for a screen that arrived with no
+ * request standing. Pure and out of the composable, this screen's rule: what moves the list is
+ * pinned by a unit test rather than by importing a file on a phone.
+ */
+fun courseWorthShowing(request: CourseToShow?, asksBefore: Long): CourseToShow? =
+    request?.takeIf { it.ask > asksBefore }
+
+/**
  * Drives the Route library (#54).
  *
  * A ViewModel rather than work launched from the screen for the same reason as [RestoreViewModel]:
@@ -460,17 +488,20 @@ class RoutesViewModel(
      * moving the screen for one of them would be the app answering a question nobody asked. The
      * runner is told what happened in words either way ([message]).
      *
-     * Cleared by [importedShown] once the row has been reached, and again when the screen that was
-     * asked leaves — a request is for the screen open now, not for the next visit to the library.
-     * A request rather than a promise: an
+     * Stamped with which ask it is, and that is the whole of how a request is kept to the screen it
+     * was made for — see [CourseToShow], where the case that forces it is argued.
+     *
+     * Cleared by [courseShown] once the row has been reached. A request rather than a promise: an
      * id the library has no row for is left standing rather than acted on late. The reasons a
      * library has no row for a course it may still hold are counted at [routeLibraryRowShowing],
-     * and this makes no claim about which one applies. Standing is inert either way — a Route's id
-     * is never handed out twice, so a request that missed can never match a later row — and the
-     * next import replaces it.
+     * and this makes no claim about which one applies. Standing is inert either way — no screen
+     * that arrives after it will act on it, and the next import replaces it.
      */
-    private val _showImported = MutableStateFlow<Long?>(null)
-    val showImported = _showImported.asStateFlow()
+    private val _courseToShow = MutableStateFlow<CourseToShow?>(null)
+    val courseToShow = _courseToShow.asStateFlow()
+
+    /** How many asks this view model has made, so each one can be told from the last. */
+    private var asks = 0L
 
     /**
      * A file has been handed over, by the picker or by another app's "Open with".
@@ -486,7 +517,9 @@ class RoutesViewModel(
             val outcome = withContext(io) { importer.import(uri) }
             // Set before the words, so the screen cannot be told "saved" by one collector and left
             // looking at the old top of the list by the other for a frame in between.
-            if (outcome is RouteImportOutcome.Imported) _showImported.value = outcome.routeId
+            if (outcome is RouteImportOutcome.Imported) {
+                _courseToShow.value = CourseToShow(outcome.routeId, ++asks)
+            }
             _message.value = when (outcome) {
                 is RouteImportOutcome.Imported ->
                     routeImportedMessage(outcome.name) + routeSameGroundNote(outcome.sameGroundAs)
@@ -522,17 +555,16 @@ class RoutesViewModel(
     }
 
     /**
-     * The request to show [routeId] is spent — the library reached its row, or the screen that was
-     * asked has gone (#458).
+     * The request numbered [ask] is spent — the library reached its row.
      *
      * **Compare-and-clear, not clear**, the bargain
      * [com.example.runningapp.segments.RunShapeStore.putShapeUnlessTheRunMoved] makes and for its
-     * reason: this view model belongs to the Activity, so a screen leaving hands its request back
-     * *after* the screen that replaced it may already have made a new one. Naming the id it is
-     * giving up means a late hand-back cannot take away a request that is not the one it held.
+     * reason: a screen that reached one course hands the request back after a second import may
+     * already have made another, and naming the ask it is giving up means it cannot take away a
+     * request that is not the one it held.
      */
-    fun importedShown(routeId: Long) {
-        _showImported.compareAndSet(routeId, null)
+    fun courseShown(ask: Long) {
+        if (_courseToShow.value?.ask == ask) _courseToShow.value = null
     }
 }
 
