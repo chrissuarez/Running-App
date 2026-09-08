@@ -4,6 +4,7 @@ import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.data.RouteSource
 import com.example.runningapp.routes.GpxRefusal
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.Locale
@@ -132,5 +133,69 @@ class RouteModelsTest {
                 "for as one.",
             runRouteLibraryEmptyLine(),
         )
+    }
+
+    // --- Where a route the runner has never run comes from (#448) ---
+
+    /** The two sites, in the order the screen offers them: the one to start with first. */
+    @Test
+    fun `the screen points at two free route builders`() {
+        assertEquals(
+            listOf("gpx.studio", "On The Go Map"),
+            routeBuilderPointers.map { it.name },
+        )
+        assertEquals(
+            listOf("https://gpx.studio", "https://onthegomap.com"),
+            routeBuilderPointers.map { it.url },
+        )
+    }
+
+    /**
+     * The rule this list exists under: a pointer that sends the runner somewhere they must pay is
+     * worse than no pointer.
+     *
+     * Strava, Komoot and Footpath all charge for the export, and Garmin Connect's free course file
+     * carries no heights at all — so a course built there can never show a climb. None of the four
+     * may be named as a place to draw a route.
+     */
+    @Test
+    fun `no route builder that charges or drops heights is named`() {
+        val everythingSaid = (
+            listOf(ROUTE_BUILDERS_HEADING, ROUTE_BUILDERS_BLURB, ROUTE_BUILDERS_THEN) +
+                routeBuilderPointers.map { "${it.name} ${it.url} ${it.note}" }
+            ).joinToString(" ").lowercase()
+
+        listOf("strava", "komoot", "footpath", "garmin").forEach { paidOrHeightless ->
+            assertFalse(
+                "the Routes screen names $paidOrHeightless as somewhere to draw a route",
+                everythingSaid.contains(paidOrHeightless),
+            )
+        }
+    }
+
+    /**
+     * The two doors that exist, and no third. The app registers `ACTION_VIEW` only, so it has no
+     * entry in the phone's share sheet — describing one would be a door that is not there (#384).
+     */
+    @Test
+    fun `getting the drawn file in names only the doors the app has`() {
+        assertEquals(
+            "Then Import GPX here, or find the file and choose Open with → Running App.",
+            ROUTE_BUILDERS_THEN,
+        )
+        assertFalse(ROUTE_BUILDERS_THEN.lowercase().contains("share"))
+    }
+
+    /**
+     * On The Go Map's note is a warning and not a description: its file carries no heights unless
+     * the elevation profile has been switched on and allowed to finish, and a route with none reads
+     * `No elevation in file` for ever, because a Route's climb is never worked out again.
+     */
+    @Test
+    fun `the site that can lose the heights says so`() {
+        val onTheGoMap = routeBuilderPointers.single { it.name == "On The Go Map" }
+
+        assertTrue(onTheGoMap.note.contains("elevation profile on"))
+        assertTrue(onTheGoMap.note.contains("no heights"))
     }
 }

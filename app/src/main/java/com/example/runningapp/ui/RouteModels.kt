@@ -177,3 +177,65 @@ const val ROUTE_REVERSED_TOGGLE_LABEL = "Run it backwards"
  */
 fun runRouteLibraryEmptyLine(): String =
     "No routes yet. Import a GPX under Open Routes, or save a run you've already been for as one."
+
+/**
+ * One free website a runner can draw a course on, and what they need to know before they do (#448).
+ *
+ * A type rather than two parallel lists, because the note belongs to the site: On The Go Map's is a
+ * warning that changes what the runner does there, and gpx.studio's is what makes it the one to
+ * start with.
+ */
+data class RouteBuilderPointer(val name: String, val url: String, val note: String)
+
+/**
+ * Where a course comes from when the runner has never run the ground (#448).
+ *
+ * The app keeps routes; it cannot draw one, and there is no plan for it to. So the answer to *"how
+ * do I get a route for a loop I have never run?"* is a free website, a download and an import — and
+ * the moment a runner needs that answer is the moment they are looking at the Routes screen, not the
+ * moment they think to open the handbook.
+ *
+ * **Two sites, and the list is short on purpose.** Both are free, neither wants an account and
+ * neither wants paying. Strava, Komoot and Footpath all charge for the export, and Garmin Connect's
+ * free course file carries no heights at all — a pointer that sends the runner somewhere they must
+ * pay, or somewhere whose file can never show a climb, is worse than no pointer, so none of the four
+ * is named here. The handbook carries the reasoning; this carries the answer.
+ */
+val routeBuilderPointers: List<RouteBuilderPointer> = listOf(
+    RouteBuilderPointer(
+        name = "gpx.studio",
+        url = "https://gpx.studio",
+        note = "Tap along the map. It snaps to real roads and paths, and fills in the heights, " +
+            "so the course arrives with a climb.",
+    ),
+    RouteBuilderPointer(
+        name = "On The Go Map",
+        url = "https://onthegomap.com",
+        note = "Easier with a thumb. Turn its elevation profile on and let it finish before you " +
+            "save, or the file carries no heights.",
+    ),
+)
+
+/** The heading over [routeBuilderPointers] — a question the runner is already asking. */
+const val ROUTE_BUILDERS_HEADING = "Want a route you've never run?"
+
+/**
+ * The line under that heading.
+ *
+ * Says what the app cannot do before it says what to do instead, because a runner hunting for a
+ * "draw a route" button needs telling there is not one. It does not repeat the empty-state card
+ * beside it, which says where routes come from; this says where a *new* one is drawn.
+ */
+const val ROUTE_BUILDERS_BLURB =
+    "The app can't draw a course, only keep one. Draw it free on either of these, in this phone's " +
+        "browser — no account, no payment:"
+
+/**
+ * How the drawn file gets in.
+ *
+ * Names the two doors that exist and no others: the button on this screen, and **Open with** on the
+ * file. The app registers `ACTION_VIEW` only, so there is no entry in the share sheet and describing
+ * one would be a door that is not there (#384).
+ */
+const val ROUTE_BUILDERS_THEN =
+    "Then Import GPX here, or find the file and choose Open with → Running App."
