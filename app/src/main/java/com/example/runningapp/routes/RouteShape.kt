@@ -25,17 +25,17 @@ import com.example.runningapp.segments.shapeAlong
  * between twelve and forty-seven metres of climbing on runs of two to six kilometres — a spread
  * that follows the ground, where ten metres reported ten on almost every one of them.
  *
- * **What this number does not cover.** A five-point mean over a file that alternates by some amount
- * a point leaves about a fifth of that amount behind, so this rule protects the reading only from a
- * per-point wobble of *under* fifteen metres. At fifteen the residual is three exactly, and the
- * comparison below is `>=`, so it banks. A file noisier than that banks its noise as climbing, over
- * and over, all route long — the #20 defect, reached at a lower noise floor than ten metres reached
- * it. That is a known, accepted limit rather than an oversight: nothing this phone or a route
- * builder exports comes close to it, and widening the window instead is no fix, because killing a
- * twenty-metre alternation with a plain mean takes eleven points, which on a route whose points sit
- * a hundred metres apart averages over a kilometre and rubs real hills out with the noise. #424
- * holds the proper fix; `RouteShapeTest.a wobble the smoothing cannot absorb is still banked` pins
- * the limit in the meantime.
+ * **How much wobble it covers, and why that is now enough** (#424). A single five-point mean over a
+ * file that alternates by some amount a point leaves about a fifth of that amount behind, which
+ * protected this reading only from a per-point wobble of *under* fifteen metres — at fifteen the
+ * residual is three exactly, and the comparison below is `>=`, so it banked. Beyond that a file
+ * banked its own noise as climbing over and over, all route long, and the total grew with the length
+ * of the route: the #20 defect, in a route. The mean is now applied **twice** ([smoothedAlong] over
+ * its own output), which leaves about a twenty-fifth rather than a fifth, so the line this number
+ * protects moves out past seventy metres a point — far past anything a phone or a route builder
+ * writes. `RouteShapeTest.a violent wobble is no longer banked as climbing` is what holds it there,
+ * and it asserts the reading at two route lengths rather than one, because what made the old
+ * behaviour a defect was the growth and not the size.
  */
 private const val ROUTE_HYSTERESIS_METERS = 3.0
 
@@ -102,7 +102,23 @@ fun routeElevationGainMeters(points: List<RoutePoint>): Double? {
     // reports "0 m up", telling the runner a route the file said nothing about is level.
     if (points.count { it.elevationMeters != null } < 2) return null
 
+    // Smoothed twice, over the same window both times (#424). One pass leaves about a fifth of a
+    // per-point wobble behind and a second leaves about a fifth of that, so what reaches the
+    // threshold is a twenty-fifth — the difference between a file that banks its own noise all
+    // route long and one that does not.
+    //
+    // Twice over a five-point window rather than once over a wider one, which is the fix that was
+    // declined when this limit was first written down: killing a twenty-metre alternation with a
+    // single plain mean takes an eleven-point window, and on a route whose points sit a hundred
+    // metres apart that averages over a kilometre of ground and rubs real hills out along with the
+    // noise. Two narrow passes fall away far faster at the noise's own frequency than at a hill's,
+    // so a sparsely sampled hill survives them: the thirty-metre climb of
+    // `RouteShapeTest.banks a climb three metres at a time` still reads fifteen metres.
+    //
+    // The cost is a second walk of the list, which is linear in the points and reads nothing new —
+    // the distances are re-measured from the same points, and a Route is a few hundred of them.
     val heights = points.map { it.elevationMeters }.filledFromNeighbours()
+        .smoothedAlong(points, ROUTE_SMOOTHING_POINTS, ROUTE_SMOOTHING_METERS)
         .smoothedAlong(points, ROUTE_SMOOTHING_POINTS, ROUTE_SMOOTHING_METERS)
 
     var gain = 0.0
