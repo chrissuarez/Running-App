@@ -90,6 +90,10 @@ class FakeRouteDao : RouteDao {
     override suspend fun coursesOwedShapes(): List<Long> =
         rows.value.map { it.id }.filterNot { it in shapes }.sorted()
 
+    /** The same debt asked of a few courses rather than of the library (#440). */
+    override suspend fun coursesOwedShapesAmong(routeIds: List<Long>): List<Long> =
+        coursesOwedShapes().filter { it in routeIds }
+
     /**
      * The shaped courses, as the real read returns them — the name taken from the row rather than
      * kept beside the shape, and a shape of null left out, exactly as `SHAPED_COURSES_SQL` does.

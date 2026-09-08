@@ -390,10 +390,25 @@ class RoutesViewModel(
      * to draw the length the library row opened and re-land once the read comes back, which moves
      * the course out from under a runner who has already started reading it — the very thing this
      * being asked *once* rather than watched exists to prevent.
+     *
+     * **This family's own shape debt is paid before the shapes are read** (#440). The library's
+     * shapes are backfilled by a pass started at launch on a scope of its own, so on the first
+     * launch after they shipped — or after a pass the runner cut short by backing out — a length
+     * with no shape yet reads as one nothing has ever been run on, and the family can land on the
+     * wrong length or on the "nobody has run this" shortest. Because the answer is settled once and
+     * never re-landed, a landing decided on an unpaid debt is not corrected later in that launch. So
+     * the debt of these few courses is paid here rather than waited on: a pass cut short never
+     * reports itself paid, so a page that waited for "paid" could wait for ever. See
+     * [com.example.runningapp.data.RouteDao.takeTheShapesStillOwedBy], which also names the half of
+     * the debt this knowingly leaves — a Run that has never been shaped is still absent from the
+     * recognising, and that debt is the whole of history rather than a handful of rows.
      */
     suspend fun landingSibling(routeId: Long): Long? = withContext(courseDispatcher) {
         val siblings = routeSiblings(routeDao.getLibraryFlow().first(), routeId)
         if (siblings.size < 2) return@withContext siblings.firstOrNull()?.id
+        // Before the shapes are read, not after: this decides where the runner lands and then has no
+        // further say, so a shape arriving a moment later is a shape this answer never sees (#440).
+        routeDao.takeTheShapesStillOwedBy(siblings.map { it.id })
         // The shapes as they stand, not watched: this settles where the runner lands and then has
         // no further say, so `first()` on the two flows the page already watches is the one-shot
         // read of them — a second pair of queries would be the same rows asked for again under
