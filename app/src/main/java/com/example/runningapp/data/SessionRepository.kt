@@ -1252,13 +1252,23 @@ class SessionRepository(
      * same hour would not, so it drags the median the suggested distance is drawn from, and it can
      * carry the history over the three-Run threshold the suggestion needs at all.
      *
-     * **Both copies of the word are asked, because between them they cover every instant.** The word
+     * **Both copies of the word are asked, because between them they cover the settlement.** The word
      * is held in memory from before the gate opens ([theRunnersWordFor], written under [settling] in
      * [finishSheetClosed]) until the settlement spends it, and the settlement writes the durable debt
-     * ([WalkMarkDebtRow]) *before* it drops the in-memory copy ([settleUnderSettling]). So there is
-     * no moment at which a word owed to a row is in neither place, and asking both is what makes
-     * that an argument rather than a hope. Asking only the debt would miss the seconds before the
-     * settlement reaches it; asking only the memory would miss every launch after this one.
+     * ([WalkMarkDebtRow]) *before* it drops the in-memory copy ([settleUnderSettling]). Asking only
+     * the debt would miss the seconds before the settlement reaches it; asking only the memory would
+     * miss every launch after this one.
+     *
+     * **The one door that drops a word without writing a debt is [settleUnderSettling]'s early
+     * return, and it cannot leave a row disagreeing.** That branch is a Run that has gone, or one
+     * already judged. A Run that has gone is answered above this question — the wait ends on a null
+     * row. A Run already judged cannot be one this sheet is closing: every wordless settlement tests
+     * [awaitingTheRunnersWord] under [settling] and stands down while it holds the Run, and the gate
+     * holds it from the STOP that raised the sheet to the close that opens it, so nothing can have
+     * judged it in between. The settlement that follows a timed-out close (#317) reaches the branch
+     * only after the sheet's own settlement has already been through [settleAndOweAnyWalkMark],
+     * which is where the debt is written or the row is found to agree. So the branch is reached with
+     * nothing owed, and it is right to drop the word.
      *
      * **A word the row already agrees with owes nothing**, which is the ordinary case — the mark
      * landed — and is why this is a comparison rather than "is a word pending". Both copies are
@@ -1271,10 +1281,10 @@ class SessionRepository(
      * mark that will not land in this process — the same bargain, reached through one more question
      * rather than a second timeout.
      */
-    private suspend fun theRowStillOwesTheRunnersWord(sessionId: Long, isWalkOnTheRow: Boolean): Boolean {
-        val pending = theRunnersWordFor[sessionId]
+    private suspend fun theRowStillOwesTheRunnersWord(runId: Long, isWalkOnTheRow: Boolean): Boolean {
+        val pending = theRunnersWordFor[runId]
         if (pending != null && pending != isWalkOnTheRow) return true
-        val owed = walkMarkDebtDao?.debtFor(sessionId) ?: return false
+        val owed = walkMarkDebtDao?.debtFor(runId) ?: return false
         return owed.isWalk != isWalkOnTheRow
     }
 

@@ -239,3 +239,17 @@ const val ROUTE_BUILDERS_BLURB =
  */
 const val ROUTE_BUILDERS_THEN =
     "Then Import GPX here, or find the file and choose Open with → Running App."
+
+/**
+ * What the Routes screen says when the library is empty (#448).
+ *
+ * It names no site at all, and that is the rule rather than brevity. This paragraph is read with the
+ * card printed under it ([ROUTE_BUILDERS_HEADING] and its neighbours), which may not name Strava,
+ * Komoot, Footpath or Garmin Connect — three charge for a course export and the fourth's free course
+ * file carries no heights. Naming them here would have the screen recommending, one line above the
+ * card, the four the card declines to send anyone to. Both doors into the library instead, which is
+ * what a runner with nothing needs told; where a *new* route is drawn is the card's job.
+ */
+const val ROUTES_EMPTY_LINE =
+    "No routes yet.\n\nImport a GPX file, or save a run you've already been for as one. " +
+        "Both land here."

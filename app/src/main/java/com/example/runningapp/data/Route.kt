@@ -355,10 +355,25 @@ interface RouteDao {
      * [Route.polyline]'s first rule. Empty on every launch after the first, where it costs the one
      * index read that says nothing is owed.
      */
-    suspend fun takeTheShapesStillOwed() {
-        coursesOwedShapes().forEach { owed ->
-            val line = getRoutePolyline(owed) ?: return@forEach
-            rememberTheShapeOf(owed, line)
+    suspend fun takeTheShapesStillOwed() = shapeEachOf(coursesOwedShapes())
+
+    /**
+     * Measures each of [owed] and writes its shape down — the walk both debt payments above make.
+     *
+     * One line at a time, fetched and let go before the next is asked for, which is
+     * [Route.polyline]'s first rule. A course whose line has gone between the debt being read and
+     * this reaching it is skipped rather than written as a shapeless row: the debt is the *absence*
+     * of a row ([RouteShapeRow]), so leaving it standing is what lets a later pass find the course
+     * again if its line comes back, and a deleted course is never asked about again either way.
+     *
+     * Written once and called twice rather than copied, because the two callers differ only in which
+     * courses they are about: they must measure by the same rule or a library page and a launch pass
+     * could disagree about the same course's shape.
+     */
+    private suspend fun shapeEachOf(owed: List<Long>) {
+        owed.forEach { course ->
+            val line = getRoutePolyline(course) ?: return@forEach
+            rememberTheShapeOf(course, line)
         }
     }
 
@@ -392,12 +407,8 @@ interface RouteDao {
      * still being measured is right again the next time the family is opened, and the length wanted
      * is one tap away. Decided with Chris on 2026-09-08 while closing #440.
      */
-    suspend fun takeTheShapesStillOwedBy(routeIds: List<Long>) {
-        coursesOwedShapesAmong(routeIds).forEach { owed ->
-            val line = getRoutePolyline(owed) ?: return@forEach
-            rememberTheShapeOf(owed, line)
-        }
-    }
+    suspend fun takeTheShapesStillOwedBy(routeIds: List<Long>) =
+        shapeEachOf(coursesOwedShapesAmong(routeIds))
 
     /**
      * Which of [routeIds] are still owed a shape, oldest first — [coursesOwedShapes] asked of a few
