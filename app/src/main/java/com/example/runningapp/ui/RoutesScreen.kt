@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
@@ -155,8 +156,11 @@ fun RoutesScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    text = "No routes yet.\n\nImport a GPX file — from Strava, Garmin Connect, " +
-                        "Komoot, or anywhere else you have one — and it will be saved here.",
+                    // The four this screen used to name here are the four the card below may not
+                    // name (#448): three charge for a course export and the fourth's free file
+                    // carries no heights. Naming them a paragraph above the card that declines to
+                    // was the screen telling a runner two different things at once.
+                    text = ROUTES_EMPTY_LINE,
                     style = MaterialTheme.typography.bodyLarge,
                     textAlign = TextAlign.Center,
                 )
@@ -230,7 +234,9 @@ fun RoutesScreen(
  *
  * The words are all in `RouteModels.kt` ([ROUTE_BUILDERS_HEADING] and its neighbours), which is this
  * screen's rule: what a runner reads is pinned by a unit test rather than by opening the screen on a
- * phone. What is here is only where the taps go.
+ * phone. What is here is only where the taps go. The empty-state paragraph above this card moved
+ * there for the same reason ([ROUTES_EMPTY_LINE]) — the two are read together and have to agree
+ * about which sites a runner is sent to, which is a rule and not a coincidence.
  *
  * The two names are the taps, and they open the phone's browser. Nothing is fetched, parsed or
  * embedded — the app has no business rendering somebody else's map, and a runner drawing a course
@@ -259,8 +265,14 @@ private fun WhereANewRouteComesFrom() {
                     // three lines that would not be tappable at all (#63).
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { browser.openUri(pointer.url) }
+                        .heightIn(min = RunningUiTokens.MinTouchTarget)
+                        .clickable(
+                            onClickLabel = "Open ${pointer.name}",
+                            role = Role.Button,
+                            onClick = { browser.openUri(pointer.url) },
+                        )
                         .padding(vertical = 4.dp),
+                    verticalArrangement = Arrangement.Center,
                 ) {
                     Text(
                         text = pointer.name,

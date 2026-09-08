@@ -174,6 +174,22 @@ class RouteModelsTest {
     }
 
     /**
+     * The empty library and the card under it are read together, so they may not disagree about
+     * where a runner is sent. The card names two free sites and bars four; this names none.
+     */
+    @Test
+    fun `the empty Routes screen names both doors and no site`() {
+        assertEquals(
+            "No routes yet.\n\nImport a GPX file, or save a run you've already been for as one. " +
+                "Both land here.",
+            ROUTES_EMPTY_LINE,
+        )
+        listOf("strava", "komoot", "footpath", "garmin").forEach {
+            assertFalse(ROUTES_EMPTY_LINE.lowercase().contains(it))
+        }
+    }
+
+    /**
      * The two doors that exist, and no third. The app registers `ACTION_VIEW` only, so it has no
      * entry in the phone's share sheet — describing one would be a door that is not there (#384).
      */
