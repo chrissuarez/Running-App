@@ -363,6 +363,53 @@ interface RouteDao {
     }
 
     /**
+     * Takes the shape of the courses in [routeIds] that have never had one, before a question is
+     * asked about those courses in particular (#440).
+     *
+     * [takeTheShapesStillOwed] narrowed to a list, and it exists because the reader that needs it
+     * has a list. The launch pass
+     * ([com.example.runningapp.routes.RouteShaping.payWhatIsOwed]) pays the whole library on a scope
+     * of its own, so a page opened during the first launch after shapes shipped — or after a pass
+     * the runner cut short by backing out — asks its question of a library that is still being
+     * measured, and an unshaped course reads as one nothing has ever been run on. Paying this
+     * family's own debt first is what makes the answer the course's rather than the pass's.
+     *
+     * Narrowed rather than the whole library, because the cost has to be bounded by the question:
+     * a family is a handful of rows, and a library on the first launch after an upgrade is every
+     * course the runner keeps. The reader is a page opening and the runner is waiting on it.
+     *
+     * Not a transaction, unlike the call inside [keepRoute]: each course's row is written as it is
+     * measured, which is the same rule the passes are built on — a caller that goes away part-way
+     * keeps what it has done and leaves the rest owed. Racing the pass is safe for the reason set
+     * out on [takeTheShapesStillOwed]: both writers read the same line, a Route's line is written
+     * once and never rewritten, and the row is replaced rather than added to, so neither can write a
+     * shape the other would disagree with.
+     *
+     * **What this does not cover, knowingly.** A Run that has never been shaped is simply absent
+     * from the recognising, and that debt is the runner's whole history rather than a handful of
+     * rows ([com.example.runningapp.AppContainer.takeRunShapesOnce]). Paying it here, or waiting on
+     * it, would stall the page for as long as the history is long; a landing that ignores a Run
+     * still being measured is right again the next time the family is opened, and the length wanted
+     * is one tap away. Decided with Chris on 2026-09-08 while closing #440.
+     */
+    suspend fun takeTheShapesStillOwedBy(routeIds: List<Long>) {
+        coursesOwedShapesAmong(routeIds).forEach { owed ->
+            val line = getRoutePolyline(owed) ?: return@forEach
+            rememberTheShapeOf(owed, line)
+        }
+    }
+
+    /**
+     * Which of [routeIds] are still owed a shape, oldest first — [coursesOwedShapes] asked of a few
+     * courses rather than of the library.
+     */
+    @Query(
+        "SELECT id FROM routes WHERE id IN (:routeIds) " +
+            "AND id NOT IN (SELECT routeId FROM route_shapes) ORDER BY id ASC"
+    )
+    suspend fun coursesOwedShapesAmong(routeIds: List<Long>): List<Long>
+
+    /**
      * Every course still owed a shape, oldest first — the debt as [RouteShapeDao] states it.
      *
      * The absence of a row is the debt ([RouteShapeRow]). Written out again on this DAO rather than

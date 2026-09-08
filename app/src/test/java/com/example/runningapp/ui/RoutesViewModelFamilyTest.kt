@@ -243,6 +243,100 @@ class RoutesViewModelFamilyTest {
             assertEquals(eightK, landing)
         }
 
+    // --- The landing pays this family's own shape debt first (#440) ---
+
+    /** The very line [shapeAt] measures, so a course kept along it is shaped to that same answer. */
+    private fun lineAt(at: Double): String = RoutePolyline.encode(
+        listOf(
+            RoutePoint(at, -0.1, elevationMeters = null),
+            RoutePoint(at + 0.02, -0.1, elevationMeters = null),
+        )
+    )
+
+    /** A course kept along real ground, so its shape can be measured from its own stored line. */
+    private suspend fun givenACourseAlong(name: String, family: String, at: Double): Long =
+        dao.insertRoute(
+            Route(
+                name = name,
+                distanceMeters = 5_000.0,
+                elevationGainMeters = null,
+                polyline = lineAt(at),
+                createdAtMillis = 1_700_000_000_000L,
+                source = RouteSource.IMPORTED,
+                family = family,
+            )
+        )
+
+    /**
+     * A view model whose course shapes come from the shapes table rather than from a map the test
+     * holds — which is what lets this ask whether the landing measured anything itself.
+     *
+     * The flow is built when the landing asks for it, so what it carries is the table as it stands
+     * at that moment: before the debt is paid, nothing.
+     */
+    private fun viewModelReadingTheShapesTable(shaped: List<ShapedRunRow>) = RoutesViewModel(
+        dao,
+        RouteImporter(mock(), dao, now = { 1_700_000_000_000L }),
+        runsAlongRoute = { flowOf(emptyList()) },
+        lastRunOnRoutes = { ids -> lastRuns.filter { it.routeId in ids } },
+        courseShape = { routeId ->
+            flowOf(
+                dao.shapes[routeId]?.let { row ->
+                    row.shape?.let {
+                        RouteShapeCandidate(
+                            routeId = routeId,
+                            name = "Course $routeId",
+                            shape = it,
+                            distanceMeters = row.distanceMeters,
+                        )
+                    }
+                }
+            )
+        },
+        shapedRuns = flowOf(shaped),
+        io = dispatcher,
+        courseDispatcher = dispatcher,
+    )
+
+    /**
+     * The whole of #440: the family is opened on the launch that is still measuring the library, so
+     * neither length has a shape yet and the 8k's only claim to having been run is a Run it would be
+     * *recognised* on. Unpaid, both lengths recognise nothing and the family lands on the shortest —
+     * the "nobody has run this" answer. The landing measures its own family first, so it does not.
+     */
+    @Test
+    fun `a family opened while its own shapes are still owed lands on the length run last`() =
+        runTest(dispatcher) {
+            val fiveK = givenACourseAlong("Cuckoo 5k", family = "Cuckoo Trail", at = 51.5)
+            val eightK = givenACourseAlong("Cuckoo 8k", family = "Cuckoo Trail", at = 52.5)
+            // Nothing has measured either course: the launch pass has not reached them.
+            assertEquals(listOf(fiveK, eightK), dao.coursesOwedShapes())
+            val theEightKsRun = runOver(shapeAt(52.5), sessionId = 7, startTime = 9_000)
+
+            val landing = viewModelReadingTheShapesTable(listOf(theEightKsRun)).landingSibling(fiveK)
+
+            assertEquals(eightK, landing)
+            // And the debt is paid rather than worked around: the shapes are on the table afterwards.
+            assertEquals(emptyList<Long>(), dao.coursesOwedShapes())
+        }
+
+    /**
+     * Only this family's debt, not the library's. A page opening must not measure every course the
+     * runner keeps, which on the first launch after an upgrade is the whole library and is what the
+     * launch pass is for.
+     */
+    @Test
+    fun `the landing measures its own family and leaves the rest of the library owed`() =
+        runTest(dispatcher) {
+            val fiveK = givenACourseAlong("Cuckoo 5k", family = "Cuckoo Trail", at = 51.5)
+            givenACourseAlong("Cuckoo 8k", family = "Cuckoo Trail", at = 52.5)
+            val elsewhere = givenACourseAlong("Park loop", family = "Park", at = 53.5)
+
+            viewModelReadingTheShapesTable(emptyList()).landingSibling(fiveK)
+
+            assertEquals(listOf(elsewhere), dao.coursesOwedShapes())
+        }
+
     /** A Run written down beats an older Run recognised, and the reverse: the later one wins. */
     @Test
     fun `a length remembered more recently than another was recognised still wins`() =
