@@ -1239,6 +1239,45 @@ class SessionRepository(
      * up — so the picker would hang on exactly the cases the bound was put there for, and hang
      * behind a screen the runner is no longer looking at.
      */
+    /**
+     * Whether the runner's word about a Run has still not reached its row (#432) — the third
+     * question in "is this Run's record complete?".
+     *
+     * The gate ([awaitingTheRunnersWord]) says a word is still *coming*; this says a word that has
+     * already come has not *landed*. They are not the same fact, and the gap between them is a whole
+     * process long. `markAsWalk` can throw — it is a database write — and when it does,
+     * [finishSheetAnswered] catches the failure and settles on what landed, [finishSheetClosed]
+     * opens the gate, and the Run is left finalized, ungated, and still carrying the default
+     * `isWalk = 0`. Reading there counts a walked hour as a Run: a Walk covers ground a Run of the
+     * same hour would not, so it drags the median the suggested distance is drawn from, and it can
+     * carry the history over the three-Run threshold the suggestion needs at all.
+     *
+     * **Both copies of the word are asked, because between them they cover every instant.** The word
+     * is held in memory from before the gate opens ([theRunnersWordFor], written under [settling] in
+     * [finishSheetClosed]) until the settlement spends it, and the settlement writes the durable debt
+     * ([WalkMarkDebtRow]) *before* it drops the in-memory copy ([settleUnderSettling]). So there is
+     * no moment at which a word owed to a row is in neither place, and asking both is what makes
+     * that an argument rather than a hope. Asking only the debt would miss the seconds before the
+     * settlement reaches it; asking only the memory would miss every launch after this one.
+     *
+     * **A word the row already agrees with owes nothing**, which is the ordinary case — the mark
+     * landed — and is why this is a comparison rather than "is a word pending". Both copies are
+     * compared against the row rather than merely counted, so the debt the launch pass has not yet
+     * got to on a Run whose switch the runner has since flipped themselves reads as settled, exactly
+     * as [markAsWalk] treats it.
+     *
+     * Not a wait of its own: the caller's wait is bounded and its expiry already drops this Run from
+     * the history ([recentMeasuredRunsOnceTheRecordIsComplete]), which is the right answer for a
+     * mark that will not land in this process — the same bargain, reached through one more question
+     * rather than a second timeout.
+     */
+    private suspend fun theRowStillOwesTheRunnersWord(sessionId: Long, isWalkOnTheRow: Boolean): Boolean {
+        val pending = theRunnersWordFor[sessionId]
+        if (pending != null && pending != isWalkOnTheRow) return true
+        val owed = walkMarkDebtDao?.debtFor(sessionId) ?: return false
+        return owed.isWalk != isWalkOnTheRow
+    }
+
     suspend fun recentMeasuredRunsOnceTheRecordIsComplete(
         justFinishedRunId: Long?,
         sinceMillis: Long,
@@ -1254,10 +1293,16 @@ class SessionRepository(
                     // A [StateFlow], so collecting it re-asks the gate immediately and a word that
                     // landed between this call and this collection cannot be missed.
                     theRunnersWordLanding,
-                ) { session, _ ->
-                    session == null ||
-                        (session.isFinished() && justFinishedRunId !in awaitingTheRunnersWord)
-                }.first { it }
+                ) { session, _ -> session }
+                    // A suspending predicate rather than the combine's own, because the last of the
+                    // three questions is a read of a table — see [theRowStillOwesTheRunnersWord].
+                    .map { session ->
+                        session == null ||
+                            (session.isFinished() &&
+                                justFinishedRunId !in awaitingTheRunnersWord &&
+                                !theRowStillOwesTheRunnersWord(justFinishedRunId, session.isWalk))
+                    }
+                    .first { it }
                 true
             }
             if (waitEnded == null) {

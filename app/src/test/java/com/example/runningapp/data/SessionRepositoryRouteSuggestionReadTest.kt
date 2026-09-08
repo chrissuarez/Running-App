@@ -52,9 +52,34 @@ class SessionRepositoryRouteSuggestionReadTest {
         on { userSettingsFlow }.thenReturn(flowOf(UserSettings()))
     }
 
+    /**
+     * The Walk marks a Run's row still owes, in memory (#432).
+     *
+     * Wired here because the third half of "the record is complete" is a question about this table:
+     * a mark the finish sheet could not write is written down as a debt for the next launch, and
+     * until it is paid the row does not yet carry the runner's word. Real rather than a mock, so the
+     * debt the settlement raises is the debt the read finds.
+     */
+    private val owedMarks = mutableMapOf<Long, WalkMarkDebtRow>()
+    private val walkMarkDebtDao: WalkMarkDebtDao = mock {
+        onBlocking { owe(any()) } doAnswer { invocation ->
+            val debt = invocation.arguments[0] as WalkMarkDebtRow
+            owedMarks[debt.sessionId] = debt
+            Unit
+        }
+        onBlocking { debtFor(any()) } doAnswer { invocation ->
+            owedMarks[invocation.arguments[0] as Long]
+        }
+        onBlocking { forgetDebtFor(any()) } doAnswer { invocation ->
+            owedMarks.remove(invocation.arguments[0] as Long)
+            Unit
+        }
+    }
+
     private val repository = SessionRepository(
         sessionDao = sessionDao,
         settingsRepository = settingsRepository,
+        walkMarkDebtDao = walkMarkDebtDao,
     )
 
     private fun liveRun() = RunnerSession(id = 67L, startTime = startedAt, runMode = "outdoor")
@@ -200,6 +225,85 @@ class SessionRepositoryRouteSuggestionReadTest {
         repository.finishSheetClosed(67L, finalizeWaitStepMillis = 1L)
 
         assertEquals(listOf(pace), read.await())
+    }
+
+    /**
+     * The gap #432 closed: the gate can open on a Walk mark that never reached the row.
+     *
+     * The Save marks the Run a Walk and `markAsWalk` throws — it is a database write, and it can.
+     * [SessionRepository.finishSheetAnswered] catches that and settles on what landed, and
+     * [SessionRepository.finishSheetClosed] opens the gate whether or not the writes did. At that
+     * instant the row is finalized, no word is still *coming*, and `isWalk` is the default 0 — so a
+     * read that asked only the gate counted a walked hour as a Run, and went on doing so for the
+     * whole process, because the debt is paid at the next launch.
+     *
+     * A Walk covers ground a Run of the same hour would not, so the pace it contributes is slow and
+     * the suggested route comes out short. The read now asks a third question — does the row carry
+     * the word — and the answer here is no, so the wait runs out and drops this Run exactly as it
+     * drops a sheet nobody answered.
+     */
+    @Test
+    fun `a Walk mark that never reached the row keeps the Run out of the history`() = runTest {
+        whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
+        historyFollowsTheRow()
+        repository.finishSheetOpened(67L)
+        row.value = finishedRun()
+
+        val read = async { repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since, until) }
+        runCurrent()
+        assertFalse(read.isCompleted)
+
+        // Save said Walk; the write threw, so the row is left saying Run. The sheet settles on what
+        // landed and closes, which is what opens the gate.
+        repository.finishSheetClosed(67L, markedAsWalk = true, finalizeWaitStepMillis = 1L)
+
+        assertEquals(
+            "the Run was counted while its row still disagreed with the runner, so a walked hour " +
+                "would have dragged the median the suggestion is drawn from",
+            emptyList<RunPaceRow>(),
+            read.await()
+        )
+        // And the word is not simply lost: the settlement wrote it down for the next launch to pay,
+        // which is the copy the read found once the in-memory one had been spent.
+        assertEquals(WalkMarkDebtRow(sessionId = 67L, isWalk = true), owedMarks[67L])
+    }
+
+    /**
+     * The same shape, one launch later: the process that owed the mark is gone, and the durable debt
+     * is the only thing left saying the row does not carry the runner's word.
+     *
+     * No sheet is open and nothing is in memory, so the gate says the record is complete — which is
+     * exactly the reading that made the miscount last a whole process rather than a beat.
+     */
+    @Test
+    fun `a Walk mark still owed from a previous launch keeps the Run out of the history`() = runTest {
+        whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
+        historyFollowsTheRow()
+        row.value = finishedRun()
+        owedMarks[67L] = WalkMarkDebtRow(sessionId = 67L, isWalk = true)
+
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since, until)
+
+        assertEquals(emptyList<RunPaceRow>(), runs)
+    }
+
+    /**
+     * A debt the runner has already overtaken owes nothing. The launch pass reads its whole work
+     * list before paying any of it, and the runner can flip the switch on the Run's own page in
+     * between — which discharges the debt ([SessionRepository.markAsWalk]). A debt the row already
+     * agrees with is therefore a question somebody has answered, and the record is complete.
+     */
+    @Test
+    fun `a debt the row already agrees with does not hold the read up`() = runTest {
+        whenever(sessionDao.getSessionByIdFlow(67L)).thenReturn(row)
+        historyFollowsTheRow()
+        row.value = finishedRun()
+        owedMarks[67L] = WalkMarkDebtRow(sessionId = 67L, isWalk = false)
+
+        val runs = repository.recentMeasuredRunsOnceTheRecordIsComplete(67L, since, until)
+
+        assertEquals(listOf(pace), runs)
+        assertEquals("a complete record was waited on", 0L, testScheduler.currentTime)
     }
 
     @Test
