@@ -4,6 +4,7 @@ import com.example.runningapp.data.MeasuredTrack
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.recording.METERS_PER_DEGREE
 import com.example.runningapp.recording.SessionRecorder
+import com.example.runningapp.recording.degreesEastOf
 import kotlin.math.cos
 import kotlin.math.max
 
@@ -134,8 +135,15 @@ private fun thumbnailOf(strokes: List<List<ShapePoint>>): RouteThumbnail? {
     // the way the latitude does: a degree of longitude is half a degree of latitude in Norway, and
     // read as the same unit it would squash every route there flat.
     val eastWest = cos(Math.toRadians(fixes.first().latitude))
-    val westmost = fixes.minOf { it.longitude } * eastWest
-    val eastmost = fixes.maxOf { it.longitude } * eastWest
+    // Every fix is placed by how far east of the first one it lies, never by its own longitude
+    // (#353). Longitude climbs to 180° and starts again at -180° without the ground changing, so a
+    // route that steps over that line has its smallest and its largest longitude a stride apart on
+    // the ground and 359.9998° apart as numbers. Subtracting one from the other would scale this
+    // square to half the planet and draw the whole route as a dot in one corner of the row. The
+    // same rule the Run kept as a course is measured by ([degreesEastOf]).
+    val reference = fixes.first().longitude
+    val westmost = fixes.minOf { it.eastOfReference(reference) } * eastWest
+    val eastmost = fixes.maxOf { it.eastOfReference(reference) } * eastWest
     val southmost = fixes.minOf { it.latitude }
     val northmost = fixes.maxOf { it.latitude }
     val spanX = eastmost - westmost
@@ -152,7 +160,8 @@ private fun thumbnailOf(strokes: List<List<ShapePoint>>): RouteThumbnail? {
     val drawn = lines.map { stretch ->
         stretch.map { fix ->
             ThumbPoint(
-                x = (sidePadding + (fix.longitude * eastWest - westmost) * scale).toFloat(),
+                x = (sidePadding + (fix.eastOfReference(reference) * eastWest - westmost) * scale)
+                    .toFloat(),
                 // Flipped, because a thumbnail's y grows downwards and north is up.
                 y = (1.0 - topAndBottomPadding - (fix.latitude - southmost) * scale).toFloat(),
             )
@@ -161,6 +170,9 @@ private fun thumbnailOf(strokes: List<List<ShapePoint>>): RouteThumbnail? {
 
     return if (drawn.isEmpty()) null else RouteThumbnail(drawn)
 }
+
+/** How far east of [reference] this point lies, in degrees, going the shorter way round. */
+private fun ShapePoint.eastOfReference(reference: Double) = degreesEastOf(reference, longitude)
 
 /** A recorded fix as a place on the line, dropping everything the Run knows about it. */
 private fun TrackPoint.shapePoint() = ShapePoint(latitude, longitude)

@@ -309,7 +309,15 @@ class ProgressViewModelTest {
         advanceUntilIdle()
 
         val card = viewModel.state.value.maxHrCard
-        assertEquals(MaxHrCardState(currentMaxHr = 190, restingHr = 60, suggestedMaxHr = 181), card)
+        assertEquals(
+            MaxHrCardState(
+                currentMaxHr = 190,
+                restingHr = 60,
+                suggestedMaxHr = 181,
+                highestRecordedBpm = 181,
+            ),
+            card,
+        )
     }
 
     @Test
@@ -323,6 +331,24 @@ class ProgressViewModelTest {
         // nothing of the runner's own to offer, which is what the age input is for.
         assertNull(viewModel.state.value.maxHrCard?.suggestedMaxHr)
         assertEquals(190, viewModel.state.value.maxHrCard?.currentMaxHr)
+        // And nothing recorded is passed on as nothing recorded, which is the card's cue to say so.
+        assertNull(viewModel.state.value.maxHrCard?.highestRecordedBpm)
+    }
+
+    @Test
+    fun `a recorded peak the field would refuse still reaches the card`() = runTest(dispatcher) {
+        // A resting heart rate of 100 rules out every peak under 150, so this one cannot be offered
+        // (#103). It must still be handed over, or the card tells a runner whose history is full of
+        // beats that nothing was ever recorded (#280).
+        settings.value = UserSettings(restingHr = 100)
+        whenever(sampleDao.getHighestSustainedBpm(any())).thenReturn(145)
+
+        val viewModel = viewModel()
+        advanceUntilIdle()
+
+        val card = viewModel.state.value.maxHrCard
+        assertNull(card?.suggestedMaxHr)
+        assertEquals(145, card?.highestRecordedBpm)
     }
 
     @Test
