@@ -40,25 +40,30 @@ class RouteShapeTest {
     /**
      * A hill is banked three metres at a time, above the last low point, rather than only at the top.
      *
-     * Twenty of the thirty metres climbed, not all thirty: the five-point window is half a kilometre
-     * wide on points this far apart, so the shoulders of the hill are averaged off it. That is the
-     * price of smoothing a sparse file, and it is the right way to be wrong — see
-     * `the jitter of a simplified track is not a hill`, which is what it buys.
+     * Fifteen of the thirty metres climbed, not all thirty: the five-point window is half a kilometre
+     * wide on points this far apart, and it is walked twice (#424), so the shoulders of the hill are
+     * averaged off it. That is the price of smoothing a sparse file, and it is the right way to be
+     * wrong — see `the jitter of a simplified track is not a hill` and
+     * `a violent wobble is no longer banked as climbing`, which are what it buys.
+     *
+     * Fifteen rather than the twenty a single pass left. The hill is still a hill, which is the
+     * whole of what this test is for: under-reporting a sparse climb by its shoulders costs metres,
+     * while banking a file's own wobble reports hundreds of metres that were never climbed.
      */
     @Test
     fun `banks a climb three metres at a time`() {
         val climb = northwards(spacingMeters = 100.0, heights = listOf(0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0))
 
-        assertEquals(20.0, routeElevationGainMeters(climb)!!, 0.001)
+        assertEquals(15.0, routeElevationGainMeters(climb)!!, 0.001)
     }
 
     /**
      * The defect #419 closed: a hill of a few metres is a hill, not the flat `10 m` the library used
      * to print against every route it held.
      *
-     * Eight metres of climb, of which the smoothing leaves three and a half to bank on points this
-     * far apart. The number matters less than that it is neither the nought the old ten-metre rule
-     * reported for a route like this nor that same `10 m` again.
+     * Eight metres of climb, of which the smoothing leaves three to bank on points this far apart.
+     * The number matters less than that it is neither the nought the old ten-metre rule reported for
+     * a route like this nor that same `10 m` again.
      */
     @Test
     fun `banks a hill of only a few metres`() {
@@ -67,7 +72,7 @@ class RouteShapeTest {
             heights = listOf(0.0, 2.0, 4.0, 6.0, 8.0, 8.0, 8.0, 6.0, 4.0, 2.0, 0.0),
         )
 
-        assertEquals(3.6, routeElevationGainMeters(lowHill)!!, 0.001)
+        assertEquals(3.08, routeElevationGainMeters(lowHill)!!, 0.001)
     }
 
     /**
@@ -75,18 +80,33 @@ class RouteShapeTest {
      *
      * A pair rather than one case, because a rise this gentle is the only way to ask the question of
      * the threshold alone: a sawtooth is flattened by the smoothing long before the threshold sees
-     * it, so it would pass whatever this number were. Both are the same ramp, one scaled by nine
-     * tenths — the smoothing scales with it, so the smoothed rise is 3.0 m and 2.7 m, and only the
-     * first clears `>=` three.
+     * it, so it would pass whatever this number were. Both are the same shape, one scaled by nine
+     * tenths, and only the first clears `>=` three.
+     *
+     * **Flat ground either side of the rise, and that is what makes it a question about the
+     * threshold rather than about the smoothing.** A centred mean leaves a straight ramp alone in
+     * its middle and only rounds its two corners, so a rise with enough level ground at each end
+     * still reaches its full height however many times it is smoothed — the low point stays 0 and
+     * the high point stays the whole rise. Without those flats the corners meet, the rise is shaved,
+     * and the test would be measuring how hard the file is smoothed. Eight level points at each end
+     * is more than the five-point window reaches, so this reads the same under one pass and under
+     * the two the code now makes (#424).
      */
     @Test
     fun `banks a rise that clears the threshold and not one under it`() {
-        val justOver = northwards(spacingMeters = 100.0, heights = listOf(0.0, 1.0, 2.0, 3.0, 4.0, 4.0, 4.0))
-        val justUnder = northwards(spacingMeters = 100.0, heights = listOf(0.0, 0.9, 1.8, 2.7, 3.6, 3.6, 3.6))
+        val justOver = northwards(spacingMeters = 100.0, heights = riseOf(3.0))
+        val justUnder = northwards(spacingMeters = 100.0, heights = riseOf(2.7))
 
         assertEquals(3.0, routeElevationGainMeters(justOver)!!, 0.001)
         assertEquals(0.0, routeElevationGainMeters(justUnder)!!, 0.001)
     }
+
+    /**
+     * Level ground, a straight rise of [meters] over eight points, then level ground again — see
+     * `banks a rise that clears the threshold and not one under it` for why it is shaped this way.
+     */
+    private fun riseOf(meters: Double): List<Double?> =
+        List(8) { 0.0 } + List(8) { meters * (it + 1) / 8 } + List(8) { meters }
 
     /**
      * The reason smoothing is here at all: a densely sampled file jittering by eight metres a fix
@@ -128,27 +148,37 @@ class RouteShapeTest {
     }
 
     /**
-     * The limit #419 opened, written down rather than left to be discovered: a file wobbling by more
-     * than about fifteen metres a point banks that wobble as climbing.
+     * The wobble #424 closed: a file alternating by twenty metres a point over flat ground no longer
+     * banks its own noise as climbing, however long the route is.
      *
-     * This is the case both jitter tests above used to assert as flat, and it was flat only because
-     * the threshold was ten. A five-point mean leaves about a fifth of the wobble behind, so twenty
-     * metres a point survives as four — over three, and banked again and again, all route long. It
-     * grows with the route, which is what makes it the #20 defect rather than an edge artefact.
+     * This is the case `a wobble the smoothing cannot absorb is still banked` used to pin as a known
+     * limit. A single five-point mean leaves about a fifth of the wobble behind — four metres, over
+     * the three-metre threshold, banked again and again all route long, which is the #20 defect in a
+     * route. The mean is applied twice ([smoothedAlong] over its own output), which leaves about a
+     * twenty-fifth: under a metre, and under the threshold.
      *
-     * Kept as a passing assertion of the wrong number on purpose. Chris's nine exported tracks all
-     * read plausibly under this rule, so no file he imports is affected, and widening the smoothing
-     * enough to cover twenty metres would average over a kilometre of a sparse route and rub real
-     * hills out. #424 holds the proper fix; this test is what will fail when it lands.
+     * **Asserted at two lengths, and that is the whole point.** What made the old behaviour a defect
+     * was not the size of the figure but that it grew with the route: sixty points reported 118.7 m
+     * and two hundred reported 398.7 m. The small figure left here is an end-of-route taper — the
+     * window is shortened at the ends rather than dropping points, so the first and last few heights
+     * are smoothed less — and a taper is the same two ends however much route is put between them.
+     * Equal at both lengths is what says the accumulation is gone.
      */
     @Test
-    fun `a wobble the smoothing cannot absorb is still banked`() {
-        val violent = northwards(
+    fun `a violent wobble is no longer banked as climbing`() {
+        val sixtyPoints = northwards(
             spacingMeters = 25.0,
             heights = List(60) { if (it % 2 == 0) 0.0 else 20.0 },
         )
+        val twoHundredPoints = northwards(
+            spacingMeters = 25.0,
+            heights = List(200) { if (it % 2 == 0) 0.0 else 20.0 },
+        )
 
-        assertEquals(118.667, routeElevationGainMeters(violent)!!, 0.001)
+        val short = routeElevationGainMeters(sixtyPoints)!!
+        val long = routeElevationGainMeters(twoHundredPoints)!!
+        assertEquals(3.556, short, 0.001)
+        assertEquals(short, long, 0.001)
     }
 
     @Test
