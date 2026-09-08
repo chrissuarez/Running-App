@@ -446,6 +446,33 @@ class RoutesViewModel(
     val message = _message.asStateFlow()
 
     /**
+     * The course an import has just **added**, for the library to put in front of the runner (#458).
+     *
+     * The library is a Room Flow and it does re-emit the instant the row is written — that much was
+     * measured on the phone, not assumed. What the runner did not see was the row, because the list
+     * keeps its place by the key of whatever was at the top of the screen
+     * ([com.example.runningapp.ui.RoutesScreen]), and a course written newest-first lands *above*
+     * that, off the top. So the list was right and the view of it was wrong, and what is missing is
+     * not a re-read but somewhere to look.
+     *
+     * **Only [RouteImportOutcome.Imported] sets it**, because only that wrote a row. A file the
+     * library already held, a re-measure, and a refusal each leave the list exactly as it was, and
+     * moving the screen for one of them would be the app answering a question nobody asked. The
+     * runner is told what happened in words either way ([message]).
+     *
+     * Cleared by [importedShown] once the row has been reached, and again when the screen that was
+     * asked leaves — a request is for the screen open now, not for the next visit to the library.
+     * A request rather than a promise: an
+     * id the library has no row for is left standing rather than acted on late. The reasons a
+     * library has no row for a course it may still hold are counted at [routeLibraryRowShowing],
+     * and this makes no claim about which one applies. Standing is inert either way — a Route's id
+     * is never handed out twice, so a request that missed can never match a later row — and the
+     * next import replaces it.
+     */
+    private val _showImported = MutableStateFlow<Long?>(null)
+    val showImported = _showImported.asStateFlow()
+
+    /**
      * A file has been handed over, by the picker or by another app's "Open with".
      *
      * Null is the runner backing out of the picker, which is not a failure and says nothing. A
@@ -457,6 +484,9 @@ class RoutesViewModel(
         _importing.value = true
         viewModelScope.launch {
             val outcome = withContext(io) { importer.import(uri) }
+            // Set before the words, so the screen cannot be told "saved" by one collector and left
+            // looking at the old top of the list by the other for a frame in between.
+            if (outcome is RouteImportOutcome.Imported) _showImported.value = outcome.routeId
             _message.value = when (outcome) {
                 is RouteImportOutcome.Imported ->
                     routeImportedMessage(outcome.name) + routeSameGroundNote(outcome.sameGroundAs)
@@ -489,6 +519,20 @@ class RoutesViewModel(
 
     fun messageShown() {
         _message.value = null
+    }
+
+    /**
+     * The request to show [routeId] is spent — the library reached its row, or the screen that was
+     * asked has gone (#458).
+     *
+     * **Compare-and-clear, not clear**, the bargain
+     * [com.example.runningapp.segments.RunShapeStore.putShapeUnlessTheRunMoved] makes and for its
+     * reason: this view model belongs to the Activity, so a screen leaving hands its request back
+     * *after* the screen that replaced it may already have made a new one. Naming the id it is
+     * giving up means a late hand-back cannot take away a request that is not the one it held.
+     */
+    fun importedShown(routeId: Long) {
+        _showImported.compareAndSet(routeId, null)
     }
 }
 

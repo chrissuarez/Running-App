@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -35,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -77,10 +79,19 @@ fun RoutesScreen(
     rows: List<RouteLibraryRow>,
     isImporting: Boolean,
     message: String?,
+    /**
+     * A course an import has just added, to be brought into view — null when there is none (#458).
+     *
+     * See [com.example.runningapp.ui.RoutesViewModel.showImported] for why an added course needs
+     * this and a re-measure does not.
+     */
+    showRouteId: Long?,
     onImport: () -> Unit,
     onOpen: (Long) -> Unit,
     onDelete: (RouteHeader) -> Unit,
     onMessageShown: () -> Unit,
+    /** The request to show that course is spent — see [RoutesViewModel.importedShown]. */
+    onShowRouteDone: (Long) -> Unit,
     onBack: () -> Unit,
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
@@ -94,6 +105,42 @@ fun RoutesScreen(
     }
 
     var deleting by rememberSaveable(stateSaver = RouteIdSaver) { mutableStateOf<Long?>(null) }
+
+    // Hoisted out of the list so an import can move it. Everything else on this screen leaves it
+    // alone: the list keeps its place by the key of the row at the top of the screen, and that is
+    // the right behaviour for a rename, a delete and a drawing arriving — none of them should pull
+    // the ground from under a runner mid-scroll.
+    val listState = rememberLazyListState()
+
+    // The one change that has to move it (#458). A course is written newest-first, so it lands
+    // above whatever the list is anchored to and the runner is left looking at an unchanged screen
+    // — the import worked and said nothing. Scrolled to the row rather than to the top, because
+    // "the top" would be this file guessing at the library's ORDER BY: see
+    // [routeLibraryRowShowing].
+    //
+    // Keyed on the rows as well as on the request, because the two arrive from different flows and
+    // the request can land first. Re-run on each list until the row is there, and spent the moment
+    // it is; a request whose row never appears is answered by nothing at all, which is what
+    // [com.example.runningapp.ui.RoutesViewModel.showImported] asks for.
+    LaunchedEffect(showRouteId, rows) {
+        if (showRouteId == null) return@LaunchedEffect
+        val index = routeLibraryRowShowing(rows, showRouteId)
+        if (index < 0) return@LaunchedEffect
+        listState.animateScrollToItem(index)
+        onShowRouteDone(showRouteId)
+    }
+
+    // A request that was never reached lapses when this screen goes, rather than moving the list on
+    // the next visit to the library for an import the runner has long since walked away from. The
+    // view model outlives this screen, so it has to: it is the Activity's, not the screen's.
+    //
+    // Keyed on the request so the id being given up is the one this block was made with, which is
+    // what lets the view model refuse a hand-back that is not the request it is holding. The
+    // Activity is not recreated by a rotation (the manifest declares `configChanges` for it), so this fires
+    // when the runner leaves the library, not when they turn the phone.
+    DisposableEffect(showRouteId) {
+        onDispose { showRouteId?.let(onShowRouteDone) }
+    }
 
     // The Import button floats over the list rather than in it, so the list has to be told how tall
     // it is: without that, scrolling to the end leaves the last route's Rename and Delete sitting
@@ -171,6 +218,7 @@ fun RoutesScreen(
             }
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
@@ -402,10 +450,12 @@ private fun RoutesScreenPreview() {
             ),
             isImporting = false,
             message = null,
+            showRouteId = null,
             onImport = {},
             onOpen = {},
             onDelete = {},
             onMessageShown = {},
+            onShowRouteDone = {},
             onBack = {},
         )
     }
@@ -419,10 +469,12 @@ private fun EmptyRoutesScreenPreview() {
             rows = emptyList(),
             isImporting = false,
             message = null,
+            showRouteId = null,
             onImport = {},
             onOpen = {},
             onDelete = {},
             onMessageShown = {},
+            onShowRouteDone = {},
             onBack = {},
         )
     }

@@ -46,6 +46,47 @@ class RouteFamiliesTest {
 
     private fun drawing(x: Float) = RouteThumbnail(listOf(listOf(ThumbPoint(x, x))))
 
+    // --- Which row shows one course (#458) ---
+
+    @Test
+    fun `finds the row of a lone course`() {
+        val rows = routeLibraryRows(listOf(row(header(3)), row(header(2)), row(header(1))))
+
+        assertEquals(1, routeLibraryRowShowing(rows, 2))
+    }
+
+    /** A freshly imported course is newest, so it is at the top — but by lookup, not by faith. */
+    @Test
+    fun `finds a newly imported course at the top of a newest-first library`() {
+        val rows = routeLibraryRows(listOf(row(header(9)), row(header(2)), row(header(1))))
+
+        assertEquals(0, routeLibraryRowShowing(rows, 9))
+    }
+
+    /** A course the library no longer holds has no row, and -1 says so rather than 0 saying "top". */
+    @Test
+    fun `finds nothing for a course the library does not hold`() {
+        val rows = routeLibraryRows(listOf(row(header(2)), row(header(1))))
+
+        assertEquals(-1, routeLibraryRowShowing(rows, 7))
+    }
+
+    /** The rows folded above a course still count, so the index is of the row as drawn. */
+    @Test
+    fun `counts a folded family as the one row it is drawn as`() {
+        val rows = routeLibraryRows(
+            listOf(
+                row(header(4, family = "Cuckoo Trail", distanceMeters = 12_000.0)),
+                row(header(3, family = "Cuckoo Trail", distanceMeters = 5_000.0)),
+                row(header(2)),
+            )
+        )
+
+        // The family is one row at 0 and opens its shortest length; the lone course follows it.
+        assertEquals(0, routeLibraryRowShowing(rows, 3))
+        assertEquals(1, routeLibraryRowShowing(rows, 2))
+    }
+
     // --- The library list ---
 
     @Test

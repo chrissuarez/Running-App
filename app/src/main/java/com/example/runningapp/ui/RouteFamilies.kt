@@ -337,3 +337,32 @@ const val ROUTE_FAMILY_EMPTY_HINT =
 
 /** What the page calls the row of chips, for a screen reader that has no row to look at. */
 const val ROUTE_FAMILY_LENGTHS_LABEL = "Lengths"
+
+/**
+ * Which library row shows one course, or -1 where none does (#458).
+ *
+ * What the Routes screen scrolls to when an import has just added a course. Pure and here rather
+ * than in the composable, the bargain every other word on these screens makes: the answer is pinned
+ * by a unit test rather than by importing a file on a phone.
+ *
+ * **Why a lookup rather than "the top".** The library arrives newest first
+ * ([com.example.runningapp.data.RouteDao.getLibraryFlow]) and a course imported a moment ago is the
+ * newest thing in it, so today the answer is always 0. Written as "scroll to the top" that would be
+ * a claim about the query's ORDER BY made in a file that cannot see it, and it would go quietly
+ * wrong the day the library is ordered any other way. The index of the row that opens the course is
+ * true whatever the order.
+ *
+ * A course is matched by the row that **opens** it. A freshly imported course carries no family
+ * ([com.example.runningapp.routes.asRoute] writes none), so it is a row of its own and this always
+ * finds it.
+ *
+ * **-1 is the class of "no row on this list opens that course", not one cause of it.** Two things
+ * put a course in that class, and a caller that reads it as only the first will be wrong at the
+ * second. The course may have gone from the library since it was asked for. Or it may be *in* the
+ * library and folded: a family is drawn as one row that opens its shortest sibling
+ * ([routeLibraryRows]), so every longer sibling is on the list and opened by none of its rows.
+ * Either way the caller has nothing to scroll to, and drawing that as a row at 0 would send the
+ * runner to a course they did not ask about.
+ */
+fun routeLibraryRowShowing(rows: List<RouteLibraryRow>, routeId: Long): Int =
+    rows.indexOfFirst { it.openRouteId == routeId }

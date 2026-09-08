@@ -149,6 +149,75 @@ class RoutesViewModelTest {
         assertEquals(1, dao.stored.size)
     }
 
+    // --- The library has to show what an import just added (#458) ---
+    //
+    // The list re-emits on its own — that was measured on the phone. What it does not do is move,
+    // because it keeps its place by the row at the top of the screen and a new course lands above
+    // that. So the view model has to name the course the screen should reach for.
+
+    @Test
+    fun `names the course an import added, so the library can reach it`() = runTest {
+        val viewModel = viewModelReading(aRealGpx)
+
+        viewModel.fileChosen(uri)
+        advanceUntilIdle()
+
+        assertEquals(dao.stored.single().id, viewModel.showImported.value)
+    }
+
+    /** Nothing was added, so nothing on screen should move. The words say what happened. */
+    @Test
+    fun `names no course when the library already held the file`() = runTest {
+        val viewModel = viewModelReading(aRealGpx)
+
+        viewModel.fileChosen(uri)
+        advanceUntilIdle()
+        viewModel.importedShown(dao.stored.single().id)
+        viewModel.fileChosen(uri)
+        advanceUntilIdle()
+
+        assertNull(viewModel.showImported.value)
+    }
+
+    @Test
+    fun `names no course when the file was refused`() = runTest {
+        val viewModel = viewModelReading("<kml/>")
+
+        viewModel.fileChosen(uri)
+        advanceUntilIdle()
+
+        assertNull(viewModel.showImported.value)
+    }
+
+    /** The request is spent once the screen has reached the row, and does not fire again. */
+    @Test
+    fun `forgets the course once the library has reached it`() = runTest {
+        val viewModel = viewModelReading(aRealGpx)
+
+        viewModel.fileChosen(uri)
+        advanceUntilIdle()
+        viewModel.importedShown(dao.stored.single().id)
+
+        assertNull(viewModel.showImported.value)
+    }
+
+    /**
+     * A screen leaving hands its request back after the screen that replaced it may already have
+     * made a new one, so the hand-back has to name what it is giving up.
+     */
+    @Test
+    fun `keeps a newer request when an older one is handed back`() = runTest {
+        val viewModel = viewModelReading(aRealGpx)
+
+        viewModel.fileChosen(uri)
+        advanceUntilIdle()
+        val imported = dao.stored.single().id
+        // A hand-back from a screen that was holding some earlier course.
+        viewModel.importedShown(imported - 1)
+
+        assertEquals(imported, viewModel.showImported.value)
+    }
+
     @Test
     fun `renames a route`() = runTest {
         dao.insertRoute(aStoredRoute())
