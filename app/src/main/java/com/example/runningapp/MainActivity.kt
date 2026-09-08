@@ -1376,6 +1376,9 @@ class MainActivity : ComponentActivity() {
                             val routeRows by routesViewModel.libraryRows.collectAsState()
                             val importingRoute by routesViewModel.importing.collectAsState()
                             val routeMessage by routesViewModel.message.collectAsState()
+                            // Which course an import has just added, so the list can be moved to it
+                            // rather than left looking unchanged (#458).
+                            val showImportedRoute by routesViewModel.showImported.collectAsState()
                             // Asked for here rather than at launch: working out the shape of every
                             // kept course is arithmetic nobody who never opens their routes should
                             // pay for (#59).
@@ -1384,10 +1387,12 @@ class MainActivity : ComponentActivity() {
                                 rows = routeRows,
                                 isImporting = importingRoute,
                                 message = routeMessage,
+                                showRouteId = showImportedRoute,
                                 onImport = { pickRouteFile.launch(arrayOf("*/*")) },
                                 onOpen = { routeId -> navigateTo(Routes.routeDetail(routeId)) },
                                 onDelete = { route -> routesViewModel.delete(route) },
                                 onMessageShown = { routesViewModel.messageShown() },
+                                onShowRouteDone = { routeId -> routesViewModel.importedShown(routeId) },
                                 onBack = goBack
                             )
                         }
