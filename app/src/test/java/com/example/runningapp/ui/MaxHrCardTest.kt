@@ -26,14 +26,17 @@ class MaxHrCardTest {
     }
 
     @Test
-    fun `a peak with no room above a stated resting rate says so, with both numbers`() {
+    fun `a peak with too little room above a stated resting rate says so, with both numbers`() {
         // Reachable without staging anything: a resting heart rate of 100 — the highest the app
         // accepts — rules out every recorded peak under 150.
         val text = maxHrEvidenceText(highestRecordedBpm = 145, restingHr = 100)
 
         assertFalse(text, text.contains("not recorded"))
         assertTrue(text, text.contains("145"))
-        assertTrue(text, text.contains("no room above your resting 100"))
+        // "No room" would be a lie about this very case: 145 over 100 leaves 45 BPM, and the
+        // rule wants 50. The sentence has to be true of the number printed beside it.
+        assertFalse(text, text.contains("no room"))
+        assertTrue(text, text.contains("too little room above your resting 100"))
         // And the age question survives, because it is still the right question here.
         assertTrue(text, text.contains("Your age"))
     }
@@ -42,21 +45,25 @@ class MaxHrCardTest {
     fun `a peak below a stated resting rate is not called close to it`() {
         // A strap that only ever recorded a resting reading. "Too close to your resting 100" would
         // be false of 60 — it is under that number, not near it — so what is said is the thing that
-        // is true of every peak this branch catches: there is no room left above.
+        // is true of every peak this branch catches: the room left above is too little.
         val text = maxHrEvidenceText(highestRecordedBpm = 60, restingHr = 100)
 
         assertFalse(text, text.contains("too close"))
         assertTrue(text, text.contains("60"))
-        assertTrue(text, text.contains("no room above your resting 100"))
+        assertTrue(text, text.contains("too little room above your resting 100"))
     }
 
     @Test
-    fun `a strap artefact above the settable range is called too high, not missing`() {
+    fun `a peak above the settable range is called unsettable, not a misread`() {
+        // 235 is a believable beat: HIGHEST_BELIEVABLE_BPM accepts up to 250 on purpose, because
+        // a real heart can pass its owner's stated maximum, and this peak survived the spike
+        // guard. Calling it a strap misreading states a fault the app has not established.
         val text = maxHrEvidenceText(highestRecordedBpm = MAX_MAX_HR + 5, restingHr = 60)
 
         assertFalse(text, text.contains("not recorded"))
         assertTrue(text, text.contains("${MAX_MAX_HR + 5}"))
-        assertTrue(text, text.contains("too high"))
+        assertFalse(text, text.contains("misread"))
+        assertTrue(text, text.contains("above the highest number this app takes as a maximum"))
         assertTrue(text, text.contains("Your age"))
     }
 
@@ -80,7 +87,7 @@ class MaxHrCardTest {
 
         assertTrue(text, text.contains("181"))
         assertFalse(text, text.contains("too low"))
-        assertFalse(text, text.contains("too high"))
-        assertFalse(text, text.contains("no room"))
+        assertFalse(text, text.contains("above the highest"))
+        assertFalse(text, text.contains("too little room"))
     }
 }

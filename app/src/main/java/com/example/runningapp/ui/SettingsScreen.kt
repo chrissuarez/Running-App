@@ -956,7 +956,7 @@ fun maxHrRefusalText(restingHr: Int): String {
     val lowest = lowestStatableMaxHr(restingHr)
     val range = "Enter a heart rate between $lowest and $MAX_MAX_HR"
     return if (lowest == MIN_MAX_HR) range
-    else "$range — anything lower leaves no room above your resting $restingHr"
+    else "$range — anything lower leaves too little room above your resting $restingHr"
 }
 
 /**
@@ -970,7 +970,7 @@ fun restingHrRefusalText(maxHr: Int): String {
     val highest = highestStatableRestingHr(maxHr)
     val range = "Enter a heart rate between $MIN_RESTING_HR and $highest"
     return if (highest == MAX_RESTING_HR) range
-    else "$range — anything higher leaves no room under your Max HR of $maxHr"
+    else "$range — anything higher leaves too little room under your Max HR of $maxHr"
 }
 
 /**

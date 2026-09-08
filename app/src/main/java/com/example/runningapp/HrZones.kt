@@ -199,10 +199,16 @@ fun parseAge(text: String): Int? =
  * while their history is full of beats has been told something false (#280).
  */
 enum class UnusableAsMaxHr {
-    /** A strap artefact above [MAX_MAX_HR] that survived the spike guard. */
+    /**
+     * A peak above [MAX_MAX_HR], which is the highest maximum a runner may *state*.
+     *
+     * Not a strap artefact: [HIGHEST_BELIEVABLE_BPM] accepts beats past [MAX_MAX_HR] on purpose,
+     * because a real heart can pass its owner's stated maximum, and such a peak has already
+     * survived the spike guard. All that is certain is that the field would refuse it.
+     */
     ABOVE_THE_HIGHEST_SETTABLE,
 
-    /** A peak that leaves no [MIN_HR_RESERVE] above the resting heart rate the runner has stated. */
+    /** A peak leaving less than [MIN_HR_RESERVE] above the resting heart rate the runner stated. */
     LEAVES_NO_ROOM_ABOVE_RESTING,
 
     /** A peak under [MIN_MAX_HR], which is the floor whether or not a resting rate is stated. */
