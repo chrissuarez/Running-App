@@ -568,6 +568,35 @@ class SuggestedMaxHrTest {
         assertEquals(MAX_MAX_HR, suggestedMaxHr(MAX_MAX_HR, RESTING_HR_UNSTATED))
     }
 
+    /**
+     * The reason is the same decision as the offer, so it can never disagree with it (#280). Asked
+     * here for every answer it has, because a card says one of these sentences to the runner and
+     * the wrong one is a lie about their own history.
+     */
+    @Test
+    fun `every way a peak can be unusable is named, and a usable one is named as nothing`() {
+        assertNull(whyUnusableAsMaxHr(181, restingHr = 60))
+        assertEquals(
+            UnusableAsMaxHr.ABOVE_THE_HIGHEST_SETTABLE,
+            whyUnusableAsMaxHr(MAX_MAX_HR + 1, RESTING_HR_UNSTATED),
+        )
+        assertEquals(
+            UnusableAsMaxHr.BELOW_THE_LOWEST_SETTABLE,
+            whyUnusableAsMaxHr(MIN_MAX_HR - 1, RESTING_HR_UNSTATED),
+        )
+        // The floor was raised by the resting rate, so that is what the runner is told about.
+        assertEquals(
+            UnusableAsMaxHr.LEAVES_NO_ROOM_ABOVE_RESTING,
+            whyUnusableAsMaxHr(145, restingHr = 100),
+        )
+        // Including a peak below the resting rate itself, which is the same fault and not a
+        // different one: there is no room above it either way.
+        assertEquals(
+            UnusableAsMaxHr.LEAVES_NO_ROOM_ABOVE_RESTING,
+            whyUnusableAsMaxHr(60, restingHr = 100),
+        )
+    }
+
     @Test
     fun `a peak with no reserve above the resting heart rate is not offered either`() {
         // A history of gentle walking, and a stated resting 60. 100 is inside Max HR's own range

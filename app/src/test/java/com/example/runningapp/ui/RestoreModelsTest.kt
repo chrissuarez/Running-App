@@ -149,6 +149,21 @@ class RestoreModelsTest {
     }
 
     @Test
+    fun `a file and a phone that would print the same sentence print it once`() {
+        // The dialog prints a day, not a moment, so the question "are these the same?" has to be
+        // asked of the sentence rather than of the milliseconds behind it: delete a run and record
+        // another the same day, back up, and the two sides differ by a millisecond and read
+        // identically. That is the fault #279 reports, and it is the printed words that carry it.
+        val body = restoreConfirmationBody(
+            plan(incomingRuns = 19, incomingNewest = july + 1, currentRuns = 19, currentNewest = july),
+            london,
+        )
+
+        assertFalse(body, body.contains("You have 19 runs"))
+        assertTrue(body, body.contains("both hold 19 runs"))
+    }
+
+    @Test
     fun `a count that matches on a different day is still two sentences`() {
         // Only the pair together makes a file a snapshot of this phone. The same count from another
         // day is the ordinary case this dialog exists for, and both sides must be readable.
