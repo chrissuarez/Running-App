@@ -57,7 +57,6 @@ import com.example.runningapp.routes.CourseSaying
 import com.example.runningapp.routes.CourseVoice
 import com.example.runningapp.routes.OffCourseWatch
 import com.example.runningapp.routes.TurnCue
-import com.example.runningapp.routes.TurnCueMoment
 import com.example.runningapp.routes.courseToWatchFlow
 import com.example.runningapp.run.Acquisition
 import com.example.runningapp.run.AcquisitionContext
@@ -608,24 +607,20 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         },
         withdraw = {
             withdrawCue(CueTag.COURSE)
-            withdrawCue(CueTag.COURSE_TURN_AHEAD)
+            withdrawCue(CueTag.COURSE_TURN)
         },
-        withdrawTurnWarning = { withdrawCue(CueTag.COURSE_TURN_AHEAD) },
+        withdrawTurnCues = { withdrawCue(CueTag.COURSE_TURN) },
     )
 
     /**
      * The name a course cue is enqueued under, so it can be asked for back (#377, #456).
      *
-     * [CueTag.COURSE_TURN_AHEAD] for a turn warning and [CueTag.COURSE] for everything else, because
-     * the warning is the one course cue that can stop being true while its course still stands —
-     * [CueTag] says why, and [CourseAlerts] is where it is taken back.
+     * [CueTag.COURSE_TURN] for a turn cue and [CueTag.COURSE] for the off-course alerts, because
+     * only the turn cues can stop being true while their course still stands — [CueTag] says why,
+     * and [CourseAlerts] is where they are taken back. Both names go when the line itself does.
      */
     private fun CourseSaying.cueTag(): CueTag =
-        if (this is TurnCue && moment == TurnCueMoment.AHEAD) {
-            CueTag.COURSE_TURN_AHEAD
-        } else {
-            CueTag.COURSE
-        }
+        if (this is TurnCue) CueTag.COURSE_TURN else CueTag.COURSE
 
     /** Keeps [courseAlerts] up with the library while the Run goes on — see [courseToWatchFlow]. */
     private var courseWatchJob: Job? = null

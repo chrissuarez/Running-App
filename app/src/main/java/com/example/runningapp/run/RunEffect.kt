@@ -18,26 +18,27 @@ enum class CueTag {
     TURNAROUND,
 
     /**
-     * Either of the two course alerts (#58), and a turn cue said *at* the turn (#456) — taken back
-     * when the course they were made about changes shape or leaves the library (#377). One name for
-     * all of them: what stops being true when the line goes is anything the app was about to say
-     * about that line.
+     * Either of the two course alerts (#58), taken back when the course they were made about
+     * changes shape or leaves the library (#377). One name for both: what stops being true when the
+     * line goes is anything the app was about to say about that line — and the turn cues, under
+     * [COURSE_TURN], are taken back at that same moment for that same reason.
      */
     COURSE,
 
     /**
-     * A turn cue said *before* the turn — "Turn left in 50 metres." (#456).
+     * Either of a turn's two cues — "Turn left in 50 metres." and "Turn left." (#456).
      *
-     * Its own name, apart from [COURSE], because it is the one course cue that can stop being true
-     * while the course itself stands: it is a claim about ground fifty metres ahead, and the runner
-     * reaching that ground makes it false. The queue drops nothing (#53), so a warning enqueued
-     * behind a long sentence can still be waiting once its turn has been reached — and it is taken
-     * back at that moment, by the at-the-turn cue that replaces it ([CourseAlerts]).
+     * Its own name, apart from [COURSE], because these are the course cues that can stop being true
+     * while the course itself stands. Each is a sentence about ground the runner is arriving at, and
+     * going past that ground makes it false; the queue drops nothing (#53), so a turn cue enqueued
+     * behind a long sentence can still be waiting by then. `CourseTurnWatch` is what decides when,
+     * and `CourseAlerts` takes them back.
      *
-     * It has to be a second name rather than a second use of [COURSE], because taking it back must
-     * not take back an "Off course." waiting beside it: that one is still true.
+     * It has to be a second name rather than a second use of [COURSE], because taking these back
+     * must not take back an "Off course." waiting beside them: reaching a corner does not put the
+     * runner back on the line, and that sentence is still owed.
      */
-    COURSE_TURN_AHEAD,
+    COURSE_TURN,
 }
 
 /**
