@@ -44,11 +44,15 @@ const val OFF_COURSE_SUSTAINED_MS = 10_000L
  * Anything the app says out loud about the course of a routed Run.
  *
  * Two kinds so far, and one name over both because everything past the sentence is the same for
- * them: they go out at [com.example.runningapp.CuePriority.NAVIGATION], under
- * [com.example.runningapp.run.CueTag.COURSE], and they are taken back together the moment the line
- * they are about changes shape or leaves the library (#377). What differs is only which is
- * [CourseAlert] — the runner has left the line, or come back to it (#58) — and which is a
- * [TurnCue]: the line ahead of them bends (#456).
+ * them: they go out at [com.example.runningapp.CuePriority.NAVIGATION], they wait in the one queue,
+ * and they are taken back together the moment the line they are about changes shape or leaves the
+ * library (#377). What differs is only which is [CourseAlert] — the runner has left the line, or
+ * come back to it (#58) — and which is a [TurnCue]: the line ahead of them bends (#456).
+ *
+ * They do not all go out under one [com.example.runningapp.run.CueTag]. A turn warning has its own
+ * ([com.example.runningapp.run.CueTag.COURSE_TURN_AHEAD]) because it is the only one of them that
+ * can stop being true while its course still stands, and taking it back must leave the others where
+ * they are — see [CourseAlerts.onFix].
  */
 interface CourseSaying {
     /** The sentence, exactly as it is spoken. */

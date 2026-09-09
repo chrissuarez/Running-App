@@ -57,22 +57,55 @@ class CourseAlertsTest {
     private val cues = OutstandingCues()
     private var clockMillis = 0L
     private val alerts = CourseAlerts(
-        speak = { alert -> cues.record(CueTag.COURSE) { queue.enqueue(alert.spoken) } },
-        withdraw = { queue.withdrawAll(cues.takeBack(CueTag.COURSE)) },
+        speak = { saying -> cues.record(saying.tag()) { queue.enqueue(saying.spoken) } },
+        withdraw = {
+            queue.withdrawAll(cues.takeBack(CueTag.COURSE) + cues.takeBack(CueTag.COURSE_TURN_AHEAD))
+        },
+        withdrawTurnWarning = { queue.withdrawAll(cues.takeBack(CueTag.COURSE_TURN_AHEAD)) },
         nowMillis = { clockMillis },
     )
+
+    /** The name the service enqueues a course cue under, mirrored here (`HrForegroundService`). */
+    private fun CourseSaying.tag(): CueTag =
+        if (this is TurnCue && moment == TurnCueMoment.AHEAD) {
+            CueTag.COURSE_TURN_AHEAD
+        } else {
+            CueTag.COURSE
+        }
 
     private val originLatitude = 51.5
     private val originLongitude = -0.1
     private val metersPerDegreeLatitude = 111_132.0
 
-    private fun at(northMeters: Double) = RoutePoint(
+    private val metersPerDegreeLongitude = 69_300.0
+
+    private fun at(northMeters: Double, eastMeters: Double = 0.0) = RoutePoint(
         latitude = originLatitude + northMeters / metersPerDegreeLatitude,
-        longitude = originLongitude,
+        longitude = originLongitude + eastMeters / metersPerDegreeLongitude,
         elevationMeters = null,
     )
 
     private val straightKilometre = (0..10).map { at(it * 100.0) }
+
+    /**
+     * Five hundred metres north, a right-angle turn, five hundred metres east. The one corner sits
+     * five hundred metres along it, so its warning is earned at four hundred and fifty.
+     */
+    private val courseWithOneTurn =
+        (0..5).map { at(it * 100.0) } + (1..5).map { at(500.0, it * 100.0) }
+
+    /** A fix [alongMeters] along [courseWithOneTurn], and [offMeters] to the left of the line. */
+    private fun onTheTurningCourse(alongMeters: Double, offMeters: Double = 0.0) =
+        (if (alongMeters <= 500.0) at(alongMeters, -offMeters) else at(500.0 + offMeters, alongMeters - 500.0))
+            .let {
+                LocationFix(
+                    latitude = it.latitude,
+                    longitude = it.longitude,
+                    accuracyMeters = 5f,
+                    speedMps = 3f,
+                    timestampMs = 0L,
+                )
+            }
 
     private fun fixAt(eastMeters: Double) = LocationFix(
         latitude = at(500.0).latitude,
@@ -269,6 +302,50 @@ class CourseAlertsTest {
 
         strayOffTheCourse()
         assertEquals(emptyList<String>(), queue.texts())
+        watching.cancel()
+    }
+
+    /**
+     * The whole of the P1 #460's review found. A warning is a claim about ground fifty metres ahead,
+     * the queue drops nothing (#53), and a sentence already being spoken holds the warning while the
+     * runner covers that ground. Heard then, it would send them fifty metres past the turning they
+     * are standing on — so reaching the turn takes it back, and the at-the-turn cue is the one true
+     * sentence left.
+     */
+    @Test
+    fun `a turn warning still waiting when the turn is reached is taken back`() = runTest {
+        val dao = FakeRouteDao()
+        val routeId = dao.keep(courseWithOneTurn)
+        val watching = runningTheCourse(dao, routeId)
+
+        fix(onTheTurningCourse(400.0), secondsIn = 0)
+        fix(onTheTurningCourse(460.0), secondsIn = 10)
+        assertEquals(listOf("Turn right in 50 metres."), queue.texts())
+
+        fix(onTheTurningCourse(505.0), secondsIn = 20)
+
+        assertEquals(listOf("Turn right."), queue.texts())
+        watching.cancel()
+    }
+
+    /**
+     * And it takes back the warning alone. An "Off course." waiting beside it is about the runner
+     * being sixty metres off the line, which reaching the turn does nothing to — they are still off
+     * it, and still have to be told.
+     */
+    @Test
+    fun `taking back a turn warning leaves an off-course cue waiting beside it`() = runTest {
+        val dao = FakeRouteDao()
+        val routeId = dao.keep(courseWithOneTurn)
+        val watching = runningTheCourse(dao, routeId)
+
+        fix(onTheTurningCourse(400.0), secondsIn = 0)
+        fix(onTheTurningCourse(460.0, offMeters = 60.0), secondsIn = 1)
+        assertEquals(listOf("Turn right in 50 metres."), queue.texts())
+
+        fix(onTheTurningCourse(505.0, offMeters = 60.0), secondsIn = 12)
+
+        assertEquals(listOf(CourseAlert.OFF_COURSE.spoken, "Turn right."), queue.texts())
         watching.cancel()
     }
 }

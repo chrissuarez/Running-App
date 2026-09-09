@@ -53,8 +53,11 @@ import com.google.android.gms.location.LocationServices
 import java.util.UUID
 import com.example.runningapp.recording.LocationFix
 import com.example.runningapp.routes.CourseAlerts
+import com.example.runningapp.routes.CourseSaying
 import com.example.runningapp.routes.CourseVoice
 import com.example.runningapp.routes.OffCourseWatch
+import com.example.runningapp.routes.TurnCue
+import com.example.runningapp.routes.TurnCueMoment
 import com.example.runningapp.routes.courseToWatchFlow
 import com.example.runningapp.run.Acquisition
 import com.example.runningapp.run.AcquisitionContext
@@ -601,10 +604,28 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private val courseAlerts = CourseAlerts(
         speak = { saying ->
             Log.d(TAG, "Course cue: ${saying.spoken}")
-            enqueueCue(saying.spoken, CuePriority.NAVIGATION, CueTag.COURSE)
+            enqueueCue(saying.spoken, CuePriority.NAVIGATION, saying.cueTag())
         },
-        withdraw = { withdrawCue(CueTag.COURSE) },
+        withdraw = {
+            withdrawCue(CueTag.COURSE)
+            withdrawCue(CueTag.COURSE_TURN_AHEAD)
+        },
+        withdrawTurnWarning = { withdrawCue(CueTag.COURSE_TURN_AHEAD) },
     )
+
+    /**
+     * The name a course cue is enqueued under, so it can be asked for back (#377, #456).
+     *
+     * [CueTag.COURSE_TURN_AHEAD] for a turn warning and [CueTag.COURSE] for everything else, because
+     * the warning is the one course cue that can stop being true while its course still stands —
+     * [CueTag] says why, and [CourseAlerts] is where it is taken back.
+     */
+    private fun CourseSaying.cueTag(): CueTag =
+        if (this is TurnCue && moment == TurnCueMoment.AHEAD) {
+            CueTag.COURSE_TURN_AHEAD
+        } else {
+            CueTag.COURSE
+        }
 
     /** Keeps [courseAlerts] up with the library while the Run goes on — see [courseToWatchFlow]. */
     private var courseWatchJob: Job? = null
@@ -1928,10 +1949,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * A fix has landed on a routed Run: say whatever the course has to say about it, if anything
      * (#58).
      *
-     * Tagged [CueTag.COURSE], like the turnaround is tagged and unlike what #376 shipped: both of
-     * these are true the moment they are made, but a cue waits its turn and the line can go out from
-     * under it while it waits, which is the one thing that stops one being true (#377).
-     * [CourseAlerts] is where that is handled; this only hands it the fix.
+     * Tagged, like the turnaround is tagged and unlike what #376 shipped: every one of these is true
+     * the moment it is made, but a cue waits its turn, and two things can stop one being true while
+     * it waits — the line going out from under it (#377), and, for a turn warning alone, the runner
+     * reaching the turn it warns about (#456). [CourseAlerts] is where both are handled and
+     * [CourseSaying.cueTag] is which name each goes out under; this only hands it the fix.
      *
      * [CuePriority.NAVIGATION], which is the top of the queue: a runner going the wrong way is going
      * further the wrong way for as long as a split announcement takes to finish. It still never cuts
