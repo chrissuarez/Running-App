@@ -18,27 +18,19 @@ enum class CueTag {
     TURNAROUND,
 
     /**
-     * Either of the two course alerts (#58), taken back when the course they were made about
-     * changes shape or leaves the library (#377). One name for both: what stops being true when the
-     * line goes is anything the app was about to say about that line — and the turn cues, under
-     * [COURSE_TURN], are taken back at that same moment for that same reason.
+     * Anything the app has waiting to say about the course of a routed Run: either of the two
+     * course alerts (#58), and either of a turn's two cues (#456). Taken back when the course they
+     * were made about changes shape or leaves the library (#377). One name for all of them: what
+     * stops being true when the line goes is anything the app was about to say about that line.
+     *
+     * A turn cue can also stop being true on its own, while the course still stands — it is a
+     * sentence about one piece of ground, and the runner passing that ground kills it. That is not
+     * a withdrawal by name and cannot be: the cue waiting beside it is about the *next* piece of
+     * ground and is still true. It goes back by its own ticket instead
+     * (`OutstandingCues.takeBackTickets`, `CourseAlerts`).
      */
     COURSE,
 
-    /**
-     * Either of a turn's two cues — "Turn left in 50 metres." and "Turn left." (#456).
-     *
-     * Its own name, apart from [COURSE], because these are the course cues that can stop being true
-     * while the course itself stands. Each is a sentence about ground the runner is arriving at, and
-     * going past that ground makes it false; the queue drops nothing (#53), so a turn cue enqueued
-     * behind a long sentence can still be waiting by then. `CourseTurnWatch` is what decides when,
-     * and `CourseAlerts` takes them back.
-     *
-     * It has to be a second name rather than a second use of [COURSE], because taking these back
-     * must not take back an "Off course." waiting beside them: reaching a corner does not put the
-     * runner back on the line, and that sentence is still owed.
-     */
-    COURSE_TURN,
 }
 
 /**

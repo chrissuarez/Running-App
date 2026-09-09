@@ -49,10 +49,11 @@ const val OFF_COURSE_SUSTAINED_MS = 10_000L
  * library (#377). What differs is only which is [CourseAlert] — the runner has left the line, or
  * come back to it (#58) — and which is a [TurnCue]: the line ahead of them bends (#456).
  *
- * They do not all go out under one [com.example.runningapp.run.CueTag]. A turn warning has its own
- * ([com.example.runningapp.run.CueTag.COURSE_TURN_AHEAD]) because it is the only one of them that
- * can stop being true while its course still stands, and taking it back must leave the others where
- * they are — see [CourseAlerts.onFix].
+ * They go out under the one [com.example.runningapp.run.CueTag.COURSE], because the line going out
+ * from under them is what stops all of them being true at once. A turn cue can also stop being true
+ * on its own, while the course still stands — it is a sentence about one piece of ground — and that
+ * one is taken back by its own queue ticket rather than by the name, so the cue waiting beside it
+ * is left alone. See [CourseAlerts.onFix].
  */
 interface CourseSaying {
     /** The sentence, exactly as it is spoken. */

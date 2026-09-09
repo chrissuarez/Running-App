@@ -251,26 +251,56 @@ private fun bearingChangeDegrees(inX: Double, inY: Double, outX: Double, outY: D
 }
 
 /**
+ * One sentence the turns have earned, and the ground it stops being true at (#456).
+ *
+ * The deadline travels with the sentence because it belongs to that sentence alone. Two turn cues
+ * can be waiting in the queue at once — a turn's own cue and the next turn's warning, where the two
+ * turns are between fifty and seventy metres apart — and they stop being true at different moments.
+ * One deadline over the pair would either take back the live one with the dead one, or keep the
+ * dead one for the sake of the live one; both are a wrong sentence in the runner's ear.
+ */
+data class SaidTurn(
+    val cue: TurnCue,
+    /**
+     * Ground along the course past which this sentence is no longer worth saying.
+     *
+     * **This is the whole of the staleness rule, stated once for both moments.** A turn cue is a
+     * sentence about ground the runner is arriving at, and it stops being true when they have gone
+     * past that ground. Where "past" falls is the only thing that differs:
+     *
+     *  - A warning says the turn is [TURN_WARNING_METERS] ahead. **Reaching the turn** makes it
+     *    false — not late, false, because it would send the runner that distance beyond the turning
+     *    they are standing on.
+     *  - The turn's own cue says to turn here. It is merely *late* for a while afterwards, and
+     *    [TURN_CUE_LATE_METERS] is how long a course cue is allowed to be late — the same number
+     *    that decides whether it is worth making in the first place.
+     */
+    val trueUntilAlongMeters: Double,
+)
+
+/**
  * What the turns of a course have to say about one fix (#456).
  *
- * Two things and not one, because a fix can be the moment a sentence is earned *and* the moment an
- * earlier one stops being true — the runner reaching the corner earns "Turn left." and is exactly
- * what makes the "Turn left in 50 metres." still waiting in the queue wrong.
+ * Two things and not one, because a fix is both an occasion to speak and an occasion to unsay: the
+ * runner reaching a corner earns "Turn left." and is exactly what makes the "Turn left in 50
+ * metres." still waiting in the queue wrong. Which of the waiting sentences that is is not decided
+ * here — this reports where the runner is and what each new sentence is good until, and
+ * [CourseAlerts] holds those against the tickets it has outstanding, because it is the only thing
+ * that knows what has actually been said.
  */
 data class TurnVoice(
     /**
-     * Every turn cue of this Run not yet spoken has stopped being true; take the lot back.
-     *
-     * All of them together, never some of them: see [CourseTurnWatch.cuesTrueUntilAlongMeters] for
-     * why one number covers the whole outstanding set.
+     * Where the runner is along the course, or null on a fix the turns did not read — auto-paused,
+     * too coarse to trust, or before the course was reached. Null says nothing has gone stale,
+     * because nothing has been measured.
      */
-    val takeBackWhatIsWaiting: Boolean,
-    /** What to say, in the order to say it. */
-    val said: List<TurnCue>,
+    val alongMeters: Double?,
+    /** What to say, in the order to say it, each with the ground it dies at. */
+    val said: List<SaidTurn>,
 ) {
     companion object {
-        /** A fix the turns have nothing to say about, and nothing to unsay. */
-        val NOTHING = TurnVoice(takeBackWhatIsWaiting = false, said = emptyList())
+        /** A fix the turns did not read: nothing to say, and nothing measured to unsay by. */
+        val NOTHING = TurnVoice(alongMeters = null, said = emptyList())
     }
 }
 
@@ -295,8 +325,10 @@ data class TurnVoice(
  *
  * **A cue about ground already covered is not said at all, and one that becomes about ground already
  * covered while it waits its turn in the queue is taken back** ([TURN_CUE_LATE_METERS],
- * [cuesTrueUntilAlongMeters]). Both ends of the same rule: a turn cue is a sentence about ground the
- * runner is arriving at, and it is worth nothing once they have gone past it.
+ * [SaidTurn.trueUntilAlongMeters]). Both ends of the same rule: a turn cue is a sentence about
+ * ground the runner is arriving at, and it is worth nothing once they have gone past it. Each cue
+ * carries its own deadline, because two of them can be waiting at once and stop being true at
+ * different moments.
  *
  * **How far off the line the runner is is not asked.** A course drawn down the middle of a road, a
  * runner on the far side of a dual carriageway and a file traced off somebody else's Run all put
@@ -347,27 +379,14 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
     private var started = false
 
     /**
-     * The furthest ground any turn cue this watch has made is still true at, or null once every one
-     * of them has been either spoken or taken back.
+     * Take one fix, and say whatever the turns ahead of the runner have to say about it — with,
+     * for each sentence, the ground past which it should be unsaid.
      *
-     * **This is what makes a cue's staleness the watch's business and not the queue's.** A cue is
-     * enqueued and not spoken (#53): it waits behind whatever sentence is in flight, and fifty
-     * metres is some ten seconds, so a cue can outlive the ground it is about while it waits. The
-     * queue drops nothing, so the producer takes it back — and this is the producer.
-     *
-     * One number over every cue outstanding rather than one per cue, and it is enough: a cue's
-     * [CueAt.trueUntilAlongMeters] never decreases down [cues] (a turn's warning dies at the turn,
-     * the turn's own cue twenty metres after it, and the next turn is at least
-     * [TURNS_TOGETHER_METERS] further on), so this is the last one made and the largest. Past it,
-     * *every* cue still waiting is false and the whole lot can go in one act. Short of it, at least
-     * one is still true, and the withdrawal waits — which is the safe way round, because taking back
-     * a batch to catch a stale cue would silence a true one beside it.
-     */
-    private var cuesTrueUntilAlongMeters: Double? = null
-
-    /**
-     * Take one fix, and say whatever the turns ahead of the runner have to say about it — and what,
-     * having been said too soon, should now be unsaid.
+     * **Staleness is reported, not acted on.** A cue is enqueued and not spoken (#53): it waits
+     * behind whatever sentence is in flight, and fifty metres is some ten seconds, so a cue can
+     * outlive the ground it is about while it waits. The queue drops nothing, so the producer takes
+     * it back — and the producer is the thing holding the tickets, [CourseAlerts]. What this can
+     * say, and all it can say, is where the runner is and what each sentence is good until.
      */
     fun onFix(fix: LocationFix, autoPaused: Boolean): TurnVoice {
         if (autoPaused || !SessionRecorder.isAccuracyAccepted(fix.accuracyMeters)) return TurnVoice.NOTHING
@@ -384,36 +403,19 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
             return TurnVoice.NOTHING
         }
 
-        // Taken back before this fix's own cues are made, and not after: the ground that kills the
-        // old ones is the very ground that earns the new, and a withdrawal that ran second would
-        // take back the sentence that replaces them.
-        val takeBack = cuesTrueUntilAlongMeters?.let { here.alongMeters > it } == true
-        if (takeBack) cuesTrueUntilAlongMeters = null
-
-        val said = mutableListOf<TurnCue>()
+        val said = mutableListOf<SaidTurn>()
         while (nextCue < cues.size && cues[nextCue].alongMeters <= here.alongMeters) {
             val cue = cues[nextCue++]
             if (here.alongMeters - cue.alongMeters <= TURN_CUE_LATE_METERS) {
-                said += cue.cue
-                cuesTrueUntilAlongMeters = cue.trueUntilAlongMeters
+                said += SaidTurn(cue.cue, cue.trueUntilAlongMeters)
             }
         }
-        return TurnVoice(takeBackWhatIsWaiting = takeBack, said = said)
+        return TurnVoice(alongMeters = here.alongMeters, said = said)
     }
 
     /**
-     * One sentence, the ground along the course that earns it, and the ground it dies at.
-     *
-     * **[trueUntilAlongMeters] is the whole of the staleness rule, stated once for both moments.** A
-     * turn cue is a sentence about ground the runner is arriving at, and it stops being true when
-     * they have gone past that ground. Where "past" falls is the only thing that differs:
-     *
-     *  - A warning says the turn is [TURN_WARNING_METERS] ahead. **Reaching the turn** makes it
-     *    false — not late, false, because it would send the runner that distance beyond the turning
-     *    they are standing on.
-     *  - The turn's own cue says to turn here. It is merely *late* for a while afterwards, and
-     *    [TURN_CUE_LATE_METERS] is how long a course cue is allowed to be late — the same number
-     *    that decides whether it is worth making in the first place.
+     * One sentence, the ground along the course that earns it, and the ground it dies at
+     * ([SaidTurn.trueUntilAlongMeters], where the rule is argued).
      */
     private class CueAt(
         val alongMeters: Double,

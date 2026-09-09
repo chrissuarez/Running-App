@@ -108,7 +108,7 @@ class CourseToWatchTest {
         watch.onFix(offTheLine, 1_000L, autoPaused = false)
         assertEquals(
             listOf(CourseAlert.OFF_COURSE),
-            watch.onFix(offTheLine, 11_000L, autoPaused = false).said,
+            watch.onFix(offTheLine, 11_000L, autoPaused = false).said.map { it.saying },
         )
 
         dao.renameRoute(someOtherRoute, "Somewhere else entirely")
@@ -118,7 +118,7 @@ class CourseToWatchTest {
         assertEquals(1, watches.size)
         assertEquals(
             listOf(CourseAlert.BACK_ON_COURSE),
-            watches.last()!!.onFix(onTheLine, 12_000L, autoPaused = false).said,
+            watches.last()!!.onFix(onTheLine, 12_000L, autoPaused = false).said.map { it.saying },
         )
     }
 
@@ -156,7 +156,7 @@ class CourseToWatchTest {
             watch.onFix(offTheLine, 1_000L, autoPaused = false)
             assertEquals(
                 listOf(CourseAlert.OFF_COURSE),
-                watch.onFix(offTheLine, 11_000L, autoPaused = false).said,
+                watch.onFix(offTheLine, 11_000L, autoPaused = false).said.map { it.saying },
             )
         }
     }

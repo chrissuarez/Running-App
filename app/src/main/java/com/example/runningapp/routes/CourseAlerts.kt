@@ -38,18 +38,25 @@ import kotlinx.coroutines.flow.Flow
  * replaces it rather than by whoever cancels first.
  */
 class CourseAlerts(
-    /** Enqueue this sentence, in its turn — tagged, so that [withdraw] can name it again. */
-    private val speak: (CourseSaying) -> Unit,
+    /**
+     * Enqueue this sentence, in its turn — tagged, so that [withdraw] can name it again — and hand
+     * back the queue's ticket for it, or null if it was not enqueued at all.
+     *
+     * The ticket is what lets one waiting sentence be taken back and another left alone
+     * ([withdrawCues]).
+     */
+    private val speak: (CourseSaying) -> Long?,
     /** Take back everything this Run's course had waiting to be said, of every kind. */
     private val withdraw: () -> Unit,
     /**
-     * Take back the turn cues of this Run that have not been spoken, and nothing else (#456).
+     * Take back exactly these cues, by the tickets [speak] handed back, and nothing else (#456).
      *
-     * Separate from [withdraw] on purpose: this fires while the course still stands, so it must
-     * leave an "Off course." waiting beside them alone — a runner who has reached a corner has not
-     * stopped being off the line by reaching it.
+     * By ticket rather than by name, and separate from [withdraw] on purpose: this fires while the
+     * course still stands and while other sentences about it are still true. A runner who has
+     * reached a corner has not stopped being off the line by reaching it, and one stale turn cue
+     * does not make the next turn's warning waiting behind it stale.
      */
-    private val withdrawTurnCues: () -> Unit,
+    private val withdrawCues: (List<Long>) -> Unit,
     /**
      * The clock the ten-second wait is lived through — the phone's, for the reason
      * [OffCourseWatch.onFix] gives.
@@ -61,6 +68,22 @@ class CourseAlerts(
 
     /** The course being watched, or null for a Run following none — and for a Route deleted. */
     private var watch: CourseVoice? = null
+
+    /**
+     * The cues of this course that carry a deadline, each with the ground it stops being true at.
+     *
+     * Kept here and not in the watch that judged them, because taking a cue back needs its queue
+     * ticket and this is the only thing that has ever held one. A ticket for a cue already spoken
+     * is inert when it is handed back, so nothing here has to know what has gone out — an entry
+     * simply leaves when the ground passes it.
+     *
+     * Emptied whenever the course changes, because [withdraw] has just taken every one of them back
+     * wholesale (#377) and what replaces them belongs to a different line.
+     */
+    private val waiting = mutableListOf<WaitingCue>()
+
+    /** One enqueued cue, by its queue ticket, and the ground past which it is not worth saying. */
+    private class WaitingCue(val ticket: Long, val trueUntilAlongMeters: Double)
 
     /** Which watching is the current one. A collection with an older number writes nothing. */
     private var watching = 0L
@@ -92,6 +115,7 @@ class CourseAlerts(
     /** Let go of the course being watched, and give out the number for whatever comes next. */
     private fun beginWatching(): Long = synchronized(lock) {
         withdraw()
+        waiting.clear()
         watch = null
         ++watching
     }
@@ -109,6 +133,7 @@ class CourseAlerts(
         synchronized(lock) {
             if (mine != watching) return
             withdraw()
+            waiting.clear()
             watch = next
         }
     }
@@ -130,9 +155,34 @@ class CourseAlerts(
     fun onFix(fix: LocationFix, autoPaused: Boolean) {
         synchronized(lock) {
             val speech = watch?.onFix(fix, nowMillis(), autoPaused) ?: return
-            if (speech.takeBackTurnCues) withdrawTurnCues()
-            speech.said.forEach(speak)
+            speech.alongMeters?.let(::takeBackWhatIsStaleAt)
+            speech.said.forEach { utterance ->
+                val ticket = speak(utterance.saying)
+                if (ticket != null && utterance.trueUntilAlongMeters != null) {
+                    waiting += WaitingCue(ticket, utterance.trueUntilAlongMeters)
+                }
+            }
         }
+    }
+
+    /**
+     * Take back every cue still waiting that the runner is now past the ground of — one by one, and
+     * leaving the rest exactly where they are.
+     *
+     * **One at a time is the whole point.** Two turn cues can be in the queue together — a turn's
+     * own cue and the next turn's warning, where the two turns are between fifty and seventy metres
+     * apart — and they stop being true at different moments. Taken back as a batch, either the live
+     * one goes with the dead one or the dead one stays for the sake of the live one, and each is a
+     * wrong sentence in the runner's ear. So the ticket, not the name, is what is handed back.
+     *
+     * Under this class's lock, from [onFix], so the list is never read while a cue is being added
+     * to it.
+     */
+    private fun takeBackWhatIsStaleAt(alongMeters: Double) {
+        val stale = waiting.filter { alongMeters > it.trueUntilAlongMeters }
+        if (stale.isEmpty()) return
+        waiting -= stale.toSet()
+        withdrawCues(stale.map { it.ticket })
     }
 
     /**

@@ -3,19 +3,27 @@ package com.example.runningapp.routes
 import com.example.runningapp.recording.LocationFix
 
 /**
- * What one course has to say about one fix: what to take back first, and what to say (#456).
+ * One sentence a course has earned, and the ground it stops being true at — null where it never
+ * does (#456).
+ *
+ * Only the turn cues carry a deadline. An off-course alert is about where the runner is *now* and
+ * is true the moment it is made and afterwards; a turn cue is about ground fifty metres ahead, and
+ * the runner covering that ground while the cue waits its turn in the queue is what makes it false.
+ */
+data class Utterance(val saying: CourseSaying, val trueUntilAlongMeters: Double?)
+
+/**
+ * What one course has to say about one fix: where the runner is on it, and what it has earned the
+ * right to say (#456).
  */
 data class CourseSpeech(
     /**
-     * Every turn cue of this Run not yet spoken has stopped being true; take the lot back.
-     *
-     * Turn cues alone, and never the off-course alerts waiting beside them — a runner who has
-     * reached a corner has not stopped being off the line by reaching it, and that sentence is
-     * still owed to them.
+     * Where the runner is along the course, or null on a fix the turns did not read. Null says
+     * nothing waiting has gone stale, because nothing has been measured to judge it by.
      */
-    val takeBackTurnCues: Boolean,
+    val alongMeters: Double?,
     /** What to say, in the order to say it. */
-    val said: List<CourseSaying>,
+    val said: List<Utterance>,
 )
 
 /**
@@ -25,7 +33,9 @@ data class CourseSpeech(
  * One object over the two watches rather than two handed about separately, because they are one
  * course's worth of voice and everything outside this package treats them alike — the same queue,
  * the same priority, the same tag, and taken back together the moment the line goes out from under
- * them ([CourseAlerts], #377). A second thing to watch is then a change here and nowhere else.
+ * them ([CourseAlerts], #377). What differs is only how long each stays true once made, and that
+ * travels with the sentence ([Utterance]). A second thing to watch is then a change here and
+ * nowhere else.
  *
  * **One [CourseLine] between them**, built once and lent to both, so that the two are reading the
  * same course rather than two courses that happen to have been built from the same list. Where each
@@ -49,19 +59,16 @@ class CourseVoice private constructor(
 
     /**
      * Take one fix, and say everything this course has to say about it — in the order to say it,
-     * and with whatever it now wants unsaid.
-     *
-     * Only the turns ever ask for something back mid-course ([TurnVoice]). An off-course alert is
-     * about where the runner is *now* and is true the moment it is made and afterwards; a turn cue
-     * is about ground fifty metres ahead, and the runner covering that ground while the cue waits
-     * its turn in the queue is what makes it false.
+     * and with what each sentence is good until.
      */
     fun onFix(fix: LocationFix, nowMillis: Long, autoPaused: Boolean): CourseSpeech {
-        val said = mutableListOf<CourseSaying>()
-        offCourse.onFix(fix, nowMillis, autoPaused)?.let { said += it }
+        val said = mutableListOf<Utterance>()
+        offCourse.onFix(fix, nowMillis, autoPaused)?.let {
+            said += Utterance(it, trueUntilAlongMeters = null)
+        }
         val turning = turns.onFix(fix, autoPaused)
-        said += turning.said
-        return CourseSpeech(takeBackTurnCues = turning.takeBackWhatIsWaiting, said = said)
+        turning.said.forEach { said += Utterance(it.cue, it.trueUntilAlongMeters) }
+        return CourseSpeech(alongMeters = turning.alongMeters, said = said)
     }
 
     /**

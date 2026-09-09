@@ -53,10 +53,8 @@ import com.google.android.gms.location.LocationServices
 import java.util.UUID
 import com.example.runningapp.recording.LocationFix
 import com.example.runningapp.routes.CourseAlerts
-import com.example.runningapp.routes.CourseSaying
 import com.example.runningapp.routes.CourseVoice
 import com.example.runningapp.routes.OffCourseWatch
-import com.example.runningapp.routes.TurnCue
 import com.example.runningapp.routes.courseToWatchFlow
 import com.example.runningapp.run.Acquisition
 import com.example.runningapp.run.AcquisitionContext
@@ -603,24 +601,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private val courseAlerts = CourseAlerts(
         speak = { saying ->
             Log.d(TAG, "Course cue: ${saying.spoken}")
-            enqueueCue(saying.spoken, CuePriority.NAVIGATION, saying.cueTag())
+            enqueueCue(saying.spoken, CuePriority.NAVIGATION, CueTag.COURSE)
         },
-        withdraw = {
-            withdrawCue(CueTag.COURSE)
-            withdrawCue(CueTag.COURSE_TURN)
-        },
-        withdrawTurnCues = { withdrawCue(CueTag.COURSE_TURN) },
+        withdraw = { withdrawCue(CueTag.COURSE) },
+        withdrawCues = ::withdrawCues,
     )
-
-    /**
-     * The name a course cue is enqueued under, so it can be asked for back (#377, #456).
-     *
-     * [CueTag.COURSE_TURN] for a turn cue and [CueTag.COURSE] for the off-course alerts, because
-     * only the turn cues can stop being true while their course still stands — [CueTag] says why,
-     * and [CourseAlerts] is where they are taken back. Both names go when the line itself does.
-     */
-    private fun CourseSaying.cueTag(): CueTag =
-        if (this is TurnCue) CueTag.COURSE_TURN else CueTag.COURSE
 
     /** Keeps [courseAlerts] up with the library while the Run goes on — see [courseToWatchFlow]. */
     private var courseWatchJob: Job? = null
@@ -1881,11 +1866,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * Say something, in its turn among everything else waiting (#53). The one way anything in this
      * app speaks — the split announcements and the UI's target-reached cue come through here too.
      */
-    fun enqueueCue(text: String, priority: CuePriority, tag: CueTag? = null) {
-        val manager = audioCueManager ?: return
+    fun enqueueCue(text: String, priority: CuePriority, tag: CueTag? = null): Long? {
+        val manager = audioCueManager ?: return null
         // Enqueued and recorded as one act, so the end of a Run cannot land between the two and
         // leave the cue outstanding with nothing left to take it back (#220).
-        outstandingCues.record(tag) { manager.enqueue(text, priority) }
+        return outstandingCues.record(tag) { manager.enqueue(text, priority) }
     }
 
     /** The Run's [RunEffect.Speak], under the name the Run gave the cue, if it gave one. */
@@ -1944,11 +1929,12 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * A fix has landed on a routed Run: say whatever the course has to say about it, if anything
      * (#58).
      *
-     * Tagged, like the turnaround is tagged and unlike what #376 shipped: every one of these is true
-     * the moment it is made, but a cue waits its turn, and two things can stop one being true while
-     * it waits — the line going out from under it (#377), and, for a turn warning alone, the runner
-     * reaching the turn it warns about (#456). [CourseAlerts] is where both are handled and
-     * [CourseSaying.cueTag] is which name each goes out under; this only hands it the fix.
+     * Tagged [CueTag.COURSE], like the turnaround is tagged and unlike what #376 shipped: every one
+     * of these is true the moment it is made, but a cue waits its turn, and two things can stop one
+     * being true while it waits — the line going out from under it, which takes back everything
+     * under the name (#377), and, for a turn cue alone, the runner running past the piece of ground
+     * that cue is about, which takes back that cue by its own ticket and leaves the rest
+     * ([withdrawCues], #456). [CourseAlerts] handles both; this only hands it the fix.
      *
      * [CuePriority.NAVIGATION], which is the top of the queue: a runner going the wrong way is going
      * further the wrong way for as long as a split announcement takes to finish. It still never cuts
@@ -1967,6 +1953,22 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
      * Inert when there is nothing to take back, and inert in the queue when the cue has already
      * gone out — so no caller has to know which of those it is.
      */
+    /**
+     * Take back these cues by their tickets, and no others (#456).
+     *
+     * The other half of [withdrawCue]: by name when everything under a name has stopped being true
+     * together, and by ticket when only some of them have. A turn cue is a sentence about one piece
+     * of ground and dies when the runner passes it, while the cue waiting beside it is about the
+     * next piece and does not — so the name is the wrong handle and the ticket is the right one.
+     *
+     * Inert for a ticket already spoken or already taken back, like every withdrawal here.
+     */
+    private fun withdrawCues(tickets: List<Long>) {
+        val taken = outstandingCues.takeBackTickets(tickets)
+        if (taken.isEmpty()) return
+        audioCueManager?.withdrawAll(taken)
+    }
+
     private fun withdrawCue(tag: CueTag) {
         val tickets = outstandingCues.takeBack(tag)
         if (tickets.isEmpty()) return
