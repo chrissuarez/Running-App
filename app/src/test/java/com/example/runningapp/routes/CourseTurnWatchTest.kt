@@ -308,4 +308,49 @@ class CourseTurnWatchTest {
         assertEquals(listOf("Turn left in 50 metres."), say(500.0, 660.0))
         assertEquals(listOf("Turn left."), say(505.0, 700.0))
     }
+
+    /**
+     * #460's sixth round, on a two-lap loop: the pointer over the cues only ever goes forwards, and
+     * re-anchoring must not be the thing that walks it back.
+     *
+     * The whole-line reading deliberately prefers the *earlier* of two equally near places, so a
+     * runner rejoining on the second lap of a loop is reported as being on the first. Believed, the
+     * pointer would jump back and every corner of the lap would be announced a second time. The
+     * pointer keeps its place instead; the cost is that the rest of that lap stays silent, which is
+     * the way round to be wrong.
+     */
+    @Test
+    fun `rejoining a two-lap loop does not announce its corners again`() {
+        // A two hundred metre square, run twice. Corners every two hundred metres.
+        val lap = (0..7).map { at(it * 25.0) } +
+            (0..7).map { at(200.0, it * 25.0) } +
+            (0..7).map { at(200.0 - it * 25.0, 200.0) } +
+            (0..7).map { at(0.0, 200.0 - it * 25.0) }
+        val twoLaps = lap + lap + listOf(at(0.0))
+        val watch = CourseTurnWatch(CourseLine.of(twoLaps)!!, courseTurnsOf(twoLaps))
+
+        fun say(north: Double, east: Double): List<String> {
+            val place = at(north, east)
+            return watch.onFix(
+                LocationFix(place.latitude, place.longitude, 5f, 3f, 0L),
+                autoPaused = false,
+            ).said.map { it.cue.spoken }
+        }
+
+        // Round the first lap, hearing its corners.
+        assertEquals(nothing, say(0.0, 0.0))
+        val heard = mutableListOf<String>()
+        for (north in listOf(100.0, 160.0, 200.0)) heard += say(north, 0.0)
+        for (east in listOf(100.0, 160.0, 200.0)) heard += say(200.0, east)
+        assertEquals(4, heard.size)
+
+        // Off into the fields, then back onto the square's west side — second lap, but the same
+        // ground as the first, so the whole-line reading calls it the first.
+        assertEquals(nothing, say(100.0, -200.0))
+        assertEquals(nothing, say(100.0, 0.0))
+
+        // Nothing from the first lap is said a second time.
+        assertEquals(nothing, say(160.0, 0.0))
+        assertEquals(nothing, say(200.0, 0.0))
+    }
 }
