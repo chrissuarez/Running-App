@@ -40,8 +40,15 @@ import kotlinx.coroutines.flow.Flow
 class CourseAlerts(
     /** Enqueue this sentence, in its turn — tagged, so that [withdraw] can name it again. */
     private val speak: (CourseSaying) -> Unit,
-    /** Take back every course alert of this Run that has not been spoken. */
+    /** Take back everything this Run's course had waiting to be said, of every kind. */
     private val withdraw: () -> Unit,
+    /**
+     * Take back a turn warning of this Run that has not been spoken, and nothing else (#456).
+     *
+     * Separate from [withdraw] on purpose: this fires while the course still stands, so it must
+     * leave an "Off course." waiting beside the warning alone — that one is still true.
+     */
+    private val withdrawTurnWarning: () -> Unit,
     /**
      * The clock the ten-second wait is lived through — the phone's, for the reason
      * [OffCourseWatch.onFix] gives.
@@ -111,10 +118,27 @@ class CourseAlerts(
      * All of it, in the order [CourseVoice] hands it over: one fix can be both the moment the
      * runner comes back onto the line and the moment the corner fifty metres ahead is worth a word,
      * and enqueueing only one of the two would be picking which of them is true.
+     *
+     * **Reaching a turn takes back the warning about it** (#456). The queue drops nothing (#53) and
+     * a cue waits behind whatever sentence is already being spoken, so a "Turn left in 50 metres."
+     * enqueued a few seconds ago can still be waiting once the runner is standing at the corner —
+     * and then it is not a late cue but a wrong one, sending them fifty metres past the turning they
+     * are on. [TurnCueMoment.AT_THE_TURN] is the exact moment that stops being true, so the cue that
+     * says it is the one that takes the warning back, immediately before saying it.
+     *
+     * It cannot take back a warning that is still owed. Turn cues sit in the order the ground
+     * reaches them and are enqueued in that order, so the only warning ever waiting when an
+     * at-the-turn cue is made is that same turn's own — the next turn's warning is behind this cue
+     * in the list, never in front of it ([CourseTurnWatch]).
      */
     fun onFix(fix: LocationFix, autoPaused: Boolean) {
         synchronized(lock) {
-            watch?.onFix(fix, nowMillis(), autoPaused)?.forEach(speak)
+            watch?.onFix(fix, nowMillis(), autoPaused)?.forEach { saying ->
+                if (saying is TurnCue && saying.moment == TurnCueMoment.AT_THE_TURN) {
+                    withdrawTurnWarning()
+                }
+                speak(saying)
+            }
         }
     }
 

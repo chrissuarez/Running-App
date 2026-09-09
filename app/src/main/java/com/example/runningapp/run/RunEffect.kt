@@ -18,11 +18,26 @@ enum class CueTag {
     TURNAROUND,
 
     /**
-     * Either of the two course alerts (#58), taken back when the course they were made about
-     * changes shape or leaves the library (#377). One name for both: what stops being true when
-     * the line goes is anything the app was about to say about that line.
+     * Either of the two course alerts (#58), and a turn cue said *at* the turn (#456) — taken back
+     * when the course they were made about changes shape or leaves the library (#377). One name for
+     * all of them: what stops being true when the line goes is anything the app was about to say
+     * about that line.
      */
     COURSE,
+
+    /**
+     * A turn cue said *before* the turn — "Turn left in 50 metres." (#456).
+     *
+     * Its own name, apart from [COURSE], because it is the one course cue that can stop being true
+     * while the course itself stands: it is a claim about ground fifty metres ahead, and the runner
+     * reaching that ground makes it false. The queue drops nothing (#53), so a warning enqueued
+     * behind a long sentence can still be waiting once its turn has been reached — and it is taken
+     * back at that moment, by the at-the-turn cue that replaces it ([CourseAlerts]).
+     *
+     * It has to be a second name rather than a second use of [COURSE], because taking it back must
+     * not take back an "Off course." waiting beside it: that one is still true.
+     */
+    COURSE_TURN_AHEAD,
 }
 
 /**
