@@ -82,8 +82,8 @@ class CourseAlerts(
      */
     private val waiting = mutableListOf<WaitingCue>()
 
-    /** One enqueued cue, by its queue ticket, and the ground past which it is not worth saying. */
-    private class WaitingCue(val ticket: Long, val trueUntilAlongMeters: Double)
+    /** One enqueued cue, by its queue ticket, and the first ground it is no longer true from. */
+    private class WaitingCue(val ticket: Long, val falseFromAlongMeters: Double)
 
     /** Which watching is the current one. A collection with an older number writes nothing. */
     private var watching = 0L
@@ -158,16 +158,22 @@ class CourseAlerts(
             speech.alongMeters?.let(::takeBackWhatIsStaleAt)
             speech.said.forEach { utterance ->
                 val ticket = speak(utterance.saying)
-                if (ticket != null && utterance.trueUntilAlongMeters != null) {
-                    waiting += WaitingCue(ticket, utterance.trueUntilAlongMeters)
+                if (ticket != null && utterance.falseFromAlongMeters != null) {
+                    waiting += WaitingCue(ticket, utterance.falseFromAlongMeters)
                 }
             }
         }
     }
 
     /**
-     * Take back every cue still waiting that the runner is now past the ground of — one by one, and
-     * leaving the rest exactly where they are.
+     * Take back every cue still waiting that the runner has now **reached** the ground of — one by
+     * one, and leaving the rest exactly where they are.
+     *
+     * Reached, not passed. Each cue names the first ground it is no longer true from
+     * ([SaidTurn.falseFromAlongMeters]), so arriving there is what kills it: a fix landing exactly
+     * on a turn makes the "in fifty metres" warning about that turn false, and leaving it standing
+     * because the runner is not yet *past* the corner would let it be spoken from on top of the
+     * corner. Named from the dead side so this is one comparison and not a judgement call.
      *
      * **One at a time is the whole point.** Two turn cues can be in the queue together — a turn's
      * own cue and the next turn's warning, where the two turns are between fifty and seventy metres
@@ -179,7 +185,7 @@ class CourseAlerts(
      * to it.
      */
     private fun takeBackWhatIsStaleAt(alongMeters: Double) {
-        val stale = waiting.filter { alongMeters > it.trueUntilAlongMeters }
+        val stale = waiting.filter { alongMeters >= it.falseFromAlongMeters }
         if (stale.isEmpty()) return
         waiting -= stale.toSet()
         withdrawCues(stale.map { it.ticket })

@@ -107,6 +107,16 @@ class CourseAlertsTest {
         LocationFix(it.latitude, it.longitude, 5f, 3f, 0L)
     }
 
+    /**
+     * The corner of [courseWithOneTurn] exactly as the library stores it — the polyline is kept to
+     * five decimal places, so a place written here and the same place read back are not the same
+     * number, and only the one read back can be landed on exactly.
+     *
+     * A fix here projects onto the turn's own vertex, which makes its `alongMeters` bit-for-bit the
+     * turn's own: the equality boundary, which is otherwise unreachable from a made-up fix.
+     */
+    private val theCornerAsKept = RoutePolyline.decode(RoutePolyline.encode(courseWithOneTurn))[5]
+
     /** A fix [alongMeters] along [courseWithOneTurn], and [offMeters] to the left of the line. */
     private fun onTheTurningCourse(alongMeters: Double, offMeters: Double = 0.0) =
         (if (alongMeters <= 500.0) at(alongMeters, -offMeters) else at(500.0 + offMeters, alongMeters - 500.0))
@@ -440,6 +450,29 @@ class CourseAlertsTest {
         fix(onTheDogLeg(530.0), secondsIn = 24)
 
         assertEquals(listOf("Turn left in 50 metres."), queue.texts())
+        watching.cancel()
+    }
+
+    /**
+     * The boundary #460's fourth round found, on the warning: a fix that lands exactly on the turn.
+     *
+     * The warning is false *from* the turn, not from a step past it. Left standing there because
+     * the runner is not yet strictly past the corner, it would be spoken from on top of the corner
+     * and send them fifty metres beyond it. Reaching the ground is what kills it.
+     */
+    @Test
+    fun `a fix landing exactly on the turn takes the warning back`() = runTest {
+        val dao = FakeRouteDao()
+        val routeId = dao.keep(courseWithOneTurn)
+        val watching = runningTheCourse(dao, routeId)
+
+        fix(onTheTurningCourse(400.0), secondsIn = 0)
+        fix(onTheTurningCourse(460.0), secondsIn = 10)
+        assertEquals(listOf("Turn right in 50 metres."), queue.texts())
+
+        fix(LocationFix(theCornerAsKept.latitude, theCornerAsKept.longitude, 5f, 3f, 0L), secondsIn = 18)
+
+        assertEquals(listOf("Turn right."), queue.texts())
         watching.cancel()
     }
 }
