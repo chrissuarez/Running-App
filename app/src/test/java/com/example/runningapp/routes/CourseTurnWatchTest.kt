@@ -71,7 +71,7 @@ class CourseTurnWatchTest {
         offMeters: Double = 0.0,
         accuracyMeters: Float? = 5f,
         autoPaused: Boolean = false,
-    ): List<String> = onFix(fix(alongMeters, offMeters, accuracyMeters), autoPaused).map { it.spoken }
+    ): List<String> = onFix(fix(alongMeters, offMeters, accuracyMeters), autoPaused).said.map { it.spoken }
 
     private val warning = "Turn left in 50 metres."
     private val theTurn = "Turn left."
@@ -201,7 +201,7 @@ class CourseTurnWatchTest {
             return watch.onFix(
                 LocationFix(place.latitude, place.longitude, 5f, 3f, 0L),
                 autoPaused = false,
-            ).map { it.spoken }
+            ).said.map { it.spoken }
         }
 
         assertEquals(nothing, say(0.0, 0.0))

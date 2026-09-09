@@ -3,6 +3,22 @@ package com.example.runningapp.routes
 import com.example.runningapp.recording.LocationFix
 
 /**
+ * What one course has to say about one fix: what to take back first, and what to say (#456).
+ */
+data class CourseSpeech(
+    /**
+     * Every turn cue of this Run not yet spoken has stopped being true; take the lot back.
+     *
+     * Turn cues alone, and never the off-course alerts waiting beside them — a runner who has
+     * reached a corner has not stopped being off the line by reaching it, and that sentence is
+     * still owed to them.
+     */
+    val takeBackTurnCues: Boolean,
+    /** What to say, in the order to say it. */
+    val said: List<CourseSaying>,
+)
+
+/**
  * Everything one course has to say to the runner following it: that they have left it or come back
  * to it (#58), and which way it bends ahead of them (#456).
  *
@@ -31,12 +47,21 @@ class CourseVoice private constructor(
     private val turns: CourseTurnWatch,
 ) {
 
-    /** Take one fix, and say everything this course has to say about it — in the order to say it. */
-    fun onFix(fix: LocationFix, nowMillis: Long, autoPaused: Boolean): List<CourseSaying> {
+    /**
+     * Take one fix, and say everything this course has to say about it — in the order to say it,
+     * and with whatever it now wants unsaid.
+     *
+     * Only the turns ever ask for something back mid-course ([TurnVoice]). An off-course alert is
+     * about where the runner is *now* and is true the moment it is made and afterwards; a turn cue
+     * is about ground fifty metres ahead, and the runner covering that ground while the cue waits
+     * its turn in the queue is what makes it false.
+     */
+    fun onFix(fix: LocationFix, nowMillis: Long, autoPaused: Boolean): CourseSpeech {
         val said = mutableListOf<CourseSaying>()
         offCourse.onFix(fix, nowMillis, autoPaused)?.let { said += it }
-        said += turns.onFix(fix, autoPaused)
-        return said
+        val turning = turns.onFix(fix, autoPaused)
+        said += turning.said
+        return CourseSpeech(takeBackTurnCues = turning.takeBackWhatIsWaiting, said = said)
     }
 
     /**

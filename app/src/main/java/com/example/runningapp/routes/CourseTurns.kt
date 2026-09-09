@@ -78,6 +78,8 @@ private const val TURNS_TOGETHER_METERS = TURN_WARNING_METERS
  * Under [TURN_WARNING_METERS] on purpose, so a warning can never still be waiting to be said once
  * the turn it warns about has been reached — by then the turn's own cue is the true sentence, and
  * this is what stops the two arriving together.
+ *
+ * It bounds both ends of a cue's life, not just the making of it: see [CueAt.trueUntilAlongMeters].
  */
 private const val TURN_CUE_LATE_METERS = 20.0
 
@@ -249,6 +251,30 @@ private fun bearingChangeDegrees(inX: Double, inY: Double, outX: Double, outY: D
 }
 
 /**
+ * What the turns of a course have to say about one fix (#456).
+ *
+ * Two things and not one, because a fix can be the moment a sentence is earned *and* the moment an
+ * earlier one stops being true — the runner reaching the corner earns "Turn left." and is exactly
+ * what makes the "Turn left in 50 metres." still waiting in the queue wrong.
+ */
+data class TurnVoice(
+    /**
+     * Every turn cue of this Run not yet spoken has stopped being true; take the lot back.
+     *
+     * All of them together, never some of them: see [CourseTurnWatch.cuesTrueUntilAlongMeters] for
+     * why one number covers the whole outstanding set.
+     */
+    val takeBackWhatIsWaiting: Boolean,
+    /** What to say, in the order to say it. */
+    val said: List<TurnCue>,
+) {
+    companion object {
+        /** A fix the turns have nothing to say about, and nothing to unsay. */
+        val NOTHING = TurnVoice(takeBackWhatIsWaiting = false, said = emptyList())
+    }
+}
+
+/**
  * Watches a routed Run against the turns of its course, and says which way it bends before it does
  * (#456).
  *
@@ -267,7 +293,10 @@ private fun bearingChangeDegrees(inX: Double, inY: Double, outX: Double, outY: D
  * told once, and an out-and-back that brings them over the same ground the other way is *forward*
  * along the line and reaches the turns beyond it, not the ones behind.
  *
- * **A cue about ground already covered is not said at all** ([TURN_CUE_LATE_METERS]).
+ * **A cue about ground already covered is not said at all, and one that becomes about ground already
+ * covered while it waits its turn in the queue is taken back** ([TURN_CUE_LATE_METERS],
+ * [cuesTrueUntilAlongMeters]). Both ends of the same rule: a turn cue is a sentence about ground the
+ * runner is arriving at, and it is worth nothing once they have gone past it.
  *
  * **How far off the line the runner is is not asked.** A course drawn down the middle of a road, a
  * runner on the far side of a dual carriageway and a file traced off somebody else's Run all put
@@ -291,8 +320,16 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
     private val cues: List<CueAt> = turns
         .flatMap {
             listOf(
-                CueAt(it.alongMeters - TURN_WARNING_METERS, TurnCue(it.direction, TurnCueMoment.AHEAD)),
-                CueAt(it.alongMeters, TurnCue(it.direction, TurnCueMoment.AT_THE_TURN)),
+                CueAt(
+                    alongMeters = it.alongMeters - TURN_WARNING_METERS,
+                    trueUntilAlongMeters = it.alongMeters,
+                    cue = TurnCue(it.direction, TurnCueMoment.AHEAD),
+                ),
+                CueAt(
+                    alongMeters = it.alongMeters,
+                    trueUntilAlongMeters = it.alongMeters + TURN_CUE_LATE_METERS,
+                    cue = TurnCue(it.direction, TurnCueMoment.AT_THE_TURN),
+                ),
             )
         }
         // Stable, so that where a turn's own cue and the next turn's warning fall on the very same
@@ -309,12 +346,34 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
     /** Whether the runner has reached the course, and the cues behind them been stepped over. */
     private var started = false
 
-    /** Take one fix, and say whatever the turns ahead of the runner have to say about it. */
-    fun onFix(fix: LocationFix, autoPaused: Boolean): List<TurnCue> {
-        if (autoPaused || !SessionRecorder.isAccuracyAccepted(fix.accuracyMeters)) return emptyList()
+    /**
+     * The furthest ground any turn cue this watch has made is still true at, or null once every one
+     * of them has been either spoken or taken back.
+     *
+     * **This is what makes a cue's staleness the watch's business and not the queue's.** A cue is
+     * enqueued and not spoken (#53): it waits behind whatever sentence is in flight, and fifty
+     * metres is some ten seconds, so a cue can outlive the ground it is about while it waits. The
+     * queue drops nothing, so the producer takes it back — and this is the producer.
+     *
+     * One number over every cue outstanding rather than one per cue, and it is enough: a cue's
+     * [CueAt.trueUntilAlongMeters] never decreases down [cues] (a turn's warning dies at the turn,
+     * the turn's own cue twenty metres after it, and the next turn is at least
+     * [TURNS_TOGETHER_METERS] further on), so this is the last one made and the largest. Past it,
+     * *every* cue still waiting is false and the whole lot can go in one act. Short of it, at least
+     * one is still true, and the withdrawal waits — which is the safe way round, because taking back
+     * a batch to catch a stale cue would silence a true one beside it.
+     */
+    private var cuesTrueUntilAlongMeters: Double? = null
+
+    /**
+     * Take one fix, and say whatever the turns ahead of the runner have to say about it — and what,
+     * having been said too soon, should now be unsaid.
+     */
+    fun onFix(fix: LocationFix, autoPaused: Boolean): TurnVoice {
+        if (autoPaused || !SessionRecorder.isAccuracyAccepted(fix.accuracyMeters)) return TurnVoice.NOTHING
         val here = course.progressAt(fix.latitude, fix.longitude, progress)
         progress = here
-        if (!here.hasReachedTheCourse) return emptyList()
+        if (!here.hasReachedTheCourse) return TurnVoice.NOTHING
 
         // Reaching the course says nothing, however much of it is behind: a runner who joins a loop
         // at its halfway point has not missed the turns of its first half, they are running the
@@ -322,16 +381,43 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
         if (!started) {
             started = true
             nextCue = cues.indexOfFirst { it.alongMeters > here.alongMeters }.takeIf { it >= 0 } ?: cues.size
-            return emptyList()
+            return TurnVoice.NOTHING
         }
+
+        // Taken back before this fix's own cues are made, and not after: the ground that kills the
+        // old ones is the very ground that earns the new, and a withdrawal that ran second would
+        // take back the sentence that replaces them.
+        val takeBack = cuesTrueUntilAlongMeters?.let { here.alongMeters > it } == true
+        if (takeBack) cuesTrueUntilAlongMeters = null
+
         val said = mutableListOf<TurnCue>()
         while (nextCue < cues.size && cues[nextCue].alongMeters <= here.alongMeters) {
             val cue = cues[nextCue++]
-            if (here.alongMeters - cue.alongMeters <= TURN_CUE_LATE_METERS) said += cue.cue
+            if (here.alongMeters - cue.alongMeters <= TURN_CUE_LATE_METERS) {
+                said += cue.cue
+                cuesTrueUntilAlongMeters = cue.trueUntilAlongMeters
+            }
         }
-        return said
+        return TurnVoice(takeBackWhatIsWaiting = takeBack, said = said)
     }
 
-    /** One sentence and the ground along the course that earns it. */
-    private class CueAt(val alongMeters: Double, val cue: TurnCue)
+    /**
+     * One sentence, the ground along the course that earns it, and the ground it dies at.
+     *
+     * **[trueUntilAlongMeters] is the whole of the staleness rule, stated once for both moments.** A
+     * turn cue is a sentence about ground the runner is arriving at, and it stops being true when
+     * they have gone past that ground. Where "past" falls is the only thing that differs:
+     *
+     *  - A warning says the turn is [TURN_WARNING_METERS] ahead. **Reaching the turn** makes it
+     *    false — not late, false, because it would send the runner that distance beyond the turning
+     *    they are standing on.
+     *  - The turn's own cue says to turn here. It is merely *late* for a while afterwards, and
+     *    [TURN_CUE_LATE_METERS] is how long a course cue is allowed to be late — the same number
+     *    that decides whether it is worth making in the first place.
+     */
+    private class CueAt(
+        val alongMeters: Double,
+        val trueUntilAlongMeters: Double,
+        val cue: TurnCue,
+    )
 }

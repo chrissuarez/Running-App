@@ -43,12 +43,13 @@ class CourseAlerts(
     /** Take back everything this Run's course had waiting to be said, of every kind. */
     private val withdraw: () -> Unit,
     /**
-     * Take back a turn warning of this Run that has not been spoken, and nothing else (#456).
+     * Take back the turn cues of this Run that have not been spoken, and nothing else (#456).
      *
      * Separate from [withdraw] on purpose: this fires while the course still stands, so it must
-     * leave an "Off course." waiting beside the warning alone — that one is still true.
+     * leave an "Off course." waiting beside them alone — a runner who has reached a corner has not
+     * stopped being off the line by reaching it.
      */
-    private val withdrawTurnWarning: () -> Unit,
+    private val withdrawTurnCues: () -> Unit,
     /**
      * The clock the ten-second wait is lived through — the phone's, for the reason
      * [OffCourseWatch.onFix] gives.
@@ -119,26 +120,18 @@ class CourseAlerts(
      * runner comes back onto the line and the moment the corner fifty metres ahead is worth a word,
      * and enqueueing only one of the two would be picking which of them is true.
      *
-     * **Reaching a turn takes back the warning about it** (#456). The queue drops nothing (#53) and
-     * a cue waits behind whatever sentence is already being spoken, so a "Turn left in 50 metres."
-     * enqueued a few seconds ago can still be waiting once the runner is standing at the corner —
-     * and then it is not a late cue but a wrong one, sending them fifty metres past the turning they
-     * are on. [TurnCueMoment.AT_THE_TURN] is the exact moment that stops being true, so the cue that
-     * says it is the one that takes the warning back, immediately before saying it.
-     *
-     * It cannot take back a warning that is still owed. Turn cues sit in the order the ground
-     * reaches them and are enqueued in that order, so the only warning ever waiting when an
-     * at-the-turn cue is made is that same turn's own — the next turn's warning is behind this cue
-     * in the list, never in front of it ([CourseTurnWatch]).
+     * **What is stale goes back before what is new goes in.** A cue is enqueued and not spoken, and
+     * the queue drops nothing (#53) — so a turn cue can outlive the ground it is about while it
+     * waits behind a sentence already in flight. Which cues those are is [CourseTurnWatch]'s
+     * judgement and stays there; what is here is the pairing of that judgement with the queue, the
+     * same as everything else in this class. Taking back first is what stops the withdrawal
+     * swallowing the very sentence that replaces what it took.
      */
     fun onFix(fix: LocationFix, autoPaused: Boolean) {
         synchronized(lock) {
-            watch?.onFix(fix, nowMillis(), autoPaused)?.forEach { saying ->
-                if (saying is TurnCue && saying.moment == TurnCueMoment.AT_THE_TURN) {
-                    withdrawTurnWarning()
-                }
-                speak(saying)
-            }
+            val speech = watch?.onFix(fix, nowMillis(), autoPaused) ?: return
+            if (speech.takeBackTurnCues) withdrawTurnCues()
+            speech.said.forEach(speak)
         }
     }
 
