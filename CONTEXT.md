@@ -312,19 +312,23 @@ anything that turns this number into a milestone the app says out loud.
 **Reversed** is the runner's word that they are setting off the other way round. It changes nothing
 about the line — the same ground in the same places, so the same line is drawn — and everything
 about which way you are *going* along it: the course is handed to the map already turned round, so
-distance remaining counts down from the end the runner actually set off at. A treadmill Run follows
-no course whatever was picked, there being no ground under a treadmill for a course to be over.
-_Avoid_: guided run, and turn-by-turn — the app says nothing about which way to go, only that the
-runner is no longer on the line (**Off course**). "Following no course" is still ordinary English and
-reads the way a Run following no **Workout** does.
+distance remaining counts down from the end the runner actually set off at, and its **Turn**s come
+in the order the Run reaches them and bend the way the Run takes them — a course run the other way
+round turns right where it turned left. A treadmill Run follows no course whatever was picked, there
+being no ground under a treadmill for a course to be over.
+_Avoid_: guided run, and turn-by-turn — the app reads no map, knows no street and cannot route: it
+says where the line the runner chose bends (**Turn**) and that they are no longer on it
+(**Off course**), and nothing at all about how to get anywhere. "Following no course" is still
+ordinary English and reads the way a Run following no **Workout** does.
 
 **Off course**:
 The runner has left the course their Run set out on, far enough and for long enough that they are
 told so (#58). Two spoken cues and nothing in between: "Off course." once they have been more than
 50 m from the line for 10 seconds, and "Back on course." once they are within 30 m of it again. A
 later excursion is told the same way. Deliberately not a running commentary — an intentional detour
-costs the runner exactly two sentences, and the app never says which way to turn, because it does not
-know: it has the line and where the runner is, and no notion of the streets between them.
+costs the runner exactly two sentences. What it never says is *how to get back*: it has the line and
+where the runner is, and no notion of the streets between them. Where the line itself bends is a
+different fact, and one the app does hold — see **Turn**.
 
 Nothing is said until the runner has first come within 30 m of the course — the same distance
 **Distance remaining** already trusts a fix at (#38) — so the walk from the front door to the start
@@ -339,6 +343,29 @@ How far off the line the runner is is not measured here — it is the one measur
 _Avoid_: off route, off track (a Track is what a Run recorded), lost, rerouting and re-routing
 (nothing is recalculated — the course never changes), and "off course" as a fact about a *Route*: it
 is a fact about a runner during one Run, and it lives only for as long as that Run does.
+
+**Turn**:
+A place where the course changes direction sharply enough to be a decision, and the two things said
+about it: "Turn left in 50 metres." as the runner comes up to it, and "Turn left." at it (#456). It
+is arithmetic on the line the runner already keeps — no map, no street names, no internet — so a
+Turn is a fact about the *course* and never about the ground: the app says where the line bends, and
+the runner is the one who can see whether there is a gate there.
+
+Found on the course's shape rather than on its every place, a bend of 45 degrees or more being a
+Turn and anything gentler a bend in a road. Turns less than 50 m apart — a roundabout, a chicane, a
+dog-leg round a building — are one instruction, spoken at the first of them, because they are one
+decision.
+
+Every rule **Off course** keeps, a Turn keeps: silence until the runner has first come within 30 m
+of the course, silence on a fix too coarse to trust and while the Run is auto-paused, nothing said
+twice, and a cue withdrawn rather than spoken if the Route changes shape or leaves the library while
+it waits (#377). Coming back down an out-and-back is *forward* along the course, so its Turns are
+behind the runner and stay silent. A cue about ground already covered is dropped rather than said
+late. Turns are **in addition to** the two Off course cues, not instead of them: missing a Turn still
+earns "Off course.".
+_Avoid_: turn-by-turn, navigation and directions as names for it, waypoint, junction, and street
+name of any kind (the app knows none); and **Turnaround**, which is the halfway point of an
+out-and-back Run the app announces (#208) and is nothing to do with the course.
 
 **Segment**:
 A stretch of ground the runner has named — "Cemetery Hill" — cut out of one Run they actually ran

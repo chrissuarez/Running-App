@@ -8,7 +8,7 @@ import kotlinx.coroutines.flow.map
 
 /**
  * The course a Run is being watched against, as it stands and as it stands again every time the
- * library moves under it (#58).
+ * library moves under it (#58, #456).
  *
  * Null throughout for a Run following no course, and null again the moment the Route is deleted —
  * which is the whole reason this is watched rather than read once at START. A Route stays the
@@ -33,10 +33,17 @@ import kotlinx.coroutines.flow.map
  *
  * [reversed] is the runner's word that they set off the other way round, applied here so the course
  * is handed over in the order the Run is running it, exactly as it is handed to the map (#56). It
- * makes no difference to how far off a line the runner is; handing it over any other way is how two
- * readers of one course come to disagree about it.
+ * makes no difference to how far off a line the runner is, and it makes all the difference to which
+ * way the course bends ([courseTurnsOf]); handing it over any other way is how two readers of one
+ * course come to disagree about it.
+ *
+ * **Every emission is real work**, and the collector has to be somewhere it may be spent: unpacking
+ * a line of up to twenty thousand places and walking it for its turns is tens of milliseconds at
+ * best, and a great deal more on a line built to be awkward. It is the same walk an import already
+ * does on a worker. Where that is spent is the collector's to choose, and the service chooses
+ * ([HrForegroundService], which collects this off its main-thread scope on purpose).
  */
-fun courseToWatchFlow(routeDao: RouteDao, routeId: Long?, reversed: Boolean): Flow<OffCourseWatch?> {
+fun courseToWatchFlow(routeDao: RouteDao, routeId: Long?, reversed: Boolean): Flow<CourseVoice?> {
     if (routeId == null) return flowOf(null)
     return routeDao.getRouteFlow(routeId)
         .map { route ->
@@ -44,5 +51,5 @@ fun courseToWatchFlow(routeDao: RouteDao, routeId: Long?, reversed: Boolean): Fl
             if (reversed) course.reversed() else course
         }
         .distinctUntilChanged()
-        .map(OffCourseWatch::of)
+        .map(CourseVoice::of)
 }

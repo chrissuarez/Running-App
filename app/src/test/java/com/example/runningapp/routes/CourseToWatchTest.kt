@@ -100,13 +100,16 @@ class CourseToWatchTest {
         val routeId = dao.keep(straightKilometre)
         val someOtherRoute = dao.keep(straightKilometre.take(3))
 
-        val watches = mutableListOf<OffCourseWatch?>()
+        val watches = mutableListOf<CourseVoice?>()
         backgroundScope.launch { courseToWatchFlow(dao, routeId, reversed = false).toList(watches) }
         runCurrent()
         val watch = watches.single()!!
         watch.onFix(onTheLine, 0L, autoPaused = false)
         watch.onFix(offTheLine, 1_000L, autoPaused = false)
-        assertEquals(CourseAlert.OFF_COURSE, watch.onFix(offTheLine, 11_000L, autoPaused = false))
+        assertEquals(
+            listOf(CourseAlert.OFF_COURSE),
+            watch.onFix(offTheLine, 11_000L, autoPaused = false),
+        )
 
         dao.renameRoute(someOtherRoute, "Somewhere else entirely")
         runCurrent()
@@ -114,7 +117,7 @@ class CourseToWatchTest {
         // One watch throughout, still holding what it said — so the runner is told they are back.
         assertEquals(1, watches.size)
         assertEquals(
-            CourseAlert.BACK_ON_COURSE,
+            listOf(CourseAlert.BACK_ON_COURSE),
             watches.last()!!.onFix(onTheLine, 12_000L, autoPaused = false),
         )
     }
@@ -128,7 +131,7 @@ class CourseToWatchTest {
         val dao = FakeRouteDao()
         val routeId = dao.keep(straightKilometre)
 
-        val watches = mutableListOf<OffCourseWatch?>()
+        val watches = mutableListOf<CourseVoice?>()
         backgroundScope.launch { courseToWatchFlow(dao, routeId, reversed = false).toList(watches) }
         runCurrent()
 
@@ -152,7 +155,7 @@ class CourseToWatchTest {
             watch.onFix(onTheLine, 0L, autoPaused = false)
             watch.onFix(offTheLine, 1_000L, autoPaused = false)
             assertEquals(
-                CourseAlert.OFF_COURSE,
+                listOf(CourseAlert.OFF_COURSE),
                 watch.onFix(offTheLine, 11_000L, autoPaused = false),
             )
         }

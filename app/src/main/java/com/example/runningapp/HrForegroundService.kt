@@ -53,6 +53,7 @@ import com.google.android.gms.location.LocationServices
 import java.util.UUID
 import com.example.runningapp.recording.LocationFix
 import com.example.runningapp.routes.CourseAlerts
+import com.example.runningapp.routes.CourseVoice
 import com.example.runningapp.routes.OffCourseWatch
 import com.example.runningapp.routes.courseToWatchFlow
 import com.example.runningapp.run.Acquisition
@@ -588,19 +589,19 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var pickedRouteReversed: Boolean = false
 
     /**
-     * The Run's course, watched, and the sentences it has to say about it (#58, #377) — silent for a
-     * Run following none, and for a routed Run in the moment between START and the course being read
-     * out of the library.
+     * The Run's course, watched, and the sentences it has to say about it (#58, #377, #456) —
+     * silent for a Run following none, and for a routed Run in the moment between START and the
+     * course being read out of the library.
      *
-     * Nothing here decides anything: [OffCourseWatch] decides, [CourseAlerts] holds that judgement
+     * Nothing here decides anything: [CourseVoice] decides, [CourseAlerts] holds that judgement
      * together with the cues it has enqueued, and this file only lends it the queue. The threads it
      * is reached from — the tracker's, for fixes, and a coroutine's, for the course — are its own
      * problem and it takes a lock over both.
      */
     private val courseAlerts = CourseAlerts(
-        speak = { alert ->
-            Log.d(TAG, "Course alert: $alert")
-            enqueueCue(alert.spoken, CuePriority.NAVIGATION, CueTag.COURSE)
+        speak = { saying ->
+            Log.d(TAG, "Course cue: ${saying.spoken}")
+            enqueueCue(saying.spoken, CuePriority.NAVIGATION, CueTag.COURSE)
         },
         withdraw = { withdrawCue(CueTag.COURSE) },
     )
@@ -1897,7 +1898,13 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         // the course before it left waiting is taken back and nothing can add to it (#377).
         courseAlerts.stop()
         if (routeId == null) return
-        courseWatchJob = serviceScope.launch {
+        // Off the main thread, unlike everything else this scope launches. Making a course out of a
+        // row is arithmetic over every place of the line — unpacking it, and walking it for its
+        // turns (#456) — and it happens again every time the Route is edited, which can be while the
+        // run screen is drawing. [CourseAlerts] takes a lock over everything it holds and is already
+        // reached from the location callback's thread, so it has no opinion about which thread this
+        // is.
+        courseWatchJob = serviceScope.launch(Dispatchers.Default) {
             courseAlerts.follow(courseToWatchFlow(database.routeDao(), routeId, reversed))
         }
     }
