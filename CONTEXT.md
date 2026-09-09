@@ -364,10 +364,15 @@ behind the runner and stay silent. A cue about ground already covered is dropped
 late. Turns are **in addition to** the two Off course cues, not instead of them: missing a Turn still
 earns "Off course.".
 
-How far off the line the runner is is not asked. A course drawn down the middle of a road leaves
-honest running tens of metres out — the same running **Off course** deliberately tolerates — and
-that runner needs the Turn told to them most of all. A runner who has genuinely left the course has
-Off course for it.
+Honest wander off the line is not asked about; having left the course is. A course drawn down the
+middle of a road leaves honest running tens of metres out — the same running **Off course**
+deliberately tolerates — and that runner needs the Turn told to them most of all, so every wander
+Off course calls being on the course still earns its Turns. Past that same distance nothing is said
+and nothing waiting is kept: where a fix sits on the course is read from around the fix before it,
+so a runner far from the line is placed at the nearest thing the window covers, and the nearest
+thing to somebody who has sailed past a turning is the very turning they missed. Coming back is a
+re-anchoring against the whole line, and it is silent about every Turn the runner did not reach —
+they did not run that stretch — while a Turn still in front of them is announced normally.
 _Avoid_: turn-by-turn and directions as names for it, waypoint, junction, and street name of any
 kind (the app knows none); and **Turnaround**, which is the halfway point of an out-and-back Run the
 app announces (#208) and is nothing to do with the course. A Turn is spoken at the *navigation*

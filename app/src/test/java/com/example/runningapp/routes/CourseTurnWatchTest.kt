@@ -353,4 +353,41 @@ class CourseTurnWatchTest {
         assertEquals(nothing, say(160.0, 0.0))
         assertEquals(nothing, say(200.0, 0.0))
     }
+
+    /**
+     * #460's seventh round: rejoining between a warning and its corner still earns the warning.
+     *
+     * The runner leaves the course before the warning is due and comes back past its trigger but
+     * short of the corner. The corner is genuinely in front of them, so they are told — stepping
+     * over by where a cue is *triggered* rather than by the turn it is *about* would swallow it and
+     * leave the corner announced only once they were standing on it.
+     */
+    @Test
+    fun `rejoining between a warning and its corner still earns the warning`() {
+        val watch = watch()
+        watch.reachTheCourse()
+
+        assertEquals(nothing, watch.at(300.0))
+        // Off the course, well past what OFF_COURSE_METERS tolerates.
+        assertEquals(nothing, watch.at(310.0, offMeters = 200.0))
+        // Back on the line at 360: past the warning's trigger at 350, short of the corner at 400.
+        assertEquals(listOf(warning), watch.at(360.0))
+        assertEquals(listOf(theTurn), watch.at(402.0))
+    }
+
+    /**
+     * And the other side of it: a corner the runner arrives *past* is not announced, however
+     * recently its cue came due. They did not run that ground and are not sent back to it.
+     */
+    @Test
+    fun `rejoining just past a corner says nothing about it`() {
+        val watch = watch()
+        watch.reachTheCourse()
+
+        assertEquals(nothing, watch.at(300.0))
+        assertEquals(nothing, watch.at(310.0, offMeters = 200.0))
+        // Back on the line at 410, ten metres beyond the corner at 400.
+        assertEquals(nothing, watch.at(410.0))
+        assertEquals(nothing, watch.at(430.0))
+    }
 }

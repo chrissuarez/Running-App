@@ -364,16 +364,17 @@ class CourseAlertsTest {
         val routeId = dao.keep(courseWithOneTurn)
         val watching = runningTheCourse(dao, routeId)
 
-        fix(onTheTurningCourse(400.0), secondsIn = 0)
-        fix(onTheTurningCourse(410.0, offMeters = 100.0), secondsIn = 1)
-        fix(onTheTurningCourse(410.0, offMeters = 100.0), secondsIn = 12)
-        fix(onTheTurningCourse(460.0), secondsIn = 20)
+        fix(onTheTurningCourse(300.0), secondsIn = 0)
+        fix(onTheTurningCourse(310.0, offMeters = 100.0), secondsIn = 1)
+        fix(onTheTurningCourse(310.0, offMeters = 100.0), secondsIn = 12)
+        fix(onTheTurningCourse(400.0), secondsIn = 20)
         assertEquals(
             listOf(CourseAlert.OFF_COURSE.spoken, CourseAlert.BACK_ON_COURSE.spoken),
             queue.texts(),
         )
 
-        // Back on the line and round the corner: the cue is made, then goes stale behind them.
+        // Back on the line and round the corner: the cues are made, then go stale behind them.
+        fix(onTheTurningCourse(460.0), secondsIn = 24)
         fix(onTheTurningCourse(505.0), secondsIn = 25)
         assertEquals(
             listOf(CourseAlert.OFF_COURSE.spoken, CourseAlert.BACK_ON_COURSE.spoken, "Turn right."),
