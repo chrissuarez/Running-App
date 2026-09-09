@@ -57,17 +57,11 @@ class CourseAlertsTest {
     private val cues = OutstandingCues()
     private var clockMillis = 0L
     private val alerts = CourseAlerts(
-        speak = { saying -> cues.record(saying.tag()) { queue.enqueue(saying.spoken) } },
-        withdraw = {
-            queue.withdrawAll(cues.takeBack(CueTag.COURSE) + cues.takeBack(CueTag.COURSE_TURN))
-        },
-        withdrawTurnCues = { queue.withdrawAll(cues.takeBack(CueTag.COURSE_TURN)) },
+        speak = { saying -> cues.record(CueTag.COURSE) { queue.enqueue(saying.spoken) } },
+        withdraw = { queue.withdrawAll(cues.takeBack(CueTag.COURSE)) },
+        withdrawCues = { tickets -> queue.withdrawAll(cues.takeBackTickets(tickets)) },
         nowMillis = { clockMillis },
     )
-
-    /** The name the service enqueues a course cue under, mirrored here (`HrForegroundService`). */
-    private fun CourseSaying.tag(): CueTag =
-        if (this is TurnCue) CueTag.COURSE_TURN else CueTag.COURSE
 
     private val originLatitude = 51.5
     private val originLongitude = -0.1
@@ -89,6 +83,29 @@ class CourseAlertsTest {
      */
     private val courseWithOneTurn =
         (0..5).map { at(it * 100.0) } + (1..5).map { at(500.0, it * 100.0) }
+
+    /**
+     * A dog-leg: five hundred metres north, sixty east, then north again. Two turns — a right at
+     * five hundred and a left at five hundred and sixty — and sixty metres apart they are two
+     * instructions, not one ([TURNS_TOGETHER_METERS] merges only what is nearer than fifty).
+     *
+     * The gap is what matters. The second turn's warning is earned at five hundred and ten, which
+     * is inside the twenty metres the first turn's own cue is still worth hearing for, so a busy
+     * queue holds them both at once — and they stop being true thirty metres apart.
+     */
+    private val courseWithTwoTurns =
+        (0..5).map { at(it * 100.0) } +
+            (1..3).map { at(500.0, it * 20.0) } +
+            (1..10).map { at(500.0 + it * 40.0, 60.0) }
+
+    /** A fix [alongMeters] along [courseWithTwoTurns]. */
+    private fun onTheDogLeg(alongMeters: Double) = when {
+        alongMeters <= 500.0 -> at(alongMeters)
+        alongMeters <= 560.0 -> at(500.0, alongMeters - 500.0)
+        else -> at(500.0 + (alongMeters - 560.0), 60.0)
+    }.let {
+        LocationFix(it.latitude, it.longitude, 5f, 3f, 0L)
+    }
 
     /** A fix [alongMeters] along [courseWithOneTurn], and [offMeters] to the left of the line. */
     private fun onTheTurningCourse(alongMeters: Double, offMeters: Double = 0.0) =
@@ -391,6 +408,38 @@ class CourseAlertsTest {
         fix(onTheTurningCourse(530.0, offMeters = 60.0), secondsIn = 20)
 
         assertEquals(listOf(CourseAlert.OFF_COURSE.spoken), queue.texts())
+        watching.cancel()
+    }
+
+    /**
+     * #460's third round, and why the deadline lives on the cue rather than on the watch.
+     *
+     * Two turns sixty metres apart put two cues in the queue together — the first turn's own
+     * "Turn right." and the second turn's "Turn left in 50 metres." — and they stop being true
+     * thirty metres apart. Held under one deadline, either the live one goes with the dead one or
+     * the dead one waits for the live one; both are a wrong sentence in the runner's ear. Each cue
+     * carries its own, so thirty metres past the first corner exactly one of them goes.
+     */
+    @Test
+    fun `a stale turn cue goes and the live one waiting behind it stays`() = runTest {
+        val dao = FakeRouteDao()
+        val routeId = dao.keep(courseWithTwoTurns)
+        val watching = runningTheCourse(dao, routeId)
+
+        fix(onTheDogLeg(400.0), secondsIn = 0)
+        fix(onTheDogLeg(460.0), secondsIn = 10)
+        assertEquals(listOf("Turn right in 50 metres."), queue.texts())
+
+        // At the first corner: its own cue is earned, the second corner's warning with it, and the
+        // warning about the corner they are standing on goes.
+        fix(onTheDogLeg(512.0), secondsIn = 20)
+        assertEquals(listOf("Turn right.", "Turn left in 50 metres."), queue.texts())
+
+        // Thirty metres past the first corner. "Turn right." has stopped being true; the second
+        // corner is still thirty metres ahead and its warning is still owed.
+        fix(onTheDogLeg(530.0), secondsIn = 24)
+
+        assertEquals(listOf("Turn left in 50 metres."), queue.texts())
         watching.cancel()
     }
 }

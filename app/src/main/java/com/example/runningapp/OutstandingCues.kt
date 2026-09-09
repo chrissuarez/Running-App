@@ -16,6 +16,9 @@ import com.example.runningapp.run.CueTag
  * - **By name** ([takeBack]), for cues that have stopped being true mid-Run — the halfway
  *   turnaround when the Run skips into its cool-down (#208), and the course alerts when the course
  *   they were made about goes (#377).
+ * - **One at a time, by ticket** ([takeBackTickets]), for cues that stop being true one by one
+ *   rather than all together — the turn cues, each of which is about its own piece of ground and
+ *   dies when the runner passes it (#456).
  * - **All of them** ([takeBackAll]), at the end of the Run, because a cue that has not been spoken
  *   by then is an instruction for a Run that is over (#220).
  *
@@ -74,6 +77,29 @@ class OutstandingCues {
         synchronized(lock) {
             val taken = byTag.remove(tag) ?: return emptyList()
             tickets.removeAll(taken.toSet())
+            return taken
+        }
+    }
+
+    /**
+     * These tickets, whichever of them are still outstanding, now the caller's to withdraw.
+     *
+     * By ticket rather than by name because the caller is taking back *some* of the cues under a
+     * name and leaving the rest: a turn cue is about one piece of ground and stops being true when
+     * the runner passes it, so two of them waiting together can stop being true at different
+     * moments, and a withdrawal by name would silence the one that is still worth hearing (#456).
+     *
+     * A ticket that is not outstanding — already withdrawn, or already spoken and swept by
+     * [takeBack] — is not handed back twice. What comes back is exactly what this call took.
+     */
+    fun takeBackTickets(wanted: Collection<Long>): List<Long> {
+        synchronized(lock) {
+            val taken = wanted.filter { it in tickets }
+            if (taken.isEmpty()) return emptyList()
+            val dropped = taken.toSet()
+            tickets.removeAll(dropped)
+            byTag.values.forEach { it.removeAll(dropped) }
+            byTag.entries.removeAll { it.value.isEmpty() }
             return taken
         }
     }
