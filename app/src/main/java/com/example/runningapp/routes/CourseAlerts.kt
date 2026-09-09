@@ -6,9 +6,9 @@ import kotlinx.coroutines.flow.Flow
 /**
  * The app's voice about the course for the length of one Run: which course is being watched, what
  * it has to say about each fix, and what happens to a sentence that has not been said yet when the
- * course goes out from under it (#58, #377).
+ * course goes out from under it (#58, #377, #456).
  *
- * The judgement itself is [OffCourseWatch]'s and stays there. What is here is the pairing of that
+ * The judgement itself is [CourseVoice]'s and stays there. What is here is the pairing of that
  * judgement with the queue: a course alert is enqueued rather than spoken, and the queue never cuts
  * off the sentence already in flight (#53), so an alert can wait a whole split announcement before
  * it is heard. [courseToWatchFlow] can hand over a different course — or no course at all, the
@@ -39,7 +39,7 @@ import kotlinx.coroutines.flow.Flow
  */
 class CourseAlerts(
     /** Enqueue this sentence, in its turn — tagged, so that [withdraw] can name it again. */
-    private val speak: (CourseAlert) -> Unit,
+    private val speak: (CourseSaying) -> Unit,
     /** Take back every course alert of this Run that has not been spoken. */
     private val withdraw: () -> Unit,
     /**
@@ -52,7 +52,7 @@ class CourseAlerts(
     private val lock = Any()
 
     /** The course being watched, or null for a Run following none — and for a Route deleted. */
-    private var watch: OffCourseWatch? = null
+    private var watch: CourseVoice? = null
 
     /** Which watching is the current one. A collection with an older number writes nothing. */
     private var watching = 0L
@@ -66,7 +66,7 @@ class CourseAlerts(
      * Beginning is itself a stop: this course is watched from nothing, so a course left behind by
      * whatever was being watched before has nothing waiting by the time the first fix is read.
      */
-    suspend fun follow(courses: Flow<OffCourseWatch?>) {
+    suspend fun follow(courses: Flow<CourseVoice?>) {
         val mine = beginWatching()
         courses.collect { next -> watchInstead(mine, next) }
     }
@@ -97,7 +97,7 @@ class CourseAlerts(
      * off the old line is not told they are back on this one, and an "Off course." withdrawn here
      * leaves no half-state behind — the state that made it went with the watch that made it.
      */
-    private fun watchInstead(mine: Long, next: OffCourseWatch?) {
+    private fun watchInstead(mine: Long, next: CourseVoice?) {
         synchronized(lock) {
             if (mine != watching) return
             withdraw()
@@ -105,17 +105,22 @@ class CourseAlerts(
         }
     }
 
-    /** Take one fix, and enqueue whatever the course being watched has to say about it. */
+    /**
+     * Take one fix, and enqueue everything the course being watched has to say about it.
+     *
+     * All of it, in the order [CourseVoice] hands it over: one fix can be both the moment the
+     * runner comes back onto the line and the moment the corner fifty metres ahead is worth a word,
+     * and enqueueing only one of the two would be picking which of them is true.
+     */
     fun onFix(fix: LocationFix, autoPaused: Boolean) {
         synchronized(lock) {
-            val alert = watch?.onFix(fix, nowMillis(), autoPaused) ?: return
-            speak(alert)
+            watch?.onFix(fix, nowMillis(), autoPaused)?.forEach(speak)
         }
     }
 
     /**
      * The fixes have stopped keeping up with the runner — a manual Pause, or the end of the Run.
-     * See [OffCourseWatch.recordingBroke]; only the wait is let go of.
+     * See [CourseVoice.recordingBroke]; only the wait is let go of.
      */
     fun recordingBroke() {
         synchronized(lock) { watch?.recordingBroke() }

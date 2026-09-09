@@ -40,8 +40,23 @@ const val BACK_ON_COURSE_METERS = REACHED_THE_COURSE_METERS
  */
 const val OFF_COURSE_SUSTAINED_MS = 10_000L
 
-/** One of the two things the app says about the course, and the sentence it says (#58). */
-enum class CourseAlert(val spoken: String) {
+/**
+ * Anything the app says out loud about the course of a routed Run.
+ *
+ * Two kinds so far, and one name over both because everything past the sentence is the same for
+ * them: they go out at [com.example.runningapp.CuePriority.NAVIGATION], under
+ * [com.example.runningapp.run.CueTag.COURSE], and they are taken back together the moment the line
+ * they are about changes shape or leaves the library (#377). What differs is only which is
+ * [CourseAlert] — the runner has left the line, or come back to it (#58) — and which is a
+ * [TurnCue]: the line ahead of them bends (#456).
+ */
+interface CourseSaying {
+    /** The sentence, exactly as it is spoken. */
+    val spoken: String
+}
+
+/** One of the two things the app says about being on the course, and the sentence it says (#58). */
+enum class CourseAlert(override val spoken: String) : CourseSaying {
     /** The runner has been [OFF_COURSE_METERS] off the line for [OFF_COURSE_SUSTAINED_MS]. */
     OFF_COURSE("Off course."),
 

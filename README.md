@@ -224,6 +224,11 @@ the dated sections below this one are older and are kept as history.
     - Rename and delete. Deleting a route never touches a run: routes and history are unconnected.
     - A file that isn't a GPX, is damaged, or holds no route is refused with a message saying why,
       and nothing is saved.
+    - **What a routed run says out loud**: "Off course." after 50 m off the line for 10 seconds and
+      "Back on course." within 30 m of it again; and, at every bend of about 45 degrees or more,
+      "Turn left in 50 metres." then "Turn left." Bends within 50 m of each other are one cue, not
+      four. All of it is arithmetic on the line you already keep — no map service, no internet, no
+      street names — and none of it is spoken until you have actually reached the course.
 - **Segments**:
     - **Cut one from a run you ran**: Name a stretch of ground — "Cemetery Hill" — marked out on a
       past run's own track. Never drawn freehand, and never taken across a pause or lost signal,
