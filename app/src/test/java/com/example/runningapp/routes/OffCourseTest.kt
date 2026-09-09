@@ -53,7 +53,7 @@ class OffCourseTest {
     /** The clock, in seconds since the Run began — every test writes its waits in seconds. */
     private fun seconds(value: Long) = value * 1000L
 
-    private fun watch() = OffCourseWatch.of(straightKilometre)!!
+    private fun watch() = OffCourseWatch(CourseLine.of(straightKilometre)!!)
 
     /**
      * Walk the runner up the course to arm the alerts, at [second] on the clock. The first fix is
@@ -62,10 +62,11 @@ class OffCourseTest {
     private fun OffCourseWatch.reachTheCourse(second: Long = 0L): CourseAlert? =
         onFix(fix(0.0), seconds(second), autoPaused = false)
 
+    /** The one door a Run builds a course through, and what it says about a course of no ground. */
     @Test
     fun `a Run following no course has nothing to watch`() {
-        assertNull(OffCourseWatch.of(emptyList()))
-        assertNull(OffCourseWatch.of(listOf(at(0.0))))
+        assertNull(CourseVoice.of(emptyList()))
+        assertNull(CourseVoice.of(listOf(at(0.0))))
     }
 
     @Test

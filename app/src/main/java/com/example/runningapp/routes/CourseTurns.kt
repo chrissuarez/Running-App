@@ -2,13 +2,10 @@ package com.example.runningapp.routes
 
 import com.example.runningapp.analysis.thinnedLineIndices
 import com.example.runningapp.recording.LocationFix
-import com.example.runningapp.recording.METERS_PER_DEGREE
 import com.example.runningapp.recording.SessionRecorder
-import com.example.runningapp.recording.degreesEastOf
 import com.example.runningapp.recording.geodesicDistanceMeters
 import kotlin.math.abs
 import kotlin.math.atan2
-import kotlin.math.cos
 
 /**
  * How far a place may sit from the line drawn without it before the turn-finding keeps it (#456).
@@ -146,22 +143,21 @@ data class TurnCue(val direction: TurnDirection, val moment: TurnCueMoment) : Co
  * *which* places are turns and the full line decides *how far along* each of them is, and the number
  * that comes out is the very number [CourseLine] hands back for a fix.
  *
+ * **The walk is bounded by the line it is handed.** [thinnedLineIndices] is quadratic on a line
+ * built to defeat it, and what arrives here is a Route's stored line — which `courseOf` has already
+ * put through that very walk, under its own bound of twenty thousand places. So this is no bigger
+ * a walk than the import that made the row already did, and it is done off the main thread for the
+ * reason [courseToWatchFlow] gives.
+ *
  * Pure — no clock, no Android — and scripted in [com.example.runningapp.routes.CourseTurnsTest].
  */
 fun courseTurnsOf(points: List<RoutePoint>): List<CourseTurn> {
     if (points.size < 3) return emptyList()
 
-    // Metres on a flat sheet, taken once for the whole course, exactly as the shaping in `Course.kt`
-    // lays a line out: a degree of longitude shrinks going north, so it is shrunk by the cosine of
-    // where the course is, and how far east a place lies is asked of [degreesEastOf] so a course
-    // over the date line is laid out the way it is run rather than flung round the world. A course
-    // is kilometres, not hundreds, so the sheet is a tenth of a percent out at its far end — which
-    // moves no bearing by a degree and cannot turn a corner into a straight.
-    val cosLatitude = cos(Math.toRadians(points.first().latitude))
-    val x = DoubleArray(points.size) {
-        degreesEastOf(points.first().longitude, points[it].longitude) * METERS_PER_DEGREE * cosLatitude
-    }
-    val y = DoubleArray(points.size) { (points[it].latitude - points.first().latitude) * METERS_PER_DEGREE }
+    // The very sheet the row's own shaping is laid out on, and shared with it for that reason
+    // ([flattenedToMeters]): the two are asking different questions of one line, and they must not
+    // be able to lay it out differently while doing so.
+    val (x, y) = points.flattenedToMeters()
 
     // Ground along the whole line, place by place — [geodesicDistanceMeters], the function that
     // measured the Route's distance when it was kept and that [CourseLine] measures a fix's progress
@@ -199,6 +195,14 @@ private class Bend(val alongMeters: Double, val degrees: Double)
  * first and a warning has to be about the turning in front of them. Put at the last, or at the
  * middle of the run, a roundabout would be announced from inside it.
  *
+ * **A run is measured from that first bend and not from the bend before it**, so one instruction
+ * covers under [TURNS_TOGETHER_METERS] of course and no more. Measured bend to bend a run would
+ * chain: a winding trail of bends forty-nine metres apart would fold into a single cue at its first
+ * one and say nothing at all for the rest of the trail, which is the opposite of what merging is
+ * for. It is also what keeps two instructions out of the air at once — the runs it makes start at
+ * least [TURNS_TOGETHER_METERS] apart, so the next run's warning never lands before this run's own
+ * cue.
+ *
  * **The direction is the sharpest bend's**, not the sum of them. A chicane is a hard left and a hard
  * right and sums to nothing at all, which is no instruction; a roundabout taken most of the way
  * round sums past a half turn and comes out the wrong way about. The sharpest bend of a run is the
@@ -210,7 +214,9 @@ private fun List<Bend>.mergedWhereTheyArriveTogether(): List<CourseTurn> {
     var index = 0
     while (index < size) {
         var last = index
-        while (last + 1 < size && this[last + 1].alongMeters - this[last].alongMeters < TURNS_TOGETHER_METERS) {
+        while (last + 1 < size &&
+            this[last + 1].alongMeters - this[index].alongMeters < TURNS_TOGETHER_METERS
+        ) {
             last++
         }
         val sharpest = subList(index, last + 1).maxByOrNull { abs(it.degrees) }!!
@@ -228,9 +234,11 @@ private fun List<Bend>.mergedWhereTheyArriveTogether(): List<CourseTurn> {
  * negative to the left, and null where either leg has no length to have a direction.
  *
  * Held inside half a turn either way, so a hairpin comes out as a hard turn rather than as a gentle
- * one the long way round. A hairpin of exactly half a turn lands on the right, which is arbitrary
- * and has to be: a course that doubles back on itself bends both ways at once, and a runner who has
- * to turn round can see that for themselves whichever word is used.
+ * one the long way round. The half turn itself lands on the **left** — a course that doubles back
+ * exactly on itself bends both ways at once, so one of the two words has to be picked arbitrarily,
+ * and a runner who has to turn round can see that for themselves whichever word is used. It is the
+ * left because the range this lands in is [-180, 180), and that is stated rather than left to be
+ * worked out from the arithmetic.
  */
 private fun bearingChangeDegrees(inX: Double, inY: Double, outX: Double, outY: Double): Double? {
     if ((inX == 0.0 && inY == 0.0) || (outX == 0.0 && outY == 0.0)) return null
@@ -254,16 +262,19 @@ private fun bearingChangeDegrees(inX: Double, inY: Double, outX: Double, outY: D
  * **A fix that is not trusted is not heard**, and nothing is said while the Run is auto-paused —
  * standing still is not approaching a turn.
  *
- * **Silent while the runner is off the line.** A runner further than [OFF_COURSE_METERS] from the
- * course is not approaching its turns, they are somewhere else; the app has one sentence for that
- * and this is not it. Their place on the course is still read, so nothing is lost by it.
- *
  * **Nothing is said twice.** The cues are held in the order the course reaches them and a pointer
  * walks that list forwards and never back — so a runner wobbling either side of the trigger point is
  * told once, and an out-and-back that brings them over the same ground the other way is *forward*
  * along the line and reaches the turns beyond it, not the ones behind.
  *
  * **A cue about ground already covered is not said at all** ([TURN_CUE_LATE_METERS]).
+ *
+ * **How far off the line the runner is is not asked.** A course drawn down the middle of a road, a
+ * runner on the far side of a dual carriageway and a file traced off somebody else's Run all put
+ * honest running tens of metres out ([OFF_COURSE_METERS]), and that runner needs the corner told to
+ * them most of all. A runner who has genuinely left the course has their own sentence for it and is
+ * not helped by a second rule here — and one added here would be a rule that *loses* turns, the
+ * cues it kept quiet arriving stale by the time the runner was back near enough to be told.
  *
  * **Where the runner is on the course is read here as well as by [OffCourseWatch].** Two readings of
  * the one [CourseLine] rather than one shared between them, because the two want different things
@@ -313,8 +324,6 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
             nextCue = cues.indexOfFirst { it.alongMeters > here.alongMeters }.takeIf { it >= 0 } ?: cues.size
             return emptyList()
         }
-        if (here.metersFromCourse > OFF_COURSE_METERS) return emptyList()
-
         val said = mutableListOf<TurnCue>()
         while (nextCue < cues.size && cues[nextCue].alongMeters <= here.alongMeters) {
             val cue = cues[nextCue++]

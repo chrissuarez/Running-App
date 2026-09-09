@@ -150,6 +150,66 @@ class CourseTurnsTest {
     }
 
     /**
+     * A chicane is the case the merge's *direction* rule exists for: a hard left and a hard right
+     * thirty metres apart, which sum to nothing at all. Summed, it would be no instruction; the cue
+     * is the sharpest of the two, which is the bend the runner would actually miss.
+     */
+    @Test
+    fun `a chicane is one cue, and it says the sharper of the two bends`() {
+        // North, then thirty metres off to the left at sixty degrees, then north again: a hard left
+        // and a hard right of the same sharpness, which sum to nothing.
+        val course = start.north(300.0)
+            .thenGo(30.0, northPerMeter = 0.5, eastPerMeter = -0.866, every = 30.0)
+            .north(300.0)
+        // The two are equally sharp, and the earlier wins — it is the one the runner meets.
+        assertEquals(listOf("left at 300 m"), turnsOf(course))
+    }
+
+    /**
+     * A roundabout taken most of the way round: four bends inside twenty metres, summing past a half
+     * turn and coming out pointing the wrong way about. One cue, at the first of them, saying the
+     * sharpest — never the sum.
+     */
+    @Test
+    fun `a roundabout is one cue, not four`() {
+        val roundabout = (1..5).map { step ->
+            val radians = Math.toRadians(step * 270.0 / 5)
+            at(northMeters = 300.0 + 10.0 * Math.sin(radians), eastMeters = 10.0 - 10.0 * Math.cos(radians))
+        }
+        val course = start.north(300.0) + roundabout + at(300.0 - 10.0, 20.0) + at(0.0, 20.0)
+        assertEquals(1, courseTurnsOf(course).size)
+        assertEquals(300L, Math.round(courseTurnsOf(course).single().alongMeters))
+    }
+
+    /**
+     * A course that doubles back exactly on itself bends both ways at once. It is a turn — the
+     * sharpest there is — and the word is the left, which is arbitrary and pinned here so that it
+     * cannot drift.
+     */
+    @Test
+    fun `a course that doubles back exactly on itself turns left`() {
+        val course = start.north(500.0) + (1..20).map { at(500.0 - it * 25.0) }
+        assertEquals(listOf("left at 501 m"), turnsOf(course))
+    }
+
+    /**
+     * The merge measures from the first bend of a run, not from the bend before it, so a run of them
+     * cannot chain: a winding trail of bends forty metres apart would otherwise fold into one cue at
+     * its first bend and say nothing for the rest of the trail.
+     */
+    @Test
+    fun `a long run of bends does not fold into one cue`() {
+        var course = start.north(200.0)
+        // Ten alternating right angles, forty metres apart — under the fifty that merges a pair.
+        for (step in 0 until 10) {
+            course = if (step % 2 == 0) course.east(40.0, every = 40.0) else course.north(40.0, every = 40.0)
+        }
+        val turns = courseTurnsOf(course)
+        // Pairs, not one and not ten: each cue covers under fifty metres of course.
+        assertEquals(5, turns.size)
+    }
+
+    /**
      * An out-and-back turns round at its far end, and turning round is the sharpest turn there is.
      * The way back here is ten metres to the side, as a real one is — two right angles ten metres
      * apart, which is one decision and told once.
