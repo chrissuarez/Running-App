@@ -338,12 +338,28 @@ data class TurnVoice(
  * carries its own deadline, because two of them can be waiting at once and stop being true at
  * different moments.
  *
- * **How far off the line the runner is is not asked.** A course drawn down the middle of a road, a
- * runner on the far side of a dual carriageway and a file traced off somebody else's Run all put
- * honest running tens of metres out ([OFF_COURSE_METERS]), and that runner needs the corner told to
- * them most of all. A runner who has genuinely left the course has their own sentence for it and is
- * not helped by a second rule here — and one added here would be a rule that *loses* turns, the
- * cues it kept quiet arriving stale by the time the runner was back near enough to be told.
+ * **Honest wander off the line is not asked about; having left the course is.** A course drawn down
+ * the middle of a road, a runner on the far side of a dual carriageway and a file traced off
+ * somebody else's Run all put honest running tens of metres out, and that runner needs the corner
+ * told to them most of all — so nothing here narrows what [OFF_COURSE_METERS] already calls being on
+ * the course.
+ *
+ * Past it, the question is not whether to be helpful but whether anything is known. Where a fix
+ * sits on the course is read from around the fix before it ([AHEAD_METERS]), so a runner far from
+ * the line is placed at the edge of that window — and an edge can be a corner. A runner who sails
+ * past a turning and keeps going is nearest, of everything the window covers, to the very turning
+ * they missed, and the arithmetic then says they are standing on it. Read on, that is "Turn right."
+ * spoken two hundred metres the wrong side of the corner, which is the exact sentence
+ * [TURN_CUE_LATE_METERS] exists to prevent and cannot, because the ground is wrong rather than the
+ * cue. So while the runner is out there this says nothing and trusts nothing.
+ *
+ * **Coming back is a re-anchoring, and it is silent.** Read against the whole course, the way
+ * [OffCourseWatch] reads it at the same moment and for the same reason — a runner rejoins wherever
+ * the streets let them, which can be past the end of the window the last fix opened. Where they
+ * rejoin is where they are, and every cue behind it is stepped over without a word: a runner who
+ * left at the first corner and came back at the last has not turned the corners in between and must
+ * not be told about them. It costs the corners of the stretch they were away from, which are corners
+ * they did not run.
  *
  * **Where the runner is on the course is read here as well as by [OffCourseWatch].** Two readings of
  * the one [CourseLine] rather than one shared between them, because the two want different things
@@ -387,6 +403,17 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
     private var started = false
 
     /**
+     * Whether the runner is far enough off the line that where they are *on* it cannot be believed.
+     *
+     * [OFF_COURSE_METERS] is the app's own line between honest wander and having left the course,
+     * and it is reused here rather than restated so that this watch and [OffCourseWatch] never
+     * disagree about which of the two a runner is doing. Unlike that watch there is no wait to live
+     * through first: the ten seconds are there so a blip cannot make the app *say* something wrong,
+     * and going quiet on a blip says nothing at all.
+     */
+    private var strayed = false
+
+    /**
      * Take one fix, and say whatever the turns ahead of the runner have to say about it — with,
      * for each sentence, the ground past which it should be unsaid.
      *
@@ -398,9 +425,40 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
      */
     fun onFix(fix: LocationFix, autoPaused: Boolean): TurnVoice {
         if (autoPaused || !SessionRecorder.isAccuracyAccepted(fix.accuracyMeters)) return TurnVoice.NOTHING
+
+        if (strayed) {
+            // Against the whole course, not against the stretch of it the runner was last near —
+            // the argument [OffCourseWatch.onFix] makes at this same moment. The window around
+            // where they were cannot reach where they have got to, so asking it would answer with
+            // its own edge for the rest of the Run.
+            //
+            // An out-and-back can read as its outward half here, which the window exists to
+            // prevent; that is the price of having nothing better, and it is the price the other
+            // watch already pays. Nothing is claimed while they are away, and the moment they are
+            // back the whole-line reading *is* where they are, so it becomes the anchor again.
+            val rejoined = course.progressAt(fix.latitude, fix.longitude, previous = null)
+            if (rejoined.metersFromCourse > BACK_ON_COURSE_METERS) return TurnVoice.NOTHING
+            progress = rejoined
+            strayed = false
+            // Silent, exactly as first reaching the course is silent, and for the same reason: the
+            // corners of the stretch they were away from are corners they did not run.
+            nextCue = cues.indexOfFirst { it.alongMeters > rejoined.alongMeters }.takeIf { it >= 0 }
+                ?: cues.size
+            return TurnVoice(alongMeters = rejoined.alongMeters, said = emptyList())
+        }
+
         val here = course.progressAt(fix.latitude, fix.longitude, progress)
+        if (!here.hasReachedTheCourse) {
+            progress = here
+            return TurnVoice.NOTHING
+        }
+        if (here.metersFromCourse > OFF_COURSE_METERS) {
+            // The anchor is left where it was. It is the last place the runner was actually seen on
+            // the course, and a place read from out here is not a place.
+            strayed = true
+            return TurnVoice.NOTHING
+        }
         progress = here
-        if (!here.hasReachedTheCourse) return TurnVoice.NOTHING
 
         // Reaching the course says nothing, however much of it is behind: a runner who joins a loop
         // at its halfway point has not missed the turns of its first half, they are running the

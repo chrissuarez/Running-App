@@ -126,17 +126,22 @@ class CourseTurnWatchTest {
     }
 
     /**
-     * A course drawn down the middle of a dual carriageway leaves an honest runner sixty metres off
-     * the line for the whole Run — far enough to be told they are off course, and the runner who
-     * most needs to know the course turns left. How far off the line they are is not asked here.
+     * A course drawn down the middle of a road, a runner on the far pavement, a file traced off
+     * somebody else's Run: honest running sits tens of metres off the line, and that runner most
+     * needs to know the course turns left. Every wander [OFF_COURSE_METERS] calls being on the
+     * course is still on the course here — the same number the off-course alerts use, so the app
+     * never tells a runner they have left the line and where to turn on it in the same breath.
+     *
+     * Forty metres rather than fifty exactly: the metres in this file are flat ones and the course
+     * counts round ones, so a fix written at the boundary lands either side of it by centimetres.
      */
     @Test
     fun `a runner running wide of the line is still told about the corner`() {
         val watch = watch()
         watch.reachTheCourse()
 
-        assertEquals(listOf(warning), watch.at(355.0, offMeters = 60.0))
-        assertEquals(listOf(theTurn), watch.at(402.0, offMeters = 60.0))
+        assertEquals(listOf(warning), watch.at(355.0, offMeters = 40.0))
+        assertEquals(listOf(theTurn), watch.at(402.0, offMeters = 40.0))
     }
 
     /**
@@ -237,5 +242,70 @@ class CourseTurnWatchTest {
 
         assertEquals(nothing, watch.at(390.0))
         assertEquals(nothing, watch.at(420.1))
+    }
+
+    /**
+     * #460's fifth round: a runner far off the line is placed at the edge of the window the last fix
+     * opened, and that edge can be a corner.
+     *
+     * The course is an L — five hundred north, then east — and the runner leaves it near the start
+     * and ends up out in the fields to the north-east. The window around where they last were reaches
+     * only the north arm, so the nearest place in it is the corner itself, and the arithmetic says
+     * they are standing on a corner four hundred metres away.
+     */
+    @Test
+    fun `a runner far off the line is not told about the corner the window ends at`() {
+        val ell = (0..20).map { at(it * 25.0) } +
+            (1..28).map { at(500.0, it * 25.0) } +
+            (1..8).map { at(500.0 + it * 25.0, 700.0) }
+        val watch = CourseTurnWatch(CourseLine.of(ell)!!, courseTurnsOf(ell))
+
+        fun say(north: Double, east: Double): List<String> {
+            val place = at(north, east)
+            return watch.onFix(
+                LocationFix(place.latitude, place.longitude, 5f, 3f, 0L),
+                autoPaused = false,
+            ).said.map { it.cue.spoken }
+        }
+
+        assertEquals(nothing, say(0.0, 0.0))
+        assertEquals(nothing, say(300.0, 0.0))
+
+        // Two hundred metres past the corner and two hundred west of it: the runner missed the
+        // turning and kept going. The nearest place on the course is the corner itself, so the
+        // projection lands on it exactly.
+        assertEquals(nothing, say(700.0, -200.0))
+    }
+
+    /**
+     * And the other half of it: coming back to the line is where the runner really is, not where the
+     * window last left them. The corners they skipped stay unsaid — they did not turn them — and the
+     * next corner in front of them is announced from where they actually rejoined.
+     */
+    @Test
+    fun `rejoining the course far ahead picks up the corners in front, not the ones behind`() {
+        val ell = (0..20).map { at(it * 25.0) } +
+            (1..28).map { at(500.0, it * 25.0) } +
+            (1..8).map { at(500.0 + it * 25.0, 700.0) }
+        val watch = CourseTurnWatch(CourseLine.of(ell)!!, courseTurnsOf(ell))
+
+        fun say(north: Double, east: Double): List<String> {
+            val place = at(north, east)
+            return watch.onFix(
+                LocationFix(place.latitude, place.longitude, 5f, 3f, 0L),
+                autoPaused = false,
+            ).said.map { it.cue.spoken }
+        }
+
+        assertEquals(nothing, say(0.0, 0.0))
+        assertEquals(nothing, say(300.0, 0.0))
+        assertEquals(nothing, say(700.0, -200.0))
+
+        // Back on the line, six hundred metres east along the second arm: 1100 m into the course.
+        assertEquals(nothing, say(500.0, 600.0))
+
+        // The last corner, at 1200 m, is now the one in front of them and is announced normally.
+        assertEquals(listOf("Turn left in 50 metres."), say(500.0, 660.0))
+        assertEquals(listOf("Turn left."), say(505.0, 700.0))
     }
 }
