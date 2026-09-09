@@ -26,6 +26,14 @@ data class CourseSpeech(
     val alongMeters: Double?,
     /** What to say, in the order to say it. */
     val said: List<Utterance>,
+    /**
+     * Every turn cue of this Run still waiting has stopped being true, whatever ground it was
+     * about — the runner has left the course it is on ([TurnVoice.takeBackWhatIsWaiting]).
+     *
+     * Turn cues alone. An off-course alert waiting beside them is about that very leaving and is
+     * the sentence the runner now needs.
+     */
+    val takeBackTurnCues: Boolean = false,
 )
 
 /**
@@ -70,7 +78,11 @@ class CourseVoice private constructor(
         }
         val turning = turns.onFix(fix, autoPaused)
         turning.said.forEach { said += Utterance(it.cue, it.falseFromAlongMeters) }
-        return CourseSpeech(alongMeters = turning.alongMeters, said = said)
+        return CourseSpeech(
+            alongMeters = turning.alongMeters,
+            said = said,
+            takeBackTurnCues = turning.takeBackWhatIsWaiting,
+        )
     }
 
     /**

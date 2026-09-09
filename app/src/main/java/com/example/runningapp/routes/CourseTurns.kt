@@ -299,12 +299,22 @@ data class SaidTurn(
 data class TurnVoice(
     /**
      * Where the runner is along the course, or null on a fix the turns did not read — auto-paused,
-     * too coarse to trust, or before the course was reached. Null says nothing has gone stale,
-     * because nothing has been measured.
+     * too coarse to trust, before the course was reached, or out beyond it. Null says nothing has
+     * gone stale *by ground*, because no ground has been measured.
      */
     val alongMeters: Double?,
     /** What to say, in the order to say it, each with the ground it is false from. */
     val said: List<SaidTurn>,
+    /**
+     * Everything the turns have waiting has stopped being true, whatever ground it was about.
+     *
+     * The second of the two ways a turn cue dies, and genuinely a different one: the first is the
+     * runner passing the ground the cue names ([SaidTurn.falseFromAlongMeters]), and this is the
+     * runner leaving the course the ground is on. A sentence telling somebody which way to turn on
+     * a line they are no longer running is not late, it is about nothing — and it cannot be judged
+     * by ground, because while they are out there no ground about them is known.
+     */
+    val takeBackWhatIsWaiting: Boolean = false,
 ) {
     companion object {
         /** A fix the turns did not read: nothing to say, and nothing measured to unsay by. */
@@ -442,8 +452,16 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
             strayed = false
             // Silent, exactly as first reaching the course is silent, and for the same reason: the
             // corners of the stretch they were away from are corners they did not run.
-            nextCue = cues.indexOfFirst { it.alongMeters > rejoined.alongMeters }.takeIf { it >= 0 }
+            //
+            // Forwards only, never back. A course can cover the same ground twice — a two-lap loop
+            // — and the whole-line reading deliberately prefers the *earlier* of two equally near
+            // places, so a rejoin on the second lap can be reported as the first. The pointer
+            // keeping its place is what stops the lap's turns being announced a second time; the
+            // cost is that the rest of a lap read as the wrong one stays silent, which is the way
+            // round to be wrong.
+            val ahead = cues.indexOfFirst { it.alongMeters > rejoined.alongMeters }.takeIf { it >= 0 }
                 ?: cues.size
+            nextCue = maxOf(nextCue, ahead)
             return TurnVoice(alongMeters = rejoined.alongMeters, said = emptyList())
         }
 
@@ -455,8 +473,15 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
         if (here.metersFromCourse > OFF_COURSE_METERS) {
             // The anchor is left where it was. It is the last place the runner was actually seen on
             // the course, and a place read from out here is not a place.
+            //
+            // And whatever was still waiting to be said goes with them. A runner who misses a
+            // corner and runs on is the very case where a "Turn right." is sitting in the queue
+            // behind a longer sentence, and it cannot be judged by ground from here — no ground
+            // about them is known while they are out there, which is the whole reason this branch
+            // exists. Leaving it would speak it minutes later, off the course, about a corner they
+            // did not take.
             strayed = true
-            return TurnVoice.NOTHING
+            return TurnVoice(alongMeters = null, said = emptyList(), takeBackWhatIsWaiting = true)
         }
         progress = here
 

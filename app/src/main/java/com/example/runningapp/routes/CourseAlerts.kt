@@ -151,10 +151,16 @@ class CourseAlerts(
      * judgement and stays there; what is here is the pairing of that judgement with the queue, the
      * same as everything else in this class. Taking back first is what stops the withdrawal
      * swallowing the very sentence that replaces what it took.
+     *
+     * Two ways a turn cue dies, and the wholesale one goes first. The runner leaving the course
+     * kills everything waiting whatever ground it named, and it kills it *without* naming ground —
+     * so it cannot be folded into the by-ground pass, and it must run before it, because the
+     * by-ground pass has no ground to work with on the fix that reports the leaving.
      */
     fun onFix(fix: LocationFix, autoPaused: Boolean) {
         synchronized(lock) {
             val speech = watch?.onFix(fix, nowMillis(), autoPaused) ?: return
+            if (speech.takeBackTurnCues) takeBack(waiting.toList())
             speech.alongMeters?.let(::takeBackWhatIsStaleAt)
             speech.said.forEach { utterance ->
                 val ticket = speak(utterance.saying)
@@ -185,10 +191,14 @@ class CourseAlerts(
      * to it.
      */
     private fun takeBackWhatIsStaleAt(alongMeters: Double) {
-        val stale = waiting.filter { alongMeters >= it.falseFromAlongMeters }
-        if (stale.isEmpty()) return
-        waiting -= stale.toSet()
-        withdrawCues(stale.map { it.ticket })
+        takeBack(waiting.filter { alongMeters >= it.falseFromAlongMeters })
+    }
+
+    /** These cues, out of the queue and off the waiting list, as one act. Inert when empty. */
+    private fun takeBack(cues: List<WaitingCue>) {
+        if (cues.isEmpty()) return
+        waiting -= cues.toSet()
+        withdrawCues(cues.map { it.ticket })
     }
 
     /**

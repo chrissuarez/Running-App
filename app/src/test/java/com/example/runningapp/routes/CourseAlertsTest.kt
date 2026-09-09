@@ -352,34 +352,35 @@ class CourseAlertsTest {
     }
 
     /**
-     * And it takes back the turn cue alone. An "Off course." waiting beside it is about the runner
-     * having left the line, which coming back to it does not unsay — they were off it, and the
-     * sentence about that is still owed.
+     * And a turn cue goes back alone. The off-course pair waiting beside it is about the runner
+     * having left the line and come back to it, which running past a corner does nothing to.
      *
-     * The runner has to leave the course to earn that sentence, and while they are off it the turns
-     * say nothing (they are not locatable on the course). So the warning is made first, the straying
-     * earns the "Off course.", and coming back is what takes the warning back.
+     * The runner has to leave the course to earn those two, and the turns say nothing while they
+     * are off it — so the order is: stray, be told, rejoin, then run past a corner.
      */
     @Test
-    fun `taking back a turn warning leaves an off-course cue waiting beside it`() = runTest {
+    fun `taking back a turn cue leaves the off-course cues waiting beside it`() = runTest {
         val dao = FakeRouteDao()
         val routeId = dao.keep(courseWithOneTurn)
         val watching = runningTheCourse(dao, routeId)
 
         fix(onTheTurningCourse(400.0), secondsIn = 0)
-        fix(onTheTurningCourse(460.0), secondsIn = 1)
-        assertEquals(listOf("Turn right in 50 metres."), queue.texts())
-
-        // A hundred metres off the line for longer than the app waits.
-        fix(onTheTurningCourse(470.0, offMeters = 100.0), secondsIn = 2)
-        fix(onTheTurningCourse(470.0, offMeters = 100.0), secondsIn = 13)
+        fix(onTheTurningCourse(410.0, offMeters = 100.0), secondsIn = 1)
+        fix(onTheTurningCourse(410.0, offMeters = 100.0), secondsIn = 12)
+        fix(onTheTurningCourse(460.0), secondsIn = 20)
         assertEquals(
-            listOf("Turn right in 50 metres.", CourseAlert.OFF_COURSE.spoken),
+            listOf(CourseAlert.OFF_COURSE.spoken, CourseAlert.BACK_ON_COURSE.spoken),
             queue.texts(),
         )
 
-        // Back on the line, past the corner. The warning is about ground behind them now.
-        fix(onTheTurningCourse(505.0), secondsIn = 20)
+        // Back on the line and round the corner: the cue is made, then goes stale behind them.
+        fix(onTheTurningCourse(505.0), secondsIn = 25)
+        assertEquals(
+            listOf(CourseAlert.OFF_COURSE.spoken, CourseAlert.BACK_ON_COURSE.spoken, "Turn right."),
+            queue.texts(),
+        )
+
+        fix(onTheTurningCourse(530.0), secondsIn = 30)
 
         assertEquals(
             listOf(CourseAlert.OFF_COURSE.spoken, CourseAlert.BACK_ON_COURSE.spoken),
@@ -412,34 +413,6 @@ class CourseAlertsTest {
         // Thirty. The corner is behind them and the sentence has stopped being true.
         fix(onTheTurningCourse(530.0), secondsIn = 25)
         assertEquals(emptyList<String>(), queue.texts())
-        watching.cancel()
-    }
-
-    /**
-     * The same, for the turn's own cue: it goes and the off-course pair beside it stays.
-     */
-    @Test
-    fun `taking back stale turn cues leaves an off-course cue waiting beside them`() = runTest {
-        val dao = FakeRouteDao()
-        val routeId = dao.keep(courseWithOneTurn)
-        val watching = runningTheCourse(dao, routeId)
-
-        fix(onTheTurningCourse(400.0), secondsIn = 0)
-        fix(onTheTurningCourse(460.0), secondsIn = 1)
-        fix(onTheTurningCourse(505.0), secondsIn = 2)
-        assertEquals(listOf("Turn right."), queue.texts())
-
-        fix(onTheTurningCourse(520.0, offMeters = 100.0), secondsIn = 3)
-        fix(onTheTurningCourse(520.0, offMeters = 100.0), secondsIn = 14)
-        assertEquals(listOf("Turn right.", CourseAlert.OFF_COURSE.spoken), queue.texts())
-
-        // Back on the line, a hundred metres past the corner: "Turn right." has stopped being true.
-        fix(onTheTurningCourse(600.0), secondsIn = 20)
-
-        assertEquals(
-            listOf(CourseAlert.OFF_COURSE.spoken, CourseAlert.BACK_ON_COURSE.spoken),
-            queue.texts(),
-        )
         watching.cancel()
     }
 
@@ -495,6 +468,31 @@ class CourseAlertsTest {
         fix(LocationFix(theCornerAsKept.latitude, theCornerAsKept.longitude, 5f, 3f, 0L), secondsIn = 18)
 
         assertEquals(listOf("Turn right."), queue.texts())
+        watching.cancel()
+    }
+
+    /**
+     * #460's sixth round: leaving the course kills what the turns had waiting.
+     *
+     * A runner who misses a corner and runs on is the very case where "Turn right." is sitting in
+     * the queue behind a longer sentence. It cannot be judged by ground once they are out there —
+     * no ground about them is known — so leaving takes it back outright.
+     */
+    @Test
+    fun `straying off the course takes back the turn cue still waiting`() = runTest {
+        val dao = FakeRouteDao()
+        val routeId = dao.keep(courseWithOneTurn)
+        val watching = runningTheCourse(dao, routeId)
+
+        fix(onTheTurningCourse(400.0), secondsIn = 0)
+        fix(onTheTurningCourse(460.0), secondsIn = 1)
+        fix(onTheTurningCourse(505.0), secondsIn = 2)
+        assertEquals(listOf("Turn right."), queue.texts())
+
+        // Straight on past the corner instead of round it.
+        fix(onTheTurningCourse(510.0, offMeters = 100.0), secondsIn = 3)
+
+        assertEquals(emptyList<String>(), queue.texts())
         watching.cancel()
     }
 }
