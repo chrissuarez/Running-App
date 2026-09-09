@@ -330,8 +330,10 @@ data class TurnVoice(
  * [com.example.runningapp.routes.CourseTurnWatchTest] with fixes written in metres. It is the
  * companion of [OffCourseWatch] and keeps every rule that one keeps, for the reasons argued there:
  *
- * **Silent until the runner has reached the course.** The jog from the front door is not a missed
- * turn. [CourseProgress.hasReachedTheCourse] is the same fact the off-course alerts arm on.
+ * **Silent until the runner has reached the course, and silent about the course behind them when
+ * they do.** The jog from the front door is not a missed turn.
+ * [CourseProgress.hasReachedTheCourse] is the same fact the off-course alerts arm on, and what
+ * arriving on the course steps over is [stepOverTheTurnsBehind]'s to say.
  *
  * **A fix that is not trusted is not heard**, and nothing is said while the Run is auto-paused —
  * standing still is not approaching a turn.
@@ -389,11 +391,13 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
                 CueAt(
                     alongMeters = it.alongMeters - TURN_WARNING_METERS,
                     falseFromAlongMeters = it.alongMeters,
+                    turnAlongMeters = it.alongMeters,
                     cue = TurnCue(it.direction, TurnCueMoment.AHEAD),
                 ),
                 CueAt(
                     alongMeters = it.alongMeters,
                     falseFromAlongMeters = it.alongMeters + TURN_CUE_LATE_METERS,
+                    turnAlongMeters = it.alongMeters,
                     cue = TurnCue(it.direction, TurnCueMoment.AT_THE_TURN),
                 ),
             )
@@ -450,19 +454,8 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
             if (rejoined.metersFromCourse > BACK_ON_COURSE_METERS) return TurnVoice.NOTHING
             progress = rejoined
             strayed = false
-            // Silent, exactly as first reaching the course is silent, and for the same reason: the
-            // corners of the stretch they were away from are corners they did not run.
-            //
-            // Forwards only, never back. A course can cover the same ground twice — a two-lap loop
-            // — and the whole-line reading deliberately prefers the *earlier* of two equally near
-            // places, so a rejoin on the second lap can be reported as the first. The pointer
-            // keeping its place is what stops the lap's turns being announced a second time; the
-            // cost is that the rest of a lap read as the wrong one stays silent, which is the way
-            // round to be wrong.
-            val ahead = cues.indexOfFirst { it.alongMeters > rejoined.alongMeters }.takeIf { it >= 0 }
-                ?: cues.size
-            nextCue = maxOf(nextCue, ahead)
-            return TurnVoice(alongMeters = rejoined.alongMeters, said = emptyList())
+            stepOverTheTurnsBehind(rejoined.alongMeters)
+            return whatIsDueAt(rejoined)
         }
 
         val here = course.progressAt(fix.latitude, fix.longitude, progress)
@@ -485,15 +478,21 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
         }
         progress = here
 
-        // Reaching the course says nothing, however much of it is behind: a runner who joins a loop
-        // at its halfway point has not missed the turns of its first half, they are running the
-        // second half. Every cue behind them is stepped over without a word.
         if (!started) {
             started = true
-            nextCue = cues.indexOfFirst { it.alongMeters > here.alongMeters }.takeIf { it >= 0 } ?: cues.size
-            return TurnVoice.NOTHING
+            stepOverTheTurnsBehind(here.alongMeters)
         }
+        return whatIsDueAt(here)
+    }
 
+    /**
+     * Everything the cues have to say about the runner being here, and nothing about anywhere else.
+     *
+     * The pointer walks forwards over every cue whose ground has been reached, and each of those is
+     * said unless the runner is already [TURN_CUE_LATE_METERS] past it — a cue about ground behind
+     * them is not a late cue, it is a wrong one.
+     */
+    private fun whatIsDueAt(here: CourseProgress): TurnVoice {
         val said = mutableListOf<SaidTurn>()
         while (nextCue < cues.size && cues[nextCue].alongMeters <= here.alongMeters) {
             val cue = cues[nextCue++]
@@ -505,12 +504,49 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
     }
 
     /**
+     * Put the pointer past every cue about a **turn** the runner has already reached, because they
+     * have arrived on the course here and did not run the ground behind them.
+     *
+     * The one rule for both arrivals — first reaching the course, and rejoining it after straying —
+     * because they are the same event: the runner is suddenly somewhere on the course without
+     * having run the way to it. A runner who joins a loop at its halfway point has not missed the
+     * turns of its first half, and one who left at the first corner and came back at the last has
+     * not turned the corners in between. Neither is told about them.
+     *
+     * **What a cue is about, not where it is said.** A warning is triggered fifty metres before its
+     * turn and is about that turn, so a runner who arrives between the two — past the trigger, short
+     * of the corner — has a corner genuinely in front of them and is told about it. Stepping over by
+     * where the cue is *triggered* would swallow that warning and leave the corner announced only
+     * once they were standing on it, which is the thing this feature exists to stop.
+     *
+     * **Forwards only, never back.** A course can cover the same ground twice — a two-lap loop —
+     * and the whole-line reading deliberately prefers the *earlier* of two equally near places, so a
+     * rejoin on the second lap can be reported as the first. Keeping the pointer where it is stops
+     * the lap's turns being announced a second time; the cost is that the rest of a lap read as the
+     * wrong one stays silent, which is the way round to be wrong.
+     */
+    private fun stepOverTheTurnsBehind(alongMeters: Double) {
+        val ahead = cues.indexOfFirst { it.turnAlongMeters > alongMeters }.takeIf { it >= 0 }
+            ?: cues.size
+        nextCue = maxOf(nextCue, ahead)
+    }
+
+    /**
      * One sentence, the ground along the course that earns it, and the ground it dies at
      * ([SaidTurn.falseFromAlongMeters], where the rule is argued).
      */
     private class CueAt(
         val alongMeters: Double,
         val falseFromAlongMeters: Double,
+        /**
+         * The turn this sentence is about, as ground along the course — its own ground for the cue
+         * said at the turn, and fifty metres on for the warning said before it.
+         *
+         * What a cue is *about* is not where it is said, and arriving on the course is the one
+         * moment that tells them apart: a warning triggered behind the runner can still be about a
+         * corner in front of them. See [stepOverTheTurnsBehind].
+         */
+        val turnAlongMeters: Double,
         val cue: TurnCue,
     )
 }
