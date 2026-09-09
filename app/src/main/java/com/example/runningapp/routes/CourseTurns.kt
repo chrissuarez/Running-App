@@ -79,7 +79,11 @@ private const val TURNS_TOGETHER_METERS = TURN_WARNING_METERS
  * the turn it warns about has been reached — by then the turn's own cue is the true sentence, and
  * this is what stops the two arriving together.
  *
- * It bounds both ends of a cue's life, not just the making of it: see [CueAt.trueUntilAlongMeters].
+ * **Stated from the side the code accepts: a turn's own cue is worth saying while the runner is
+ * *less than* twenty metres past the turn, and at twenty metres exactly it is not.** One side, one
+ * comparison, and the same one whether the cue is being made or being taken back — because those
+ * are the same question asked at two moments, and answering them differently at the boundary is how
+ * a cue comes to be made and then never taken back. See [CueAt.falseFromAlongMeters].
  */
 private const val TURN_CUE_LATE_METERS = 20.0
 
@@ -262,20 +266,24 @@ private fun bearingChangeDegrees(inX: Double, inY: Double, outX: Double, outY: D
 data class SaidTurn(
     val cue: TurnCue,
     /**
-     * Ground along the course past which this sentence is no longer worth saying.
+     * The first ground along the course at which this sentence is no longer true — false *from*
+     * here on, and true everywhere short of it.
      *
-     * **This is the whole of the staleness rule, stated once for both moments.** A turn cue is a
-     * sentence about ground the runner is arriving at, and it stops being true when they have gone
-     * past that ground. Where "past" falls is the only thing that differs:
+     * **This is the whole of the staleness rule, stated once for both moments**, and named from the
+     * dead side so the boundary needs no second thought: the runner reaching this ground is what
+     * kills the sentence, so one comparison, `here >= falseFromAlongMeters`, settles every case.
+     * A turn cue is a sentence about ground the runner is arriving at, and it stops being true when
+     * they arrive. Where that ground sits is the only thing that differs:
      *
-     *  - A warning says the turn is [TURN_WARNING_METERS] ahead. **Reaching the turn** makes it
-     *    false — not late, false, because it would send the runner that distance beyond the turning
-     *    they are standing on.
-     *  - The turn's own cue says to turn here. It is merely *late* for a while afterwards, and
-     *    [TURN_CUE_LATE_METERS] is how long a course cue is allowed to be late — the same number
-     *    that decides whether it is worth making in the first place.
+     *  - A warning says the turn is [TURN_WARNING_METERS] ahead, so it is false **at the turn**.
+     *    Not late — false, because heard there it would send the runner that distance beyond the
+     *    turning they are standing on. The turn's own cue is the true sentence by then.
+     *  - The turn's own cue says to turn here, and is merely *late* for a while afterwards. It is
+     *    false at [TURN_CUE_LATE_METERS] past the turn, which is where its whole allowance for
+     *    being late has been spent — the same number, on the same side, as the one that decides
+     *    whether the cue was worth making in the first place.
      */
-    val trueUntilAlongMeters: Double,
+    val falseFromAlongMeters: Double,
 )
 
 /**
@@ -295,7 +303,7 @@ data class TurnVoice(
      * because nothing has been measured.
      */
     val alongMeters: Double?,
-    /** What to say, in the order to say it, each with the ground it dies at. */
+    /** What to say, in the order to say it, each with the ground it is false from. */
     val said: List<SaidTurn>,
 ) {
     companion object {
@@ -325,7 +333,7 @@ data class TurnVoice(
  *
  * **A cue about ground already covered is not said at all, and one that becomes about ground already
  * covered while it waits its turn in the queue is taken back** ([TURN_CUE_LATE_METERS],
- * [SaidTurn.trueUntilAlongMeters]). Both ends of the same rule: a turn cue is a sentence about
+ * [SaidTurn.falseFromAlongMeters]). Both ends of the same rule: a turn cue is a sentence about
  * ground the runner is arriving at, and it is worth nothing once they have gone past it. Each cue
  * carries its own deadline, because two of them can be waiting at once and stop being true at
  * different moments.
@@ -354,12 +362,12 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
             listOf(
                 CueAt(
                     alongMeters = it.alongMeters - TURN_WARNING_METERS,
-                    trueUntilAlongMeters = it.alongMeters,
+                    falseFromAlongMeters = it.alongMeters,
                     cue = TurnCue(it.direction, TurnCueMoment.AHEAD),
                 ),
                 CueAt(
                     alongMeters = it.alongMeters,
-                    trueUntilAlongMeters = it.alongMeters + TURN_CUE_LATE_METERS,
+                    falseFromAlongMeters = it.alongMeters + TURN_CUE_LATE_METERS,
                     cue = TurnCue(it.direction, TurnCueMoment.AT_THE_TURN),
                 ),
             )
@@ -406,8 +414,8 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
         val said = mutableListOf<SaidTurn>()
         while (nextCue < cues.size && cues[nextCue].alongMeters <= here.alongMeters) {
             val cue = cues[nextCue++]
-            if (here.alongMeters - cue.alongMeters <= TURN_CUE_LATE_METERS) {
-                said += SaidTurn(cue.cue, cue.trueUntilAlongMeters)
+            if (here.alongMeters - cue.alongMeters < TURN_CUE_LATE_METERS) {
+                said += SaidTurn(cue.cue, cue.falseFromAlongMeters)
             }
         }
         return TurnVoice(alongMeters = here.alongMeters, said = said)
@@ -415,11 +423,11 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
 
     /**
      * One sentence, the ground along the course that earns it, and the ground it dies at
-     * ([SaidTurn.trueUntilAlongMeters], where the rule is argued).
+     * ([SaidTurn.falseFromAlongMeters], where the rule is argued).
      */
     private class CueAt(
         val alongMeters: Double,
-        val trueUntilAlongMeters: Double,
+        val falseFromAlongMeters: Double,
         val cue: TurnCue,
     )
 }

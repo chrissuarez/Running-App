@@ -213,4 +213,29 @@ class CourseTurnWatchTest {
             assertEquals(nothing, say(north, 10.0))
         }
     }
+
+    /**
+     * The other side of the same number, at the moment a cue is *made* (#460's fourth round).
+     *
+     * A turn's own cue is worth saying while the runner is less than twenty metres past the corner,
+     * and at twenty metres exactly it is not — one side, and the same side the withdrawal uses, so
+     * a cue can never be made at a distance the withdrawal would already call dead.
+     */
+    @Test
+    fun `a cue exactly the late allowance past its ground is not said`() {
+        val watch = watch()
+        watch.reachTheCourse()
+
+        assertEquals(nothing, watch.at(390.0))
+        assertEquals(listOf(theTurn), watch.at(419.9))
+    }
+
+    @Test
+    fun `a cue a whisker over the late allowance past its ground is not said`() {
+        val watch = watch()
+        watch.reachTheCourse()
+
+        assertEquals(nothing, watch.at(390.0))
+        assertEquals(nothing, watch.at(420.1))
+    }
 }

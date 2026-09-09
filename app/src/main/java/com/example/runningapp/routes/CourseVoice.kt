@@ -3,14 +3,16 @@ package com.example.runningapp.routes
 import com.example.runningapp.recording.LocationFix
 
 /**
- * One sentence a course has earned, and the ground it stops being true at — null where it never
- * does (#456).
+ * One sentence a course has earned, and the first ground it is no longer true from — null where
+ * there is no such ground (#456).
  *
- * Only the turn cues carry a deadline. An off-course alert is about where the runner is *now* and
- * is true the moment it is made and afterwards; a turn cue is about ground fifty metres ahead, and
- * the runner covering that ground while the cue waits its turn in the queue is what makes it false.
+ * Only the turn cues carry one. An off-course alert is about where the runner is *now* and is true
+ * the moment it is made and afterwards; a turn cue is about ground fifty metres ahead, and the
+ * runner covering that ground while the cue waits its turn in the queue is what makes it false.
+ * Named from the dead side, so the boundary is settled by one comparison — see
+ * [SaidTurn.falseFromAlongMeters].
  */
-data class Utterance(val saying: CourseSaying, val trueUntilAlongMeters: Double?)
+data class Utterance(val saying: CourseSaying, val falseFromAlongMeters: Double?)
 
 /**
  * What one course has to say about one fix: where the runner is on it, and what it has earned the
@@ -64,10 +66,10 @@ class CourseVoice private constructor(
     fun onFix(fix: LocationFix, nowMillis: Long, autoPaused: Boolean): CourseSpeech {
         val said = mutableListOf<Utterance>()
         offCourse.onFix(fix, nowMillis, autoPaused)?.let {
-            said += Utterance(it, trueUntilAlongMeters = null)
+            said += Utterance(it, falseFromAlongMeters = null)
         }
         val turning = turns.onFix(fix, autoPaused)
-        turning.said.forEach { said += Utterance(it.cue, it.trueUntilAlongMeters) }
+        turning.said.forEach { said += Utterance(it.cue, it.falseFromAlongMeters) }
         return CourseSpeech(alongMeters = turning.alongMeters, said = said)
     }
 
