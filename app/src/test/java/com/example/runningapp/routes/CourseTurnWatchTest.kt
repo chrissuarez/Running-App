@@ -11,11 +11,10 @@ import org.junit.Test
  * So there is exactly one turn, it is a left, and it is four hundred metres in — which makes every
  * test in here a sentence about ground. A fix is written as how far along the course the runner is
  * and how far off the line, so "at 355" is five metres past the point the warning is owed and "at
- * 355, sixty metres off" is the same ground with the runner on the wrong street.
+ * 355, sixty metres off" is the same ground with the runner over on the far pavement.
  *
  * What is being pinned is every rule #58 established, kept: silent until the course is reached,
- * silent on a fix that is not trusted, silent while auto-paused, silent while the runner is off the
- * line, and nothing ever said twice.
+ * silent on a fix that is not trusted, silent while auto-paused, and nothing ever said twice.
  */
 class CourseTurnWatchTest {
 
@@ -127,17 +126,17 @@ class CourseTurnWatchTest {
     }
 
     /**
-     * A runner sixty metres off the line is not approaching the course's corners, they are somewhere
-     * else — and the app already has a sentence for that. Nothing is lost by the silence: the cue is
-     * still waiting when they get back.
+     * A course drawn down the middle of a dual carriageway leaves an honest runner sixty metres off
+     * the line for the whole Run — far enough to be told they are off course, and the runner who
+     * most needs to know the course turns left. How far off the line they are is not asked here.
      */
     @Test
-    fun `nothing is said while the runner is off the line`() {
+    fun `a runner running wide of the line is still told about the corner`() {
         val watch = watch()
         watch.reachTheCourse()
 
-        assertEquals(nothing, watch.at(355.0, offMeters = 60.0))
-        assertEquals(listOf(warning), watch.at(356.0))
+        assertEquals(listOf(warning), watch.at(355.0, offMeters = 60.0))
+        assertEquals(listOf(theTurn), watch.at(402.0, offMeters = 60.0))
     }
 
     /**

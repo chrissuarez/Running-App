@@ -92,6 +92,11 @@ enum class CourseAlert(override val spoken: String) : CourseSaying {
  * again from the next fix that is heard. What has already been said stands: a runner told they are
  * off course, whose phone then loses the sky, is still off course, and will be told when they get
  * back.
+ *
+ * **Which way round the course is turned changes nothing here**, so there is no door of its own for
+ * building one: how far off a line the runner is is the same measurement in either direction, and
+ * the one door a Run comes through is [CourseVoice.of], where the course's turns — which the
+ * direction changes entirely — are made from the same list at the same moment.
  */
 class OffCourseWatch(private val course: CourseLine) {
 
@@ -167,19 +172,5 @@ class OffCourseWatch(private val course: CourseLine) {
      */
     fun recordingBroke() {
         strayingSinceMs = null
-    }
-
-    companion object {
-        /**
-         * A watch over the course [points] describe, or null when they describe no ground to run —
-         * an unrouted Run, an empty Route, a Route deleted from the library before the Run got
-         * going. A Run with no course cannot leave it.
-         *
-         * [points] arrive in the order the Run is running them, reversed already where the runner
-         * said they were setting off the other way round — the same list the live map is drawn
-         * from. Which way round the course is turned changes nothing here: how far off a line you
-         * are is the same measurement in either direction.
-         */
-        fun of(points: List<RoutePoint>): OffCourseWatch? = CourseLine.of(points)?.let(::OffCourseWatch)
     }
 }

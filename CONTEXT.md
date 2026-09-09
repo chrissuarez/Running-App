@@ -363,9 +363,15 @@ it waits (#377). Coming back down an out-and-back is *forward* along the course,
 behind the runner and stay silent. A cue about ground already covered is dropped rather than said
 late. Turns are **in addition to** the two Off course cues, not instead of them: missing a Turn still
 earns "Off course.".
-_Avoid_: turn-by-turn, navigation and directions as names for it, waypoint, junction, and street
-name of any kind (the app knows none); and **Turnaround**, which is the halfway point of an
-out-and-back Run the app announces (#208) and is nothing to do with the course.
+
+How far off the line the runner is is not asked. A course drawn down the middle of a road leaves
+honest running tens of metres out — the same running **Off course** deliberately tolerates — and
+that runner needs the Turn told to them most of all. A runner who has genuinely left the course has
+Off course for it.
+_Avoid_: turn-by-turn and directions as names for it, waypoint, junction, and street name of any
+kind (the app knows none); and **Turnaround**, which is the halfway point of an out-and-back Run the
+app announces (#208) and is nothing to do with the course. A Turn is spoken at the *navigation*
+level of the voice queue, which is that level's own name and not a name for this.
 
 **Segment**:
 A stretch of ground the runner has named — "Cemetery Hill" — cut out of one Run they actually ran

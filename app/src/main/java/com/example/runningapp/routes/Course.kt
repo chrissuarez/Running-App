@@ -181,6 +181,46 @@ private fun List<RoutePoint>.withoutRepeatedPlaces(): List<RoutePoint> = filterI
 private const val MOST_POINTS_A_COURSE_IS_THINNED_FROM = 20_000
 
 /**
+ * The line laid out flat, in metres east and north of its own first place — an `x` for every `y`.
+ *
+ * One copy of it, because two readings of a course lay it out this way and both have to lay it out
+ * the *same* way: the thinning that decides what the row keeps ([thinnedToItsShape]) and the
+ * turn-finding that decides where the course bends ([courseTurnsOf]). The same argument
+ * [thinnedLineIndices] makes for one walk down a line rather than two, one step earlier.
+ *
+ * A degree of longitude shrinks going north, so it is shrunk by the cosine of where the line starts
+ * — a course covers too little ground for that to have changed along it, and what is asked of the
+ * sheet afterwards is how far a place sits from a line a few hundred metres long, and which way that
+ * line turns. Every place is put by how far east it is of the first one rather than by its own
+ * longitude, and that "how far east" is asked of [degreesEastOf], so a line over the date line is
+ * laid out the way it is run rather than flung most of the way round the world.
+ *
+ * It is not the ruler for ground *along* the course. That is `geodesicDistanceMeters`, measured on
+ * the round earth, because the numbers it makes are the ones the runner is shown.
+ */
+internal fun List<RoutePoint>.flattenedToMeters(): FlatLine {
+    val cosLatitude = cos(Math.toRadians(first().latitude))
+    return FlatLine(
+        x = DoubleArray(size) {
+            degreesEastOf(first().longitude, this[it].longitude) * METERS_PER_DEGREE * cosLatitude
+        },
+        y = DoubleArray(size) { (this[it].latitude - first().latitude) * METERS_PER_DEGREE },
+    )
+}
+
+/**
+ * A line on the flat sheet [flattenedToMeters] lays out: metres east, and metres north.
+ *
+ * Two arrays rather than a list of pairs because [thinnedLineIndices] wants two arrays, and because
+ * a course is thousands of places. Named and destructurable so that the pair cannot be handed over
+ * the wrong way round.
+ */
+internal class FlatLine(val x: DoubleArray, val y: DoubleArray) {
+    operator fun component1(): DoubleArray = x
+    operator fun component2(): DoubleArray = y
+}
+
+/**
  * The same line with everything finer than [ROUTE_DETAIL_METERS] taken out of it.
  *
  * The thinning itself is [thinnedLineIndices], shared with the drawing beside a Run in History; all
@@ -196,19 +236,7 @@ private const val MOST_POINTS_A_COURSE_IS_THINNED_FROM = 20_000
  */
 private fun List<RoutePoint>.thinnedToItsShape(): List<RoutePoint> {
     if (size <= 2) return this
-    // Metres on a flat sheet, taken once for the whole line. A degree of longitude shrinks going
-    // north, so it is shrunk by the cosine of where the Run was — one Run covers too little ground
-    // for that to have changed within it, and this is only ever asked how far a fix sits from a
-    // line a few hundred metres long.
-    //
-    // Every fix is placed by how far east it is of the first one rather than by its own longitude,
-    // and that "how far east" is asked of [degreesEastOf] so that a Run over the date line is laid
-    // out on the sheet the way it was run rather than flung most of the way round the world.
-    val cosLatitude = cos(Math.toRadians(first().latitude))
-    val x = DoubleArray(size) {
-        degreesEastOf(first().longitude, this[it].longitude) * METERS_PER_DEGREE * cosLatitude
-    }
-    val y = DoubleArray(size) { (this[it].latitude - first().latitude) * METERS_PER_DEGREE }
+    val (x, y) = flattenedToMeters()
 
     // Shortened first if it is too long to thin, and only then. Everything below reads the line
     // through [thinnable], which is every place there is whenever the line was short enough — so a
