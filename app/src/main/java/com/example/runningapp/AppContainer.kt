@@ -225,16 +225,6 @@ class AppContainer(context: Context) {
     }
 
     /**
-     * Everything the archive is made of, and the folder it goes to (#85).
-     *
-     * One archiver for both ways of asking — the "Back up now" button and the monthly job — so the
-     * unattended backup is the same archive as the deliberate one, built by the same code.
-     *
-     * The folder is read fresh on every backup rather than captured here: the runner can change it
-     * at any time, and a monthly job holding the folder they picked a year ago would keep writing
-     * somewhere they had moved on from.
-     */
-    /**
      * The offline map (#42), on the app's scope so a download outlives the Settings screen that
      * started it.
      */
@@ -247,6 +237,16 @@ class AppContainer(context: Context) {
         )
     }
 
+    /**
+     * Everything the archive is made of, and the folder it goes to (#85).
+     *
+     * One archiver for both ways of asking — the "Back up now" button and the monthly job — so the
+     * unattended backup is the same archive as the deliberate one, built by the same code.
+     *
+     * The folder is read fresh on every backup rather than captured here: the runner can change it
+     * at any time, and a monthly job holding the folder they picked a year ago would keep writing
+     * somewhere they had moved on from.
+     */
     val archiver: Archiver by lazy {
         val contents = RunArchiveContents(
             context = appContext,

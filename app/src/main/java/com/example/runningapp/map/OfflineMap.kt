@@ -101,7 +101,7 @@ enum class OfflineMapFailure {
     DISK_FULL,
 
     /** Mapbox's cap on saved map for one phone. One area at a time should never reach it. */
-    AREA_TOO_BIG,
+    MAPBOX_LIMIT_REACHED,
 
     /** Anything else, which in practice is no internet. */
     DOWNLOAD_FAILED,
@@ -169,7 +169,7 @@ class OfflineMapDownload(
 
     init {
         scope.launch {
-            val stored = store.stored()
+            val stored = readStored()
             // Only if nothing has happened since. A tap that lands before this read returns has
             // already moved the row on, and the read would put "Saved" back over a download under way.
             _state.compareAndSet(OfflineMapState.Checking, OfflineMapState.Ready(stored))
@@ -189,7 +189,7 @@ class OfflineMapDownload(
                 // leave the row at "Downloading…" for good, or take the app down with it.
                 OfflineMapFailure.DOWNLOAD_FAILED
             }
-            _state.value = OfflineMapState.Ready(store.stored(), failure)
+            _state.value = OfflineMapState.Ready(readStored(), failure)
         }
     }
 
@@ -197,9 +197,21 @@ class OfflineMapDownload(
     fun locationRefused() {
         if (_state.value.busy) return
         scope.launch {
-            val stored = store.stored()
+            val stored = readStored()
             _state.update { if (it.busy) it else OfflineMapState.Ready(stored, OfflineMapFailure.NO_PERMISSION) }
         }
+    }
+
+    /**
+     * What the store holds, with the same backstop as a download. The scope has no handler, so a
+     * read that threw would take the app down over a Settings row; read as nothing saved instead.
+     */
+    private suspend fun readStored(): StoredOfflineMap? = try {
+        store.stored()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
     }
 
     private suspend fun fetch(): OfflineMapFailure? {
