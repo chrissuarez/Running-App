@@ -17,7 +17,9 @@ import com.mapbox.maps.Style
 import com.mapbox.maps.StylePackErrorType
 import com.mapbox.maps.StylePackLoadOptions
 import com.mapbox.maps.TilesetDescriptorOptions
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
 /**
@@ -36,15 +38,37 @@ import kotlin.coroutines.resume
  * **Nothing here needs telling to use the result.** The maps read offline data from the default tile
  * store and the default offline manager, which are the ones created here.
  *
- * Mapbox answers on its own threads, once per call. A cancelled coroutine cancels the Mapbox call, and
- * the answer Mapbox then gives is dropped, because a cancelled continuation ignores a late resume.
+ * **Every call is made on the main thread (#463).** [OfflineManager] answers on the thread that asked
+ * it, through that thread's message loop. The download is started from the app's scope, which runs on
+ * `Dispatchers.IO`, and an IO thread has no message loop — so asked from there, the style pack never
+ * reported progress, never finished and never failed, and the row sat at "Starting…" for ever.
+ * [TileStore] answers on a Mapbox thread of its own whoever asks, which is why a read that stops at the
+ * tile store worked while one that reached the style pack did not.
+ *
+ * The whole call hops, not just the [OfflineManager] lines, so the manager is also created on the
+ * main thread, and nothing here depends on remembering which of the two objects is the fussy one. The
+ * main thread only makes the calls and takes the answers; the fetching runs on Mapbox's own threads.
+ *
+ * Declined: a thread of our own with a message loop. It answers the same need with a thread that lives
+ * for as long as the app does, to carry a handful of calls per tap.
+ *
+ * Mapbox answers once per call. A cancelled coroutine cancels the Mapbox call, and the answer Mapbox
+ * then gives is dropped, because a cancelled continuation ignores a late resume.
  */
 class MapboxOfflineMapStore(private val context: Context) : OfflineMapStore {
 
     private val offlineManager by lazy { OfflineManager() }
     private val tileStore by lazy { TileStore.create() }
 
-    override suspend fun stored(): StoredOfflineMap? {
+    override suspend fun stored(): StoredOfflineMap? = withContext(Dispatchers.Main) { readStored() }
+
+    override suspend fun download(
+        center: MapFix,
+        downloadedAtMillis: Long,
+        onProgress: (OfflineMapProgress) -> Unit,
+    ): OfflineMapFailure? = withContext(Dispatchers.Main) { fetch(center, downloadedAtMillis, onProgress) }
+
+    private suspend fun readStored(): StoredOfflineMap? {
         val region = suspendCancellableCoroutine { done ->
             tileStore.getTileRegion(REGION_ID) { done.resume(it) }
         }.value ?: return null
@@ -66,7 +90,7 @@ class MapboxOfflineMapStore(private val context: Context) : OfflineMapStore {
         )
     }
 
-    override suspend fun download(
+    private suspend fun fetch(
         center: MapFix,
         downloadedAtMillis: Long,
         onProgress: (OfflineMapProgress) -> Unit,
