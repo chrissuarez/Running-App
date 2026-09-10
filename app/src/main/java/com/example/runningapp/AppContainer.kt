@@ -28,6 +28,9 @@ import com.example.runningapp.routes.RouteImporter
 import com.example.runningapp.routes.RouteShapeStore
 import com.example.runningapp.routes.RouteShaping
 import com.mapbox.common.MapboxOptions
+import com.example.runningapp.map.MapboxOfflineMapStore
+import com.example.runningapp.map.OfflineMapDownload
+import com.example.runningapp.map.PhoneLocation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -231,6 +234,19 @@ class AppContainer(context: Context) {
      * at any time, and a monthly job holding the folder they picked a year ago would keep writing
      * somewhere they had moved on from.
      */
+    /**
+     * The offline map (#42), on the app's scope so a download outlives the Settings screen that
+     * started it.
+     */
+    val offlineMap: OfflineMapDownload by lazy {
+        OfflineMapDownload(
+            scope = applicationScope,
+            store = MapboxOfflineMapStore(appContext),
+            whereAmI = PhoneLocation(appContext)::whereAmI,
+            now = System::currentTimeMillis,
+        )
+    }
+
     val archiver: Archiver by lazy {
         val contents = RunArchiveContents(
             context = appContext,

@@ -174,11 +174,12 @@
 <div class="wrap">
 
   <header class="mast">
-    <div class="kicker">Handbook · updated 9 September 2026</div>
+    <div class="kicker">Handbook · updated 10 September 2026</div>
     <h1>Everything the app does, and where to find it.</h1>
     <p class="lede">One page per part of a run: getting ready, running, and what the app does with it afterwards. Written to be looked things up in, not read end to end.</p>
     <div class="whatsnew">
       <div class="h">Newest thing</div>
+      <p><strong>The map can be saved to the phone, for runs with no signal.</strong> In Settings there is a new row, <strong>Download map for this area</strong>. Tap it once at home and the app saves the map for about 15 km around you, so the map during a run &mdash; and the full-screen one &mdash; still draws where the phone has no signal. The row shows how far the download has got, then the day it was saved and how big it is. Only one area is kept: tap it again somewhere else and the new area replaces the old. Your run was always recorded with no signal, and still is; this is only the picture of the map. See <em>A map for places with no signal</em> in <a href="#setup">setting up</a>.</p>
       <p><strong>The app now tells you which way the course turns.</strong> On a run following a route you get two sentences at every real bend: <em>&ldquo;Turn left in 50 metres.&rdquo;</em> as you come up to it, and <em>&ldquo;Turn left.&rdquo;</em> at it. That is the whole of it &mdash; no street names, no distance to the bend after next, and it never sends you anywhere. It is worked out from the line already in your library, so it needs no internet and works with the map downloaded for offline use. A gentle curve in a road says nothing; a roundabout or a dog-leg round a building is <em>one</em> sentence, not four. Everything <em>Off course</em> already promised still holds: silence until you have actually reached the course, silence on a poor GPS reading and while you are auto-paused, and nothing said twice. Stray properly off the line and it goes quiet until you rejoin, then picks up from the turn in front of you. And it is <em>as well as</em> &ldquo;Off course.&rdquo;, not instead of it &mdash; miss a turn and you will still be told you have strayed. See <em>Which way the course turns</em> in <a href="#routes">routes</a>.</p>
       <p><strong>A route you import now shows up straight away.</strong> Import a <span class="mono">.gpx</span> with the Routes screen already open and the list used to come back looking exactly as it did &mdash; no new row, nothing to see. The route really was saved; it had gone to the top of the list, and the list had held its place, so the new row sat just above the top of the screen where you could not see it. Import the same file again and the app would tell you it was already in your routes, which is how it was found. With the Routes screen in front of you, the list now slides to the route as it is added, so what you just imported is what you are looking at. See <em>Getting a route in</em> in <a href="#routes">routes</a>.</p>
       <p><strong>Two cards have stopped saying something not quite true.</strong> The <strong>Max HR card</strong> &mdash; the one that asks you to confirm your maximum &mdash; used to say <em>&ldquo;we have not recorded a heart rate from you yet&rdquo;</em> in two quite different situations: when nothing had been recorded, which is true, and when something had been recorded that it cannot use, which is not. A resting rate of 100 rules out every recorded peak under 150, so a runner with years of readings could be told there were none. It names the number and the reason now. And the <strong>restore confirmation</strong> used to print the same sentence twice, word for word, when the file you pick describes the history already on the phone &mdash; which is exactly what you see if you back up and test the restore straight afterwards. It says it once now, and still says plainly that restoring replaces what is here. See <em>The Max HR card</em> in <a href="#progress">progress</a> and <em>Restore</em> in <a href="#data">your data</a>.</p>
@@ -210,7 +211,7 @@
   <section class="ch" id="setup">
     <div class="ch-head">
       <h2>Setting up, once</h2>
-      <p class="sub">Four things to get right at the start. After this the app mostly looks after itself.</p>
+      <p class="sub">Five things to get right at the start. After this the app mostly looks after itself.</p>
     </div>
     <div class="entries">
 
@@ -244,7 +245,7 @@
 
       <div class="e">
         <h3>Permissions</h3>
-        <p>Bluetooth to reach the strap, Location for outdoor runs and for Bluetooth scanning, and Notifications so the run can keep recording with the screen off.</p>
+        <p>Bluetooth to reach the strap, Location for outdoor runs, for Bluetooth scanning and for knowing which area of map to save, and Notifications so the run can keep recording with the screen off.</p>
         <p class="note"><b>Worth knowing.</b> Taking a permission away while a run is going stops the run. Grant them once and leave them.</p>
       </div>
 
@@ -252,6 +253,16 @@
         <h3>Where to keep your backups</h3>
         <p>Pick a folder once — a Google Drive folder is the sensible choice, because then the backup lives somewhere other than the phone. The app writes a full archive there every month and keeps the last three. See <a href="#data">Your data</a>.</p>
         <div class="where"><b>Where</b> Home → Prefs → Backup</div>
+      </div>
+
+      <div class="e">
+        <h3>A map for places with no signal</h3>
+        <p>The maps in the app come off the internet, so where the phone has no signal, ground you have not looked at lately can come up blank. Save your area once and it stops mattering: tap <strong>Download map for this area</strong>. The app finds where you are and saves the map for about <strong>15 km around you</strong> in every direction &mdash; a routine run from the front door and back, with room to spare. Best done at home, on Wi-Fi.</p>
+        <p>While it works the row says which of its two steps it is on, how far through it is, and how much it has fetched. When it is done the row says the day you saved it and how big it is. Every map in the app draws from it inside that area &mdash; the map during a run, the full-screen map, and the maps on a run&rsquo;s, a route&rsquo;s and a segment&rsquo;s own page.</p>
+        <p><strong>Only one area is kept.</strong> Tap it again somewhere else &mdash; on holiday, say &mdash; and the new area replaces the old one. Leaving Settings does not stop a download; come back and the row shows where it has got to.</p>
+        <p class="note"><b>Your run records either way.</b> Where you are comes from satellites, not from the phone&rsquo;s signal, so a run with no signal still records its route, distance and pace in full. Only the picture of the map needs the saved area.</p>
+        <p class="note"><b>When it cannot finish, the row says why</b>, in words you can act on, and then says what is saved now. A download that stopped part-way says <span class="mono">Only part saved</span> rather than calling it saved; tap again to try again.</p>
+        <div class="where"><b>Where</b> Home → Prefs → Offline map</div>
       </div>
 
     </div>
@@ -388,6 +399,7 @@
       <div class="e">
         <h3>The map, while you run</h3>
         <p>An outdoor run gets a small map card, with an amber line of where you have been and a marker for where you are. <strong>Tap it and the map fills the screen</strong>, with a slim strip across the top carrying your heart rate, pace, distance and elapsed time. The back arrow in the top-left, and your phone's own back gesture, both return you to the run screen. The back arrow is the only control on it, so a wet thumb cannot pause or stop the run from there. (Mapbox's own small &ldquo;i&rdquo; in the bottom corner is theirs, and stays where it is.)</p>
+        <p class="note"><b>With no signal, the map shows what you saved.</b> The map comes off the internet, so where the phone has no signal, ground you have not looked at lately can come up blank. Save your area once and it is there without signal &mdash; see <em>A map for places with no signal</em> in <a href="#setup">setting up</a>. The run itself records either way.</p>
         <p class="note"><b>The small card does not move under your finger.</b> It is a picture, and its only job is to open the big one &mdash; a drag on it scrolls the run screen, the way a drag anywhere else on that screen does.</p>
         <div class="where"><b>Where</b> During an outdoor run &rarr; the map card</div>
       </div>
@@ -1146,7 +1158,7 @@
 
   <footer class="foot">
     <p><strong>How this page is kept.</strong> It is rebuilt whenever a feature ships, from the source file <code>docs/guide/index.html</code> in the app's own repository, and republished to this same link — so the bookmark keeps working.</p>
-    <p>Last updated <strong>9 September 2026</strong>. A run on a route is told which way the course turns, before it turns. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
+    <p>Last updated <strong>10 September 2026</strong>. The map can be saved to the phone for runs with no signal. Everything described here is built and running on the phone; anything still to come is called out as such.</p>
   </footer>
 
 </div>
