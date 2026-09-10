@@ -524,6 +524,17 @@ class MainActivity : ComponentActivity() {
                         )
                     )
                     val restoreState by restoreViewModel.state.collectAsState()
+
+                    // Held by the app, not by Settings: a download outlives the runner leaving the
+                    // screen (#42).
+                    val offlineMapState by appContainer.offlineMap.state.collectAsState()
+                    // The tap that needed location finishes once it is granted, rather than asking
+                    // the runner to tap again after the dialog.
+                    val askLocationForOfflineMap = rememberLauncherForActivityResult(
+                        ActivityResultContracts.RequestPermission()
+                    ) { granted ->
+                        if (granted) appContainer.offlineMap.download() else appContainer.offlineMap.locationRefused()
+                    }
                     // OpenDocument rather than GetContent: it hands back a Uri this app may read
                     // for as long as it holds it, which is the whole reason a picked file works
                     // where the app's own Downloads copy no longer does after a Clear storage
@@ -924,6 +935,17 @@ class MainActivity : ComponentActivity() {
                                     it.sessionStatus != SessionStatus.IDLE &&
                                         it.sessionStatus != SessionStatus.STOPPED
                                 } ?: false,
+                                offlineMapState = offlineMapState,
+                                onDownloadOfflineMap = {
+                                    val hasLocation = ContextCompat.checkSelfPermission(
+                                        this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION
+                                    ) == PackageManager.PERMISSION_GRANTED
+                                    if (hasLocation) {
+                                        appContainer.offlineMap.download()
+                                    } else {
+                                        askLocationForOfflineMap.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                                    }
+                                },
                                 onBack = {
                                     // The result belonged to the visit that asked for it; coming
                                     // back to Settings later should read the last-backup time, not

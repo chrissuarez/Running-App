@@ -55,6 +55,7 @@ import com.example.runningapp.MAX_RESTING_HR
 import com.example.runningapp.MIN_RESTING_HR
 import com.example.runningapp.RESTING_HR_UNSTATED
 import com.example.runningapp.UserSettings
+import com.example.runningapp.map.OfflineMapState
 import com.example.runningapp.highestStatableRestingHr
 import com.example.runningapp.lowestStatableMaxHr
 import com.example.runningapp.parseMaxHr
@@ -126,6 +127,10 @@ fun SettingsScreen(
      * the row is off rather than warned about.
      */
     runInProgress: Boolean,
+    /** Where the offline map stands — what is saved, or how far a download has got (#42). */
+    offlineMapState: OfflineMapState,
+    /** Saves the map round where the runner is now, asking for location first if it must. */
+    onDownloadOfflineMap: () -> Unit,
     onBack: () -> Unit
 ) {
     var showTargetZonePicker by remember { mutableStateOf(false) }
@@ -289,6 +294,18 @@ fun SettingsScreen(
                 subtitle = null,
                 value = null,
                 onClick = onManageStrap
+            )
+
+            Spacer(modifier = Modifier.height(RunningUiTokens.SectionSpacing))
+            SettingsSectionHeader("Offline map")
+            SettingsRow(
+                label = offlineMapRowLabel(offlineMapState),
+                subtitle = offlineMapRowSubtitle(offlineMapState),
+                value = null,
+                // Allowed during a run: the download asks the phone for one fix and fetches map, and
+                // neither touches the Run's own location stream or its record. A second tap while one
+                // is under way does nothing, and the label already says a download is running.
+                onClick = onDownloadOfflineMap
             )
 
             Spacer(modifier = Modifier.height(RunningUiTokens.SectionSpacing))
