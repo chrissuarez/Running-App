@@ -1,7 +1,6 @@
 package com.example.runningapp.map
 
 import com.example.runningapp.analysis.MapFix
-import com.example.runningapp.recording.degreesEastOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -33,37 +32,91 @@ const val OFFLINE_AREA_CORNERS = 64
 private const val MEAN_EARTH_RADIUS_METERS = 6_371_008.8
 
 /**
- * The ground to keep: a ring of [corners] points [radiusMeters] out from [center], closed — the last
- * point repeats the first, which is what a GeoJSON polygon requires.
+ * The ground to keep: a circle [radiusMeters] out from [center], drawn as [corners] points and given
+ * back as closed rings — in each, the last point repeats the first, which is what a GeoJSON polygon
+ * requires. One polygon per ring.
+ *
+ * Almost everywhere that is one ring. Where the circle crosses the date line it is two, cut along
+ * the 180° meridian: the piece east of the cut ends at 180, the piece west of it at -180, and each
+ * stays on the map. A single ring there would have to either leave the map (181°, a longitude
+ * Mapbox does not say it accepts) or jump from 179.9° to -179.9° between neighbouring corners, and
+ * that edge runs the other way round the world — the ground it outlines is not the runner's. Cutting
+ * it in two is what the GeoJSON standard (RFC 7946, 3.1.9) asks for.
  *
  * A circle rather than a square because the runner can go any way out of the door, and a square's
  * corners are ground a fifth bigger again that no out-and-back of the same length reaches.
  *
  * Laid out on a sphere. Against the ellipsoid every distance a runner is shown is measured on, a
  * corner lands a few tens of metres off at most, which moves no tile.
+ *
+ * The poles are not handled: the map stops at about 85° north and south, and nobody runs there.
  */
-fun offlineAreaRing(
+fun offlineAreaRings(
     center: MapFix,
     radiusMeters: Double = OFFLINE_AREA_RADIUS_METERS,
     corners: Int = OFFLINE_AREA_CORNERS,
-): List<MapFix> {
+): List<List<MapFix>> {
     val lat = Math.toRadians(center.latitude)
-    val lon = Math.toRadians(center.longitude)
     val angle = radiusMeters / MEAN_EARTH_RADIUS_METERS
     val ring = (0 until corners).map { i ->
         val bearing = 2.0 * Math.PI * i / corners
         val cornerLat = asin(sin(lat) * cos(angle) + cos(lat) * sin(angle) * cos(bearing))
-        val cornerLon = lon + atan2(
-            sin(bearing) * sin(angle) * cos(lat),
-            cos(angle) - sin(lat) * sin(cornerLat)
+        val degreesEast = Math.toDegrees(
+            atan2(sin(bearing) * sin(angle) * cos(lat), cos(angle) - sin(lat) * sin(cornerLat))
         )
         MapFix(
             latitude = Math.toDegrees(cornerLat),
-            // Back onto the map: east of a centre near 180° is written just past -180°, not 180.2°.
-            longitude = degreesEastOf(0.0, Math.toDegrees(cornerLon)),
+            // Measured on from the centre and never wrapped, so the ring runs on unbroken: east of a
+            // centre at 179.95° is 180.1°, next to its neighbours, not -179.9° across the world.
+            longitude = center.longitude + degreesEast,
         )
     }
-    return ring + ring.first()
+    val east = ring.maxOf { it.longitude }
+    val west = ring.minOf { it.longitude }
+    return when {
+        east > 180.0 -> listOf(
+            ring.cutAt(180.0, keepEast = false),
+            ring.cutAt(180.0, keepEast = true).map { it.copy(longitude = it.longitude - 360.0) },
+        )
+        west < -180.0 -> listOf(
+            ring.cutAt(-180.0, keepEast = true),
+            ring.cutAt(-180.0, keepEast = false).map { it.copy(longitude = it.longitude + 360.0) },
+        )
+        else -> listOf(ring)
+    }.map { it + it.first() }
+}
+
+/**
+ * The part of this ring on one side of the [meridian] — east of it when [keepEast], else west —
+ * with the cut drawn along the meridian itself. The ring comes in open (no repeated first point) and
+ * goes out open.
+ *
+ * One straight cut through a circle, so the part left is one piece and a single pass round the
+ * corners finds it: keep each corner on the kept side, and where an edge crosses the meridian, add
+ * the point it crosses at. That point's longitude is the meridian exactly, so the two pieces of one
+ * circle meet on the same line to the last digit.
+ */
+private fun List<MapFix>.cutAt(meridian: Double, keepEast: Boolean): List<MapFix> {
+    fun kept(fix: MapFix) = if (keepEast) fix.longitude >= meridian else fix.longitude <= meridian
+    fun crossing(from: MapFix, to: MapFix) = MapFix(
+        latitude = from.latitude +
+            (meridian - from.longitude) / (to.longitude - from.longitude) * (to.latitude - from.latitude),
+        longitude = meridian,
+    )
+    val piece = mutableListOf<MapFix>()
+    forEachIndexed { i, to ->
+        val from = this[(i + size - 1) % size]
+        when {
+            kept(from) && kept(to) -> piece += to
+            kept(from) -> piece += crossing(from, to)
+            kept(to) -> {
+                piece += crossing(from, to)
+                piece += to
+            }
+        }
+    }
+    // A corner lying on the meridian is both kept and a crossing; say it once.
+    return piece.filterIndexed { i, fix -> fix != piece[(i + piece.size - 1) % piece.size] }
 }
 
 /**
