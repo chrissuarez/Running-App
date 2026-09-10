@@ -530,10 +530,18 @@ class MainActivity : ComponentActivity() {
                     val offlineMapState by appContainer.offlineMap.state.collectAsState()
                     // The tap that needed location finishes once it is granted, rather than asking
                     // the runner to tap again after the dialog.
+                    //
+                    // Fine and coarse asked together, as checkAndRequestPermissions does: from
+                    // Android 12 a request for fine alone is ignored by the system, with no dialog.
+                    // Either answer will do — "approximate" is plenty to centre 15 km of map on.
                     val askLocationForOfflineMap = rememberLauncherForActivityResult(
-                        ActivityResultContracts.RequestPermission()
-                    ) { granted ->
-                        if (granted) appContainer.offlineMap.download() else appContainer.offlineMap.locationRefused()
+                        ActivityResultContracts.RequestMultiplePermissions()
+                    ) { answers ->
+                        if (answers.values.any { it }) {
+                            appContainer.offlineMap.download()
+                        } else {
+                            appContainer.offlineMap.locationRefused()
+                        }
                     }
                     // OpenDocument rather than GetContent: it hands back a Uri this app may read
                     // for as long as it holds it, which is the whole reason a picked file works
@@ -937,13 +945,18 @@ class MainActivity : ComponentActivity() {
                                 } ?: false,
                                 offlineMapState = offlineMapState,
                                 onDownloadOfflineMap = {
-                                    val hasLocation = ContextCompat.checkSelfPermission(
-                                        this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION
-                                    ) == PackageManager.PERMISSION_GRANTED
+                                    val locationPermissions = arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION,
+                                    )
+                                    val hasLocation = locationPermissions.any {
+                                        ContextCompat.checkSelfPermission(this@MainActivity, it) ==
+                                            PackageManager.PERMISSION_GRANTED
+                                    }
                                     if (hasLocation) {
                                         appContainer.offlineMap.download()
                                     } else {
-                                        askLocationForOfflineMap.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+                                        askLocationForOfflineMap.launch(locationPermissions)
                                     }
                                 },
                                 onBack = {

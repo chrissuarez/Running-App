@@ -64,7 +64,7 @@ private fun failureLine(failure: OfflineMapFailure): String = when (failure) {
     OfflineMapFailure.NO_PERMISSION -> "Needs location, to know which area to save."
     OfflineMapFailure.NO_LOCATION -> "Couldn't find where you are. Turn on location, then try again."
     OfflineMapFailure.DISK_FULL -> "Phone storage is full. Free some space, then try again."
-    OfflineMapFailure.AREA_TOO_BIG -> "Mapbox's limit on saved map for this phone was reached."
+    OfflineMapFailure.MAPBOX_LIMIT_REACHED -> "Mapbox's limit on saved map for this phone was reached."
     OfflineMapFailure.DOWNLOAD_FAILED -> "Download failed. Check you have internet, then try again."
 }
 

@@ -138,7 +138,7 @@ class MapboxOfflineMapStore(private val context: Context) : OfflineMapStore {
             Log.w(TAG, "Tile region failed: ${error.type} ${error.message}")
             return when (error.type) {
                 TileRegionErrorType.DISK_FULL -> OfflineMapFailure.DISK_FULL
-                TileRegionErrorType.TILE_COUNT_EXCEEDED -> OfflineMapFailure.AREA_TOO_BIG
+                TileRegionErrorType.TILE_COUNT_EXCEEDED -> OfflineMapFailure.MAPBOX_LIMIT_REACHED
                 else -> OfflineMapFailure.DOWNLOAD_FAILED
             }
         }

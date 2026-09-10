@@ -163,6 +163,28 @@ class OfflineMapDownloadTest {
     }
 
     @Test
+    fun `a store that cannot be read is read as nothing saved, not a crash`() = runTest {
+        // The row lives on the app's scope, which has no handler: an escape would end the app.
+        val store = object : OfflineMapStore {
+            override suspend fun stored(): StoredOfflineMap? = error("Mapbox could not open its store")
+            override suspend fun download(
+                center: MapFix,
+                downloadedAtMillis: Long,
+                onProgress: (OfflineMapProgress) -> Unit
+            ): OfflineMapFailure? = null
+        }
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val download = OfflineMapDownload(scope, store, whereAmI = { home }, now = { 0L })
+        advanceUntilIdle()
+
+        assertEquals(OfflineMapState.Ready(null), download.state.value)
+        download.download()
+        advanceUntilIdle()
+        assertEquals(OfflineMapState.Ready(null), download.state.value)
+        scope.cancel()
+    }
+
+    @Test
     fun `refused location permission is said on the row, and nothing is downloaded`() = runTest {
         val store = FakeStore(null)
         val (download, scope) = downloader(store)

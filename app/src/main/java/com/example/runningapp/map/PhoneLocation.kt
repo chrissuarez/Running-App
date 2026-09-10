@@ -19,9 +19,11 @@ import kotlin.coroutines.resume
  * Not the Run's [com.example.runningapp.LocationTracker], which is a stream of fixes for recording a
  * Run. This is one answer, for a tap in Settings, with no Run in it.
  *
- * Any fix up to five minutes old is taken, and no accuracy bar is set. The area reaches 15 km in every
- * direction, so a fix a few hundred metres out still saves the ground the runner will run on; the
- * 30 m bar a Run's distance needs would only turn a good-enough answer into "couldn't find you".
+ * Any fix up to five minutes old is taken, at the phone's balanced accuracy, and no accuracy bar is
+ * set. The area reaches 15 km in every direction, so a fix a few hundred metres out still saves the
+ * ground the runner will run on; the 30 m bar a Run's distance needs would only turn a good-enough
+ * answer into "couldn't find you". It is also why "approximate" location is accepted as well as
+ * precise.
  *
  * Null when there is no answer — no permission, location switched off, or no fix inside thirty
  * seconds. Never throws.
@@ -29,11 +31,11 @@ import kotlin.coroutines.resume
 class PhoneLocation(private val context: Context) {
 
     suspend fun whereAmI(): MapFix? {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) !=
-            PackageManager.PERMISSION_GRANTED
-        ) return null
+        val permitted = listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            .any { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
+        if (!permitted) return null
         val request = CurrentLocationRequest.Builder()
-            .setPriority(Priority.PRIORITY_HIGH_ACCURACY)
+            .setPriority(Priority.PRIORITY_BALANCED_POWER_ACCURACY)
             .setMaxUpdateAgeMillis(FIX_MAX_AGE_MILLIS)
             .setDurationMillis(WAIT_MILLIS)
             .build()
