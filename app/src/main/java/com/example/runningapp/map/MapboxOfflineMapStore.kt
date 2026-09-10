@@ -7,6 +7,8 @@ import com.mapbox.bindgen.Value
 import com.mapbox.common.TileRegionErrorType
 import com.mapbox.common.TileRegionLoadOptions
 import com.mapbox.common.TileStore
+import com.mapbox.geojson.Geometry
+import com.mapbox.geojson.MultiPolygon
 import com.mapbox.geojson.Point
 import com.mapbox.geojson.Polygon
 import com.mapbox.maps.GlyphsRasterizationMode
@@ -109,9 +111,12 @@ class MapboxOfflineMapStore(private val context: Context) : OfflineMapStore {
                 .pixelRatio(context.resources.displayMetrics.density)
                 .build()
         )
-        val ring = offlineAreaRing(center).map { Point.fromLngLat(it.longitude, it.latitude) }
+        val rings = offlineAreaRings(center).map { ring -> ring.map { Point.fromLngLat(it.longitude, it.latitude) } }
+        // Two rings only where the area is cut at the date line; they are one area, so one region.
+        val area: Geometry = rings.singleOrNull()?.let { Polygon.fromLngLats(listOf(it)) }
+            ?: MultiPolygon.fromLngLats(rings.map { listOf(it) })
         val options = TileRegionLoadOptions.Builder()
-            .geometry(Polygon.fromLngLats(listOf(ring)))
+            .geometry(area)
             .descriptors(listOf(descriptor))
             .metadata(Value.valueOf(hashMapOf(DOWNLOADED_AT to Value.valueOf(downloadedAtMillis))))
             .build()
