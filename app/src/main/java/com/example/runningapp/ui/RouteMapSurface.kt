@@ -5,8 +5,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.map.SunriseSunsetCalculator
 import com.mapbox.geojson.MultiPoint
@@ -16,13 +14,10 @@ import com.mapbox.maps.extension.compose.MapboxMap
 import com.mapbox.maps.extension.compose.MapboxMapComposable
 import com.mapbox.maps.extension.compose.MapboxMapScope
 import com.mapbox.maps.extension.compose.animation.viewport.rememberMapViewportState
-import com.mapbox.maps.extension.compose.annotation.generated.CircleAnnotation
-import com.mapbox.maps.extension.compose.annotation.generated.CircleAnnotationGroup
 import com.mapbox.maps.extension.compose.rememberMapState
 import com.mapbox.maps.extension.compose.style.standard.LightPresetValue
 import com.mapbox.maps.extension.compose.style.standard.MapboxStandardStyle
 import com.mapbox.maps.extension.compose.style.standard.rememberStandardStyleState
-import com.mapbox.maps.plugin.annotation.generated.CircleAnnotationOptions
 import com.mapbox.maps.plugin.gestures.generated.GesturesSettings
 import com.mapbox.maps.plugin.viewport.data.OverviewViewportStateOptions
 
@@ -129,43 +124,6 @@ fun RouteMapSurface(
         style = { MapboxStandardStyle(standardStyleState = standardStyleState) },
         content = content,
     )
-}
-
-/**
- * How brightly everything this app draws on a map lights itself: fully, so it keeps its own colour.
- *
- * The Standard style lights its whole scene, and a line or dot added to it is lit with the rest
- * unless it says otherwise. At night that turned an amber course dark brown on a dark map — the one
- * thing on the page a runner could not see (#468). Lit from inside, a line is the colour it was given
- * by day and by night alike. The icons and words drawn over it never needed telling.
- */
-internal const val SelfLit = 1.0
-
-/**
- * One dot on the ground — a start, a finish, the scrubber's place — lit from inside like every line
- * ([SelfLit]).
- *
- * A group of one rather than Mapbox's single [CircleAnnotation], because only a group can be told
- * how brightly to light itself: a dot's emissive strength belongs to the layer it is drawn in, and a
- * single circle does not let its layer be reached. One group per dot keeps each in a layer of its
- * own, drawn in the order it is composed, as the single circles were.
- */
-@Composable
-@MapboxMapComposable
-internal fun GroundDot(at: MapFix, radius: Double, fill: Color, edge: Color, edgeWidth: Double) {
-    val dot = remember(at, radius, fill, edge, edgeWidth) {
-        listOf(
-            CircleAnnotationOptions()
-                .withPoint(at.asPoint())
-                .withCircleRadius(radius)
-                .withCircleColor(fill.toArgb())
-                .withCircleStrokeColor(edge.toArgb())
-                .withCircleStrokeWidth(edgeWidth)
-        )
-    }
-    CircleAnnotationGroup(annotations = dot) {
-        circleEmissiveStrength = SelfLit
-    }
 }
 
 /** One fix as Mapbox wants it. Longitude first, which is the mistake this exists to make once. */

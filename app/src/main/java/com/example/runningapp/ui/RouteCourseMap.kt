@@ -84,8 +84,8 @@ fun RouteCourseMap(line: List<MapFix>, modifier: Modifier = Modifier) {
                 at = finish,
                 radius = GroundMarkerRadius,
                 fill = markerFill,
-                edge = markerStroke,
-                edgeWidth = GroundMarkerStrokeWidth,
+                stroke = markerStroke,
+                strokeWidth = GroundMarkerStrokeWidth,
             )
         }
         line.firstOrNull()?.let { start ->
@@ -93,8 +93,8 @@ fun RouteCourseMap(line: List<MapFix>, modifier: Modifier = Modifier) {
                 at = start,
                 radius = GroundMarkerRadius,
                 fill = markerStroke,
-                edge = markerFill,
-                edgeWidth = GroundMarkerStrokeWidth,
+                stroke = markerFill,
+                strokeWidth = GroundMarkerStrokeWidth,
             )
             PointAnnotationGroup(
                 annotations = listOf(
