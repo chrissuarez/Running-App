@@ -4,7 +4,7 @@ import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.recording.FLAT_EPSILON_METERS
 import com.example.runningapp.recording.LocalFrame
-import com.example.runningapp.recording.theShortWayRound
+import com.example.runningapp.segments.fixAt
 import com.example.runningapp.run.RunRoute
 import kotlin.math.atan2
 import kotlin.math.hypot
@@ -100,36 +100,17 @@ fun routeDirectionLine(flipped: Boolean): String =
 /** The button that turns a course round for good. */
 const val FLIP_ROUTE_BUTTON_LABEL = "Flip direction"
 
-private fun metersOf(from: MapFix, to: MapFix): Double =
+/** [to] in metres east and north of [from], in a frame pinned at [from]. */
+private fun flatStep(from: MapFix, to: MapFix) =
     LocalFrame(from.latitude, from.longitude).project(to.latitude, to.longitude)
-        .let { flat -> hypot(flat.east, flat.north) }
+
+private fun metersOf(from: MapFix, to: MapFix): Double =
+    flatStep(from, to).let { hypot(it.east, it.north) }
 
 /** Degrees clockwise from north, from [from] to [to]; null where the two are one place. */
 private fun bearingDegrees(from: MapFix, to: MapFix): Double? {
-    val flat = LocalFrame(from.latitude, from.longitude).project(to.latitude, to.longitude)
+    val flat = flatStep(from, to)
     if (hypot(flat.east, flat.north) <= FLAT_EPSILON_METERS) return null
     val degrees = Math.toDegrees(atan2(flat.east, flat.north))
     return if (degrees < 0.0) degrees + 360.0 else degrees
-}
-
-/**
- * Where the course is [target] metres along it, interpolated on the leg it falls on — clamped to the
- * ends. Longitude is interpolated the short way round, so a leg over the date line stays on it.
- */
-private fun fixAt(line: List<MapFix>, along: DoubleArray, target: Double): MapFix {
-    if (target <= 0.0) return line.first()
-    for (leg in 0 until line.lastIndex) {
-        val legMeters = along[leg + 1] - along[leg]
-        if (legMeters <= 0.0 || target > along[leg + 1]) continue
-        val fraction = ((target - along[leg]) / legMeters).coerceIn(0.0, 1.0)
-        val from = line[leg]
-        val to = line[leg + 1]
-        return MapFix(
-            latitude = from.latitude + (to.latitude - from.latitude) * fraction,
-            longitude = theShortWayRound(
-                from.longitude + theShortWayRound(to.longitude - from.longitude) * fraction
-            ),
-        )
-    }
-    return line.last()
 }

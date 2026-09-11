@@ -12,8 +12,11 @@ import com.mapbox.maps.extension.compose.annotation.generated.CircleAnnotation
 import com.mapbox.maps.extension.compose.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.extension.style.layers.properties.generated.LineJoin
 
-/** The chosen stretch, drawn to be followed; the same weight the run's own route is drawn at. */
-private const val SegmentLineWidth = 6.0
+/**
+ * The chosen stretch, drawn to be followed; the same weight the run's own route is drawn at. A
+ * course's own page draws at it too ([RouteCourseMap]), so the two pages of ground read alike.
+ */
+internal const val SegmentLineWidth = 6.0
 
 /**
  * How the rest of the Run is drawn behind the chosen stretch: thinner and part way to transparent.
@@ -25,8 +28,8 @@ private const val SegmentLineWidth = 6.0
 private const val BehindLineWidth = 3.0
 private const val BehindLineOpacity = 0.45
 
-private const val MarkerRadius = 8.0
-private const val MarkerStrokeWidth = 3.0
+internal const val GroundMarkerRadius = 8.0
+internal const val GroundMarkerStrokeWidth = 3.0
 
 /**
  * What the camera is framed on: the Run the choice is being cut out of, wherever there is one, and
@@ -102,18 +105,18 @@ fun SegmentMapSurface(
         // on a dark map and a light one and need no colour vision to tell apart.
         segment.firstOrNull()?.let { start ->
             CircleAnnotation(point = start.asPoint()) {
-                circleRadius = MarkerRadius
+                circleRadius = GroundMarkerRadius
                 circleColor = markerStroke
                 circleStrokeColor = markerFill
-                circleStrokeWidth = MarkerStrokeWidth
+                circleStrokeWidth = GroundMarkerStrokeWidth
             }
         }
         segment.lastOrNull()?.let { finish ->
             CircleAnnotation(point = finish.asPoint()) {
-                circleRadius = MarkerRadius
+                circleRadius = GroundMarkerRadius
                 circleColor = markerFill
                 circleStrokeColor = markerStroke
-                circleStrokeWidth = MarkerStrokeWidth
+                circleStrokeWidth = GroundMarkerStrokeWidth
             }
         }
     }

@@ -125,8 +125,8 @@ data class Route(
      *
      * It is also why no Run's history moves when a course is flipped. A Run writes down which way
      * round it went *against the line as kept* ([RunnerSession.ranAlongRouteReversed]), and the line
-     * as kept never changes — so an old Run still says exactly which way it went, and only the word
-     * the screen uses for it ("the usual way", "backwards") is worked out against this.
+     * as kept never changes — so an old Run still says exactly which way it went. Only the pre-run
+     * switch is read against this, and it is turned into the line's terms at START.
      *
      * Everything that reads a course for direction reads it through here: the page's arrows and the
      * pre-run switch ([com.example.runningapp.ui.runRouteSetOutAlong]). Nothing that recognises a

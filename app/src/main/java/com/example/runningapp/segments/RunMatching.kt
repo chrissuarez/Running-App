@@ -189,6 +189,10 @@ fun RunnerSession.mayBeMatchedToOtherRuns(): Boolean = mayHoldSegmentEfforts()
 
 /**
  * Where the Run was when it had covered [target] metres, interpolated along the leg it fell on.
+ * [along] is how far each of [places] is from the first. Clamped to the two ends.
+ *
+ * Shared with the arrows a course's page draws ([com.example.runningapp.ui.directionArrowsAlong],
+ * #465), which ask the same question of a course, so the date line is handled in one place.
  *
  * Longitude is interpolated across [theShortWayRound] and wrapped back, because a leg that steps
  * over ±180° subtracts to nearly a whole turn: taken raw, the waypoint lands near Greenwich, half a
@@ -196,7 +200,7 @@ fun RunnerSession.mayBeMatchedToOtherRuns(): Boolean = mayHoldSegmentEfforts()
  * *on* the date line would not take that leg at all, so the two runs would disagree about identical
  * ground and [runsMatch] would refuse them.
  */
-private fun fixAt(
+internal fun fixAt(
     places: List<MapFix>,
     along: DoubleArray,
     target: Double,
