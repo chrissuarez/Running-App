@@ -109,8 +109,8 @@ fun SegmentMapSurface(
                 at = start,
                 radius = GroundMarkerRadius,
                 fill = markerStroke,
-                edge = markerFill,
-                edgeWidth = GroundMarkerStrokeWidth,
+                stroke = markerFill,
+                strokeWidth = GroundMarkerStrokeWidth,
             )
         }
         segment.lastOrNull()?.let { finish ->
@@ -118,8 +118,8 @@ fun SegmentMapSurface(
                 at = finish,
                 radius = GroundMarkerRadius,
                 fill = markerFill,
-                edge = markerStroke,
-                edgeWidth = GroundMarkerStrokeWidth,
+                stroke = markerStroke,
+                strokeWidth = GroundMarkerStrokeWidth,
             )
         }
     }

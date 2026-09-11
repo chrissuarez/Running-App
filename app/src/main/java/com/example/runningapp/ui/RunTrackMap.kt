@@ -206,15 +206,15 @@ private fun TrackMapSurface(
             at = trackMap.start,
             radius = MarkerRadius,
             fill = markerStroke,
-            edge = markerFill,
-            edgeWidth = MarkerStrokeWidth,
+            stroke = markerFill,
+            strokeWidth = MarkerStrokeWidth,
         )
         GroundDot(
             at = trackMap.finish,
             radius = MarkerRadius,
             fill = markerFill,
-            edge = markerStroke,
-            edgeWidth = MarkerStrokeWidth,
+            stroke = markerStroke,
+            strokeWidth = MarkerStrokeWidth,
         )
         // Last, so it is drawn over the route and over both markers: the runner's finger has to be
         // findable even where it is on top of where they set off from.
@@ -240,7 +240,7 @@ private fun ScrubDot(scrubbedFix: () -> MapFix?, fill: Color, stroke: Color) {
         at = fix,
         radius = ScrubDotRadius,
         fill = fill,
-        edge = stroke,
-        edgeWidth = ScrubDotStrokeWidth,
+        stroke = stroke,
+        strokeWidth = ScrubDotStrokeWidth,
     )
 }
