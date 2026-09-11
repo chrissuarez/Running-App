@@ -26,6 +26,7 @@ import com.example.runningapp.routes.CourseLine
 import com.example.runningapp.routes.RoutePoint
 import com.example.runningapp.routes.courseRemainingMeters
 import com.example.runningapp.ui.MapCardTapOverlay
+import com.example.runningapp.ui.SelfLit
 import com.mapbox.geojson.Point
 import com.mapbox.maps.extension.compose.MapEffect
 import com.mapbox.maps.extension.compose.MapboxMap
@@ -187,12 +188,14 @@ fun MapSurface(
                 PolylineAnnotation(points = coursePoints) {
                     lineColor = courseColor
                     lineWidth = CourseLineWidth
+                    lineEmissiveStrength = SelfLit
                 }
             }
             if (trailPoints.size >= 2) {
                 PolylineAnnotation(points = trailPoints) {
                     lineColor = trailColor
                     lineWidth = TrailLineWidth
+                    lineEmissiveStrength = SelfLit
                 }
             }
         }

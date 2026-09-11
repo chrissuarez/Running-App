@@ -33,7 +33,6 @@ import com.example.runningapp.analysis.TrackMap
 import com.example.runningapp.ui.theme.RunningUiTokens
 import com.example.runningapp.ui.workout.zoneChartColor
 import com.mapbox.maps.extension.compose.MapboxMapComposable
-import com.mapbox.maps.extension.compose.annotation.generated.CircleAnnotation
 import com.mapbox.maps.extension.compose.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.extension.style.layers.properties.generated.LineJoin
 
@@ -198,22 +197,25 @@ private fun TrackMapSurface(
                 lineWidth = if (zone == null) NoHeartRateLineWidth else RouteLineWidth
                 lineOpacity = if (zone == null) NoHeartRateLineOpacity else 1.0
                 lineJoin = LineJoin.ROUND
+                lineEmissiveStrength = SelfLit
             }
         }
         // Start hollow, finish filled — the same two colours swapped, so the pair reads on a dark
         // map and a light one and needs no colour vision to tell apart.
-        CircleAnnotation(point = trackMap.start.asPoint()) {
-            circleRadius = MarkerRadius
-            circleColor = markerStroke
-            circleStrokeColor = markerFill
-            circleStrokeWidth = MarkerStrokeWidth
-        }
-        CircleAnnotation(point = trackMap.finish.asPoint()) {
-            circleRadius = MarkerRadius
-            circleColor = markerFill
-            circleStrokeColor = markerStroke
-            circleStrokeWidth = MarkerStrokeWidth
-        }
+        GroundDot(
+            at = trackMap.start,
+            radius = MarkerRadius,
+            fill = markerStroke,
+            edge = markerFill,
+            edgeWidth = MarkerStrokeWidth,
+        )
+        GroundDot(
+            at = trackMap.finish,
+            radius = MarkerRadius,
+            fill = markerFill,
+            edge = markerStroke,
+            edgeWidth = MarkerStrokeWidth,
+        )
         // Last, so it is drawn over the route and over both markers: the runner's finger has to be
         // findable even where it is on top of where they set off from.
         ScrubDot(scrubbedFix = scrubbedFix, fill = scrubDotFill, stroke = markerStroke)
@@ -234,10 +236,11 @@ private fun TrackMapSurface(
 @MapboxMapComposable
 private fun ScrubDot(scrubbedFix: () -> MapFix?, fill: Color, stroke: Color) {
     val fix = scrubbedFix() ?: return
-    CircleAnnotation(point = fix.asPoint()) {
-        circleRadius = ScrubDotRadius
-        circleColor = fill
-        circleStrokeColor = stroke
-        circleStrokeWidth = ScrubDotStrokeWidth
-    }
+    GroundDot(
+        at = fix,
+        radius = ScrubDotRadius,
+        fill = fill,
+        edge = stroke,
+        edgeWidth = ScrubDotStrokeWidth,
+    )
 }
