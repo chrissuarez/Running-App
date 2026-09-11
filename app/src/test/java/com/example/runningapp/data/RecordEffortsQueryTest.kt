@@ -25,9 +25,9 @@ import org.junit.Test
  * fourth place for ever: nothing mends the top ten, because nothing has to.
  *
  * And the other thing only a real database can show (#346): the fill flag and the claims come back
- * from **one statement**, so no reading can pair a flag lowered by one write with claims read before
- * the write that finished filling them. Every read below goes through that one statement
- * ([RECORD_BOOK_SQL]) and the fold the repository makes of it ([recordBookOf]).
+ * from **one statement**, so no reading can pair a flag lowered by one write with claims read
+ * before the write that finished filling them. Every read below goes through that one statement
+ * ([RECORDS_READING_SQL]) and the fold the repository makes of it ([recordsReadingOf]).
  */
 class RecordEffortsQueryTest {
 
@@ -127,16 +127,17 @@ class RecordEffortsQueryTest {
 
     @Test
     fun `a raised fill flag comes back with no claims, however many the table already holds`() {
-        // The first launch after the upgrade, part-way through: two Runs of a long history measured.
+        // The first launch after the upgrade, part-way through: two Runs of a long history
+        // measured.
         givenRun(1L, day = 1, fiveKSeconds = 1_800.0)
         givenRun(2L, day = 2, fiveKSeconds = 1_700.0)
         givenFillOwed(true)
 
-        val book = recordBook()
+        val reading = recordsReading()
 
-        assertTrue(book.measuring)
+        assertTrue(reading.measuring)
         // Not the two claims the pass has reached — a slice of history is never handed to a reader.
-        assertEquals(emptyList<RecordEffortRow>(), book.efforts)
+        assertEquals(emptyList<RecordEffortRow>(), reading.efforts)
     }
 
     @Test
@@ -148,35 +149,38 @@ class RecordEffortsQueryTest {
         givenRun(3L, day = 3, fiveKSeconds = 1_700.0)
         givenFillOwed(false)
 
-        val book = recordBook()
+        val reading = recordsReading()
 
-        assertFalse(book.measuring)
-        assertEquals(listOf(1L, 2L, 3L), book.efforts.map { it.sessionId })
-        assertEquals(2L, recordSlots(book.efforts, zone).single { it.type == RecordType.FASTEST_5K }.best?.sessionId)
+        assertFalse(reading.measuring)
+        assertEquals(listOf(1L, 2L, 3L), reading.efforts.map { it.sessionId })
+        val fiveK = recordSlots(reading.efforts, zone).single { it.type == RecordType.FASTEST_5K }
+        assertEquals(2L, fiveK.best?.sessionId)
     }
 
     @Test
     fun `a history with nothing banked and nothing owed is an answer of its own`() {
-        // No rows at all to join, and still one answer: nothing is being measured and nothing stands.
-        val book = recordBook()
+        // No rows at all to join, and still one answer: nothing is being measured and nothing
+        // stands.
+        val reading = recordsReading()
 
-        assertFalse(book.measuring)
-        assertEquals(emptyList<RecordEffortRow>(), book.efforts)
+        assertFalse(reading.measuring)
+        assertEquals(emptyList<RecordEffortRow>(), reading.efforts)
     }
 
     @Test
     fun `a fresh install that never held the fill row reads as nothing owed`() {
         givenRun(1L, day = 1, fiveKSeconds = 1_500.0)
 
-        val book = recordBook()
+        val reading = recordsReading()
 
-        assertFalse(book.measuring)
-        assertEquals(1, book.efforts.size)
+        assertFalse(reading.measuring)
+        assertEquals(1, reading.efforts.size)
     }
 
     private fun givenFillOwed(owed: Boolean) {
         db.exec(
-            "INSERT OR REPLACE INTO record_fill (id, wholesaleFillOwed) VALUES (0, ${if (owed) 1 else 0})"
+            "INSERT OR REPLACE INTO record_fill (id, wholesaleFillOwed) " +
+                "VALUES (0, ${if (owed) 1 else 0})"
         )
     }
 
@@ -190,14 +194,17 @@ class RecordEffortsQueryTest {
         )
     }
 
-    /** The claims of a reading taken when nothing is being measured — every test above sets none. */
-    private fun effortRows(): List<RecordEffortRow> = recordBook().efforts
+    /** The claims of a reading taken with nothing being measured — the tests above owe no fill. */
+    private fun effortRows(): List<RecordEffortRow> = recordsReading().efforts
 
-    /** The DAO's own read ([RECORD_BOOK_SQL]), run against the real tables and folded as the repository folds it. */
-    private fun recordBook(): RecordBook {
-        val rows = mutableListOf<RecordBookRow>()
+    /**
+     * The DAO's own read ([RECORDS_READING_SQL]), run against the real tables and folded as the
+     * repository folds it.
+     */
+    private fun recordsReading(): RecordsReading {
+        val rows = mutableListOf<RecordsReadingRow>()
         db.createStatement().use { statement ->
-            statement.executeQuery(RECORD_BOOK_SQL).use { cursor ->
+            statement.executeQuery(RECORDS_READING_SQL).use { cursor ->
                 while (cursor.next()) {
                     val sessionId = cursor.getLong("sessionId")
                     val effort = if (cursor.wasNull()) {
@@ -211,11 +218,12 @@ class RecordEffortsQueryTest {
                             ranAtUtcOffsetSeconds = cursor.getInt("ranAtUtcOffsetSeconds"),
                         )
                     }
-                    rows += RecordBookRow(fillOwed = cursor.getBoolean("fillOwed"), effort = effort)
+                    val fillOwed = cursor.getBoolean("fillOwed")
+                    rows += RecordsReadingRow(fillOwed = fillOwed, effort = effort)
                 }
             }
         }
-        return recordBookOf(rows)
+        return recordsReadingOf(rows)
     }
 
     private fun Connection.exec(sql: String) = createStatement().use { it.execute(sql) }

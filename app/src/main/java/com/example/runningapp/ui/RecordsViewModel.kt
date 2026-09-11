@@ -4,8 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.runningapp.analysis.RecordType
-import com.example.runningapp.data.RecordBook
 import com.example.runningapp.data.RecordEffortRow
+import com.example.runningapp.data.RecordsReading
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.repeatedOn
 import java.time.ZoneId
@@ -22,11 +22,11 @@ import kotlinx.coroutines.flow.stateIn
  * The Records section and the pages behind it (#75).
  *
  * One rule for both: the grid on the Progress screen and any Record's own page are built from the
- * same query ([SessionRepository.recordBookFlow]) and placed by the same order, so the number in
- * a slot and the gold at the top of that slot's page cannot be two different answers. Each screen
- * builds its own instance of this — a view model belongs to the screen that opened it — and that
- * costs nothing but a second read of a small table, because the rule they share is in the placing
- * rather than in the instance.
+ * same query ([SessionRepository.recordsReadingFlow]) and placed by the same order, so the number
+ * in a slot and the gold at the top of that slot's page cannot be two different answers. Each
+ * screen builds its own instance of this — a view model belongs to the screen that opened it — and
+ * that costs nothing but a second read of a small table, because the rule they share is in the
+ * placing rather than in the instance.
  *
  * Nothing is measured here and nothing is stored. Every row is a claim the record book already
  * banked as it scored the Run ([com.example.runningapp.data.RunEffortRow]); what this does is place
@@ -55,9 +55,9 @@ class RecordsViewModel(
 ) : ViewModel() {
 
     /**
-     * The record book — every claim ever banked, and whether history is being measured against it
-     * wholesale — offered again whenever the phone changes zone; or null, which means Room has not
-     * answered yet (#75).
+     * The latest reading — every claim ever banked, and whether history is being measured against
+     * the record book wholesale — offered again whenever the phone changes zone; or null, which
+     * means Room has not answered yet (#75).
      *
      * Shared rather than collected twice, because the grid and a Record's page ask the same question
      * of the same tables and a second stream would answer it a moment apart from the first.
@@ -65,26 +65,27 @@ class RecordsViewModel(
      * **One value, not the claims and the flag watched apart (#346).** They were once two flows
      * combined here, and Room re-reads each table on its own: the one-row flag answered "nothing
      * owed" the moment the fill was handed back, while this still held the claims read part-way
-     * through it, and for that moment the grid drew a top ten off a slice of history. The repository
-     * now reads both in one statement ([SessionRepository.recordBookFlow]), so a lowered flag can
-     * only reach here beside the claims written before it was lowered.
+     * through it, and for that moment the grid drew a top ten off a slice of history. The
+     * repository now reads both in one statement ([SessionRepository.recordsReadingFlow]), so a
+     * lowered flag can only reach here beside the claims written before it was lowered.
      *
-     * **Null and not an empty book, and this is the whole of the rule.** A shared state has to be
-     * seeded with something before its query answers, and a seed of "no claims" is not a placeholder
-     * — it is a sentence, and the sentence is "this runner has never run anything". Everything
-     * downstream then says it out loud in its own words: the grid draws seven slots reading "Not run
-     * yet", and a Record's page prints the message that nobody has ever contested it, both of them a
-     * frame or two after the runner tapped a number saying otherwise. The seed is the earliest place
-     * the difference between "nothing" and "not asked yet" can be told, so it is told here once and
-     * every reader below derives its own not-yet from this one fact rather than inventing another.
+     * **Null and not an empty reading, and this is the whole of the rule.** A shared state has to
+     * be seeded with something before its query answers, and a seed of "no claims" is not a
+     * placeholder — it is a sentence, and the sentence is "this runner has never run anything".
+     * Everything downstream then says it out loud in its own words: the grid draws seven slots
+     * reading "Not run yet", and a Record's page prints the message that nobody has ever contested
+     * it, both of them a frame or two after the runner tapped a number saying otherwise. The seed
+     * is the earliest place the difference between "nothing" and "not asked yet" can be told, so it
+     * is told here once and every reader below derives its own not-yet from this one fact rather
+     * than inventing another.
      *
-     * The same shape [RecordDetailUi.top] already carries for the same reason, and for the reason it
-     * gives: the absence of the rows says "not read" better than a flag beside them, because a flag
-     * is a second answer to a question the rows themselves answer and two answers can disagree.
-     * Being still measured ([RecordBook.measuring]) is a third fact again and survives untouched —
-     * there the read *has* answered and the answer is deliberately nothing.
+     * The same shape [RecordDetailUi.top] already carries for the same reason, and for the reason
+     * it gives: the absence of the rows says "not read" better than a flag beside them, because a
+     * flag is a second answer to a question the rows themselves answer and two answers can
+     * disagree. Being still measured ([RecordsReading.measuring]) is a third fact again and
+     * survives untouched — there the read *has* answered and the answer is deliberately nothing.
      */
-    private val book: StateFlow<RecordBook?> = sessionRepository.recordBookFlow()
+    private val latest: StateFlow<RecordsReading?> = sessionRepository.recordsReadingFlow()
         .repeatedOn(zoneChanges)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
@@ -92,7 +93,7 @@ class RecordsViewModel(
      * The three states any reading of the record book can be in, said once for every reader (#75).
      *
      * A reading is one of exactly three things and the runner is owed a different thing by each:
-     * the book has not answered yet ([whileUnread]) and the screen must say nothing at all;
+     * the claims have not been read yet ([whileUnread]) and the screen must say nothing at all;
      * history is being measured against the book wholesale ([whileMeasuring]) and the screen says so
      * in words; or the rows are in hand and the screen is read off them ([read]).
      *
@@ -103,20 +104,20 @@ class RecordsViewModel(
      * a fourth screen added later gets the rule by using it rather than by remembering it.
      *
      * The flag and the claims arrive together (#346), so "not answered" is simply the absence of a
-     * book, and a book that has answered is read by its own flag: whether a fill is outstanding is
-     * the database's word, and the claims beside it are never a slice ([RecordBook.efforts]). For
-     * what the flag keys on — and why it cannot fire in ordinary use, after every Run, for ever —
-     * see [SessionRepository.recordsBeingMeasuredFlow].
+     * reading, and a reading that has answered is read by its own flag: whether a fill is
+     * outstanding is the database's word, and the claims beside it are never a slice
+     * ([RecordsReading.efforts]). For what the flag keys on — and why it cannot fire in ordinary
+     * use, after every Run, for ever — see [SessionRepository.recordsBeingMeasuredFlow].
      */
     private fun <T> reading(
         whileUnread: T,
         whileMeasuring: T,
         read: (List<RecordEffortRow>) -> T,
-    ): Flow<T> = book.map { book ->
+    ): Flow<T> = latest.map { reading ->
         when {
-            book == null -> whileUnread
-            book.measuring -> whileMeasuring
-            else -> read(book.efforts)
+            reading == null -> whileUnread
+            reading.measuring -> whileMeasuring
+            else -> read(reading.efforts)
         }
     }
         .flowOn(recordsDispatcher)
@@ -125,13 +126,13 @@ class RecordsViewModel(
      * The Records grid: every Record, best first at each — or the fact that they are still being
      * measured, or nothing at all because the table has not answered yet (#75).
      *
-     * One reading of one book rather than two states the screen collects apart, so the slots and the
-     * flag are one answer: the moment the flag stands, what goes with it is an empty grid and not a grid read off
-     * the slice of history the table has reached. A partial top ten hands out medals to Runs that do
-     * not place, which is worse than a section that says what it is doing.
+     * One reading rather than two states the screen collects apart, so the slots and the flag are
+     * one answer: the moment the flag stands, what goes with it is an empty grid and not a grid
+     * read off the slice of history the table has reached. A partial top ten hands out medals to
+     * Runs that do not place, which is worse than a section that says what it is doing.
      *
      * Seeded with [recordsGridNotReadYet] and not with a grid of empty slots, which is the same
-     * distinction [book] is seeded on: [recordSlots] always hands back all seven Records, so a
+     * distinction [latest] is seeded on: [recordSlots] always hands back all seven Records, so a
      * grid of seven slots reading "Not run yet" is a claim about the runner's history and must never
      * be what a screen is handed before that history has been read.
      */
