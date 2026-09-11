@@ -1055,14 +1055,22 @@ class SessionRepository(
     fun recentSessionsFlow(): Flow<List<RunnerSession>> = sessionDao.getLast20Sessions()
 
     /**
-     * Every claim ever banked against a Record, oldest Run first — what the Records section of the
-     * Progress screen is drawn from (#75).
+     * Every claim ever banked against a Record, oldest Run first, and whether history is being
+     * measured against the book wholesale — what the Records section of the Progress screen is drawn
+     * from (#75), as one value (#346).
      *
-     * Empty wherever records are not wired, which is the same picture a runner with no history sees:
-     * seven Records with nothing standing at any of them.
+     * One value and not two flows the screen combines, because two flows are two readings: Room
+     * re-reads each table on its own, and the fill is lowered in a write of its own after its last
+     * claim is written, so a combined pair could put "nothing owed" beside claims read part-way
+     * through the fill. [RECORD_BOOK_SQL] reads both in one statement; see it for the whole case.
+     * [recordsBeingMeasuredFlow] stays for readers that only need the flag.
+     *
+     * Nothing owed and nothing banked wherever records are not wired, which is the same picture a
+     * runner with no history sees: seven Records with nothing standing at any of them.
      */
-    fun recordEffortsFlow(): Flow<List<RecordEffortRow>> =
-        runEffortDao?.getRecordEffortsFlow() ?: flowOf(emptyList())
+    fun recordBookFlow(): Flow<RecordBook> =
+        runEffortDao?.getRecordBookFlow()?.map(::recordBookOf)
+            ?: flowOf(RecordBook(measuring = false, efforts = emptyList()))
 
     /**
      * Whether history is being measured against the record book wholesale right now — which is when

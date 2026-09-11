@@ -1,8 +1,8 @@
 package com.example.runningapp.ui
 
 import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.data.RecordBookRow
 import com.example.runningapp.data.RecordEffortRow
-import com.example.runningapp.data.RecordFillDao
 import com.example.runningapp.data.RunEffortDao
 import com.example.runningapp.data.SessionDao
 import com.example.runningapp.data.SessionRepository
@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -44,14 +45,17 @@ import org.mockito.kotlin.whenever
  * Run's scoring never raises it. `one run waiting on its own scoring does not hide the records` is
  * what pins that down; see [SessionRepository.recordsBeingMeasuredFlow] for the argument.
  *
- * **And a third state, which is neither of those (#75):** the efforts have not come back from Room
- * at all yet. `record_fill` is one small row and answers at once, the efforts are a join over the
- * whole of history and answer frames later, so there is always a moment on a cold open where
- * nothing is being measured and nothing has been read. Handing a screen an empty history in that
- * moment is a statement — seven slots reading "Not run yet", and an "you have never run this"
- * message on a Record the runner just tapped a time on. The tests from
- * `the grid says nothing at all until the efforts come back` down are what hold the three apart, and
- * they stage exactly that order: the fill answers false first, and the efforts do not answer at all.
+ * **And a third state, which is neither of those (#75):** the record book has not come back from
+ * Room at all yet. It is a join over the whole of history and answers frames after the screen
+ * opens, and handing a screen an empty history in that moment is a statement — seven slots reading
+ * "Not run yet", and an "you have never run this" message on a Record the runner just tapped a time
+ * on. The tests from `the grid says nothing at all until the efforts come back` down are what hold
+ * the three apart, and they stage exactly that: the book does not answer at all.
+ *
+ * The flag and the claims reach the view model as one reading (#346) — one statement, so one
+ * snapshot of the database ([com.example.runningapp.data.RECORD_BOOK_SQL]). The fake below stands in
+ * for that statement by building each reading from both halves at once; that a real statement does
+ * the same is pinned against real SQLite in [com.example.runningapp.data.RecordEffortsQueryTest].
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RecordsViewModelTest {
@@ -61,28 +65,26 @@ class RecordsViewModelTest {
 
     private val sessionDao: SessionDao = mock()
     private val runEffortDao: RunEffortDao = mock()
-    private val recordFillDao: RecordFillDao = mock()
 
     /** Whether a wholesale fill is outstanding — a var, because the pass that fills hands it back. */
     private val fillOwed = MutableStateFlow(false)
     private val efforts = MutableStateFlow(emptyList<RecordEffortRow>())
 
     /**
-     * The effort join before it has answered — a stream that has emitted nothing at all (#75).
+     * The record book before it has answered — a stream that has emitted nothing at all (#75).
      *
      * A shared flow rather than a state, because that absence is the point: a `MutableStateFlow`
      * always holds a value and so can only ever stage a table that has already answered, which is
      * precisely the state this fault was hiding behind. Replay of one so that a collector arriving
      * after the answer still sees it, as Room's own query does.
      */
-    private val unansweredEfforts = MutableSharedFlow<List<RecordEffortRow>>(replay = 1)
+    private val unansweredBook = MutableSharedFlow<List<RecordBookRow>>(replay = 1)
     private val zoneChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
-        whenever(recordFillDao.wholesaleFillOwedFlow()).thenReturn(fillOwed)
-        whenever(runEffortDao.getRecordEffortsFlow()).thenReturn(efforts)
+        whenever(runEffortDao.getRecordBookFlow()).thenReturn(combine(fillOwed, efforts, ::bookRows))
     }
 
     @After
@@ -204,13 +206,11 @@ class RecordsViewModelTest {
 
     @Test
     fun `the grid says nothing at all until the efforts come back`() = runTest(dispatcher) {
-        // The exact order a cold open of the Progress screen happens in (#75): `record_fill` is one
-        // small row and answers at once with "nothing owed", while the efforts are a join over the
-        // whole of history and land frames later. Before this was one fact, that gap was enough for
-        // the grid to be handed seven slots read off no rows at all — a runner with years of runs
-        // shown "Not run yet" seven times over, for as long as the join took.
-        fillOwed.value = false
-        whenever(runEffortDao.getRecordEffortsFlow()).thenReturn(unansweredEfforts)
+        // A cold open of the Progress screen (#75): the book is a join over the whole of history and
+        // lands frames later. Before the unread state was its own fact, that gap was enough for the
+        // grid to be handed seven slots read off no rows at all — a runner with years of runs shown
+        // "Not run yet" seven times over, for as long as the join took.
+        whenever(runEffortDao.getRecordBookFlow()).thenReturn(unansweredBook)
 
         val viewModel = viewModel()
         watch(viewModel)
@@ -236,8 +236,7 @@ class RecordsViewModelTest {
         runTest(dispatcher) {
             // The other half of the rule, and the reason the unread state cannot simply be silence
             // for ever: a genuinely empty table is a real answer and the runner is owed the words.
-            fillOwed.value = false
-            whenever(runEffortDao.getRecordEffortsFlow()).thenReturn(unansweredEfforts)
+            whenever(runEffortDao.getRecordBookFlow()).thenReturn(unansweredBook)
 
             val viewModel = viewModel()
             watch(viewModel)
@@ -245,7 +244,7 @@ class RecordsViewModelTest {
             assertEquals(null, viewModel.grid.value.slots)
 
             // Room answers, and the answer is "none".
-            unansweredEfforts.emit(emptyList())
+            unansweredBook.emit(bookRows(fillOwed = false, efforts = emptyList()))
             advanceUntilIdle()
 
             assertEquals(RecordType.entries.size, viewModel.grid.value.slots?.size)
@@ -260,8 +259,7 @@ class RecordsViewModelTest {
         // The whole point, followed through: the runner taps a cell reading 25:00 and the page must
         // go from silence to that time, without passing through "you have not covered 5 km in a run
         // yet" on the way.
-        fillOwed.value = false
-        whenever(runEffortDao.getRecordEffortsFlow()).thenReturn(unansweredEfforts)
+        whenever(runEffortDao.getRecordBookFlow()).thenReturn(unansweredBook)
 
         val viewModel = viewModel()
         watch(viewModel)
@@ -271,7 +269,7 @@ class RecordsViewModelTest {
         }
         advanceUntilIdle()
 
-        unansweredEfforts.emit(listOf(effort(sessionId = 1L, seconds = 1_500.0)))
+        unansweredBook.emit(bookRows(fillOwed = false, efforts = listOf(effort(sessionId = 1L, seconds = 1_500.0))))
         advanceUntilIdle()
 
         // Every message the page was ever handed: silence, then silence again because there is a
@@ -306,12 +304,23 @@ class RecordsViewModelTest {
         SessionRepository(
             sessionDao = sessionDao,
             runEffortDao = runEffortDao,
-            recordFillDao = recordFillDao,
         ),
         zone = { zone },
         zoneChanges = zoneChanges,
         recordsDispatcher = dispatcher,
     )
+
+    /**
+     * One reading of [com.example.runningapp.data.RECORD_BOOK_SQL] as the statement hands it back:
+     * the flag on every line, the claims joined only while it is down, and one line with no claim
+     * when there is nothing to join.
+     */
+    private fun bookRows(fillOwed: Boolean, efforts: List<RecordEffortRow>): List<RecordBookRow> =
+        if (fillOwed || efforts.isEmpty()) {
+            listOf(RecordBookRow(fillOwed = fillOwed, effort = null))
+        } else {
+            efforts.map { RecordBookRow(fillOwed = false, effort = it) }
+        }
 
     private fun effort(sessionId: Long, seconds: Double) = RecordEffortRow(
         sessionId = sessionId,
