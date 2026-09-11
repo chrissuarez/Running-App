@@ -21,11 +21,6 @@ import com.mapbox.maps.extension.style.layers.properties.generated.LineJoin
 import com.mapbox.maps.extension.style.layers.properties.generated.TextAnchor
 import com.mapbox.maps.plugin.annotation.generated.PointAnnotationOptions
 
-/** The same weights a Segment's page draws at, so the two pages of ground read alike. */
-private const val CourseLineWidth = 6.0
-private const val MarkerRadius = 8.0
-private const val MarkerStrokeWidth = 3.0
-
 /** How big an arrow is drawn: wider than the line under it, so it reads as sitting on it. */
 private val ArrowSize = 22.dp
 
@@ -63,7 +58,7 @@ fun RouteCourseMap(line: List<MapFix>, modifier: Modifier = Modifier) {
         if (line.size >= 2) {
             PolylineAnnotation(points = line.map { it.asPoint() }) {
                 this.lineColor = lineColor
-                lineWidth = CourseLineWidth
+                lineWidth = SegmentLineWidth
                 lineJoin = LineJoin.ROUND
             }
         }
@@ -86,18 +81,18 @@ fun RouteCourseMap(line: List<MapFix>, modifier: Modifier = Modifier) {
         }
         line.lastOrNull()?.let { finish ->
             CircleAnnotation(point = finish.asPoint()) {
-                circleRadius = MarkerRadius
+                circleRadius = GroundMarkerRadius
                 circleColor = markerFill
                 circleStrokeColor = markerStroke
-                circleStrokeWidth = MarkerStrokeWidth
+                circleStrokeWidth = GroundMarkerStrokeWidth
             }
         }
         line.firstOrNull()?.let { start ->
             CircleAnnotation(point = start.asPoint()) {
-                circleRadius = MarkerRadius
+                circleRadius = GroundMarkerRadius
                 circleColor = markerStroke
                 circleStrokeColor = markerFill
-                circleStrokeWidth = MarkerStrokeWidth
+                circleStrokeWidth = GroundMarkerStrokeWidth
             }
             PointAnnotationGroup(
                 annotations = listOf(

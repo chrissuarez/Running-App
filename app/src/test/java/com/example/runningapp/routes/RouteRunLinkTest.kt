@@ -135,8 +135,8 @@ class RouteRunLinkTest {
 
     @Test
     fun `a loop run the other way round is still that course`() {
-        // The one place this parts company with matching two Runs. A course is a line with two ends
-        // and no arrow on it, and the app has let a runner set out along one backwards since #56.
+        // The one place this parts company with matching two Runs. A course's usual way round is a
+        // plan for the next Run (#466), and the app has let a runner set out backwards since #56.
         assertTrue(runIsOnCourse(runOver(theBlock.reversed()), courseOver(theBlock)))
     }
 

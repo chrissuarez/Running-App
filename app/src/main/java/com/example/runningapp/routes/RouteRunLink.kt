@@ -41,7 +41,8 @@ data class CourseShape(
  * separate set of numbers for courses would let a Run be in a group of Matched Runs whose route's own
  * page disowned it.
  *
- * **Either way round.** A course is a line with two ends and no arrow on it: the app has let a runner
+ * **Either way round.** For recognising, a course is ground with two ends: its usual way round
+ * (#466) is a plan for the next Run, not a test of past ones, and the app has let a runner
  * set out along one backwards since #56 and calls that Run a Run on the course, so a Run recognised
  * on it backwards is one too. That is not the loop rule being broken — [runsMatch] refuses a *Run*
  * run the other way round because two recordings the runner could tell apart should not be called one

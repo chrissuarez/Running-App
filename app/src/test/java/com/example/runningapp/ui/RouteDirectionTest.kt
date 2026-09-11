@@ -3,6 +3,7 @@ package com.example.runningapp.ui
 import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.data.RouteSource
+import com.example.runningapp.recording.theShortWayRound
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -97,14 +98,12 @@ class RouteDirectionTest {
      */
     @Test
     fun `a course over the date line still points the way it goes`() {
-        val line = (0..300).map { step -> MapFix(-16.5, 179.99 + step * 10 / 106_700.0) }
-            .map { MapFix(it.latitude, theShortWayRoundForTest(it.longitude)) }
+        val line = (0..300).map { step ->
+            MapFix(-16.5, theShortWayRound(179.99 + step * 10 / 106_700.0))
+        }
 
         directionArrowsAlong(line).forEach { assertBearing(90.0, it.bearingDegrees) }
     }
-
-    private fun theShortWayRoundForTest(longitude: Double) =
-        if (longitude > 180.0) longitude - 360.0 else longitude
 
     // -- The way round a course is run (#466) ---------------------------------------------------
 
