@@ -22,7 +22,7 @@ data class WeatherFillTarget(
 /**
  * Every Run still owed its weather, newest first — the whole work list of
  * [SessionRepository.backfillWeather], named so a test can put the real statement to a real SQLite
- * database ([RECORD_BOOK_SQL]'s reason exactly).
+ * database ([RECORDS_READING_SQL]'s reason exactly).
  *
  * **Why a Run's start position is not enough on its own.** `startLatitude` arrived with the weather
  * columns themselves at v11, so *every* Run recorded before that upgrade has a null there — which is

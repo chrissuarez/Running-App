@@ -1,7 +1,7 @@
 package com.example.runningapp.ui
 
 import com.example.runningapp.analysis.RecordType
-import com.example.runningapp.data.RecordBookRow
+import com.example.runningapp.data.RecordsReadingRow
 import com.example.runningapp.data.RecordEffortRow
 import com.example.runningapp.data.RunEffortDao
 import com.example.runningapp.data.SessionDao
@@ -45,17 +45,18 @@ import org.mockito.kotlin.whenever
  * Run's scoring never raises it. `one run waiting on its own scoring does not hide the records` is
  * what pins that down; see [SessionRepository.recordsBeingMeasuredFlow] for the argument.
  *
- * **And a third state, which is neither of those (#75):** the record book has not come back from
- * Room at all yet. It is a join over the whole of history and answers frames after the screen
+ * **And a third state, which is neither of those (#75):** the Records reading has not come back
+ * from Room at all yet. It is a join over the whole of history and answers frames after the screen
  * opens, and handing a screen an empty history in that moment is a statement — seven slots reading
  * "Not run yet", and an "you have never run this" message on a Record the runner just tapped a time
  * on. The tests from `the grid says nothing at all until the efforts come back` down are what hold
- * the three apart, and they stage exactly that: the book does not answer at all.
+ * the three apart, and they stage exactly that: the reading does not answer at all.
  *
  * The flag and the claims reach the view model as one reading (#346) — one statement, so one
- * snapshot of the database ([com.example.runningapp.data.RECORD_BOOK_SQL]). The fake below stands in
- * for that statement by building each reading from both halves at once; that a real statement does
- * the same is pinned against real SQLite in [com.example.runningapp.data.RecordEffortsQueryTest].
+ * snapshot of the database ([com.example.runningapp.data.RECORDS_READING_SQL]). The fake below
+ * stands in for that statement by building each reading from both halves at once; that a real
+ * statement does the same is pinned against real SQLite in
+ * [com.example.runningapp.data.RecordEffortsQueryTest].
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RecordsViewModelTest {
@@ -71,20 +72,21 @@ class RecordsViewModelTest {
     private val efforts = MutableStateFlow(emptyList<RecordEffortRow>())
 
     /**
-     * The record book before it has answered — a stream that has emitted nothing at all (#75).
+     * The Records reading before it has answered — a stream that has emitted nothing at all (#75).
      *
      * A shared flow rather than a state, because that absence is the point: a `MutableStateFlow`
      * always holds a value and so can only ever stage a table that has already answered, which is
      * precisely the state this fault was hiding behind. Replay of one so that a collector arriving
      * after the answer still sees it, as Room's own query does.
      */
-    private val unansweredBook = MutableSharedFlow<List<RecordBookRow>>(replay = 1)
+    private val unansweredReading = MutableSharedFlow<List<RecordsReadingRow>>(replay = 1)
     private val zoneChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
 
     @Before
     fun setUp() {
         Dispatchers.setMain(dispatcher)
-        whenever(runEffortDao.getRecordBookFlow()).thenReturn(combine(fillOwed, efforts, ::bookRows))
+        whenever(runEffortDao.getRecordsReadingFlow())
+            .thenReturn(combine(fillOwed, efforts, ::readingRows))
     }
 
     @After
@@ -206,11 +208,11 @@ class RecordsViewModelTest {
 
     @Test
     fun `the grid says nothing at all until the efforts come back`() = runTest(dispatcher) {
-        // A cold open of the Progress screen (#75): the book is a join over the whole of history and
-        // lands frames later. Before the unread state was its own fact, that gap was enough for the
-        // grid to be handed seven slots read off no rows at all — a runner with years of runs shown
-        // "Not run yet" seven times over, for as long as the join took.
-        whenever(runEffortDao.getRecordBookFlow()).thenReturn(unansweredBook)
+        // A cold open of the Progress screen (#75): the reading is a join over the whole of history
+        // and lands frames later. Before the unread state was its own fact, that gap was enough for
+        // the grid to be handed seven slots read off no rows at all — a runner with years of runs
+        // shown "Not run yet" seven times over, for as long as the join took.
+        whenever(runEffortDao.getRecordsReadingFlow()).thenReturn(unansweredReading)
 
         val viewModel = viewModel()
         watch(viewModel)
@@ -236,7 +238,7 @@ class RecordsViewModelTest {
         runTest(dispatcher) {
             // The other half of the rule, and the reason the unread state cannot simply be silence
             // for ever: a genuinely empty table is a real answer and the runner is owed the words.
-            whenever(runEffortDao.getRecordBookFlow()).thenReturn(unansweredBook)
+            whenever(runEffortDao.getRecordsReadingFlow()).thenReturn(unansweredReading)
 
             val viewModel = viewModel()
             watch(viewModel)
@@ -244,7 +246,7 @@ class RecordsViewModelTest {
             assertEquals(null, viewModel.grid.value.slots)
 
             // Room answers, and the answer is "none".
-            unansweredBook.emit(bookRows(fillOwed = false, efforts = emptyList()))
+            unansweredReading.emit(readingRows(fillOwed = false, efforts = emptyList()))
             advanceUntilIdle()
 
             assertEquals(RecordType.entries.size, viewModel.grid.value.slots?.size)
@@ -259,7 +261,7 @@ class RecordsViewModelTest {
         // The whole point, followed through: the runner taps a cell reading 25:00 and the page must
         // go from silence to that time, without passing through "you have not covered 5 km in a run
         // yet" on the way.
-        whenever(runEffortDao.getRecordBookFlow()).thenReturn(unansweredBook)
+        whenever(runEffortDao.getRecordsReadingFlow()).thenReturn(unansweredReading)
 
         val viewModel = viewModel()
         watch(viewModel)
@@ -269,7 +271,8 @@ class RecordsViewModelTest {
         }
         advanceUntilIdle()
 
-        unansweredBook.emit(bookRows(fillOwed = false, efforts = listOf(effort(sessionId = 1L, seconds = 1_500.0))))
+        val oneRun = listOf(effort(sessionId = 1L, seconds = 1_500.0))
+        unansweredReading.emit(readingRows(fillOwed = false, efforts = oneRun))
         advanceUntilIdle()
 
         // Every message the page was ever handed: silence, then silence again because there is a
@@ -311,15 +314,18 @@ class RecordsViewModelTest {
     )
 
     /**
-     * One reading of [com.example.runningapp.data.RECORD_BOOK_SQL] as the statement hands it back:
-     * the flag on every line, the claims joined only while it is down, and one line with no claim
-     * when there is nothing to join.
+     * One reading of [com.example.runningapp.data.RECORDS_READING_SQL] as the statement hands it
+     * back: the flag on every line, the claims joined only while it is down, and one line with no
+     * claim when there is nothing to join.
      */
-    private fun bookRows(fillOwed: Boolean, efforts: List<RecordEffortRow>): List<RecordBookRow> =
+    private fun readingRows(
+        fillOwed: Boolean,
+        efforts: List<RecordEffortRow>,
+    ): List<RecordsReadingRow> =
         if (fillOwed || efforts.isEmpty()) {
-            listOf(RecordBookRow(fillOwed = fillOwed, effort = null))
+            listOf(RecordsReadingRow(fillOwed = fillOwed, effort = null))
         } else {
-            efforts.map { RecordBookRow(fillOwed = false, effort = it) }
+            efforts.map { RecordsReadingRow(fillOwed = false, effort = it) }
         }
 
     private fun effort(sessionId: Long, seconds: Double) = RecordEffortRow(

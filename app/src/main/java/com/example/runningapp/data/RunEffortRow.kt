@@ -121,47 +121,47 @@ interface RunEffortDao {
      * Watched rather than read once: a Run finishing, a treadmill time stated, a Run deleted or
      * marked a Walk all move what stands here, and the screen has to move with them. Room watches
      * every table the statement names, so the fill flag being lowered wakes it as surely as a claim
-     * being written. See [RECORD_BOOK_SQL] for why the flag rides in the same statement.
+     * being written. See [RECORDS_READING_SQL] for why the flag rides in the same statement.
      */
-    @Query(RECORD_BOOK_SQL)
-    fun getRecordBookFlow(): Flow<List<RecordBookRow>>
+    @Query(RECORDS_READING_SQL)
+    fun getRecordsReadingFlow(): Flow<List<RecordsReadingRow>>
 }
 
 /**
- * One line of [RunEffortDao.getRecordBookFlow]: the fill flag, and one claim — or no claim, on the
- * one line a reading hands back when there is nothing to put beside the flag (#346).
+ * One line of [RunEffortDao.getRecordsReadingFlow]: the fill flag, and one claim — or no claim, on
+ * the one line a reading hands back when there is nothing to put beside the flag (#346).
  *
  * Every line of one reading carries the same [fillOwed], because it is read once, in the same
- * statement as the claims. [recordBookOf] is what folds the lines back into one answer.
+ * statement as the claims. [recordsReadingOf] is what folds the lines back into one answer.
  */
-data class RecordBookRow(
+data class RecordsReadingRow(
     val fillOwed: Boolean,
     @Embedded val effort: RecordEffortRow?,
 )
 
 /**
- * The record book as the Records section reads it: whether history is being measured wholesale,
- * and every claim banked — one value, so the two can never have been read at different moments
- * (#346).
+ * What the Records section reads, in one reading: whether history is being measured against the
+ * record book wholesale, and every claim banked — one value, so the two can never have been read at
+ * different moments (#346).
  *
  * [efforts] is always empty while [measuring] stands. A table part-way through a fill is a slice of
  * history, and a slice is never handed to a reader, not even to one that has promised to ignore it.
  */
-data class RecordBook(
+data class RecordsReading(
     val measuring: Boolean,
     val efforts: List<RecordEffortRow>,
 )
 
 /**
- * Folds the lines of one [RECORD_BOOK_SQL] reading into one [RecordBook] (#346).
+ * Folds the lines of one [RECORDS_READING_SQL] reading into one [RecordsReading] (#346).
  *
  * The statement always hands back at least one line — its flag is read from a one-line select that
  * everything else is joined onto — so an empty list is a reading nobody made, and it answers as a
  * history with nothing owed and nothing banked, which is what [RecordFillRow]'s absent row means.
  */
-fun recordBookOf(rows: List<RecordBookRow>): RecordBook {
+fun recordsReadingOf(rows: List<RecordsReadingRow>): RecordsReading {
     val measuring = rows.firstOrNull()?.fillOwed ?: false
-    return RecordBook(
+    return RecordsReading(
         measuring = measuring,
         efforts = if (measuring) emptyList() else rows.mapNotNull { it.effort },
     )
@@ -221,8 +221,10 @@ interface RecordFillDao {
     suspend fun put(row: RecordFillRow)
 
     /**
-     * Whether a wholesale fill is outstanding right now, watched — what the Records section covers
-     * itself up with, and uncovers itself by when the pass finishes.
+     * Whether a wholesale fill is outstanding right now, watched — for the gates that need only the
+     * flag ([SessionRepository.historyBeingMeasuredFlow]). The Records section does not read this:
+     * it takes the same flag inside [RECORDS_READING_SQL], in the one statement that reads its
+     * claims (#346).
      *
      * `EXISTS` rather than a plain column read so the answer is a plain false on a database that has
      * never held the row, instead of a null every caller would have to remember to fold down.
@@ -241,7 +243,7 @@ interface RecordFillDao {
 
 /**
  * The v36 to v37 migration's half of the wholesale-fill fact, named so a test can put the real
- * statements to a real SQLite database (#75) — [RECORD_BOOK_SQL]'s reason exactly. What the
+ * statements to a real SQLite database (#75) — [RECORDS_READING_SQL]'s reason exactly. What the
  * migration raises here is what the Records section covers itself up with for the whole of the
  * first launch after the upgrade, and a test that retyped the SQL would go on passing after this
  * changed.
@@ -250,15 +252,15 @@ interface RecordFillDao {
  * Room checks the two against each other at every open and refuses the database if they differ.
  */
 /**
- * The read both halves of [RecordFillDao] answer with, named so the migration's own statements and
- * the question the Records section asks of them can be put to a real SQLite database in one test
- * (#75) — [RECORD_BOOK_SQL]'s reason.
+ * The read both halves of [RecordFillDao] answer with — and the flag [RECORDS_READING_SQL] joins
+ * the claims onto (#346) — named so the migration's own statements and the question asked of them
+ * can be put to a real SQLite database in one test (#75), for [RECORDS_READING_SQL]'s reason.
  */
 const val WHOLESALE_FILL_OWED_SQL: String =
     "SELECT EXISTS(SELECT 1 FROM record_fill WHERE id = 0 AND wholesaleFillOwed = 1)"
 
 /**
- * The read behind [RunEffortDao.getRecordBookFlow], named so a test can put it to a real SQLite
+ * The read behind [RunEffortDao.getRecordsReadingFlow], named so a test can put it to a real SQLite
  * database rather than to a hand-written stand-in that agrees with it by luck (#75).
  *
  * A `const` for [SHAPED_RUNS_SQL]'s reason: which rows come back is what the runner is told their
@@ -276,10 +278,10 @@ const val WHOLESALE_FILL_OWED_SQL: String =
  *
  * The flag is a one-line select every claim is joined onto, so a reading always has a line to carry
  * it — a history with no claims at all still says whether it is being measured. And the claims are
- * joined only while the flag is down (`ON f.fillOwed = 0`): a reading taken during a fill hands back
- * the flag alone, never the slice.
+ * joined only while the flag is down (`ON f.fillOwed = 0`): a reading taken during a fill hands
+ * back the flag alone, never the slice.
  */
-const val RECORD_BOOK_SQL: String =
+const val RECORDS_READING_SQL: String =
     """
         SELECT f.fillOwed AS fillOwed,
                e.sessionId AS sessionId,
