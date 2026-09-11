@@ -8,6 +8,7 @@ import java.sql.DriverManager
 import java.time.ZoneId
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -22,6 +23,11 @@ import org.junit.Test
  * book** — which is a promise the schema keeps ([RunEffortRow]'s cascade) rather than the code, and
  * so cannot be checked against a fake DAO at all. That promise is what stops a deleted Run holding
  * fourth place for ever: nothing mends the top ten, because nothing has to.
+ *
+ * And the other thing only a real database can show (#346): the fill flag and the claims come back
+ * from **one statement**, so no reading can pair a flag lowered by one write with claims read before
+ * the write that finished filling them. Every read below goes through that one statement
+ * ([RECORD_BOOK_SQL]) and the fold the repository makes of it ([recordBookOf]).
  */
 class RecordEffortsQueryTest {
 
@@ -57,6 +63,7 @@ class RecordEffortsQueryTest {
             )
             """
         )
+        db.exec(RECORD_FILL_TABLE_SQL)
     }
 
     @After
@@ -118,6 +125,61 @@ class RecordEffortsQueryTest {
         )
     }
 
+    @Test
+    fun `a raised fill flag comes back with no claims, however many the table already holds`() {
+        // The first launch after the upgrade, part-way through: two Runs of a long history measured.
+        givenRun(1L, day = 1, fiveKSeconds = 1_800.0)
+        givenRun(2L, day = 2, fiveKSeconds = 1_700.0)
+        givenFillOwed(true)
+
+        val book = recordBook()
+
+        assertTrue(book.measuring)
+        // Not the two claims the pass has reached — a slice of history is never handed to a reader.
+        assertEquals(emptyList<RecordEffortRow>(), book.efforts)
+    }
+
+    @Test
+    fun `the read that sees the flag lowered sees every claim the fill wrote before it`() {
+        givenFillOwed(true)
+        givenRun(1L, day = 1, fiveKSeconds = 1_800.0)
+        // The pass goes on filling, then hands the fill back in a write of its own (#346).
+        givenRun(2L, day = 2, fiveKSeconds = 1_500.0)
+        givenRun(3L, day = 3, fiveKSeconds = 1_700.0)
+        givenFillOwed(false)
+
+        val book = recordBook()
+
+        assertFalse(book.measuring)
+        assertEquals(listOf(1L, 2L, 3L), book.efforts.map { it.sessionId })
+        assertEquals(2L, recordSlots(book.efforts, zone).single { it.type == RecordType.FASTEST_5K }.best?.sessionId)
+    }
+
+    @Test
+    fun `a history with nothing banked and nothing owed is an answer of its own`() {
+        // No rows at all to join, and still one answer: nothing is being measured and nothing stands.
+        val book = recordBook()
+
+        assertFalse(book.measuring)
+        assertEquals(emptyList<RecordEffortRow>(), book.efforts)
+    }
+
+    @Test
+    fun `a fresh install that never held the fill row reads as nothing owed`() {
+        givenRun(1L, day = 1, fiveKSeconds = 1_500.0)
+
+        val book = recordBook()
+
+        assertFalse(book.measuring)
+        assertEquals(1, book.efforts.size)
+    }
+
+    private fun givenFillOwed(owed: Boolean) {
+        db.exec(
+            "INSERT OR REPLACE INTO record_fill (id, wholesaleFillOwed) VALUES (0, ${if (owed) 1 else 0})"
+        )
+    }
+
     private fun givenRun(id: Long, day: Long, fiveKSeconds: Double) {
         db.exec(
             "INSERT INTO sessions (id, startTime, ranAtUtcOffsetSeconds) " +
@@ -128,23 +190,32 @@ class RecordEffortsQueryTest {
         )
     }
 
-    /** The DAO's own read ([RECORD_EFFORTS_SQL]), run against the real table. */
-    private fun effortRows(): List<RecordEffortRow> {
-        val rows = mutableListOf<RecordEffortRow>()
+    /** The claims of a reading taken when nothing is being measured — every test above sets none. */
+    private fun effortRows(): List<RecordEffortRow> = recordBook().efforts
+
+    /** The DAO's own read ([RECORD_BOOK_SQL]), run against the real tables and folded as the repository folds it. */
+    private fun recordBook(): RecordBook {
+        val rows = mutableListOf<RecordBookRow>()
         db.createStatement().use { statement ->
-            statement.executeQuery(RECORD_EFFORTS_SQL).use { cursor ->
+            statement.executeQuery(RECORD_BOOK_SQL).use { cursor ->
                 while (cursor.next()) {
-                    rows += RecordEffortRow(
-                        sessionId = cursor.getLong("sessionId"),
-                        type = RecordType.valueOf(cursor.getString("type")),
-                        value = cursor.getDouble("value"),
-                        startTime = cursor.getLong("startTime"),
-                        ranAtUtcOffsetSeconds = cursor.getInt("ranAtUtcOffsetSeconds"),
-                    )
+                    val sessionId = cursor.getLong("sessionId")
+                    val effort = if (cursor.wasNull()) {
+                        null
+                    } else {
+                        RecordEffortRow(
+                            sessionId = sessionId,
+                            type = RecordType.valueOf(cursor.getString("type")),
+                            value = cursor.getDouble("value"),
+                            startTime = cursor.getLong("startTime"),
+                            ranAtUtcOffsetSeconds = cursor.getInt("ranAtUtcOffsetSeconds"),
+                        )
+                    }
+                    rows += RecordBookRow(fillOwed = cursor.getBoolean("fillOwed"), effort = effort)
                 }
             }
         }
-        return rows
+        return recordBookOf(rows)
     }
 
     private fun Connection.exec(sql: String) = createStatement().use { it.execute(sql) }
