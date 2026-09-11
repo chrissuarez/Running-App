@@ -109,7 +109,7 @@ class RouteModelsTest {
     @Test
     fun `the pre-run card names the course and which way round`() {
         assertEquals(
-            "Regent's Park loop · 5.20 km · as drawn",
+            "Regent's Park loop · 5.20 km · usual way round",
             runRouteChoiceSummary(route(5200.0, null), reversed = false),
         )
         assertEquals(

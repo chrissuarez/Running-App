@@ -29,6 +29,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SuggestionChip
@@ -62,7 +63,8 @@ import com.example.runningapp.ui.theme.RunningUiTokens
 private val MapHeight = 220.dp
 
 /**
- * One Route's own page: the course drawn, what it costs, and every Run remembered on it (#420).
+ * One Route's own page: the course drawn and which way round it goes, what it costs, and every Run
+ * remembered on it (#420, #465).
  *
  * The map is not interactive and the page scrolls instead — the lesson [SegmentDetailScreen] paid
  * for (#69): a pannable map inside a scrolling column steals the drag meant to scroll the page, and
@@ -121,6 +123,8 @@ fun RouteDetailScreen(
      * on it is unambiguous.
      */
     onDelete: (RouteHeader) -> Unit,
+    /** Turning the course round for good, or back again (#466). */
+    onFlip: (RouteHeader) -> Unit,
     onBack: () -> Unit,
 ) {
     var renaming by rememberSaveable { mutableStateOf(false) }
@@ -165,6 +169,7 @@ fun RouteDetailScreen(
         }
 
         val best = remember(runs) { runs?.let(::routeBestOf) }
+        val runOrder = remember(line, route.flipped) { line.theWayRoundItIsRun(route.flipped) }
         val average = remember(runs) { runs?.let(::routeAverageTimeLabel) }
 
         LazyColumn(
@@ -208,17 +213,38 @@ fun RouteDetailScreen(
             item {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Box(modifier = Modifier.fillMaxWidth().height(MapHeight)) {
-                        // The Segments' surface rather than a new one (#69, #420): a course is a
-                        // piece of ground with no heart rate on it, exactly as a Segment is, so the
-                        // zone-coloured map a Run gets would be inventing a reading this row does
-                        // not hold. Nothing drawn behind it — there is no Run this course sits
-                        // inside of.
-                        SegmentMapSurface(
-                            segment = line,
-                            runBehind = emptyList(),
-                            interactive = false,
+                        // Not the zone-coloured map a Run gets (#69, #420): a course is a piece of
+                        // ground with no heart rate on it, so colouring it would be inventing a
+                        // reading this row does not hold. Handed the line the way round it is run,
+                        // so a flip turns the arrows round the instant the row says so (#465).
+                        RouteCourseMap(
+                            line = runOrder,
                             modifier = Modifier.fillMaxSize(),
                         )
+                    }
+                }
+            }
+
+            item {
+                // Right under the map, because it is about what the map shows: which way the
+                // arrows point, and the one button that turns them round for good (#466). No
+                // question asked first — the same button undoes it.
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        text = routeDirectionLine(route.flipped),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedButton(
+                        onClick = { onFlip(route) },
+                        modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
+                    ) {
+                        Text(FLIP_ROUTE_BUTTON_LABEL)
                     }
                 }
             }

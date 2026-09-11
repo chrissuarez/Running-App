@@ -466,6 +466,16 @@ class RoutesViewModel(
         viewModelScope.launch { routeDao.setRouteFamily(route.id, family) }
     }
 
+    /**
+     * Turns a course round for good, or back again (#466).
+     *
+     * No question asked first: the same button undoes it, and the arrows on the page turn round the
+     * moment it is pressed, which is the answer to "did that do what I meant?".
+     */
+    fun flip(routeId: Long) {
+        viewModelScope.launch { routeDao.flipRoute(routeId) }
+    }
+
     private val _importing = MutableStateFlow(false)
     val importing = _importing.asStateFlow()
 

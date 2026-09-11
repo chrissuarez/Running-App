@@ -114,6 +114,26 @@ data class Route(
      * ([RouteDao.setRouteFamily]), so nothing that reads this column has to know that twice.
      */
     val family: String? = null,
+    /**
+     * True where the runner has turned the course round, so its usual way is the opposite of the
+     * order its [polyline] is kept in (#466).
+     *
+     * **A bit beside the line, never a rewrite of it.** The line is the Route's identity and is
+     * written once ([polyline]'s second rule), so a flip cannot be a line drawn backwards: that
+     * would leave the thumbnail and shape kept against this id describing a line the row no longer
+     * holds, and a re-import of the very same file would miss the row and write a second one.
+     *
+     * It is also why no Run's history moves when a course is flipped. A Run writes down which way
+     * round it went *against the line as kept* ([RunnerSession.ranAlongRouteReversed]), and the line
+     * as kept never changes — so an old Run still says exactly which way it went, and only the word
+     * the screen uses for it ("the usual way", "backwards") is worked out against this.
+     *
+     * Everything that reads a course for direction reads it through here: the page's arrows and the
+     * pre-run switch ([com.example.runningapp.ui.runRouteSetOutAlong]). Nothing that recognises a
+     * Run on a course looks at it, because a course is recognised either way round
+     * ([com.example.runningapp.routes.courseRecognising]).
+     */
+    val flipped: Boolean = false,
 )
 
 /**
@@ -132,6 +152,8 @@ data class RouteHeader(
     val source: String,
     /** The family the course was put in, or null — see [Route.family] (#421). */
     val family: String? = null,
+    /** Whether the runner turned the course round — see [Route.flipped] (#466). */
+    val flipped: Boolean = false,
 )
 
 /** What keeping a course came to: the four things that can become of one line offered to the table. */
@@ -214,8 +236,8 @@ interface RouteDao {
      * at a time, by whatever actually needs it ([getRoutePolyline], [getRoute], [getRouteFlow]).
      */
     @Query(
-        "SELECT id, name, distanceMeters, elevationGainMeters, createdAtMillis, source, family " +
-            "FROM routes ORDER BY createdAtMillis DESC, id DESC"
+        "SELECT id, name, distanceMeters, elevationGainMeters, createdAtMillis, source, family, " +
+            "flipped FROM routes ORDER BY createdAtMillis DESC, id DESC"
     )
     fun getLibraryFlow(): Flow<List<RouteHeader>>
 
@@ -244,8 +266,8 @@ interface RouteDao {
      * open — which the page draws as nothing rather than as a course.
      */
     @Query(
-        "SELECT id, name, distanceMeters, elevationGainMeters, createdAtMillis, source, family " +
-            "FROM routes WHERE id = :routeId"
+        "SELECT id, name, distanceMeters, elevationGainMeters, createdAtMillis, source, family, " +
+            "flipped FROM routes WHERE id = :routeId"
     )
     fun getRouteHeaderFlow(routeId: Long): Flow<RouteHeader?>
 
@@ -565,6 +587,18 @@ interface RouteDao {
     @Query("UPDATE routes SET family = :family WHERE id = :routeId")
     suspend fun writeRouteFamily(routeId: Long, family: String?)
 
+    /**
+     * Turns a course round, or back again (#466).
+     *
+     * One statement that reads and writes the bit, rather than a read here and a write after it, so
+     * two taps on the button are two flips and never two writes of the same answer.
+     */
+    @Query(FLIP_ROUTE_SQL)
+    suspend fun flipRoute(routeId: Long)
+
     @Query("DELETE FROM routes WHERE id = :routeId")
     suspend fun deleteRoute(routeId: Long)
 }
+
+/** The write [RouteDao.flipRoute] makes — a constant so `RouteFlipMigrationTest` runs the same text. */
+const val FLIP_ROUTE_SQL = "UPDATE routes SET flipped = NOT flipped WHERE id = :routeId"
