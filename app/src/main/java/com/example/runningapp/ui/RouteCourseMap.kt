@@ -13,7 +13,6 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.analysis.MapFix
-import com.mapbox.maps.extension.compose.annotation.generated.CircleAnnotation
 import com.mapbox.maps.extension.compose.annotation.generated.PointAnnotationGroup
 import com.mapbox.maps.extension.compose.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.extension.style.layers.properties.generated.IconRotationAlignment
@@ -60,6 +59,7 @@ fun RouteCourseMap(line: List<MapFix>, modifier: Modifier = Modifier) {
                 this.lineColor = lineColor
                 lineWidth = SegmentLineWidth
                 lineJoin = LineJoin.ROUND
+                lineEmissiveStrength = SelfLit
             }
         }
         // One group, with overlap allowed, so no arrow is dropped for landing near a street name or
@@ -80,20 +80,22 @@ fun RouteCourseMap(line: List<MapFix>, modifier: Modifier = Modifier) {
             iconRotationAlignment = IconRotationAlignment.MAP
         }
         line.lastOrNull()?.let { finish ->
-            CircleAnnotation(point = finish.asPoint()) {
-                circleRadius = GroundMarkerRadius
-                circleColor = markerFill
-                circleStrokeColor = markerStroke
-                circleStrokeWidth = GroundMarkerStrokeWidth
-            }
+            GroundDot(
+                at = finish,
+                radius = GroundMarkerRadius,
+                fill = markerFill,
+                edge = markerStroke,
+                edgeWidth = GroundMarkerStrokeWidth,
+            )
         }
         line.firstOrNull()?.let { start ->
-            CircleAnnotation(point = start.asPoint()) {
-                circleRadius = GroundMarkerRadius
-                circleColor = markerStroke
-                circleStrokeColor = markerFill
-                circleStrokeWidth = GroundMarkerStrokeWidth
-            }
+            GroundDot(
+                at = start,
+                radius = GroundMarkerRadius,
+                fill = markerStroke,
+                edge = markerFill,
+                edgeWidth = GroundMarkerStrokeWidth,
+            )
             PointAnnotationGroup(
                 annotations = listOf(
                     PointAnnotationOptions()

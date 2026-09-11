@@ -8,7 +8,6 @@ import androidx.compose.ui.Modifier
 import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.segments.segmentCutOf
 import com.example.runningapp.segments.unbrokenStretchesOf
-import com.mapbox.maps.extension.compose.annotation.generated.CircleAnnotation
 import com.mapbox.maps.extension.compose.annotation.generated.PolylineAnnotation
 import com.mapbox.maps.extension.style.layers.properties.generated.LineJoin
 
@@ -91,6 +90,7 @@ fun SegmentMapSurface(
                     lineWidth = BehindLineWidth
                     lineOpacity = BehindLineOpacity
                     lineJoin = LineJoin.ROUND
+                    lineEmissiveStrength = SelfLit
                 }
             }
         }
@@ -99,25 +99,28 @@ fun SegmentMapSurface(
                 lineColor = segmentColor
                 lineWidth = SegmentLineWidth
                 lineJoin = LineJoin.ROUND
+                lineEmissiveStrength = SelfLit
             }
         }
         // Start hollow, finish filled — the same pair the Run's own map uses, so the two ends read
         // on a dark map and a light one and need no colour vision to tell apart.
         segment.firstOrNull()?.let { start ->
-            CircleAnnotation(point = start.asPoint()) {
-                circleRadius = GroundMarkerRadius
-                circleColor = markerStroke
-                circleStrokeColor = markerFill
-                circleStrokeWidth = GroundMarkerStrokeWidth
-            }
+            GroundDot(
+                at = start,
+                radius = GroundMarkerRadius,
+                fill = markerStroke,
+                edge = markerFill,
+                edgeWidth = GroundMarkerStrokeWidth,
+            )
         }
         segment.lastOrNull()?.let { finish ->
-            CircleAnnotation(point = finish.asPoint()) {
-                circleRadius = GroundMarkerRadius
-                circleColor = markerFill
-                circleStrokeColor = markerStroke
-                circleStrokeWidth = GroundMarkerStrokeWidth
-            }
+            GroundDot(
+                at = finish,
+                radius = GroundMarkerRadius,
+                fill = markerFill,
+                edge = markerStroke,
+                edgeWidth = GroundMarkerStrokeWidth,
+            )
         }
     }
 }
