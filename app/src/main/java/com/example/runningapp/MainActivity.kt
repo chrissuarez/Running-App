@@ -95,6 +95,7 @@ import com.example.runningapp.ui.RouteDetailScreen
 import com.example.runningapp.ui.RoutesScreen
 import com.example.runningapp.ui.RoutesViewModel
 import com.example.runningapp.ui.RoutesViewModelFactory
+import com.example.runningapp.ui.runRouteSetOutAlong
 import com.example.runningapp.ui.HistoryScreen
 import com.example.runningapp.ui.HistoryViewModel
 import com.example.runningapp.ui.HistoryViewModelFactory
@@ -1525,6 +1526,7 @@ class MainActivity : ComponentActivity() {
                                 runs = runs,
                                 onRename = { row, name -> routesViewModel.rename(row, name) },
                                 onDelete = { row -> routesViewModel.delete(row) },
+                                onFlip = { row -> routesViewModel.flip(row.id) },
                                 // A time on a course belongs to a morning, and the page that holds
                                 // the morning is the Run's own (#72, #420).
                                 onOpenRun = { runId -> navigateTo(Routes.sessionDetail(runId)) },
@@ -2042,7 +2044,9 @@ fun MainScreen(
         skipPlan = skipPlanToday,
         runMode = RunMode.ofSettingValue(selectedRunMode),
         pickedWorkoutId = todaysWorkoutId,
-        route = pickedRoute?.let { RunRoute(it.id, pickedRouteReversed) },
+        // The switch is against the course's usual way and the Run writes down against its line as
+        // kept; the two differ where the course was flipped (#466).
+        route = pickedRoute?.let { runRouteSetOutAlong(it, backwards = pickedRouteReversed) },
     )
 
     // A course is chosen for one Run (#56), so the tap that asks for that Run spends it. Without

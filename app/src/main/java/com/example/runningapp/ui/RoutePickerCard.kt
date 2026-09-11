@@ -42,6 +42,10 @@ import com.example.runningapp.ui.theme.RunningUiTokens
  * Run set out on, and making it carry an Android interface to suit one screen's saved state would
  * put Android in the run module. Two values written down and read back is the whole of what saving
  * it needs.
+ *
+ * The pick's `reversed` is the switch on this card — against the course's *usual* way — and not yet
+ * what a Run writes down. The two differ on a flipped course, and START turns one into the other
+ * ([runRouteSetOutAlong], #466).
  */
 val RunRouteSaver: Saver<RunRoute?, Any> = listSaver(
     save = { route -> route?.let { listOf(it.routeId, it.reversed) } ?: emptyList() },

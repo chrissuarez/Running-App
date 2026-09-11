@@ -476,11 +476,18 @@ data class RunnerSession(
      */
     val ranAlongRouteId: Long? = null,
     /**
-     * Which way round the Run set out along [ranAlongRouteId] — true for the course run backwards.
+     * Which way round the Run set out along [ranAlongRouteId] — true for the course run against the
+     * order its line is kept in.
+     *
+     * **Against the line as kept, not against the way the runner has made usual** (#466). The line
+     * is written once and never rewritten ([Route.polyline]), so this answer stays true for ever; a
+     * course flipped after this Run moves [Route.flipped] and nothing here. The pre-run switch is
+     * relative to the usual way, and is turned into this at START
+     * ([com.example.runningapp.ui.runRouteSetOutAlong]).
      *
      * Only meaningful beside an id, and false for every Run following no course. False rather than
-     * null because there is no third state to tell apart: a Run either set out the way the course is
-     * drawn or the other way, and a Run following nothing has done neither, which "not reversed"
+     * null because there is no third state to tell apart: a Run either set out the way the line is
+     * kept or the other way, and a Run following nothing has done neither, which "not reversed"
      * says as truthfully as a null would. Read the pair through [ranAlongRoute], which is the only
      * way anything should ask.
      */
@@ -1792,7 +1799,7 @@ interface RunPauseDao {
         WalkMarkDebtRow::class,
         HistoryDebtRow::class
     ],
-    version = 44,
+    version = 45,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -1911,7 +1918,8 @@ fun appDatabaseMigrations(hrProfileProvider: () -> HrProfile): Array<Migration> 
     MIGRATION_40_41,
     MIGRATION_41_42,
     MIGRATION_42_43,
-    MIGRATION_43_44
+    MIGRATION_43_44,
+    MIGRATION_44_45
 )
 
 /**
@@ -1959,6 +1967,21 @@ const val CREATE_ROUTE_SHAPES_SQL: String =
 val MIGRATION_43_44 = object : Migration(43, 44) {
     override fun migrate(database: SupportSQLiteDatabase) {
         database.execSQL(CREATE_ROUTE_SHAPES_SQL)
+    }
+}
+
+/**
+ * The one bit a flipped course needs, added unset (#466).
+ *
+ * Every Route already kept comes through going the way it was saved, which is what was true of it
+ * before — nobody had been offered a way to turn one round. No row is read and none is rewritten, so
+ * a library of high-detail courses costs nothing here ([Route.polyline]).
+ */
+const val ADD_ROUTE_FLIPPED_SQL = "ALTER TABLE routes ADD COLUMN flipped INTEGER NOT NULL DEFAULT 0"
+
+val MIGRATION_44_45 = object : Migration(44, 45) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL(ADD_ROUTE_FLIPPED_SQL)
     }
 }
 

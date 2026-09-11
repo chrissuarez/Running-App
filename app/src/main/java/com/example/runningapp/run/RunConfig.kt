@@ -34,6 +34,11 @@ enum class RunMode(val settingValue: String) {
  * nothing about the line: the same ground is covered in the same places, so the same line is drawn
  * on the map. What it is for is everything that depends on which way you are *going* along it — the
  * next turn, how far is left — which belong to the tickets that come after this one.
+ *
+ * Against the course's line **as kept**, not against the way the runner has made usual by flipping
+ * it (#466) — see [com.example.runningapp.ui.runRouteSetOutAlong], which turns the pre-run switch
+ * into this. The one exception is the pre-run screen's own pending pick, which holds the switch
+ * itself until START ([com.example.runningapp.ui.RunRouteSaver]).
  */
 data class RunRoute(val routeId: Long, val reversed: Boolean)
 

@@ -156,10 +156,14 @@ fun routeRemeasuredKeepingClimbMessage(name: String): String =
  *
  * One line rather than a name alone, because the two things a runner checks on the start line are
  * that it is the right course and that it is pointing the way they mean to set off.
+ *
+ * [reversed] is the switch, against the course's usual way — the way its page's arrows point. "Usual
+ * way round" rather than "as drawn" since #466: a flipped course is usually run the other way to how
+ * it was drawn, and the card would otherwise call that way "backwards".
  */
 fun runRouteChoiceSummary(route: RouteHeader?, reversed: Boolean): String {
     if (route == null) return "No route — just go for a run"
-    val direction = if (reversed) "backwards" else "as drawn"
+    val direction = if (reversed) "backwards" else "usual way round"
     return "${route.name} · ${routeDistanceLabel(route.distanceMeters)} · $direction"
 }
 

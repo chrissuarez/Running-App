@@ -201,4 +201,35 @@ class RoutesViewModelRouteDetailTest {
 
         assertEquals(listOf(4L), listed.map { it.sessionId })
     }
+
+    // -- Flipping a course (#466) ---------------------------------------------------------------
+
+    /**
+     * The flip reaches the page's own row, which is watched — so the arrows turn round the instant
+     * the button is pressed — and it leaves the line exactly as it was kept.
+     */
+    @Test
+    fun `flipping a course turns its row round and leaves its line alone`() = runTest(dispatcher) {
+        val routeId = givenACourse(5_000.0)
+        val viewModel = viewModel()
+
+        viewModel.flip(routeId)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertTrue(viewModel.route(routeId).first()!!.flipped)
+        assertEquals(aLine, dao.stored.single().polyline)
+    }
+
+    /** Reversible by the same button, which is why it asks no question first. */
+    @Test
+    fun `flipping it again puts it back the way it was saved`() = runTest(dispatcher) {
+        val routeId = givenACourse(5_000.0)
+        val viewModel = viewModel()
+
+        viewModel.flip(routeId)
+        viewModel.flip(routeId)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertFalse(viewModel.route(routeId).first()!!.flipped)
+    }
 }

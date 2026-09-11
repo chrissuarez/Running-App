@@ -50,6 +50,7 @@ class FakeRouteDao : RouteDao {
                     createdAtMillis = row.createdAtMillis,
                     source = row.source,
                     family = row.family,
+                    flipped = row.flipped,
                 )
             }
     }
@@ -123,6 +124,7 @@ class FakeRouteDao : RouteDao {
                 createdAtMillis = row.createdAtMillis,
                 source = row.source,
                 family = row.family,
+                flipped = row.flipped,
             )
         }
     }
@@ -184,6 +186,10 @@ class FakeRouteDao : RouteDao {
      */
     override suspend fun writeRouteFamily(routeId: Long, family: String?) {
         rows.value = rows.value.map { if (it.id == routeId) it.copy(family = family) else it }
+    }
+
+    override suspend fun flipRoute(routeId: Long) {
+        rows.value = rows.value.map { if (it.id == routeId) it.copy(flipped = !it.flipped) else it }
     }
 
     override suspend fun deleteRoute(routeId: Long) {

@@ -243,7 +243,14 @@ by shape. Neither writes anything into the library, so deleting a Route still co
 Which length of a family its page opens on is the one **run most recently by either reading** (#436):
 "the rung they were on last" is a question about ground covered, so a length nobody ever picked at
 START still wins it.
-_Avoid_: path, and **track** — a Track is what a Run recorded of where it went, and the two must
+
+A Route has a **usual way round**: the order its line is kept in, unless the runner has **flipped**
+it (#466). Its page draws arrows along the line pointing that way, and names the start (#465). A flip
+is one bit beside the line and never a rewrite of it — the line is the Route's identity, so a flipped
+course is still the course its file drew, and handing that file back finds it. The pre-run switch
+"Run it backwards" is against the usual way; what a Routed Run writes down is against the line as
+kept, so flipping a course later changes nothing any Run says about which way it went.
+_Avoid_: reversed route (for a flipped one — it is the same Route, turned round), path, and **track** — a Track is what a Run recorded of where it went, and the two must
 not be confused even in code (`TrackPoint` belongs to a Run). "Course" is fine, and is the word for
 the line itself as against the whole record of it. The `Routes` object under
 `navigation/` is the app's list of screen addresses and is a different word that happens to be
@@ -295,8 +302,8 @@ worked out on read, off the banked shapes, so a course saved today is recognised
 already fit it and a course deleted stops being recognised on anything, neither time touching a Run.
 A **Course Shape** is what a Route is reduced to for it: the same five places a Run Shape holds, taken
 off the line once and banked because no reader may hold two lines at once. A course may be recognised
-either way round, because a course is a line with two ends and no arrow on it and the app has let a
-runner set out along one backwards since #56.
+either way round, because a course is ground with two ends, and the app has let a runner set out along
+one backwards since #56 — its usual way round (#466) is a plan for the next Run, not a test of past ones.
 _Avoid_: matched route, auto-linked run, and **Routed Run** for a Run that was merely recognised.
 
 **Distance remaining** is how much of the course is left, shown in the corner of the live map and of
