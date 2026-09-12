@@ -406,7 +406,7 @@ class SessionDetailScreenTest {
         composeRule.onNodeWithText("Delete").performClick()
 
         assertEquals(1L, deleted)
-        composeRule.onNodeWithText("Deleting this run\u2026").assertIsDisplayed()
+        composeRule.onNodeWithText("Deleting this run…").assertIsDisplayed()
         // The page's own content, and with it every link off it, is gone rather than tappable.
         composeRule.onAllNodesWithText("Heart Rate Zones").assertCountEquals(0)
         composeRule.onAllNodesWithContentDescription("Share run").assertCountEquals(0)

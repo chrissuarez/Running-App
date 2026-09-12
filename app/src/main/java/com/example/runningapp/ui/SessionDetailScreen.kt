@@ -133,7 +133,12 @@ fun SessionDetailScreen(
     // back, until it goes (#414).
     //
     // Kept across a rotation, because the delete is not: turning the phone while it runs would
-    // otherwise hand the runner back the doors this is here to close.
+    // otherwise hand the runner back the doors this is here to close. Nothing clears it — the page
+    // is popped when the delete lands — so Back is deliberately left open, and a delete that never
+    // lands leaves the runner able to walk away rather than stuck.
+    //
+    // A Segment's page needs none of this. It deletes and pops in the same callback
+    // ([MainActivity]), so there is no window on it to close.
     var deleteRequested by rememberSaveable { mutableStateOf(false) }
     // Kept across a rotation or a process death, so a runner who turned the phone sideways to look
     // at their route is still looking at it afterwards.
@@ -233,7 +238,7 @@ fun SessionDetailScreen(
             ) {
                 CircularProgressIndicator()
                 Spacer(modifier = Modifier.height(16.dp))
-                Text("Deleting this run\u2026")
+                Text("Deleting this run…")
             }
             return@Scaffold
         }
