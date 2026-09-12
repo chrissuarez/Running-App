@@ -62,7 +62,9 @@ import kotlin.math.roundToInt
  * History. Two reasons. Back means "cancel this mode" in every Android app that has a contextual
  * selection mode, so the X and Back in the same corner must not disagree. And the selection lives
  * in a view model that outlives this screen, so a Back that left while rows were held would bring
- * the runner back later to an armed Delete button they have no memory of arming (#416).
+ * the runner back later to an armed Delete button they have no memory of arming (#416). Back is the
+ * only way out of History while a selection is held, so intercepting it is enough; the one exit this
+ * screen cannot see — the app being aimed at Home from outside — drops the selection there instead.
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
