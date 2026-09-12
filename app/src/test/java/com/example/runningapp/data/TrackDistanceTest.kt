@@ -105,6 +105,73 @@ class TrackDistanceTest {
     }
 
     @Test
+    fun `a leg stamped the same moment carries its ground into every measurement`() {
+        // The clock did not tick between two fixes twenty metres apart. The runner covered that
+        // ground and the live recorder banked it, so every reader of the track banks it too — the
+        // stamp is what is wrong, not the position (#336).
+        val track = script {
+            running(2.0, seconds = 100)
+            sameMomentJump(meters = 20.0)
+            running(2.0, seconds = 100)
+        }
+
+        assertEquals(0.42, recordedKm(track), 0.005)
+        assertEquals(recordedKm(track), measuredLegsKm(track), 0.001)
+        assertEquals(recordedKm(track), measureTrackDistanceKm(track), 0.001)
+    }
+
+    @Test
+    fun `the leg stamped the same moment carries ground but never a second`() {
+        // It has no time to have been run in, so it can never be moving time and can never make a
+        // pace. What it may not do is vanish from the total while its line stays on the map.
+        val track = script {
+            running(2.0, seconds = 60)
+            sameMomentJump(meters = 20.0)
+            running(2.0, seconds = 60)
+        }
+        val jump = measureTrack(track).legs[60]
+
+        assertEquals(20.0, jump.meters, 0.5)
+        assertEquals(0L, jump.millis)
+        assertEquals(0L, jump.movingMillis)
+        // Recorded, because there is no stretch between the two fixes to have gone unwitnessed: the
+        // line is drawn across it, and the climb underneath it is still banked.
+        assertTrue(jump.recorded)
+    }
+
+    @Test
+    fun `a leg stamped the same moment in one place counts nothing`() {
+        // The ordinary shape of a repeated stamp: the same fix delivered twice. No ground moved, so
+        // counting the leg adds nothing — this rule hands out no distance of its own.
+        val track = script {
+            running(2.0, seconds = 60)
+            sameMomentJump(meters = 0.0)
+            running(2.0, seconds = 60)
+        }
+
+        assertEquals(0.24, measuredLegsKm(track), 0.005)
+        assertEquals(0.0, measureTrack(track).legs[60].meters, 0.0)
+    }
+
+    @Test
+    fun `a Pause written down beats the clock that did not tick across it`() {
+        // A Pause is the one Break the Run wrote down, so it carries nothing whatever its two fixes
+        // are stamped — the record beats every reading of the clock. Still a Break, so no line is
+        // drawn over it either.
+        val track = script {
+            running(2.0, seconds = 60)
+            pauseAndMoveOn(meters = 20.0, seconds = 0)
+            running(2.0, seconds = 60)
+        }
+        val paused = measureTrack(track).legs[60]
+
+        assertEquals(0.0, paused.meters, 0.0)
+        assertEquals(0L, paused.movingMillis)
+        assertFalse(paused.recorded)
+        assertFalse(paused.carriesSpeed)
+    }
+
+    @Test
     fun `a Run rescued from its record measures the same as one finished live`() {
         val track = script {
             running(2.5, seconds = 400)

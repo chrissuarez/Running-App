@@ -295,11 +295,13 @@ private fun MeasuredTrack.smoothedPaceAtEachFix(
         var meters = 0.0
         var movingMillis = 0.0
         for (j in from..to) {
-            // No window of pace reaches through a Break, whatever that Break is worth in metres or
-            // seconds (#204, #165): this line is the shape of the Run, and a tunnel has no shape.
-            // Folding half of one into the pace either side would draw a bend nobody ran. The
-            // splits table is where an Outage's ground and seconds are both accounted for.
-            if (!legs[j].recorded) continue
+            // No window of pace folds in a leg that holds no speed ([TrackLeg.carriesSpeed]): a
+            // Break, whatever it is worth in metres or seconds (#204, #165), or a leg stamped the
+            // same moment at both ends (#336). This line is the shape of the Run, and a tunnel has
+            // no shape and an instant has no pace. Folding half of one into the pace either side
+            // would draw a bend nobody ran. The splits table is where their ground is accounted
+            // for, because a kilometre has to add up to the ground under it.
+            if (!legs[j].carriesSpeed) continue
             val share = legs[j].shareInside(distanceAtFix[j], distanceAtFix[j + 1], lowest, highest)
             meters += legs[j].meters * share
             movingMillis += legs[j].movingMillis * share

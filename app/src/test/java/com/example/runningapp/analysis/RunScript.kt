@@ -196,6 +196,15 @@ internal class RunScript {
     }
 
     /**
+     * One fix landing [meters] further on but stamped the same moment as the one before it — a
+     * clock that did not tick between two positions that did move (#336).
+     */
+    fun sameMomentJump(meters: Double) {
+        advance(meters)
+        add()
+    }
+
+    /**
      * Flat ground, with the barometer as noisy as Chris's Pixel 8a actually records it (#45).
      *
      * The shape of the jitter is taken from three of his runs: mostly under a metre from one

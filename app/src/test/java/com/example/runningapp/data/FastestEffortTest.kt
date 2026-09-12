@@ -172,8 +172,10 @@ class FastestEffortTest {
     }
 
     @Test
-    fun `two fixes stamped the same second carry no distance for free`() {
-        // A duplicated fix a hundred metres along would otherwise be distance covered in no time.
+    fun `two fixes stamped the same second carry no speed for free`() {
+        // A duplicated fix a long way along would otherwise carry the window to its target over
+        // ground that took no time, and report an effort faster than the runner ran. The Run's own
+        // distance total does keep those metres — an effort is a speed, and a total is not (#336).
         val points = track(3.0 to 900).toMutableList()
         val teleport = points.last().let { it.copy(latitude = it.latitude + 2500.0 / metresPerDegreeLatitude) }
         points += teleport

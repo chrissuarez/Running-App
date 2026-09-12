@@ -31,11 +31,15 @@ sealed interface SegmentCut {
      * There is no ground between the two marks: both on one fix, a Run with no route, or a stretch
      * the Run itself counted as nothing.
      *
-     * The last of those is a runner who stood still. A leg between two fixes stamped the same
-     * moment carries no metres by construction ([com.example.runningapp.data.measureTrack]), so a
-     * mark either side of only those is two marks with a gap in the index and none on the ground.
-     * Kept, it would be a place with no length, and every reading ever taken against it would be a
-     * reading of nothing.
+     * The last of those is a runner who stood still: fix after fix arriving in one place, so the
+     * Run's own distance never moves across them and a mark either side of only those is two marks
+     * with a gap in the index and none on the ground. Kept, it would be a place with no length, and
+     * every reading ever taken against it would be a reading of nothing.
+     *
+     * Measured off the same walk everything else is ([com.example.runningapp.data.measureTrack]),
+     * so a stretch this refuses is a stretch the Run's own total counts nothing for — including a
+     * leg between two fixes stamped the same moment, which carries its ground like any other and is
+     * therefore a stretch, short as it is (#336).
      */
     data object TooShort : SegmentCut
 

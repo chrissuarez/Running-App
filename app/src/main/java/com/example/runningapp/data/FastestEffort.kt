@@ -36,6 +36,10 @@ const val FIVE_K_METERS = 5_000.0
  *   way — a window spanning a tunnel reads slower than the runner really was, never faster — which
  *   is what lets an effort span one at all rather than being thrown away with it.
  *
+ * * - **A leg stamped the same second at both ends is skipped** (#336). Its metres are the Run's and
+ *   its distance total keeps them, but they took no time, and a window that reached its target
+ *   across them would report an effort faster than the runner ran.
+ *
  * Pass the same accuracy-filtered points the map, the distance total and moving time are built from
  * ([SessionRepository.getTrackPointsForMap]). A rejected wild fix left in would read as a sprint.
  */
@@ -62,8 +66,11 @@ fun measureFastestEffortSeconds(points: List<TrackPoint>, targetMeters: Double):
             current.latitude,
             current.longitude,
         )
-        // Two fixes stamped the same second carry the leg no time to be run in, so it carries no
-        // ground either — counted, it would be distance for free.
+        // A leg stamped the same second at both ends is skipped here for a different reason from a
+        // Pause: it holds no speed ([TrackLeg.carriesSpeed]), and this whole measurement is a speed.
+        // The Run's distance keeps those metres (#336); an effort may not, because reaching the
+        // target on ground that took no time would report a 5K faster than the runner ran — the one
+        // direction every rule here is written not to lean in.
         val pausedHere = current.startsAfterPause || legMillis <= 0
 
         if (pausedHere) {

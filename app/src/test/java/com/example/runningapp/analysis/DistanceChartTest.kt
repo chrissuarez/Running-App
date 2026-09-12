@@ -245,6 +245,42 @@ class DistanceChartTest {
         assertEquals(1000.0 / 1.5 / 60.0, afterTheBreak[1].paceMinPerKm!!, 1.0)
     }
 
+    @Test
+    fun `a jump stamped the same moment does not make the pace line read fast`() {
+        // Twenty metres the clock did not tick across. Those metres are the Run's — the total and
+        // the splits keep them — but ground over no time is not a speed, so the smoothed line runs
+        // at the pace either side of it rather than ten per cent faster (#336).
+        val chart = chartOf(
+            aRun(),
+            script {
+                running(3.0, seconds = 250)
+                sameMomentJump(meters = 20.0)
+                running(3.0, seconds = 250)
+            }
+        )!!
+
+        val paces = chart.traces.single().points.mapNotNull { it.paceMinPerKm }
+        assertTrue(paces.isNotEmpty())
+        paces.forEach { assertEquals(1000.0 / 3.0 / 60.0, it, 0.05) }
+    }
+
+    @Test
+    fun `a jump stamped the same moment keeps its ground on the axis`() {
+        // The line is drawn straight through it and the axis runs to the far side of it, so the
+        // chart and the route map measure themselves along the same walk.
+        val chart = chartOf(
+            aRun(),
+            script {
+                running(3.0, seconds = 250)
+                sameMomentJump(meters = 20.0)
+                running(3.0, seconds = 250)
+            }
+        )!!
+
+        assertEquals(1520.0, chart.distanceMetersSpan, 2.0)
+        assertEquals(1, chart.traces.size)
+    }
+
     // -- The readout under the finger ------------------------------------------------------------
 
     @Test
