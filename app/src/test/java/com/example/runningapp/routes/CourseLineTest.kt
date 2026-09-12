@@ -167,6 +167,26 @@ class CourseLineTest {
 
         assertEquals(500.0, jumped.alongMeters, 2.0)
         assertEquals(1000.0, caughtUp.alongMeters, 2.0)
+        // And the answer says so of itself: the nearest place is the last leg the window reached
+        // and the course carries on past it, so nobody can tell whether something nearer is out
+        // there (#461).
+        assertTrue(jumped.heldBackByTheWindow)
+        assertTrue(caughtUp.heldBackByTheWindow)
+    }
+
+    /**
+     * The other side of the same flag: a fix a stride on from the one before is answered by the
+     * course, not by the window's edge, and a reading against the whole line never can be (#461).
+     */
+    @Test
+    fun `a fix the window comfortably covers is not held back by it`() {
+        val course = CourseLine.of(northwards(count = 31, spacingMeters = 100.0))!!
+
+        val firstFix = course.after(fix(0.0))
+        val aStrideOn = course.progressAt(fix(10.0).latitude, fix(10.0).longitude, firstFix)
+
+        assertEquals(false, firstFix.heldBackByTheWindow)
+        assertEquals(false, aStrideOn.heldBackByTheWindow)
     }
 
     @Test
