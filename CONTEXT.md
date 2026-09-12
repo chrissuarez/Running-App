@@ -379,7 +379,10 @@ and nothing waiting is kept: where a fix sits on the course is read from around 
 so a runner far from the line is placed at the nearest thing the window covers, and the nearest
 thing to somebody who has sailed past a turning is the very turning they missed. Coming back is a
 re-anchoring against the whole line, and it is silent about every Turn the runner did not reach —
-they did not run that stretch — while a Turn still in front of them is announced normally.
+they did not run that stretch — while a Turn still in front of them is announced normally. A jump
+past the far edge of that window — a Pause spent in a car, a tunnel — is the same re-anchoring and
+the same silence: the answer is then the edge itself rather than a place, and an edge can be a
+corner the runner has already turned (#461).
 _Avoid_: turn-by-turn and directions as names for it, waypoint, junction, and street name of any
 kind (the app knows none); and **Turnaround**, which is the halfway point of an out-and-back Run the
 app announces (#208) and is nothing to do with the course. A Turn is spoken at the *navigation*
