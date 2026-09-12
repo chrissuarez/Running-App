@@ -112,3 +112,7 @@ reads the **shape** of a Run still reads the track, and this section still gover
   over 20 s across all five runs, worth 37.0 m — 1.4% of the Run holding it. Four runs unchanged to
   the metre, and that one's Splits now total its distance. The disagreement was always the point
   rather than its size.
+
+_A leg between two fixes stamped the same moment carries its ground too, and for the reason this ADR
+gives for an Outage: the runner reached the far fix. What it does not carry is a speed
+([ADR 0021](0021-a-leg-stamped-one-moment-is-ground-without-a-speed.md), #336)._

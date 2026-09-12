@@ -35,10 +35,11 @@ const val FIVE_K_METERS = 5_000.0
  *   than the route they took, so the ground is never over-stated. Both halves of that lean the same
  *   way — a window spanning a tunnel reads slower than the runner really was, never faster — which
  *   is what lets an effort span one at all rather than being thrown away with it.
- *
- * * - **A leg stamped the same second at both ends is skipped** (#336). Its metres are the Run's and
- *   its distance total keeps them, but they took no time, and a window that reached its target
- *   across them would report an effort faster than the runner ran.
+ * - **A leg stamped the same second at both ends is skipped, ground and all** (#336). Its metres are
+ *   the Run's, and every measurement that totals a Run keeps them
+ *   ([ADR 0021](docs/adr/0021-a-leg-stamped-one-moment-is-ground-without-a-speed.md)); this one may
+ *   not, because they took no time, and a window that reached its target across them would report
+ *   an effort faster than the runner ran.
  *
  * Pass the same accuracy-filtered points the map, the distance total and moving time are built from
  * ([SessionRepository.getTrackPointsForMap]). A rejected wild fix left in would read as a sprint.
@@ -67,10 +68,12 @@ fun measureFastestEffortSeconds(points: List<TrackPoint>, targetMeters: Double):
             current.longitude,
         )
         // A leg stamped the same second at both ends is skipped here for a different reason from a
-        // Pause: it holds no speed ([TrackLeg.carriesSpeed]), and this whole measurement is a speed.
-        // The Run's distance keeps those metres (#336); an effort may not, because reaching the
-        // target on ground that took no time would report a 5K faster than the runner ran — the one
-        // direction every rule here is written not to lean in.
+        // Pause, and more harshly than anywhere else. Everything that totals a Run keeps those
+        // metres (#336, ADR 0021) and only withholds their speed; this walk withholds the metres
+        // too, because the whole measurement IS a speed — a window that reached its target across
+        // ground that took no time would report a 5K faster than the runner ran, the one direction
+        // every rule here is written not to lean in. Its own walk, so its own arithmetic: this is a
+        // deliberate difference from TrackLeg, not that rule applied.
         val pausedHere = current.startsAfterPause || legMillis <= 0
 
         if (pausedHere) {
