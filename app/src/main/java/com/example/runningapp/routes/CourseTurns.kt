@@ -500,22 +500,20 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
             strayed = true
             return TurnVoice(alongMeters = null, said = emptyList(), takeBackWhatIsWaiting = true)
         }
+        if (!started) return arriveAt(here)
         progress = here
-
-        if (!started) {
-            started = true
-            stepOverTheTurnsBehind(here.alongMeters)
-        }
         return whatIsDueAt(here)
     }
 
     /**
-     * Take a whole-line reading as where the runner now is, and say only what is in front of them.
+     * Take a reading as where the runner now is, and say only what is in front of them.
      *
-     * The one path for every arrival that is not a stride on from the fix before — first reaching
-     * the course, rejoining it after straying, and a jump past the window's far edge — because they
-     * are the one event: the runner is somewhere on the course without having run the way to it from
-     * where they were last seen. See [stepOverTheTurnsBehind] for what that costs and why.
+     * The one path for all three arrivals — first reaching the course, rejoining it after straying,
+     * and a jump past the window's far edge — because they are the one event: the runner is
+     * somewhere on the course without having run the way to it from where they were last seen. Each
+     * of the three hands in a reading taken against the *whole* line, which is the only reading that
+     * can place a runner who did not walk there. See [stepOverTheTurnsBehind] for what that costs
+     * and why.
      */
     private fun arriveAt(here: CourseProgress): TurnVoice {
         progress = here
@@ -546,11 +544,12 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
      * Put the pointer past every cue about a **turn** the runner has already reached, because they
      * have arrived on the course here and did not run the ground behind them.
      *
-     * The one rule for both arrivals — first reaching the course, and rejoining it after straying —
-     * because they are the same event: the runner is suddenly somewhere on the course without
-     * having run the way to it. A runner who joins a loop at its halfway point has not missed the
-     * turns of its first half, and one who left at the first corner and came back at the last has
-     * not turned the corners in between. Neither is told about them.
+     * The one rule for all three arrivals — first reaching the course, rejoining it after straying,
+     * and a jump past the window's far edge ([arriveAt]) — because they are the same event: the
+     * runner is suddenly somewhere on the course without having run the way to it. A runner who
+     * joins a loop at its halfway point has not missed the turns of its first half, and one who left
+     * at the first corner and came back at the last has not turned the corners in between. None of
+     * them is told about them.
      *
      * **What a cue is about, not where it is said.** A warning is triggered fifty metres before its
      * turn and is about that turn, so a runner who arrives between the two — past the trigger, short

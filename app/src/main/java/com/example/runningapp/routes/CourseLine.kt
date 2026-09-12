@@ -88,17 +88,25 @@ data class CourseProgress(
      */
     val hasReachedTheCourse: Boolean,
     /**
-     * Whether the window is the only reason no nearer place was found — the nearest place in it is
-     * on the very last leg the window reached, and the course carries on past there (#461).
+     * Whether the answer is the far end of the ground that was looked at, with course beyond it
+     * that was not (#461).
      *
      * A reading like that is not a place. The runner has been carried more than [AHEAD_METERS] along
      * the course between two fixes — a Pause spent in a car, a tunnel, a phone that lost the sky —
-     * and the piece of course they are really on was never looked at. What comes back is the far
-     * edge of the window, and an edge can be a corner: thirty metres round a turning reads as
+     * so the piece of course they are really on was never looked at, and what comes back is the
+     * window's own far edge. An edge can be a corner: thirty metres round a turning reads as
      * standing on it, which is inside honest wander and so never reads as having left the course
-     * either. Whoever cares which piece of course the runner is on has to read the whole line
-     * instead; whoever only wants a distance can take this at face value, because the edge is the
-     * nearest place anybody knows of.
+     * either.
+     *
+     * **The far end, not merely the last leg.** A course can be drawn with a single leg half a
+     * kilometre long — a straight road in a file made by hand — and the window's edge then falls in
+     * the middle of that leg, with the runner honestly on it and hundreds of metres of it still in
+     * front of them. Nothing is held back there: the answer is a real place, and only an answer
+     * sitting on the boundary of what was measured is not.
+     *
+     * Whoever cares which piece of course the runner is on has to read the whole line instead;
+     * whoever only wants a distance can take this at face value, because the edge is the nearest
+     * place anybody knows of.
      */
     val heldBackByTheWindow: Boolean = false,
 )
@@ -154,8 +162,8 @@ class CourseLine private constructor(private val legs: List<Leg>) {
 
         var bestAlong = 0.0
         var bestOffset = Double.MAX_VALUE
-        var bestLeg = -1
-        var lastLegLookedAt = -1
+        // How far along the course the walk below got to, and whether it stopped short of the end.
+        var lookedAsFarAs = 0.0
         var thereIsCoursePastTheWindow = false
         // Straight to the first leg the window reaches and no further than its last, rather than
         // walking the whole course for every fix. A Run is an hour of fixes and a course is
@@ -167,14 +175,13 @@ class CourseLine private constructor(private val legs: List<Leg>) {
                 thereIsCoursePastTheWindow = true
                 break
             }
-            lastLegLookedAt = index
+            lookedAsFarAs = leg.alongAtStart + leg.meters
             val fix = leg.frame.project(latitude, longitude)
             val fraction = leg.start.fractionNearest(leg.end, fix)
             val offset = leg.start.along(leg.end, fraction).metersTo(fix)
             if (offset < bestOffset - mustBeatBestBy) {
                 bestOffset = offset
                 bestAlong = leg.alongAtStart + fraction * leg.meters
-                bestLeg = index
             }
         }
         // The window always holds the leg [previous] landed on, and a whole-line reading holds every
@@ -190,12 +197,12 @@ class CourseLine private constructor(private val legs: List<Leg>) {
             metersFromCourse = bestOffset,
             hasReachedTheCourse = previous?.hasReachedTheCourse == true ||
                 bestOffset <= REACHED_THE_COURSE_METERS,
-            // Nothing beyond the window was measured, so whether something nearer sits out there is
-            // not known — and the winner being the last leg looked at is the one shape in which it
-            // could. Every other winner had a leg past it that lost, so the window is not what
-            // decided the answer. A whole-line reading looks at every leg and can never be held
-            // back.
-            heldBackByTheWindow = thereIsCoursePastTheWindow && bestLeg == lastLegLookedAt,
+            // Nothing past [lookedAsFarAs] was measured, so whether something nearer sits out there
+            // is not known — and an answer standing on that boundary is the one shape in which it
+            // could. An answer anywhere short of it had ground past it that lost, so the window is
+            // not what decided it. A whole-line reading walks to the course's own end and can never
+            // be held back.
+            heldBackByTheWindow = thereIsCoursePastTheWindow && bestAlong >= lookedAsFarAs,
         )
     }
 

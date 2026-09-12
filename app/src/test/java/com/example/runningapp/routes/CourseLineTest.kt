@@ -2,6 +2,7 @@ package com.example.runningapp.routes
 
 import com.example.runningapp.analysis.MapFix
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -185,8 +186,26 @@ class CourseLineTest {
         val firstFix = course.after(fix(0.0))
         val aStrideOn = course.progressAt(fix(10.0).latitude, fix(10.0).longitude, firstFix)
 
-        assertEquals(false, firstFix.heldBackByTheWindow)
-        assertEquals(false, aStrideOn.heldBackByTheWindow)
+        assertFalse(firstFix.heldBackByTheWindow)
+        assertFalse(aStrideOn.heldBackByTheWindow)
+    }
+
+    /**
+     * A course drawn by hand puts a straight road down as two points, so one leg can be longer than
+     * the window itself — and the window's far edge then falls in the middle of it, with the runner
+     * honestly on it and hundreds of metres of it still in front of them. That is a real place, and
+     * calling it held back would make every ordinary fix on such a road one (#461).
+     */
+    @Test
+    fun `a leg longer than the window is not held back at every step of it`() {
+        val course = CourseLine.of(
+            listOf(at(0.0), at(100.0), at(1500.0), at(1600.0), at(1700.0)),
+        )!!
+
+        val onTheLongLeg = course.after(fix(0.0), fix(200.0), fix(400.0))
+
+        assertEquals(400.0, onTheLongLeg.alongMeters, 2.0)
+        assertFalse(onTheLongLeg.heldBackByTheWindow)
     }
 
     @Test
