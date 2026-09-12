@@ -124,6 +124,17 @@ fun SessionDetailScreen(
     onRegenerateRunSummary: (() -> Unit)? = null
 ) {
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    // The delete is asked for here and finishes somewhere else, so between the tap and the page
+    // going there is a live page for a Run that is on its way out. Every forward door on it — a
+    // Segment, the group of matched Runs, cutting a new Segment, keeping the ground as a Route,
+    // writing a file — opens a page that the pop then takes away along with this one, because a
+    // pop cannot lift one page out of the middle of the stack and leave what is above it. So the
+    // page stops being a page about a Run and says what is happening instead, leaving only the way
+    // back, until it goes (#414).
+    //
+    // Kept across a rotation, because the delete is not: turning the phone while it runs would
+    // otherwise hand the runner back the doors this is here to close.
+    var deleteRequested by rememberSaveable { mutableStateOf(false) }
     // Kept across a rotation or a process death, so a runner who turned the phone sideways to look
     // at their route is still looking at it afterwards.
     var showFullScreenMap by rememberSaveable { mutableStateOf(false) }
@@ -183,7 +194,7 @@ fun SessionDetailScreen(
                     }
                 },
                 actions = {
-                    if (session != null && shareableFormats.isNotEmpty()) {
+                    if (session != null && shareableFormats.isNotEmpty() && !deleteRequested) {
                         // A menu rather than one button, because the two files are for two different
                         // places: FIT is the one Garmin reads whole, GPX the one everything else
                         // takes. FIT is listed first for that reason — it is the better file, and it
@@ -206,7 +217,7 @@ fun SessionDetailScreen(
                     }
                     IconButton(
                         onClick = { showDeleteConfirm = true },
-                        enabled = session != null
+                        enabled = session != null && !deleteRequested
                     ) {
                         Icon(Icons.Default.Delete, contentDescription = "Delete run")
                     }
@@ -214,6 +225,19 @@ fun SessionDetailScreen(
             )
         }
     ) { padding ->
+        if (deleteRequested) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                CircularProgressIndicator()
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Deleting this run\u2026")
+            }
+            return@Scaffold
+        }
+
         // Both or neither: the analysis is worked out from the run, so it is only missing while the
         // run itself is still being read.
         if (session == null || analysis == null) {
@@ -414,6 +438,7 @@ fun SessionDetailScreen(
                 TextButton(
                     onClick = {
                         showDeleteConfirm = false
+                        deleteRequested = true
                         onDeleteSession(session.id)
                     }
                 ) {

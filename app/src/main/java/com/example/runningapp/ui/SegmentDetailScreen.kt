@@ -88,6 +88,12 @@ fun SegmentDetailScreen(
 ) {
     var renaming by rememberSaveable { mutableStateOf(false) }
     var deleting by rememberSaveable { mutableStateOf(false) }
+    // A Segment is deleted the same way a Run is, and carries the same race: the page stays live
+    // while the delete runs, and every effort row on it is a door to a Run's page. Walk through
+    // one and the pop that follows the delete takes that page too, because a pop cannot lift this
+    // page out of the middle of the stack on its own. So the page says what is happening and
+    // offers only the way back until it goes (#414).
+    var deleteRequested by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -99,16 +105,35 @@ fun SegmentDetailScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { renaming = true }, enabled = segment != null) {
+                    IconButton(
+                        onClick = { renaming = true },
+                        enabled = segment != null && !deleteRequested,
+                    ) {
                         Icon(Icons.Default.Edit, contentDescription = "Rename segment")
                     }
-                    IconButton(onClick = { deleting = true }, enabled = segment != null) {
+                    IconButton(
+                        onClick = { deleting = true },
+                        enabled = segment != null && !deleteRequested,
+                    ) {
                         Icon(Icons.Default.Delete, contentDescription = "Delete segment")
                     }
                 },
             )
         },
     ) { padding ->
+        if (deleteRequested) {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(padding),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                CircularProgressIndicator()
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Deleting this segment\u2026")
+            }
+            return@Scaffold
+        }
+
         if (segment == null) {
             // The row is watched, so this is both "still loading" and "just deleted". Either way
             // there is nothing to draw, and the caller pops the page when the row goes.
@@ -274,6 +299,7 @@ fun SegmentDetailScreen(
             onDismiss = { deleting = false },
             onDelete = {
                 deleting = false
+                deleteRequested = true
                 onDelete(segment)
             },
         )

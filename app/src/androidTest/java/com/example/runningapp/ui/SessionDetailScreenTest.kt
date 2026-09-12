@@ -382,6 +382,60 @@ class SessionDetailScreenTest {
         composeRule.onAllNodesWithText("Effort Score").assertCountEquals(0)
     }
 
+    /**
+     * The window #414 is about: the delete is asked for here and lands somewhere else, so the page
+     * has to stop offering doors before it goes.
+     */
+    @Test
+    fun sessionDetailScreen_closesItsForwardDoorsWhileTheDeleteRuns() {
+        var deleted = 0L
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = finishedSession(),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    shareableFormats = listOf(ExportFormat.FIT),
+                    onDeleteSession = { deleted = it },
+                    onBack = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("Delete run").performClick()
+        composeRule.onNodeWithText("Delete").performClick()
+
+        assertEquals(1L, deleted)
+        composeRule.onNodeWithText("Deleting this run\u2026").assertIsDisplayed()
+        // The page's own content, and with it every link off it, is gone rather than tappable.
+        composeRule.onAllNodesWithText("Heart Rate Zones").assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("Share run").assertCountEquals(0)
+        composeRule.onNodeWithContentDescription("Delete run").assertIsNotEnabled()
+    }
+
+    /** The way back stays open, so a delete that never lands is not a trap. */
+    @Test
+    fun sessionDetailScreen_stillOffersBackWhileTheDeleteRuns() {
+        var backs = 0
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = finishedSession(),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
+                    onDeleteSession = {},
+                    onBack = { backs++ }
+                )
+            }
+        }
+
+        composeRule.onNodeWithContentDescription("Delete run").performClick()
+        composeRule.onNodeWithText("Delete").performClick()
+        composeRule.onNodeWithContentDescription("Back").performClick()
+
+        assertEquals(1, backs)
+    }
+
     private fun finishedSession(effort: Int? = null, note: String? = null) = RunnerSession(
         id = 1L,
         startTime = 1_742_000_000_000,
