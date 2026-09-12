@@ -394,6 +394,58 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `moving back puts the runner on the Stage they named and says so in one pass`() {
+        // The runner's own hand on a graduation the app granted in error (#235). One pass, for the
+        // reason a graduation is one pass: a Run started between the move and the dropped
+        // prescriptions would run a Stage half arrived at.
+        val preferences = mutablePreferencesOf()
+        preferences[PreferencesKeys.ACTIVE_STAGE_ID] = "sub_25_peak"
+        // What the coach said about the Stage being left behind.
+        preferences.writeStandingDebrief("Sharp work on those intervals.", DebriefAuthor.COACH)
+
+        preferences.moveBackToStage("5k_sub_25", "sub_30_bridge", movedBackMessage("Stage 2: Sub-30 Bridge"))
+
+        assertEquals("sub_30_bridge", preferences[PreferencesKeys.ACTIVE_STAGE_ID])
+        assertEquals(
+            "You're back on Stage 2: Sub-30 Bridge. Your runs and records are unchanged.",
+            preferences[PreferencesKeys.LATEST_COACH_MESSAGE]
+        )
+        // The runner asked and the app did it, with no coach consulted (#296).
+        assertEquals(DebriefAuthor.APP, debriefAuthorOf(preferences))
+    }
+
+    @Test
+    fun `moving back cancels a completion of the Plan being moved within`() {
+        // A runner standing in Stage 2 has not finished the Plan. Left behind, the completion puts a
+        // COMPLETE badge on a Stage they have walked away from and a congratulation under it.
+        val preferences = mutablePreferencesOf()
+        preferences[PreferencesKeys.ACTIVE_STAGE_ID] = "sub_25_peak"
+        preferences.completePlanOnce(
+            PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = 1_632),
+            "That is the whole of 5K Sub-25."
+        )
+
+        preferences.moveBackToStage("5k_sub_25", "sub_30_bridge", movedBackMessage("Stage 2: Sub-30 Bridge"))
+
+        assertNull(planCompletionOf(preferences))
+    }
+
+    @Test
+    fun `moving back leaves another Plan's completion alone`() {
+        // One slot holds the fact, and the fact is about a Plan. A move inside this Plan is no
+        // business of a Plan the runner finished and left.
+        val preferences = mutablePreferencesOf()
+        preferences.completePlanOnce(
+            PlanCompletion(planId = "couch_to_5k", completedOnEpochDay = 19_000L, seconds = 2_100),
+            "That is the whole of Couch to 5K."
+        )
+
+        preferences.moveBackToStage("5k_sub_25", "sub_30_bridge", movedBackMessage("Stage 2: Sub-30 Bridge"))
+
+        assertEquals("couch_to_5k", planCompletionOf(preferences)?.planId)
+    }
+
+    @Test
     fun `a graduation with no next Stage still tells the runner`() {
         // The coach can call a Stage finished where the plan has no next one. Nothing to advance to,
         // and "you have finished this stage" is still the whole of what it had to say — so the

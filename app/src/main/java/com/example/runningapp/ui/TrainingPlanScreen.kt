@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,8 +31,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -43,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import com.example.runningapp.PlanStage
 import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.lockedStageIds
+import com.example.runningapp.passedStageIds
 import com.example.runningapp.training.PlanCompletion
 import com.example.runningapp.training.StageTrainingSummary
 import com.example.runningapp.training.StageWeek
@@ -87,10 +94,50 @@ fun TrainingPlanScreen(
      */
     planCompletion: PlanCompletion?,
     onActivatePlan: (planId: String, stageId: String) -> Unit,
+    /**
+     * The runner putting themselves back on a Stage they have already left (#235) — offered on
+     * those Stages and nowhere else, and never forwards: moving forward by hand would hand out a
+     * graduation nobody earned.
+     */
+    onMoveBackToStage: (planId: String, stageId: String, stageTitle: String) -> Unit,
     onBack: () -> Unit
 ) {
     val plans = TrainingPlanProvider.getAllPlans()
     if (plans.isEmpty()) return
+
+    // The Stage the runner has asked to go back to and not yet confirmed. One slot for the whole
+    // screen, because one dialog is open at a time; null is "no dialog". Held here rather than in
+    // the card so that the card the dialog is about can scroll away without taking the question
+    // with it.
+    var pendingMoveBack by remember { mutableStateOf<PendingMoveBack?>(null) }
+
+    pendingMoveBack?.let { pending ->
+        AlertDialog(
+            onDismissRequest = { pendingMoveBack = null },
+            title = { Text("Go back to ${pending.stageTitle}?") },
+            // Says what the move costs before it is made, because the two things a runner would
+            // fear are the two things worth stating: their history is not touched, and the coach's
+            // queued workout is. Written as plainly as the card above it.
+            text = {
+                Text(
+                    "You'll train this stage again. Your runs, records and best efforts are not " +
+                        "changed. The coach's next-run suggestions are cleared, and it will make " +
+                        "new ones after your next run."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onMoveBackToStage(pending.planId, pending.stageId, pending.stageTitle)
+                    pendingMoveBack = null
+                }) {
+                    Text("Go back")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingMoveBack = null }) { Text("Cancel") }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -150,6 +197,11 @@ fun TrainingPlanScreen(
                     // of the same id the ACTIVE badge is decided by (#301) — so the padlock lands
                     // ahead of the runner and never on them.
                     val lockedStageIds = plan.lockedStageIds(selectedStageId)
+                    // The Stages behind the runner, off the same reading of the same position
+                    // (#235). Only these offer a way back, and only on the plan they are actually
+                    // on: a plan they have never activated has no Stage of theirs to return to.
+                    val passedStageIds =
+                        if (isPlanActive) plan.passedStageIds(selectedStageId) else emptySet()
                     plan.stages.forEach { stage ->
                         val isActiveStage = stage.id == selectedStageId
                         // The whole sentence, built here from the stored completion and this
@@ -177,7 +229,21 @@ fun TrainingPlanScreen(
                             alreadyBeatenLine = alreadyBeatenLine.takeIf { saysMoreThanTheBar },
                             stageTraining = stageTraining.takeIf { saysMoreThanTheBar },
                             barShortfallLine = barShortfallLine.takeIf { saysMoreThanTheBar },
-                            completedLine = completedLine
+                            completedLine = completedLine,
+                            // Null on every card but the ones behind the runner, which is what
+                            // makes the offer unmistakable: the button appears on Stages they have
+                            // left and nowhere else.
+                            onMoveBack = if (stage.id in passedStageIds) {
+                                {
+                                    pendingMoveBack = PendingMoveBack(
+                                        planId = plan.id,
+                                        stageId = stage.id,
+                                        stageTitle = stage.title
+                                    )
+                                }
+                            } else {
+                                null
+                            }
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                     }
@@ -190,6 +256,18 @@ fun TrainingPlanScreen(
         }
     }
 }
+
+/**
+ * A Stage the runner has asked to go back to, waiting on their confirmation (#235).
+ *
+ * Carries the title the card showed rather than looking one up when the dialog draws: the Stage
+ * being named in the question is the Stage they were reading, named the same way.
+ */
+private data class PendingMoveBack(
+    val planId: String,
+    val stageId: String,
+    val stageTitle: String,
+)
 
 @Composable
 private fun StageCard(
@@ -222,7 +300,13 @@ private fun StageCard(
      * the replaced Requirement line, and the suppressed already-beaten line are one state, not three
      * flags that could disagree.
      */
-    completedLine: String?
+    completedLine: String?,
+    /**
+     * What to do when the runner asks to go back to this Stage (#235), or null on a Stage that is
+     * not behind them — the Stage they are in, one they have not reached, and every Stage of a plan
+     * they are not on.
+     */
+    onMoveBack: (() -> Unit)?
 ) {
     val isComplete = completedLine != null
     val cardColor = when {
@@ -370,6 +454,21 @@ private fun StageCard(
                         Spacer(modifier = Modifier.height(12.dp))
                         StageTrainingBlock(stageTraining)
                     }
+                }
+            }
+
+            // Below everything the Stage says about itself, because it is not part of what the
+            // Stage asks for — it is a door out of the card, and one only a runner already past
+            // this Stage is shown (#235). A text button rather than a filled one: going back is a
+            // correction the runner occasionally needs, not the thing this screen is for, and a
+            // second prominent button beside "Activate Plan" would read as an equal offer.
+            if (onMoveBack != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(
+                    onClick = onMoveBack,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text("Go back to this stage")
                 }
             }
         }

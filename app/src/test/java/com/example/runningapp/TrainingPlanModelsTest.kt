@@ -329,6 +329,43 @@ class TrainingPlanModelsTest {
         assertEquals(setOf("sub_30_bridge", "sub_25_peak"), sub25Plan.lockedStageIds("desk_test_stage"))
     }
 
+    // --- Which Stages can be gone back to (#235) ------------------------------------------------
+
+    @Test
+    fun `the stages behind the runner are the ones they can go back to`() {
+        assertEquals(setOf("base_builder", "sub_30_bridge"), sub25Plan.passedStageIds("sub_25_peak"))
+        assertEquals(setOf("base_builder"), sub25Plan.passedStageIds("sub_30_bridge"))
+    }
+
+    @Test
+    fun `there is nowhere to go back to from the first stage`() {
+        assertEquals(emptySet<String>(), sub25Plan.passedStageIds("base_builder"))
+    }
+
+    @Test
+    fun `a plan the runner is in no stage of offers no way back`() {
+        // Off the same walk as the padlock, so "left", "standing in" and "not reached" are one
+        // reading of one position: an unactivated plan stands at its first Stage, and there is
+        // nothing behind that.
+        assertEquals(emptySet<String>(), sub25Plan.passedStageIds(null))
+        assertEquals(emptySet<String>(), sub25Plan.passedStageIds("desk_test_stage"))
+    }
+
+    @Test
+    fun `a stage is never both locked and behind the runner`() {
+        // The two sets are complementary halves of one plan minus the Stage the runner is in. A
+        // Stage in both would be a card offering a way back into somewhere it also draws as shut.
+        sub25Plan.stages.forEach { standingIn ->
+            val locked = sub25Plan.lockedStageIds(standingIn.id)
+            val passed = sub25Plan.passedStageIds(standingIn.id)
+            assertEquals(emptySet<String>(), locked intersect passed)
+            assertEquals(
+                sub25Plan.stages.map { it.id }.toSet() - standingIn.id,
+                locked + passed
+            )
+        }
+    }
+
     // --- Requirements written in numbers, and the tests that answer them (#290, #291) ----------
 
     @Test

@@ -57,7 +57,8 @@ what the Run was: when the "How did that feel?" sheet closes, or straight away
 for a Run no sheet was shown for, or at the next launch for a sheet nobody ever
 answered. Never at STOP, because the Walk mark has not been given yet (#297).
 Granted forwards only, never from a pass over
-history, and never taken back (#290). Where history already holds a Run that
+history, and never taken back by the app (#290). The runner may take one back
+themselves — see **Moving Back a Stage**. Where history already holds a Run that
 would clear the bar, the Stage card names it and says a new one would count —
 a statement of what happened, never an offer, and nothing changes when it
 appears (#293). On the last Stage of a Plan, answering it records a Plan
@@ -78,7 +79,7 @@ weeks was judged through a keyhole barely a week wide — and told a runner thre
 weeks into a block that it was only just beginning. How long the training has
 run is measured in whole seven-day weeks gone by since the first qualifying Run, never
 in the number of Monday-starting rows: a Sunday start puts four rows on the list
-a fortnight in, and a graduation cannot be taken back. The app counts; whether
+a fortnight in, and nothing in the app takes a graduation back. The app counts; whether
 the count is *consistent* stays the coach's judgement
 ([ADR 0019](docs/adr/0019-the-app-counts-the-training-the-coach-judges-the-consistency.md)).
 _Avoid_: training history (the whole record book, across every Stage), streak,
@@ -91,12 +92,33 @@ there was no Stage after it. Recorded at the moment it is granted — the Plan, 
 day, and the effort in seconds — and never worked out from history afterwards.
 Granted once per Plan: a later Run clearing the bar again moves nothing and says
 nothing, because this records the day the Plan ended and not the runner's best.
-Never taken back, and carried in the archive. The runner stays in that last Stage
+Never taken back by the app, and carried in the archive;
+the one thing that cancels one is the runner moving themselves back off the last
+Stage of that Plan (#235), because a runner standing in Stage 2 has not finished
+it. The runner stays in that last Stage
 with its Workouts and their standing Prescription; what changes is that the card
 stops calling it something to achieve, the already-beaten line is no longer shown
 on it, and the coach is told (#294).
 _Avoid_: graduation (a graduation moves a runner to the next Stage; there is no
 next Stage here), finishing a Stage, maintenance mode
+
+**Moving Back a Stage**:
+The runner putting themselves back on a Stage they have already left, by hand,
+off that Stage's own card on the Training Plan screen
+([ADR 0020](docs/adr/0020-a-graduation-is-the-apps-to-grant-and-the-runners-to-undo.md)).
+The app grants a graduation forwards from evidence and never withdraws one; this
+is the only way back, and it belongs to the runner. Offered on the Stages behind
+them and never ahead — moving forward by hand would hand out a graduation nobody
+earned — and offered for ever, with no reason asked for and none recorded, because
+the errors it exists for are noticed late. It touches no Run: no Best Effort is
+given back, no record is withdrawn, and the Stage each Run was recorded under is
+unchanged. What goes with it, in one write, is the standing Prescriptions, a Plan
+Completion of the Plan being moved within, and the standing debrief. The Stage
+landed on is live again and re-graduates only when a new Run answers its
+Requirement, since a graduation is never granted from a pass over history (#235).
+_Avoid_: un-graduate, revert, downgrade; and demote and rollback, which are both
+already taken — a Promotion is the foreground service's (see **Promotion**) and a
+rollback is the coach's previous Prescription (#156)
 
 **Workout**:
 The planned shape a Run may follow — its intervals, durations, and targets —
@@ -516,8 +538,8 @@ no Stage, and it reaches the coach named as a Walk. A mark made on the finish
 sheet is in before the Run is judged at all: the Run's Stage is settled when that
 sheet closes, not at STOP, precisely so that a walk cannot graduate a Stage a
 moment before the app is told it was one (#297). Marking one takes back the
-medals it held, through the same mend a deletion owes; it does not un-graduate a
-Stage that is already past, and a mark made afterwards — on the Run's own page —
+medals it held, through the same mend a deletion owes; it does not move the runner off a
+Stage they have already graduated onto — that is theirs to do (#235), and a mark made afterwards — on the Run's own page —
 does not re-run the Run's own judgement, so what it buys is every evaluation
 after it. Curves are worked out on read, so marking a session
 from three weeks ago moves every Fitness, Fatigue and Form number from that day

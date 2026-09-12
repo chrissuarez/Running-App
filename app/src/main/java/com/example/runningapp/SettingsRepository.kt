@@ -474,6 +474,68 @@ internal fun MutablePreferences.graduateToStage(
 }
 
 /**
+ * The runner puts themselves back on a Stage they have already left, and is told so — as one thing
+ * (#235).
+ *
+ * A graduation is granted forwards by the app and never withdrawn by it: the coach said yes, the
+ * Stage moved, and until now nothing anywhere could say otherwise. But the app says yes to what it
+ * is shown, and what it is shown can be wrong — a GPS distance that overread, a treadmill distance
+ * typed wrong and noticed a fortnight later, a judgement the coach is entitled to get wrong. So the
+ * way back is the runner's own hand rather than a rule: they name the Stage, and this is the write.
+ *
+ * The move is the runner's decision and not a re-judgement of anything. No Run is touched, no
+ * Best Effort is given back, and the record book is not consulted — what the runner ran, they ran.
+ * What changes is only where they stand and what the app says next to them.
+ *
+ * **Three things go with the Stage, and they go in this one write.**
+ *
+ * The standing Prescriptions go, for the reason [graduateToStage] drops them: they were reasoned
+ * about against the Stage being left, and a Workout modified by them is not the Workout of the
+ * Stage now underfoot. Two writes could let a Run start between them, on a Stage it had half
+ * reached.
+ *
+ * The Plan Completion goes, where the completion on record belongs to [planId] — a runner standing
+ * in Stage 2 cannot also have finished the Plan, and a COMPLETE badge over a Stage they have left
+ * is the screen contradicting itself. Only *this* Plan's completion: one slot holds the fact, and
+ * a fact about another Plan is none of this move's business.
+ *
+ * The debrief is replaced rather than merely removed. What stood there explained the Stage the
+ * runner is leaving — most often the congratulation that moved them off the Stage they are going
+ * back to — and leaving it would head the card with words about a graduation the runner has just
+ * undone. [message] is stamped [DebriefAuthor.APP] always: the runner asked and the app did it,
+ * offline and with no Gemini key, and a coach that was never consulted must not be named over it
+ * (#296).
+ *
+ * Pure and separate from the write around it, for the reason [coachWriteAllowed] is.
+ */
+internal fun MutablePreferences.moveBackToStage(
+    planId: String?,
+    stageId: String,
+    message: String,
+) {
+    this[PreferencesKeys.ACTIVE_STAGE_ID] = stageId
+    clearCoachPrescriptions()
+    if (planId != null && planCompletionOf(this)?.planId == planId) {
+        writePlanCompletion(null)
+    }
+    writeStandingDebrief(message, DebriefAuthor.APP)
+}
+
+/**
+ * What the runner is told when they move themselves back (#235): where they now are, and that
+ * nothing they ran has been taken off them.
+ *
+ * The second sentence is the whole reason this line exists rather than a blank card. The runner has
+ * just undone a graduation, and the fear that undoing one also undoes the Run that earned it is the
+ * fear that would stop them using this at all. It does not: a Best Effort is the runner's, the
+ * record book keeps it, and no Run is touched by a move.
+ *
+ * The Stage is named as the card named it, so the sentence and the ACTIVE badge say the same word.
+ */
+internal fun movedBackMessage(stageTitle: String): String =
+    "You're back on $stageTitle. Your runs and records are unchanged."
+
+/**
  * Everything stored, read as what it means (#234).
  *
  * Pure and separate from the flow that publishes it, for the reason [coachWriteAllowed] is: the
@@ -836,6 +898,28 @@ class SettingsRepository(private val context: Context) {
     ) {
         context.dataStore.editCoachWrite(scope) { preferences ->
             preferences.graduateToStage(nextStageId, message, author)
+        }
+    }
+
+    /**
+     * Puts the runner back on a Stage they have already left, because they said to (#235).
+     *
+     * Deliberately *not* an [editCoachWrite]: that gate exists to refuse work the coach reasoned
+     * about against a Stage the runner has since moved off, and this is the runner moving. Gated on
+     * the Stage it is trying to change, it could only ever refuse itself.
+     *
+     * One write, for the reason [graduateStage] is one write: the move, the dropped Prescriptions,
+     * the cancelled Plan Completion and the line that explains all three are one event, and a Run
+     * started in a gap between any two of them would be a Run on a Stage half arrived at. See
+     * [moveBackToStage] — the rule — for what each of those is doing.
+     *
+     * [stageTitle] rather than a lookup, because the caller is the screen that just drew the card
+     * the runner tapped: the Stage they are being moved to is the Stage they were reading, named as
+     * it was named to them.
+     */
+    suspend fun moveBackToStage(planId: String?, stageId: String, stageTitle: String) {
+        context.dataStore.edit { preferences ->
+            preferences.moveBackToStage(planId, stageId, movedBackMessage(stageTitle))
         }
     }
 

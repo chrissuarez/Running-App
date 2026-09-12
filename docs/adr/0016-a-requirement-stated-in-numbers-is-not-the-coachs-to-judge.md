@@ -106,7 +106,7 @@ A rule evaluated inside finalize has no round trip and no window: the Run exists
 it grants. Neither the lock nor the re-check belongs here, and copying them across out of habit would
 be machinery guarding nothing.
 
-## Forwards only, and never taken back
+## Forwards only, and never taken back by the app
 
 - **No pass over history.** A launch that silently jumped the runner two Stages, on evidence recorded
   under different rules, is the highest-stakes version of the one act the app can never undo. The
@@ -116,6 +116,11 @@ be machinery guarding nothing.
   un-graduate. CONTEXT.md already says this of the Walk mark, and the rule holds the same line for a
   delete. "Afterwards" means after the finish sheet: a mark made *on* that sheet is in before the
   rule is asked at all, so there is nothing there to revoke (#297).
+- **The way back is the runner's, not the rule's.**
+  [ADR 0020](./0020-a-graduation-is-the-apps-to-grant-and-the-runners-to-undo.md) gives them a hand
+  move back onto a Stage they have left (#235). It re-judges nothing and touches no Run — it moves
+  where they stand — so every line above it still holds, and this rule stays exactly as careful as
+  it was: a graduation nobody notices is a graduation nobody undoes.
 - **A Stated Best Effort typed after the Run re-asks the rule.** This is the one place the rule looks
   at a Run again, and it has to: a treadmill 5K is stated after the Run has ended, so a rule that
   only ever looked at the finish would accept a measured 5K and silently refuse a stated one. It is

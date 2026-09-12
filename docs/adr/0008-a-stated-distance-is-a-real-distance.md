@@ -105,7 +105,10 @@ one Run later is a small loss; a Stage graduated by a typo, with no way back, is
 **And that has to hold even when the runner is quick.** The Run's own evaluation used to be in
 flight while the sheet was on screen — it reads the last three Runs out of the database on its way
 to asking the coach — so a number typed fast enough would slip into the judgement of its own Run,
-which looked like the single case where a typo could graduate a Stage nothing can ungraduate. The
+which looked like the single case where a typo could graduate a Stage nothing could then ungraduate.
+(That last half is no longer true:
+[ADR 0020](./0020-a-graduation-is-the-apps-to-grant-and-the-runners-to-undo.md) gives the runner a
+hand move back onto a Stage they have left, #235.) The
 answer here was to judge the Run **as it stood when it was finalized**, freezing the row against the
 race.
 

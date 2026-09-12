@@ -490,9 +490,10 @@ data class AiTrainingContext(
      * a Run whose later deletion unwinds nothing. Three reasons it stays that way, and the ADR's own
      * argument is the first: what the ADR excludes is a Run that only moved a *measurement* — the
      * Fitness and Fatigue curves — and this is a count of Runs, not a description of any one of
-     * them. Second, a graduation is never taken back at all (#290), so there is nothing for a
-     * deletion to unwind on that side; what #156 unwinds is a standing Prescription, which still
-     * stands on the three Runs it was shown. Third, putting the counted Runs into [sourceRunIds]
+     * them. Second, nothing re-judges a graduation once it is granted (#290), so there is nothing
+     * for a deletion to unwind on that side; what #156 unwinds is a standing Prescription, which
+     * still stands on the three Runs it was shown. The runner's own move back (ADR 0020, #235) does
+     * not change that — it moves where they stand and re-judges no Run. Third, putting the counted Runs into [sourceRunIds]
      * would throw a sound Prescription away because one Run of a twenty-Run Stage was deleted — a
      * far worse trade than the one this leaves open.
      *
@@ -5336,11 +5337,14 @@ class SessionRepository(
      * exists, its effort clears, it grants. Copying that machinery across would be a guard around
      * nothing.
      *
-     * **Forwards only, and never taken back.** No pass over history: a launch that silently jumped
-     * the runner two Stages on evidence recorded under different rules is the highest-stakes version
-     * of the one act that cannot be undone — the Stage card names an already-beaten bar instead
-     * (#293). And deleting the Run afterwards, or marking it a Walk, does not un-graduate; CONTEXT.md
-     * already says that of the Walk mark and the rule holds the same line for a delete.
+     * **Forwards only, and never taken back by the app.** No pass over history: a launch that
+     * silently jumped the runner two Stages on evidence recorded under different rules is the
+     * highest-stakes version of the one act this rule cannot undo — the Stage card names an
+     * already-beaten bar instead (#293). And deleting the Run afterwards, or marking it a Walk, does
+     * not un-graduate; CONTEXT.md already says that of the Walk mark and the rule holds the same
+     * line for a delete. The way back is the runner's own hand and not a rule at all
+     * ([SettingsRepository.moveBackToStage], ADR 0020) — which is why this one stays as careful as
+     * it is: a graduation nobody notices is a graduation nobody undoes.
      *
      * **On the plan's last Stage it records a Plan Completion instead of advancing** (#294). There
      * is no Stage to move to, so what is granted is the end of the plan: the plan, the day and the
