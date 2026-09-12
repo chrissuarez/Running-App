@@ -121,25 +121,33 @@ fun SessionDetailScreen(
     runSummary: RunSummaryUi? = null,
     // Asking for the words again — after a failure, or because the runner wants different ones.
     // Null rather than a no-op for [onOpenSegment]'s reason.
-    onRegenerateRunSummary: (() -> Unit)? = null
-) {
-    var showDeleteConfirm by remember { mutableStateOf(false) }
+    onRegenerateRunSummary: (() -> Unit)? = null,
+    // Whether this Run's delete has been asked for and has not landed yet (#414).
+    //
     // The delete is asked for here and finishes somewhere else, so between the tap and the page
     // going there is a live page for a Run that is on its way out. Every forward door on it — a
     // Segment, the group of matched Runs, cutting a new Segment, keeping the ground as a Route,
     // writing a file — opens a page that the pop then takes away along with this one, because a
     // pop cannot lift one page out of the middle of the stack and leave what is above it. So the
     // page stops being a page about a Run and says what is happening instead, leaving only the way
-    // back, until it goes (#414).
+    // back, until it goes.
     //
-    // Kept across a rotation, because the delete is not: turning the phone while it runs would
-    // otherwise hand the runner back the doors this is here to close. Nothing clears it — the page
-    // is popped when the delete lands — so Back is deliberately left open, and a delete that never
-    // lands leaves the runner able to walk away rather than stuck.
+    // Told to the page rather than remembered by it, because the right lifetime is the delete job's
+    // and the job is the ViewModel's ([SessionDetailViewModel.deletePending]). Held there it
+    // survives a rotation the way the job does, dies with the process the way the job does — so a
+    // page restored after the phone reclaimed the app is a page about a Run again, not one waiting
+    // for ever on a delete that no longer exists — and is cleared if the delete fails, so a row
+    // that is still there gets its page back. Remembered here across a save-and-restore instead, it
+    // would outlive the only thing that could ever end it.
+    //
+    // Back is deliberately left open throughout, so a delete that never lands lets the runner walk
+    // away rather than trapping them.
     //
     // A Segment's page needs none of this. It deletes and pops in the same callback
     // ([MainActivity]), so there is no window on it to close.
-    var deleteRequested by rememberSaveable { mutableStateOf(false) }
+    deleteInProgress: Boolean = false,
+) {
+    var showDeleteConfirm by remember { mutableStateOf(false) }
     // Kept across a rotation or a process death, so a runner who turned the phone sideways to look
     // at their route is still looking at it afterwards.
     var showFullScreenMap by rememberSaveable { mutableStateOf(false) }
@@ -199,7 +207,7 @@ fun SessionDetailScreen(
                     }
                 },
                 actions = {
-                    if (session != null && shareableFormats.isNotEmpty() && !deleteRequested) {
+                    if (session != null && shareableFormats.isNotEmpty() && !deleteInProgress) {
                         // A menu rather than one button, because the two files are for two different
                         // places: FIT is the one Garmin reads whole, GPX the one everything else
                         // takes. FIT is listed first for that reason — it is the better file, and it
@@ -222,7 +230,7 @@ fun SessionDetailScreen(
                     }
                     IconButton(
                         onClick = { showDeleteConfirm = true },
-                        enabled = session != null && !deleteRequested
+                        enabled = session != null && !deleteInProgress
                     ) {
                         Icon(Icons.Default.Delete, contentDescription = "Delete run")
                     }
@@ -230,7 +238,7 @@ fun SessionDetailScreen(
             )
         }
     ) { padding ->
-        if (deleteRequested) {
+        if (deleteInProgress) {
             Column(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -443,7 +451,6 @@ fun SessionDetailScreen(
                 TextButton(
                     onClick = {
                         showDeleteConfirm = false
-                        deleteRequested = true
                         onDeleteSession(session.id)
                     }
                 ) {

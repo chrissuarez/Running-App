@@ -81,6 +81,31 @@ class SessionDetailViewModel(
     private val _deleteCompleted = MutableSharedFlow<Long>(extraBufferCapacity = 1)
     val deleteCompleted = _deleteCompleted.asSharedFlow()
 
+    /**
+     * The Runs whose delete has been asked for and has not landed yet (#414).
+     *
+     * A Run's page asks for the delete here and is popped somewhere else, so between the two there
+     * is a live page for a Run that is on its way out. What that page does about it is its own
+     * business ([SessionDetailScreen] closes every forward door on itself); this is only the record
+     * of which Run is going, and it is kept here because here is where the job that does it lives.
+     *
+     * **The right lifetime is the job's lifetime, which is this ViewModel's.** It is held across a
+     * rotation, because the delete is — turning the phone while it runs would otherwise hand the
+     * runner back the doors the page is closing. It goes when the process does, because the delete
+     * goes with it: remembered any longer, a page restored after the phone reclaimed the app would
+     * sit on "Deleting this run…" for ever over a Run that is still there, with no job left to
+     * finish and nothing to ask again. And it is cleared when the delete fails, so a delete that
+     * cannot land gives the page back rather than stranding it.
+     *
+     * **A set of Runs rather than one Run**, for [summaryWriting]'s reason: this ViewModel is the
+     * activity's, so more than one Run can be on its way out at a time.
+     *
+     * A Segment's page needs none of this. It deletes and pops in the same callback
+     * ([com.example.runningapp.MainActivity]), so there is no window on it to close.
+     */
+    private val _deletePending = MutableStateFlow<Set<Long>>(emptySet())
+    val deletePending = _deletePending.asStateFlow()
+
     // Held as state rather than announced once: an export outlives the screen that asked for it,
     // and if the activity is being recreated when the file is ready there is nobody listening. A
     // result that is kept until the screen acknowledges it cannot be missed that way — the runner
@@ -412,10 +437,30 @@ class SessionDetailViewModel(
         )
     }
 
+    /**
+     * Removes a Run, and says while it is going that it is going (#414).
+     *
+     * Marked before the work is launched rather than inside it, so the page that asked is already
+     * closed to its forward doors by the time the next frame is drawn — there is no gap in which a
+     * runner can tap through to a page the pop is about to take away.
+     *
+     * The mark comes off only when the delete fails, because only then is there a page left to
+     * give back: a delete that throws leaves the row standing and the page unpopped, so it has to
+     * become a page about a Run again rather than waiting for an end that has already been and
+     * gone. A delete that lands keeps its mark for good. Taking it off would hand the doors back
+     * for the frame between the row going and the pop arriving — the very gap this is here to
+     * close — and the Run it names cannot come back to be looked at again.
+     */
     fun deleteSession(sessionId: Long) {
+        _deletePending.update { it + sessionId }
         viewModelScope.launch {
-            sessionRepository.deleteSession(sessionId)
-            _deleteCompleted.emit(sessionId)
+            try {
+                sessionRepository.deleteSession(sessionId)
+                _deleteCompleted.emit(sessionId)
+            } catch (e: Exception) {
+                Log.e("SessionDetail", "Failed to delete sessionId=$sessionId", e)
+                _deletePending.update { it - sessionId }
+            }
         }
     }
 

@@ -633,6 +633,11 @@ class MainActivity : ComponentActivity() {
                     // switched off is never asked again, so it holds no refusal — only this says
                     // that its "write it again" could now do nothing but be turned down (#76).
                     val summariesAllowed by sessionDetailViewModel.summariesAllowed.collectAsState()
+                    // Which Runs are on their way out (#414). Named by Run for the reason the
+                    // export results and the summaries are: the delete outlives the page that asked
+                    // for it, and a Run going must not close the doors on whichever Run the runner
+                    // is looking at now.
+                    val deletePending by sessionDetailViewModel.deletePending.collectAsState()
                     val selectedSessionIds by historyViewModel.selectedSessionIds.collectAsState()
                     // Through the view model rather than straight off the DAO: a History row is the
                     // run plus what it won and where it went (#51), and only the view model has
@@ -1203,7 +1208,8 @@ class MainActivity : ComponentActivity() {
                                 runSummary = summaryUi,
                                 onRegenerateRunSummary = sessionId?.let { id ->
                                     { sessionDetailViewModel.regenerateRunSummary(id) }
-                                }
+                                },
+                                deleteInProgress = sessionId != null && sessionId in deletePending,
                             )
                         }
                         composable(Routes.TRAINING_PLAN) {
