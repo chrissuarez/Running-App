@@ -534,9 +534,25 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
      * The pointer is a separate matter and is not rewound — [stepOverTheTurnsBehind] only ever goes
      * forwards — because what has been said once is not owed again. This is about the sentence
      * already handed over and still queued, which no pointer governs.
+     *
+     * **And having reached the course is carried forward from the anchor being replaced.** Reaching
+     * it is a latch: once a runner has been seen on the line, they have been seen on it, and nothing
+     * later can make that untrue. But a whole-line reading is taken with nothing before it, so it
+     * can only latch on its own offset — and a jump can honestly land thirty-one to fifty metres off
+     * the line, near enough that [OFF_COURSE_METERS] calls it wander and this function is asked to
+     * store it, far enough that the reading itself says the course has not been reached. Installed
+     * as it stands, that anchor would unlatch the runner: every fix after it would chain from a
+     * "not reached" anchor, and the guard in [onFix] would swallow every cue they were owed until
+     * they came within thirty metres of the line again. So the latch comes from the anchor it is
+     * replacing as well as from the reading. Harmless on the other two arrivals — the first reach
+     * has no earlier anchor to carry anything from, and a rejoin's reading is inside thirty metres
+     * and has latched itself.
      */
     private fun arriveAt(here: CourseProgress): TurnVoice {
-        progress = here
+        val hadReachedTheCourse = progress?.hasReachedTheCourse == true
+        progress = here.copy(
+            hasReachedTheCourse = here.hasReachedTheCourse || hadReachedTheCourse,
+        )
         started = true
         stepOverTheTurnsBehind(here.alongMeters)
         return whatIsDueAt(here).copy(takeBackWhatIsWaiting = true)

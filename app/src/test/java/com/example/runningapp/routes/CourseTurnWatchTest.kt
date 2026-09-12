@@ -510,4 +510,52 @@ class CourseTurnWatchTest {
             jumped.alongMeters!! < warned.said.single().falseFromAlongMeters,
         )
     }
+
+    /**
+     * #471: a jump that lands honestly wide of the line must not un-reach the course.
+     *
+     * Reaching the course is a latch — once a runner has been seen on the line they have been seen
+     * on it — but a jump past the window's far edge is read against the whole line with nothing
+     * before it, so that reading can only latch on how far off the line it landed. Thirty-one to
+     * fifty metres off is the gap: far enough that the reading itself says the course has not been
+     * reached, near enough that it is honest wander and the reading is kept as where the runner is.
+     *
+     * Here the runner is last seen a hundred metres in, the fixes stop, and the next one lands
+     * seventy metres round the first corner and forty metres out into the field beside the course —
+     * a runner on the far verge of the road, which is ordinary. Kept as an anchor with its own "not
+     * reached" on it, every fix after it would chain from that, and a runner who stayed forty metres
+     * off the line would be told nothing about the corner in front of them. They are told.
+     */
+    @Test
+    fun `a jump landing wide of the line still earns the corners in front of it`() {
+        val corner = (0..23).map { at(it * 25.0) } + at(580.0) + at(630.0)
+        val ell = corner +
+            (1..24).map { at(630.0, it * 25.0) } +
+            (1..8).map { at(630.0 + it * 25.0, 600.0) }
+        val watch = CourseTurnWatch(CourseLine.of(ell)!!, courseTurnsOf(ell))
+
+        fun say(north: Double, east: Double): List<String> {
+            val place = at(north, east)
+            return watch.onFix(
+                LocationFix(place.latitude, place.longitude, 5f, 3f, 0L),
+                autoPaused = false,
+            ).said.map { it.cue.spoken }
+        }
+
+        assertEquals(nothing, say(0.0, 0.0))
+        assertEquals(nothing, say(100.0, 0.0))
+
+        // Six hundred metres on — further than the window reaches — and forty metres out past the
+        // second arm, seventy metres beyond the first corner. That corner is stepped over in
+        // silence, and the whole-line reading kept as where the runner is says, of itself, that the
+        // course has not been reached.
+        assertEquals(nothing, say(670.0, 70.0))
+
+        // Forty metres off the line the whole way down the second arm, and still owed the corner at
+        // the end of it, twelve hundred and thirty metres in.
+        assertEquals(nothing, say(670.0, 150.0))
+        assertEquals(nothing, say(670.0, 400.0))
+        assertEquals(listOf("Turn left in 50 metres."), say(670.0, 560.0))
+        assertEquals(listOf("Turn left."), say(645.0, 635.0))
+    }
 }
