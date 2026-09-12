@@ -28,7 +28,8 @@ data class CourseSpeech(
     val said: List<Utterance>,
     /**
      * Every turn cue of this Run still waiting has stopped being true, whatever ground it was
-     * about — the runner has left the course it is on ([TurnVoice.takeBackWhatIsWaiting]).
+     * about — the runner has left the course it is on, or arrived on it without having run the way
+     * to where they now are ([TurnVoice.takeBackWhatIsWaiting]).
      *
      * Turn cues alone. An off-course alert waiting beside them is about that very leaving and is
      * the sentence the runner now needs.
