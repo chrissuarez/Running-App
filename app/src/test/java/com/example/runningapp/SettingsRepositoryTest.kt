@@ -416,6 +416,16 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `the confirmation names the one kind of Run that brings the coaching back`() {
+        // The coach is asked about a Long Run and no other kind (`isCoachAdjusted`, ADR 0006). Told
+        // only "after your next run", a runner whose next Workout is Easy or Quality runs it and
+        // waits for advice that Run could never produce.
+        assertTrue(moveBackWarning().contains("next Long run"))
+        // And it says the half that matters more first: nothing they have run is taken away.
+        assertTrue(moveBackWarning().contains("Your runs, records and best efforts are not changed"))
+    }
+
+    @Test
     fun `a move that is not backwards writes nothing at all`() {
         // The screen only ever offers a Stage behind the runner, but the screen is a picture of
         // settings as they were when it was drawn. The rule sits in the write, where there is no

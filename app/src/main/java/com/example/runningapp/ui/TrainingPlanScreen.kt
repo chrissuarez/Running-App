@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import com.example.runningapp.PlanStage
 import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.lockedStageIds
+import com.example.runningapp.moveBackWarning
 import com.example.runningapp.passedStageIds
 import com.example.runningapp.training.PlanCompletion
 import com.example.runningapp.training.StageTrainingSummary
@@ -115,16 +116,10 @@ fun TrainingPlanScreen(
         AlertDialog(
             onDismissRequest = { pendingMoveBack = null },
             title = { Text("Go back to ${pending.stageTitle}?") },
-            // Says what the move costs before it is made, because the two things a runner would
-            // fear are the two things worth stating: their history is not touched, and the coach's
-            // queued workout is. Written as plainly as the card above it.
-            text = {
-                Text(
-                    "You'll train this stage again. Your runs, records and best efforts are not " +
-                        "changed. The coach's next-run suggestions are cleared, and it will make " +
-                        "new ones after your next run."
-                )
-            },
+            // Says what the move costs before it is made. The words live beside the ones the
+            // move itself writes ([moveBackWarning], [movedBackMessage]) so the promise and the
+            // fact cannot drift apart, and so both can be read and tested without a screen.
+            text = { Text(moveBackWarning()) },
             confirmButton = {
                 TextButton(onClick = {
                     onMoveBackToStage(pending.planId, pending.stageId, pending.stageTitle)

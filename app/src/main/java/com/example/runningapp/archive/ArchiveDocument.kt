@@ -58,7 +58,7 @@ const val ARCHIVE_FORMAT_VERSION = 1
  *    AI coach — restoring it silently would leave the coach mute with nothing on screen to say why.
  *  - **The coach's latest debrief and its Prescriptions.** A debrief explains one Prescription and a
  *    Prescription expires; both describe the run just finished rather than the runner, and the coach
- *    writes fresh ones after the next Run.
+ *    writes fresh ones after the next Long Run, the only kind it is asked about (ADR 0006).
  */
 data class ArchivedSettings(
     val maxHr: Int,
