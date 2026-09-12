@@ -1,5 +1,6 @@
 package com.example.runningapp.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.*
@@ -47,17 +48,21 @@ import kotlin.math.roundToInt
  * **The filter lives as long as this screen does, and no longer.** It is held here rather than in
  * the view model, so it survives a rotation and survives opening a Run and coming back — the screen
  * is still on the back stack for both — and it is gone the next time History is opened from the
- * menu. That is deliberate and it is the opposite of what a *selection* does (#416), because the two
- * are different things: a selection is a set of Runs the runner picked out to act on, and losing it
- * loses work; a filter is only how they are looking at the list this minute, and a narrowed History
- * silently waiting weeks later is a list with Runs missing from it.
+ * menu. A narrowed History silently waiting weeks later is a list with Runs missing from it, and a
+ * filter is only how the runner is looking at the list this minute.
  *
  * **Changing the chip clears the selection.** A selected row the filter then hides would leave the
  * top bar counting Runs nobody can see, and the Delete button acting on them — the one mistake on
  * this screen that cannot be undone. The alternative considered was to keep the selection and narrow
  * it to the visible rows; it was declined because it makes Delete's count change on its own while
  * the runner is looking at the list, which is worse than dropping a selection they can remake.
- * Nothing else clears it: Back does not, and leaving the screen does not (#416).
+ *
+ * **Back clears the selection too.** While rows are selected the system back button and the back
+ * gesture do what the Close (X) in the same corner does, and nothing else; they do not leave
+ * History. Two reasons. Back means "cancel this mode" in every Android app that has a contextual
+ * selection mode, so the X and Back in the same corner must not disagree. And the selection lives
+ * in a view model that outlives this screen, so a Back that left while rows were held would bring
+ * the runner back later to an armed Delete button they have no memory of arming (#416).
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -77,6 +82,9 @@ fun HistoryScreen(
     // Held across recompositions because narrowing walks every row's Stage and Workout back through
     // the plan, and the rows only change when the database says so.
     val shownRows = remember(rows, selectedType) { historyRowsOfType(rows, selectedType) }
+    // Back cancels the mode instead of leaving the screen — see the KDoc on [HistoryScreen].
+    // Disabled when nothing is selected, so with no selection Back is Navigation's again.
+    BackHandler(enabled = selectionMode) { onClearSelection() }
     val summary = remember(shownRows) { historyDistanceSummary(shownRows) }
 
     Scaffold(
