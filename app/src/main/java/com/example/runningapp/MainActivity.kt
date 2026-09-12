@@ -173,6 +173,32 @@ private fun NavController.popEveryPageFor(filledRoute: String) {
     }
 }
 
+/**
+ * Leaving the page for a Run: **while that Run is on its way out, leaving its page leaves every
+ * page of that Run** (#414).
+ *
+ * A Run's page can be on the stack more than once — `History → Run A → its group → Run A` — and
+ * [popEveryPageFor] is what the delete landing will do to it, so it takes the lower copy of A and
+ * everything stacked on top of that copy. One step back from the top copy would put the runner on
+ * the page in between: the group of Runs matched to A is not a page *about* A, so it carries no
+ * "Deleting this run…" of its own and stays fully live. Anything the runner then opened from it —
+ * another Run's page — sits above a doomed entry, and the completion pop would sweep it away
+ * unasked. Leaving by the same call the completion uses cannot leave anything above anything: the
+ * runner lands where they first opened that Run from, which is exactly where the delete landing
+ * would have put them.
+ *
+ * Back is still Back. It stays open throughout — a delete that never lands must let the runner walk
+ * away rather than trap them — and for a Run that is not going anywhere it is one step back the way
+ * they came.
+ */
+internal fun NavController.leaveSessionDetail(sessionId: Long?, deleteInProgress: Boolean) {
+    if (deleteInProgress && sessionId != null) {
+        popEveryPageFor(Routes.sessionDetail(sessionId))
+    } else {
+        popBackStack()
+    }
+}
+
 class MainActivity : ComponentActivity() {
 
     private var hrService by mutableStateOf<HrForegroundService?>(null)
@@ -1163,6 +1189,10 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            // Whether this Run is on its way out — asked once, because the page's
+                            // own state and where Back goes are the same question (#414).
+                            val runIsGoing = sessionId != null && sessionId in deletePending
+
                             SessionDetailScreen(
                                 session = selectedSession,
                                 samples = sessionSamples,
@@ -1177,7 +1207,14 @@ class MainActivity : ComponentActivity() {
                                 onDeleteSession = { id ->
                                     sessionDetailViewModel.deleteSession(id)
                                 },
-                                onBack = goBack,
+                                // Not [goBack] while this Run is going: leaving the page for a Run
+                                // on its way out leaves *every* page of that Run, by the very call
+                                // the delete landing will make. One step back would instead uncover
+                                // whatever sits between two copies of this Run — the group of Runs
+                                // matched to it, which is not a page about this Run and so stays
+                                // live — and anything opened from there would be swept away by the
+                                // completion pop. See [leaveSessionDetail].
+                                onBack = { navController.leaveSessionDetail(sessionId, runIsGoing) },
                                 onStateDistance = { id, distanceKm ->
                                     sessionDetailViewModel.stateDistance(id, distanceKm)
                                 },
@@ -1222,7 +1259,7 @@ class MainActivity : ComponentActivity() {
                                 onRegenerateRunSummary = sessionId?.let { id ->
                                     { sessionDetailViewModel.regenerateRunSummary(id) }
                                 },
-                                deleteInProgress = sessionId != null && sessionId in deletePending,
+                                deleteInProgress = runIsGoing,
                             )
                         }
                         composable(Routes.TRAINING_PLAN) {

@@ -1,5 +1,6 @@
 package com.example.runningapp.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.PaddingValues
@@ -141,7 +142,16 @@ fun SessionDetailScreen(
     // would outlive the only thing that could ever end it.
     //
     // Back is deliberately left open throughout, so a delete that never lands lets the runner walk
-    // away rather than trapping them.
+    // away rather than trapping them. But while a Run is on its way out, leaving its page leaves
+    // *every* page of that Run: [onBack] is wired to the same call the delete landing makes
+    // ([com.example.runningapp.leaveSessionDetail]), not to one step back. A Run's page can be
+    // on the stack twice — History → this Run → its group of matched Runs → this Run — and one step back
+    // would uncover the page in between. That page is not a page *about* this Run, so nothing above
+    // tells it anything is happening and it stays fully live: the runner can open another Run from
+    // it, and the landing pop, which takes the lower copy of this Run and everything stacked on it,
+    // would throw that other Run's page away unasked. Leaving by the landing's own call leaves
+    // nothing above anything, and puts the runner where the landing would have put them anyway —
+    // wherever they first opened this Run from.
     //
     // A Segment's page needs none of this. It deletes and pops in the same callback
     // ([MainActivity]), so there is no window on it to close.
@@ -191,6 +201,13 @@ fun SessionDetailScreen(
         )
         return
     }
+
+    // The phone's own back button and gesture, while this Run is going, routed through the same
+    // [onBack] as the arrow in the top bar (#414). Without this they reach the navigation host
+    // instead and take one page off, which is the one step back the rule on [deleteInProgress]
+    // exists to prevent: it uncovers whatever sits between two copies of this Run. Enabled only
+    // while the Run is going, so ordinary back is left exactly as it was.
+    BackHandler(enabled = deleteInProgress, onBack = onBack)
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
