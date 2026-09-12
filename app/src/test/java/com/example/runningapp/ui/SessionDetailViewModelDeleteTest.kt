@@ -5,7 +5,6 @@ import com.example.runningapp.data.SessionDao
 import com.example.runningapp.data.SessionRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
@@ -33,6 +32,11 @@ import org.mockito.kotlin.stub
  * off for a delete that throws, because that page is staying. Held by the page across a
  * save-and-restore instead, a delete the phone reclaimed would leave a page saying "Deleting this
  * run…" for ever over a Run that is still there.
+ *
+ * The landing that ends that page is kept here too, not announced once, and for the same reason
+ * read the other way round: because the mark on a landed delete never comes off, a landing that
+ * reached nobody — the activity being recreated at the moment the row went — is a page marked as
+ * going with nothing left to take it away.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class SessionDetailViewModelDeleteTest {
@@ -59,9 +63,6 @@ class SessionDetailViewModelDeleteTest {
     fun `the run being deleted is marked from the moment it is asked for, and stays marked`() =
         runTest(dispatcher) {
             val viewModel = viewModel()
-            val ended = mutableListOf<Long>()
-            val listening = launch { viewModel.deleteCompleted.collect { ended += it } }
-            advanceUntilIdle()
 
             viewModel.deleteSession(7L)
 
@@ -71,11 +72,10 @@ class SessionDetailViewModelDeleteTest {
 
             advanceUntilIdle()
 
-            assertEquals(listOf(7L), ended)
+            assertEquals(setOf(7L), viewModel.deleteCompleted.value)
             // Still marked. The row has gone and the pop is on its way, so taking the mark off
             // here would only hand the doors back for the frame in between.
             assertTrue(7L in viewModel.deletePending.value)
-            listening.cancel()
         }
 
     @Test
@@ -84,9 +84,6 @@ class SessionDetailViewModelDeleteTest {
             onBlocking { deleteSessionById(7L) } doThrow IllegalStateException("the row would not go")
         }
         val viewModel = viewModel()
-        val ended = mutableListOf<Long>()
-        val listening = launch { viewModel.deleteCompleted.collect { ended += it } }
-        advanceUntilIdle()
 
         viewModel.deleteSession(7L)
         assertTrue(7L in viewModel.deletePending.value)
@@ -96,7 +93,47 @@ class SessionDetailViewModelDeleteTest {
         // The row is still there, so the page is not popped — and must stop saying that the Run is
         // going, or it is a page with nothing on it and no way to try again.
         assertFalse(7L in viewModel.deletePending.value)
-        assertTrue(ended.isEmpty())
-        listening.cancel()
+        assertTrue(viewModel.deleteCompleted.value.isEmpty())
+    }
+
+    @Test
+    fun `a delete that lands with nobody listening is still there to be popped afterwards`() =
+        runTest(dispatcher) {
+            val viewModel = viewModel()
+
+            // Nobody is collecting: this is the activity being recreated across the delete, its
+            // old collector already cancelled and its replacement not yet installed.
+            viewModel.deleteSession(7L)
+            advanceUntilIdle()
+
+            // The landing waited. Announced once into a replay-0 flow it would have gone to
+            // nobody, and the page that came back would have sat on "Deleting this run…" over a
+            // Run that is already gone, because the mark on a landed delete never comes off.
+            assertTrue(7L in viewModel.deletePending.value)
+            assertEquals(setOf(7L), viewModel.deleteCompleted.value)
+
+            // And it is asked for only once: the pop says it has taken the pages off, and the
+            // landing goes.
+            viewModel.deleteCompletedHandled(7L)
+            assertTrue(viewModel.deleteCompleted.value.isEmpty())
+            // The mark stays. It is the page's forward doors, and that page is on its way out.
+            assertTrue(7L in viewModel.deletePending.value)
+        }
+
+    @Test
+    fun `two Runs landing while nobody listens both keep their pop`() = runTest(dispatcher) {
+        val viewModel = viewModel()
+
+        // This ViewModel is the activity's, so two Runs can be on their way out at once. Held
+        // state that could name only one would let the second landing overwrite the first Run's
+        // pop — a dropped pop by another route.
+        viewModel.deleteSession(7L)
+        viewModel.deleteSession(8L)
+        advanceUntilIdle()
+
+        assertEquals(setOf(7L, 8L), viewModel.deleteCompleted.value)
+
+        viewModel.deleteCompletedHandled(7L)
+        assertEquals(setOf(8L), viewModel.deleteCompleted.value)
     }
 }
