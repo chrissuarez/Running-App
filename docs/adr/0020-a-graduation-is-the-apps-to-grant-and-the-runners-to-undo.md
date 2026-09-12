@@ -68,7 +68,8 @@ undoes the run that earned it is the fear that would stop the feature being used
 **It drops the standing Prescriptions**, for the reason a graduation drops them: they were reasoned
 about against the Stage being left, and a Workout modified by them is not the Workout of the Stage
 now underfoot ([ADR 0013](./0013-a-prescription-stands-on-the-runs-it-was-shown.md)). The coach
-writes new ones after the next Run.
+writes new ones after the next **Long** Run, which is the only kind it is asked about
+([ADR 0006](./0006-the-coach-adjusts-the-long-run-only.md), `RunType.isCoachAdjusted`).
 
 **It cancels a Plan Completion of the Plan being moved within.** A runner standing in Stage 2 has
 not finished the Plan, and a COMPLETE badge over a Stage they have walked away from is the screen

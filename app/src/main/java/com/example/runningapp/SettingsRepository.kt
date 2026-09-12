@@ -581,6 +581,25 @@ internal fun movedBackMessage(stageTitle: String): String =
     "You're back on $stageTitle. Your runs and records are unchanged."
 
 /**
+ * What the confirmation says a move costs, before the runner makes it (#235).
+ *
+ * Beside [movedBackMessage] rather than inside the screen, because the two sentences the runner
+ * reads about a move are one thing to keep true: this one promises what the other one confirms, and
+ * a promise made on a screen and a fact written to storage that drift apart is the failure.
+ *
+ * Both halves are the two things a runner would fear, answered in the order they would fear them.
+ * Their history is untouched — the fear that undoing a graduation undoes the run that earned it is
+ * the fear that would stop this being used at all. Their queued coaching is not, and it is named as
+ * **Long** because that is the only kind of Run the coach is asked about
+ * ([com.example.runningapp.isCoachAdjusted], ADR 0006): "after your next run" would leave a runner
+ * whose next Workout is Easy or Quality waiting for advice that Run could never produce.
+ */
+internal fun moveBackWarning(): String =
+    "You'll train this stage again. Your runs, records and best efforts are not changed. " +
+        "The coach's next-run suggestions are cleared, and it will make new ones after your " +
+        "next Long run."
+
+/**
  * Everything stored, read as what it means (#234).
  *
  * Pure and separate from the flow that publishes it, for the reason [coachWriteAllowed] is: the
