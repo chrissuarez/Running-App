@@ -12,17 +12,25 @@ import com.example.runningapp.recording.geodesicDistanceMeters
  * recorder banks it as it runs, so a reader that skipped it would have a run's splits fail to add up
  * to the distance printed above them.
  *
- * Two legs carry nothing. A leg across a *Pause* carries no ground, because GPS is torn down for the
- * length of one and the runner was not running: the recorder drops its distance baseline there
- * ([com.example.runningapp.recording.SessionRecorder.discardLastFix]) and so must everything else. A
- * leg between two fixes stamped the same moment carries none either — it has no time to have been
- * run in, so counted it would be distance for free.
+ * One leg carries nothing: a leg across a *Pause*, because GPS is torn down for the length of one and
+ * the runner was not running — the recorder drops its distance baseline there
+ * ([com.example.runningapp.recording.SessionRecorder.discardLastFix]) and so must everything else.
+ *
+ * Every other leg carries its ground, including a leg between two fixes stamped the same moment
+ * (#336). Such a leg has no time to have been run in, but its two fixes are in different places and
+ * the runner reached the second of them, so it is the stamp that is wrong and not the position; the
+ * live recorder banks those metres as it runs, and a reader that dropped them would put a line on
+ * the Run's map over ground the Run's own distance denies.
  *
  * [movingMillis] is the part of the leg that counts towards moving time: all of it, or none, decided
  * by whether [meters] over [millis] clears [MOVING_SPEED_THRESHOLD_MPS]. A leg across an Outage is
  * judged by that same rule — the ground it carries is the evidence that the runner was running
  * across it (#165, [ADR 0012](docs/adr/0012-an-outage-is-a-leg-like-any-other.md)) — and a leg
  * across a Pause is never moving, because it carries no ground to be judged on.
+ *
+ * A leg stamped the same moment at both ends has [millis] of zero and so no moving time either: it
+ * has no speed to clear a threshold with, and handing one seconds it did not record would make the
+ * pace over it infinite.
  */
 data class TrackLeg(
     val meters: Double,
@@ -43,7 +51,19 @@ data class TrackLeg(
      * climb banked below it.
      */
     val recorded: Boolean,
-)
+) {
+    /**
+     * Whether this leg says how fast the runner was going over it — the one question a *shape* of
+     * the Run may fold a leg into, as against a total, which folds every leg for what it carries.
+     *
+     * False across a Break, because a tunnel has no shape however much ground it is worth, and
+     * false for a leg stamped the same moment at both ends, because ground over no time is not a
+     * speed (#336). Both keep their metres in the Run's distance and in its splits, where a
+     * kilometre has to add up to the ground under it; what neither may do is bend the smoothed pace
+     * line ([com.example.runningapp.analysis.DistanceChart]) with a reading it does not hold.
+     */
+    val carriesSpeed: Boolean get() = recorded && millis > 0L
+}
 
 /**
  * A finished run's track with every leg judged: the fixes in time order, and one [TrackLeg] per gap
@@ -169,19 +189,33 @@ fun measureTrack(points: List<TrackPoint>): MeasuredTrack {
         val previous = ordered[i - 1]
         val current = ordered[i]
         val legMs = current.timestampMillis - previous.timestampMillis
-        // Two fixes stamped the same moment leave a leg with no time to have been run in, so it
-        // carries no ground either — counted, it would be distance for free.
-        if (legMs <= 0) {
-            legs[i - 1] = TrackLeg(meters = 0.0, millis = 0L, movingMillis = 0L, recorded = true)
-            continue
-        }
-
         val legMeters = geodesicDistanceMeters(
             previous.latitude,
             previous.longitude,
             current.latitude,
             current.longitude,
         )
+        // Two fixes stamped the same moment leave a leg with no time to have been run in. It keeps
+        // its ground and gets no seconds: ground, because the two fixes are in different places and
+        // the runner reached the second of them, so the stamp is what is wrong rather than the
+        // position (#336) — and no seconds, so it can never be moving time and never makes a pace.
+        //
+        // Unless the Run wrote a Pause down across it, which is the one record that beats every
+        // reading of the clock: a Pause carries no ground however its two fixes are stamped, and it
+        // is still a Break, so no line may be drawn over it.
+        if (legMs <= 0) {
+            legs[i - 1] = if (current.startsAfterPause) {
+                TrackLeg(meters = 0.0, millis = 0L, movingMillis = 0L, recorded = false)
+            } else {
+                TrackLeg(meters = legMeters, millis = 0L, movingMillis = 0L, recorded = true)
+            }
+            if (current.startsAfterPause) {
+                slowSpell.clear()
+                slowSpellMs = 0L
+            }
+            continue
+        }
+
         // A Pause is the one leg no measurement reaches into: the run wrote it down, its own clock
         // stopped for it, and the runner was not running across it however fast the two fixes
         // either side of it look. An Outage - a gap nobody declared - is a leg like any other, and

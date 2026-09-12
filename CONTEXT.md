@@ -228,7 +228,11 @@ How far a Run went: the ground it went over, or the Stated Distance where a
 treadmill reported it. Measured one way by every path that measures it — the
 live recorder, the rescue of an interrupted Run, and the Splits table alike — so
 a Run's Splits total the distance printed above them
-([ADR 0010](docs/adr/0010-the-track-is-the-record-of-a-break.md)).
+([ADR 0010](docs/adr/0010-the-track-is-the-record-of-a-break.md)). Every stretch
+between two fixes counts for the ground it holds, including one whose two fixes
+share a timestamp: that stretch has no speed and so bends no pace line, but the
+runner did reach the far end of it
+([ADR 0021](docs/adr/0021-a-leg-stamped-one-moment-is-ground-without-a-speed.md)).
 _Avoid_: total distance, actual distance
 
 **Stated Distance**:
