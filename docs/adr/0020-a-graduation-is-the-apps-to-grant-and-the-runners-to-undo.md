@@ -36,7 +36,11 @@ Two writers, two rules, and they do not overlap:
 `TrainingPlan.passedStageIds` is the whole of what may be gone back to: the Stages *before* the one
 the runner is in, off the same walk `lockedStageIds` takes, so "left", "standing in" and "not
 reached" are one reading of one position and can never disagree. `SettingsRepository.moveBackToStage`
-is the write.
+is the write, and **the rule is inside it, not on the screen**. The card drawn from `passedStageIds`
+is a picture of settings as they were when it was drawn; the write reads the stored pair inside its
+own edit, so there is no window between drawing a card and tapping it, and no later caller can reach
+past the guard. A move that is not backwards within the Plan the runner is actually on writes
+nothing at all — not half of it.
 
 ### Backwards only
 
@@ -106,6 +110,20 @@ one who went back to train the block properly will, and that graduation is earne
 - **Let the runner re-pick the Plan.** Available today, and the wrong shape: `setActivePlan` puts
   them at Stage 1 whatever Stage they wanted, so the runner fixing a wrong graduation out of Stage 3
   loses Stage 2 as well.
+
+## A Run already under way keeps the Stage it started on
+
+`ranUnderStageId` is stamped at START and nothing rewrites it, which is right: the runner did run it
+under that Stage. What follows is that a Run straddling a move settles against a Stage the plan has
+left, `settleStageAfterRun` finds `stageId != settings.activeStageId`, and it grants nothing — so
+that Run counts towards no Requirement and earns no debrief. Its distance, its records and its Best
+Efforts are banked exactly as usual.
+
+Left as it is rather than guarded against. Refusing the move while a Run is in flight would be the
+app telling the runner they may not correct an error until they have stopped running, and the moment
+barely exists in practice: a graduation only becomes visible once the finish sheet has settled it,
+which is after the window closes. Naming it here so that a Run which quietly counted towards nothing
+is a decision on record rather than a mystery.
 
 ## The residue
 

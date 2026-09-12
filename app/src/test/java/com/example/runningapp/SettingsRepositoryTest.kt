@@ -399,6 +399,7 @@ class SettingsRepositoryTest {
         // reason a graduation is one pass: a Run started between the move and the dropped
         // prescriptions would run a Stage half arrived at.
         val preferences = mutablePreferencesOf()
+        preferences[PreferencesKeys.ACTIVE_PLAN_ID] = "5k_sub_25"
         preferences[PreferencesKeys.ACTIVE_STAGE_ID] = "sub_25_peak"
         // What the coach said about the Stage being left behind.
         preferences.writeStandingDebrief("Sharp work on those intervals.", DebriefAuthor.COACH)
@@ -415,10 +416,58 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `a move that is not backwards writes nothing at all`() {
+        // The screen only ever offers a Stage behind the runner, but the screen is a picture of
+        // settings as they were when it was drawn. The rule sits in the write, where there is no
+        // window: forward is a graduation nobody ran for, and the Stage they are already in is not
+        // a move.
+        listOf("sub_25_peak", "base_builder").forEach { asked ->
+            val preferences = mutablePreferencesOf()
+            preferences[PreferencesKeys.ACTIVE_PLAN_ID] = "5k_sub_25"
+            preferences[PreferencesKeys.ACTIVE_STAGE_ID] = "base_builder"
+            preferences.writeStandingDebrief("Steady all the way through.", DebriefAuthor.COACH)
+
+            preferences.moveBackToStage("5k_sub_25", asked, movedBackMessage("whatever"))
+
+            assertEquals("base_builder", preferences[PreferencesKeys.ACTIVE_STAGE_ID])
+            // Nothing half-done: the coach's standing word is still standing.
+            assertEquals("Steady all the way through.", preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+            assertEquals(DebriefAuthor.COACH, debriefAuthorOf(preferences))
+        }
+    }
+
+    @Test
+    fun `a move naming a Plan the runner is not on writes nothing`() {
+        // Their Plan moved while the Training Plan screen sat open. The card they tapped was drawn
+        // against a Plan they have left, and acting on it would move a Stage of somebody else's
+        // plan under them.
+        val preferences = mutablePreferencesOf()
+        preferences[PreferencesKeys.ACTIVE_PLAN_ID] = TrainingPlanProvider.DESK_TEST_PLAN_ID
+        preferences[PreferencesKeys.ACTIVE_STAGE_ID] = "desk_test_stage"
+
+        preferences.moveBackToStage("5k_sub_25", "base_builder", movedBackMessage("whatever"))
+
+        assertEquals("desk_test_stage", preferences[PreferencesKeys.ACTIVE_STAGE_ID])
+        assertNull(preferences[PreferencesKeys.LATEST_COACH_MESSAGE])
+    }
+
+    @Test
+    fun `a move naming a Plan this build does not hold writes nothing`() {
+        val preferences = mutablePreferencesOf()
+        preferences[PreferencesKeys.ACTIVE_PLAN_ID] = "5k_sub_25"
+        preferences[PreferencesKeys.ACTIVE_STAGE_ID] = "sub_25_peak"
+
+        preferences.moveBackToStage("a_plan_that_went_away", "base_builder", movedBackMessage("x"))
+
+        assertEquals("sub_25_peak", preferences[PreferencesKeys.ACTIVE_STAGE_ID])
+    }
+
+    @Test
     fun `moving back cancels a completion of the Plan being moved within`() {
         // A runner standing in Stage 2 has not finished the Plan. Left behind, the completion puts a
         // COMPLETE badge on a Stage they have walked away from and a congratulation under it.
         val preferences = mutablePreferencesOf()
+        preferences[PreferencesKeys.ACTIVE_PLAN_ID] = "5k_sub_25"
         preferences[PreferencesKeys.ACTIVE_STAGE_ID] = "sub_25_peak"
         preferences.completePlanOnce(
             PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = 1_632),
@@ -435,6 +484,8 @@ class SettingsRepositoryTest {
         // One slot holds the fact, and the fact is about a Plan. A move inside this Plan is no
         // business of a Plan the runner finished and left.
         val preferences = mutablePreferencesOf()
+        preferences[PreferencesKeys.ACTIVE_PLAN_ID] = "5k_sub_25"
+        preferences[PreferencesKeys.ACTIVE_STAGE_ID] = "sub_25_peak"
         preferences.completePlanOnce(
             PlanCompletion(planId = "couch_to_5k", completedOnEpochDay = 19_000L, seconds = 2_100),
             "That is the whole of Couch to 5K."

@@ -116,7 +116,7 @@ unchanged. What goes with it, in one write, is the standing Prescriptions, a Pla
 Completion of the Plan being moved within, and the standing debrief. The Stage
 landed on is live again and re-graduates only when a new Run answers its
 Requirement, since a graduation is never granted from a pass over history (#235).
-_Avoid_: un-graduate, revert, downgrade; and demote and rollback, which are both
+_Avoid_: revert, downgrade; and demote and rollback, which are both
 already taken — a Promotion is the foreground service's (see **Promotion**) and a
 rollback is the coach's previous Prescription (#156)
 
