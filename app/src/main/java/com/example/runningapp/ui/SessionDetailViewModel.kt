@@ -23,9 +23,7 @@ import com.example.runningapp.routes.RunRouteSaver
 import com.example.runningapp.repeatedOn
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
@@ -78,8 +76,35 @@ class SessionDetailViewModel(
     private val savedCourses: Flow<List<CourseShape>> = flowOf(emptyList()),
 ) : ViewModel() {
 
-    private val _deleteCompleted = MutableSharedFlow<Long>(extraBufferCapacity = 1)
-    val deleteCompleted = _deleteCompleted.asSharedFlow()
+    /**
+     * The Runs whose delete has landed and whose page has not been popped yet (#414).
+     *
+     * **Held as state rather than announced once**, for the reason [exportShareReady] is: a landed
+     * delete outlives the screen that asked for it. Announced once, it was emitted into a
+     * replay-0 flow with nobody listening whenever the activity was being recreated as the row
+     * went — and a dropped announcement is a page that is never popped. The mark in
+     * [deletePending] survives that recreation and, for a delete that lands, deliberately never
+     * comes off, so the restored page would sit on "Deleting this run…" for ever over a Run that
+     * is already gone. A result that is kept until the screen acknowledges it cannot be missed
+     * that way: the recreated activity reads it as soon as it is listening again and pops then.
+     *
+     * **A set of Runs rather than one Run**, for [deletePending]'s reason: this ViewModel is the
+     * activity's, so more than one Run can be on its way out at a time, and held state that can
+     * only name one would let the second landing overwrite the first Run's pop — the same dropped
+     * pop by another route.
+     *
+     * Cleared one Run at a time by [deleteCompletedHandled], which the pop calls once it has taken
+     * that Run's pages off the stack. It goes when the process does, with [deletePending]: a page
+     * restored after the phone reclaimed the app is not a page mid-delete, and there is nothing
+     * left to pop.
+     */
+    private val _deleteCompleted = MutableStateFlow<Set<Long>>(emptySet())
+    val deleteCompleted = _deleteCompleted.asStateFlow()
+
+    /** This Run's pages are off the stack; the pop is not asked for again. */
+    fun deleteCompletedHandled(sessionId: Long) {
+        _deleteCompleted.update { it - sessionId }
+    }
 
     /**
      * The Runs whose delete has been asked for and has not landed yet (#414).
@@ -450,13 +475,19 @@ class SessionDetailViewModel(
      * gone. A delete that lands keeps its mark for good. Taking it off would hand the doors back
      * for the frame between the row going and the pop arriving — the very gap this is here to
      * close — and the Run it names cannot come back to be looked at again.
+     *
+     * Because that mark never comes off, the landing has to be impossible to miss: it is *kept* on
+     * [deleteCompleted] until whoever pops the page says it has, rather than announced once to
+     * whoever happens to be listening. An announcement made while the activity is being recreated
+     * reaches nobody, and the page that comes back is then marked as going with nothing left to
+     * take it away.
      */
     fun deleteSession(sessionId: Long) {
         _deletePending.update { it + sessionId }
         viewModelScope.launch {
             try {
                 sessionRepository.deleteSession(sessionId)
-                _deleteCompleted.emit(sessionId)
+                _deleteCompleted.update { it + sessionId }
             } catch (e: Exception) {
                 Log.e("SessionDetail", "Failed to delete sessionId=$sessionId", e)
                 _deletePending.update { it - sessionId }

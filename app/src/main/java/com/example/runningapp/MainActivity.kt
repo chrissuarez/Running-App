@@ -664,16 +664,29 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    LaunchedEffect(sessionDetailViewModel) {
-                        sessionDetailViewModel.deleteCompleted.collect { deletedSessionId ->
+                    // Which Runs have gone and are still waiting for their page to come off the
+                    // stack (#414). Read as state and acknowledged, not listened for once: the
+                    // delete can land in the gap between this activity being torn down and its
+                    // replacement listening again, and a landing nobody heard is a page left on
+                    // "Deleting this run…" for ever, because the mark on a landed delete never
+                    // comes off.
+                    val deleteCompleted by sessionDetailViewModel.deleteCompleted.collectAsState()
+                    LaunchedEffect(deleteCompleted) {
+                        deleteCompleted.forEach { deletedSessionId ->
                             // The page for a Run that no longer exists comes off the stack rather
                             // than being covered over, so Back can never walk back onto it. Where
                             // the runner lands is wherever they opened it from — History for a Run
                             // opened from History, a Record for one opened from a Record.
                             //
                             // By the deleted Run, not by whatever page is on top: this lands after
-                            // a wait the runner can walk away during. See [popEveryPageFor].
+                            // a wait the runner can walk away during. See [popEveryPageFor]. So it
+                            // is not gated on the page the runner is looking at the way an export
+                            // is — an export opens a chooser *over* the current screen, while this
+                            // only removes pages about a Run that is gone, wherever they sit.
                             navController.popEveryPageFor(Routes.sessionDetail(deletedSessionId))
+                            // Acknowledged once the pages are off, so the pop is not asked for a
+                            // second time.
+                            sessionDetailViewModel.deleteCompletedHandled(deletedSessionId)
                         }
                     }
 
