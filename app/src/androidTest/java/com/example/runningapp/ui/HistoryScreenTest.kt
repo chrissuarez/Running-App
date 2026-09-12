@@ -40,17 +40,22 @@ class HistoryScreenTest {
         thumbnail = null,
     )
 
-    private fun showRows(rows: List<HistoryRow>) {
+    private fun showRows(
+        rows: List<HistoryRow>,
+        selectedSessionIds: Set<Long> = emptySet(),
+        onClearSelection: () -> Unit = {},
+        onBack: () -> Unit = {},
+    ) {
         composeRule.setContent {
             RunningAppTheme {
                 HistoryScreen(
                     rows = rows,
-                    selectedSessionIds = emptySet(),
+                    selectedSessionIds = selectedSessionIds,
                     onToggleSelection = {},
-                    onClearSelection = {},
+                    onClearSelection = onClearSelection,
                     onDeleteSelected = {},
                     onSessionClick = {},
-                    onBack = {},
+                    onBack = onBack,
                 )
             }
         }
@@ -92,19 +97,12 @@ class HistoryScreenTest {
         // that leaves while rows are held comes back to an armed Delete button nobody armed.
         var cleared = 0
         var left = 0
-        composeRule.setContent {
-            RunningAppTheme {
-                HistoryScreen(
-                    rows = listOf(row(id = 1L, effortScore = 100)),
-                    selectedSessionIds = setOf(1L),
-                    onToggleSelection = {},
-                    onClearSelection = { cleared++ },
-                    onDeleteSelected = {},
-                    onSessionClick = {},
-                    onBack = { left++ },
-                )
-            }
-        }
+        showRows(
+            rows = listOf(row(id = 1L, effortScore = 100)),
+            selectedSessionIds = setOf(1L),
+            onClearSelection = { cleared++ },
+            onBack = { left++ },
+        )
 
         pressSystemBack()
 
@@ -118,19 +116,10 @@ class HistoryScreenTest {
         // the page. Where it lands is not this screen's business (#412), so all that is asserted
         // here is that History does not swallow the press.
         var cleared = 0
-        composeRule.setContent {
-            RunningAppTheme {
-                HistoryScreen(
-                    rows = listOf(row(id = 1L, effortScore = 100)),
-                    selectedSessionIds = emptySet(),
-                    onToggleSelection = {},
-                    onClearSelection = { cleared++ },
-                    onDeleteSelected = {},
-                    onSessionClick = {},
-                    onBack = {},
-                )
-            }
-        }
+        showRows(
+            rows = listOf(row(id = 1L, effortScore = 100)),
+            onClearSelection = { cleared++ },
+        )
 
         pressSystemBack()
 

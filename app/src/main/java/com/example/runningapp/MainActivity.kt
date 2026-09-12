@@ -650,6 +650,11 @@ class MainActivity : ComponentActivity() {
                             // The record screen taking the app over, so whatever the runner had
                             // stacked up goes with it: this fires because the app has been aimed at
                             // Home from outside, and Back must not walk back into the pile behind.
+                            // The History selection goes with the pile. It is the one piece of
+                            // screen state that outlives its screen, and this is the one way out of
+                            // History the screen's own Back cannot guard (#416) — so History must
+                            // not be re-entered later with its Delete button still armed.
+                            historyViewModel.clearSelection()
                             navigateHome()
                         }
                     }
