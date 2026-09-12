@@ -542,7 +542,7 @@ internal fun MutablePreferences.moveBackToStage(
 
     this[PreferencesKeys.ACTIVE_STAGE_ID] = stageId
     clearCoachPrescriptions()
-    if (planCompletionOf(this)?.planId == planId) writePlanCompletion(null)
+    cancelCompletionOf(planId)
     writeStandingDebrief(message, DebriefAuthor.APP)
 }
 
@@ -557,6 +557,26 @@ internal fun MutablePreferences.moveBackToStage(
  *
  * The Stage is named as the card named it, so the sentence and the ACTIVE badge say the same word.
  */
+/**
+ * A Plan the runner is no longer standing at the end of stops being recorded as finished (#235).
+ *
+ * Named once because two doors reach it and they have to agree. A runner moving themselves back off
+ * the last Stage ([moveBackToStage]) and a runner picking a finished Plan off the Training Plan
+ * screen again ([SettingsRepository.setActivePlan], which starts it at Stage 1) are the same fact
+ * arriving twice: they are somewhere inside the Plan, and somewhere inside a Plan is not the end of
+ * it. Held at one door only, the other leaves a COMPLETE badge and a congratulation over a Stage the
+ * runner has walked away from — the screen contradicting itself.
+ *
+ * Only *this* Plan's completion. One slot holds the fact, the fact is about a Plan, and a completion
+ * belonging to some other Plan is none of either door's business.
+ *
+ * It takes back no time and no record. What the runner ran at that bar is theirs, and the record
+ * book is where it lives; this is only the app's note that the Plan was finished on a day.
+ */
+internal fun MutablePreferences.cancelCompletionOf(planId: String) {
+    if (planCompletionOf(this)?.planId == planId) writePlanCompletion(null)
+}
+
 internal fun movedBackMessage(stageTitle: String): String =
     "You're back on $stageTitle. Your runs and records are unchanged."
 
@@ -864,6 +884,11 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { preferences ->
             preferences.clearCoachWork()
             if (planId != null) {
+                // Picking a Plan starts it, at its first Stage — so a Plan the runner finished and
+                // has now chosen again is not a finished Plan any more (#235). Without this the
+                // runner stands in Stage 1 while the last Stage still wears COMPLETE, and no Stage
+                // is behind them for the way back to reach. See [cancelCompletionOf].
+                preferences.cancelCompletionOf(planId)
                 preferences[PreferencesKeys.ACTIVE_PLAN_ID] = planId
             } else {
                 preferences.remove(PreferencesKeys.ACTIVE_PLAN_ID)

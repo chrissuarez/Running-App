@@ -480,6 +480,36 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `picking a finished Plan again starts it, so it is no longer finished`() {
+        // Finish the 5K plan, activate the Desk Test Plan, then pick the 5K plan again: it starts
+        // at Stage 1. Left standing, the completion put a COMPLETE badge on Stage 3 while the
+        // runner stood in Stage 1 — and with no Stage behind them, the way back could not reach it.
+        // The two doors that put a runner inside a Plan have to agree it is not finished.
+        val preferences = mutablePreferencesOf()
+        preferences.completePlanOnce(
+            PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = 1_632),
+            "That is the whole of 5K Sub-25."
+        )
+
+        preferences.cancelCompletionOf("5k_sub_25")
+
+        assertNull(planCompletionOf(preferences))
+    }
+
+    @Test
+    fun `picking a Plan leaves another Plan's completion alone`() {
+        val preferences = mutablePreferencesOf()
+        preferences.completePlanOnce(
+            PlanCompletion(planId = "5k_sub_25", completedOnEpochDay = 20_000L, seconds = 1_632),
+            "That is the whole of 5K Sub-25."
+        )
+
+        preferences.cancelCompletionOf(TrainingPlanProvider.DESK_TEST_PLAN_ID)
+
+        assertEquals("5k_sub_25", planCompletionOf(preferences)?.planId)
+    }
+
+    @Test
     fun `moving back leaves another Plan's completion alone`() {
         // One slot holds the fact, and the fact is about a Plan. A move inside this Plan is no
         // business of a Plan the runner finished and left.

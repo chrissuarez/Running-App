@@ -76,6 +76,13 @@ contradicting itself. Only that Plan's completion: one slot holds the fact, and 
 Plan. This is a real amendment to #294's "never taken back" — it was never taken back *by the app*,
 and it still is not.
 
+That rule has **two** doors, and `cancelCompletionOf` is the one statement of it. Moving back off
+the last Stage is the door this ADR is about; picking a finished Plan off the Training Plan screen
+again is the other, because `setActivePlan` starts it at Stage 1. Held at one door only, the second
+left the runner standing in Stage 1 of a Plan whose last Stage still wore COMPLETE — and with no
+Stage behind them, the way back could not reach it. Somewhere inside a Plan is not the end of a
+Plan, whichever door you came through.
+
 **It replaces the standing debrief.** What stood there explained the Stage being left, most often
 the very congratulation that moved the runner off the Stage they are going back to.
 
