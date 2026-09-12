@@ -152,10 +152,12 @@ class CourseAlerts(
      * same as everything else in this class. Taking back first is what stops the withdrawal
      * swallowing the very sentence that replaces what it took.
      *
-     * Two ways a turn cue dies, and the wholesale one goes first. The runner leaving the course
-     * kills everything waiting whatever ground it named, and it kills it *without* naming ground —
-     * so it cannot be folded into the by-ground pass, and it must run before it, because the
-     * by-ground pass has no ground to work with on the fix that reports the leaving.
+     * Two ways a turn cue dies, and the wholesale one goes first. Ground jumping under the runner —
+     * leaving the course, or arriving on it somewhere they did not run to — kills everything
+     * waiting whatever ground it named, and the ground the fix reports cannot do that job: on the
+     * fix that reports a leaving there is no ground at all, and on an arrival the ground can even
+     * have gone backwards. So the wholesale pass cannot be folded into the by-ground one, and it
+     * must run before it.
      */
     fun onFix(fix: LocationFix, autoPaused: Boolean) {
         synchronized(lock) {

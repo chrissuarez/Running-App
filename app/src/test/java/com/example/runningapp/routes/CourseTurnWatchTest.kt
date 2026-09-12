@@ -2,6 +2,7 @@ package com.example.runningapp.routes
 
 import com.example.runningapp.recording.LocationFix
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -433,5 +434,80 @@ class CourseTurnWatchTest {
         assertEquals(nothing, say(630.0, 200.0))
         assertEquals(listOf("Turn left in 50 metres."), say(630.0, 255.0))
         assertEquals(listOf("Turn left."), say(632.0, 300.0))
+    }
+
+    /**
+     * #471: a jump that lands the runner on an earlier lap takes back what is still waiting.
+     *
+     * A cue is enqueued and not spoken (#53), so a "Turn right in 50 metres." can still be sitting
+     * behind a longer sentence when the next fix lands. Normally the ground kills it: the producer
+     * withdraws every cue the runner has reached the ground of. That only works while the ground
+     * goes forwards.
+     *
+     * Here it does not. The course is an eight hundred metre square run twice, so every metre of it
+     * is covered twice over. The runner is last seen fifty metres short of the second lap's first
+     * corner — the warning about that corner is spoken and goes into the queue — and the next fix
+     * lands more than the window is long further on. The whole line is read instead, and the whole
+     * line cannot tell the second lap from the first: it answers with the first, which is thousands
+     * of metres *behind* the corner the queued warning is about. Judged by ground, that warning is
+     * not stale and never will be, and the runner is told to turn right long after they have.
+     *
+     * So the arrival says so itself: everything waiting goes back, whatever ground it named. The
+     * pointer is a separate matter and is not rewound — nothing already said is said again — which
+     * is why this fix has nothing of its own to say.
+     */
+    @Test
+    fun `a jump landing on an earlier lap takes back what is waiting`() {
+        // An eight hundred metre square, run twice: corners every eight hundred metres, and every
+        // place on it is two places on the line.
+        val lap = (0..31).map { at(it * 25.0) } +
+            (0..31).map { at(800.0, it * 25.0) } +
+            (0..31).map { at(800.0 - it * 25.0, 800.0) } +
+            (0..31).map { at(0.0, 800.0 - it * 25.0) }
+        val twoLaps = lap + lap + listOf(at(0.0))
+        val watch = CourseTurnWatch(CourseLine.of(twoLaps)!!, courseTurnsOf(twoLaps))
+
+        /** Where a runner this far along the square is, lap after lap. */
+        fun placeAt(alongMeters: Double): RoutePoint {
+            val round = alongMeters % 3200.0
+            return when {
+                round <= 800.0 -> at(round)
+                round <= 1600.0 -> at(800.0, round - 800.0)
+                round <= 2400.0 -> at(800.0 - (round - 1600.0), 800.0)
+                else -> at(0.0, 800.0 - (round - 2400.0))
+            }
+        }
+
+        fun heardAt(place: RoutePoint): TurnVoice = watch.onFix(
+            LocationFix(place.latitude, place.longitude, 5f, 3f, 0L),
+            autoPaused = false,
+        )
+
+        // Round the first lap and into the second, two hundred metres at a time, hearing the
+        // corners as they come.
+        var along = 0.0
+        while (along <= 3800.0) {
+            heardAt(placeAt(along))
+            along += 200.0
+        }
+
+        // Forty metres short of the second lap's first corner: the warning about it is spoken, and
+        // it stops being true at the corner itself, four thousand metres along.
+        val warned = heardAt(placeAt(3960.0))
+        assertEquals(listOf("Turn right in 50 metres."), warned.said.map { it.cue.spoken })
+        assertEquals(4000.0, warned.said.single().falseFromAlongMeters, 10.0)
+
+        // Six hundred metres on — past the corner and well down the square's east side — which is
+        // further than the window reaches, so the whole line is read and answers with the first lap.
+        val jumped = heardAt(placeAt(4560.0))
+
+        assertTrue("the arrival must take back what is waiting", jumped.takeBackWhatIsWaiting)
+        assertEquals(nothing, jumped.said.map { it.cue.spoken })
+        // And this is why ground alone cannot be trusted to do it: the reading is behind the ground
+        // the queued warning dies at, so no amount of running forwards would ever have killed it.
+        assertTrue(
+            "the reading should have landed on the earlier lap",
+            jumped.alongMeters!! < warned.said.single().falseFromAlongMeters,
+        )
     }
 }

@@ -309,10 +309,17 @@ data class TurnVoice(
      * Everything the turns have waiting has stopped being true, whatever ground it was about.
      *
      * The second of the two ways a turn cue dies, and genuinely a different one: the first is the
-     * runner passing the ground the cue names ([SaidTurn.falseFromAlongMeters]), and this is the
-     * runner leaving the course the ground is on. A sentence telling somebody which way to turn on
-     * a line they are no longer running is not late, it is about nothing — and it cannot be judged
-     * by ground, because while they are out there no ground about them is known.
+     * runner passing the ground the cue names ([SaidTurn.falseFromAlongMeters]), and this is
+     * everything ground can no longer settle.
+     *
+     * Two moments say it. The runner **leaving the course**: a sentence telling somebody which way
+     * to turn on a line they are no longer running is not late, it is about nothing, and it cannot
+     * be judged by ground because while they are out there no ground about them is known. And the
+     * runner **arriving on the course** without having run the way to it — first reaching it,
+     * rejoining it, or being carried past the far edge of the window ([CourseTurnWatch]'s
+     * arrivals). Ground has jumped, so what is waiting was never run past; on a course that covers
+     * the same ground twice the new reading can even be *earlier* along the line than the cue, and
+     * ground would then keep a dead sentence alive for ever.
      */
     val takeBackWhatIsWaiting: Boolean = false,
 ) {
@@ -514,12 +521,25 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
      * of the three hands in a reading taken against the *whole* line, which is the only reading that
      * can place a runner who did not walk there. See [stepOverTheTurnsBehind] for what that costs
      * and why.
+     *
+     * **And whatever was still waiting to be said goes back, whatever ground it named.** An arrival
+     * says the runner did not run the ground between where they were last seen and here, so nothing
+     * waiting can be judged by ground any more: on a course that covers the same ground twice, the
+     * whole-line reading can land *earlier* along the line than a cue already spoken about the lap
+     * they have just jumped past, and a cue behind ground that has gone backwards is never reached
+     * — it would sit in the queue and be spoken minutes later about a corner they have long since
+     * turned. Cheap on the other two arrivals and true on all three: the first reach has nothing
+     * waiting yet, and a rejoin emptied the queue on the fix that reported the leaving.
+     *
+     * The pointer is a separate matter and is not rewound — [stepOverTheTurnsBehind] only ever goes
+     * forwards — because what has been said once is not owed again. This is about the sentence
+     * already handed over and still queued, which no pointer governs.
      */
     private fun arriveAt(here: CourseProgress): TurnVoice {
         progress = here
         started = true
         stepOverTheTurnsBehind(here.alongMeters)
-        return whatIsDueAt(here)
+        return whatIsDueAt(here).copy(takeBackWhatIsWaiting = true)
     }
 
     /**
