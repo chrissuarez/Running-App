@@ -365,6 +365,15 @@ data class TurnVoice(
  * [TURN_CUE_LATE_METERS] exists to prevent and cannot, because the ground is wrong rather than the
  * cue. So while the runner is out there this says nothing and trusts nothing.
  *
+ * **A jump past the window's far edge is the same silence, and the same re-anchoring.** A Pause
+ * spent in a car, a tunnel, a phone that lost the sky: the next fix can land further along the
+ * course than the window around the last one reaches, and then the nearest place the window knows of
+ * is its own far edge ([CourseProgress.heldBackByTheWindow]). An edge can be a corner, and thirty
+ * metres round a turning is near enough to that corner to read as standing on it — near enough, too,
+ * that [OFF_COURSE_METERS] calls it honest wander and lets the cue through, which is the one way a
+ * corner already turned gets announced. So a reading the window held back is not judged as a place
+ * at all; it is read against the whole course, exactly as a rejoin is.
+ *
  * **Coming back is a re-anchoring, and it is silent.** Read against the whole course, the way
  * [OffCourseWatch] reads it at the same moment and for the same reason — a runner rejoins wherever
  * the streets let them, which can be past the end of the window the last fix opened. Where they
@@ -452,16 +461,31 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
             // back the whole-line reading *is* where they are, so it becomes the anchor again.
             val rejoined = course.progressAt(fix.latitude, fix.longitude, previous = null)
             if (rejoined.metersFromCourse > BACK_ON_COURSE_METERS) return TurnVoice.NOTHING
-            progress = rejoined
             strayed = false
-            stepOverTheTurnsBehind(rejoined.alongMeters)
-            return whatIsDueAt(rejoined)
+            return arriveAt(rejoined)
         }
 
         val here = course.progressAt(fix.latitude, fix.longitude, progress)
         if (!here.hasReachedTheCourse) {
             progress = here
             return TurnVoice.NOTHING
+        }
+        if (here.heldBackByTheWindow) {
+            // The runner has been carried more than the window is long since the last fix, so the
+            // piece of course they are on was never looked at and what came back is the window's own
+            // far edge ([CourseProgress.heldBackByTheWindow]). An edge can be a corner, and thirty
+            // metres round a turning is near enough to that corner to read as standing on it — near
+            // enough, too, that the off-course branch below would call it honest wander and let the
+            // cue through. So it is not judged as a place at all: the whole line is read instead,
+            // the same reading a rejoin takes and for the same reason, and it is the same event —
+            // the runner is suddenly somewhere on the course without having run the way to it, so
+            // every corner behind them is stepped over without a word.
+            val where = course.progressAt(fix.latitude, fix.longitude, previous = null)
+            if (where.metersFromCourse > OFF_COURSE_METERS) {
+                strayed = true
+                return TurnVoice(alongMeters = null, said = emptyList(), takeBackWhatIsWaiting = true)
+            }
+            return arriveAt(where)
         }
         if (here.metersFromCourse > OFF_COURSE_METERS) {
             // The anchor is left where it was. It is the last place the runner was actually seen on
@@ -482,6 +506,21 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
             started = true
             stepOverTheTurnsBehind(here.alongMeters)
         }
+        return whatIsDueAt(here)
+    }
+
+    /**
+     * Take a whole-line reading as where the runner now is, and say only what is in front of them.
+     *
+     * The one path for every arrival that is not a stride on from the fix before — first reaching
+     * the course, rejoining it after straying, and a jump past the window's far edge — because they
+     * are the one event: the runner is somewhere on the course without having run the way to it from
+     * where they were last seen. See [stepOverTheTurnsBehind] for what that costs and why.
+     */
+    private fun arriveAt(here: CourseProgress): TurnVoice {
+        progress = here
+        started = true
+        stepOverTheTurnsBehind(here.alongMeters)
         return whatIsDueAt(here)
     }
 

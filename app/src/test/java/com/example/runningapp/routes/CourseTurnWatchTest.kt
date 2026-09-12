@@ -390,4 +390,48 @@ class CourseTurnWatchTest {
         assertEquals(nothing, watch.at(410.0))
         assertEquals(nothing, watch.at(430.0))
     }
+
+    /**
+     * #461: a jump past the window's far edge lands the reading on the edge, and the edge can be a
+     * corner the runner has already turned.
+     *
+     * The course goes north six hundred and thirty metres, turns right for three hundred east, then
+     * turns left again. The runner is last seen a hundred metres in, then the fixes stop — a tunnel,
+     * a pocket that lost the sky, a Pause spent in a car — and the next one lands thirty metres round
+     * the first corner. The window opened at a hundred reaches six hundred, so the piece of course
+     * the runner is really on was never looked at; the nearest place in the window is the corner
+     * itself, thirty metres away, which is well inside honest wander and so never reads as having
+     * left the course.
+     *
+     * Believed, that says "Turn right." to a runner who has already turned right. The reading is not
+     * a place, so the whole line is read instead, and the corner behind them is stepped over in
+     * silence. The corner still in front of them is announced normally.
+     */
+    @Test
+    fun `a jump past the window does not announce the corner its edge lands on`() {
+        val corner = (0..23).map { at(it * 25.0) } + at(580.0) + at(630.0)
+        val ell = corner +
+            (1..12).map { at(630.0, it * 25.0) } +
+            (1..8).map { at(630.0 + it * 25.0, 300.0) }
+        val watch = CourseTurnWatch(CourseLine.of(ell)!!, courseTurnsOf(ell))
+
+        fun say(north: Double, east: Double): List<String> {
+            val place = at(north, east)
+            return watch.onFix(
+                LocationFix(place.latitude, place.longitude, 5f, 3f, 0L),
+                autoPaused = false,
+            ).said.map { it.cue.spoken }
+        }
+
+        assertEquals(nothing, say(0.0, 0.0))
+        assertEquals(nothing, say(100.0, 0.0))
+
+        // Five hundred and thirty metres on, and thirty metres the far side of the first corner.
+        assertEquals(nothing, say(630.0, 30.0))
+
+        // Read from where they really are, the second corner at 930 m is still theirs to hear.
+        assertEquals(nothing, say(630.0, 200.0))
+        assertEquals(listOf("Turn left in 50 metres."), say(630.0, 255.0))
+        assertEquals(listOf("Turn left."), say(632.0, 300.0))
+    }
 }
