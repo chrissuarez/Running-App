@@ -201,17 +201,17 @@ fun measureTrack(points: List<TrackPoint>): MeasuredTrack {
         // position (#336) — and no seconds, so it can never be moving time and never makes a pace.
         //
         // Unless the Run wrote a Pause down across it, which is the one record that beats every
-        // reading of the clock: a Pause carries no ground however its two fixes are stamped, and it
-        // is still a Break, so no line may be drawn over it.
+        // reading of the clock. This is not a rule of its own: it is the Pause rule below, reaching
+        // a leg that used to slip past it because this branch returned before the Pause was ever
+        // looked at. A Pause carries no ground however its two fixes are stamped, it is a Break so
+        // no line may be drawn over it, and the slow spell running into it is rest like any other.
         if (legMs <= 0) {
-            legs[i - 1] = if (current.startsAfterPause) {
-                TrackLeg(meters = 0.0, millis = 0L, movingMillis = 0L, recorded = false)
-            } else {
-                TrackLeg(meters = legMeters, millis = 0L, movingMillis = 0L, recorded = true)
-            }
             if (current.startsAfterPause) {
+                legs[i - 1] = pauseLeg(legMs)
                 slowSpell.clear()
                 slowSpellMs = 0L
+            } else {
+                legs[i - 1] = TrackLeg(meters = legMeters, millis = 0L, movingMillis = 0L, recorded = true)
             }
             continue
         }
@@ -247,12 +247,11 @@ fun measureTrack(points: List<TrackPoint>): MeasuredTrack {
             // It still carries its ground unless it was a Pause, which is the one Break the runner
             // was not running across - see [TrackLeg.meters].
             spansPause || spansOutage -> {
-                legs[i - 1] = TrackLeg(
-                    meters = if (spansPause) 0.0 else legMeters,
-                    millis = legMs,
-                    movingMillis = 0L,
-                    recorded = false,
-                )
+                legs[i - 1] = if (spansPause) {
+                    pauseLeg(legMs)
+                } else {
+                    TrackLeg(meters = legMeters, millis = legMs, movingMillis = 0L, recorded = false)
+                }
                 slowSpell.clear()
                 slowSpellMs = 0L
             }
@@ -274,6 +273,17 @@ fun measureTrack(points: List<TrackPoint>): MeasuredTrack {
     @Suppress("UNCHECKED_CAST")
     return MeasuredTrack(ordered, (legs as Array<TrackLeg>).asList())
 }
+
+/**
+ * What a leg across a Pause is worth, wherever one is made: no ground, no moving time, and not a
+ * stretch the recording covers.
+ *
+ * One statement, because a Pause reaches [measureTrack] down two paths — the ordinary one, and a
+ * pair of fixes stamped the same moment, which takes the early exit (#336) — and a Pause that meant
+ * two different things depending on which path found it would be no rule at all.
+ */
+private fun pauseLeg(millis: Long) =
+    TrackLeg(meters = 0.0, millis = millis, movingMillis = 0L, recorded = false)
 
 /** A slow spell counts as moving until it outlasts [REST_SUSTAINED_MS]; after that, none of it does. */
 private fun Array<TrackLeg?>.redeem(slowSpell: List<Int>, slowSpellMs: Long) {

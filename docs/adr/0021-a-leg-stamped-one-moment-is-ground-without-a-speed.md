@@ -42,6 +42,14 @@ a leg whose far fix resumes one carries no ground and stays a Break whatever its
 stamped — the record is the authority, and the length of a gap has not been evidence of a Pause since
 #84 ([ADR 0018](0018-a-pause-is-written-down.md)).
 
+That is not a new rule and not this ADR's to decide. `measureTrack` used to answer the zero-time case
+and return before it ever looked at `startsAfterPause`, so such a leg slipped past the Pause rule and
+came out `recorded` — drawable — by an accident of ordering rather than by anyone's decision. Giving
+the leg its ground is what makes the omission visible, because a Pause that carried ground would
+contradict ADR 0012 outright. So the branch now asks about the Pause first and the rule below finally
+reaches it. Nothing the app has recorded is affected either way: a Pause takes wall-clock time, so a
+Pause leg stamped one moment at both ends is not a recording the recorder produces.
+
 It stays `recorded` otherwise. There is no stretch between the two fixes for the recording to have missed, so
 the line is drawn across it and the climb underneath it is banked — reading a single repeated stamp
 mid-hill as a Break would throw that climb away for nothing.

@@ -129,7 +129,7 @@ class TrackDistanceTest {
             sameMomentJump(meters = 20.0)
             running(2.0, seconds = 60)
         }
-        val jump = measureTrack(track).legs[60]
+        val jump = measureTrack(track).theZeroTimeLeg()
 
         assertEquals(20.0, jump.meters, 0.5)
         assertEquals(0L, jump.millis)
@@ -150,7 +150,7 @@ class TrackDistanceTest {
         }
 
         assertEquals(0.24, measuredLegsKm(track), 0.005)
-        assertEquals(0.0, measureTrack(track).legs[60].meters, 0.0)
+        assertEquals(0.0, measureTrack(track).theZeroTimeLeg().meters, 0.0)
     }
 
     @Test
@@ -163,13 +163,59 @@ class TrackDistanceTest {
             pauseAndMoveOn(meters = 20.0, seconds = 0)
             running(2.0, seconds = 60)
         }
-        val paused = measureTrack(track).legs[60]
+        val paused = measureTrack(track).theZeroTimeLeg()
 
         assertEquals(0.0, paused.meters, 0.0)
         assertEquals(0L, paused.movingMillis)
         assertFalse(paused.recorded)
         assertFalse(paused.carriesSpeed)
     }
+
+    @Test
+    fun `a jump stamped the same moment is counted however far it is`() {
+        // No sanity check on the size of one, deliberately. The live recorder banks a fix's ground
+        // with no test on the time since the last one, so a jump this size is already in the Run's
+        // saved distance; a reader that refused it would put the two back into the disagreement
+        // this ticket closes. What keeps a wild fix out is the accuracy gate, which both sides run
+        // and neither this rule nor #336 changes.
+        val track = script {
+            running(2.0, seconds = 60)
+            sameMomentJump(meters = 2_500.0)
+            running(2.0, seconds = 60)
+        }
+
+        assertEquals(2.74, recordedKm(track), 0.01)
+        assertEquals(recordedKm(track), measuredLegsKm(track), 0.001)
+        assertEquals(recordedKm(track), measureTrackDistanceKm(track), 0.001)
+    }
+
+    @Test
+    fun `a jump stamped the same moment neither redeems nor condemns a slow spell`() {
+        // The dawdle either side of it runs to four seconds, which outlasts REST_SUSTAINED_MS, so
+        // the whole spell is rest and none of it is moving time. The jump has no seconds to lend
+        // the spell and no speed to judge it by, so it must leave the spell whole. Were it to break
+        // the spell in two, the half after it would be two seconds — short enough to be redeemed by
+        // the next moving leg — and the Run would bank movement the runner never made.
+        val restedThrough = script {
+            running(2.0, seconds = 30)
+            running(0.2, seconds = 4)
+            running(2.0, seconds = 30)
+        }
+        val interrupted = script {
+            running(2.0, seconds = 30)
+            running(0.2, seconds = 2)
+            sameMomentJump(meters = 0.0)
+            running(0.2, seconds = 2)
+            running(2.0, seconds = 30)
+        }
+
+        // Sixty seconds of running, and not one of the four it dawdled through.
+        assertEquals(60_000L, measureTrack(restedThrough).legs.sumOf { it.movingMillis })
+        assertEquals(60_000L, measureTrack(interrupted).legs.sumOf { it.movingMillis })
+    }
+
+    /** The one leg of a scripted track whose two fixes share a timestamp. */
+    private fun MeasuredTrack.theZeroTimeLeg(): TrackLeg = legs.single { it.millis == 0L }
 
     @Test
     fun `a Run rescued from its record measures the same as one finished live`() {

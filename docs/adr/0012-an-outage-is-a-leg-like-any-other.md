@@ -105,3 +105,7 @@ before #84.
 - **A Run's records are not re-scored by this.** Best Efforts have always spanned a Break over its
   straight line and its full seconds (ADR 0010), so nothing in the record book was measured under
   the rule that changed.
+
+_This ADR judged a leg by its ground over its seconds, and left unasked what a leg with no seconds at
+all is judged on. It is judged on nothing: it carries its ground and no moving time
+([ADR 0021](0021-a-leg-stamped-one-moment-is-ground-without-a-speed.md), #336)._
