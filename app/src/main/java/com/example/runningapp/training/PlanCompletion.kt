@@ -23,7 +23,9 @@ import java.util.Locale
  * [completedOnEpochDay] and does not congratulate the runner a second time: this records the day the
  * plan was finished, not the runner's best — `bestEffortsOf` and the record book already own that.
  * Deleting the Run afterwards does not un-complete the plan, exactly as deleting it does not
- * un-graduate a Stage.
+ * un-graduate a Stage. The one thing that cancels a completion is the runner moving themselves back
+ * off that last Stage (ADR 0020, #235): a runner standing in Stage 2 has not finished the plan, and
+ * that is their statement rather than a re-judgement of any Run.
  *
  * The runner keeps their last Stage, its Workouts and their standing Prescription; the only thing
  * that changes is that the screen stops calling that Stage something to achieve.

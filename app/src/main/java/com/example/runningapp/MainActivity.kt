@@ -1307,6 +1307,15 @@ class MainActivity : ComponentActivity() {
                                         settingsRepository.setActivePlan(planId, stageId)
                                     }
                                 },
+                                // Straight to the one write that holds the rule (#235). Nothing is
+                                // decided here: which Stages may be gone back to is the screen's
+                                // reading of where the runner stands, and what a move takes with it
+                                // is [SettingsRepository.moveBackToStage]'s.
+                                onMoveBackToStage = { planId, stageId, stageTitle ->
+                                    scope.launch {
+                                        settingsRepository.moveBackToStage(planId, stageId, stageTitle)
+                                    }
+                                },
                                 onBack = goBack
                             )
                         }

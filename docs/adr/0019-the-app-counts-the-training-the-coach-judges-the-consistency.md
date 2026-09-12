@@ -98,7 +98,9 @@ unwinds nothing.
 
 That is accepted, for the ADR's own reason first: what ADR 0013 excludes is a Run that only moved a
 *measurement* — the Fitness and Fatigue curves — and this is a count of Runs, not a description of
-one. A graduation is never taken back at all (#290), so there is nothing on that side for a deletion
-to undo; what #156 unwinds is a standing Prescription, and that still stands on the three Runs it
-was shown. And putting twenty counted Runs into the provenance would throw a sound Prescription away
+one. Nothing re-judges a graduation once it is granted (#290), so there is nothing on that side for
+a deletion to undo — and the runner's own way back
+([ADR 0020](./0020-a-graduation-is-the-apps-to-grant-and-the-runners-to-undo.md), #235) is a move
+rather than a re-judgement, so it does not change that; what #156 unwinds is a standing
+Prescription, and that still stands on the three Runs it was shown. And putting twenty counted Runs into the provenance would throw a sound Prescription away
 because one of them was deleted — a worse trade than the one this leaves open.

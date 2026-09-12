@@ -119,6 +119,22 @@ fun TrainingPlan.lockedStageIds(activeStageId: String?): Set<String> =
     stages.drop(activeStageIndex(activeStageId) + 1).mapTo(mutableSetOf()) { it.id }
 
 /**
+ * The Stages of this Plan the runner has already left: every Stage before the one they are in
+ * (#235).
+ *
+ * The other side of [lockedStageIds], off the same walk, so the three states a card can be in —
+ * left, standing in, not reached — are one reading of one position and cannot disagree. These are
+ * the Stages a runner may put themselves back on when a graduation was granted on evidence that was
+ * wrong; nothing later is, because moving *forward* by hand would hand out a graduation nobody
+ * earned, which is the thing the Plan exists to decide.
+ *
+ * Empty for a Plan the runner has not activated, and empty on the first Stage of one they have:
+ * there is nowhere behind them to go.
+ */
+fun TrainingPlan.passedStageIds(activeStageId: String?): Set<String> =
+    stages.take(activeStageIndex(activeStageId)).mapTo(mutableSetOf()) { it.id }
+
+/**
  * The Stage's Test, or null for a Stage that offers none (#292).
  *
  * The first one declared, because a Stage has one requirement and so has one Test; a second would
