@@ -50,7 +50,7 @@ Not at STOP. **Never a Walk** is only a promise the code keeps if the Walk mark 
 time the rule is asked, and the mark is the runner's own word given on the "How did that feel?"
 sheet — which goes up at STOP and is answered seconds later. Asked at STOP, an outdoor activity
 covering a qualifying 5 km could advance the Stage a moment before the app was told it was a walk,
-and a graduation cannot be taken back. That was
+and nothing in this rule would take the graduation back. That was
 [#297](https://github.com/chrissuarez/Running-App/issues/297).
 
 So the Run is put to the Plan when the finish sheet resolves — Save or dismissed, both being an

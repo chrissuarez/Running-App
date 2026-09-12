@@ -70,7 +70,10 @@ have the coach judging a Run it cannot classify.
   later delete can answer for, because a Run cannot be deleted twice. The graduation
   is the one that can least afford it and the easiest to be sure about: it rests on
   the same three Runs, most of a Stage's requirement is answered by one Run or two of
-  them, and there is no un-graduate — a Prescription records the Runs it stood on and
-  a later delete unwinds it, while a Stage only ever advances. So a graduation refused
+  them, and nothing re-judges a graduation once it is granted — a Prescription records
+  the Runs it stood on and a later delete unwinds it, while a Stage only ever advances
+  under the app's own hand. (The runner can move themselves back onto a Stage they have
+  left, [ADR 0020](./0020-a-graduation-is-the-apps-to-grant-and-the-runners-to-undo.md),
+  #235 — but that moves where they stand and re-judges no Run, so nothing here changes.) So a graduation refused
   is the conservative direction: it comes late, on the next Run, rather than being
   granted for good on evidence the runner has already thrown away.

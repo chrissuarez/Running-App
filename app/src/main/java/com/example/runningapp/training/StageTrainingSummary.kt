@@ -83,7 +83,9 @@ data class StageTrainingSummary(
  *
  * [record] must be built from `SessionDao.getAiEvidenceRunDaysOfStage` — the graduation guard's own
  * filter — and never from a wider read. Two doors that answer "how many weeks" have to be fed the
- * same numbers, or one of them is misleading the runner about a promotion that cannot be undone.
+ * same numbers, or one of them is misleading the runner about a promotion the app itself will never
+ * reverse. The runner can move back by hand (ADR 0020, #235), which is a repair and not a reason to
+ * be any less careful here: a graduation nobody notices is a graduation nobody repairs.
  */
 fun stageTrainingSummaryOf(
     record: StageTrainingRecord,

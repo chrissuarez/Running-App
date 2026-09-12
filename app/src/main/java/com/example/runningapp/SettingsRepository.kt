@@ -474,8 +474,23 @@ internal fun MutablePreferences.graduateToStage(
 }
 
 /**
- * The runner puts themselves back on a Stage they have already left, and is told so — as one thing
- * (#235).
+ * The runner puts themselves back on a Stage they have already left, and is told so — as one thing,
+ * or nothing at all where the Stage they named is not one behind them (#235).
+ *
+ * **The rule lives here and not on the screen.** The card the runner tapped was drawn from
+ * [TrainingPlan.passedStageIds], so a legal move is the only one they can ask for — but the screen
+ * is a picture of settings as they were when it was drawn, and this is the settings as they are.
+ * Read here, against the stored pair inside the edit, the check has no window: a graduation that
+ * lands between the draw and the tap cannot turn a move backwards into a move forwards, and no
+ * later caller can reach past a rule the write itself holds. Moving *forward* by hand would grant a
+ * graduation nobody ran for, which is the one thing the Plan exists to decide.
+ *
+ * Three ways to name nothing, and all of them do nothing rather than write half a move: a Plan this
+ * build does not hold, a Plan the runner is not on — theirs moved while the screen was open — and a
+ * Stage that is not behind them in it, which covers the Stage they are in, one they have not
+ * reached, and one belonging to some other Plan entirely. Silent, because there is nothing here to
+ * tell a runner about: the only way to ask is to tap a card, and a card offering an illegal move is
+ * a card that is already out of date.
  *
  * A graduation is granted forwards by the app and never withdrawn by it: the coach said yes, the
  * Stage moved, and until now nothing anywhere could say otherwise. But the app says yes to what it
@@ -497,7 +512,9 @@ internal fun MutablePreferences.graduateToStage(
  * The Plan Completion goes, where the completion on record belongs to [planId] — a runner standing
  * in Stage 2 cannot also have finished the Plan, and a COMPLETE badge over a Stage they have left
  * is the screen contradicting itself. Only *this* Plan's completion: one slot holds the fact, and
- * a fact about another Plan is none of this move's business.
+ * a fact about another Plan is none of this move's business. [planId] is not nullable, because the
+ * move always comes off a card the screen drew inside a named Plan: there is no way to ask to go
+ * back to a Stage without naming the Plan holding it.
  *
  * The debrief is replaced rather than merely removed. What stood there explained the Stage the
  * runner is leaving — most often the congratulation that moved them off the Stage they are going
@@ -509,15 +526,23 @@ internal fun MutablePreferences.graduateToStage(
  * Pure and separate from the write around it, for the reason [coachWriteAllowed] is.
  */
 internal fun MutablePreferences.moveBackToStage(
-    planId: String?,
+    planId: String,
     stageId: String,
     message: String,
 ) {
+    val plan = TrainingPlanProvider.getPlanById(planId) ?: return
+    // The pair as everything downstream reads it, never the raw strings: a preference naming no
+    // Stage is the runner standing at the Plan's first, and the Stages behind that are none.
+    val (activePlanId, activeStageId) = activePlanAndStage(
+        this[PreferencesKeys.ACTIVE_PLAN_ID],
+        this[PreferencesKeys.ACTIVE_STAGE_ID]
+    )
+    if (activePlanId != planId) return
+    if (stageId !in plan.passedStageIds(activeStageId)) return
+
     this[PreferencesKeys.ACTIVE_STAGE_ID] = stageId
     clearCoachPrescriptions()
-    if (planId != null && planCompletionOf(this)?.planId == planId) {
-        writePlanCompletion(null)
-    }
+    if (planCompletionOf(this)?.planId == planId) writePlanCompletion(null)
     writeStandingDebrief(message, DebriefAuthor.APP)
 }
 
@@ -906,18 +931,30 @@ class SettingsRepository(private val context: Context) {
      *
      * Deliberately *not* an [editCoachWrite]: that gate exists to refuse work the coach reasoned
      * about against a Stage the runner has since moved off, and this is the runner moving. Gated on
-     * the Stage it is trying to change, it could only ever refuse itself.
+     * the Stage it is trying to change, it could only ever refuse itself. The guard it does need is
+     * a different one and is inside [moveBackToStage]: backwards, within the Plan the runner is
+     * actually on.
      *
      * One write, for the reason [graduateStage] is one write: the move, the dropped Prescriptions,
      * the cancelled Plan Completion and the line that explains all three are one event, and a Run
-     * started in a gap between any two of them would be a Run on a Stage half arrived at. See
-     * [moveBackToStage] — the rule — for what each of those is doing.
+     * started in a gap between any two of them would be a Run on a Stage half arrived at. The rule
+     * deciding whether any of it happens is inside that same write. See [moveBackToStage] for what
+     * each part is doing.
+     *
+     * **A Run already under way keeps the Stage it started on.** Its `ranUnderStageId` was stamped
+     * at START and nothing rewrites it, which is right — the runner did run it under that Stage.
+     * The settlement that follows then finds the plan has moved and grants nothing, so a Run
+     * straddling a move counts towards no Stage's Requirement and earns no debrief. Its distance,
+     * its records and its Best Efforts are all banked as usual. Left as it is rather than guarded
+     * against, because refusing the move would be the app telling the runner they may not correct
+     * an error until they have finished running, and the moment is a rare one: a graduation is only
+     * visible after the finish sheet has settled it.
      *
      * [stageTitle] rather than a lookup, because the caller is the screen that just drew the card
      * the runner tapped: the Stage they are being moved to is the Stage they were reading, named as
      * it was named to them.
      */
-    suspend fun moveBackToStage(planId: String?, stageId: String, stageTitle: String) {
+    suspend fun moveBackToStage(planId: String, stageId: String, stageTitle: String) {
         context.dataStore.edit { preferences ->
             preferences.moveBackToStage(planId, stageId, movedBackMessage(stageTitle))
         }
