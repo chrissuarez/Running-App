@@ -182,6 +182,25 @@ data class DistancePoint(
      */
     val metersAboveLowestPoint: Double?,
     val bpm: Int?,
+    /**
+     * Whether the pace line may be drawn from the point before this one to this one.
+     *
+     * False across a leg the clock did not tick across ([TrackLeg.carriesSpeed], #336). The two
+     * paces either side of such a leg are both real — each is measured over the ground around its
+     * own fix — but the stroke *between* them is not: it runs along ground that holds no speed, and
+     * a reader following it from left to right would take its whole width as a pace the runner held
+     * there. So the line stops at the near fix and starts again at the far one, which says what is
+     * true of both ends without claiming anything about the jump.
+     *
+     * Only the pace line. The stretch is not a Break — the recording missed nothing between two
+     * fixes stamped one moment — so the trace is not cut, the climb underneath it stays banked and
+     * drawn, and the heart rate reads the same real beat at both ends with a flat line between them
+     * that states nothing false. A speed is the one reading the leg does not hold.
+     *
+     * True at the first point of a trace, where there is no earlier point to reach back to, and
+     * true by default so a chart assembled by hand — a preview, a test — draws an unbroken line.
+     */
+    val paceReachesBack: Boolean = true,
 )
 
 /**
@@ -224,6 +243,12 @@ internal fun distanceChartOf(
             paceMinPerKm = pace[i],
             metersAboveLowestPoint = if (heights == null || lowest == null) null else heights[i] - lowest,
             bpm = bpm[i],
+            // The pace line is drawn along the legs that hold a speed and no others — the same
+            // predicate the smoothing window folds by, said once more here so the drawing inherits
+            // it instead of restating it. Leaving the leg out of the averages is only half the
+            // rule: both endpoints still come out with a real pace of their own, and a stroke
+            // joining them would draw that pace across ground the clock never ticked over.
+            paceReachesBack = i == 0 || legs[i - 1].carriesSpeed,
         )
     }
 

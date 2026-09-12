@@ -401,7 +401,10 @@ fun RunCombinedChart(
             // a break in the recording and a Strap dropout are both stretches nothing was measured
             // in, and drawing across either would invent a line through them.
             chart.traces.forEach { trace ->
-                trace.points.stretchesOf { it.paceMinPerKm }.forEach { measured ->
+                // The pace line breaks again wherever the analysis says a leg holds no speed
+                // ([DistancePoint.paceReachesBack]): the trace runs on through it, the ground under
+                // it is drawn, and only this one line stops short of crossing it.
+                trace.points.stretchesOf({ it.paceReachesBack }) { it.paceMinPerKm }.forEach { measured ->
                     drawSeries(measured.map { Offset(xOf(it.first.distanceMeters), yOfPace(it.second)) }, PaceLine)
                 }
                 trace.points.stretchesOf { it.bpm }.forEach { measured ->
@@ -500,8 +503,15 @@ internal fun readoutFor(point: DistancePoint): String = buildList {
  *
  * Every point keeps its own place along the Run, so a Strap that dropped out for a minute leaves a
  * gap where it dropped out rather than the line closing up over it.
+ *
+ * A value can be missing at a point, and it can also be present at two points that may not be
+ * joined — the pace either side of a leg the clock did not tick across (#336). So a stretch ends
+ * either way: where the value runs out, or where [reachesBack] says this point does not carry on
+ * from the one before it. Which legs those are is the analysis layer's to say, not the canvas's;
+ * the default joins everything, which is every series but pace.
  */
 internal fun <T : Any> List<DistancePoint>.stretchesOf(
+    reachesBack: (DistancePoint) -> Boolean = { true },
     valueOf: (DistancePoint) -> T?,
 ): List<List<Pair<DistancePoint, T>>> {
     val measured = mutableListOf<MutableList<Pair<DistancePoint, T>>>()
@@ -512,7 +522,7 @@ internal fun <T : Any> List<DistancePoint>.stretchesOf(
             open = false
             return@forEach
         }
-        if (!open) measured.add(mutableListOf())
+        if (!open || !reachesBack(point)) measured.add(mutableListOf())
         measured.last() += point to value
         open = true
     }

@@ -281,6 +281,35 @@ class DistanceChartTest {
         assertEquals(1, chart.traces.size)
     }
 
+    @Test
+    fun `the pace line stops at a jump stamped the same moment rather than drawing across it`() {
+        // Leaving the leg out of the smoothing windows is only half the rule: both fixes either
+        // side of the jump still hold a pace of their own, and a stroke joining them would draw
+        // that pace across twenty metres the clock never ticked over — a reader following the line
+        // would take its whole width as ground run at that speed (#336).
+        val chart = chartOf(
+            aRun(),
+            script {
+                running(3.0, seconds = 250)
+                sameMomentJump(meters = 20.0)
+                running(3.0, seconds = 250)
+            }
+        )!!
+
+        val points = chart.traces.single().points
+        val far = points.indexOfFirst { !it.paceReachesBack }
+        // Exactly one break, and it is the far end of the jump: twenty metres on from the near one.
+        assertEquals(1, points.count { !it.paceReachesBack })
+        assertEquals(20.0, points[far].distanceMeters - points[far - 1].distanceMeters, 0.5)
+        // Both ends keep a real pace. It is the stroke between them that is not drawn, not either
+        // reading — the smoothed pace at a fix is measured over the ground around it and stands.
+        assertNotNull(points[far - 1].paceMinPerKm)
+        assertNotNull(points[far].paceMinPerKm)
+        // And nothing else breaks: the recording missed nothing between two fixes stamped one
+        // moment, so the trace runs on and the ground and the heart rate are drawn across it.
+        assertEquals(1, chart.traces.size)
+    }
+
     // -- The readout under the finger ------------------------------------------------------------
 
     @Test
