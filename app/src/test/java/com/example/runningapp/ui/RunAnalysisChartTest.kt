@@ -74,6 +74,39 @@ class RunAnalysisChartTest {
         assertEquals(emptyList<Any>(), points.stretchesOf { it.bpm })
     }
 
+    @Test
+    fun `a point the line may not carry on from starts a new line`() {
+        // The far side of a jump the clock did not tick across (#336). Both fixes hold a pace, so
+        // neither value is dropped — but the stroke between them would run along ground that holds
+        // no speed, so the line stops at the near fix and starts again at the far one.
+        val points = listOf(
+            aPoint(0.0, pace = 5.5),
+            aPoint(100.0, pace = 5.6),
+            aPoint(120.0, pace = 5.6, reachesBack = false),
+            aPoint(220.0, pace = 5.5),
+        )
+
+        val drawn = points.stretchesOf({ it.paceReachesBack }) { it.paceMinPerKm }
+
+        assertEquals(2, drawn.size)
+        assertEquals(listOf(0.0, 100.0), drawn[0].map { it.first.distanceMeters })
+        assertEquals(listOf(120.0, 220.0), drawn[1].map { it.first.distanceMeters })
+    }
+
+    @Test
+    fun `a series that asks nothing about reaching back is one line across the same points`() {
+        // The heart rate over that same jump: both fixes share one timestamp, so the reading is the
+        // same real beat at both ends and the flat line between them states nothing false.
+        val points = listOf(
+            aPoint(0.0, bpm = 140),
+            aPoint(100.0, bpm = 142),
+            aPoint(120.0, bpm = 142, reachesBack = false),
+            aPoint(220.0, bpm = 143),
+        )
+
+        assertEquals(1, points.stretchesOf { it.bpm }.size)
+    }
+
     // -- What the heading promises ---------------------------------------------------------------
 
     @Test
@@ -135,10 +168,16 @@ class RunAnalysisChartTest {
         elevationBand = height?.let { ElevationBand(floorMeters = 0.0, ceilingMeters = 20.0) },
     )
 
-    private fun aPoint(distanceMeters: Double, bpm: Int?) = DistancePoint(
+    private fun aPoint(
+        distanceMeters: Double,
+        bpm: Int? = null,
+        pace: Double? = null,
+        reachesBack: Boolean = true,
+    ) = DistancePoint(
         distanceMeters = distanceMeters,
-        paceMinPerKm = null,
+        paceMinPerKm = pace,
         metersAboveLowestPoint = null,
         bpm = bpm,
+        paceReachesBack = reachesBack,
     )
 }
