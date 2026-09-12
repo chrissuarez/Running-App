@@ -388,7 +388,8 @@ class SessionDetailScreenTest {
      */
     @Test
     fun sessionDetailScreen_closesItsForwardDoorsWhileTheDeleteRuns() {
-        var deleted = 0L
+        // Told that the delete is running, rather than tapping Delete: the page is no longer the
+        // thing that remembers this, the ViewModel holding the job is (#414).
         composeRule.setContent {
             RunningAppTheme {
                 SessionDetailScreen(
@@ -396,6 +397,30 @@ class SessionDetailScreenTest {
                     samples = emptyList(),
                     intervalStats = emptyList(),
                     shareableFormats = listOf(ExportFormat.FIT),
+                    onDeleteSession = {},
+                    onBack = {},
+                    deleteInProgress = true
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Deleting this run…").assertIsDisplayed()
+        // The page's own content, and with it every link off it, is gone rather than tappable.
+        composeRule.onAllNodesWithText("Heart Rate Zones").assertCountEquals(0)
+        composeRule.onAllNodesWithContentDescription("Share run").assertCountEquals(0)
+        composeRule.onNodeWithContentDescription("Delete run").assertIsNotEnabled()
+    }
+
+    /** Confirming the delete asks for it, and asks for it once. */
+    @Test
+    fun sessionDetailScreen_confirmingTheDeleteAsksForIt() {
+        var deleted = 0L
+        composeRule.setContent {
+            RunningAppTheme {
+                SessionDetailScreen(
+                    session = finishedSession(),
+                    samples = emptyList(),
+                    intervalStats = emptyList(),
                     onDeleteSession = { deleted = it },
                     onBack = {}
                 )
@@ -406,11 +431,6 @@ class SessionDetailScreenTest {
         composeRule.onNodeWithText("Delete").performClick()
 
         assertEquals(1L, deleted)
-        composeRule.onNodeWithText("Deleting this run…").assertIsDisplayed()
-        // The page's own content, and with it every link off it, is gone rather than tappable.
-        composeRule.onAllNodesWithText("Heart Rate Zones").assertCountEquals(0)
-        composeRule.onAllNodesWithContentDescription("Share run").assertCountEquals(0)
-        composeRule.onNodeWithContentDescription("Delete run").assertIsNotEnabled()
     }
 
     /** The way back stays open, so a delete that never lands is not a trap. */
@@ -424,13 +444,12 @@ class SessionDetailScreenTest {
                     samples = emptyList(),
                     intervalStats = emptyList(),
                     onDeleteSession = {},
-                    onBack = { backs++ }
+                    onBack = { backs++ },
+                    deleteInProgress = true
                 )
             }
         }
 
-        composeRule.onNodeWithContentDescription("Delete run").performClick()
-        composeRule.onNodeWithText("Delete").performClick()
         composeRule.onNodeWithContentDescription("Back").performClick()
 
         assertEquals(1, backs)
