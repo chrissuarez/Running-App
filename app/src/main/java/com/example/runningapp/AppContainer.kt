@@ -18,7 +18,6 @@ import com.example.runningapp.data.OpenMeteoWeatherClient
 import com.example.runningapp.data.RoomRecordBookStore
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.WeatherClient
-import com.example.runningapp.records.RecordBook
 import com.example.runningapp.diagnostics.RunJournal
 import com.example.runningapp.export.ExportFileStore
 import com.example.runningapp.export.FileProviderExportFileStore
@@ -35,6 +34,7 @@ import com.mapbox.common.MapboxOptions
 import com.example.runningapp.map.MapboxOfflineMapStore
 import com.example.runningapp.map.OfflineMapDownload
 import com.example.runningapp.map.PhoneLocation
+import com.example.runningapp.records.RecordBook
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -273,7 +273,7 @@ class AppContainer(context: Context) {
             aiCoachClient = aiCoachClient,
             weatherClient = weatherClient,
             refreshHistoryBackup = refreshHistoryBackup,
-            // The durable version of the line above, for the rescue that finishes a Run whose
+            // The durable version of refreshHistoryBackup, for the rescue that finishes a Run whose
             // service was torn down (#309): the process may not outlive the snapshot, so the
             // request goes into WorkManager's database and the copy happens whether this process
             // lives or not. Blocks until that write is done, and is only ever called from IO.
