@@ -424,8 +424,7 @@ interface RouteDao {
      *
      * **What this does not cover, knowingly.** A Run that has never been shaped is simply absent
      * from the recognising, and that debt is the runner's whole history rather than a handful of
-     * rows ([com.example.runningapp.AppContainer.takeRunShapesOnce]). Paying it here, or waiting on
-     * it, would stall the page for as long as the history is long; a landing that ignores a Run
+     * rows ([SessionRepository.payWhatRunShapesOwe]). Paying it here, or waiting on it, would stall the page for as long as the history is long; a landing that ignores a Run
      * still being measured is right again the next time the family is opened, and the length wanted
      * is one tap away. Decided with Chris on 2026-09-08 while closing #440.
      */
