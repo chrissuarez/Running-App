@@ -44,15 +44,11 @@ import com.example.runningapp.training.progressCurve
 import com.example.runningapp.training.StageTrainingRecord
 import com.example.runningapp.training.stageTrainingRecordOf
 import com.example.runningapp.training.weeklyVolumeOf
-import com.example.runningapp.analysis.BestEffort
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.analysis.RouteThumbnail
 import com.example.runningapp.routes.RoutePoint
 import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.analysis.routeThumbnailOf
-import com.example.runningapp.analysis.RunEfforts
-import com.example.runningapp.analysis.recordBookOf
-import com.example.runningapp.analysis.standingsAfter
 import com.example.runningapp.analysis.bestEffortsOf
 import com.example.runningapp.segments.RunShape
 import com.example.runningapp.segments.RunShapeStore
@@ -62,11 +58,11 @@ import com.example.runningapp.segments.SegmentTimingStore
 import com.example.runningapp.segments.holdsEffortsAs
 import com.example.runningapp.segments.shapesAs
 import com.example.runningapp.recording.SessionRecorder
+import com.example.runningapp.records.RecordBook
+import com.example.runningapp.records.RecordBookStore
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.Flow
@@ -88,8 +84,6 @@ import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
@@ -1108,28 +1102,6 @@ class SessionRepository(
         recordFillDao?.wholesaleFillOwedFlow()?.distinctUntilChanged() ?: flowOf(false)
 
     /**
-     * Hands back the wholesale-fill debt, once the pass that was paying it has been through the
-     * whole of the work it found (#75).
-     *
-     * Asked before it is written, so a launch that was owed nothing does not wake the Records
-     * section with a write that changes no answer.
-     *
-     * **After the sweep, not after a perfect sweep.** A Run the pass could not measure — an
-     * unreadable track, a write that threw — keeps its own debt and is tried again at the next
-     * launch, and that is the right place for it. But the fill is a statement about the *table*,
-     * and once every owed Run has been offered to the book the table is as whole as this history
-     * can make it: one Run's claims missing from a top ten is a small, self-mending wrong, while a
-     * Records section hidden for ever behind a Run that will never measure is a permanent one. The
-     * runner would be left with a screen that says "still measuring your runs" until they delete
-     * the Run, with nothing on it to tell them why.
-     */
-    private suspend fun handBackTheWholesaleFill() {
-        val dao = recordFillDao ?: return
-        if (!dao.wholesaleFillOwed()) return
-        dao.put(RecordFillRow(wholesaleFillOwed = false))
-    }
-
-    /**
      * Every scored Run in history, oldest first — what the Progress screen builds its curves from
      * (#63). See [SessionDao.getScoredRunsFlow] for why it is all of history and only the scored
      * part of it.
@@ -2103,9 +2075,9 @@ class SessionRepository(
             // a wild fix the Run itself refused cannot bend a route out of the group it belongs to.
             override suspend fun track(sessionId: Long) = getTrackPointsForMap(sessionId)
 
-            // Read again inside the transaction that writes, `scoreRecordsUnlessOvertaken`'s rule
-            // and for its reason (#210): the database takes one writer at a time, so either the
-            // mark that overtook this measurement has committed by then and this sees it, or it
+            // Read again inside the transaction that writes, the record book's rule and for its
+            // reason ([RecordBook.scoreAndMark], #210): the database takes one writer at a time, so
+            // either the mark that overtook this measurement has committed by then and this sees it, or it
             // commits afterwards and its own re-shaping has the last word. Cheaper than a lock, and
             // nothing is made to wait behind seconds of arithmetic.
             override suspend fun putShapeUnlessTheRunMoved(
@@ -2126,810 +2098,93 @@ class SessionRepository(
     }
 
     /**
-     * Scores a finished run against the record book and banks whatever it won (#49).
+     * The record book — scoring a Run, marking it scored, and mending the book when a Run changes or
+     * leaves — over this repository's own DAOs (#478). See [RecordBook] for every rule.
      *
-     * Returns the medals *this run* holds afterwards, which is what its own page shows — an empty
-     * list for an ordinary run, and for one that beat nothing.
-     *
-     * Called when a run finishes, and safe to call again: [standingsAfter] drops the run's own standing rows
-     * before ranking it, so a re-score cannot leave it racing itself. The read of the book, the
-     * ranking and the rewrite are one transaction, because a half-written book has a record with two
-     * golds in it and no way to tell which one is real.
-     *
-     * Scoring history recorded before this shipped is a job of its own (#50): it means measuring
-     * every stored track, and it has to happen once rather than every time a run finishes.
+     * One per repository, and never a second: the book counts the changes in flight to decide when
+     * history may be called scored, and a count is only good inside the one book that keeps it.
      */
-    suspend fun scoreRecords(sessionId: Long): List<Achievement> =
-        scoreRecordsUnlessOvertaken(sessionId).orEmpty()
+    private val recordBook = RecordBook(
+        object : RecordBookStore {
+            override val keepsBook = achievementDao != null
+            override val banksEfforts = runEffortDao != null
 
-    /**
-     * [scoreRecords], with the one answer it cannot give: `null` for a Run that changed underneath
-     * the measuring, and was therefore not written to the book at all (#210).
-     *
-     * Measuring a Run is minutes of arithmetic on a long history, and the Run is read at the start
-     * of it. A stated distance corrected in that window — or the Run deleted — is a change that
-     * scores itself and mends the book behind it, so a rewrite landing afterwards out of the effort
-     * measured *before* it would put the old number back, over a mend that had already been made.
-     * Nothing later would find it: only the top three are stored, so the effort the correction
-     * promoted exists nowhere else, and a Run marked scored is never revisited. That window was
-     * always here in principle, and the launch pass is what makes it wide — every historical Run
-     * queued behind one another after the v22 migration.
-     *
-     * So the Run is read again inside the transaction that writes the book, and the write is
-     * abandoned if the effort it measured is no longer the Run's own. Inside, because the database
-     * takes one writer at a time: either the correction has committed by then and this reads it, or
-     * it commits afterwards and its own mend has the last word.
-     *
-     * Cheaper than a lock, and the right shape: nothing is made to wait behind minutes of
-     * arithmetic. The cost of abandoning is that the Run keeps owing a scoring, which the next
-     * launch pays against a book nobody is moving.
-     */
-    private suspend fun scoreRecordsUnlessOvertaken(sessionId: Long): List<Achievement>? {
-        val dao = achievementDao ?: return emptyList()
-        val session = sessionDao.getSessionById(sessionId) ?: return emptyList()
-        // The same accuracy-gated points the map, the splits and the GPX export are built from, so a
-        // fix the run itself refused cannot come back as a record nobody ran.
-        val stated = statedEffortsOf(sessionId)
-        val efforts = bestEffortsOf(session, getTrackPointsForMap(sessionId), stated = stated)
-        if (efforts.isEmpty()) return emptyList()
+            override suspend fun run(sessionId: Long) = sessionDao.getSessionById(sessionId)
+            override suspend fun runs() = sessionDao.getAllSessions()
 
-        var earned: List<Achievement>? = null
-        inTransaction {
-            val now = sessionDao.getSessionById(sessionId)
-            if (now == null || !now.contestsAs(session) || statedEffortsOf(sessionId) != stated) {
-                Log.d("Records", "Run $sessionId changed while it was being measured; leaving it unscored")
-                return@inTransaction
-            }
-            val rewritten = standingsAfter(dao.getAllAchievements(), sessionId, efforts)
-            dao.deleteAchievementsOfTypes(efforts.map { it.type })
-            dao.insertAchievements(rewritten)
-            // The same efforts, banked whole, in the same commit that ranks them (#75). One
-            // transaction because they are one measuring: a book written without them would leave
-            // the Records section a top ten short of a Run it has already given a medal to, and
-            // nothing afterwards goes back for either.
-            bankEfforts(sessionId, efforts)
-            earned = rewritten.filter { it.sessionId == sessionId }
-        }
-        return earned
-    }
+            // The same accuracy-gated fixes the map, the splits and the GPX export are built from, so
+            // a fix the Run itself refused cannot come back as a record nobody ran.
+            override suspend fun track(sessionId: Long) = getTrackPointsForMap(sessionId)
 
-    /**
-     * Banks what one Run is worth at the Records it contested, over whatever the last measuring of
-     * it said (#75).
-     *
-     * Called only from inside the transaction that writes the record book, never on its own: these
-     * rows and the medals are one measuring, and a caller free to write one without the other is a
-     * caller free to make them disagree.
-     *
-     * A re-scoring replaces this Run's rows rather than joining them, which the row's own key does
-     * ([RunEffortRow] is keyed by the Run and the Record) — so scoring a Run twice leaves it holding
-     * one claim at each Record rather than racing itself, the same promise [standingsAfter] keeps
-     * for the medals.
-     *
-     * Only the Records the Run still contests are touched. A Record it has stopped contesting
-     * altogether — a stated time withdrawn, a Walk marked — is not this path's to clear and never
-     * was: those go through the rebuild, which wipes the Record whole and writes back only what
-     * still stands.
-     */
-    private suspend fun bankEfforts(sessionId: Long, efforts: List<BestEffort>) {
-        runEffortDao?.putEfforts(efforts.map { RunEffortRow(sessionId, it.type, it.value) })
-    }
+            override suspend fun runsOwedScoring() = sessionDao.getSessionIdsMissingRecordScoring()
+            override suspend fun markScored(sessionId: Long) = sessionDao.setRecordsScored(sessionId)
 
-    /**
-     * Whether two readings of the same Run would put the same efforts to the book: everything
-     * [bestEffortsOf] measures a Run by, and nothing else (#210).
-     *
-     * Deliberately not the whole row. A Run's feel, its note and its Effort Score can all be written
-     * while history is being measured — the Effort backfill runs at the same launch — and none of
-     * them can change a distance or a duration, so none of them is a reason to abandon a scoring.
-     *
-     * The Walk mark is here for the opposite reason (#275): it changes what the Run is worth at
-     * every record at once, from everything it measured to nothing at all. Marked in the window, the
-     * Run scores itself and mends the book behind it, and a rewrite landing afterwards out of the
-     * efforts measured before the mark would put its medals straight back.
-     *
-     * What a Run has been *told* it holds is not in the row at all, so the caller checks that
-     * separately against the same table (#282) — for the same reason and against the same window: a
-     * stated Best Effort corrected while history is being measured scores itself and mends the book
-     * behind it, and a rewrite landing afterwards out of the older claim would put the old time
-     * back over a mend already made.
-     */
-    private fun RunnerSession.contestsAs(other: RunnerSession): Boolean =
-        endTime == other.endTime &&
-            runMode == other.runMode &&
-            durationSeconds == other.durationSeconds &&
-            distanceKm == other.distanceKm &&
-            isWalk == other.isWalk
-
-    /**
-     * Scores a Run and, only once that has landed, writes down that it has been scored (#210).
-     *
-     * The order is the whole of it, which is why the two are one function rather than a rule three
-     * callers are asked to remember. [scoreRecords] is the work; the mark is the receipt, and it is
-     * written after — never inside the scoring, and never in the same breath as the row being
-     * stamped finished. Every way the work can end short of finishing therefore leaves the Run
-     * owing a scoring: the process reclaimed, the write thrown. That debt costs one redundant
-     * re-score at the next launch, which is safe, where a receipt written early would cost the Run
-     * its medals for good.
-     *
-     * Returns what the Run holds afterwards, exactly as [scoreRecords] does, and throws where it
-     * throws — an unmarked Run being precisely what the caller wants left behind.
-     *
-     * A Run that changed while it was being measured is one of those ways of ending short: nothing
-     * was written to the book (see [scoreRecordsUnlessOvertaken]), so nothing is marked either, and
-     * the debt stands for the next launch to pay.
-     *
-     * Called for a statement too, and not only for a Run finishing (#282). A Stated Distance or a
-     * stated Best Effort re-scores a Run the book has already seen — but the mark is what stops the
-     * book ever looking again, so a claim stored against a marked Run is a medal nobody goes back
-     * for if the scoring behind it ends short. [writeAndScore] lifts the mark first for exactly
-     * that reason, which leaves this to hand it back.
-     */
-    suspend fun scoreAndMarkRecords(sessionId: Long): List<Achievement> {
-        val earned = scoreRecordsUnlessOvertaken(sessionId) ?: return emptyList()
-        sessionDao.setRecordsScored(sessionId)
-        return earned
-    }
-
-    /**
-     * Scores every finished Run the book never measured, at launch (#210).
-     *
-     * A Run is scored the moment it finishes, and that is the only moment anything offers it to the
-     * book — so a scoring that is missed is missed for good. The process can be killed between the
-     * row being stamped finished and the book being written; the write itself can throw and be
-     * logged. Nothing revisits it afterwards: the interrupted-run rescue only looks at Runs with no
-     * end time, a later Run's scoring ranks only itself, and the seeding pass declines once history
-     * carries its mark. This is the pass that goes back for them.
-     *
-     * **Silent while history is still owed its seeding.** That pass is about to measure all of
-     * history at once and its book is the better one — only a rebuild can fill a hole *below* the
-     * stored top three — so scoring Runs one at a time in front of it would be work done twice for
-     * a worse answer. It marks the Runs it measured itself, which leaves this with nothing to do.
-     *
-     * One Run at a time, each marked as its scoring lands, so a pass cut short keeps what it paid
-     * for and the next launch picks up the rest. A Run that cannot be scored costs the others
-     * nothing and stays owed. Failures are logged and never thrown: a book that cannot be written
-     * is not a reason to take the app down on the way to the first screen.
-     */
-    suspend fun scoreMissedRecords() {
-        if (achievementDao == null) return
-        val settings = settingsRepository ?: return
-        if (!settings.userSettingsFlow.first().historyRecordsSeeded) return
-        val sessionIds = sessionDao.getSessionIdsMissingRecordScoring()
-        var scored = 0
-        sessionIds.forEach { sessionId ->
-            try {
-                scoreAndMarkRecords(sessionId)
-                scored++
-            } catch (e: Exception) {
-                Log.w("Records", "Could not score run $sessionId; leaving it for next launch", e)
-            }
-        }
-        if (sessionIds.isNotEmpty()) {
-            Log.d("Records", "Scored $scored of ${sessionIds.size} run(s) the book had missed")
-        }
-        // This pass is the one that pays off a wholesale fill, so it is the one that hands the debt
-        // back — and only once it has been through every Run it found, which is why it no longer
-        // returns early on an empty list: a launch that finds nothing owing is a launch that has
-        // just finished the fill, or a launch after one where the migration un-scored nothing at
-        // all. Anything that cuts the loop short — the process reclaimed, the scope cancelled —
-        // leaves the fill standing for the next launch to finish, which is the whole reason the
-        // fact is in the database. See [handBackTheWholesaleFill] for why a Run that could not be
-        // measured does not hold it up.
-        handBackTheWholesaleFill()
-    }
-
-    /**
-     * Puts every Run already in history to the record book, once (#50).
-     *
-     * #49 scores a Run as it finishes, which leaves the history recorded before it shipped — years
-     * of it — holding medals nobody ever awarded. This is the pass that awards them: every stored
-     * track measured, the whole book built from all of it at once, so old Runs show the
-     * achievements they earned at the time and the book means "all time" rather than "since the
-     * update".
-     *
-     * Once, because it is minutes of GPS arithmetic over a long history: the mark is stored only
-     * after the rebuilt book has been committed, so a pass killed part-way through — the process
-     * reclaimed, the phone off — simply runs again at the next launch rather than leaving half a
-     * book behind. Nothing is written until the rebuild is complete, so there is no half state to
-     * resume from and nothing to clean up.
-     *
-     * Deliberately *not* gated on the book being empty: a fresh install scores its first Run the
-     * moment it finishes, and a book with one Run in it would look seeded while the rest of a
-     * restored history was still unread. The mark travels with the history it describes — a restored
-     * archive clears it (see [com.example.runningapp.SettingsRepository.restoreArchivedSettings]),
-     * and a Clear-storage wipe takes it with the settings, which is the safe direction: an
-     * unnecessary reseed costs a few minutes of background work and produces the same book.
-     */
-    suspend fun seedRecordsFromHistory() {
-        if (achievementDao == null) return
-        val settings = settingsRepository ?: return
-        if (settings.userSettingsFlow.first().historyRecordsSeeded) return
-
-        // Noted before a line of history is read, and asked again before the mark is written. Both
-        // under the lock, so a delete cannot slip into the gap between looking and deciding.
-        var deletesBefore = 0L
-        var deleteRunningBefore = false
-        recordBookMark.withLock {
-            deletesBefore = deletesStarted.get()
-            deleteRunningBefore = deletesActive.get() != 0
-        }
-        // Which Runs this pass is about to settle the debt of (#210), read before it measures
-        // anything: everything on this list is finished now, so the rebuild below is certain to
-        // measure it. A Run that finishes while the measuring is going on is deliberately not here
-        // — it scores itself, and if that scoring is missed the debt is still its own to owe.
-        val runsOwedScoring = sessionDao.getSessionIdsMissingRecordScoring()
-        try {
-            val book = rebuildRecords(RecordType.entries)
-            if (book == null) {
-                Log.d("Records", "A stated Best Effort changed while history was being scored; leaving it for next launch")
-                return
-            }
-            // Only now: until this lands, the pass is still owed. And not at all if a delete ran at
-            // any point alongside it — one that started after the baseline was taken, one still
-            // running now, or one already under way when it was taken, which a count of *starts*
-            // cannot see on its own. That delete read history as unseeded, so it lifted no mark and
-            // will hand none back, and its own mend can still be cut short: marking here would
-            // stand over a book with a hole in it that nothing can find. Left unmarked, the next
-            // launch reseeds, which is minutes of background work for the right book.
-            // Asked and answered under the lock, so a delete arriving between the question and the
-            // write is one that waits rather than one this write talks over.
-            recordBookMark.withLock {
-                if (deletesStarted.get() != deletesBefore ||
-                    deleteRunningBefore ||
-                    deletesActive.get() != 0
-                ) {
-                    Log.d("Records", "A run was deleted while history was being scored; leaving it for next launch")
-                    return
-                }
-                settings.setHistoryRecordsSeeded()
-                // In the same breath as the whole-history mark, and on the same terms: this book
-                // measured every one of them, so none of them is owed a scoring of its own (#210).
-                // Nothing is marked on the path above, where the pass declines the mark — that book
-                // may have a hole in it, and a Run marked scored against it would never be revisited.
-                // In batches, because every id is a bound variable and SQLite takes a bounded
-                // number of them: a history long enough to be worth seeding is a history long
-                // enough to exceed it.
-                runsOwedScoring.chunked(MAX_SESSION_IDS_PER_QUERY)
+            // In batches, because every id is a bound variable and SQLite takes a bounded number of
+            // them: a history long enough to be worth seeding is a history long enough to exceed it.
+            override suspend fun markScored(sessionIds: List<Long>) =
+                sessionIds.chunked(MAX_SESSION_IDS_PER_QUERY)
                     .forEach { sessionDao.setRecordsScoredForSessions(it) }
-                // And the wholesale fill with them (#75): this pass rewrote the whole of
-                // `run_efforts` in the transaction that just committed, so whatever fill was
-                // outstanding — the one the v36 to v37 migration raised, or one a restored archive
-                // arrived still owing — has been paid in full by a book built over all of history at
-                // once. On the declining paths above nothing is written and the fill stands, which is
-                // right: the table was left as it was, and as it was is what the debt describes.
-                handBackTheWholesaleFill()
+
+            override suspend fun statedFor(sessionId: Long) =
+                statedBestEffortDao?.getForSession(sessionId).orEmpty()
+            override suspend fun allStated() = statedBestEffortDao?.getAll().orEmpty()
+
+            override suspend fun medals() = achievementDao?.getAllAchievements().orEmpty()
+            override suspend fun medalsHeldBy(sessionIds: List<Long>) =
+                achievementDao?.getAchievementsForSessions(sessionIds).orEmpty()
+            override suspend fun replaceMedalsOfTypes(types: List<RecordType>, medals: List<Achievement>) {
+                achievementDao?.deleteAchievementsOfTypes(types)
+                achievementDao?.insertAchievements(medals)
             }
-            Log.d("Records", "Seeded the record book from history: ${book.size} medal(s) awarded")
-        } catch (e: Exception) {
-            // Caught rather than left to the launch scope, which has no handler behind it: a book
-            // that cannot be built is a card the runner does not see yet, not a reason to take the
-            // app down on the way to the first screen. Unmarked, so the next launch tries again.
-            Log.w("Records", "Could not seed the record book from history; leaving it for next launch", e)
-        }
-    }
 
-    /**
-     * The one way a Run leaves history, and the one way a medal it holds is written down to a
-     * smaller number: what it held noted, the change made durable, and only then the book mended
-     * (#50, #231).
-     *
-     * Both are the same shape, which is why they are the same function. A deletion takes a medal off
-     * the book; a distance corrected downward demotes one. Either way the Run behind it — the one
-     * that should move up — exists nowhere but in history, because only the top three are banked, so
-     * neither can be put right by re-scoring one Run. Nothing here is about the deletion in
-     * particular except the words: [change] is whatever the sessions are about to be made into, and
-     * [mendOnly] narrows the mend where the caller knows which record can have moved. Everything
-     * below says "delete" because deletion is where all of it was worked out, and every line of it
-     * holds for a correction unchanged — including the counters ([deletesStarted], [deletesActive]),
-     * which count anything that can leave the book standing short, not deletions specifically.
-     *
-     * **The backup is refreshed twice, and the first one is the important one.** The Downloads
-     * snapshot is what a Clear-storage restore reads, so until it is rewritten it still holds the
-     * deleted Run. Mending the book measures every stored track — minutes on a long history — and a
-     * process killed inside that window would leave the deletion committed here and undone there,
-     * so the runner could restore a Run they had deleted. The snapshot therefore goes out the
-     * moment the rows are gone, before anything slow, and the deletion is durable from that point
-     * whatever happens next. What the change itself owes goes out ahead of even that
-     * ([onceRowsAreDurable]): the snapshot is a copy of rows that have already gone, while the
-     * coaching taken back is the thing the deletion promised the runner.
-     *
-     * The second refresh carries the mended book — the promotions behind the deleted Run — into the
-     * snapshot, and is skipped entirely when the Run held nothing, which is the ordinary case. Its
-     * failing costs a restored history a record standing two deep until something contests it; the
-     * first one's failing would cost the runner a deletion that did not stick.
-     *
-     * **The seeding mark is lifted first of all, and handed back last.** From the moment the rows
-     * go the medals go with them, so until the book is mended a record the deleted Run held stands
-     * short — and short is a hole nothing else can find: only the top three are ever stored, so the
-     * fourth-best effort that should move up exists nowhere but in the tracks, and no future Run
-     * finishing can promote it. The debt is therefore written down *before* the delete, not after
-     * it: everything between here and the mend can be cut short — the process reclaimed, the view
-     * model's scope cancelled by the runner leaving the screen mid-backup — and a debt recorded
-     * afterwards would be a debt those endings skip. Recorded first, every one of them leaves
-     * history owing a reseed, which the next launch pays.
-     *
-     * Lifted for deletes that turn out to hold nothing too, because what a Run held is not known
-     * until it is already gone. That costs a needless reseed only if the process dies inside the
-     * delete itself, and a reseed of unmoved history arrives at the same book.
-     *
-     * Only if it was marked to begin with: an install whose seeding pass has not finished (or has
-     * failed) is already owed one, and marking it seeded at the end of a two-record repair would
-     * cancel a debt this never paid. And only if this delete was the only one there was: another
-     * one mending different records is a debt of its own, and this one's mend landing says nothing
-     * about whether that one's will. "The only one" is asked two ways, because one delete can be
-     * *behind* another as easily as ahead of it: none begun since this one started, and none still
-     * running once this one has stepped out of the count. Deletes that overlapped in either
-     * direction leave the reseed owed, which the next launch pays.
-     */
-    private suspend fun changeAndRepair(
-        sessionIds: List<Long>,
-        mendOnly: Collection<RecordType>? = null,
-        /**
-         * What else the change owes, run the moment the rows are durable — before the backup and
-         * before the mend, which is the slow part (#156). First of everything that follows the
-         * commit, because a delete's promise to the runner is that the coaching goes with the Run,
-         * and everything after the commit can be cut short.
-         *
-         * Uncancellable, which closes one of the two ways it can be cut short and not the other. The
-         * runner leaving the history screen cancels this scope, and there is no second attempt and
-         * no pass at startup to find the work undone — so cancellation must not reach it. A process
-         * *reclaimed* still can, and what is left of that is set out on [deleteRuns].
-         *
-         * Nothing here is allowed to stop the mend either: whatever it needs to do, a failure of it
-         * is a smaller loss than a record book left standing short.
-         */
-        onceRowsAreDurable: (suspend () -> Unit)? = null,
-        /**
-         * Held from before the rows go until [onceRowsAreDurable] has finished, and let go before
-         * the mend — so a caller that has to make the change and what it owes look like one act to
-         * everybody else can say so (#156). Null where nothing else is watching.
-         */
-        whileTheRowsGo: Mutex? = null,
-        change: suspend () -> Unit,
-    ) {
-        val settings = settingsRepository
-        var mine = 0L
-        var wasSeeded = false
-        // Only ever true once the mend has landed, so every way out of the block below — thrown,
-        // cancelled — leaves the debt standing.
-        var repaired = false
-        // Joining is one indivisible act: take a number, join the count, and lift the mark. Held
-        // across the DataStore read and write because that is the check-and-act another delete has
-        // to be kept out of — one entering here between another's read and its write would find the
-        // mark already down, lift nothing, and be owed nothing back.
-        //
-        // Uncancellable, like the leaving below and for the same reason: both suspend, and a
-        // cancellation landing after the count was joined but before the block finished would leave
-        // a delete counted that is not running. See [deletesActive].
-        //
-        // Inside the `try` below, because joining is not one write but three — take a number, join
-        // the count, then read and lower the mark — and the last two suspend on DataStore, which can
-        // throw. A join that got as far as the count and no further would otherwise leave a delete
-        // counted that never ran and never leaves, and that phantom stops every later delete and
-        // every seeding pass in this process from calling the book whole: a full reseed at every
-        // launch, for the life of the install. [joined] is raised the instant the count is joined,
-        // so the leaving below answers for exactly the part that happened.
-        var joined = false
-        try {
-            withContext(NonCancellable) {
-                recordBookMark.withLock {
-                    mine = deletesStarted.incrementAndGet()
-                    deletesActive.incrementAndGet()
-                    joined = true
-                    wasSeeded = settings?.userSettingsFlow?.first()?.historyRecordsSeeded == true
-                    if (wasSeeded) settings?.clearHistoryRecordsSeeded()
-                }
+            override suspend fun effortsFor(sessionId: Long) =
+                runEffortDao?.getEffortsForSession(sessionId).orEmpty()
+            override suspend fun replaceEffortsFor(sessionId: Long, efforts: List<RunEffortRow>) {
+                runEffortDao?.deleteEffortsForSession(sessionId)
+                runEffortDao?.putEfforts(efforts)
             }
-            // Read and removed in one transaction, so nothing can award these Runs a medal in
-            // between. The seeding pass commits a whole book at once and a delete arrives from the
-            // history screen while it may still be running: read outside, a medal landing in that
-            // gap would be cascaded away by the delete and never appear in `losing`, leaving the
-            // record it took vacant with no repair coming and the pass marking history complete
-            // over the hole.
-            var losing = emptyList<RecordType>()
-            whileTheRowsGo.holding {
-                inTransaction {
-                    losing = recordsHeldBy(sessionIds).filter { mendOnly == null || it in mendOnly }
-                    change()
-                }
-                // Before the backup, and uncancellable — see [onceRowsAreDurable]. Both narrow the
-                // same window, the one where the rows have gone and what stood on them has not been
-                // taken back yet: ahead of the backup it is one settings write wide instead of a
-                // whole copy of history, and uncancellable it is not walked out of by the runner
-                // leaving the screen. Narrowed, not closed — a process reclaimed inside the write
-                // itself still lands there, which [deleteRuns] says plainly.
-                withContext(NonCancellable) { onceRowsAreDurable?.invoke() }
+            override suspend fun putEfforts(efforts: List<RunEffortRow>) {
+                runEffortDao?.putEfforts(efforts)
             }
-            refreshHistoryBackup?.invoke()
-
-            // Every changed Run's banked claims re-taken, whether or not it held a medal (#75).
-            //
-            // The book above is mended only where a place moved, which is all it can be: beyond
-            // bronze it remembers nothing, so there is nothing there to go stale. The banked rows
-            // are the opposite — they hold every claim a Run ever made, and a Run that has stopped
-            // making one leaves a row nothing else would ever look at again. A Run marked a Walk
-            // that placed fourth at 5 km is exactly that: it loses no medal, so `losing` is empty
-            // and the rebuild does nothing, and its time would stand in that Record's top ten for
-            // ever.
-            //
-            // Asked of the Run rather than of the Records, because what changed is what the Run is
-            // worth: re-measuring it whole is the only reading that can say a Record it used to
-            // contest is one it no longer does.
-            val rebanked = rebankEfforts(sessionIds)
-            repaired = repairRecordBook(losing, remeasured = sessionIds) && rebanked.landed
-            // A second snapshot, because the one above was taken before either of these ran and is
-            // now behind whatever they wrote. Owed by the re-banking as much as by the mend (#75):
-            // a fourth-place Run marked a Walk moves no medal, so `losing` is empty and the book is
-            // never rebuilt — and its banked rows still went. Restored from a snapshot taken before
-            // that, the Walk would climb back into the Records top ten and its trend, which is the
-            // very thing this change took it out of.
-            //
-            // On what actually moved rather than on having got here at all, because the backup is a
-            // whole copy of history and every edit to a Run's feel or its note comes through this
-            // path. A re-measuring that came back with the same claims has left the snapshot as good
-            // as it was.
-            if (losing.isNotEmpty() || rebanked.movedRows) refreshHistoryBackup?.invoke()
-        } finally {
-            // Leaving is the same act in reverse, and under the same lock: step out of the count,
-            // look around, and hand the mark back only if there is nobody left to speak for. Sampled
-            // and written together, so a delete arriving in between cannot be one this write ignores.
-            //
-            // In a finally so a cancelled delete — the runner leaving the history screen — stops
-            // holding every other caller's mark down. It leaves the debt behind it either way, since
-            // `repaired` is only true once the mend has landed.
-            //
-            // And uncancellable, because this *is* the cancellation path and taking the lock
-            // suspends: run in the cancelled scope it would throw before the count came down, and
-            // the phantom delete left behind would stop every later delete and every seeding pass in
-            // this process from ever calling the book whole — a full reseed at every launch, for the
-            // life of the install.
-            //
-            // And only if the count was joined, since a join that threw before it landed has
-            // nothing standing in it to take out.
-            if (joined) withContext(NonCancellable) {
-                recordBookMark.withLock {
-                    deletesActive.decrementAndGet()
-                    val onlyDelete = deletesStarted.get() == mine && deletesActive.get() == 0
-                    if (wasSeeded && repaired && onlyDelete) settings?.setHistoryRecordsSeeded()
-                }
+            override suspend fun effortsOfTypes(types: List<RecordType>) =
+                runEffortDao?.getEffortsOfTypes(types).orEmpty()
+            override suspend fun replaceEffortsOfTypes(types: List<RecordType>, efforts: List<RunEffortRow>) {
+                runEffortDao?.deleteEffortsOfTypes(types)
+                runEffortDao?.putEfforts(efforts)
             }
-        }
-    }
 
-    /**
-     * The two halves of "was a delete going on while I worked?", which is the question anything
-     * about to call history scored has to answer before it does (#50).
-     *
-     * Asked by the seeding pass and by a delete's own mend, because either can overlap a delete and
-     * the result is the same shape: a marked book with a hole in it. A delete that reads history as
-     * unseeded lifts no mark, because the seeding pass owes one already — but if that pass then
-     * finishes and marks history complete while the delete's mend is cut short, the record the
-     * deleted Run held stands short with the mark saying otherwise. Two overlapping deletes reach
-     * it from the other side: the first one's mend landing says nothing about whether the second's
-     * will, so it must not be the one to call the book whole. Nothing later can find what either
-     * leaves behind, since only the top three are ever stored.
-     *
-     * **Both counters, because neither answers it alone.** [deletesStarted] only ever climbs, so
-     * comparing it against a baseline catches a delete that began *after* the baseline was taken
-     * and nothing else — a delete already under way at that moment is invisible to it, and one that
-     * is still running when the baseline is checked again looks identical to one that finished.
-     * [deletesActive] is what says a delete is happening *now*. Asked at both ends, they cover a
-     * delete ahead, behind, or alongside.
-     *
-     * Counters rather than a lock, because the lock would be the wrong shape: seeding is minutes of
-     * arithmetic, and a delete made to wait behind it is a history screen that does not respond.
-     * These let everything run and refuse only the *mark* when two of them overlapped, which costs
-     * a reseed at the next launch and arrives at the same book.
-     *
-     * In memory only, and that is enough: they exist to catch two things overlapping inside one
-     * process, and a process that dies takes any unwritten mark with it.
-     *
-     * **[deletesActive] must come back down whatever happens**, which is why both the joining and
-     * the leaving run uncancellable. A delete counted but not running is not a wrong book — it errs
-     * the safe way, refusing the mark — but it never stops erring: every later delete and every
-     * later seeding pass would decline to call the book whole, so the install pays a full reseed at
-     * every launch for as long as it lives.
-     */
-    private val deletesStarted = AtomicLong(0)
-    private val deletesActive = AtomicInteger(0)
-
-    /**
-     * Held while the seeding mark is being looked at and moved, and never while anything is
-     * measured (#50).
-     *
-     * The counters say who was working; this is what makes *asking them and acting on the answer*
-     * one act. Sampled and then written without it, a delete could enter in the gap — find the mark
-     * already down so it lifts nothing and is owed nothing back — while the write it arrived after
-     * put the mark up over a mend that had not landed. Every reader of the counters therefore does
-     * its looking and its writing inside here.
-     *
-     * What is *not* inside here is the work: the rebuild, the backup, the delete's own transaction
-     * all happen with the lock released. Nothing held across it takes longer than a DataStore edit,
-     * so a delete never waits on a seeding pass, which is the whole reason these are counters and
-     * not a lock around the work itself.
-     */
-    private val recordBookMark = Mutex()
-
-    private suspend fun recordsHeldBy(sessionIds: List<Long>): List<RecordType> =
-        achievementDao?.getAchievementsForSessions(sessionIds)?.map { it.type }?.distinct().orEmpty()
-
-    /**
-     * Rebuilds the records a deleted Run held, so the places below it move up (#50).
-     *
-     * Only the records it actually held: deleting a Run that never won anything changes nothing
-     * about the book, and must not cost a re-measure of the whole history to prove it — so an empty
-     * list is nothing to do rather than a whole history to walk, and counts as mended.
-     *
-     * Its own attempt, because the Run is already deleted by the time this runs. A book that cannot
-     * be rewritten leaves a record two deep until the next Run contests it, which is a wrong number
-     * on a card; failing here would instead leave the runner staring at a delete that appeared not
-     * to work, with the run gone anyway. Returns whether it landed, so the caller can leave history
-     * owing a full reseed when it did not.
-     */
-    /**
-     * Re-takes what [sessionIds] are worth at every Record, replacing whatever was banked for them
-     * (#75). Returns whether it landed and whether it moved anything — see [Rebanking].
-     *
-     * Its own attempt and its own transaction, like [repairRecordBook]: the Runs have already
-     * changed by the time this runs, and a re-banking that cannot be written must not take a Walk
-     * mark down with it. Left undone it leaves the debt owed, which the next launch's seeding pass
-     * pays against a book and a set of rows nobody is moving.
-     *
-     * A Run that is *gone* re-banks to nothing and needs no help: its rows cascaded away with it
-     * ([RunEffortRow]), and it is not in history to be measured. The delete path therefore reaches
-     * here and finds nothing to do, which is the right answer rather than a special case.
-     *
-     * Whole rather than at named Records, and that is the point of it: only a whole measure can say
-     * that a Record the Run used to contest is one it no longer does.
-     *
-     * A Run that moved while it was being measured is left exactly as it stands, and leaves the debt
-     * owed — see the abandonment below.
-     */
-    private suspend fun rebankEfforts(sessionIds: List<Long>): Rebanking {
-        val dao = runEffortDao ?: return Rebanking(landed = true, movedRows = false)
-        // Raised outside the `try` and never lowered, because a re-banking that threw on the third
-        // Run has still moved the first two: what is on disk is stale from the first row that
-        // differed, whether or not the rest of the work got there.
-        var movedRows = false
-        // Raised by a Run that moved out from under the measuring, for the same reason [landed] is
-        // lowered by a throw: the rows this pass was going to write were never written, so the Run
-        // is still owed a re-banking and the debt has to outlive this call. Per pass rather than per
-        // Run, because the debt is paid by one reseed of the whole book either way.
-        var overtaken = false
-        return try {
-            sessionIds.forEach { sessionId ->
-                val session = sessionDao.getSessionById(sessionId)
-                // Measured outside the transaction below, which is the same split [rebuildRecords]
-                // makes: reading and measuring a track is real work, and the database's write lock
-                // is not the place to do it.
-                val stated = session?.let { statedEffortsOf(sessionId) }.orEmpty()
-                val efforts = session
-                    ?.let { effortsAt(it, RecordType.entries, stated) }
-                    .orEmpty()
-                val rows = efforts.map { RunEffortRow(sessionId, it.type, it.value) }
-                inTransaction {
-                    // The Run and what it has been told it holds are asked for again, inside the
-                    // transaction that replaces its rows, and the replacement is abandoned if either
-                    // has moved (#75). [scoreRecordsUnlessOvertaken]'s rule, against the same window
-                    // and for a sharper reason: a *second* edit landing after this pass measured the
-                    // Run scores itself and banks its own rows, and this one committing afterwards
-                    // out of a reading taken before it would delete them and put the older claims
-                    // back. Nothing later would find it. A withdrawn fourth-place claim re-stated in
-                    // that window is the whole of it: the effort held no medal, so `losing` is empty
-                    // and no rebuild ever visits the Record again.
-                    //
-                    // Inside, because the database takes one writer at a time — either the newer
-                    // edit has committed by now and this reads it, or it commits afterwards and its
-                    // own banking has the last word. Cheaper than a lock, and nothing is made to
-                    // wait behind a walk of a track.
-                    //
-                    // A Run that was already gone when it was measured is not overtaken by still
-                    // being gone: its rows went with it ([RunEffortRow]), and re-banking it to
-                    // nothing is the right answer. One reappearing would be a different Run at the
-                    // same id, which is nothing this reading can speak for either.
-                    val now = sessionDao.getSessionById(sessionId)
-                    val moved =
-                        if (session == null) now != null
-                        else now == null || !now.contestsAs(session) || statedEffortsOf(sessionId) != stated
-                    if (moved) {
-                        Log.d("Records", "Run $sessionId changed while what it is worth was being re-taken; leaving its claims")
-                        overtaken = true
-                        return@inTransaction
-                    }
-                    // Read inside the same transaction that replaces them, so what is compared is
-                    // what is overwritten. Sets rather than lists: a re-measuring that came back
-                    // with the same claims in another order has moved nothing the runner or the
-                    // Records section could ever see.
-                    if (dao.getEffortsForSession(sessionId).toSet() != rows.toSet()) movedRows = true
-                    dao.deleteEffortsForSession(sessionId)
-                    dao.putEfforts(rows)
-                }
+            override suspend fun wholesaleFillOwed() = recordFillDao?.wholesaleFillOwed() == true
+            override suspend fun markWholesaleFillPaid() {
+                recordFillDao?.put(RecordFillRow(wholesaleFillOwed = false))
             }
-            Rebanking(landed = !overtaken, movedRows = movedRows)
-        } catch (e: Exception) {
-            Log.w("Records", "Could not re-bank what ${sessionIds.size} run(s) are worth", e)
-            Rebanking(landed = false, movedRows = movedRows)
-        }
-    }
 
-    /**
-     * What one pass of [rebankEfforts] did: whether it landed, and whether it changed anything (#75).
-     *
-     * Two answers rather than one because they are asked by different callers for different reasons.
-     * [landed] is the debt — a re-banking that could not be written leaves history owing a full
-     * reseed, exactly as a mend that could not be written does. Owed by a re-banking that *declined*
-     * to be written too: a Run overtaken mid-measure is one whose rows this pass never replaced, and
-     * the newer scoring behind it is the one that owns them now. [movedRows] is the snapshot on disk
-     * — the backup is a whole copy of history and taking one is not free, so it is refreshed when
-     * the rows behind the Records section actually moved and not on every change that reaches here.
-     *
-     * A pass can be both: one Run re-banked and the next one thrown on leaves rows moved and the
-     * debt owed at the same time.
-     */
-    private data class Rebanking(val landed: Boolean, val movedRows: Boolean)
-
-    private suspend fun repairRecordBook(types: List<RecordType>, remeasured: List<Long>): Boolean {
-        if (types.isEmpty()) return true
-        return try {
-            // Null is the rebuild declining to commit, which is not a failure but is not a repair
-            // either: the book stands as it was and the debt stays owed.
-            rebuildRecords(types, remeasured) != null
-        } catch (e: Exception) {
-            Log.w("Records", "Deleted run(s) held ${types.size} record(s) the book could not be rebuilt for", e)
-            false
-        }
-    }
-
-    /**
-     * Measures the whole history and writes [types] of the record book from it, returning what it
-     * wrote (#50).
-     *
-     * The measuring is done outside the transaction and the writing inside it, which is the split
-     * that matters: reading and measuring every stored track is minutes of work, and holding the
-     * database's write lock for it would stall the per-second inserts of a Run being recorded.
-     * Everything that *changes* the book is one commit, so the book is never half rewritten.
-     *
-     * A Run that finished while the measuring was going on has already scored itself, and its rows
-     * would be wiped by the rewrite — so the standing rows of any Run this pass cannot have the last
-     * word on are carried in as claims of their own. Their stored value is the effort they were
-     * awarded for, so they can be ranked beside the freshly measured ones without measuring again.
-     *
-     * Which Runs those are is decided by what history looked like when it was read, not by what the
-     * measuring came back with. A Run still being recorded then *is* in the list and is worth
-     * nothing until it finishes — which is exactly the Run most likely to finish and score itself
-     * while this pass is still measuring — so its rows are kept. A Run that was already finished is
-     * answered for by this pass whatever it measured to, including nothing at all, and its standing
-     * rows go. That difference is the whole of it: a Run marked a Walk contests nothing, so it
-     * measures to nothing, and judging the carry-in on emptiness instead would conflate it with the
-     * Run nobody could measure yet and hand its old rows straight back. Its time would return to the
-     * Records section at every reseed and no repeated pass could ever shift it (#75).
-     *
-     * [remeasured] is the Runs this rebuild was called *for*, whose standing rows are therefore
-     * never carried in — the whole point of the pass is to replace them. Without it a Run that now
-     * measures to nothing is indistinguishable from one that was never measured, and its old row
-     * comes straight back: a Stated Distance withdrawn would keep the medal it held at the number it
-     * no longer has (#231). Empty for the seeding pass, which is measuring history rather than
-     * mending it, and harmless for a deletion, whose rows have already cascaded away.
-     *
-     * On [Dispatchers.Default] because the measuring is geodesic arithmetic over every stored
-     * track — minutes of it on a long history. The callers are a launch-time pass and a delete from
-     * the history screen, and the delete arrives on the main thread.
-     */
-    private suspend fun rebuildRecords(
-        types: List<RecordType>,
-        remeasured: List<Long> = emptyList(),
-    ): List<Achievement>? {
-        val dao = achievementDao ?: return emptyList()
-        // Every statement in history, in one read rather than one per Run: a query inside the loop
-        // below is a round trip per Run in the runner's life, to fetch at most five rows. Read
-        // before the measuring, and checked again after it — see the abandonment below.
-        val statedBefore = claimsAt(types)
-        // Regrouped out of the very list the abandonment below compares against, rather than read a
-        // second time: the claims a Run is measured against have to be the claims that were
-        // compared, or the rebuild could commit having measured one reading and checked another.
-        val statedByRun: Map<Long, Map<RecordType, Double>> = statedBefore
-            .groupBy({ it.sessionId }) { it.type to it.seconds.toDouble() }
-            .mapValues { (_, claims) -> claims.toMap() }
-        // One Run at a time, because a track is thousands of points and the whole history's worth
-        // of them at once is not something to hold in memory. Unfinished Runs are in this list and
-        // measure to nothing, which is what [bestEffortsOf] says they are worth.
-        val history = sessionDao.getAllSessions()
-        val measured = withContext(Dispatchers.Default) {
-            history.map { session ->
-                RunEfforts(session.id, effortsAt(session, types, statedByRun[session.id].orEmpty()))
+            override suspend fun historySeeded() =
+                settingsRepository?.userSettingsFlow?.first()?.historyRecordsSeeded
+            override suspend fun markHistorySeeded() {
+                settingsRepository?.setHistoryRecordsSeeded()
             }
-        }
-        // The Runs this pass has the last word on: the ones history showed as finished when it was
-        // read, whether or not they turned out to be worth anything, plus the ones the rebuild was
-        // called for. Everything else — a Run still being recorded, a Run that appeared after the
-        // read — keeps whatever is standing for it. See the carry-in above.
-        val measuredIds = history.filter { it.isFinished() }.map { it.id }.toSet() + remeasured
-
-        var written: List<Achievement>? = null
-        inTransaction {
-            // The statements are asked for again, inside the transaction that writes the book, and
-            // the whole rebuild is abandoned if they have moved (#282). A Run finishing mid-measure
-            // is already answered — it scores itself, and its standing rows are carried in as
-            // `unseen` — but a *statement* has no such answer: stating or improving one takes the
-            // direct scoring path rather than this one, so a rebuild committing afterwards out of
-            // the claims it read minutes ago would overwrite that scoring with the old time, or
-            // with no row at all. Nothing later would find it: only the top three are stored.
-            //
-            // Inside, because the database takes one writer at a time — either the statement has
-            // committed by now and this sees it, or it commits afterwards and its own scoring has
-            // the last word. Abandoning costs a book left as it was and the seeding debt still
-            // owed, which the next launch pays against a history nobody is moving.
-            if (claimsAt(types) != statedBefore) {
-                Log.d("Records", "A stated Best Effort changed while the book was being rebuilt; leaving it")
-                return@inTransaction
+            override suspend fun clearHistorySeeded() {
+                settingsRepository?.clearHistoryRecordsSeeded()
             }
-            val unseen = dao.getAllAchievements()
-                .filter { it.type in types && it.sessionId !in measuredIds }
-                .groupBy { it.sessionId }
-                .map { (sessionId, rows) ->
-                    RunEfforts(sessionId, rows.map { BestEffort(it.type, it.value) })
-                }
-            val book = recordBookOf(measured + unseen)
-            dao.deleteAchievementsOfTypes(types)
-            dao.insertAchievements(book)
-            // The efforts behind the book, rewritten on exactly the terms the book is (#75): the
-            // Runs this pass measured, plus what is banked for the Runs it did not — which is the
-            // same carry-in, decided by the same [measuredIds], so a Run that finished mid-measure
-            // keeps the rows its own scoring wrote rather than being wiped by this one, and a Run
-            // that was measured and found to be worth nothing loses the rows it used to hold.
-            val carried = runEffortDao?.getEffortsOfTypes(types)
-                .orEmpty()
-                .filter { it.sessionId !in measuredIds }
-            runEffortDao?.deleteEffortsOfTypes(types)
-            runEffortDao?.putEfforts(
-                measured.flatMap { run ->
-                    run.efforts.map { RunEffortRow(run.sessionId, it.type, it.value) }
-                } + carried
-            )
-            written = book
-        }
-        return written
-    }
 
-    /**
-     * One statement as the record book's input sees it: which Run made it, at which record, and the
-     * time it claims (#282).
-     *
-     * The claim and not the stored row, which is what lets two readings of an unmoved table compare
-     * equal: correcting a statement replaces it, giving the same claim a new id, and an id is not
-     * something a record book has ever ranked by.
-     */
-    private data class Claim(val sessionId: Long, val type: RecordType, val seconds: Int)
+            override suspend fun inTransaction(block: suspend () -> Unit) =
+                this@SessionRepository.inTransaction(block)
+        },
+        refreshHistoryBackup = refreshHistoryBackup,
+    )
 
-    /**
-     * Every claim standing at [types], as the thing two readings of it are compared by (#282).
-     *
-     * Sorted so two reads of an unchanged table compare equal whatever order the database hands
-     * them back in.
-     */
-    private suspend fun claimsAt(types: List<RecordType>): List<Claim> =
-        statedBestEffortDao?.getAll().orEmpty()
-            .filter { it.type in types }
-            .map { Claim(it.sessionId, it.type, it.seconds) }
-            .sortedWith(compareBy({ it.sessionId }, { it.type }))
+    /** Scores a finished Run against the record book — see [RecordBook.score]. */
+    suspend fun scoreRecords(sessionId: Long): List<Achievement> = recordBook.score(sessionId)
 
-    /** What one Run is worth at [types], measuring its track only if one of them needs it. */
-    private suspend fun effortsAt(
-        session: RunnerSession,
-        types: List<RecordType>,
-        stated: Map<RecordType, Double> = emptyMap(),
-    ): List<BestEffort> {
-        // The longest time is asked of the Run's own clock; every other record is measured against
-        // ground, so it needs the track read and accuracy-gated first.
-        val overGround = types.any { it != RecordType.LONGEST_DURATION }
-        val track = if (overGround) getTrackPointsForMap(session.id) else emptyList()
-        return bestEffortsOf(session, track, types, stated)
-    }
+    /** Scores a Run and, only once that has landed, marks it scored — see [RecordBook.scoreAndMark]. */
+    suspend fun scoreAndMarkRecords(sessionId: Long): List<Achievement> =
+        recordBook.scoreAndMark(sessionId)
 
-    /** What one Run has been told it holds, in the shape the record book ranks (#282). */
-    private suspend fun statedEffortsOf(sessionId: Long): Map<RecordType, Double> =
-        statedBestEffortDao?.getForSession(sessionId).orEmpty().byType()
+    /** Scores every finished Run the book never measured, at launch — see [RecordBook.scoreMissed]. */
+    suspend fun scoreMissedRecords() = recordBook.scoreMissed()
+
+    /** Puts every Run already in history to the record book, once — see [RecordBook.seedFromHistory]. */
+    suspend fun seedRecordsFromHistory() = recordBook.seedFromHistory()
 
     /**
      * One-shot read of a Run's Pauses, in the order it took them (#328).
@@ -3303,7 +2558,7 @@ class SessionRepository(
             // because a Walk stops contesting all of them at once, so there is no narrower list to
             // give than "whatever it was holding".
             Log.i("Walk", "Run $sessionId is a Walk; its records go back to the book")
-            changeAndRepair(listOf(sessionId), change = write)
+            recordBook.changeAndRepair(listOf(sessionId), change = write)
         } else {
             writeAndScore("Walk", sessionId, write) {
                 "Run $sessionId is a Run again but could not be scored"
@@ -3439,7 +2694,7 @@ class SessionRepository(
             // still contains stand exactly as they were.
             val moved = RecordType.bestEffortDistances.filterNot { it.fitsWithin(stated) } +
                 listOfNotNull(RecordType.LONGEST_DISTANCE.takeIf { lowered })
-            changeAndRepair(listOf(sessionId), mendOnly = moved, change = write)
+            recordBook.changeAndRepair(listOf(sessionId), mendOnly = moved, change = write)
         } else {
             writeAndScore("StatedDistance", sessionId, write) {
                 "Stated $stated km for run $sessionId but could not score it"
@@ -3809,7 +3064,7 @@ class SessionRepository(
         // worse, and a Medal may have to come off it.
         val worse = standing != null && (seconds == null || seconds > standing)
         if (worse) {
-            changeAndRepair(listOf(sessionId), mendOnly = listOf(type), change = write)
+            recordBook.changeAndRepair(listOf(sessionId), mendOnly = listOf(type), change = write)
         } else {
             writeAndScore("StatedBestEffort", sessionId, write) {
                 "Stated ${seconds}s at $type for run $sessionId but could not score it"
@@ -3897,9 +3152,9 @@ class SessionRepository(
      * backup — leaving the Run owing a scoring if any of that cannot be finished (#282).
      *
      * The two doors are a Stated Distance corrected upward and a Best Effort stated or improved.
-     * Neither can demote a Medal, so neither needs the mend [changeAndRepair] exists for; what they
-     * do need is the debt, and one of them having it and the other not would be an accident of which
-     * was written first.
+     * Neither can demote a Medal, so neither needs the mend [RecordBook.changeAndRepair] exists for;
+     * what they do need is the debt, and one of them having it and the other not would be an accident
+     * of which was written first.
      *
      * **The scoring mark is lifted before the change and handed back only once the book has taken
      * it.** A Run is marked scored once and never revisited ([scoreAndMarkRecords]), so a claim
@@ -3977,8 +3232,8 @@ class SessionRepository(
      *
      * **The window between the commit and the rollback is narrowed, not closed.** It used to be the
      * whole backup and the whole mend, and to end wherever the runner's scope was cancelled; it is
-     * now one settings write, and cancellation does not reach it ([changeAndRepair]). What is left
-     * is a process reclaimed inside that one write, which leaves the row gone and the coaching
+     * now one settings write, and cancellation does not reach it ([RecordBook.changeAndRepair]). What
+     * is left is a process reclaimed inside that one write, which leaves the row gone and the coaching
      * standing on it with nothing to notice — there is no reconciling pass at startup, and building
      * one is a separate piece of work. Until there is, the runner's remedy is the one they have
      * always had: delete the Run again, or cycle testing mode.
@@ -3989,7 +3244,7 @@ class SessionRepository(
      */
     private suspend fun deleteRuns(runIds: List<Long>, delete: suspend () -> Unit) {
         val fedTheCoach = aiEligibleIdsAmong(runIds)
-        changeAndRepair(
+        recordBook.changeAndRepair(
             runIds,
             onceRowsAreDurable = {
                 // Whatever the runner said about these Runs goes with them: the id a deleted Run
@@ -5325,7 +4580,7 @@ class SessionRepository(
      * that followed a structure, and a time requirement is answered by a time.
      *
      * The three edges — not a Walk, not a Run still going, measured-or-stated — are not restated
-     * here. They are [bestEffortsOf]'s, asked through [effortsAt], which is the same measurement the
+     * here. They are [bestEffortsOf]'s, asked through [RecordBook.worthAt], which is the same measurement the
      * record book ranks: a rule applied in one reader of a shared measurement is a bug waiting for
      * the second reader. It also means the Walk exclusion is not a filter this has to remember —
      * a Walk is worth no Best Effort at all, so it clears nothing.
@@ -5389,11 +4644,8 @@ class SessionRepository(
         // stage 2, because the coach is now forbidden from granting a requirement written in
         // numbers (ADR 0016): a privacy choice would silently become a plan that cannot progress.
 
-        val seconds = effortsAt(
-            session = run,
-            types = listOf(requirement.record),
-            stated = statedEffortsOf(run.id),
-        ).firstOrNull { it.type == requirement.record }?.value ?: return false
+        val seconds = recordBook.worthAt(run, listOf(requirement.record))
+            .firstOrNull { it.type == requirement.record }?.value ?: return false
 
         if (seconds > requirement.withinSeconds) {
             Log.d(
@@ -6114,9 +5366,4 @@ class SessionRepository(
     private fun mainSetSeconds(runSeconds: Int, walkSeconds: Int, repeats: Int): Long =
         (runSeconds.toLong() + walkSeconds.toLong()) * repeats.toLong()
 
-}
-
-/** [act] under this lock where there is one to take, and plainly where there is not. */
-private suspend fun Mutex?.holding(act: suspend () -> Unit) {
-    if (this == null) act() else withLock { act() }
 }

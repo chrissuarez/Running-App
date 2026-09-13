@@ -748,7 +748,7 @@ class SessionRepositoryTest {
         repositoryWithRecords.stateDistance(2L, distanceKm = 1.25)
 
         verify(mockRunEffortDao).deleteEffortsOfTypes(listOf(RecordType.LONGEST_DISTANCE))
-        // Twice: the changed Run's own claims are re-taken whole first (see [rebankEfforts]), and
+        // Twice: the changed Run's own claims are re-taken whole first (see `RecordBook.rebank`), and
         // the rebuild's rewrite of the Record follows it. The rebuild's is the last word.
         val banked = argumentCaptor<List<RunEffortRow>>()
         verify(mockRunEffortDao, times(2)).putEfforts(banked.capture())
