@@ -630,7 +630,10 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+            )
         )
 
         repositoryWithRecords.stateDistance(42L, distanceKm = 12.0)
@@ -660,8 +663,11 @@ class SessionRepositoryTest {
         val mockRunEffortDao: RunEffortDao = mock()
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            runEffortDao = mockRunEffortDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                runEffortDao = mockRunEffortDao,
+            ),
         )
 
         repositoryWithRecords.stateDistance(42L, distanceKm = 12.0)
@@ -694,8 +700,11 @@ class SessionRepositoryTest {
         val mockRunEffortDao: RunEffortDao = mock()
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            runEffortDao = mockRunEffortDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                runEffortDao = mockRunEffortDao,
+            ),
         )
 
         repositoryWithRecords.stateDistance(9L, distanceKm = 0.5)
@@ -741,8 +750,11 @@ class SessionRepositoryTest {
         )
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            runEffortDao = mockRunEffortDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                runEffortDao = mockRunEffortDao,
+            ),
         )
 
         repositoryWithRecords.stateDistance(2L, distanceKm = 1.25)
@@ -813,7 +825,10 @@ class SessionRepositoryTest {
         )
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+            )
         )
 
         repositoryWithRecords.stateDistance(2L, distanceKm = 1.25)
@@ -838,7 +853,10 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+            )
         )
 
         repositoryWithRecords.stateDistance(42L, distanceKm = null)
@@ -870,7 +888,10 @@ class SessionRepositoryTest {
         )
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+            )
         )
 
         repositoryWithRecords.stateDistance(2L, distanceKm = null)
@@ -893,7 +914,11 @@ class SessionRepositoryTest {
         var refreshCount = 0
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                refreshHistoryBackup = { refreshCount++ },
+            ),
             refreshHistoryBackup = { refreshCount++ },
         )
 
@@ -929,7 +954,10 @@ class SessionRepositoryTest {
         )
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+            ),
         )
 
         repositoryWithRecords.markAsWalk(2L, isWalk = true)
@@ -957,8 +985,11 @@ class SessionRepositoryTest {
         )
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            runEffortDao = mockRunEffortDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                runEffortDao = mockRunEffortDao,
+            ),
         )
 
         repositoryWithRecords.markAsWalk(42L, isWalk = true)
@@ -986,8 +1017,12 @@ class SessionRepositoryTest {
         var refreshCount = 0
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            runEffortDao = mockRunEffortDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                runEffortDao = mockRunEffortDao,
+                refreshHistoryBackup = { refreshCount++ },
+            ),
             refreshHistoryBackup = { refreshCount++ },
         )
 
@@ -1015,8 +1050,12 @@ class SessionRepositoryTest {
         var refreshCount = 0
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            runEffortDao = mockRunEffortDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                runEffortDao = mockRunEffortDao,
+                refreshHistoryBackup = { refreshCount++ },
+            ),
             refreshHistoryBackup = { refreshCount++ },
         )
 
@@ -1054,9 +1093,13 @@ class SessionRepositoryTest {
         var refreshCount = 0
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            runEffortDao = mockRunEffortDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+                runEffortDao = mockRunEffortDao,
+                refreshHistoryBackup = { refreshCount++ },
+            ),
             refreshHistoryBackup = { refreshCount++ },
         )
 
@@ -1081,8 +1124,11 @@ class SessionRepositoryTest {
         val mockRunEffortDao: RunEffortDao = mock()
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            runEffortDao = mockRunEffortDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                runEffortDao = mockRunEffortDao,
+            ),
         )
 
         repositoryWithRecords.markAsWalk(42L, isWalk = false)
@@ -1107,7 +1153,10 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+            ),
         )
 
         repositoryWithRecords.markAsWalk(42L, isWalk = false)
@@ -1134,7 +1183,11 @@ class SessionRepositoryTest {
         var refreshCount = 0
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                refreshHistoryBackup = { refreshCount++ },
+            ),
             refreshHistoryBackup = { refreshCount++ },
         )
 
@@ -1156,7 +1209,10 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+            ),
         )
 
         repositoryWithRecords.markAsWalk(42L, isWalk = true, finalizeWaitStepMillis = 1L)
@@ -1175,7 +1231,10 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+            ),
         )
 
         repositoryWithRecords.markAsWalk(42L, isWalk = true)
@@ -1198,7 +1257,10 @@ class SessionRepositoryTest {
         whenever(mockSegmentDao.getAllSegments()).thenThrow(IllegalStateException("no segments today"))
         val repositoryWithSegments = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+            ),
             segmentDao = mockSegmentDao,
             segmentEffortDao = mock(),
         )
@@ -1229,7 +1291,15 @@ class SessionRepositoryTest {
         whenever(mockDao.setIsWalk(42L, true)).doSuspendableAnswer { order += "setIsWalk" }
         val repositoryWithShapes = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                inTransaction = { block ->
+                    order += "begin"
+                    block()
+                    order += "commit"
+                },
+            ),
             runShapeDao = mockRunShapeDao,
             inTransaction = { block ->
                 order += "begin"
@@ -1263,7 +1333,10 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAchievementsForSessions(listOf(42L))).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+            ),
         )
 
         repositoryWithRecords.markAsWalk(42L, isWalk = true)
@@ -1593,8 +1666,12 @@ class SessionRepositoryTest {
         var refreshCount = 0
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+                refreshHistoryBackup = { refreshCount++ },
+            ),
             refreshHistoryBackup = { refreshCount++ },
         )
 
@@ -1629,8 +1706,11 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+            ),
         )
 
         repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_1K, seconds = 280)
@@ -1653,7 +1733,10 @@ class SessionRepositoryTest {
         whenever(statedDao.getForSession(42L)).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+            ),
         )
 
         repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_440)
@@ -1672,7 +1755,10 @@ class SessionRepositoryTest {
         whenever(statedDao.getForSession(42L)).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+            ),
         )
 
         repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_801)
@@ -1697,8 +1783,11 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+            ),
         )
 
         repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_440)
@@ -1720,8 +1809,11 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+            ),
         )
 
         repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_HALF, seconds = 7_000)
@@ -1742,7 +1834,11 @@ class SessionRepositoryTest {
         var refreshCount = 0
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                refreshHistoryBackup = { refreshCount++ },
+            ),
             refreshHistoryBackup = { refreshCount++ },
         )
 
@@ -1784,8 +1880,11 @@ class SessionRepositoryTest {
         )
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+            ),
         )
 
         repositoryWithRecords.stateBestEffort(2L, RecordType.FASTEST_5K, seconds = 1_500)
@@ -1817,8 +1916,11 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+            ),
         )
 
         repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_440)
@@ -1839,8 +1941,11 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAllAchievements()).thenThrow(RuntimeException("no book today"))
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+            ),
         )
 
         repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_440)
@@ -1865,8 +1970,11 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+            ),
         )
 
         repositoryWithRecords.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_440)
@@ -1912,8 +2020,11 @@ class SessionRepositoryTest {
         )
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+            ),
         )
 
         repositoryWithRecords.stateDistance(2L, distanceKm = 3.0)
@@ -1949,8 +2060,11 @@ class SessionRepositoryTest {
         whenever(mockDao.getAllSessions()).thenReturn(listOf(run.copy(distanceKm = 0.0)))
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+            ),
         )
 
         repositoryWithRecords.stateDistance(2L, distanceKm = null)
@@ -1987,8 +2101,11 @@ class SessionRepositoryTest {
         )
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+            ),
         )
 
         repositoryWithRecords.stateBestEffort(2L, RecordType.FASTEST_5K, seconds = null)
@@ -3018,7 +3135,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
             aiCoachClient = mockCoach,
         )
         // The settings as the rule finds them, and then as the coach's path finds them a moment
@@ -3056,7 +3177,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
             aiCoachClient = mockCoach,
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
@@ -3086,7 +3211,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
             aiCoachClient = mockCoach,
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
@@ -3113,7 +3242,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
             flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
@@ -3134,7 +3267,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
             flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
@@ -3158,7 +3295,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
             flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
@@ -3182,7 +3323,11 @@ class SessionRepositoryTest {
             val repo = SessionRepository(
                 sessionDao = mockDao,
                 settingsRepository = settingsRepo,
-                statedBestEffortDao = statedDao,
+                recordBook = recordBookOver(
+                    sessionDao = mockDao,
+                    statedBestEffortDao = statedDao,
+                    settingsRepository = settingsRepo,
+                ),
             )
             whenever(settingsRepo.userSettingsFlow).thenReturn(
                 flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_30_bridge"))
@@ -3269,7 +3414,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(onTheLastStage()))
         stubTheCoachsReads()
@@ -3301,7 +3450,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(onTheLastStage()))
         stubTheCoachsReads()
@@ -3334,7 +3487,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(onTheLastStage()))
         stubTheCoachsReads()
@@ -3367,7 +3524,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
             flowOf(
@@ -3398,7 +3559,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
             flowOf(
@@ -3429,7 +3594,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(onTheLastStage()))
         stubTheCoachsReads()
@@ -3505,8 +3674,14 @@ class SessionRepositoryTest {
         return SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            achievementDao = achievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = achievementDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+                refreshHistoryBackup = refreshHistoryBackup,
+                inTransaction = inTransaction ?: { it() },
+            ),
             aiCoachClient = coach,
             refreshHistoryBackup = refreshHistoryBackup,
             walkMarkDebtDao = walkMarkDebtDao,
@@ -4377,8 +4552,12 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
 
         repo.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_700)
@@ -4842,7 +5021,11 @@ class SessionRepositoryTest {
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(flowOf(settings))
         return SessionRepository(
             sessionDao = mockDao,
-            achievementDao = book,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = book,
+                settingsRepository = mockSettingsRepo,
+            ),
             settingsRepository = mockSettingsRepo,
         )
     }
@@ -4992,8 +5175,12 @@ class SessionRepositoryTest {
         val book = BookInMemory()
         val repo = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = book,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = book,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
             settingsRepository = mockSettingsRepo,
         )
         whenever(mockSettingsRepo.userSettingsFlow)
@@ -5022,7 +5209,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
             aiCoachClient = mockCoach,
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
@@ -5054,7 +5245,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
             flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_25_peak"))
@@ -5074,7 +5269,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
             flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_25_peak"))
@@ -5106,7 +5305,11 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
         whenever(mockSettingsRepo.userSettingsFlow).thenReturn(
             flowOf(UserSettings(activePlanId = "5k_sub_25", activeStageId = "sub_25_peak"))
@@ -5141,8 +5344,12 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
 
         repo.stateBestEffort(42L, RecordType.FASTEST_5K, seconds = 1_700)
@@ -5175,8 +5382,12 @@ class SessionRepositoryTest {
         val repo = SessionRepository(
             sessionDao = mockDao,
             settingsRepository = mockSettingsRepo,
-            achievementDao = mockAchievementDao,
-            statedBestEffortDao = statedDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                statedBestEffortDao = statedDao,
+                settingsRepository = mockSettingsRepo,
+            ),
         )
 
         repo.stateBestEffort(42L, RecordType.FASTEST_MILE, seconds = 500)
@@ -6960,7 +7171,10 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAllAchievements()).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+            )
         )
 
         val earned = repositoryWithRecords.scoreRecords(7L)
@@ -6979,7 +7193,10 @@ class SessionRepositoryTest {
         whenever(mockDao.getSessionById(7L)).thenReturn(session(id = 7, endTime = 0L))
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+            )
         )
 
         assertEquals(emptyList<Achievement>(), repositoryWithRecords.scoreRecords(7L))
@@ -7061,7 +7278,19 @@ class SessionRepositoryTest {
         var firstTransaction = true
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                settingsRepository = mockSettingsRepo,
+                inTransaction = { block ->
+                    // Holds the delete open, and only the delete: the pass runs to completion inside it.
+                    if (firstTransaction) {
+                        firstTransaction = false
+                        gate.await()
+                    }
+                    block()
+                },
+            ),
             settingsRepository = mockSettingsRepo,
             inTransaction = { block ->
                 // Holds the delete open, and only the delete: the pass runs to completion inside it.
@@ -7098,7 +7327,18 @@ class SessionRepositoryTest {
         var firstTransaction = true
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                settingsRepository = mockSettingsRepo,
+                inTransaction = { block ->
+                    if (firstTransaction) {
+                        firstTransaction = false
+                        gate.await()
+                    }
+                    block()
+                },
+            ),
             settingsRepository = mockSettingsRepo,
             inTransaction = { block ->
                 if (firstTransaction) {
@@ -7188,7 +7428,11 @@ class SessionRepositoryTest {
         val order = mutableListOf<String>()
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                refreshHistoryBackup = { order += "backup" },
+            ),
             refreshHistoryBackup = { order += "backup" }
         )
         whenever(mockAchievementDao.insertAchievements(any())).then { order += "rebuild"; Unit }
@@ -7223,7 +7467,15 @@ class SessionRepositoryTest {
         }
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                inTransaction = { block ->
+                    order += "begin"
+                    block()
+                    order += "commit"
+                },
+            ),
             inTransaction = { block ->
                 order += "begin"
                 block()
@@ -7234,8 +7486,9 @@ class SessionRepositoryTest {
         repositoryWithRecords.deleteSession(2L)
 
         // Both inside one transaction: a medal awarded by the seeding pass in between would be
-        // cascaded away by the delete without ever showing up as a record to repair.
-        assertEquals(listOf("begin", "read", "delete", "commit"), order)
+        // cascaded away by the delete without ever showing up as a record to repair. The deleted
+        // Run's claims are then re-banked in a transaction of their own (#75), which finds nothing.
+        assertEquals(listOf("begin", "read", "delete", "commit", "begin", "commit"), order)
     }
 
     @Test
@@ -7244,7 +7497,10 @@ class SessionRepositoryTest {
         whenever(mockAchievementDao.getAchievementsForSessions(listOf(2L, 5L))).thenReturn(emptyList())
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+            )
         )
 
         repositoryWithRecords.deleteSessions(listOf(2L, 5L))
@@ -7272,7 +7528,12 @@ class SessionRepositoryTest {
         }
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                settingsRepository = mockSettingsRepo,
+                refreshHistoryBackup = { order += "backup" },
+            ),
             settingsRepository = mockSettingsRepo,
             refreshHistoryBackup = { order += "backup" }
         )
@@ -7297,7 +7558,11 @@ class SessionRepositoryTest {
             .thenReturn(flowOf(UserSettings(historyRecordsSeeded = true)))
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                settingsRepository = mockSettingsRepo,
+            ),
             settingsRepository = mockSettingsRepo
         )
         // A second delete begins while the first is still measuring, which the history screen
@@ -7330,7 +7595,11 @@ class SessionRepositoryTest {
             .thenReturn(flowOf(UserSettings(historyRecordsSeeded = true)))
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                settingsRepository = mockSettingsRepo,
+            ),
             settingsRepository = mockSettingsRepo
         )
 
@@ -7355,7 +7624,11 @@ class SessionRepositoryTest {
             .thenReturn(flowOf(UserSettings(historyRecordsSeeded = true)))
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                settingsRepository = mockSettingsRepo,
+            ),
             settingsRepository = mockSettingsRepo
         )
 
@@ -7381,7 +7654,11 @@ class SessionRepositoryTest {
             .thenAnswer { }
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                settingsRepository = mockSettingsRepo,
+            ),
             settingsRepository = mockSettingsRepo
         )
 
@@ -7408,7 +7685,11 @@ class SessionRepositoryTest {
             .thenReturn(flowOf(UserSettings(historyRecordsSeeded = false)))
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                settingsRepository = mockSettingsRepo,
+            ),
             settingsRepository = mockSettingsRepo
         )
 
@@ -7560,7 +7841,11 @@ class SessionRepositoryTest {
                 .thenReturn(flowOf(UserSettings(historyRecordsSeeded = true)))
             SessionRepository(
                 sessionDao = mockDao,
-                achievementDao = oneAtATime,
+                recordBook = recordBookOver(
+                    sessionDao = mockDao,
+                    achievementDao = oneAtATime,
+                    settingsRepository = mockSettingsRepo,
+                ),
                 settingsRepository = mockSettingsRepo
             ).scoreMissedRecords()
 
@@ -7569,7 +7854,11 @@ class SessionRepositoryTest {
                 .thenReturn(flowOf(UserSettings(historyRecordsSeeded = false)))
             SessionRepository(
                 sessionDao = mockDao,
-                achievementDao = allAtOnce,
+                recordBook = recordBookOver(
+                    sessionDao = mockDao,
+                    achievementDao = allAtOnce,
+                    settingsRepository = mockSettingsRepo,
+                ),
                 settingsRepository = mockSettingsRepo
             ).seedRecordsFromHistory()
 
@@ -7592,7 +7881,11 @@ class SessionRepositoryTest {
         val book = BookInMemory()
         val repositoryWithRecords = SessionRepository(
             sessionDao = mockDao,
-            achievementDao = book,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = book,
+                settingsRepository = mockSettingsRepo,
+            ),
             settingsRepository = mockSettingsRepo
         )
 
@@ -7671,7 +7964,11 @@ class SessionRepositoryTest {
         whenever(mockRecordFillDao.wholesaleFillOwedFlow()).thenReturn(flowOf(true))
         whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(7L))
 
-        val measuring = SessionRepository(sessionDao = mockDao, recordFillDao = mockRecordFillDao)
+        val measuring = SessionRepository(sessionDao = mockDao,
+    recordBook = recordBookOver(
+        sessionDao = mockDao,
+        recordFillDao = mockRecordFillDao,
+    ))
             .recordsBeingMeasuredFlow().first()
 
         assertTrue(measuring)
@@ -7686,7 +7983,11 @@ class SessionRepositoryTest {
         whenever(mockRecordFillDao.wholesaleFillOwedFlow()).thenReturn(flowOf(false))
         whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(7L))
 
-        val measuring = SessionRepository(sessionDao = mockDao, recordFillDao = mockRecordFillDao)
+        val measuring = SessionRepository(sessionDao = mockDao,
+    recordBook = recordBookOver(
+        sessionDao = mockDao,
+        recordFillDao = mockRecordFillDao,
+    ))
             .recordsBeingMeasuredFlow().first()
 
         assertFalse(measuring)
@@ -7709,8 +8010,11 @@ class SessionRepositoryTest {
 
         SessionRepository(
             sessionDao = mockDao,
-            achievementDao = mockAchievementDao,
-            recordFillDao = mockRecordFillDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                recordFillDao = mockRecordFillDao,
+            ),
         ).scoreAndMarkRecords(7L)
 
         verify(mockRecordFillDao, never()).put(any())
@@ -7885,9 +8189,14 @@ class SessionRepositoryTest {
         return SessionRepository(
             sessionDao = mockDao,
             trackPointDao = trackPointDao,
-            achievementDao = mockAchievementDao,
-            runEffortDao = runEffortDao,
-            recordFillDao = recordFillDao,
+            recordBook = recordBookOver(
+                sessionDao = mockDao,
+                achievementDao = mockAchievementDao,
+                runEffortDao = runEffortDao,
+                recordFillDao = recordFillDao,
+                trackPointDao = trackPointDao,
+                settingsRepository = mockSettingsRepo,
+            ),
             settingsRepository = mockSettingsRepo
         ) to mockAchievementDao
     }

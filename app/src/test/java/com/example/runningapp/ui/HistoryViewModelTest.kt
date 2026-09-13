@@ -1,5 +1,6 @@
 package com.example.runningapp.ui
 
+import com.example.runningapp.data.recordBookOver
 import com.example.runningapp.data.AchievementDao
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.SessionDao
@@ -202,7 +203,11 @@ class HistoryViewModelTest {
         SessionRepository(
             sessionDao = sessionDao,
             trackPointDao = trackPointDao,
-            achievementDao = achievementDao,
+            recordBook = recordBookOver(
+                sessionDao = sessionDao,
+                achievementDao = achievementDao,
+                trackPointDao = trackPointDao,
+            ),
         ),
         routeDispatcher = dispatcher,
     )

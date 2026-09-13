@@ -4,6 +4,7 @@ import com.example.runningapp.SettingsRepository
 import com.example.runningapp.UserSettings
 import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.data.recordBookOver
 import com.example.runningapp.data.Achievement
 import com.example.runningapp.data.AchievementDao
 import com.example.runningapp.data.AiCoachClient
@@ -97,9 +98,12 @@ class SessionDetailViewModelRunSummaryTest {
     ) = SessionDetailViewModel(
         SessionRepository(
             sessionDao = sessionDaoOverBothRuns(shapesOwed),
-            achievementDao = mock<AchievementDao> {
-                onBlocking { getAchievementsForSessions(listOf(7)) } doReturn medals
-            },
+            recordBook = recordBookOver(
+                sessionDao = mock(),
+                achievementDao = mock<AchievementDao> {
+                    onBlocking { getAchievementsForSessions(listOf(7)) } doReturn medals
+                },
+            ),
             runSummaryDao = mock<RunSummaryDao> {
                 onBlocking { summary(7) } doReturn alreadyWritten
             },
@@ -311,9 +315,12 @@ class SessionDetailViewModelRunSummaryTest {
         val viewModel = SessionDetailViewModel(
             SessionRepository(
                 sessionDao = sessionDaoOverBothRuns(shapesOwed),
-                achievementDao = mock<AchievementDao> {
-                    onBlocking { getAchievementsForSessions(listOf(7)) } doReturn emptyList()
-                },
+                recordBook = recordBookOver(
+                    sessionDao = mock(),
+                    achievementDao = mock<AchievementDao> {
+                        onBlocking { getAchievementsForSessions(listOf(7)) } doReturn emptyList()
+                    },
+                ),
                 runSummaryDao = summaries,
                 settingsRepository = mock<SettingsRepository> {
                     on { userSettingsFlow } doReturn flowOf(UserSettings(aiDataSharingEnabled = true))
@@ -367,9 +374,12 @@ class SessionDetailViewModelRunSummaryTest {
                         on { anySegmentTimingOwedFlow() } doReturn flowOf(false)
                         on { anyRunShapeOwedFlow() } doReturn flowOf(false)
                     },
-                    achievementDao = mock<AchievementDao> {
-                        onBlocking { getAchievementsForSessions(listOf(7)) } doReturn emptyList()
-                    },
+                    recordBook = recordBookOver(
+                        sessionDao = mock(),
+                        achievementDao = mock<AchievementDao> {
+                            onBlocking { getAchievementsForSessions(listOf(7)) } doReturn emptyList()
+                        },
+                    ),
                     runSummaryDao = summaries,
                     settingsRepository = mock<SettingsRepository> {
                         on { userSettingsFlow } doReturn flowOf(UserSettings(aiDataSharingEnabled = true))
@@ -495,9 +505,12 @@ class SessionDetailViewModelRunSummaryTest {
                 on { anySegmentTimingOwedFlow() } doReturn flowOf(false)
                 on { anyRunShapeOwedFlow() } doReturn flowOf(false)
             },
-            achievementDao = mock<AchievementDao> {
-                onBlocking { getAchievementsForSessions(listOf(7)) } doReturn emptyList()
-            },
+            recordBook = recordBookOver(
+                sessionDao = mock(),
+                achievementDao = mock<AchievementDao> {
+                    onBlocking { getAchievementsForSessions(listOf(7)) } doReturn emptyList()
+                },
+            ),
             runSummaryDao = mock<RunSummaryDao>(),
             settingsRepository = mock<SettingsRepository> {
                 on { userSettingsFlow } doReturn sharingOn.map { UserSettings(aiDataSharingEnabled = it) }
