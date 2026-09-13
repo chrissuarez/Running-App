@@ -12,12 +12,12 @@ class RoutesTest {
         assertEquals(expected, Routes.sessionDetail(42L))
     }
 
-    // A page that closes itself pops a *filled* address — "session_detail/9", not
-    // "session_detail/{sessionId}" — because only a filled one carries the arguments
-    // NavDestination.hasRoute compares against, and so only a filled one names the single entry
-    // about that Run, Segment, group or Record (#412). A builder that drifted from its own pattern
-    // would still compile and would still read correctly, but every such pop would silently match
-    // nothing and the page would never close. These lock each builder to its pattern.
+    // A page that closes itself closes by a *filled* address — "session_detail/9", not
+    // "session_detail/{sessionId}" — because only a filled one names the single page about that
+    // Run, Segment, group or Record (#412). The stack's own pages are read back by filling each
+    // pattern in (#476), so a builder that drifted from its own pattern would still compile and
+    // would still read correctly, but every such close would silently match nothing and the page
+    // would never close. These lock each builder to its pattern.
     @Test
     fun `matchedRuns builds a route that matches the matched-runs route pattern`() {
         val expected = Routes.MATCHED_RUNS.replace("{${Routes.ARG_SESSION_ID}}", "42")

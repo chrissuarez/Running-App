@@ -54,7 +54,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -74,7 +73,11 @@ import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.export.ExportFormat
 import com.example.runningapp.export.exportShareChooser
+import com.example.runningapp.navigation.NavControllerPageStack
 import com.example.runningapp.navigation.Routes
+import com.example.runningapp.navigation.closeEveryPageOf
+import com.example.runningapp.navigation.landDeletedRuns
+import com.example.runningapp.navigation.leaveRunPage
 import com.example.runningapp.ui.FeelFeedbackSheet
 import com.example.runningapp.ui.BackupViewModel
 import com.example.runningapp.ui.BackupViewModelFactory
@@ -140,64 +143,6 @@ import com.example.runningapp.ui.workout.mapWorkoutPlayerUiState
 import com.example.runningapp.ui.workout.zoneBandColor
 import java.time.LocalDate
 import java.time.ZoneId
-
-/**
- * Take **every** copy of one page off the stack, wherever it sits, and everything above each.
- *
- * A page addressed by a thing — a Run, a Segment, a group of matched Runs — can be on the stack
- * more than once, because moving forward stacks and these pages lead back into each other. A Run's
- * page lists the group of Runs over its route, that group lists the Run itself as a row you can
- * tap, and a Segment's page lists the Runs over it while a Run's page lists its Segments. So
- * History → Run A → its group → Run A leaves two `session_detail/A` entries, and Segments → X →
- * one of its Runs → that Run's card for X leaves two `segment_detail/X`.
- *
- * When the thing itself is gone, popping one copy is not enough. The copy left underneath is a
- * page for something that no longer exists, and Back walks the runner onto it: the read behind it
- * can never answer, so it holds its loading state for ever.
- *
- * [filledRoute] is a filled address — `session_detail/9`, never the pattern
- * `session_detail/{sessionId}`. `NavDestination.hasRoute` matches a pattern against any entry of
- * that shape, so a pattern would take the topmost page about *anything*; only a filled address
- * carries the arguments it compares, and so names the pages about this one thing.
- *
- * [NavController.popBackStack] with a filled address takes the **nearest** copy and everything
- * above it, so this asks again until there is no copy left to take. A thing that is not on the
- * stack at all takes nothing, which is right: the runner has already left the page there was to
- * correct. The loop ends, because the address is always one of the pages a thing is addressed by
- * and never the start destination — every pop leaves the record screen standing, so `popBackStack`
- * can only report false for "no copy left", never for "the stack is now empty".
- */
-private fun NavController.popEveryPageFor(filledRoute: String) {
-    while (popBackStack(filledRoute, inclusive = true)) {
-        // Again. One call takes the nearest copy; a page can be on the stack more than once.
-    }
-}
-
-/**
- * Leaving the page for a Run: **while that Run is on its way out, leaving its page leaves every
- * page of that Run** (#414).
- *
- * A Run's page can be on the stack more than once — `History → Run A → its group → Run A` — and
- * [popEveryPageFor] is what the delete landing will do to it, so it takes the lower copy of A and
- * everything stacked on top of that copy. One step back from the top copy would put the runner on
- * the page in between: the group of Runs matched to A is not a page *about* A, so it carries no
- * "Deleting this run…" of its own and stays fully live. Anything the runner then opened from it —
- * another Run's page — sits above a doomed entry, and the completion pop would sweep it away
- * unasked. Leaving by the same call the completion uses cannot leave anything above anything: the
- * runner lands where they first opened that Run from, which is exactly where the delete landing
- * would have put them.
- *
- * Back is still Back. It stays open throughout — a delete that never lands must let the runner walk
- * away rather than trap them — and for a Run that is not going anywhere it is one step back the way
- * they came.
- */
-internal fun NavController.leaveSessionDetail(sessionId: Long?, deleteInProgress: Boolean) {
-    if (deleteInProgress && sessionId != null) {
-        popEveryPageFor(Routes.sessionDetail(sessionId))
-    } else {
-        popBackStack()
-    }
-}
 
 class MainActivity : ComponentActivity() {
 
@@ -470,6 +415,10 @@ class MainActivity : ComponentActivity() {
                     // place: a Run opened from a Record has to return to that Record, and naming
                     // History here would land the runner on a page they were never on.
                     val goBack: () -> Unit = { navController.popBackStack() }
+                    // The stack as the closing rules read it (#476). Which pages come off when a
+                    // thing is gone is decided in [closeEveryPageOf] and its neighbours; this only
+                    // does the pops they ask for.
+                    val pages = remember(navController) { NavControllerPageStack(navController) }
                     // Home with the stack behind it cleared: the record screen taking the app over,
                     // not a screen stacked on top of one. Only for the moves that mean "the app is
                     // back at the start" — a Run beginning, a strap picked. Back from Home leaves
@@ -698,20 +647,10 @@ class MainActivity : ComponentActivity() {
                     // comes off.
                     val deleteCompleted by sessionDetailViewModel.deleteCompleted.collectAsState()
                     LaunchedEffect(deleteCompleted) {
-                        deleteCompleted.forEach { deletedSessionId ->
-                            // The page for a Run that no longer exists comes off the stack rather
-                            // than being covered over, so Back can never walk back onto it. Where
-                            // the runner lands is wherever they opened it from — History for a Run
-                            // opened from History, a Record for one opened from a Record.
-                            //
-                            // By the deleted Run, not by whatever page is on top: this lands after
-                            // a wait the runner can walk away during. See [popEveryPageFor]. So it
-                            // is not gated on the page the runner is looking at the way an export
-                            // is — an export opens a chooser *over* the current screen, while this
-                            // only removes pages about a Run that is gone, wherever they sit.
-                            navController.popEveryPageFor(Routes.sessionDetail(deletedSessionId))
-                            // Acknowledged once the pages are off, so the pop is not asked for a
-                            // second time.
+                        // Not gated on the page the runner is looking at the way an export is — an
+                        // export opens a chooser *over* the current screen, while this only removes
+                        // pages about a Run that is gone, wherever they sit. See [landDeletedRuns].
+                        pages.landDeletedRuns(deleteCompleted) { deletedSessionId ->
                             sessionDetailViewModel.deleteCompletedHandled(deletedSessionId)
                         }
                     }
@@ -1213,8 +1152,8 @@ class MainActivity : ComponentActivity() {
                                 // whatever sits between two copies of this Run — the group of Runs
                                 // matched to it, which is not a page about this Run and so stays
                                 // live — and anything opened from there would be swept away by the
-                                // completion pop. See [leaveSessionDetail].
-                                onBack = { navController.leaveSessionDetail(sessionId, runIsGoing) },
+                                // completion pop. See [leaveRunPage].
+                                onBack = { pages.leaveRunPage(sessionId, runIsGoing) },
                                 onStateDistance = { id, distanceKm ->
                                     sessionDetailViewModel.stateDistance(id, distanceKm)
                                 },
@@ -1446,11 +1385,11 @@ class MainActivity : ComponentActivity() {
                                 // Spelled from the argument this entry was given rather than from
                                 // [recordType], which is null here by definition: that argument is
                                 // what put this entry on the stack, so it is what takes it off
-                                // again. See [popEveryPageFor].
+                                // again. See [closeEveryPageOf].
                                 val unknownRecord = backStackEntry.arguments
                                     ?.getString(Routes.ARG_RECORD_TYPE)
                                 if (recordType == null && unknownRecord != null) {
-                                    navController.popEveryPageFor(Routes.recordDetail(unknownRecord))
+                                    pages.closeEveryPageOf(Routes.recordDetail(unknownRecord))
                                 }
                             }
                             recordType?.let { type ->
@@ -1646,8 +1585,8 @@ class MainActivity : ComponentActivity() {
                                     segmentsViewModel.delete(row)
                                     // Off the stack, not covered over: the Segment this page is
                                     // for has just been thrown away, so Back must not be able to
-                                    // walk back onto it. See [popEveryPageFor].
-                                    navController.popEveryPageFor(Routes.segmentDetail(row.id))
+                                    // walk back onto it. See [closeEveryPageOf].
+                                    pages.closeEveryPageOf(Routes.segmentDetail(row.id))
                                 },
                                 // A time on a hill belongs to a morning, and the page that holds
                                 // the morning is the Run's own (#72).
@@ -1689,10 +1628,10 @@ class MainActivity : ComponentActivity() {
                             // re-read on every write to the Runs it is drawn from, so "there is no
                             // such group" can arrive more than once, and a second step off the
                             // stack would take the Run's own page with it. Asking twice for a
-                            // group already gone takes nothing. See [popEveryPageFor].
+                            // group already gone takes nothing. See [closeEveryPageOf].
                             LaunchedEffect(answered) {
                                 if (answered != null && answered?.value == null && sessionId != null) {
-                                    navController.popEveryPageFor(Routes.matchedRuns(sessionId))
+                                    pages.closeEveryPageOf(Routes.matchedRuns(sessionId))
                                 }
                             }
                             MatchedRunsScreen(

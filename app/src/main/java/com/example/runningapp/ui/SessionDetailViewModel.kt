@@ -113,7 +113,7 @@ class SessionDetailViewModel(
      * is a live page for a Run that is on its way out. What that page does about it is its own
      * business ([SessionDetailScreen] closes every forward door on itself, and Back off it leaves
      * every page of that Run rather than one —
-     * [com.example.runningapp.leaveSessionDetail]); this is only the record of which Run is going,
+     * [com.example.runningapp.navigation.leaveRunPage]); this is only the record of which Run is going,
      * and it is kept here because here is where the job that does it lives.
      *
      * **The right lifetime is the job's lifetime, which is this ViewModel's.** It is held across a
