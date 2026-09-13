@@ -41,7 +41,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.concurrent.atomic.AtomicBoolean
 
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -272,157 +271,13 @@ class AppContainer(context: Context) {
     }
 
     /**
-     * Measures moving time for runs recorded before #163, once per process.
-     *
-     * On the container's own scope rather than an Activity's: the latch below is process-wide, so a
-     * backfill tied to an Activity that the user backs out of mid-pass would be cancelled with the
-     * work half done and never start again for the life of the process — leaving some runs quoting
-     * pace over one clock and their neighbours over another.
+     * Starts every launch pass, once per process — see [LaunchPasses] for the order and why it is on
+     * this container's scope (#477).
      */
-    fun backfillMovingTimeOnce() {
-        if (!movingTimeBackfilled.compareAndSet(false, true)) return
-        passes.launch("moving-time backfill") { sessionRepository.backfillMovingTime() }
-    }
+    fun payLaunchPassesOnce() = launchPasses.payOnce()
 
-    /**
-     * Finishes any Run a previous process left interrupted, once per process (#192).
-     *
-     * [processStartedAtMillis] is read at construction rather than at the moment the pass runs, and
-     * that is what makes the pass safe: it draws the line before this process can have started a Run
-     * of its own, so nothing it finds can be a Run being recorded now. Reading the clock inside the
-     * pass would move the line to after a runner could have pressed START.
-     *
-     * On the container's own scope, for the same reason the moving-time backfill is — see above.
-     */
-    fun rescueInterruptedRunsOnce() {
-        if (!interruptedRunsRescued.compareAndSet(false, true)) return
-        passes.launch("interrupted-run rescue") { sessionRepository.rescueInterruptedRuns(processStartedAtMillis) }
-    }
-
-    /**
-     * Puts the history already recorded to the record book, once per process (#50).
-     *
-     * After the rescue pass rather than before it, so a Run a previous process left interrupted is
-     * finished — and therefore eligible — before history is measured. Ordering is a preference, not
-     * a requirement: a rescued Run scores itself, and this pass carries over the rows of any Run it
-     * did not see, so either order leaves the same book.
-     *
-     * On the container's own scope, for the same reason the moving-time backfill is — see above.
-     */
-    fun seedRecordsFromHistoryOnce() {
-        if (!recordsSeeded.compareAndSet(false, true)) return
-        passes.launch("record seeding") { sessionRepository.seedRecordsFromHistory() }
-    }
-
-    /**
-     * Scores any Run the record book never measured, once per process (#210).
-     *
-     * Started after the rescue pass and the seeding pass, though nothing makes them run in that
-     * order: all three are launched on the same scope and none waits for the others. Nothing needs
-     * the order. A Run this pass ran past while it was still interrupted is finished by the rescue
-     * and is on the next launch's list; and while history is still owed its seeding this pass
-     * declines outright, because that pass measures every Run at once and marks them itself.
-     *
-     * On the container's own scope, for the same reason the moving-time backfill is — see above. It
-     * matters here as it does for the Effort backfill: a Run scored is a Run marked, so a pass
-     * cancelled because the runner backed out of an Activity keeps everything it paid for, but
-     * would not be resumed for the life of the process.
-     */
-    fun scoreMissedRecordsOnce() {
-        if (!missedRecordsScored.compareAndSet(false, true)) return
-        passes.launch("missed-record scoring") { sessionRepository.scoreMissedRecords() }
-    }
-
-    /**
-     * Puts any Run the finish never settled to the Plan, once per process (#297).
-     *
-     * After the rescue pass in the list above and not waiting on it, as none of these do. Ordering
-     * costs nothing here either: a Run this pass ran past while it was still interrupted has no end
-     * time, so the settlement declines it and leaves its debt for the launch after the rescue
-     * finishes it.
-     *
-     * On the container's own scope, for the same reason the moving-time backfill is — see above. It
-     * matters as much here as anywhere: a Stage settled is a Stage marked, so a pass cancelled
-     * because the runner backed out of an Activity keeps every settlement it made, but would not be
-     * resumed for the life of the process.
-     */
-    fun settleMissedStagesOnce() {
-        if (!missedStagesSettled.compareAndSet(false, true)) return
-        passes.launch("Stage settlement") { sessionRepository.settleStagesMissedAtTheFinish() }
-    }
-
-    /**
-     * Puts back any Walk mark a settlement judged on but could not write, once per process (#371).
-     *
-     * After the settling pass in the list above and not waiting on it, as none of these do — and the
-     * order genuinely does not matter here either. A debt this pass ran past is one the settling
-     * pass raised a moment later, and it is still in the table at the next launch; a debt raised
-     * before this pass reads is paid now. Nothing is lost by either order because the debt is
-     * durable, which is the whole reason it is stored.
-     *
-     * On the container's own scope, for the same reason the moving-time backfill is — see above. It
-     * matters here as it does everywhere in this list: each mark discharges its own debt as it
-     * lands, so a pass cancelled because the runner backed out of an Activity keeps every mark it
-     * put back, but would not be resumed for the life of the process.
-     */
-    fun payWalkMarkDebtsOnce() {
-        if (!walkMarkDebtsPaid.compareAndSet(false, true)) return
-        passes.launch("Walk-mark debt") { sessionRepository.payWalkMarkDebts() }
-    }
-
-    /**
-     * Takes back coaching left standing on Runs that are no longer in history, once per process
-     * (#270).
-     *
-     * On the container's own scope, for the same reason the moving-time backfill is — see above, and
-     * more sharply here: the delete this finishes was cut short by a process being reclaimed, and a
-     * pass tied to the screen the runner deletes from would be the same kind of half-finished work
-     * one lifetime further in.
-     *
-     * Nothing orders this against the passes around it. None of them takes a Run out of history,
-     * which is the only thing this reads.
-     */
-    fun reconcileCoachingOnce() {
-        if (!coachingReconciled.compareAndSet(false, true)) return
-        passes.launch("coaching reconciliation") { sessionRepository.reconcileCoachingWithHistory() }
-    }
-
-    /**
-     * Scores the history recorded before the Effort Score shipped, once per process (#62).
-     *
-     * Started after the rescue pass, though nothing makes them run in that order: both are launched
-     * on the same scope and neither waits for the other. Nothing needs the order — a rescued Run is
-     * scored as it is finished, and one this pass ran past while it was still interrupted is on the
-     * next launch's list. What does keep the two from colliding is the lock they share
-     * ([SessionRepository.backfillEffortScores]), not the order they are started in.
-     *
-     * On the container's own scope, for the same reason the moving-time backfill is — see above.
-     * That matters more here than anywhere: the pass is resumable, but a pass cancelled because the
-     * runner backed out of an Activity would not be *resumed* for the life of the process, leaving
-     * the trends built on these Scores reading half a history.
-     */
-    fun backfillEffortScoresOnce() {
-        if (!effortScored.compareAndSet(false, true)) return
-        passes.launch("Effort Score backfill") { sessionRepository.backfillEffortScores() }
-    }
-
-    /**
-     * Fills in the weather for the Runs in history that have none, once per process (#81).
-     *
-     * On the container's own scope, for the same reason the moving-time backfill is — see above, and
-     * this is the pass that most needed moving there. It shipped with #79 on a `LaunchedEffect` in
-     * the Activity's composition, which is precisely the lifetime that cannot hold it: the pass is
-     * minutes of fetching over a whole history, and the runner backing out of the screen cancelled
-     * it with the work part done and started nothing again for the life of the process. The ticket
-     * asks that killing the app mid-backfill and relaunching finishes the job, and that is only true
-     * of a pass no screen owns.
-     *
-     * Nothing orders this against the passes around it. It writes five columns nothing else reads
-     * and reads none that anything else writes.
-     */
-    fun backfillWeatherOnce() {
-        if (!weatherBackfilled.compareAndSet(false, true)) return
-        passes.launch("weather backfill") { sessionRepository.backfillWeather() }
+    private val launchPasses: LaunchPasses by lazy {
+        LaunchPasses(passes, launchPassesOver({ sessionRepository }, { routeShaping }, processStartedAtMillis))
     }
 
     /**
@@ -442,66 +297,6 @@ class AppContainer(context: Context) {
         passes.launch("Segment timing for segment $segmentId") {
             sessionRepository.timeSegmentAgainstHistory(segmentId)
         }
-    }
-
-    /**
-     * Pays whatever the Segments and the Runs owe each other, once per process (#70).
-     *
-     * Two debts, and between them they are the whole reason a Segment can be trusted to know its own
-     * history: a Segment cut before efforts existed has never been walked against anything, and
-     * either side of a walk can be lost to a process being reclaimed half way through it. On an
-     * ordinary launch this reads two empty lists and returns.
-     *
-     * After the rescue pass in the list above and not waiting on it, as none of these do. A Run this
-     * pass ran past while it was still interrupted has no end time, so it is not on the list; the
-     * rescue finishes it and walks it against the Segments itself.
-     *
-     * On the container's own scope, for the same reason the moving-time backfill is — see above. It
-     * matters here as it does for the Effort backfill: each side is marked as it is paid, so a pass
-     * cancelled because the runner backed out of an Activity keeps everything it paid for, but would
-     * not be resumed for the life of the process.
-     */
-    fun paySegmentTimingOnce() {
-        if (!segmentTimingPaid.compareAndSet(false, true)) return
-        passes.launch("Segment-timing debt") { sessionRepository.payWhatSegmentTimingOwes() }
-    }
-
-    /**
-     * Takes the shape of every Run that has never had one, once per process (#73).
-     *
-     * On the first launch after this shipped that is the whole of the runner's history, which is the
-     * backfill the matching is worth having at all: a runner who has been round the same park for a
-     * year should be told so on the day it arrives, not a year later. Every launch afterwards reads
-     * an empty list and returns.
-     *
-     * On the container's own scope, for the reason the passes above are: each Run's row is written
-     * as it is measured, so a pass cancelled by the runner backing out of an Activity keeps
-     * everything it has already done and the next launch takes up the rest.
-     */
-    fun takeRunShapesOnce() {
-        if (!runShapesTaken.compareAndSet(false, true)) return
-        passes.launch("Run-shape debt") { sessionRepository.payWhatRunShapesOwe() }
-    }
-
-    /**
-     * Takes the shape of every saved course that has never had one, once per process (#74).
-     *
-     * The library's half of [takeRunShapesOnce], and it exists for the same reason: on the first
-     * launch after this shipped that is every course the runner keeps, and a library shaped only from
-     * now on would leave each of those courses opening on the empty page this ticket exists to fill.
-     * Every launch afterwards reads an empty list and returns — a course kept since is shaped in the
-     * transaction that kept it ([com.example.runningapp.data.RouteDao.keepRoute]).
-     *
-     * Cheap beside the Run pass. A course's shape comes off a line already stored rather than off a
-     * whole track of fixes, and a library is a handful of rows where history is thousands.
-     *
-     * On the container's own scope, for the reason the passes above are: each course's row is written
-     * as it is measured, so a pass cancelled by the runner backing out of an Activity keeps
-     * everything it has already done and the next launch takes up the rest.
-     */
-    fun takeRouteShapesOnce() {
-        if (!routeShapesTaken.compareAndSet(false, true)) return
-        passes.launch("Route-shape debt") { routeShaping.payWhatIsOwed() }
     }
 
     /**
@@ -549,7 +344,7 @@ class AppContainer(context: Context) {
      * launch pass has already run for this process, and nothing else would settle the Run until the
      * process was killed.
      *
-     * Not `once`, unlike everything above: this is the answer to one sheet, and there is one sheet
+     * Not `once`, unlike the launch passes: this is the answer to one sheet, and there is one sheet
      * per Run.
      */
     fun answerFinishSheet(sessionId: Long, markedAsWalk: Boolean?, writes: suspend () -> Unit) {
@@ -582,25 +377,10 @@ class AppContainer(context: Context) {
      */
     fun stateHeartRates(maxHr: Int?, restingHr: Int?) = statedHeartRates.state(maxHr, restingHr)
 
-    // A lambda rather than `sessionRepository::setStatedProfile`, so building the queue does not
-    // reach through the lazy repository and open the database at container construction.
-    private val movingTimeBackfilled = AtomicBoolean(false)
-    private val interruptedRunsRescued = AtomicBoolean(false)
-    private val recordsSeeded = AtomicBoolean(false)
-    private val effortScored = AtomicBoolean(false)
-    private val weatherBackfilled = AtomicBoolean(false)
-    private val missedRecordsScored = AtomicBoolean(false)
-    private val missedStagesSettled = AtomicBoolean(false)
-    private val walkMarkDebtsPaid = AtomicBoolean(false)
-    private val coachingReconciled = AtomicBoolean(false)
-    private val segmentTimingPaid = AtomicBoolean(false)
-    private val runShapesTaken = AtomicBoolean(false)
-    private val routeShapesTaken = AtomicBoolean(false)
-
     /**
      * When this process began, as far as anything here is concerned — the container is built once,
      * on the way to the first screen, before a Run of this process can exist. See
-     * [rescueInterruptedRunsOnce], which is the whole reason it is recorded.
+     * [launchPassesOver] for the rescue it is recorded for.
      */
     private val processStartedAtMillis = System.currentTimeMillis()
 
@@ -613,6 +393,9 @@ class AppContainer(context: Context) {
     // not happen while this constructor is still running. The read is on [applicationScope]
     // (Dispatchers.IO), so opening the database here never lands on the main thread even though
     // `runningAppContainer()` is called from `onCreate`.
+    //
+    // A lambda rather than `sessionRepository::setStatedProfile`, so building the queue does not
+    // reach through the lazy repository and open the database at container construction.
     private val statedHeartRates = StatedHeartRateQueue(
         scope = applicationScope,
         recover = { sessionRepository.interruptedStatement() }

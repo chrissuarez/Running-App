@@ -306,65 +306,11 @@ class MainActivity : ComponentActivity() {
         // given it, so there is nothing here to do but let them have Home.
         pendingRouteFile = takeRouteFileIn(intent)?.takeUnless { isTaskRoot }
 
-        // Runs already in history predate moving time, so their pace would be measured against a
-        // different clock from today's runs until this fills them in (#163). Off the main thread and
-        // once per process, on a scope that outlives this Activity - see the container.
-        runningAppContainer().backfillMovingTimeOnce()
-
-        // A Run whose process was killed mid-recording never reached the finish that stamps its
-        // totals, so it is sitting in the database invisible to every screen that reads runs. This
-        // is the launch that finishes it (#192).
-        runningAppContainer().rescueInterruptedRunsOnce()
-
-        // The record book only knows about Runs finished since it shipped until this pass measures
-        // the rest of history and awards the medals those Runs earned at the time (#50). Once, in
-        // the background, and off this Activity's lifetime - see the container.
-        runningAppContainer().seedRecordsFromHistoryOnce()
-
-        // A Run whose scoring against the record book was missed — the process killed on the way to
-        // the book, or the write logged and lost — holds no medals and nothing else will ever give
-        // it any. This is the launch that goes back for it (#210).
-        runningAppContainer().scoreMissedRecordsOnce()
-
-        // A Run whose finish sheet was never answered — the process killed between STOP and the
-        // sheet, or a runner who walked away from it — was never put to the Plan at all, so it holds
-        // no graduation and nothing else will ever offer it one. This is the launch that goes back
-        // for it (#297).
-        runningAppContainer().settleMissedStagesOnce()
-
-        // A Run the app agreed was a walk but could not write the mark onto — the record-book mend
-        // threw, or the row's own write did — is judged right and reads wrong, and its settlement is
-        // spent, so nothing above would ever go back for it. This is the launch that puts the mark
-        // back (#371).
-        runningAppContainer().payWalkMarkDebtsOnce()
-
-        // Deleting a Run takes back the coaching that stood on it, but the rows and the coaching
-        // live in two stores and a process reclaimed between them leaves the Prescription standing
-        // on a Run that is gone — with nothing on the running app to notice. This is the launch that
-        // finishes it (#270).
-        runningAppContainer().reconcileCoachingOnce()
-
-        // Every Run recorded before the Effort Score shipped has the beats to work one out and no
-        // Score stored, so history would read as unscored until each Run was run again (#62). This
-        // is the launch that scores it, from the samples those Runs already kept.
-        runningAppContainer().backfillEffortScoresOnce()
-        runningAppContainer().paySegmentTimingOnce()
-
-        // Every Run recorded before the weather shipped has the position and the time to look one up
-        // and nothing stored, and a Run saved offline has the same gap for a different reason. This
-        // is the launch that asks for both (#81, #79). Off this Activity's lifetime — see the
-        // container: the runner backing out mid-pass must not stop it.
-        runningAppContainer().backfillWeatherOnce()
-
-        // Every Run recorded before matched runs shipped has a track and no shape taken off it, so
-        // nothing would recognise the route the runner has run fifty times until they ran it again.
-        // This is the launch that measures them (#73).
-        runningAppContainer().takeRunShapesOnce()
-
-        // And every course kept before this shipped has a line and no shape taken off it, so its own
-        // page would open empty however many times the runner has been round it. This is the launch
-        // that measures the library (#74).
-        runningAppContainer().takeRouteShapesOnce()
+        // Every pass that goes back for work a previous process owed — a Run left interrupted, a
+        // history measured before a feature shipped, a debt written down on the way out. Once per
+        // process, in the background, on a scope that outlives this Activity. The list, its order and
+        // the reason for each pass are in [launchPassesOver] (#477).
+        runningAppContainer().payLaunchPassesOnce()
 
         // Keeps the monthly full archive scheduled (#85). Called on every launch and cheap every
         // time: an existing schedule is left exactly where it is, so this only ever creates the job
