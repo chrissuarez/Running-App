@@ -10,9 +10,8 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
@@ -46,6 +45,9 @@ class AudioCueManagerTest {
     private val reports = mutableListOf<Pair<Boolean, Long>>()
 
     private lateinit var manager: AudioCueManager
+
+    /** The service's hold on the queue — the only way anything is enqueued or let go of. */
+    private lateinit var lease: AudioCueManager.Lease
     private lateinit var listener: UtteranceProgressListener
 
     /** The grace period the service's teardown gives the last sentence, held rather than run. */
@@ -67,7 +69,8 @@ class AudioCueManagerTest {
             onCueActivity = { speaking, sequence -> reports += speaking to sequence },
         )
         manager.initialize()
-        listener = argumentCaptor<UtteranceProgressListener>().run {
+        lease = manager.open()!!
+        listener =argumentCaptor<UtteranceProgressListener>().run {
             verify(tts).setOnUtteranceProgressListener(capture())
             firstValue
         }
@@ -101,9 +104,9 @@ class AudioCueManagerTest {
 
     @Test
     fun `cues enqueued while one is speaking are spoken in full, in order`() {
-        manager.enqueue("first", CuePriority.INSTRUCTION)
-        manager.enqueue("second", CuePriority.INSTRUCTION)
-        manager.enqueue("third", CuePriority.INSTRUCTION)
+        lease.enqueue("first", CuePriority.INSTRUCTION)
+        lease.enqueue("second", CuePriority.INSTRUCTION)
+        lease.enqueue("third", CuePriority.INSTRUCTION)
 
         // Only the first has been handed over: the other two are waiting, not racing it.
         assertEquals(listOf("first"), spokenTexts())
@@ -117,10 +120,10 @@ class AudioCueManagerTest {
 
     @Test
     fun `a higher-priority cue enqueued behind lower ones is spoken first`() {
-        manager.enqueue("speaking now", CuePriority.INFORMATION)
-        manager.enqueue("a split", CuePriority.INFORMATION)
-        manager.enqueue("ease off", CuePriority.COACHING)
-        manager.enqueue("start running", CuePriority.INSTRUCTION)
+        lease.enqueue("speaking now", CuePriority.INFORMATION)
+        lease.enqueue("a split", CuePriority.INFORMATION)
+        lease.enqueue("ease off", CuePriority.COACHING)
+        lease.enqueue("start running", CuePriority.INSTRUCTION)
 
         // The one in flight is not cut off, and the two that jumped it go in priority order.
         assertEquals(listOf("speaking now"), spokenTexts())
@@ -133,10 +136,10 @@ class AudioCueManagerTest {
 
     @Test
     fun `a course alert goes ahead of everything waiting and cuts nothing off`() {
-        manager.enqueue("split two kilometers", CuePriority.INFORMATION)
-        manager.enqueue("ease off slightly", CuePriority.COACHING)
-        manager.enqueue("start walking", CuePriority.INSTRUCTION)
-        manager.enqueue(CourseAlert.OFF_COURSE.spoken, CuePriority.NAVIGATION)
+        lease.enqueue("split two kilometers", CuePriority.INFORMATION)
+        lease.enqueue("ease off slightly", CuePriority.COACHING)
+        lease.enqueue("start walking", CuePriority.INSTRUCTION)
+        lease.enqueue(CourseAlert.OFF_COURSE.spoken, CuePriority.NAVIGATION)
 
         // The split is half-said and stays half-said: the runner going the wrong way is told at the
         // end of that sentence and not over the top of it (#58).
@@ -154,10 +157,10 @@ class AudioCueManagerTest {
 
     @Test
     fun `order within a level is first in, first out`() {
-        manager.enqueue("in flight", CuePriority.INSTRUCTION)
-        manager.enqueue("split one", CuePriority.INFORMATION)
-        manager.enqueue("split two", CuePriority.INFORMATION)
-        manager.enqueue("split three", CuePriority.INFORMATION)
+        lease.enqueue("in flight", CuePriority.INSTRUCTION)
+        lease.enqueue("split one", CuePriority.INFORMATION)
+        lease.enqueue("split two", CuePriority.INFORMATION)
+        lease.enqueue("split three", CuePriority.INFORMATION)
 
         repeat(3) { finishCurrent() }
         assertEquals(listOf("in flight", "split one", "split two", "split three"), spokenTexts())
@@ -165,11 +168,11 @@ class AudioCueManagerTest {
 
     @Test
     fun `a cue withdrawn before it is spoken is not spoken, and the ones around it still are`() {
-        manager.enqueue("in flight", CuePriority.INSTRUCTION)
-        val turnaround = manager.enqueue("turn around", CuePriority.INFORMATION)!!
-        manager.enqueue("a split", CuePriority.INFORMATION)
+        lease.enqueue("in flight", CuePriority.INSTRUCTION)
+        val turnaround = lease.enqueue("turn around", CuePriority.INFORMATION)!!
+        lease.enqueue("a split", CuePriority.INFORMATION)
 
-        manager.withdrawAll(listOf(turnaround))
+        lease.withdrawAll(listOf(turnaround))
         repeat(2) { finishCurrent() }
 
         assertEquals(listOf("in flight", "a split"), spokenTexts())
@@ -181,14 +184,14 @@ class AudioCueManagerTest {
      */
     @Test
     fun `a set of cues withdrawn together is not spoken, and the sentence in flight still finishes`() {
-        manager.enqueue("in flight", CuePriority.INSTRUCTION)
+        lease.enqueue("in flight", CuePriority.INSTRUCTION)
         val waiting = listOf(
-            manager.enqueue("start running", CuePriority.INSTRUCTION)!!,
-            manager.enqueue("ease off", CuePriority.COACHING)!!,
-            manager.enqueue("a split", CuePriority.INFORMATION)!!,
+            lease.enqueue("start running", CuePriority.INSTRUCTION)!!,
+            lease.enqueue("ease off", CuePriority.COACHING)!!,
+            lease.enqueue("a split", CuePriority.INFORMATION)!!,
         )
 
-        manager.withdrawAll(waiting)
+        lease.withdrawAll(waiting)
         finishCurrent()
 
         assertEquals(listOf("in flight"), spokenTexts())
@@ -196,11 +199,11 @@ class AudioCueManagerTest {
 
     @Test
     fun `withdrawing a set with nothing in it, or cues already spoken, does nothing`() {
-        val spoken = manager.enqueue("in flight", CuePriority.INSTRUCTION)!!
-        manager.enqueue("a split", CuePriority.INFORMATION)
+        val spoken = lease.enqueue("in flight", CuePriority.INSTRUCTION)!!
+        lease.enqueue("a split", CuePriority.INFORMATION)
 
-        manager.withdrawAll(emptyList())
-        manager.withdrawAll(listOf(spoken, 9999L))
+        lease.withdrawAll(emptyList())
+        lease.withdrawAll(listOf(spoken, 9999L))
         finishCurrent()
 
         assertEquals(listOf("in flight", "a split"), spokenTexts())
@@ -208,8 +211,8 @@ class AudioCueManagerTest {
 
     @Test
     fun `focus is taken once when the queue starts speaking and released once when it drains`() {
-        manager.enqueue("first", CuePriority.INSTRUCTION)
-        manager.enqueue("second", CuePriority.INSTRUCTION)
+        lease.enqueue("first", CuePriority.INSTRUCTION)
+        lease.enqueue("second", CuePriority.INSTRUCTION)
         finishCurrent()
 
         // Both cues, one grant: focus is the queue's, not each cue's, so music ducks once and
@@ -226,7 +229,7 @@ class AudioCueManagerTest {
         assertEquals(listOf(true to 1L, false to 2L), reports)
 
         // And a cue after the drain takes focus again.
-        manager.enqueue("later", CuePriority.INSTRUCTION)
+        lease.enqueue("later", CuePriority.INSTRUCTION)
         @Suppress("DEPRECATION")
         verify(audioManager, times(2)).requestAudioFocus(anyOrNull(), any(), any())
         assertEquals(listOf(true to 1L, false to 2L, true to 3L), reports)
@@ -234,8 +237,8 @@ class AudioCueManagerTest {
 
     @Test
     fun `a cue whose engine callback never arrives does not wedge the queue`() {
-        manager.enqueue("silent failure", CuePriority.INSTRUCTION)
-        manager.enqueue("next", CuePriority.INSTRUCTION)
+        lease.enqueue("silent failure", CuePriority.INSTRUCTION)
+        lease.enqueue("next", CuePriority.INSTRUCTION)
 
         elapse(TIMEOUT_MS + 1)
 
@@ -250,9 +253,9 @@ class AudioCueManagerTest {
         whenever(tts.speak(eq("refused"), any(), anyOrNull(), anyOrNull()))
             .thenReturn(TextToSpeech.ERROR)
 
-        manager.enqueue("in flight", CuePriority.INSTRUCTION)
-        manager.enqueue("refused", CuePriority.INSTRUCTION)
-        manager.enqueue("next", CuePriority.INSTRUCTION)
+        lease.enqueue("in flight", CuePriority.INSTRUCTION)
+        lease.enqueue("refused", CuePriority.INSTRUCTION)
+        lease.enqueue("next", CuePriority.INSTRUCTION)
 
         // The refused cue was never going to report back, so the queue moves itself past it rather
         // than waiting on a callback that is not coming.
@@ -267,7 +270,7 @@ class AudioCueManagerTest {
 
     @Test
     fun `the safety timeout stops the engine before letting go of focus`() {
-        manager.enqueue(TEXT, CuePriority.INFORMATION)
+        lease.enqueue(TEXT, CuePriority.INFORMATION)
         elapse(TIMEOUT_MS + 1)
 
         // Focus goes back on the pre-O path here: `Build.VERSION.SDK_INT` is 0 in a plain JVM test,
@@ -281,7 +284,7 @@ class AudioCueManagerTest {
 
     @Test
     fun `the safety timeout reports quiet exactly once, whatever the engine says after`() {
-        manager.enqueue(TEXT, CuePriority.INFORMATION)
+        lease.enqueue(TEXT, CuePriority.INFORMATION)
         val utteranceId = handedToEngine().last().second
         elapse(TIMEOUT_MS + 1)
 
@@ -295,7 +298,7 @@ class AudioCueManagerTest {
 
     @Test
     fun `a cue that finishes inside the timeout is untouched by it`() {
-        manager.enqueue(TEXT, CuePriority.INFORMATION)
+        lease.enqueue(TEXT, CuePriority.INFORMATION)
         elapse(TIMEOUT_MS - 1)
         finishCurrent()
 
@@ -311,11 +314,11 @@ class AudioCueManagerTest {
 
     @Test
     fun `an engine that reports error or stop for itself is untouched by the timeout`() {
-        manager.enqueue(TEXT, CuePriority.INFORMATION)
+        lease.enqueue(TEXT, CuePriority.INFORMATION)
         listener.onError(handedToEngine().last().second)
         assertEquals(listOf(true to 1L, false to 2L), reports)
 
-        manager.enqueue(TEXT, CuePriority.INFORMATION)
+        lease.enqueue(TEXT, CuePriority.INFORMATION)
         listener.onStop(handedToEngine().last().second, true)
         assertEquals(listOf(true to 1L, false to 2L, true to 3L, false to 4L), reports)
 
@@ -326,10 +329,10 @@ class AudioCueManagerTest {
 
     @Test
     fun `the timeout for a cue that has been replaced never touches the cue speaking now`() {
-        manager.enqueue(TEXT, CuePriority.INFORMATION)
+        lease.enqueue(TEXT, CuePriority.INFORMATION)
         elapse(TIMEOUT_MS / 2)
         finishCurrent()
-        manager.enqueue(TEXT, CuePriority.INFORMATION)
+        lease.enqueue(TEXT, CuePriority.INFORMATION)
         reports.clear()
 
         // Only the second cue's timeout is live; the first one's was cancelled when it finished.
@@ -342,11 +345,11 @@ class AudioCueManagerTest {
 
     @Test
     fun `the engine goes at once when the service is destroyed with nothing being said`() {
-        manager.enqueue(TEXT, CuePriority.INFORMATION)
+        lease.enqueue(TEXT, CuePriority.INFORMATION)
         finishCurrent()
         reports.clear()
 
-        manager.shutdown()
+        lease.shutdown()
 
         verify(tts).shutdown()
         // Nothing to report: the queue had already drained and said so.
@@ -355,9 +358,9 @@ class AudioCueManagerTest {
 
     @Test
     fun `a sentence being said when the service is destroyed finishes before the engine goes`() {
-        manager.enqueue("in flight", CuePriority.INSTRUCTION)
+        lease.enqueue("in flight", CuePriority.INSTRUCTION)
 
-        manager.shutdown()
+        lease.shutdown()
 
         // The engine is still up, and what it is saying was neither stopped nor cut short: that
         // truncation mid-word is what a backgrounded STOP used to do (#220).
@@ -370,8 +373,8 @@ class AudioCueManagerTest {
 
     @Test
     fun `focus goes back when the last sentence ends, not when the service is destroyed`() {
-        manager.enqueue("in flight", CuePriority.INSTRUCTION)
-        manager.shutdown()
+        lease.enqueue("in flight", CuePriority.INSTRUCTION)
+        lease.shutdown()
 
         @Suppress("DEPRECATION")
         verify(audioManager, never()).abandonAudioFocus(anyOrNull())
@@ -385,10 +388,10 @@ class AudioCueManagerTest {
 
     @Test
     fun `a cue still waiting when the service is destroyed is never spoken`() {
-        manager.enqueue("in flight", CuePriority.INSTRUCTION)
-        manager.enqueue("waiting", CuePriority.INSTRUCTION)
+        lease.enqueue("in flight", CuePriority.INSTRUCTION)
+        lease.enqueue("waiting", CuePriority.INSTRUCTION)
 
-        manager.shutdown()
+        lease.shutdown()
         finishCurrent()
 
         assertEquals(listOf("in flight"), spokenTexts())
@@ -396,10 +399,10 @@ class AudioCueManagerTest {
 
     @Test
     fun `nothing enqueued after the service is destroyed is spoken`() {
-        manager.shutdown()
+        lease.shutdown()
 
         // No ticket either: there is no promise to take back, because none was made.
-        assertNull(manager.enqueue("too late", CuePriority.INSTRUCTION))
+        assertNull(lease.enqueue("too late", CuePriority.INSTRUCTION))
 
         assertEquals(emptyList<String>(), spokenTexts())
         assertEquals(emptyList<Pair<Boolean, Long>>(), reports)
@@ -407,8 +410,8 @@ class AudioCueManagerTest {
 
     @Test
     fun `a last sentence the engine never finishes does not keep the engine alive forever`() {
-        manager.enqueue("in flight", CuePriority.INSTRUCTION)
-        manager.shutdown()
+        lease.enqueue("in flight", CuePriority.INSTRUCTION)
+        lease.shutdown()
         verify(tts, never()).shutdown()
 
         // The grace period is a clock of its own, so the wait is bounded whatever becomes of the
@@ -423,8 +426,8 @@ class AudioCueManagerTest {
 
     @Test
     fun `the engine is not torn down twice when the last sentence ends after the grace period`() {
-        manager.enqueue("in flight", CuePriority.INSTRUCTION)
-        manager.shutdown()
+        lease.enqueue("in flight", CuePriority.INSTRUCTION)
+        lease.shutdown()
         shutdownBackstop!!.invoke()
 
         // The engine catching up afterwards changes nothing: it has already gone.
@@ -436,12 +439,12 @@ class AudioCueManagerTest {
 
     @Test
     fun `a Run started during the last sentence joins the same queue and waits for that sentence`() {
-        manager.enqueue("last words", CuePriority.INSTRUCTION)
-        manager.shutdown()
+        lease.enqueue("last words", CuePriority.INSTRUCTION)
+        lease.shutdown()
 
         // The next service takes the queue back rather than building a second engine beside it.
-        assertTrue(manager.reopen())
-        manager.enqueue("start running", CuePriority.INSTRUCTION)
+        val next = manager.open()!!
+        next.enqueue("start running", CuePriority.INSTRUCTION)
 
         // One voice: the new Run's first cue is not spoken over the old Run's last words (#274).
         assertEquals(listOf("last words"), spokenTexts())
@@ -451,11 +454,39 @@ class AudioCueManagerTest {
     }
 
     @Test
+    fun `a late cue from the old service is refused once the next one has taken the queue`() {
+        lease.enqueue("last words", CuePriority.INSTRUCTION)
+        lease.shutdown()
+        val next = manager.open()!!
+
+        // A producer of the old service that read its hold before the service went away (Codex,
+        // #274): the old hold is over, so the cue does not land in the new Run.
+        assertNull(lease.enqueue("stale split", CuePriority.INFORMATION))
+        next.enqueue("start running", CuePriority.INSTRUCTION)
+
+        finishCurrent()
+        finishCurrent()
+        assertEquals(listOf("last words", "start running"), spokenTexts())
+    }
+
+    @Test
+    fun `the old service letting go again does not end the new Run's hold`() {
+        lease.enqueue("last words", CuePriority.INSTRUCTION)
+        lease.shutdown()
+        val next = manager.open()!!
+
+        lease.shutdown()
+
+        assertNotNull(next.enqueue("start running", CuePriority.INSTRUCTION))
+        finishCurrent()
+        assertEquals(listOf("last words", "start running"), spokenTexts())
+    }
+
+    @Test
     fun `focus is held across the handover and given back once, when the new Run's cue ends`() {
-        manager.enqueue("last words", CuePriority.INSTRUCTION)
-        manager.shutdown()
-        manager.reopen()
-        manager.enqueue("start running", CuePriority.INSTRUCTION)
+        lease.enqueue("last words", CuePriority.INSTRUCTION)
+        lease.shutdown()
+        manager.open()!!.enqueue("start running", CuePriority.INSTRUCTION)
 
         // The old Run's last sentence ending is not the queue draining: music stays ducked.
         finishCurrent()
@@ -470,11 +501,10 @@ class AudioCueManagerTest {
 
     @Test
     fun `the old service's grace period does not tear down a queue taken back`() {
-        manager.enqueue("last words", CuePriority.INSTRUCTION)
-        manager.shutdown()
+        lease.enqueue("last words", CuePriority.INSTRUCTION)
+        lease.shutdown()
         val oldBackstop = shutdownBackstop!!
-        manager.reopen()
-        manager.enqueue("start running", CuePriority.INSTRUCTION)
+        manager.open()!!.enqueue("start running", CuePriority.INSTRUCTION)
 
         oldBackstop.invoke()
 
@@ -486,13 +516,13 @@ class AudioCueManagerTest {
 
     @Test
     fun `a grace period from an earlier goodbye does not cut short a later one`() {
-        manager.enqueue("last words", CuePriority.INSTRUCTION)
-        manager.shutdown()
+        lease.enqueue("last words", CuePriority.INSTRUCTION)
+        lease.shutdown()
         val firstBackstop = shutdownBackstop!!
-        manager.reopen()
-        manager.enqueue("start running", CuePriority.INSTRUCTION)
+        val next = manager.open()!!
+        next.enqueue("start running", CuePriority.INSTRUCTION)
         finishCurrent()
-        manager.shutdown()
+        next.shutdown()
 
         // The first goodbye's clock is not the second one's: "start running" still has its own.
         firstBackstop.invoke()
@@ -504,17 +534,10 @@ class AudioCueManagerTest {
 
     @Test
     fun `a queue whose engine has gone cannot be taken back`() {
-        manager.shutdown()
+        lease.shutdown()
 
-        assertFalse(manager.reopen())
-        assertNull(manager.enqueue("too late", CuePriority.INSTRUCTION))
-    }
-
-    @Test
-    fun `a queue that was never let go of is simply still open`() {
-        assertTrue(manager.reopen())
-        manager.enqueue(TEXT, CuePriority.INSTRUCTION)
-        assertEquals(listOf(TEXT), spokenTexts())
+        assertNull(manager.open())
+        assertNull(lease.enqueue("too late", CuePriority.INSTRUCTION))
     }
 
     private companion object {

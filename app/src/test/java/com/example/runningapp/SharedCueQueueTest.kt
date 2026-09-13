@@ -4,8 +4,8 @@ import android.media.AudioManager
 import android.speech.tts.TextToSpeech
 import kotlinx.coroutines.test.TestScope
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotSame
-import org.junit.Assert.assertSame
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
@@ -14,10 +14,10 @@ import org.mockito.kotlin.whenever
 
 /**
  * One voice across the Run's service coming and going (#274): a service created while the last one's
- * sentence is still being said borrows that queue rather than building a second engine beside it.
+ * sentence is still being said takes that queue back rather than building a second engine beside it.
  *
- * The queue's own behaviour across the handover — the new cue waiting, focus held — is
- * [AudioCueManagerTest]'s. This is only which queue a service is handed.
+ * The queue's own behaviour across the handover — the new cue waiting, focus held, the old hold
+ * refused — is [AudioCueManagerTest]'s. This is only which queue a service is handed.
  */
 class SharedCueQueueTest {
 
@@ -39,21 +39,23 @@ class SharedCueQueueTest {
 
     @Test
     fun `the first service builds the queue`() {
-        val queue = shared.acquire()
+        assertNotNull(shared.acquire().enqueue("start running", CuePriority.INSTRUCTION))
 
-        assertEquals(listOf(queue), built)
+        assertEquals(1, built.size)
     }
 
     @Test
-    fun `a service created during the last sentence is handed the same queue`() {
+    fun `a service created during the last sentence takes the same queue back`() {
         val old = shared.acquire()
         old.enqueue("last words", CuePriority.INSTRUCTION)
         old.shutdown()
 
         val next = shared.acquire()
 
-        assertSame(old, next)
         assertEquals(1, built.size)
+        assertNotNull(next.enqueue("start running", CuePriority.INSTRUCTION))
+        // And the old service's hold on it is over (#274).
+        assertNull(old.enqueue("late", CuePriority.INSTRUCTION))
     }
 
     @Test
@@ -64,7 +66,7 @@ class SharedCueQueueTest {
 
         val next = shared.acquire()
 
-        assertNotSame(old, next)
         assertEquals(2, built.size)
+        assertNotNull(next.enqueue("start running", CuePriority.INSTRUCTION))
     }
 }

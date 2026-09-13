@@ -26,8 +26,9 @@ import java.util.TimerTask
  *
  * **The queue never drops a cue.** There is no expiry and no staleness rule: everything enqueued is
  * eventually spoken, however late. The one way a cue leaves unspoken is its producer taking it back
- * with [withdrawAll] — the Run does that with the halfway turnaround when it enters the cool-down,
- * because the cue has stopped being true. Withdrawal is the producer's act, not the queue's.
+ * with [Lease.withdrawAll] — the Run does that with the halfway turnaround when it enters the
+ * cool-down, because the cue has stopped being true. Withdrawal is the producer's act, not the
+ * queue's.
  *
  * Audio focus belongs to the queue rather than to each cue: it is taken when the queue starts
  * speaking and given back when it drains, so music ducks once across a run of cues instead of
@@ -41,7 +42,7 @@ class AudioCueManager(
     private val audioManager: AudioManager?,
     /**
      * Where the per-cue timeouts run. Process-wide, not the service's: the queue outlives the
-     * service that let go of it while a new Run takes it back ([reopen], #274), and a timeout
+     * service that let go of it while a new Run takes it back ([open], #274), and a timeout
      * launched in a cancelled scope would never fire.
      */
     private val scope: CoroutineScope,
@@ -49,7 +50,7 @@ class AudioCueManager(
     private val cueFocusTimeoutMs: Long = 8_000L,
     /**
      * How long the last sentence has to finish once the service starts going away, before the
-     * engine is torn down over the top of it. See [shutdown].
+     * engine is torn down over the top of it. See [Lease.shutdown].
      */
     private val shutdownGraceMs: Long = cueFocusTimeoutMs,
     /**
@@ -90,7 +91,7 @@ class AudioCueManager(
 
     /**
      * The service has let go: nothing more is taken, and the engine goes with the last cue — unless
-     * the next service takes the queue back first ([reopen]).
+     * the next service takes the queue back first ([open]).
      */
     private var isShuttingDown = false
 
@@ -98,10 +99,61 @@ class AudioCueManager(
     private var isEngineDown = false
 
     /**
-     * Which goodbye a grace period belongs to. A queue taken back ([reopen]) and let go of again
+     * Which goodbye a grace period belongs to. A queue taken back ([open]) and let go of again
      * starts a clock of its own, and the first goodbye's clock must not end the second's sentence.
      */
     private var shutdownGeneration = 0L
+
+    /** The one borrower who may speak through this queue, or null before the first ([open]). */
+    private var holder: Lease? = null
+
+    /**
+     * One service instance's hold on the queue, from [open] until [Lease.shutdown] (#274). The only
+     * way to enqueue or to let go.
+     *
+     * A hold and not the queue itself, because a queue taken back by the next Run is the same
+     * object the last Run was speaking through, and the last Run's producers can still be holding
+     * it: a cue from a thread that read the reference just before its service went away would
+     * otherwise land in the new Run. Clearing the service's field does not stop that — the thread
+     * already has the reference. Asking under the queue's lock whether this hold is still the
+     * current one does, because [open] swaps the holder under the same lock.
+     */
+    inner class Lease internal constructor() {
+        /**
+         * Say this, in its turn. Returns the ticket the cue can later be taken back by
+         * ([Lease.withdrawAll]); a caller with nothing to take back can ignore it.
+         *
+         * Null when there was no queue left to join: this hold has let go ([shutdown]), or the next
+         * Run has taken the queue since ([open]).
+         */
+        fun enqueue(text: String, priority: CuePriority): Long? = enqueueFor(this, text, priority)
+
+        /** See [AudioCueManager.withdrawAll]. */
+        fun withdrawAll(tickets: Collection<Long>) = this@AudioCueManager.withdrawAll(tickets)
+
+        /**
+         * The service is going away and lets go of the queue. Nothing waiting is spoken after
+         * this, which is that Run ending rather than the queue dropping a cue. The engine goes with
+         * the queue's last sentence, unless a new Run takes the queue back before then ([open]).
+         *
+         * The sentence being said when this lands is not cut off: the engine goes when that
+         * sentence ends — or after [shutdownGraceMs] if the engine never reports back, which is
+         * the same refusal to wedge that the per-cue timeout is. Tearing the engine down over the
+         * top of a cue is what used to truncate the last words of a run stopped from the
+         * notification (#220).
+         *
+         * In practice there is nothing waiting by the time this is reached, because the end of a
+         * Run takes its cues back first (`OutstandingCues`). Clearing here is the backstop for the
+         * service going away without a Run ending.
+         *
+         * There is no session-stop counterpart. Letting go of audio focus when a Run ends used to
+         * be a step of its own, because focus was held per cue and a cue could hold it after the
+         * Run was over; the queue lets go of it when it drains, which is at most a sentence away.
+         *
+         * Inert from a hold that is no longer the current one: the queue is the next Run's now.
+         */
+        fun shutdown() = settle(beginShutdown(this))
+    }
 
     /** One report of the app starting or stopping talking, stamped in the order it happened. */
     private data class CueActivity(val speaking: Boolean, val sequence: Long)
@@ -138,19 +190,13 @@ class AudioCueManager(
         })
     }
 
-    /**
-     * Say this, in its turn. Returns the ticket the cue can later be taken back by ([withdrawAll]);
-     * a caller with nothing to take back can ignore it.
-     *
-     * Null when there was no queue left to join, which is only ever the service letting go of it
-     * underneath the caller ([shutdown]) and no Run having taken it back since ([reopen]).
-     */
-    fun enqueue(text: String, priority: CuePriority): Long? {
+    /** [Lease.enqueue], for [lease]. */
+    private fun enqueueFor(lease: Lease, text: String, priority: CuePriority): Long? {
         val (ticket, activity) = synchronized(this) {
-            if (isShuttingDown) {
-                // The engine is on its way out, so there is nothing to promise and no ticket to
-                // hand back for a promise that is not being made.
-                Log.w(logTag, "A cue arrived as the service was going away, and is not queued")
+            if (isShuttingDown || lease !== holder) {
+                // The queue is on its way out, or is the next Run's now, so there is nothing to
+                // promise and no ticket to hand back for a promise that is not being made.
+                Log.w(logTag, "A cue arrived after its service let go, and is not queued")
                 return null
             }
             val cue = QueuedCue(++ticketCounter, text, priority)
@@ -178,7 +224,7 @@ class AudioCueManager(
      * course taking back the pair it left waiting (#377).
      */
     @Synchronized
-    fun withdrawAll(tickets: Collection<Long>) {
+    private fun withdrawAll(tickets: Collection<Long>) {
         if (tickets.isEmpty()) return
         val wanted = tickets.toHashSet()
         if (queue.removeAll { it.ticket in wanted }) {
@@ -186,31 +232,10 @@ class AudioCueManager(
         }
     }
 
-    /**
-     * The service is going away and lets go of the queue. Nothing waiting is spoken after this,
-     * which is that Run ending rather than the queue dropping a cue. The engine goes with the
-     * queue's last sentence, unless a new Run takes the queue back before then ([reopen], #274).
-     *
-     * The sentence being said when this lands is not cut off: the engine goes when that sentence
-     * ends — or after [shutdownGraceMs] if the engine never reports back, which is the same refusal
-     * to wedge that the per-cue timeout is. Tearing the engine down over the top of a cue is what
-     * used to truncate the last words of a run stopped from the notification (#220).
-     *
-     * In practice there is nothing waiting by the time this is reached, because the end of a Run
-     * takes its cues back first (`OutstandingCues`). Clearing here is the backstop for the service
-     * going away without a Run ending.
-     *
-     * There is no session-stop counterpart. Letting go of audio focus when a Run ends used to be a
-     * step of its own, because focus was held per cue and a cue could hold it after the Run was
-     * over; the queue lets go of it when it drains, which is at most a sentence away.
-     */
-    fun shutdown() {
-        settle(beginShutdown())
-    }
-
+    /** [Lease.shutdown], for [lease]. */
     @Synchronized
-    private fun beginShutdown(): Settlement {
-        if (isShuttingDown) return Settlement()
+    private fun beginShutdown(lease: Lease): Settlement {
+        if (isShuttingDown || lease !== holder) return Settlement()
         isShuttingDown = true
         queue.clear()
 
@@ -223,24 +248,27 @@ class AudioCueManager(
     }
 
     /**
-     * Take the queue back while its last sentence is still being said — a new Run started before
-     * the old one's last words were over (#274). True if it is open again, and false if the engine
-     * has already gone, in which case the caller needs a queue of its own.
+     * A hold on the queue for one service instance — the first, or a new Run taking it back while
+     * the last one's final sentence is still being said (#274). Null if the engine has already
+     * gone, in which case the caller needs a queue of its own.
+     *
+     * Any earlier hold stops working here, in the same act, so nothing the last Run still has in
+     * flight can speak into this one ([Lease]).
      *
      * The sentence carries on, and whatever is enqueued next waits for it like any other cue. That
      * is the whole point: a second engine built beside this one would say the new Run's first cue
      * over the old Run's last words, and this queue letting go of audio focus as that sentence ended
      * would stop the music ducking under a cue still being said. One queue has neither problem.
      *
-     * The queue the old Run left is not given back — [shutdown] emptied it, and the old Run had
-     * taken its cues back before that anyway.
+     * The queue the old Run left is not given back — [Lease.shutdown] emptied it, and the old Run
+     * had taken its cues back before that anyway.
      */
     @Synchronized
-    fun reopen(): Boolean {
-        if (isEngineDown) return false
+    fun open(): Lease? {
+        if (isEngineDown) return null
         if (isShuttingDown) Log.d(logTag, "Queue taken back during its last sentence")
         isShuttingDown = false
-        return true
+        return Lease().also { holder = it }
     }
 
     /**
@@ -248,7 +276,7 @@ class AudioCueManager(
      * ending, and holding audio focus for a cue the engine has gone quiet on is worse than the
      * words that are lost.
      *
-     * Only for the goodbye that started this clock: a queue taken back since ([reopen]) is not
+     * Only for the goodbye that started this clock: a queue taken back since ([open]) is not
      * going away, and one let go of again is timing a sentence of its own.
      */
     @Synchronized
