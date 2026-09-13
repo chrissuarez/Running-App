@@ -35,9 +35,10 @@ interface RunShapeStore {
  * Whether two readings of the same Run would have the same shape taken from them — everything the
  * shaping decides by, and nothing else (#73).
  *
- * `contestsAs`'s rule and for its reason: a Run's feel, its note and its Effort Score can all be
- * written while its track is being measured, and none of them can move a waypoint, so none of them
- * is a reason to throw a measurement away. What is here is the three things
+ * The record book's `contestsAs` rule ([com.example.runningapp.records.RecordBook]) and for its
+ * reason: a Run's feel, its note and its Effort Score can all be written while its track is being
+ * measured, and none of them can move a waypoint, so none of them is a reason to throw a
+ * measurement away. What is here is the three things
  * [mayBeMatchedToOtherRuns] asks — a Run finishing, being marked a Walk, becoming a treadmill Run —
  * because each of those changes the shape the Run should hold from a route to nothing, or back.
  *
