@@ -144,7 +144,7 @@ fun SessionDetailScreen(
     // Back is deliberately left open throughout, so a delete that never lands lets the runner walk
     // away rather than trapping them. But while a Run is on its way out, leaving its page leaves
     // *every* page of that Run: [onBack] is wired to the same call the delete landing makes
-    // ([com.example.runningapp.leaveSessionDetail]), not to one step back. A Run's page can be
+    // ([com.example.runningapp.navigation.leaveRunPage]), not to one step back. A Run's page can be
     // on the stack twice — History → this Run → its group of matched Runs → this Run — and one step back
     // would uncover the page in between. That page is not a page *about* this Run, so nothing above
     // tells it anything is happening and it stays fully live: the runner can open another Run from

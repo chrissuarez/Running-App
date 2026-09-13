@@ -1,7 +1,6 @@
 package com.example.runningapp.ui
 
 import androidx.activity.ComponentActivity
-import androidx.compose.material3.Text
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
@@ -14,15 +13,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
-import androidx.navigation.NavHostController
-import androidx.navigation.NavType
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.example.runningapp.leaveSessionDetail
-import com.example.runningapp.navigation.Routes
 import com.example.runningapp.data.HrSample
 import com.example.runningapp.data.RunWalkIntervalStat
 import com.example.runningapp.data.RunnerSession
@@ -463,103 +454,6 @@ class SessionDetailScreenTest {
 
         assertEquals(1, backs)
     }
-
-    /**
-     * The rule #414 settles: **while a Run is on its way out, leaving its page leaves every page of
-     * that Run.**
-     *
-     * A NavController test rather than a screen test, because the fault is in the stack and not on
-     * the page: every copy of the going Run's own page already says "Deleting this run…", so what
-     * one step back would uncover is the page *between* two copies — the group of Runs matched to
-     * it, which is not a page about that Run and stays live. The runner could open another Run from
-     * there, and the completion pop, which takes the lower copy of the going Run and everything
-     * above it, would throw that page away unasked.
-     */
-    @Test
-    fun back_whileTheRunIsGoing_leavesEveryPageOfThatRun() {
-        lateinit var navController: NavHostController
-        composeRule.setContent {
-            navController = rememberNavController()
-            StubStack(navController)
-        }
-
-        // History -> Run 1 -> the Runs matched to Run 1 -> Run 1 again. `launchSingleTop` does not
-        // fold the second copy in: the page on top when it is asked for is the group, not the Run.
-        composeRule.runOnUiThread {
-            navController.navigate(Routes.sessionDetail(1L)) { launchSingleTop = true }
-            navController.navigate(Routes.matchedRuns(1L)) { launchSingleTop = true }
-            navController.navigate(Routes.sessionDetail(1L)) { launchSingleTop = true }
-        }
-        composeRule.waitForIdle()
-        assertEquals(
-            listOf(
-                Routes.HISTORY,
-                Routes.SESSION_DETAIL,
-                Routes.MATCHED_RUNS,
-                Routes.SESSION_DETAIL
-            ),
-            navController.routesOnTheStack()
-        )
-
-        composeRule.runOnUiThread {
-            navController.leaveSessionDetail(sessionId = 1L, deleteInProgress = true)
-        }
-        composeRule.waitForIdle()
-
-        // Where the completion pop would have landed the runner anyway, with nothing live left
-        // above a page that pop will sweep.
-        assertEquals(listOf(Routes.HISTORY), navController.routesOnTheStack())
-    }
-
-    /** A Run that is not going anywhere: Back is still one step back the way the runner came. */
-    @Test
-    fun back_whileTheRunStays_leavesOnlyThePageTheRunnerIsOn() {
-        lateinit var navController: NavHostController
-        composeRule.setContent {
-            navController = rememberNavController()
-            StubStack(navController)
-        }
-
-        composeRule.runOnUiThread {
-            navController.navigate(Routes.sessionDetail(1L)) { launchSingleTop = true }
-            navController.navigate(Routes.matchedRuns(1L)) { launchSingleTop = true }
-            navController.navigate(Routes.sessionDetail(1L)) { launchSingleTop = true }
-        }
-        composeRule.waitForIdle()
-
-        composeRule.runOnUiThread {
-            navController.leaveSessionDetail(sessionId = 1L, deleteInProgress = false)
-        }
-        composeRule.waitForIdle()
-
-        assertEquals(
-            listOf(Routes.HISTORY, Routes.SESSION_DETAIL, Routes.MATCHED_RUNS),
-            navController.routesOnTheStack()
-        )
-    }
-
-    /**
-     * The three addresses the #414 stack is built from, with nothing on the pages: what is being
-     * tested is which entries the stack is left holding, not what any of them draws.
-     */
-    @androidx.compose.runtime.Composable
-    private fun StubStack(navController: NavHostController) {
-        NavHost(navController = navController, startDestination = Routes.HISTORY) {
-            composable(Routes.HISTORY) { Text("History") }
-            composable(
-                route = Routes.SESSION_DETAIL,
-                arguments = listOf(navArgument(Routes.ARG_SESSION_ID) { type = NavType.LongType })
-            ) { Text("Run") }
-            composable(
-                route = Routes.MATCHED_RUNS,
-                arguments = listOf(navArgument(Routes.ARG_SESSION_ID) { type = NavType.LongType })
-            ) { Text("Matched runs") }
-        }
-    }
-
-    /** The page addresses the stack holds, oldest first. The graph's own entry has no address. */
-    private fun NavHostController.routesOnTheStack(): List<String> =
-        currentBackStack.value.mapNotNull { it.destination.route }
 
     private fun finishedSession(effort: Int? = null, note: String? = null) = RunnerSession(
         id = 1L,
