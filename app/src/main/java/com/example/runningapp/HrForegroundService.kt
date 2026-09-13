@@ -18,7 +18,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.media.AudioManager
 import android.os.Binder
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -27,7 +26,6 @@ import android.os.IBinder
 import android.app.PendingIntent
 import android.os.Handler
 import android.os.HandlerThread
-import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
@@ -215,7 +213,7 @@ data class HrState(
     val scannedDevices: List<ScannedStrap> get() = acquisition.scanned
 }
 
-class HrForegroundService : Service(), TextToSpeech.OnInitListener {
+class HrForegroundService : Service() {
 
     private val binder = LocalBinder()
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -387,9 +385,7 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
     private var acquisitionState = AcquisitionState()
     private var isActivityBound = false
     
-    // TTS & Audio Focus
-    private var tts: TextToSpeech? = null
-    private var audioManager: AudioManager? = null
+    // Borrowed from the process for this instance's life, and let go of in onDestroy (#274).
     private var audioCueManager: AudioCueManager? = null
 
     /**
@@ -1562,24 +1558,11 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
         
-        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        tts = TextToSpeech(this, this)
-        tts?.let {
-            audioCueManager = AudioCueManager(
-                it,
-                audioManager,
-                serviceScope,
-                TAG,
-                // Nothing acts on this; it is here to be read in logcat when a run's cues are
-                // being checked on the phone, which is the only way this ticket's back-to-back
-                // rule can be verified (#53).
-                onCueActivity = { speaking, sequence ->
-                    Log.d(TAG, "Cue queue ${if (speaking) "speaking" else "quiet"} (seq=$sequence)")
-                },
-            )
-        }
-        
-        
+        // The process's one queue, not one of this instance's own: a Run started while the last
+        // one's final sentence is still being said joins that sentence's queue rather than
+        // speaking over it (#274).
+        audioCueManager = appContainer.cueQueue.acquire()
+
         database = appContainer.database
         sessionRepository = appContainer.sessionRepository
         
@@ -1858,10 +1841,6 @@ class HrForegroundService : Service(), TextToSpeech.OnInitListener {
         releaseStrapAndTimer()
     }
 
-    override fun onInit(status: Int) {
-        audioCueManager?.onTtsInit(status)
-    }
-    
     /**
      * Say something, in its turn among everything else waiting (#53). The one way anything in this
      * app speaks — the split announcements and the UI's target-reached cue come through here too.

@@ -10,7 +10,9 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.kotlin.any
@@ -58,7 +60,7 @@ class AudioCueManagerTest {
         manager = AudioCueManager(
             tts = tts,
             audioManager = audioManager,
-            serviceScope = scope,
+            scope = scope,
             logTag = "test",
             cueFocusTimeoutMs = TIMEOUT_MS,
             scheduleShutdownBackstop = { _, action -> shutdownBackstop = action },
@@ -409,8 +411,8 @@ class AudioCueManagerTest {
         manager.shutdown()
         verify(tts, never()).shutdown()
 
-        // The service's scope is already cancelled by the time it tears the engine down, so the
-        // per-cue safety timeout cannot be what bounds this wait.
+        // The grace period is a clock of its own, so the wait is bounded whatever becomes of the
+        // per-cue safety timeout.
         shutdownBackstop!!.invoke()
 
         verify(tts).shutdown()
@@ -430,6 +432,89 @@ class AudioCueManagerTest {
 
         verify(tts, times(1)).shutdown()
         assertEquals(listOf(true to 1L, false to 2L), reports)
+    }
+
+    @Test
+    fun `a Run started during the last sentence joins the same queue and waits for that sentence`() {
+        manager.enqueue("last words", CuePriority.INSTRUCTION)
+        manager.shutdown()
+
+        // The next service takes the queue back rather than building a second engine beside it.
+        assertTrue(manager.reopen())
+        manager.enqueue("start running", CuePriority.INSTRUCTION)
+
+        // One voice: the new Run's first cue is not spoken over the old Run's last words (#274).
+        assertEquals(listOf("last words"), spokenTexts())
+        finishCurrent()
+        assertEquals(listOf("last words", "start running"), spokenTexts())
+        verify(tts, never()).shutdown()
+    }
+
+    @Test
+    fun `focus is held across the handover and given back once, when the new Run's cue ends`() {
+        manager.enqueue("last words", CuePriority.INSTRUCTION)
+        manager.shutdown()
+        manager.reopen()
+        manager.enqueue("start running", CuePriority.INSTRUCTION)
+
+        // The old Run's last sentence ending is not the queue draining: music stays ducked.
+        finishCurrent()
+        @Suppress("DEPRECATION")
+        verify(audioManager, never()).abandonAudioFocus(anyOrNull())
+
+        finishCurrent()
+        @Suppress("DEPRECATION")
+        verify(audioManager, times(1)).abandonAudioFocus(anyOrNull())
+        assertEquals(listOf(true to 1L, false to 2L), reports)
+    }
+
+    @Test
+    fun `the old service's grace period does not tear down a queue taken back`() {
+        manager.enqueue("last words", CuePriority.INSTRUCTION)
+        manager.shutdown()
+        val oldBackstop = shutdownBackstop!!
+        manager.reopen()
+        manager.enqueue("start running", CuePriority.INSTRUCTION)
+
+        oldBackstop.invoke()
+
+        verify(tts, never()).shutdown()
+        verify(tts, never()).stop()
+        finishCurrent()
+        assertEquals(listOf("last words", "start running"), spokenTexts())
+    }
+
+    @Test
+    fun `a grace period from an earlier goodbye does not cut short a later one`() {
+        manager.enqueue("last words", CuePriority.INSTRUCTION)
+        manager.shutdown()
+        val firstBackstop = shutdownBackstop!!
+        manager.reopen()
+        manager.enqueue("start running", CuePriority.INSTRUCTION)
+        finishCurrent()
+        manager.shutdown()
+
+        // The first goodbye's clock is not the second one's: "start running" still has its own.
+        firstBackstop.invoke()
+        verify(tts, never()).shutdown()
+
+        shutdownBackstop!!.invoke()
+        verify(tts).shutdown()
+    }
+
+    @Test
+    fun `a queue whose engine has gone cannot be taken back`() {
+        manager.shutdown()
+
+        assertFalse(manager.reopen())
+        assertNull(manager.enqueue("too late", CuePriority.INSTRUCTION))
+    }
+
+    @Test
+    fun `a queue that was never let go of is simply still open`() {
+        assertTrue(manager.reopen())
+        manager.enqueue(TEXT, CuePriority.INSTRUCTION)
+        assertEquals(listOf(TEXT), spokenTexts())
     }
 
     private companion object {
