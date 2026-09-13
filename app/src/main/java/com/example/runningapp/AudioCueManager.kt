@@ -39,7 +39,12 @@ import java.util.TimerTask
 class AudioCueManager(
     private val tts: TextToSpeech,
     private val audioManager: AudioManager?,
-    private val serviceScope: CoroutineScope,
+    /**
+     * Where the per-cue timeouts run. Process-wide, not the service's: the queue outlives the
+     * service that let go of it while a new Run takes it back ([reopen], #274), and a timeout
+     * launched in a cancelled scope would never fire.
+     */
+    private val scope: CoroutineScope,
     private val logTag: String,
     private val cueFocusTimeoutMs: Long = 8_000L,
     /**
@@ -48,9 +53,8 @@ class AudioCueManager(
      */
     private val shutdownGraceMs: Long = cueFocusTimeoutMs,
     /**
-     * How that grace period is timed. Not [serviceScope]: the service cancels that before it tears
-     * the engine down, so a job launched there would be cancelled rather than run — and the whole
-     * point of the backstop is to fire when nothing else will.
+     * How that grace period is timed. On a clock of its own rather than in [scope]: the whole point
+     * of the backstop is to fire when nothing else will, so it leans on nothing else.
      *
      * It must not run the action inline: what the action ends in is the engine's teardown, which
      * blocks on a thread that takes this instance's lock.
@@ -90,6 +94,12 @@ class AudioCueManager(
     /** Whether the engine has been torn down, so that it is torn down exactly once. */
     private var isEngineDown = false
 
+    /**
+     * Which goodbye a grace period belongs to. A queue taken back ([reopen]) and let go of again
+     * starts a clock of its own, and the first goodbye's clock must not end the second's sentence.
+     */
+    private var shutdownGeneration = 0L
+
     /** One report of the app starting or stopping talking, stamped in the order it happened. */
     private data class CueActivity(val speaking: Boolean, val sequence: Long)
 
@@ -104,8 +114,11 @@ class AudioCueManager(
     private data class Settlement(
         val activity: List<CueActivity> = emptyList(),
         val tearDownEngine: Boolean = false,
-        /** Start the clock on the last sentence — see [shutdownGraceMs]. */
-        val startShutdownGrace: Boolean = false,
+        /**
+         * Start the clock on the last sentence — see [shutdownGraceMs] — for this goodbye, or null
+         * for no clock.
+         */
+        val startShutdownGrace: Long? = null,
     )
 
     fun initialize() {
@@ -202,17 +215,41 @@ class AudioCueManager(
         }
 
         Log.d(logTag, "Service destroyed mid-sentence: the engine goes when the sentence ends")
-        return Settlement(startShutdownGrace = true)
+        return Settlement(startShutdownGrace = ++shutdownGeneration)
+    }
+
+    /**
+     * Take the queue back while its last sentence is still being said — a new Run started before
+     * the old one's last words were over (#274). True if it is open again, and false if the engine
+     * has already gone, in which case the caller needs a queue of its own.
+     *
+     * The sentence carries on, and whatever is enqueued next waits for it like any other cue. That
+     * is the whole point: a second engine built beside this one would say the new Run's first cue
+     * over the old Run's last words, and this queue letting go of audio focus as that sentence ended
+     * would stop the music ducking under a cue still being said. One queue has neither problem.
+     *
+     * The queue the old Run left is not given back — [shutdown] emptied it, and the old Run had
+     * taken its cues back before that anyway.
+     */
+    @Synchronized
+    fun reopen(): Boolean {
+        if (isEngineDown) return false
+        if (isShuttingDown) Log.d(logTag, "Queue taken back during its last sentence")
+        isShuttingDown = false
+        return true
     }
 
     /**
      * The last sentence has outstayed its grace period. The engine goes anyway — it is the process
      * ending, and holding audio focus for a cue the engine has gone quiet on is worse than the
      * words that are lost.
+     *
+     * Only for the goodbye that started this clock: a queue taken back since ([reopen]) is not
+     * going away, and one let go of again is timing a sentence of its own.
      */
     @Synchronized
-    private fun giveUpOnLastSentence(): Settlement {
-        if (isEngineDown) return Settlement()
+    private fun giveUpOnLastSentence(generation: Long): Settlement {
+        if (isEngineDown || !isShuttingDown || generation != shutdownGeneration) return Settlement()
         currentCueUtteranceId?.let { endUtterance("shutdown_grace_expired", it) }
         return Settlement(fallQuiet("service_destroy"), tearDownEngine = claimEngineTeardown())
     }
@@ -227,8 +264,8 @@ class AudioCueManager(
     /** Do what was decided under the lock, now that it has been let go of. */
     private fun settle(settlement: Settlement) {
         announce(settlement.activity)
-        if (settlement.startShutdownGrace) {
-            scheduleShutdownBackstop(shutdownGraceMs) { settle(giveUpOnLastSentence()) }
+        settlement.startShutdownGrace?.let { generation ->
+            scheduleShutdownBackstop(shutdownGraceMs) { settle(giveUpOnLastSentence(generation)) }
         }
         if (settlement.tearDownEngine) {
             try {
@@ -406,7 +443,7 @@ class AudioCueManager(
      */
     private fun scheduleCueFocusTimeout(utteranceId: String) {
         cueFocusTimeoutJob?.cancel()
-        cueFocusTimeoutJob = serviceScope.launch {
+        cueFocusTimeoutJob = scope.launch {
             delay(cueFocusTimeoutMs)
             // What follows must not suspend: it runs inside this job, and [endUtterance] cancels the
             // job as its first act. A suspension point between there and [announce] would be the one

@@ -1,7 +1,9 @@
 package com.example.runningapp
 
 import android.content.Context
+import android.media.AudioManager
 import android.net.Uri
+import android.speech.tts.TextToSpeech
 import android.util.Log
 import androidx.room.withTransaction
 import com.example.runningapp.archive.ArchivedSettings
@@ -146,6 +148,40 @@ class AppContainer(context: Context) {
 
     val exportFileStore: ExportFileStore by lazy {
         FileProviderExportFileStore(appContext)
+    }
+
+    /**
+     * The one voice the app speaks with, borrowed by the Run's service for each instance's life
+     * (#274) — see [SharedCueQueue] for why it is not the service's own.
+     *
+     * Its timeouts run on main, where the service's own scope ran them before the queue moved here,
+     * and in a scope nothing cancels: the queue can outlive the service that let go of it.
+     */
+    val cueQueue: SharedCueQueue by lazy {
+        val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val cueScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+        SharedCueQueue {
+            // Assigned before the engine can answer: it answers only once it has bound to the
+            // system's speech service, and binding is never done inside the constructor.
+            lateinit var queue: AudioCueManager
+            val engine = TextToSpeech(appContext) { status -> queue.onTtsInit(status) }
+            queue = AudioCueManager(
+                engine,
+                audioManager,
+                cueScope,
+                HrForegroundService.TAG,
+                // Nothing acts on this; it is here to be read in logcat when a run's cues are
+                // being checked on the phone, which is the only way #53's back-to-back rule can be
+                // verified.
+                onCueActivity = { speaking, sequence ->
+                    Log.d(
+                        HrForegroundService.TAG,
+                        "Cue queue ${if (speaking) "speaking" else "quiet"} (seq=$sequence)",
+                    )
+                },
+            )
+            queue
+        }
     }
 
     /**
