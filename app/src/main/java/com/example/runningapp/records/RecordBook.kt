@@ -37,14 +37,14 @@ import java.util.concurrent.atomic.AtomicLong
  */
 interface RecordBookStore {
     /**
-     * False wherever the medals are not wired — tests, and the archive's read-only container. A Run
-     * then finishes without being scored rather than failing to finish.
+     * False wherever the medals are not wired, which only a test does — the app always wires them. A
+     * Run then finishes without being scored rather than failing to finish.
      */
     val keepsBook: Boolean
 
     /**
-     * False wherever the claims beneath the medals are not wired (#75). Nothing is banked, and a
-     * re-banking has nothing to do and nothing to owe.
+     * False wherever the claims beneath the medals are not wired (#75), which again only a test does.
+     * Nothing is banked, and a re-banking has nothing to do and nothing to owe.
      */
     val banksEfforts: Boolean
 
@@ -947,6 +947,7 @@ class RecordBook(
     }
 }
 
+/** [act] under this lock where there is one to take, and plainly where there is not. */
 private suspend fun Mutex?.holding(act: suspend () -> Unit) {
     if (this == null) act() else withLock { act() }
 }
