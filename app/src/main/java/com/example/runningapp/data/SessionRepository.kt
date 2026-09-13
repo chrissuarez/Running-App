@@ -630,9 +630,8 @@ class SessionRepository(
     /**
      * The runner's named places and the times run at them (#70).
      *
-     * Null on the same terms as the record book: wherever Segments are not wired — tests, and the
-     * archive's read-only container — a Run finishes without being put to any, which is what every
-     * Run did before this shipped.
+     * Null wherever Segments are not wired, which only a test does: a Run then finishes without
+     * being put to any, which is what every Run did before this shipped.
      */
     private val segmentDao: SegmentDao? = null,
     private val segmentEffortDao: SegmentEffortDao? = null,
@@ -656,9 +655,8 @@ class SessionRepository(
     /**
      * Where a Run's AI summary is kept once it has been written (#76) — see [RunSummaryRow].
      *
-     * Null on the same terms as the record book: wherever it is not wired — tests, and the archive's
-     * read-only container — a Run's page simply never offers a summary, which is what every Run's
-     * page did before this shipped.
+     * Null wherever it is not wired, which only a test does: a Run's page then simply never offers
+     * a summary, which is what every Run's page did before this shipped.
      */
     private val runSummaryDao: RunSummaryDao? = null,
     /**
@@ -686,8 +684,8 @@ class SessionRepository(
      * The runner's library of courses, read for one thing only: drawing the course a live Run set
      * out to follow on its map (#56).
      *
-     * Null on the same terms as the record book — wherever it is not wired, a Run's map draws its
-     * amber trail and nothing else, which is what every Run's map did before this shipped. Nothing
+     * Null wherever it is not wired, which only a test does — a Run's map then draws its amber
+     * trail and nothing else, which is what every Run's map did before this shipped. Nothing
      * here ever writes to it: keeping the library is the Routes screen's business, and a Run that
      * happened to be started on a course must not be able to change it.
      */

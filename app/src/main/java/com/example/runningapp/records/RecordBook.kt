@@ -106,6 +106,7 @@ interface RecordBookStore {
     fun statedForFlow(sessionId: Long): Flow<List<StatedBestEffort>>
     /** One stated Best Effort stored, over whatever the Run held at the same Record (#282). */
     suspend fun state(effort: StatedBestEffort)
+    /** One Run's stated Best Effort at [type] taken away (#282). */
     suspend fun withdraw(sessionId: Long, type: RecordType)
 }
 
@@ -636,7 +637,7 @@ class RecordBook(
      *
      * In memory only, and that is enough: they exist to catch two things overlapping inside one
      * process, and a process that dies takes any unwritten mark with it. Which is also why there
-     * must be one [RecordBook] per process, beside the one repository that owns it.
+     * must be one [RecordBook] per process, built once in [com.example.runningapp.AppContainer].
      *
      * **[deletesActive] must come back down whatever happens**, which is why both the joining and
      * the leaving run uncancellable. A delete counted but not running is not a wrong book — it errs
