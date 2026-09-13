@@ -15,8 +15,10 @@ import com.example.runningapp.data.AiCoachClient
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.DatabaseBackupManager
 import com.example.runningapp.data.OpenMeteoWeatherClient
+import com.example.runningapp.data.RoomRecordBookStore
 import com.example.runningapp.data.SessionRepository
 import com.example.runningapp.data.WeatherClient
+import com.example.runningapp.records.RecordBook
 import com.example.runningapp.diagnostics.RunJournal
 import com.example.runningapp.export.ExportFileStore
 import com.example.runningapp.export.FileProviderExportFileStore
@@ -201,6 +203,43 @@ class AppContainer(context: Context) {
      */
     val zoneChanges: SharedFlow<Unit> by lazy { systemZoneChanges(appContext, applicationScope) }
 
+    /** One database transaction, shared by the repository and the record book's store. */
+    private val inTransaction: suspend (suspend () -> Unit) -> Unit =
+        { block -> database.withTransaction { block() } }
+
+    // After a change to history, re-snapshot it to Downloads so a later Clear-storage restore can't
+    // bring back what the change took away. File IO, so keep it off the caller's (main) thread.
+    private val refreshHistoryBackup: suspend () -> Unit = {
+        withContext(Dispatchers.IO) {
+            DatabaseBackupManager.backup(appContext, database)
+        }
+    }
+
+    /**
+     * The record book (#478, #484): medals, the claims banked beneath them, and a treadmill Run's
+     * stated Best Efforts. One per process, because it counts the changes in flight to decide when
+     * history may be called scored — see [RecordBook].
+     */
+    private val recordBook: RecordBook by lazy {
+        RecordBook(
+            RoomRecordBookStore(
+                sessionDao = database.sessionDao(),
+                trackPointDao = database.trackPointDao(),
+                achievementDao = database.achievementDao(),
+                statedBestEffortDao = database.statedBestEffortDao(),
+                runEffortDao = database.runEffortDao(),
+                // Whether the banked claims are part-way through being rebuilt over the whole of
+                // history (#75) — raised by the migration that created the table, handed back by
+                // the pass that fills it, and read by the Records section so it never quotes an
+                // all-time best off a slice.
+                recordFillDao = database.recordFillDao(),
+                settingsRepository = settingsRepository,
+                inTransaction = inTransaction,
+            ),
+            refreshHistoryBackup = refreshHistoryBackup,
+        )
+    }
+
     val sessionRepository: SessionRepository by lazy {
         SessionRepository(
             sessionDao = database.sessionDao(),
@@ -208,21 +247,12 @@ class AppContainer(context: Context) {
             trackPointDao = database.trackPointDao(),
             intervalStatDao = database.runWalkIntervalStatDao(),
             runPauseDao = database.runPauseDao(),
-            achievementDao = database.achievementDao(),
-            statedBestEffortDao = database.statedBestEffortDao(),
+            recordBook = recordBook,
             // The runner's named places, and the times run at them (#70).
             segmentDao = database.segmentDao(),
             segmentEffortDao = database.segmentEffortDao(),
             // The shapes Runs recognise each other by (#73).
             runShapeDao = database.runShapeDao(),
-            // Every Run's claim at every Record, banked beside the medals so the Records section
-            // can show a top ten and a trend (#75).
-            runEffortDao = database.runEffortDao(),
-            // Whether that banking is part-way through being rebuilt over the whole of history
-            // (#75) — raised by the migration that created the table, handed back by the pass that
-            // fills it, and read by the Records section so it never quotes an all-time best off a
-            // slice.
-            recordFillDao = database.recordFillDao(),
             // Read for one thing only: telling the coach where the runner stands against their own
             // targets (#83). Without it the coach is simply told nothing about goals.
             goalDao = database.goalDao(),
@@ -242,20 +272,14 @@ class AppContainer(context: Context) {
             coachPrescriptionRepository = coachPrescriptionRepository,
             aiCoachClient = aiCoachClient,
             weatherClient = weatherClient,
-            // After a delete, re-snapshot history to Downloads so a later Clear-storage restore
-            // can't bring the deleted runs back. File IO, so keep it off the caller's (main) thread.
-            refreshHistoryBackup = {
-                withContext(Dispatchers.IO) {
-                    DatabaseBackupManager.backup(appContext, database)
-                }
-            },
+            refreshHistoryBackup = refreshHistoryBackup,
             // The durable version of the line above, for the rescue that finishes a Run whose
             // service was torn down (#309): the process may not outlive the snapshot, so the
             // request goes into WorkManager's database and the copy happens whether this process
             // lives or not. Blocks until that write is done, and is only ever called from IO.
             bookAfterRunWork = { runRowId -> AfterRunWorker.enqueue(appContext, runRowId) },
             // A re-tally of history is all of it or none: see SessionRepository.inTransaction.
-            inTransaction = { block -> database.withTransaction { block() } }
+            inTransaction = inTransaction,
         )
     }
 

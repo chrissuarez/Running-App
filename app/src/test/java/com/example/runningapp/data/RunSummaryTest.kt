@@ -195,9 +195,12 @@ class RunSummaryTest {
             on { anySegmentHistoryWalkOwedFlow() } doReturn flowOf(segmentHistoryWalkOwedSomewhere)
         },
         runShapeDao = mock<RunShapeDao> { on { isShapedFlow(7) } doReturn flowOf(shaped) },
-        recordFillDao = mock<RecordFillDao> {
-            on { wholesaleFillOwedFlow() } doReturn flowOf(historyBeingMeasured)
-        },
+        recordBook = recordBookOver(
+            sessionDao = mock(),
+            recordFillDao = mock<RecordFillDao> {
+                on { wholesaleFillOwedFlow() } doReturn flowOf(historyBeingMeasured)
+            },
+        ),
     )
 
     private fun measuredRun(recordsScored: Boolean = true, segmentsTimed: Boolean = true) = RunnerSession(

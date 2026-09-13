@@ -3,11 +3,15 @@ package com.example.runningapp.records
 import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.data.Achievement
+import com.example.runningapp.data.RecordsReadingRow
 import com.example.runningapp.data.RunEffortRow
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.data.SessionMedalCount
 import com.example.runningapp.data.StatedBestEffort
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.run.RunMode
+import com.example.runningapp.training.HistoryBestEffort
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -30,9 +34,6 @@ class RecordBookTest {
 
     /** The record book's tables as the book sees them, in memory. */
     private class Store : RecordBookStore {
-        override var keepsBook = true
-        override val banksEfforts = true
-
         val runs = mutableMapOf<Long, RunnerSession>()
         val stated = mutableListOf<StatedBestEffort>()
         val medals = mutableListOf<Achievement>()
@@ -95,6 +96,24 @@ class RecordBookTest {
         override suspend fun clearHistorySeeded() { seeded = false }
 
         override suspend fun inTransaction(block: suspend () -> Unit) = block()
+
+        // The screens' reads, as one reading of the tables as they stand.
+        override fun quickestInHistoryFlow(type: RecordType) = flowOf(
+            medals.filter { it.type == type }.minByOrNull { it.value }
+                ?.let { HistoryBestEffort(seconds = it.value, runStartedAtMillis = 0L) }
+        )
+        override fun medalCountsFlow() =
+            flowOf(medals.groupBy { it.sessionId }.map { (id, held) -> SessionMedalCount(id, held.size) })
+        override fun recordsReadingFlow() = flowOf(emptyList<RecordsReadingRow>())
+        override fun wholesaleFillOwedFlow() = flowOf(fillOwed)
+        override fun statedForFlow(sessionId: Long) = flowOf(stated.filter { it.sessionId == sessionId })
+        override suspend fun state(effort: StatedBestEffort) {
+            withdraw(effort.sessionId, effort.type)
+            stated += effort
+        }
+        override suspend fun withdraw(sessionId: Long, type: RecordType) {
+            stated.removeAll { it.sessionId == sessionId && it.type == type }
+        }
 
         /** A Run leaving history, with what a real delete cascades away going with it. */
         fun delete(sessionId: Long) {
@@ -271,17 +290,5 @@ class RecordBookTest {
         assertTrue(store.medals.isEmpty())
         assertEquals(false, store.seeded)
         assertTrue(store.scored.isEmpty())
-    }
-
-    @Test
-    fun `where no book is kept a run is marked scored and holds nothing`() = runTest {
-        store.keepsBook = false
-        aTreadmillRun(1, km = 10.0, seconds = 3_000)
-
-        val earned = book.scoreAndMark(1)
-
-        assertTrue(earned.isEmpty())
-        assertTrue(store.medals.isEmpty())
-        assertEquals(setOf(1L), store.scored)
     }
 }

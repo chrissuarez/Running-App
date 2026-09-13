@@ -28,6 +28,7 @@ import com.example.runningapp.hrProfile
 import com.example.runningapp.tallyZoneSeconds
 import com.example.runningapp.ranOn
 import com.example.runningapp.training.BarStanding
+import com.example.runningapp.training.HistoryBestEffort
 import com.example.runningapp.training.PlanCompletion
 import com.example.runningapp.training.ScoredRun
 import com.example.runningapp.training.asClock
@@ -97,7 +98,41 @@ import kotlin.math.roundToInt
  * statement's, not the list's, and nothing here is worth a full history's worth of arithmetic to
  * cut fine.
  */
-private const val MAX_SESSION_IDS_PER_QUERY = 500
+internal const val MAX_SESSION_IDS_PER_QUERY = 500
+
+/**
+ * The accuracy gate, applied without losing where the run was paused.
+ *
+ * A resume is recorded on one point ([TrackPoint.startsAfterPause]), and that point is the most
+ * likely in the whole run to be thrown out: the run resumes on the first fix after GPS was torn
+ * down and re-acquired, which is exactly when accuracy is at its worst. Dropping it would take
+ * the pause with it — the next point kept says nothing happened — and the route would be drawn
+ * and measured straight across ground the runner covered while stopped.
+ *
+ * So the boundary moves to whichever point survives to take its place. The pause is a fact about
+ * the run, not about the fix that happened to carry it.
+ *
+ * Top-level so the record book's store reads a Run's track through the same gate the map does
+ * ([RoomRecordBookStore], #484).
+ */
+internal fun List<TrackPoint>.acceptedForMap(): List<TrackPoint> {
+    var pauseToCarry = false
+    return mapNotNull { point ->
+        if (!point.isAcceptedForMap()) {
+            pauseToCarry = pauseToCarry || point.startsAfterPause
+            null
+        } else {
+            val carried = point.startsAfterPause || pauseToCarry
+            pauseToCarry = false
+            if (carried == point.startsAfterPause) point else point.copy(startsAfterPause = true)
+        }
+    }
+}
+
+private fun TrackPoint.isAcceptedForMap(): Boolean = when (source) {
+    TrackPointSource.BACKFILL -> true
+    else -> horizontalAccuracyMeters != null && SessionRecorder.isAccuracyAccepted(horizontalAccuracyMeters)
+}
 
 /**
  * How long the route picker's read will wait for a just-finished Run's row to be settled (#422).
@@ -580,12 +615,18 @@ class SessionRepository(
     private val trackPointDao: TrackPointDao? = null,
     private val intervalStatDao: RunWalkIntervalStatDao? = null,
     private val runPauseDao: RunPauseDao? = null,
-    // Null wherever records are not wired (tests, and the archive's read-only container): a run then
-    // finishes without being scored rather than failing to finish.
-    private val achievementDao: AchievementDao? = null,
-    // Null on the same terms as the record book it feeds: a treadmill Run then simply holds no
-    // stated Best Effort, which is what every Run held before #282 anyway.
-    private val statedBestEffortDao: StatedBestEffortDao? = null,
+    /**
+     * The record book — medals, the claims banked beneath them, and what a treadmill Run has been
+     * told it holds — and the one door to its tables (#478, #484). See [RecordBook] for every rule.
+     *
+     * One per process, built in [com.example.runningapp.AppContainer] over [RoomRecordBookStore]:
+     * the book counts the changes in flight to decide when history may be called scored, and a count
+     * is only good inside the one book that keeps it.
+     *
+     * Null only in the tests that never reach a Record, which get a book over no tables at all
+     * ([NoRecordTables]): a Run then finishes holding nothing, and a change to it has no book to mend.
+     */
+    recordBook: RecordBook? = null,
     /**
      * The runner's named places and the times run at them (#70).
      *
@@ -603,25 +644,6 @@ class SessionRepository(
      * before this shipped.
      */
     private val runShapeDao: RunShapeDao? = null,
-    /**
-     * Every Run's claim at every Record, banked beside the medals (#75) — see [RunEffortRow].
-     *
-     * Null on the same terms as the record book it is written beside: wherever records are not
-     * wired, nothing is banked here either, and the Records section reads an empty history. Never
-     * written without the book being written in the same transaction, and never read to decide
-     * anything — this class only fills it.
-     */
-    private val runEffortDao: RunEffortDao? = null,
-    /**
-     * Whether the whole of history is part-way through being measured against the book (#75) — see
-     * [RecordFillRow].
-     *
-     * Null on the same terms as the rows it speaks for: wherever records are not wired there is no
-     * fill to be part-way through, and the Records section is handed a history that is whole because
-     * it is empty. Read by exactly one screen and written by exactly the two passes that can pay a
-     * fill off.
-     */
-    private val recordFillDao: RecordFillDao? = null,
     /**
      * The runner's own Goals, read so the coach can be told where they stand (#83).
      *
@@ -716,6 +738,11 @@ class SessionRepository(
      */
     private val inTransaction: suspend (suspend () -> Unit) -> Unit = { it() }
 ) {
+    // The book with no tables still refreshes the backup this repository was handed: a delete is a
+    // change to history whether or not there is a book to mend behind it.
+    private val recordBook: RecordBook =
+        recordBook ?: RecordBook(NoRecordTables, refreshHistoryBackup = refreshHistoryBackup)
+
     suspend fun deleteSession(sessionId: Long) =
         deleteRuns(listOf(sessionId)) { sessionDao.deleteSessionById(sessionId) }
 
@@ -1060,12 +1087,11 @@ class SessionRepository(
      * through the fill. [RECORDS_READING_SQL] reads both in one statement; see it for the whole
      * case. [recordsBeingMeasuredFlow] stays for readers that only need the flag.
      *
-     * Nothing owed and nothing banked wherever records are not wired, which is the same picture a
-     * runner with no history sees: seven Records with nothing standing at any of them.
+     * Nothing owed and nothing banked where the book has no tables ([NoRecordTables]), which is the
+     * same picture a runner with no history sees: seven Records with nothing standing at any of them.
      */
     fun recordsReadingFlow(): Flow<RecordsReading> =
-        runEffortDao?.getRecordsReadingFlow()?.map(::recordsReadingOf)
-            ?: flowOf(RecordsReading(measuring = false, efforts = emptyList()))
+        recordBook.recordsReadingFlow().map(::recordsReadingOf)
 
     /**
      * Whether history is being measured against the record book wholesale right now — which is when
@@ -1095,11 +1121,11 @@ class SessionRepository(
      * but the newest, which was the right answer a moment ago and becomes the right answer as of now
      * the moment that Run is scored. What can never be shown is a *slice*.
      *
-     * False wherever no record fill is wired, which is the same picture as a history nobody is
-     * measuring — because there is none.
+     * False where the book has no tables ([NoRecordTables]), which is the same picture as a history
+     * nobody is measuring — because there is none.
      */
     fun recordsBeingMeasuredFlow(): Flow<Boolean> =
-        recordFillDao?.wholesaleFillOwedFlow()?.distinctUntilChanged() ?: flowOf(false)
+        recordBook.wholesaleFillOwedFlow().distinctUntilChanged()
 
     /**
      * Every scored Run in history, oldest first — what the Progress screen builds its curves from
@@ -1394,8 +1420,8 @@ class SessionRepository(
      * Three answers and not two.
      * [BarStanding.Silent] is every reason the app may not speak about this bar — a Stage whose
      * requirement is a judgement, stage 1's "4 weeks of consistent Zone 2 training", which has no
-     * bar to have been beaten; no record book to ask; testing mode, the one state where "run
-     * one now and it counts" is not true, since `graduateOnBestEffortRequirement` refuses to grant
+     * bar to have been beaten; no settings to ask whether the book is seeded; testing mode, the one
+     * state where "run one now and it counts" is not true, since `graduateOnBestEffortRequirement` refuses to grant
      * while it is on and a card promising a graduation the rule will decline is worse than a card
      * that says nothing; and a book history has not been seeded into yet ([seedRecordsFromHistory],
      * #50), which is the same reason stated about the book instead of the Stage.
@@ -1419,10 +1445,9 @@ class SessionRepository(
      */
     fun barStandingFlow(requirement: BestEffortRequirement?): Flow<BarStanding> {
         if (requirement == null) return flowOf(BarStanding.Silent)
-        val dao = achievementDao ?: return flowOf(BarStanding.Silent)
         val settings = settingsRepository?.userSettingsFlow ?: return flowOf(BarStanding.Silent)
         return combine(
-            dao.getQuickestInHistoryFlow(requirement.record),
+            recordBook.quickestInHistoryFlow(requirement.record),
             settings,
         ) { best, userSettings ->
             when {
@@ -1555,12 +1580,12 @@ class SessionRepository(
      * How many medals each run holds, keyed by run, for the History list's medal badges (#51).
      *
      * A stream, so a run scored the moment it finishes gets its badge without the list being left
-     * and re-entered. Empty where records are not wired at all.
+     * and re-entered. Empty where the book has no tables ([NoRecordTables]).
      */
     fun medalCountsFlow(): Flow<Map<Long, Int>> =
-        achievementDao?.getMedalCountsFlow()?.map { counts ->
+        recordBook.medalCountsFlow().map { counts ->
             counts.associate { it.sessionId to it.medals }
-        } ?: flowOf(emptyMap())
+        }
 
     /**
      * The shape of a run's route, for the drawing beside it in the History list (#51).
@@ -2097,79 +2122,6 @@ class SessionRepository(
         })
     }
 
-    /**
-     * The record book — scoring a Run, marking it scored, and mending the book when a Run changes or
-     * leaves — over this repository's own DAOs (#478). See [RecordBook] for every rule.
-     *
-     * One per repository, and never a second: the book counts the changes in flight to decide when
-     * history may be called scored, and a count is only good inside the one book that keeps it.
-     */
-    private val recordBook = RecordBook(
-        object : RecordBookStore {
-            override val keepsBook = achievementDao != null
-            override val banksEfforts = runEffortDao != null
-
-            override suspend fun run(sessionId: Long) = sessionDao.getSessionById(sessionId)
-            override suspend fun runs() = sessionDao.getAllSessions()
-            override suspend fun track(sessionId: Long) = getTrackPointsForMap(sessionId)
-
-            override suspend fun runsOwedScoring() = sessionDao.getSessionIdsMissingRecordScoring()
-            override suspend fun markScored(sessionId: Long) = sessionDao.setRecordsScored(sessionId)
-
-            // In batches, because every id is a bound variable and SQLite takes a bounded number of
-            // them: a history long enough to be worth seeding is a history long enough to exceed it.
-            override suspend fun markScored(sessionIds: List<Long>) =
-                sessionIds.chunked(MAX_SESSION_IDS_PER_QUERY)
-                    .forEach { sessionDao.setRecordsScoredForSessions(it) }
-
-            override suspend fun statedFor(sessionId: Long) =
-                statedBestEffortDao?.getForSession(sessionId).orEmpty()
-            override suspend fun allStated() = statedBestEffortDao?.getAll().orEmpty()
-
-            override suspend fun medals() = achievementDao?.getAllAchievements().orEmpty()
-            override suspend fun medalsHeldBy(sessionIds: List<Long>) =
-                achievementDao?.getAchievementsForSessions(sessionIds).orEmpty()
-            override suspend fun replaceMedalsOfTypes(types: List<RecordType>, medals: List<Achievement>) {
-                achievementDao?.deleteAchievementsOfTypes(types)
-                achievementDao?.insertAchievements(medals)
-            }
-
-            override suspend fun effortsFor(sessionId: Long) =
-                runEffortDao?.getEffortsForSession(sessionId).orEmpty()
-            override suspend fun replaceEffortsFor(sessionId: Long, efforts: List<RunEffortRow>) {
-                runEffortDao?.deleteEffortsForSession(sessionId)
-                runEffortDao?.putEfforts(efforts)
-            }
-            override suspend fun putEfforts(efforts: List<RunEffortRow>) {
-                runEffortDao?.putEfforts(efforts)
-            }
-            override suspend fun effortsOfTypes(types: List<RecordType>) =
-                runEffortDao?.getEffortsOfTypes(types).orEmpty()
-            override suspend fun replaceEffortsOfTypes(types: List<RecordType>, efforts: List<RunEffortRow>) {
-                runEffortDao?.deleteEffortsOfTypes(types)
-                runEffortDao?.putEfforts(efforts)
-            }
-
-            override suspend fun wholesaleFillOwed() = recordFillDao?.wholesaleFillOwed() == true
-            override suspend fun markWholesaleFillPaid() {
-                recordFillDao?.put(RecordFillRow(wholesaleFillOwed = false))
-            }
-
-            override suspend fun historySeeded() =
-                settingsRepository?.userSettingsFlow?.first()?.historyRecordsSeeded
-            override suspend fun markHistorySeeded() {
-                settingsRepository?.setHistoryRecordsSeeded()
-            }
-            override suspend fun clearHistorySeeded() {
-                settingsRepository?.clearHistoryRecordsSeeded()
-            }
-
-            override suspend fun inTransaction(block: suspend () -> Unit) =
-                this@SessionRepository.inTransaction(block)
-        },
-        refreshHistoryBackup = refreshHistoryBackup,
-    )
-
     /** Scores a finished Run against the record book — see [RecordBook.score]. */
     suspend fun scoreRecords(sessionId: Long): List<Achievement> = recordBook.score(sessionId)
 
@@ -2265,36 +2217,6 @@ class SessionRepository(
             session != null && session.isFinished() && points.isNotEmpty()
         }
 
-    /**
-     * The accuracy gate, applied without losing where the run was paused.
-     *
-     * A resume is recorded on one point ([TrackPoint.startsAfterPause]), and that point is the most
-     * likely in the whole run to be thrown out: the run resumes on the first fix after GPS was torn
-     * down and re-acquired, which is exactly when accuracy is at its worst. Dropping it would take
-     * the pause with it — the next point kept says nothing happened — and the route would be drawn
-     * and measured straight across ground the runner covered while stopped.
-     *
-     * So the boundary moves to whichever point survives to take its place. The pause is a fact about
-     * the run, not about the fix that happened to carry it.
-     */
-    private fun List<TrackPoint>.acceptedForMap(): List<TrackPoint> {
-        var pauseToCarry = false
-        return mapNotNull { point ->
-            if (!point.isAcceptedForMap()) {
-                pauseToCarry = pauseToCarry || point.startsAfterPause
-                null
-            } else {
-                val carried = point.startsAfterPause || pauseToCarry
-                pauseToCarry = false
-                if (carried == point.startsAfterPause) point else point.copy(startsAfterPause = true)
-            }
-        }
-    }
-
-    private fun TrackPoint.isAcceptedForMap(): Boolean = when (source) {
-        TrackPointSource.BACKFILL -> true
-        else -> horizontalAccuracyMeters != null && SessionRecorder.isAccuracyAccepted(horizontalAccuracyMeters)
-    }
 
     /**
      * Fetches and persists the weather snapshot for a session. Never throws — a failed or
@@ -2647,7 +2569,7 @@ class SessionRepository(
         // away, because the alternative is a Medal standing on a claim nothing will ever look at
         // again. Nothing is orphaned by a distance being *withdrawn*: that leaves the Run with no
         // distance at all, which contradicts nothing.
-        val orphaned = statedBestEffortDao?.getForSession(sessionId).orEmpty()
+        val orphaned = recordBook.statedFor(sessionId)
             .filterNot { it.type.fitsWithin(stated) }
             .map { it.type }
 
@@ -2667,14 +2589,14 @@ class SessionRepository(
             // the record it held unmended — narrowed to a window one write wide, not closed, and the
             // next launch's seeding debt is not owed for it. Both doors are dialogs on one screen,
             // so reaching it means two statements from one finger in the same instant.
-            statedBestEffortDao?.getForSession(sessionId).orEmpty()
+            recordBook.statedFor(sessionId)
                 .filterNot { it.type.fitsWithin(stated) }
                 .forEach { claim ->
                     Log.i(
                         "StatedDistance",
                         "Run $sessionId is $stated km, so its stated ${claim.type} goes with the correction"
                     )
-                    statedBestEffortDao?.withdraw(sessionId, claim.type)
+                    recordBook.withdraw(sessionId, claim.type)
                 }
         }
 
@@ -2701,7 +2623,7 @@ class SessionRepository(
 
     /** What a Run has been told it holds, as its own page watches it (#282). */
     fun statedBestEffortsFlow(sessionId: Long): Flow<List<StatedBestEffort>> =
-        statedBestEffortDao?.getForSessionFlow(sessionId) ?: flowOf(emptyList())
+        recordBook.statedForFlow(sessionId)
 
     // --- The Run Summary one Run has been given (#76) ---
 
@@ -2735,7 +2657,7 @@ class SessionRepository(
      * ([runSummaryFactsSettledFlow]), so the answer is the whole of what it holds.
      */
     suspend fun achievementsForRun(sessionId: Long): List<Achievement> =
-        achievementDao?.getAchievementsForSessions(listOf(sessionId)) ?: emptyList()
+        recordBook.medalsHeldBy(listOf(sessionId))
 
     /**
      * Whether anything about this history is still being measured (#76).
@@ -3007,7 +2929,6 @@ class SessionRepository(
         seconds: Int?,
         finalizeWaitStepMillis: Long = 250L,
     ) {
-        val dao = statedBestEffortDao ?: return
         if (type.distanceMeters == null) {
             Log.w("StatedBestEffort", "Refusing $type for run $sessionId: it is not run over a distance")
             return
@@ -3026,7 +2947,7 @@ class SessionRepository(
             return
         }
 
-        val standing = dao.getForSession(sessionId).singleOrNull { it.type == type }?.seconds
+        val standing = recordBook.statedFor(sessionId).singleOrNull { it.type == type }?.seconds
         // Nothing to write, and so nothing to re-score or re-snapshot: re-opening the dialog and
         // pressing Save on the time already there must not cost a walk of the record book.
         if (standing == seconds) return
@@ -3052,8 +2973,8 @@ class SessionRepository(
                     )
                     return@inTransaction
                 }
-                if (seconds == null) dao.withdraw(sessionId, type)
-                else dao.state(StatedBestEffort(sessionId = sessionId, type = type, seconds = seconds))
+                if (seconds == null) recordBook.withdraw(sessionId, type)
+                else recordBook.state(StatedBestEffort(sessionId = sessionId, type = type, seconds = seconds))
             }
         }
 
@@ -5363,4 +5284,43 @@ class SessionRepository(
     private fun mainSetSeconds(runSeconds: Int, walkSeconds: Int, repeats: Int): Long =
         (runSeconds.toLong() + walkSeconds.toLong()) * repeats.toLong()
 
+}
+
+/**
+ * A record book with no tables behind it — the book of a repository nothing hands one to (#484).
+ *
+ * Only a test builds that: the app always hands the repository its one book over Room. No Runs,
+ * no medals, no claims, and nowhere to write any, so a Run finishes holding nothing and a change
+ * to it has no book to mend. Tests that reach a Record hand the repository a real book instead.
+ */
+private object NoRecordTables : RecordBookStore {
+    override suspend fun run(sessionId: Long): RunnerSession? = null
+    override suspend fun runs(): List<RunnerSession> = emptyList()
+    override suspend fun track(sessionId: Long): List<TrackPoint> = emptyList()
+    override suspend fun runsOwedScoring(): List<Long> = emptyList()
+    override suspend fun markScored(sessionId: Long) = Unit
+    override suspend fun markScored(sessionIds: List<Long>) = Unit
+    override suspend fun statedFor(sessionId: Long): List<StatedBestEffort> = emptyList()
+    override suspend fun allStated(): List<StatedBestEffort> = emptyList()
+    override suspend fun medals(): List<Achievement> = emptyList()
+    override suspend fun medalsHeldBy(sessionIds: List<Long>): List<Achievement> = emptyList()
+    override suspend fun replaceMedalsOfTypes(types: List<RecordType>, medals: List<Achievement>) = Unit
+    override suspend fun effortsFor(sessionId: Long): List<RunEffortRow> = emptyList()
+    override suspend fun replaceEffortsFor(sessionId: Long, efforts: List<RunEffortRow>) = Unit
+    override suspend fun putEfforts(efforts: List<RunEffortRow>) = Unit
+    override suspend fun effortsOfTypes(types: List<RecordType>): List<RunEffortRow> = emptyList()
+    override suspend fun replaceEffortsOfTypes(types: List<RecordType>, efforts: List<RunEffortRow>) = Unit
+    override suspend fun wholesaleFillOwed() = false
+    override suspend fun markWholesaleFillPaid() = Unit
+    override suspend fun historySeeded(): Boolean? = null
+    override suspend fun markHistorySeeded() = Unit
+    override suspend fun clearHistorySeeded() = Unit
+    override suspend fun inTransaction(block: suspend () -> Unit) = block()
+    override fun quickestInHistoryFlow(type: RecordType) = flowOf<HistoryBestEffort?>(null)
+    override fun medalCountsFlow() = flowOf(emptyList<SessionMedalCount>())
+    override fun recordsReadingFlow() = flowOf(emptyList<RecordsReadingRow>())
+    override fun wholesaleFillOwedFlow() = flowOf(false)
+    override fun statedForFlow(sessionId: Long) = flowOf(emptyList<StatedBestEffort>())
+    override suspend fun state(effort: StatedBestEffort) = Unit
+    override suspend fun withdraw(sessionId: Long, type: RecordType) = Unit
 }

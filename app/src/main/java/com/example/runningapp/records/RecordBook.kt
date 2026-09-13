@@ -8,14 +8,18 @@ import com.example.runningapp.analysis.bestEffortsOf
 import com.example.runningapp.analysis.recordBookOf
 import com.example.runningapp.analysis.standingsAfter
 import com.example.runningapp.data.Achievement
+import com.example.runningapp.data.RecordsReadingRow
 import com.example.runningapp.data.RunEffortRow
 import com.example.runningapp.data.RunnerSession
+import com.example.runningapp.data.SessionMedalCount
 import com.example.runningapp.data.StatedBestEffort
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.byType
 import com.example.runningapp.data.isFinished
+import com.example.runningapp.training.HistoryBestEffort
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -34,20 +38,12 @@ import java.util.concurrent.atomic.AtomicLong
  * read again inside the commit that ranks it, a claim list read again inside the commit that
  * rebuilds from it — are the book's own rules, so they are written in [RecordBook] against
  * [inTransaction] rather than hidden in an implementation where a test could not see them.
+ *
+ * Every table is always there (#484): the app's store is
+ * [com.example.runningapp.data.RoomRecordBookStore], and a test stands up the whole of one in memory
+ * rather than wiring some tables and not others.
  */
 interface RecordBookStore {
-    /**
-     * False wherever the medals are not wired, which only a test does — the app always wires them. A
-     * Run then finishes without being scored rather than failing to finish.
-     */
-    val keepsBook: Boolean
-
-    /**
-     * False wherever the claims beneath the medals are not wired (#75), which again only a test does.
-     * Nothing is banked, and a re-banking has nothing to do and nothing to owe.
-     */
-    val banksEfforts: Boolean
-
     suspend fun run(sessionId: Long): RunnerSession?
     /** Every Run in history, finished or not. */
     suspend fun runs(): List<RunnerSession>
@@ -91,6 +87,26 @@ interface RecordBookStore {
 
     /** Runs [block] as one database transaction. */
     suspend fun inTransaction(block: suspend () -> Unit)
+
+    // --- For readers that are not the book (#484) ---
+    //
+    // The screens that show what the book holds, and the two statements a runner can make about a
+    // treadmill Run. None of them decides anything the book ranks by, so they are plain reads and
+    // writes here and the rules around them stay with their callers.
+
+    /** The quickest effort history holds at [type], watched (#446). */
+    fun quickestInHistoryFlow(type: RecordType): Flow<HistoryBestEffort?>
+    /** How many medals each Run holds, watched (#51). */
+    fun medalCountsFlow(): Flow<List<SessionMedalCount>>
+    /** The banked claims and the fill flag, in one statement (#346). */
+    fun recordsReadingFlow(): Flow<List<RecordsReadingRow>>
+    /** Whether the banked claims are part-way through being filled, watched (#75). */
+    fun wholesaleFillOwedFlow(): Flow<Boolean>
+    /** What one Run has been told it holds, watched (#282). */
+    fun statedForFlow(sessionId: Long): Flow<List<StatedBestEffort>>
+    /** One stated Best Effort stored, over whatever the Run held at the same Record (#282). */
+    suspend fun state(effort: StatedBestEffort)
+    suspend fun withdraw(sessionId: Long, type: RecordType)
 }
 
 /**
@@ -150,7 +166,6 @@ class RecordBook(
      * launch pays against a book nobody is moving.
      */
     private suspend fun scoreUnlessOvertaken(sessionId: Long): List<Achievement>? {
-        if (!store.keepsBook) return emptyList()
         val session = store.run(sessionId) ?: return emptyList()
         // The same accuracy-gated points the map, the splits and the GPX export are built from, so a
         // fix the run itself refused cannot come back as a record nobody ran.
@@ -196,7 +211,6 @@ class RecordBook(
      * still stands.
      */
     private suspend fun bankEfforts(sessionId: Long, efforts: List<BestEffort>) {
-        if (!store.banksEfforts) return
         store.putEfforts(efforts.map { RunEffortRow(sessionId, it.type, it.value) })
     }
 
@@ -277,7 +291,6 @@ class RecordBook(
      * is not a reason to take the app down on the way to the first screen.
      */
     suspend fun scoreMissed() {
-        if (!store.keepsBook) return
         if (store.historySeeded() != true) return
         val sessionIds = store.runsOwedScoring()
         var scored = 0
@@ -347,7 +360,6 @@ class RecordBook(
      * unnecessary reseed costs a few minutes of background work and produces the same book.
      */
     suspend fun seedFromHistory() {
-        if (!store.keepsBook) return
         if (store.historySeeded() != false) return
 
         // Noted before a line of history is read, and asked again before the mark is written. Both
@@ -653,8 +665,7 @@ class RecordBook(
     private val seedingMark = Mutex()
 
     private suspend fun recordsHeldBy(sessionIds: List<Long>): List<RecordType> =
-        if (!store.keepsBook) emptyList()
-        else store.medalsHeldBy(sessionIds).map { it.type }.distinct()
+        store.medalsHeldBy(sessionIds).map { it.type }.distinct()
 
     /**
      * Re-takes what [sessionIds] are worth at every Record, replacing whatever was banked for them
@@ -676,7 +687,6 @@ class RecordBook(
      * owed — see the abandonment below.
      */
     private suspend fun rebank(sessionIds: List<Long>): Rebanking {
-        if (!store.banksEfforts) return Rebanking(landed = true, movedRows = false)
         // Raised outside the `try` and never lowered, because a re-banking that threw on the third
         // Run has still moved the first two: what is on disk is stale from the first row that
         // differed, whether or not the rest of the work got there.
@@ -821,7 +831,6 @@ class RecordBook(
         types: List<RecordType>,
         remeasured: List<Long> = emptyList(),
     ): List<Achievement>? {
-        if (!store.keepsBook) return emptyList()
         // Every statement in history, in one read rather than one per Run: a query inside the loop
         // below is a round trip per Run in the runner's life, to fetch at most five rows. Read
         // before the measuring, and checked again after it — see the abandonment below.
@@ -878,15 +887,13 @@ class RecordBook(
             // same carry-in, decided by the same [measuredIds], so a Run that finished mid-measure
             // keeps the rows its own scoring wrote rather than being wiped by this one, and a Run
             // that was measured and found to be worth nothing loses the rows it used to hold.
-            if (store.banksEfforts) {
-                val carried = store.effortsOfTypes(types).filter { it.sessionId !in measuredIds }
-                store.replaceEffortsOfTypes(
-                    types,
-                    measured.flatMap { run ->
-                        run.efforts.map { RunEffortRow(run.sessionId, it.type, it.value) }
-                    } + carried,
-                )
-            }
+            val carried = store.effortsOfTypes(types).filter { it.sessionId !in measuredIds }
+            store.replaceEffortsOfTypes(
+                types,
+                measured.flatMap { run ->
+                    run.efforts.map { RunEffortRow(run.sessionId, it.type, it.value) }
+                } + carried,
+            )
             written = book
         }
         return written
@@ -924,6 +931,28 @@ class RecordBook(
      */
     suspend fun worthAt(session: RunnerSession, types: List<RecordType>): List<BestEffort> =
         effortsAt(session, types, statedEffortsOf(session.id))
+
+    // --- What the book holds, for readers that are not the book (#484) ---
+    //
+    // The one door to the record tables: the repository reads medals, claims and the fill flag
+    // through here rather than holding the tables itself. See the matching part of [RecordBookStore].
+
+    fun quickestInHistoryFlow(type: RecordType): Flow<HistoryBestEffort?> = store.quickestInHistoryFlow(type)
+    fun medalCountsFlow(): Flow<List<SessionMedalCount>> = store.medalCountsFlow()
+    fun recordsReadingFlow(): Flow<List<RecordsReadingRow>> = store.recordsReadingFlow()
+    fun wholesaleFillOwedFlow(): Flow<Boolean> = store.wholesaleFillOwedFlow()
+    fun statedForFlow(sessionId: Long): Flow<List<StatedBestEffort>> = store.statedForFlow(sessionId)
+    suspend fun statedFor(sessionId: Long): List<StatedBestEffort> = store.statedFor(sessionId)
+    suspend fun medalsHeldBy(sessionIds: List<Long>): List<Achievement> = store.medalsHeldBy(sessionIds)
+
+    /**
+     * Stores one stated Best Effort. The write alone: the caller puts it inside its own transaction,
+     * and scores or mends the book behind it (#282).
+     */
+    suspend fun state(effort: StatedBestEffort) = store.state(effort)
+
+    /** Takes one stated Best Effort away, on the same terms as [state]. */
+    suspend fun withdraw(sessionId: Long, type: RecordType) = store.withdraw(sessionId, type)
 
     /** What one Run is worth at [types], measuring its track only if one of them needs it. */
     private suspend fun effortsAt(

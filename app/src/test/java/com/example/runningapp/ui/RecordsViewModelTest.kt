@@ -1,6 +1,7 @@
 package com.example.runningapp.ui
 
 import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.data.recordBookOver
 import com.example.runningapp.data.RecordsReadingRow
 import com.example.runningapp.data.RecordEffortRow
 import com.example.runningapp.data.RunEffortDao
@@ -306,7 +307,10 @@ class RecordsViewModelTest {
     private fun viewModel() = RecordsViewModel(
         SessionRepository(
             sessionDao = sessionDao,
-            runEffortDao = runEffortDao,
+            recordBook = recordBookOver(
+                sessionDao = sessionDao,
+                runEffortDao = runEffortDao,
+            ),
         ),
         zone = { zone },
         zoneChanges = zoneChanges,
