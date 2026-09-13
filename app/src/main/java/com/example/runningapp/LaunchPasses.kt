@@ -22,19 +22,20 @@ class LaunchPass(val name: String, val work: suspend () -> Unit)
  *
  * **On the container's scope, never an Activity's.** The latch below is process-wide, so a pass tied
  * to an Activity the runner backs out of would be cancelled with its work half done and never started
- * again for the life of the process. Every pass marks each item as it pays it, so a pass cut short by
- * the process itself keeps what it paid and the next launch takes up the rest.
+ * again for the life of the process. A pass cut short by the process itself leaves its work owed for
+ * the next launch: most mark each item as they pay it and keep what they paid, and the record seeding,
+ * which commits the whole book at once, simply runs again.
  */
 class LaunchPasses(
     private val passes: BackgroundPasses,
-    private val list: List<LaunchPass>,
+    private val inOrder: List<LaunchPass>,
 ) {
     private val paid = AtomicBoolean(false)
 
-    /** Starts every pass in [list], in order. Only the first call in a process does anything. */
+    /** Starts every pass in [inOrder], in order. Only the first call in a process does anything. */
     fun payOnce() {
         if (!paid.compareAndSet(false, true)) return
-        list.forEach { passes.launch(it.name, it.work) }
+        inOrder.forEach { passes.launch(it.name, it.work) }
     }
 }
 

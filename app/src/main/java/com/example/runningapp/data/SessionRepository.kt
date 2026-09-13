@@ -3503,14 +3503,13 @@ class SessionRepository(
      *   at a time — a process that died mid-pass leaves finished Runs owing a scoring with no
      *   wholesale fill outstanding at all, and the rest of that pass rewrites the standings;
      * - the Segment walk ([SessionDao.anySegmentTimingOwedFlow]), paid by the launch pass
-     *   [payWhatSegmentTimingOwes], where an effort timed for
-     *   another Run takes a medal off this one;
+     *   [payWhatSegmentTimingOwes], where an effort timed for another Run takes a medal off this one;
      * - the Segment's own walk of history ([SegmentDao.anySegmentHistoryWalkOwedFlow]), paid by the
      *   same pass from the other end, where a Segment nobody has walked yet holds no efforts at all
      *   — so this Run can be handed efforts and medals it did not have when the walk reaches it;
      * - the shapes ([SessionDao.anyRunShapeOwedFlow]), paid by the launch pass
-     *   [payWhatRunShapesOwe], where a Run's group is every Run
-     *   shaped like it, so a shape taken later moves the count of times the route has been run;
+     *   [payWhatRunShapesOwe], where a Run's group is every Run shaped like it, so a shape taken
+     *   later moves the count of times the route has been run;
      * - the moving-time backfill (#163) and the Effort Score backfill (#62), which rewrite a Run's
      *   pace, moving time and Score, and which said nothing at all until #349 gave them the one
      *   shared way of saying it ([HistoryDebtDao.anyHistoryDebtOwedFlow]).
