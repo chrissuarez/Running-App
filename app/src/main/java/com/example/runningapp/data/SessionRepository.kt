@@ -2075,8 +2075,8 @@ class SessionRepository(
             // a wild fix the Run itself refused cannot bend a route out of the group it belongs to.
             override suspend fun track(sessionId: Long) = getTrackPointsForMap(sessionId)
 
-            // Read again inside the transaction that writes, the record book's rule and for its
-            // reason ([RecordBook.scoreAndMark], #210): the database takes one writer at a time, so
+            // Read again inside the transaction that writes, the rule the record book scores a Run
+            // by and for its reason ([RecordBook], #210): the database takes one writer at a time, so
             // either the mark that overtook this measurement has committed by then and this sees it, or it
             // commits afterwards and its own re-shaping has the last word. Cheaper than a lock, and
             // nothing is made to wait behind seconds of arithmetic.
@@ -2111,9 +2111,6 @@ class SessionRepository(
 
             override suspend fun run(sessionId: Long) = sessionDao.getSessionById(sessionId)
             override suspend fun runs() = sessionDao.getAllSessions()
-
-            // The same accuracy-gated fixes the map, the splits and the GPX export are built from, so
-            // a fix the Run itself refused cannot come back as a record nobody ran.
             override suspend fun track(sessionId: Long) = getTrackPointsForMap(sessionId)
 
             override suspend fun runsOwedScoring() = sessionDao.getSessionIdsMissingRecordScoring()
@@ -4580,8 +4577,8 @@ class SessionRepository(
      * that followed a structure, and a time requirement is answered by a time.
      *
      * The three edges — not a Walk, not a Run still going, measured-or-stated — are not restated
-     * here. They are [bestEffortsOf]'s, asked through [RecordBook.worthAt], which is the same measurement the
-     * record book ranks: a rule applied in one reader of a shared measurement is a bug waiting for
+     * here. They are [bestEffortsOf]'s, asked through [RecordBook.worthAt], which is the same
+     * measurement the record book ranks: a rule applied in one reader of a shared measurement is a bug waiting for
      * the second reader. It also means the Walk exclusion is not a filter this has to remember —
      * a Walk is worth no Best Effort at all, so it clears nothing.
      *

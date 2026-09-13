@@ -30,7 +30,7 @@ class RecordBookTest {
 
     /** The record book's tables as the book sees them, in memory. */
     private class Store : RecordBookStore {
-        override val keepsBook = true
+        override var keepsBook = true
         override val banksEfforts = true
 
         val runs = mutableMapOf<Long, RunnerSession>()
@@ -234,5 +234,54 @@ class RecordBookTest {
         val worth = book.worthAt(store.runs.getValue(1), listOf(RecordType.FASTEST_5K))
 
         assertEquals(listOf(RecordType.FASTEST_5K to 1_500.0), worth.map { it.type to it.value })
+    }
+
+    @Test
+    fun `a change overtaken while it is re-measured keeps its claims and leaves history owing`() = runTest {
+        aTreadmillRun(1, km = 10.0, seconds = 3_000)
+        aTreadmillRun(2, km = 12.0, seconds = 4_000)
+        aTreadmillRun(3, km = 14.0, seconds = 5_000)
+        // Fourth at both Records, so it holds no medal and no rebuild comes behind its change.
+        aTreadmillRun(4, km = 5.0, seconds = 1_000)
+        book.seedFromHistory()
+
+        book.changeAndRepair(listOf(4L)) {
+            store.runs[4] = store.runs.getValue(4).copy(distanceKm = 6.0)
+            // A second edit, landing while the first one's re-banking is measuring the Run.
+            store.whileMeasuring = { store.runs[4] = store.runs.getValue(4).copy(distanceKm = 7.0) }
+        }
+
+        // The re-banking stood down rather than write a reading the Run no longer agrees with.
+        assertEquals(
+            listOf(RunEffortRow(4, RecordType.LONGEST_DISTANCE, 5_000.0)),
+            store.effortsFor(4).filter { it.type == RecordType.LONGEST_DISTANCE },
+        )
+        assertEquals(false, store.seeded)
+    }
+
+    @Test
+    fun `seeding stands down when a stated best effort changes while history is measured`() = runTest {
+        aTreadmillRun(1, km = 6.0, seconds = 2_000)
+        store.whileMeasuring = {
+            store.stated += StatedBestEffort(sessionId = 1, type = RecordType.FASTEST_5K, seconds = 1_500)
+        }
+
+        book.seedFromHistory()
+
+        assertTrue(store.medals.isEmpty())
+        assertEquals(false, store.seeded)
+        assertTrue(store.scored.isEmpty())
+    }
+
+    @Test
+    fun `where no book is kept a run is marked scored and holds nothing`() = runTest {
+        store.keepsBook = false
+        aTreadmillRun(1, km = 10.0, seconds = 3_000)
+
+        val earned = book.scoreAndMark(1)
+
+        assertTrue(earned.isEmpty())
+        assertTrue(store.medals.isEmpty())
+        assertEquals(setOf(1L), store.scored)
     }
 }
