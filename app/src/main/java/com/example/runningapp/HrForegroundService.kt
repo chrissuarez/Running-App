@@ -385,12 +385,10 @@ class HrForegroundService : Service() {
     private var acquisitionState = AcquisitionState()
     private var isActivityBound = false
     
-    // Borrowed from the process for this instance's life, and let go of in onDestroy (#274).
-    // Dropped as it is let go of: the next instance may take the same queue back, and a producer of
-    // this one arriving late must not speak into the next Run. Volatile because producers read it
-    // from the session, recorder and location threads.
-    @Volatile
-    private var audioCueManager: AudioCueManager? = null
+    // This instance's hold on the process's one cue queue, taken in onCreate and let go of in
+    // onDestroy (#274). The next instance may take the same queue back; this hold stops working
+    // then, so a late producer of this instance cannot speak into the next Run.
+    private var cueLease: AudioCueManager.Lease? = null
 
     /**
      * The queue tickets for the cues of the Run that is on, which the end of the Run hands back
@@ -1565,7 +1563,7 @@ class HrForegroundService : Service() {
         // The process's one queue, not one of this instance's own: a Run started while the last
         // one's final sentence is still being said joins that sentence's queue rather than
         // speaking over it (#274).
-        audioCueManager = appContainer.cueQueue.acquire()
+        cueLease = appContainer.cueQueue.acquire()
 
         database = appContainer.database
         sessionRepository = appContainer.sessionRepository
@@ -1850,7 +1848,7 @@ class HrForegroundService : Service() {
      * app speaks — the split announcements and the UI's target-reached cue come through here too.
      */
     fun enqueueCue(text: String, priority: CuePriority, tag: CueTag? = null): Long? {
-        val manager = audioCueManager ?: return null
+        val manager = cueLease ?: return null
         // Enqueued and recorded as one act, so the end of a Run cannot land between the two and
         // leave the cue outstanding with nothing left to take it back (#220).
         return outstandingCues.record(tag) { manager.enqueue(text, priority) }
@@ -1949,7 +1947,7 @@ class HrForegroundService : Service() {
     private fun withdrawCues(tickets: List<Long>) {
         val taken = outstandingCues.takeBackTickets(tickets)
         if (taken.isEmpty()) return
-        audioCueManager?.withdrawAll(taken)
+        cueLease?.withdrawAll(taken)
     }
 
     private fun withdrawCue(tag: CueTag) {
@@ -1958,7 +1956,7 @@ class HrForegroundService : Service() {
         // In one act, for the reason [AudioCueManager.withdrawAll] gives: taken back one at a time,
         // the engine can finish its sentence between two of them and hand the next out before its
         // own withdrawal reaches it.
-        audioCueManager?.withdrawAll(tickets)
+        cueLease?.withdrawAll(tickets)
     }
 
     /**
@@ -1976,7 +1974,7 @@ class HrForegroundService : Service() {
         // All of them in one act, and the bookkeeping held across it: taken back one at a time the
         // engine can finish its sentence between two of them and hand the next one out before its
         // withdrawal lands, and a cue recorded between the two steps would be left behind entirely.
-        outstandingCues.takeBackAll { tickets -> audioCueManager?.withdrawAll(tickets) }
+        outstandingCues.takeBackAll { tickets -> cueLease?.withdrawAll(tickets) }
     }
 
 
@@ -3243,7 +3241,7 @@ class HrForegroundService : Service() {
         // outlive the service that took it, so this is a last-resort safety net, not a second
         // owner of the decision. acquire/release are idempotent, so a preceding demote is fine.
         releaseWakeLock()
-        audioCueManager.also { audioCueManager = null }?.shutdown()
+        cueLease?.shutdown()
 
         // The one drain this teardown takes for itself, and it is not the destroyed line's: that
         // one waits for itself above. This is for the session inbox, which was still running then
