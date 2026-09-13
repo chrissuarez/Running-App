@@ -161,11 +161,12 @@ class AppContainer(context: Context) {
         val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
         val cueScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
         SharedCueQueue {
-            // Assigned before the engine can answer: it answers only once it has bound to the
-            // system's speech service, and binding is never done inside the constructor.
-            lateinit var queue: AudioCueManager
-            val engine = TextToSpeech(appContext) { status -> queue.onTtsInit(status) }
-            queue = AudioCueManager(
+            // Null until the constructor below returns, and the callback may come before then: with
+            // no speech engine to bind to, the engine reports its failure from inside its own
+            // constructor. A failure has nothing to set up, so a queue not yet made misses nothing.
+            var queue: AudioCueManager? = null
+            val engine = TextToSpeech(appContext) { status -> queue?.onTtsInit(status) }
+            AudioCueManager(
                 engine,
                 audioManager,
                 cueScope,
@@ -179,8 +180,7 @@ class AppContainer(context: Context) {
                         "Cue queue ${if (speaking) "speaking" else "quiet"} (seq=$sequence)",
                     )
                 },
-            )
-            queue
+            ).also { queue = it }
         }
     }
 

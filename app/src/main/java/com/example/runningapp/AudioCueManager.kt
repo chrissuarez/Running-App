@@ -88,7 +88,10 @@ class AudioCueManager(
     private var cueFocusTimeoutJob: Job? = null
     private var activitySequence = 0L
 
-    /** The service is going away: nothing more is taken, and the engine goes with the last cue. */
+    /**
+     * The service has let go: nothing more is taken, and the engine goes with the last cue — unless
+     * the next service takes the queue back first ([reopen]).
+     */
     private var isShuttingDown = false
 
     /** Whether the engine has been torn down, so that it is torn down exactly once. */
@@ -118,7 +121,7 @@ class AudioCueManager(
          * Start the clock on the last sentence — see [shutdownGraceMs] — for this goodbye, or null
          * for no clock.
          */
-        val startShutdownGrace: Long? = null,
+        val shutdownGraceFor: Long? = null,
     )
 
     fun initialize() {
@@ -139,8 +142,8 @@ class AudioCueManager(
      * Say this, in its turn. Returns the ticket the cue can later be taken back by ([withdrawAll]);
      * a caller with nothing to take back can ignore it.
      *
-     * Null when there was no queue left to join, which is only ever the service going away
-     * underneath the caller ([shutdown]).
+     * Null when there was no queue left to join, which is only ever the service letting go of it
+     * underneath the caller ([shutdown]) and no Run having taken it back since ([reopen]).
      */
     fun enqueue(text: String, priority: CuePriority): Long? {
         val (ticket, activity) = synchronized(this) {
@@ -184,8 +187,9 @@ class AudioCueManager(
     }
 
     /**
-     * The service is going away and the engine with it. Nothing waiting is spoken after this, which
-     * is the process ending rather than the queue dropping a cue.
+     * The service is going away and lets go of the queue. Nothing waiting is spoken after this,
+     * which is that Run ending rather than the queue dropping a cue. The engine goes with the
+     * queue's last sentence, unless a new Run takes the queue back before then ([reopen], #274).
      *
      * The sentence being said when this lands is not cut off: the engine goes when that sentence
      * ends — or after [shutdownGraceMs] if the engine never reports back, which is the same refusal
@@ -215,7 +219,7 @@ class AudioCueManager(
         }
 
         Log.d(logTag, "Service destroyed mid-sentence: the engine goes when the sentence ends")
-        return Settlement(startShutdownGrace = ++shutdownGeneration)
+        return Settlement(shutdownGraceFor = ++shutdownGeneration)
     }
 
     /**
@@ -264,7 +268,7 @@ class AudioCueManager(
     /** Do what was decided under the lock, now that it has been let go of. */
     private fun settle(settlement: Settlement) {
         announce(settlement.activity)
-        settlement.startShutdownGrace?.let { generation ->
+        settlement.shutdownGraceFor?.let { generation ->
             scheduleShutdownBackstop(shutdownGraceMs) { settle(giveUpOnLastSentence(generation)) }
         }
         if (settlement.tearDownEngine) {

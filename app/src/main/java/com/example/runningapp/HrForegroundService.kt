@@ -386,6 +386,10 @@ class HrForegroundService : Service() {
     private var isActivityBound = false
     
     // Borrowed from the process for this instance's life, and let go of in onDestroy (#274).
+    // Dropped as it is let go of: the next instance may take the same queue back, and a producer of
+    // this one arriving late must not speak into the next Run. Volatile because producers read it
+    // from the session, recorder and location threads.
+    @Volatile
     private var audioCueManager: AudioCueManager? = null
 
     /**
@@ -3239,7 +3243,7 @@ class HrForegroundService : Service() {
         // outlive the service that took it, so this is a last-resort safety net, not a second
         // owner of the decision. acquire/release are idempotent, so a preceding demote is fine.
         releaseWakeLock()
-        audioCueManager?.shutdown()
+        audioCueManager.also { audioCueManager = null }?.shutdown()
 
         // The one drain this teardown takes for itself, and it is not the destroyed line's: that
         // one waits for itself above. This is for the session inbox, which was still running then
