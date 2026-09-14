@@ -126,7 +126,13 @@ class RoomRecordBookStoreTest {
     fun `a run's track is read through the map's accuracy gate, breadcrumbs and all`() = runTest {
         // A fix the Run itself refused cannot come back as a record nobody ran; a breadcrumb from
         // before the app kept an accuracy is always kept.
-        val breadcrumb = TrackPoint(sessionId = 1, latitude = 0.0, longitude = 0.0, timestampMillis = 0L, source = TrackPointSource.BACKFILL)
+        val breadcrumb = TrackPoint(
+            sessionId = 1,
+            latitude = 0.0,
+            longitude = 0.0,
+            timestampMillis = 0L,
+            source = TrackPointSource.BACKFILL,
+        )
         val refused = TrackPoint(
             sessionId = 1,
             latitude = 0.0,
@@ -141,7 +147,7 @@ class RoomRecordBookStoreTest {
     }
 
     @Test
-    fun `a transaction is the database's own`() = runTest {
+    fun `the store's transaction is the one it was handed`() = runTest {
         store().inTransaction { transactions += "work" }
 
         assertEquals(listOf("begin", "work", "commit"), transactions)
