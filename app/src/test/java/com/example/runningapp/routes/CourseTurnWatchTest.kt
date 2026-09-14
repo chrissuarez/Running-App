@@ -253,7 +253,8 @@ class CourseTurnWatchTest {
      */
     @Test
     fun `no cue is made on a fix it is already false at`() {
-        var said = 0
+        var fixesThatSpoke = 0
+        var fixesThatDidNot = 0
         for (centimetres in 41_900..42_100) {
             val watch = watch()
             watch.reachTheCourse()
@@ -261,13 +262,14 @@ class CourseTurnWatchTest {
 
             val voice = watch.onFix(fix(centimetres / 100.0), autoPaused = false)
 
+            if (voice.said.isEmpty()) fixesThatDidNot++ else fixesThatSpoke++
             voice.said.forEach {
-                said++
                 assertFalse("${it.cue.spoken} at ${voice.alongMeters}", it.isFalseAt(voice.alongMeters!!))
             }
         }
-        // Both sides of the edge were reached: the sweep made the cue on the near side of it.
-        assertTrue(said > 0)
+        // Both sides of the edge were reached: the cue was made on the near side and not the far.
+        assertTrue(fixesThatSpoke > 0)
+        assertTrue(fixesThatDidNot > 0)
     }
 
     /**

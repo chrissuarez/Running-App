@@ -306,8 +306,9 @@ private fun hasReached(alongMeters: Double, ground: Double): Boolean = alongMete
 /**
  * The first ground past [alongMeters] a cue said there is too late for — [TURN_CUE_LATE_METERS] on.
  *
- * One function, so a turn's own cue is made up to *exactly* the ground it is taken back from: the
- * two are the same number, worked out once, and not the same sum worked out twice.
+ * For a turn's own cue this is also the ground it is false from — the one value is used for both
+ * ([CueAt.falseFromAlongMeters]), so the cue is made up to *exactly* the ground it is taken back
+ * from.
  */
 private fun tooLateFrom(alongMeters: Double): Double = alongMeters + TURN_CUE_LATE_METERS
 
@@ -431,13 +432,11 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
             listOf(
                 CueAt(
                     alongMeters = it.alongMeters - TURN_WARNING_METERS,
-                    falseFromAlongMeters = it.alongMeters,
                     turnAlongMeters = it.alongMeters,
                     cue = TurnCue(it.direction, TurnCueMoment.AHEAD),
                 ),
                 CueAt(
                     alongMeters = it.alongMeters,
-                    falseFromAlongMeters = tooLateFrom(it.alongMeters),
                     turnAlongMeters = it.alongMeters,
                     cue = TurnCue(it.direction, TurnCueMoment.AT_THE_TURN),
                 ),
@@ -636,7 +635,6 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
      */
     private class CueAt(
         val alongMeters: Double,
-        val falseFromAlongMeters: Double,
         /**
          * The turn this sentence is about, as ground along the course — its own ground for the cue
          * said at the turn, and fifty metres on for the warning said before it.
@@ -648,12 +646,18 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
         val turnAlongMeters: Double,
         val cue: TurnCue,
     ) {
-        /**
-         * The first ground this sentence is too late to be said at. For a turn's own cue it is the
-         * very ground the sentence is false from — the same number, from the same function
-         * ([tooLateFrom]) — so it is never made at a distance the withdrawal would already take it
-         * back at.
-         */
+        /** The first ground this sentence is too late to be said at ([TURN_CUE_LATE_METERS]). */
         val tooLateFromAlongMeters: Double = tooLateFrom(alongMeters)
+
+        /**
+         * The first ground this sentence is false from ([SaidTurn.falseFromAlongMeters], where the
+         * rule is argued): the turn, for the warning; and for a turn's own cue, the very value it is
+         * too late from — not the same sum worked out twice — so it is never made at a distance the
+         * withdrawal would already take it back at (#479).
+         */
+        val falseFromAlongMeters: Double = when (cue.moment) {
+            TurnCueMoment.AHEAD -> turnAlongMeters
+            TurnCueMoment.AT_THE_TURN -> tooLateFromAlongMeters
+        }
     }
 }

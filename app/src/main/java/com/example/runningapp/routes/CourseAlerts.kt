@@ -21,15 +21,15 @@ interface CourseCueQueue {
     fun enqueue(saying: CourseSaying): Long?
 
     /** Take back everything the course has waiting to be said, of every kind. */
-    fun takeBackAll()
+    fun takeBackEveryCourseCue()
 
     /**
      * Take back exactly these cues, by the tickets [enqueue] handed back, and nothing else (#456).
      *
-     * By ticket rather than by name, and separate from [takeBackAll] on purpose: this fires while
-     * the course still stands and while other sentences about it are still true. A runner who has
-     * reached a corner has not stopped being off the line by reaching it, and one stale turn cue
-     * does not make the next turn's warning waiting behind it stale.
+     * By ticket rather than by name, and separate from [takeBackEveryCourseCue] on purpose: this
+     * fires while the course still stands and while other sentences about it are still true. A
+     * runner who has reached a corner has not stopped being off the line by reaching it, and one
+     * stale turn cue does not make the next turn's warning waiting behind it stale.
      */
     fun takeBack(tickets: List<Long>)
 }
@@ -94,8 +94,9 @@ class CourseAlerts(
      * is inert when it is handed back, so nothing here has to know what has gone out — an entry
      * simply leaves when the ground passes it.
      *
-     * Emptied whenever the course changes, because [CourseCueQueue.takeBackAll] has just taken every
-     * one of them back wholesale (#377) and what replaces them belongs to a different line.
+     * Emptied whenever the course changes, because [CourseCueQueue.takeBackEveryCourseCue] has just
+     * taken every one of them back wholesale (#377) and what replaces them belongs to a different
+     * line.
      */
     private val waiting = mutableListOf<WaitingCue>()
 
@@ -133,7 +134,7 @@ class CourseAlerts(
 
     /** Let go of the course being watched, and give out the number for whatever comes next. */
     private fun beginWatching(): Long = synchronized(lock) {
-        queue.takeBackAll()
+        queue.takeBackEveryCourseCue()
         waiting.clear()
         watch = null
         ++watching
@@ -151,7 +152,7 @@ class CourseAlerts(
     private fun watchInstead(mine: Long, next: WatchedCourse?) {
         synchronized(lock) {
             if (mine != watching) return
-            queue.takeBackAll()
+            queue.takeBackEveryCourseCue()
             waiting.clear()
             watch = next
         }

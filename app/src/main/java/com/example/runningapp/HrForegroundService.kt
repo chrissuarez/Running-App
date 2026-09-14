@@ -396,6 +396,9 @@ class HrForegroundService : Service() {
      */
     private val outstandingCues = OutstandingCues()
 
+    /** Every cue this service enqueues or takes back, kept in step with [outstandingCues] (#479). */
+    private val runCues = RunCueQueue(outstandingCues) { cueLease }
+
     // Mission 4: Location
     private lateinit var fusedLocationClient: FusedLocationProviderClient
     private var locationTracker: LocationTracker? = null
@@ -596,7 +599,7 @@ class HrForegroundService : Service() {
      * The threads it is reached from — the tracker's, for fixes, and a coroutine's, for the course —
      * are its own problem and it takes a lock over both.
      */
-    private val courseAlerts = CourseAlerts(QueuedCourseCues(outstandingCues) { cueLease })
+    private val courseAlerts = CourseAlerts(QueuedCourseCues(runCues))
 
     /** Keeps [courseAlerts] up with the library while the Run goes on — see [courseToWatchFlow]. */
     private var courseWatchJob: Job? = null
@@ -1837,15 +1840,12 @@ class HrForegroundService : Service() {
     }
 
     /**
-     * Say something, in its turn among everything else waiting (#53). The one way anything in this
-     * app speaks — the split announcements and the UI's target-reached cue come through here too.
+     * Say something, in its turn among everything else waiting (#53) — the Run's own effects, the
+     * split announcements and the UI's target-reached cue. Like the course's cues, it goes through
+     * [runCues], the one way anything in this app speaks.
      */
-    fun enqueueCue(text: String, priority: CuePriority, tag: CueTag? = null): Long? {
-        val manager = cueLease ?: return null
-        // Enqueued and recorded as one act, so the end of a Run cannot land between the two and
-        // leave the cue outstanding with nothing left to take it back (#220).
-        return outstandingCues.record(tag) { manager.enqueue(text, priority) }
-    }
+    fun enqueueCue(text: String, priority: CuePriority, tag: CueTag? = null): Long? =
+        runCues.enqueue(text, priority, tag)
 
     /** The Run's [RunEffect.Speak], under the name the Run gave the cue, if it gave one. */
     private fun speakCue(effect: RunEffect.Speak) =
@@ -1903,17 +1903,11 @@ class HrForegroundService : Service() {
      * A fix has landed on a routed Run: say whatever the course has to say about it, if anything
      * (#58).
      *
-     * Tagged [CueTag.COURSE], like the turnaround is tagged and unlike what #376 shipped: every one
-     * of these is true the moment it is made, but a cue waits its turn, and two things can stop one
-     * being true while it waits — the line going out from under it, which takes back everything
-     * under the name (#377), and, for a turn cue alone, the runner running past the piece of ground
-     * that cue is about, which takes back that cue by its own ticket and leaves the rest (#456).
-     * [CourseAlerts] handles both; this only hands it the fix.
-     *
-     * [CuePriority.NAVIGATION], which is the top of the queue: a runner going the wrong way is going
-     * further the wrong way for as long as a split announcement takes to finish. It still never cuts
-     * one off mid-sentence — nothing in this app does (#53) — it goes to the front of what is
-     * waiting.
+     * Every one of these is true the moment it is made, but a cue waits its turn, and two things can
+     * stop one being true while it waits — the line going out from under it (#377), and, for a turn
+     * cue alone, the runner running past the piece of ground that cue is about (#456).
+     * [CourseAlerts] handles both, and [QueuedCourseCues] says under which name and at which
+     * priority; this only hands it the fix.
      */
     private fun onFixForCourse(fix: LocationFix, autoPaused: Boolean) {
         courseAlerts.onFix(fix, autoPaused)
@@ -1927,14 +1921,7 @@ class HrForegroundService : Service() {
      * Inert when there is nothing to take back, and inert in the queue when the cue has already
      * gone out — so no caller has to know which of those it is.
      */
-    private fun withdrawCue(tag: CueTag) {
-        val tickets = outstandingCues.takeBack(tag)
-        if (tickets.isEmpty()) return
-        // In one act, for the reason [AudioCueManager.withdrawAll] gives: taken back one at a time,
-        // the engine can finish its sentence between two of them and hand the next out before its
-        // own withdrawal reaches it.
-        cueLease?.withdrawAll(tickets)
-    }
+    private fun withdrawCue(tag: CueTag) = runCues.takeBack(tag)
 
     /**
      * Take back every cue of the Run that has just ended (#220).
@@ -1942,17 +1929,12 @@ class HrForegroundService : Service() {
      * A cue still waiting its turn belongs to a Run that is over: "start running, interval 3 of 6"
      * after the runner has stopped is an instruction with nothing left to instruct. The queue drops
      * nothing (#53), so this is the producer taking its own cues back — and the service is that
-     * producer, because every cue in the app is enqueued through it.
+     * producer, because every cue in the app is enqueued through its [runCues].
      *
      * The sentence being said is untouched and finishes in full: a withdrawn ticket for a cue
      * already gone out is inert.
      */
-    private fun withdrawRunCues() {
-        // All of them in one act, and the bookkeeping held across it: taken back one at a time the
-        // engine can finish its sentence between two of them and hand the next one out before its
-        // withdrawal lands, and a cue recorded between the two steps would be left behind entirely.
-        outstandingCues.takeBackAll { tickets -> cueLease?.withdrawAll(tickets) }
-    }
+    private fun withdrawRunCues() = runCues.takeBackAll()
 
 
     private var lastNotificationTime = 0L
