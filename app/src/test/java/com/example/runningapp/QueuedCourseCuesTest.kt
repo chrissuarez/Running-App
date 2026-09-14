@@ -38,13 +38,14 @@ class QueuedCourseCuesTest {
     private val queue = SilentQueue()
     private var hold: CueHold? = queue
     private val outstanding = OutstandingCues()
-    private val course = QueuedCourseCues(outstanding) { hold }
+    private val runCues = RunCueQueue(outstanding) { hold }
+    private val course = QueuedCourseCues(runCues)
 
     private val turnRight = TurnCue(TurnDirection.RIGHT, TurnCueMoment.AT_THE_TURN)
 
     /** A cue of the Run's own, enqueued the way the service enqueues one. */
     private fun theRunSays(text: String, tag: CueTag? = null) =
-        outstanding.record(tag) { queue.enqueue(text, CuePriority.INFORMATION) }
+        runCues.enqueue(text, CuePriority.INFORMATION, tag)
 
     /** The top of the queue: a runner going the wrong way cannot wait for a split to finish. */
     @Test
@@ -62,7 +63,7 @@ class QueuedCourseCuesTest {
         theRunSays("Kilometre 3.")
         course.enqueue(turnRight)
 
-        course.takeBackAll()
+        course.takeBackEveryCourseCue()
 
         assertEquals(listOf("Halfway. Turn around.", "Kilometre 3."), queue.texts())
     }
@@ -94,8 +95,9 @@ class QueuedCourseCuesTest {
     @Test
     fun `the end of the Run takes back a course cue still waiting`() {
         course.enqueue(CourseAlert.OFF_COURSE)
+        theRunSays("Kilometre 3.")
 
-        outstanding.takeBackAll { queue.withdrawAll(it) }
+        runCues.takeBackAll()
 
         assertEquals(emptyList<String>(), queue.texts())
     }
@@ -106,8 +108,9 @@ class QueuedCourseCuesTest {
         hold = null
 
         assertNull(course.enqueue(CourseAlert.OFF_COURSE))
-        course.takeBackAll()
+        course.takeBackEveryCourseCue()
         course.takeBack(listOf(1L))
+        runCues.takeBackAll()
 
         assertEquals(emptyList<Long>(), outstanding.takeBack(CueTag.COURSE))
     }

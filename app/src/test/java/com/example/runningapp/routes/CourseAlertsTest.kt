@@ -4,6 +4,7 @@ import com.example.runningapp.CueHold
 import com.example.runningapp.CuePriority
 import com.example.runningapp.OutstandingCues
 import com.example.runningapp.QueuedCourseCues
+import com.example.runningapp.RunCueQueue
 import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteSource
 import com.example.runningapp.recording.LocationFix
@@ -62,7 +63,7 @@ class CourseAlertsTest {
 
     /** Wired to the queue exactly as the service wires it — the real adapter over the stand-in. */
     private val alerts = CourseAlerts(
-        QueuedCourseCues(OutstandingCues()) { queue },
+        QueuedCourseCues(RunCueQueue(OutstandingCues()) { queue }),
         nowMillis = { clockMillis },
     )
 
@@ -245,6 +246,13 @@ class CourseAlertsTest {
         runCurrent()
 
         assertEquals(listOf(CourseAlert.OFF_COURSE.spoken), queue.texts())
+
+        // And the same watch is still reading the runner, so coming back is still told.
+        fix(onTheLine, secondsIn = 20)
+        assertEquals(
+            listOf(CourseAlert.OFF_COURSE.spoken, CourseAlert.BACK_ON_COURSE.spoken),
+            queue.texts(),
+        )
         watching.cancel()
     }
 
