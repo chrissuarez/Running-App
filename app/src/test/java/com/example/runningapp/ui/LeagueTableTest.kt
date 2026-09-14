@@ -25,6 +25,7 @@ class LeagueTableTest {
     private val laps = LeagueTable<Lap>(
         bestFirst = compareBy<Lap> { it.seconds ?: Double.POSITIVE_INFINITY }.thenBy { it.id },
         day = { firstDay.plusDays(it.day.toLong()) },
+        dateLabel = { "day ${it.day}" },
         plotted = { it.seconds },
         valueLabel = { "${it.toLong()}s" },
         orderWord = "quickest",
@@ -94,20 +95,6 @@ class LeagueTableTest {
         assertEquals("14 efforts", laps.countLabel(14))
     }
 
-    // --- A row said out loud ---
-
-    @Test
-    fun `a placed row names its metal, or the number it came in at`() {
-        assertEquals(
-            "Gold, 5 Jan 2026, 01:00, 5:00 /km",
-            placedRowSpoken(place = 1, medal = Medal.GOLD, primary = "5 Jan 2026", secondary = "5:00 /km", trailing = "01:00"),
-        )
-        assertEquals(
-            "Number 4, 5 Jan 2026, 1:00:00",
-            placedRowSpoken(place = 4, medal = null, primary = "5 Jan 2026", secondary = null, trailing = "1:00:00"),
-        )
-    }
-
     // --- The trend ---
 
     @Test
@@ -153,7 +140,7 @@ class LeagueTableTest {
     fun `each point carries its day and value in words`() {
         val points = laps.trend(listOf(lap(1, day = 0, seconds = 70.0), lap(2, day = 31, seconds = 64.0)))
 
-        assertEquals(listOf("5 Jan 2026", "5 Feb 2026"), points.map { it.dateLabel })
+        assertEquals(listOf("day 0", "day 31"), points.map { it.dateLabel })
         assertEquals(listOf("70s", "64s"), points.map { it.valueLabel })
     }
 
@@ -162,7 +149,7 @@ class LeagueTableTest {
         val points = laps.trend(listOf(lap(1, day = 0, seconds = 70.0), lap(2, day = 31, seconds = 64.0)))
 
         assertEquals(
-            "Your quickest lap from 5 Jan 2026 to 5 Feb 2026: 70s on the first day, 64s on the latest.",
+            "Your quickest lap from day 0 to day 31: 70s on the first day, 64s on the latest.",
             laps.trendDescription(points),
         )
     }

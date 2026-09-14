@@ -259,6 +259,7 @@ val segmentLeague: LeagueTable<SegmentEffortUi> = LeagueTable(
         rowId = { it.effortId },
     ),
     day = { it.date },
+    dateLabel = { it.dateLabel },
     plotted = { it.elapsedMillis.roundedToSeconds().toDouble() },
     valueLabel = { formatDuration(it.roundToLong()) },
     orderWord = "quickest",

@@ -152,6 +152,7 @@ fun recordSlots(
 fun recordLeague(type: RecordType): LeagueTable<RecordEffortUi> = LeagueTable(
     bestFirst = bestFirst(type),
     day = { it.date },
+    dateLabel = { it.dateLabel },
     plotted = { it.value },
     valueLabel = { recordValueLabel(type, it) },
     orderWord = "best",
