@@ -86,7 +86,7 @@ class RunRouteSaverTest {
         val outcome = saver.save(aRun, aLap(), london)
 
         val route = dao.stored.single()
-        assertEquals(RunRouteOutcome.Saved(route.id, route.name), outcome)
+        assertEquals(added(route.id, route.name), outcome)
         // Named for the Run it was taken from, in the same words the Run is exported under.
         assertEquals("Run 14 Nov 2023, 22:13", route.name)
         assertTrue(route.distanceMeters > 1_400.0)
@@ -101,8 +101,8 @@ class RunRouteSaverTest {
         val first = saver.save(aRun, aLap(), london)
         val again = saver.save(aRun, aLap(), london)
 
-        assertTrue(first is RunRouteOutcome.Saved)
-        assertEquals(RunRouteOutcome.AlreadySaved(dao.stored.single().name), again)
+        assertTrue(first.addedRouteId != null)
+        assertEquals(dao.alreadyHeld(dao.stored.single().name), again)
         assertEquals(1, dao.stored.size)
     }
 
@@ -127,7 +127,7 @@ class RunRouteSaverTest {
         val kept = dao.stored.single()
         // One kept it, the other was sent back to the row that keeping it made.
         assertEquals(
-            setOf(RunRouteOutcome.Saved(kept.id, kept.name), RunRouteOutcome.AlreadySaved(kept.name)),
+            setOf(added(kept.id, kept.name), dao.alreadyHeld(kept.name)),
             outcomes.toSet(),
         )
     }
@@ -138,12 +138,12 @@ class RunRouteSaverTest {
         saver.save(aRun, aLap(), london)
         dao.renameRoute(dao.stored.single().id, "Park lap")
 
-        assertEquals(RunRouteOutcome.AlreadySaved("Park lap"), saver.save(aRun, aLap(), london))
+        assertEquals(dao.alreadyHeld("Park lap"), saver.save(aRun, aLap(), london))
     }
 
     @Test
     fun `a run that recorded no ground is no course`() = runTest {
-        assertEquals(RunRouteOutcome.NoGround, saver.save(aRun, emptyList(), london))
+        assertEquals(RouteOutcome.NoGround, saver.save(aRun, emptyList(), london))
         assertTrue(dao.stored.isEmpty())
     }
 
@@ -164,7 +164,7 @@ class RunRouteSaverTest {
             )
         }
 
-        assertEquals(RunRouteOutcome.NoGround, saver.save(aRun, scattered, london))
+        assertEquals(RouteOutcome.NoGround, saver.save(aRun, scattered, london))
         assertTrue(dao.stored.isEmpty())
     }
 
@@ -200,7 +200,7 @@ class RunRouteSaverTest {
     fun `a run still being run is not a course yet`() = runTest {
         val stillRunning = aRun.copy(endTime = 0L)
 
-        assertEquals(RunRouteOutcome.StillRunning, saver.save(stillRunning, aLap(), london))
+        assertEquals(RouteOutcome.StillRunning, saver.save(stillRunning, aLap(), london))
         assertTrue(dao.stored.isEmpty())
     }
 
@@ -221,9 +221,9 @@ class RunRouteSaverTest {
      */
     @Test
     fun `the run a course was traced off is remembered on it`() = runTest {
-        val outcome = saver.save(aRun, aLap(), london) as RunRouteOutcome.Saved
+        val outcome = saver.save(aRun, aLap(), london).addedRouteId!!
 
-        assertEquals(listOf(aRun.id to outcome.routeId), remembered)
+        assertEquals(listOf(aRun.id to outcome), remembered)
     }
 
     /**
@@ -232,12 +232,12 @@ class RunRouteSaverTest {
      */
     @Test
     fun `a run saved onto a course already kept is remembered on it too`() = runTest {
-        val first = saver.save(aRun, aLap(), london) as RunRouteOutcome.Saved
+        val first = saver.save(aRun, aLap(), london).addedRouteId!!
         val secondRun = aRun.copy(id = 8)
 
         saver.save(secondRun, aLap(), london)
 
-        assertEquals(listOf(aRun.id to first.routeId, secondRun.id to first.routeId), remembered)
+        assertEquals(listOf(aRun.id to first, secondRun.id to first), remembered)
     }
 
     /** Nothing was kept, so there is nothing for the Run to be remembered on. */
@@ -260,7 +260,7 @@ class RunRouteSaverTest {
     fun `keeps the course and stamps its Run in one transaction`() = runTest {
         val outcome = saver.save(aRun, aLap(), london)
 
-        assertTrue(outcome is RunRouteOutcome.Saved)
+        assertTrue(outcome.addedRouteId != null)
         assertEquals(listOf(7L to 1L), remembered)
         assertEquals("the keep ran outside a transaction", 1, depthAtKeep)
         assertEquals("the stamp ran outside a transaction", 1, depthAtRemember)

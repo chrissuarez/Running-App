@@ -6,6 +6,7 @@ import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteSource
 import com.example.runningapp.routes.FakeRouteDao
 import com.example.runningapp.routes.RouteImporter
+import com.example.runningapp.routes.RouteLibrary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.flowOf
@@ -56,17 +57,21 @@ class RoutesViewModelTest {
         whenever(resolver.query(anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull()))
             .doReturn(null)
         return RoutesViewModel(
-            dao,
+            RouteLibrary(
+                dao,
+                // No Run is remembered on any course in these tests: what they are about is the
+                // library.
+                runsAlongRoute = { flowOf(emptyList()) },
+                // Nor has any been run: none of these tests opens a family's page.
+                lastRunOnRoutes = { emptyList() },
+                courseShape = { flowOf(null) },
+                shapedRuns = flowOf(emptyList()),
+                // The drawings too, so a test can see a pass finish rather than wait on a real
+                // thread.
+                measuring = dispatcher,
+            ),
             RouteImporter(resolver, dao, now = { 1_700_000_000_000L }),
-            // No Run is remembered on any course in these tests: what they are about is the library.
-            runsAlongRoute = { flowOf(emptyList()) },
-            // Nor has any been run: none of these tests opens a family's page.
-            lastRunOnRoutes = { emptyList() },
-            courseShape = { flowOf(null) },
-            shapedRuns = flowOf(emptyList()),
             io = dispatcher,
-            // The shapes too, so a test can see a pass finish rather than wait on a real thread.
-            courseDispatcher = dispatcher,
         )
     }
 

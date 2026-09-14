@@ -1,7 +1,9 @@
 package com.example.runningapp.ui
 
 import com.example.runningapp.data.RouteHeader
+import com.example.runningapp.data.RouteKeeping
 import com.example.runningapp.routes.GpxRefusal
+import com.example.runningapp.routes.RouteOutcome
 import java.util.Locale
 import kotlin.math.roundToInt
 
@@ -42,18 +44,60 @@ fun gpxRefusalMessage(reason: GpxRefusal): String = when (reason) {
             "Connect and Komoot export."
     GpxRefusal.NO_POINTS ->
         "That GPX has no route in it — no track and no route to follow. Try exporting it again."
-    GpxRefusal.NO_GROUND ->
-        // The Run door's words for the same rule ([runHasNoRouteToSaveMessage]), because it is the
-        // same rule (#397). Not "it stays on one spot": a file of places spread fifty metres about
-        // is turned away too, and telling the runner it is all one place would be untrue of it.
-        "That GPX doesn’t go far enough from where it starts to keep as a route. Nothing has " +
-            "been added to your routes."
     GpxRefusal.TOO_LARGE ->
         "That GPX is too big to keep as a route. Try exporting a shorter one, or one recorded less often."
     GpxRefusal.UNREADABLE ->
         "That GPX couldn't be read — it may be damaged or only partly downloaded. Nothing has been " +
             "added to your routes."
 }
+
+/** Which door a course came in by — the only thing the words for one [RouteOutcome] depend on. */
+enum class RouteDoor {
+    /** A GPX file handed over by the picker or by "Open with" (#54). */
+    FILE,
+
+    /** A Run the runner asked to keep, from its own page (#55). */
+    RUN,
+}
+
+/**
+ * What the runner is told about a course offered to the library, from either door (#480).
+ *
+ * One mapping for both doors, so the library's answer is put into words in one place. The doors
+ * share every sentence but two: a new row is announced as the file's name or as "this run", and a
+ * course with no ground is a GPX or a run that did not go far enough.
+ */
+fun routeOutcomeMessage(outcome: RouteOutcome, door: RouteDoor): String = when (outcome) {
+    is RouteOutcome.Kept -> {
+        val name = outcome.kept.name
+        when (outcome.kept.keeping) {
+            RouteKeeping.KEPT -> when (door) {
+                RouteDoor.FILE -> routeImportedMessage(name)
+                RouteDoor.RUN -> runSavedAsRouteMessage(name)
+            } + routeSameGroundNote(outcome.kept.sameGroundAs)
+            RouteKeeping.ALREADY_KEPT -> routeAlreadySavedMessage(name)
+            RouteKeeping.REMEASURED -> routeRemeasuredMessage(name)
+            RouteKeeping.REMEASURED_KEEPING_CLIMB -> routeRemeasuredKeepingClimbMessage(name)
+        }
+    }
+    RouteOutcome.NoGround -> when (door) {
+        RouteDoor.FILE -> gpxHasNoRouteToKeepMessage()
+        RouteDoor.RUN -> runHasNoRouteToSaveMessage()
+    }
+    is RouteOutcome.FileRefused -> gpxRefusalMessage(outcome.reason)
+    RouteOutcome.StillRunning -> runStillRunningMessage()
+}
+
+/**
+ * What the Routes screen says when a file's places cover no ground (#397).
+ *
+ * The Run door's words for the same rule ([runHasNoRouteToSaveMessage]), because it is the same
+ * rule. Not "it stays on one spot": a file of places spread fifty metres about is turned away too,
+ * and telling the runner it is all one place would be untrue of it.
+ */
+fun gpxHasNoRouteToKeepMessage(): String =
+    "That GPX doesn’t go far enough from where it starts to keep as a route. Nothing has " +
+        "been added to your routes."
 
 /** What the screen says the moment a Route lands, so an import is visibly an import. */
 fun routeImportedMessage(name: String): String = "Saved “$name” to your routes."
@@ -69,10 +113,10 @@ fun routeImportedMessage(name: String): String = "Saved “$name” to your rout
  * Names the other course, because the name is the only handle they have on it in the library, and
  * says what to do about it, because "covers the same ground" is a fact and not yet an instruction.
  *
- * One sentence for both doors ([runSavedAsRouteMessage] appends it too), so a runner meeting the
- * same pair from a Run's page and from the file picker is told the same thing. Null is no such
- * course and reads as nothing at all, settled here rather than at each door — otherwise two callers
- * would each decide what an absent twin says.
+ * One sentence for both doors ([routeOutcomeMessage] appends it after either door's news), so a
+ * runner meeting the same pair from a Run's page and from the file picker is told the same thing.
+ * Null is no such course and reads as nothing at all, settled here rather than at each door —
+ * otherwise two callers would each decide what an absent twin says.
  *
  * **Conditional rather than an instruction.** The ground is recognised by a tolerance, not by an
  * equality ([com.example.runningapp.routes.runIsOnCourse]), so two courses the runner keeps on

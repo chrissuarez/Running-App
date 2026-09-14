@@ -18,7 +18,6 @@ import com.example.runningapp.export.RunExportName
 import com.example.runningapp.export.RunFitActivity
 import com.example.runningapp.export.RunGpxTrack
 import com.example.runningapp.routes.CourseShape
-import com.example.runningapp.routes.RunRouteOutcome
 import com.example.runningapp.routes.RunRouteSaver
 import com.example.runningapp.repeatedOn
 import kotlinx.coroutines.CoroutineDispatcher
@@ -193,15 +192,8 @@ class SessionDetailViewModel(
             // them twice over for distance and hills — all of it arithmetic, none of it waiting on
             // anything. The runner tapped a button expecting the words back, not the screen to
             // stall.
-            val words = when (val outcome = withContext(assemblyDispatcher) {
-                saver.save(run, trackPoints)
-            }) {
-                is RunRouteOutcome.Saved ->
-                    runSavedAsRouteMessage(outcome.name) + routeSameGroundNote(outcome.sameGroundAs)
-                is RunRouteOutcome.AlreadySaved -> routeAlreadySavedMessage(outcome.name)
-                RunRouteOutcome.NoGround -> runHasNoRouteToSaveMessage()
-                RunRouteOutcome.StillRunning -> runStillRunningMessage()
-            }
+            val outcome = withContext(assemblyDispatcher) { saver.save(run, trackPoints) }
+            val words = routeOutcomeMessage(outcome, RouteDoor.RUN)
             _saveAsRouteMessage.value = SaveAsRouteMessage(sessionId, words)
         }
     }

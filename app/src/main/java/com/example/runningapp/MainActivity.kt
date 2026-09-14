@@ -489,18 +489,8 @@ class MainActivity : ComponentActivity() {
                     // import must not be cancelled by the runner walking away from the library.
                     val routesViewModel: RoutesViewModel = viewModel(
                         factory = RoutesViewModelFactory(
-                            appContainer.database.routeDao(),
+                            appContainer.routeLibrary,
                             appContainer.routeImporter,
-                            // One question of `sessions`, handed over as one function (#420).
-                            appContainer.database.sessionDao()::getRunsAlongRouteFlow,
-                            // The second, and the last: which of a family's lengths was run most
-                            // recently, which is what its page opens on (#421).
-                            appContainer.database.sessionDao()::lastRunOnRoutes,
-                            // This course's own shape, and every Run that holds one — so its page
-                            // shows the Runs that covered its ground as well as the Runs the app
-                            // wrote it down on (#74).
-                            courseShape = appContainer.database.routeShapeDao()::getCourseShapeFlow,
-                            shapedRuns = appContainer.database.runShapeDao().getShapedRunsForCoursesFlow(),
                             zoneChanges = appContainer.zoneChanges,
                         )
                     )

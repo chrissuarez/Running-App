@@ -3,6 +3,7 @@ package com.example.runningapp.routes
 import android.content.ContentResolver
 import android.database.Cursor
 import android.net.Uri
+import com.example.runningapp.data.KeptRoute
 import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteKeeping
 import com.example.runningapp.data.RouteSource
@@ -80,7 +81,7 @@ class RouteImporterTest {
         val outcome = importerFor(aRealGpx, fileNamedOnDisk = "download-3.gpx").import(uri)
 
         val route = dao.stored.single()
-        assertEquals(RouteImportOutcome.Imported(route.id, "Regent's Park loop"), outcome)
+        assertEquals(added(route.id, "Regent's Park loop"), outcome)
         assertEquals("Regent's Park loop", route.name)
         assertEquals(222.4, route.distanceMeters, 1.0)
         // That the heights reached the row at all. What they add up to is the shape module's
@@ -101,8 +102,8 @@ class RouteImporterTest {
         val again = importerFor(aRealGpx).import(uri)
 
         val route = dao.stored.single()
-        assertEquals(RouteImportOutcome.Imported(route.id, "Regent's Park loop"), first)
-        assertEquals(RouteImportOutcome.AlreadySaved("Regent's Park loop"), again)
+        assertEquals(added(route.id, "Regent's Park loop"), first)
+        assertEquals(dao.alreadyHeld("Regent's Park loop"), again)
     }
 
     @Test
@@ -115,7 +116,7 @@ class RouteImporterTest {
 
         // The file still calls it "Regent's Park loop"; the runner does not. Naming the file back
         // at them would point at a row that is not in their library under that name.
-        assertEquals(RouteImportOutcome.AlreadySaved("Tuesday hills"), again)
+        assertEquals(dao.alreadyHeld("Tuesday hills"), again)
         assertEquals(1, dao.stored.size)
     }
 
@@ -141,7 +142,7 @@ class RouteImporterTest {
         val outcome = importerFor(aRealGpx).import(uri)
 
         val route = dao.stored.single()
-        assertEquals(RouteImportOutcome.Remeasured("Tuesday hills"), outcome)
+        assertEquals(RouteOutcome.Kept(KeptRoute(route.id, "Tuesday hills", RouteKeeping.REMEASURED)), outcome)
         // Absent became stated, which is the whole difference between the two files: what the
         // climb adds up to is RouteShapeTest's question, not this one's.
         assertNotNull(route.elevationGainMeters)
@@ -212,7 +213,7 @@ class RouteImporterTest {
 
         // Nothing about the row moved, so the runner is told they already have it rather than that
         // it has been re-measured.
-        assertEquals(RouteImportOutcome.AlreadySaved("Regent's Park loop"), outcome)
+        assertEquals(dao.alreadyHeld("Regent's Park loop"), outcome)
         assertEquals(banked, dao.stored.single().elevationGainMeters)
     }
 
@@ -270,7 +271,7 @@ class RouteImporterTest {
     fun `writes nothing when the file is not a gpx`() = runTest {
         val outcome = importerFor("<kml><Placemark/></kml>").import(uri)
 
-        assertEquals(RouteImportOutcome.Refused(GpxRefusal.NOT_GPX), outcome)
+        assertEquals(RouteOutcome.FileRefused(GpxRefusal.NOT_GPX), outcome)
         assertTrue(dao.stored.isEmpty())
     }
 
@@ -278,7 +279,7 @@ class RouteImporterTest {
     fun `writes nothing when the gpx holds no route`() = runTest {
         val outcome = importerFor("""<gpx version="1.1"><trk><trkseg/></trk></gpx>""").import(uri)
 
-        assertEquals(RouteImportOutcome.Refused(GpxRefusal.NO_POINTS), outcome)
+        assertEquals(RouteOutcome.FileRefused(GpxRefusal.NO_POINTS), outcome)
         assertTrue(dao.stored.isEmpty())
     }
 
@@ -294,7 +295,7 @@ class RouteImporterTest {
                 """</trkseg></trk></gpx>"""
         ).import(uri)
 
-        assertEquals(RouteImportOutcome.Refused(GpxRefusal.NO_GROUND), outcome)
+        assertEquals(RouteOutcome.NoGround, outcome)
         assertTrue(dao.stored.isEmpty())
     }
 
@@ -311,7 +312,7 @@ class RouteImporterTest {
             """<gpx version="1.1"><trk><trkseg>$standingStill</trkseg></trk></gpx>"""
         ).import(uri)
 
-        assertEquals(RouteImportOutcome.Refused(GpxRefusal.NO_GROUND), outcome)
+        assertEquals(RouteOutcome.NoGround, outcome)
         assertTrue(dao.stored.isEmpty())
     }
 
@@ -331,7 +332,7 @@ class RouteImporterTest {
             """<gpx version="1.1"><trk><trkseg>$scatter</trkseg></trk></gpx>"""
         ).import(uri)
 
-        assertEquals(RouteImportOutcome.Refused(GpxRefusal.NO_GROUND), outcome)
+        assertEquals(RouteOutcome.NoGround, outcome)
         assertTrue(dao.stored.isEmpty())
     }
 
@@ -346,7 +347,7 @@ class RouteImporterTest {
 
         val outcome = RouteImporter(resolver, dao, now = { 1L }).import(uri)
 
-        assertEquals(RouteImportOutcome.Refused(GpxRefusal.NO_GROUND), outcome)
+        assertEquals(RouteOutcome.NoGround, outcome)
         verify(resolver, never()).query(any(), anyOrNull(), anyOrNull(), anyOrNull(), anyOrNull())
     }
 
@@ -357,18 +358,18 @@ class RouteImporterTest {
             """<gpx version="1.1"><trk><trkseg><trkpt lat="51.5" lon="-0.1"/>"""
         ).import(uri)
 
-        assertEquals(RouteImportOutcome.Refused(GpxRefusal.UNREADABLE), outcome)
+        assertEquals(RouteOutcome.FileRefused(GpxRefusal.UNREADABLE), outcome)
         assertTrue(dao.stored.isEmpty())
     }
 
     @Test
     fun `refuses a file the provider will not open`() = runTest {
         assertEquals(
-            RouteImportOutcome.Refused(GpxRefusal.UNREADABLE),
+            RouteOutcome.FileRefused(GpxRefusal.UNREADABLE),
             importerFor(contents = null).import(uri),
         )
         assertEquals(
-            RouteImportOutcome.Refused(GpxRefusal.UNREADABLE),
+            RouteOutcome.FileRefused(GpxRefusal.UNREADABLE),
             importerFor(contents = null, openThrows = FileNotFoundException("gone")).import(uri),
         )
         assertTrue(dao.stored.isEmpty())
@@ -382,7 +383,7 @@ class RouteImporterTest {
             openThrows = SecurityException("permission denial"),
         ).import(uri)
 
-        assertEquals(RouteImportOutcome.Refused(GpxRefusal.UNREADABLE), outcome)
+        assertEquals(RouteOutcome.FileRefused(GpxRefusal.UNREADABLE), outcome)
         assertTrue(dao.stored.isEmpty())
     }
 
@@ -468,7 +469,7 @@ class RouteImporterTest {
         assertEquals(
             "one of them kept the course and the other was sent to it, but got $outcomes",
             1,
-            outcomes.count { it is RouteImportOutcome.Imported || it is RunRouteOutcome.Saved },
+            outcomes.count { it.addedRouteId != null },
         )
     }
 }

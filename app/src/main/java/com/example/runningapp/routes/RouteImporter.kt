@@ -5,58 +5,8 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Log
 import com.example.runningapp.data.RouteDao
-import com.example.runningapp.data.RouteKeeping
 import com.example.runningapp.data.RouteSource
 import java.io.IOException
-
-/** What became of a file the runner handed to the library. */
-sealed interface RouteImportOutcome {
-    /**
-     * A new Route now holds this file's course.
-     *
-     * [sameGroundAs] names another course the library already keeps over this very ground, where
-     * there is one, and is null otherwise (#402). The import still happened — the file's line is
-     * not the kept row's line, so by the app's one identity rule they are two courses — and saying
-     * so is what lets the runner settle a pair the app is not entitled to merge. See
-     * [com.example.runningapp.data.KeptRoute.sameGroundAs].
-     */
-    data class Imported(
-        val routeId: Long,
-        val name: String,
-        val sameGroundAs: String? = null,
-    ) : RouteImportOutcome
-
-    /**
-     * The library already held this course, measured exactly as this file measures it.
-     *
-     * [name] is what the existing Route is called, which may not be what the file is called: a
-     * runner who renamed it needs to be told which row is the one they already have.
-     */
-    data class AlreadySaved(val name: String) : RouteImportOutcome
-
-    /**
-     * The library already held this course, and this file measures it differently, so the kept
-     * Route now carries the file's numbers.
-     *
-     * This is the remedy ADR 0014 names for a Route's banked distance and climb: re-importing the
-     * file is how a runner reaches them, since nothing re-measures a Route behind their back. The
-     * common case is a first export with no `<ele>` in it and a second with heights.
-     */
-    data class Remeasured(val name: String) : RouteImportOutcome
-
-    /**
-     * The library already held this course, and this file measures its distance differently but
-     * carries no heights, so the kept Route took the new distance and kept the climb it had (#355).
-     *
-     * Its own outcome rather than a [Remeasured] because the screen must not tell a runner that a
-     * number came from a file that never mentioned it. A file with no `<ele>` says nothing about
-     * climb; saying nothing is not the same as saying there is none, so the banked answer stands.
-     */
-    data class RemeasuredKeepingClimb(val name: String) : RouteImportOutcome
-
-    /** Nothing was written. See [com.example.runningapp.ui.gpxRefusalMessage] for the words. */
-    data class Refused(val reason: GpxRefusal) : RouteImportOutcome
-}
 
 /**
  * Turns a GPX file the runner picked — or opened this app with — into a stored Route (#54).
@@ -91,24 +41,24 @@ class RouteImporter(
     private val now: () -> Long = System::currentTimeMillis,
 ) {
 
-    suspend fun import(uri: Uri): RouteImportOutcome {
+    suspend fun import(uri: Uri): RouteOutcome {
         val outcome = try {
             contentResolver.openInputStream(uri).use { stream ->
-                if (stream == null) return RouteImportOutcome.Refused(GpxRefusal.UNREADABLE)
+                if (stream == null) return RouteOutcome.FileRefused(GpxRefusal.UNREADABLE)
                 GpxRouteReader.read(stream)
             }
         } catch (unreadable: IOException) {
             Log.w("RouteImporter", "Could not read the picked file", unreadable)
-            return RouteImportOutcome.Refused(GpxRefusal.UNREADABLE)
+            return RouteOutcome.FileRefused(GpxRefusal.UNREADABLE)
         } catch (refused: SecurityException) {
             // The read grant has lapsed — an "Open with" Uri the app came back to after being
             // killed, most often. Nothing to do but ask for the file again.
             Log.w("RouteImporter", "No longer allowed to read the picked file", refused)
-            return RouteImportOutcome.Refused(GpxRefusal.UNREADABLE)
+            return RouteOutcome.FileRefused(GpxRefusal.UNREADABLE)
         }
 
         val read = when (outcome) {
-            is GpxReadOutcome.Refused -> return RouteImportOutcome.Refused(outcome.reason)
+            is GpxReadOutcome.Refused -> return RouteOutcome.FileRefused(outcome.reason)
             is GpxReadOutcome.Read -> outcome
         }
 
@@ -128,7 +78,7 @@ class RouteImporter(
         // and the row is harmless — [CourseLine.of] refuses it, so no Run can be started on it, and
         // it draws as a course with no shape. Handing the same file over again now refuses it, and
         // the runner can delete the row themselves.
-        if (!course.holdsACourse()) return RouteImportOutcome.Refused(GpxRefusal.NO_GROUND)
+        if (!course.holdsACourse()) return RouteOutcome.NoGround
 
         // The name is worked out here, after the file has been found to hold a course and before the
         // library is asked anything, even though a file that turns out to be a course already kept
@@ -144,22 +94,13 @@ class RouteImporter(
 
         // The line is the course's identity, and the library decides in one go what to do with it:
         // keep it, leave the row already holding it alone, or write this file's better numbers onto
-        // that row. Whatever comes back names the row the runner has, under whatever they call it.
+        // that row. Whatever comes back names the row the runner has, under whatever they call it,
+        // and is handed on as it is rather than translated (#480).
         val kept = routeDao.keepRoute(
             course.asRoute(name, createdAtMillis = now(), source = RouteSource.IMPORTED),
             remeasuring = true,
         )
-        return when (kept.keeping) {
-            RouteKeeping.KEPT -> RouteImportOutcome.Imported(
-                routeId = kept.id,
-                name = kept.name,
-                sameGroundAs = kept.sameGroundAs,
-            )
-            RouteKeeping.ALREADY_KEPT -> RouteImportOutcome.AlreadySaved(name = kept.name)
-            RouteKeeping.REMEASURED -> RouteImportOutcome.Remeasured(name = kept.name)
-            RouteKeeping.REMEASURED_KEEPING_CLIMB ->
-                RouteImportOutcome.RemeasuredKeepingClimb(name = kept.name)
-        }
+        return RouteOutcome.Kept(kept)
     }
 
     /**

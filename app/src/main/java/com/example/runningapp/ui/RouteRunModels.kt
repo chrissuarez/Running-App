@@ -1,11 +1,8 @@
 package com.example.runningapp.ui
 
 import com.example.runningapp.data.RouteRunRow
-import com.example.runningapp.data.ShapedRunRow
-import com.example.runningapp.data.decoded
 import com.example.runningapp.ranOn
 import com.example.runningapp.routes.runIsOnCourse
-import com.example.runningapp.segments.RunShape
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -24,6 +21,7 @@ import kotlin.math.roundToLong
  * (#55) — or it was *recognised*, its shape covering this course's ground by the same rule that puts
  * two Runs in one group (#74, [runIsOnCourse]). The first says what the Run set out to do and only
  * START can know it; the second says where the Run went, which the track can be asked at any time.
+ * The two are joined into one list by the library ([com.example.runningapp.routes.runsOnCourse]).
  *
  * The page prints them as one list, because to the runner they are one thing: runs they have been on
  * this route. Nothing is written down by the recognising, so a course saved today claims the Runs
@@ -147,33 +145,6 @@ fun routeRunsUi(
                 isBest = row.sessionId == best?.sessionId,
             )
         }
-}
-
-/**
- * Every Run on one course: the ones remembered on it and the ones recognised on it, each named once
- * (#74).
- *
- * A Run can be both — the runner picked the course and then ran it — and it is one Run, so the
- * remembered row is the one kept. They carry the same columns either way ([ShapedRunRow] embeds the
- * very row the remembered read returns), so which copy survives changes nothing the page prints; it
- * is settled here rather than left to chance so that two reads of the same history cannot come back
- * in different orders.
- *
- * [course] null is a course with no shape to recognise anything by — one still owed its measurement
- * at the first launch after this shipped, or a line too short to hold a route
- * ([com.example.runningapp.routes.routeShapeOf]). Its remembered Runs are unaffected, because those
- * were written down rather than recognised.
- */
-fun runsOnCourse(
-    remembered: List<RouteRunRow>,
-    shaped: List<ShapedRunRow>,
-    course: RunShape?,
-): List<RouteRunRow> {
-    if (course == null) return remembered
-    val alreadyNamed = remembered.mapTo(mutableSetOf()) { it.sessionId }
-    return remembered + shaped.filter { row ->
-        row.run.sessionId !in alreadyNamed && row.decoded()?.let { runIsOnCourse(it, course) } == true
-    }.map { it.run }
 }
 
 /**
