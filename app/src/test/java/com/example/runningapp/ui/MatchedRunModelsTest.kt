@@ -146,7 +146,7 @@ class MatchedRunModelsTest {
             zone = zone,
         )!!
 
-        val trend = matchedRunTrendPoints(group.runs)
+        val trend = matchedRunLeague.trend(group.runs)
 
         assertEquals(listOf(0, 14), trend.map { it.dayOffset })
     }
@@ -163,10 +163,10 @@ class MatchedRunModelsTest {
             zone = zone,
         )!!
 
-        val trend = matchedRunTrendPoints(group.runs)
+        val trend = matchedRunLeague.trend(group.runs)
 
         assertEquals(2, trend.size)
-        assertEquals(2L, trend.first().sessionId)
+        assertEquals(2L, trend.first().entry.sessionId)
         assertEquals(3, group.count)
     }
 
@@ -178,7 +178,7 @@ class MatchedRunModelsTest {
             zone = zone,
         )!!
 
-        assertTrue(matchedRunTrendPoints(group.runs).isEmpty())
+        assertTrue(matchedRunLeague.trend(group.runs).isEmpty())
     }
 
     @Test
@@ -193,12 +193,12 @@ class MatchedRunModelsTest {
             zone = zone,
         )!!
 
-        val trend = matchedRunTrendPoints(group.runs)
+        val trend = matchedRunLeague.trend(group.runs)
 
         assertEquals(3, group.count)
-        assertEquals(listOf(2L, 3L), trend.map { it.sessionId })
+        assertEquals(listOf(2L, 3L), trend.map { it.entry.sessionId })
         assertEquals("--:-- /km", group.runs.first().paceLabel)
-        assertFalse(trend.any { it.paceMinPerKm <= 0.0 })
+        assertFalse(trend.any { it.value <= 0.0 })
     }
 
     @Test
@@ -209,7 +209,7 @@ class MatchedRunModelsTest {
             zone = zone,
         )!!
 
-        val spoken = matchedRunTrendDescription(matchedRunTrendPoints(group.runs))!!
+        val spoken = matchedRunLeague.trendDescription(matchedRunLeague.trend(group.runs))!!
 
         assertTrue(spoken, spoken.contains("6:00 /km on the first day"))
         assertTrue(spoken, spoken.contains("5:30 /km on the latest"))
@@ -217,7 +217,7 @@ class MatchedRunModelsTest {
 
     @Test
     fun `nothing plotted is nothing to read out`() {
-        assertNull(matchedRunTrendDescription(emptyList()))
+        assertNull(matchedRunLeague.trendDescription(emptyList()))
     }
 
     // -- The saved course the group turns out to be (#74) ---------------------------------------

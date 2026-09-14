@@ -47,8 +47,6 @@ internal fun RankedEffortRow(
     secondary: String?,
     /** The number the runner came to the list for, on its own at the end. */
     trailing: String,
-    /** What the row says out loud, which its caller words in its own page's terms. */
-    spoken: String,
     onOpen: () -> Unit,
 ) {
     Row(
@@ -56,7 +54,7 @@ internal fun RankedEffortRow(
             .fillMaxWidth()
             .heightIn(min = RunningUiTokens.MinTouchTarget)
             .clickable(onClick = onOpen)
-            .semantics { contentDescription = spoken },
+            .semantics { contentDescription = placedRowSpoken(place, medal, primary, secondary, trailing) },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (medal != null) {
@@ -97,7 +95,3 @@ internal fun RankedEffortRow(
         )
     }
 }
-
-/** How a placed effort names its place out loud: its metal, or the number it came in at. */
-internal fun spokenPlace(place: Int, medal: Medal?): String =
-    medal?.let { "${it.face.spoken}, " } ?: "Number $place, "

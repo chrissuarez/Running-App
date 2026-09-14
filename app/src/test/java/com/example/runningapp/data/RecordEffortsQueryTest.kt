@@ -2,7 +2,8 @@ package com.example.runningapp.data
 
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.ui.recordSlots
-import com.example.runningapp.ui.recordTopEfforts
+import com.example.runningapp.ui.recordEfforts
+import com.example.runningapp.ui.recordLeague
 import java.sql.Connection
 import java.sql.DriverManager
 import java.time.ZoneId
@@ -75,12 +76,12 @@ class RecordEffortsQueryTest {
     fun `every claim ever banked reaches the placing, however deep it sits`() {
         (1L..12L).forEach { givenRun(it, day = it, fiveKSeconds = 1_500.0 + it) }
 
-        val top = recordTopEfforts(effortRows(), RecordType.FASTEST_5K, zone)
+        val top = top(RecordType.FASTEST_5K)
 
         assertEquals(10, top.size)
-        assertEquals(listOf(1L, 2L, 3L), top.take(3).map { it.effort.sessionId })
+        assertEquals(listOf(1L, 2L, 3L), top.take(3).map { it.entry.sessionId })
         // Tenth place is a Run the record book never remembered — three deep, it holds nothing.
-        assertEquals(10L, top.last().effort.sessionId)
+        assertEquals(10L, top.last().entry.sessionId)
     }
 
     @Test
@@ -93,9 +94,9 @@ class RecordEffortsQueryTest {
         val slots = recordSlots(effortRows(), zone)
         val fiveK = slots.single { it.type == RecordType.FASTEST_5K }
         assertEquals(2L, fiveK.best?.sessionId)
-        assertEquals(10, recordTopEfforts(effortRows(), RecordType.FASTEST_5K, zone).size)
+        assertEquals(10, top(RecordType.FASTEST_5K).size)
         // The eleventh Run was outside the ten and is inside it now, with nothing having mended it.
-        assertEquals(11L, recordTopEfforts(effortRows(), RecordType.FASTEST_5K, zone).last().effort.sessionId)
+        assertEquals(11L, top(RecordType.FASTEST_5K).last().entry.sessionId)
     }
 
     @Test
@@ -105,7 +106,7 @@ class RecordEffortsQueryTest {
         val tenK = recordSlots(effortRows(), zone).single { it.type == RecordType.FASTEST_10K }
 
         assertNull(tenK.best)
-        assertTrue(recordTopEfforts(effortRows(), RecordType.FASTEST_10K, zone).isEmpty())
+        assertTrue(top(RecordType.FASTEST_10K).isEmpty())
     }
 
     @Test
@@ -118,7 +119,7 @@ class RecordEffortsQueryTest {
                 "VALUES (1, 'FASTEST_5K', 1400.0)"
         )
 
-        assertEquals(1, recordTopEfforts(effortRows(), RecordType.FASTEST_5K, zone).size)
+        assertEquals(1, top(RecordType.FASTEST_5K).size)
         assertEquals(
             "23:20",
             recordSlots(effortRows(), zone).single { it.type == RecordType.FASTEST_5K }.best?.valueLabel,
@@ -193,6 +194,9 @@ class RecordEffortsQueryTest {
             "INSERT INTO run_efforts (sessionId, type, value) VALUES ($id, 'FASTEST_5K', $fiveKSeconds)"
         )
     }
+
+    /** One Record's ranked list off the real read, as its page builds it. */
+    private fun top(type: RecordType) = recordLeague(type).top(recordEfforts(effortRows(), type, zone))
 
     /** The claims of a reading taken with nothing being measured — the tests above owe no fill. */
     private fun effortRows(): List<RecordEffortRow> = recordsReading().efforts

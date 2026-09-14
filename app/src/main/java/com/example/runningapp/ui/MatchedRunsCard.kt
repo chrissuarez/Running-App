@@ -37,7 +37,7 @@ import com.example.runningapp.ui.theme.RunningUiTokens
  *
  * The count arrives before the chart can. A group whose Runs all fall on one day, or where only one
  * of them ever measured a pace, is a real group with nothing to draw a line between
- * ([bestEachDay]) — so the card says the number and leaves the chart out, rather than showing an
+ * ([LeagueTable.trend]) — so the card says the number and leaves the chart out, rather than showing an
  * empty frame that reads as a chart that broke.
  *
  * The whole card is the door to the list, and it is held to the app's minimum touch height for the
@@ -49,7 +49,7 @@ fun MatchedRunsCard(
     onOpenMatchedRuns: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val trend = remember(matched.runs) { matchedRunTrendPoints(matched.runs) }
+    val trend = remember(matched.runs) { matchedRunLeague.trend(matched.runs) }
     val headline = matchedRunHeadline(matched.position, matched.courseName)
     val count = matchedRunCountLabel(matched.count, matched.courseName)
 
@@ -81,14 +81,7 @@ fun MatchedRunsCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
-                TrendLineChart(
-                    points = trend.map {
-                        TrendChartPoint(dayOffset = it.dayOffset, value = it.paceMinPerKm.toFloat())
-                    },
-                    firstDay = trend.first().date,
-                    valueLabel = { matchedRunPaceAxisLabel(it) },
-                    spoken = matchedRunTrendDescription(trend).orEmpty(),
-                )
+                TrendLineChart(league = matchedRunLeague, points = trend)
             }
         }
     }

@@ -10,7 +10,6 @@ import com.example.runningapp.segments.runsMatch
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
 import java.util.Locale
 
 /**
@@ -172,75 +171,30 @@ fun matchedRunsListTitle(courseName: String? = null): String = "Runs on ${whatTh
  */
 private fun whatTheGroundIsCalled(courseName: String?): String = courseName ?: "this route"
 
-/** One day on the pace trend: when it was, how far into the chart it sits, and what it took. */
-data class MatchedRunTrendPoint(
-    val sessionId: Long,
-    val date: LocalDate,
-    /** Days since the first point, which is the x the chart is drawn against. */
-    val dayOffset: Int,
-    val paceMinPerKm: Double,
-    val dateLabel: String,
-    val paceLabel: String,
-)
-
 /**
- * The pace of a group's Runs over the calendar they were run on, oldest first — one point per day,
- * at that day's quickest.
+ * What a matched route's card charts (#73): the pace of a group's Runs over the calendar they were
+ * run on, one point per day at that day's quickest.
  *
- * One point per day, and nothing at all below two days — the shared rule ([bestEachDay]), which the
- * Segment trend keeps too. Placed by the calendar rather than evenly, so a two-year gap is drawn as
- * a two-year gap.
+ * The table is the one every league of the runner's efforts is built by ([LeagueTable]); what is the
+ * group's own is that it plots pace, and that a tie on pace keeps the earlier Run — the rule the
+ * record book and the Segments both keep ([quickestFirst]).
  *
  * A Run with no pace is left out of the chart and stays in the list. It is not a slow Run; it is a
  * Run nothing measured a pace for, and plotting it as a zero would draw a cliff the runner never ran.
  */
-fun matchedRunTrendPoints(runs: List<MatchedRunUi>): List<MatchedRunTrendPoint> {
-    val bestPerDay = bestEachDay(
-        runs.filter { it.paceMinPerKm != null },
-        day = { it.date },
-        better = quickestPaceFirst,
-    )
-    if (bestPerDay.isEmpty()) return emptyList()
-
-    val firstDay = bestPerDay.firstKey()
-    return bestPerDay.map { (date, run) ->
-        MatchedRunTrendPoint(
-            sessionId = run.sessionId,
-            date = date,
-            dayOffset = ChronoUnit.DAYS.between(firstDay, date).toInt(),
-            paceMinPerKm = run.paceMinPerKm!!,
-            dateLabel = run.dateLabel,
-            paceLabel = run.paceLabel,
-        )
-    }
-}
-
-/**
- * What the trend chart is, said in one sentence for a runner who is being read the page.
- *
- * A chart is a picture, and a picture says nothing out loud. The two ends are what the chart is for:
- * the stretch of calendar it covers, and whether the pace at the end of it is quicker than the pace
- * at the start. Both ends are a day's quickest rather than a day's last, because that is what the
- * chart plots.
- */
-fun matchedRunTrendDescription(points: List<MatchedRunTrendPoint>): String? {
-    if (points.isEmpty()) return null
-    val first = points.first()
-    val last = points.last()
-    return "Your quickest pace on this route from ${first.dateLabel} to ${last.dateLabel}: " +
-        "${first.paceLabel} on the first day, ${last.paceLabel} on the latest."
-}
-
-/** The paces up the side of the chart, read back as the paces they are. */
-fun matchedRunPaceAxisLabel(paceMinPerKm: Float): String = paceLabelOf(paceMinPerKm.toDouble())
-
-/**
- * A tie on pace keeps the earlier Run, the rule the record book and the Segments both keep: matching
- * a pace you already ran is not beating it, and an order that left them tied would place them
- * differently on two reads of the same rows.
- */
-private val quickestPaceFirst: Comparator<MatchedRunUi> =
-    compareBy<MatchedRunUi> { it.paceMinPerKm }.thenBy { it.startTime }.thenBy { it.sessionId }
+val matchedRunLeague: LeagueTable<MatchedRunUi> = LeagueTable(
+    bestFirst = quickestFirst(
+        // A Run with no pace is never the quickest of its day — it never gets as far as the trend.
+        time = { it.paceMinPerKm ?: Double.POSITIVE_INFINITY },
+        startedAt = { it.startTime },
+        rowId = { it.sessionId },
+    ),
+    day = { it.date },
+    plotted = { it.paceMinPerKm },
+    valueLabel = ::paceLabelOf,
+    orderWord = "quickest",
+    trendSubject = "Your quickest pace on this route",
+)
 
 private fun paceLabelOf(paceMinPerKm: Double): String =
     if (paceMinPerKm <= 0.0) "--:-- /km" else "${formatMinutesPerKm(paceMinPerKm)} /km"

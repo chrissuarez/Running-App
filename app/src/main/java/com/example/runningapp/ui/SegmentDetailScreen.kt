@@ -128,8 +128,8 @@ fun SegmentDetailScreen(
         // watched (#343) — a `remember` here would sit still through a zone change.
         val shown = efforts
         val record = remember(shown) { segmentRecordOf(shown) }
-        val ranked = remember(shown) { segmentTopEfforts(shown) }
-        val trend = remember(shown) { segmentTrendPoints(shown) }
+        val ranked = remember(shown) { segmentLeague.top(shown) }
+        val trend = remember(shown) { segmentLeague.trend(shown) }
 
         LazyColumn(
             modifier = Modifier
@@ -192,7 +192,7 @@ fun SegmentDetailScreen(
                                 fontWeight = FontWeight.Bold,
                             )
                             Text(
-                                text = segmentEffortCountLabel(shown.size),
+                                text = segmentLeague.countLabel(shown.size),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -216,7 +216,7 @@ fun SegmentDetailScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Spacer(modifier = Modifier.height(8.dp))
-                            SegmentTrendChart(points = trend)
+                            TrendLineChart(league = segmentLeague, points = trend)
                         }
                     }
                 }
@@ -225,15 +225,15 @@ fun SegmentDetailScreen(
             if (ranked.isNotEmpty()) {
                 item {
                     Text(
-                        text = segmentTopTitle(shown.size),
+                        text = segmentLeague.topTitle(shown.size),
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
 
-            items(ranked, key = { "ranked-" + it.effort.effortId }) { placed ->
-                SegmentRankedEffortRow(placed = placed, onOpen = { onOpenRun(placed.effort.sessionId) })
+            items(ranked, key = { "ranked-" + it.entry.effortId }) { placed ->
+                SegmentRankedEffortRow(placed = placed, onOpen = { onOpenRun(placed.entry.sessionId) })
             }
 
             // Past ten, the ranked list is no longer the whole of the runner's history at this
@@ -241,7 +241,7 @@ fun SegmentDetailScreen(
             // runs off a runner for having done nothing but keep running — and the run they are
             // most likely looking for is the one they did on Sunday, which is why this half is
             // newest first.
-            if (shown.size > SEGMENT_TOP_COUNT) {
+            if (shown.size > LEAGUE_TOP_COUNT) {
                 item {
                     Text(
                         text = SEGMENT_ALL_EFFORTS_TITLE,
@@ -286,16 +286,14 @@ fun SegmentDetailScreen(
  * because a place is a place.
  */
 @Composable
-private fun SegmentRankedEffortRow(placed: SegmentRankedEffortUi, onOpen: () -> Unit) {
-    val effort = placed.effort
+private fun SegmentRankedEffortRow(placed: Placed<SegmentEffortUi>, onOpen: () -> Unit) {
+    val effort = placed.entry
     RankedEffortRow(
         place = placed.place,
         medal = placed.medal,
         primary = effort.dateLabel,
         secondary = effort.paceLabel,
         trailing = effort.timeLabel,
-        spoken = spokenPlace(placed.place, placed.medal) +
-            "${effort.dateLabel}, ${effort.timeLabel}, ${effort.paceLabel}",
         onOpen = onOpen,
     )
 }
@@ -342,20 +340,4 @@ private fun SegmentEffortRowUi(effort: SegmentEffortUi, onOpen: () -> Unit) {
             fontWeight = FontWeight.Bold,
         )
     }
-}
-
-/**
- * The times run at a Segment, over the calendar they were run on (#72).
- *
- * The app's one trend chart ([TrendLineChart]), given this page's points: a Segment's efforts are a
- * history drawn against the days they happened on, exactly as a matched route's paces are (#73).
- */
-@Composable
-private fun SegmentTrendChart(points: List<SegmentTrendPoint>) {
-    TrendLineChart(
-        points = points.map { TrendChartPoint(dayOffset = it.dayOffset, value = it.seconds.toFloat()) },
-        firstDay = points.first().date,
-        valueLabel = { segmentTrendTimeLabel(it) },
-        spoken = segmentTrendDescription(points).orEmpty(),
-    )
 }

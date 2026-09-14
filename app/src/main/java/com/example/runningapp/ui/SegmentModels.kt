@@ -10,7 +10,6 @@ import com.example.runningapp.segments.SegmentCut
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -121,7 +120,7 @@ fun segmentEffortsUi(
 ): List<SegmentEffortUi> {
     val record = efforts.minWithOrNull(
         quickestFirst(
-            elapsed = { it.elapsedMillis },
+            time = { it.elapsedMillis },
             startedAt = { it.startedAtMillis },
             rowId = { it.effortId },
         )
@@ -155,14 +154,6 @@ fun segmentEffortsUi(
  * readings free to break the tie differently.
  */
 fun segmentRecordOf(efforts: List<SegmentEffortUi>): SegmentEffortUi? = efforts.firstOrNull { it.isRecord }
-
-/**
- * How many times the runner has been over a Segment.
- *
- * The count is the other half of what a PR means. "4:32" on its own says nothing about whether it
- * was the best of two attempts or of fifty.
- */
-fun segmentEffortCountLabel(efforts: Int): String = if (efforts == 1) "1 effort" else "$efforts efforts"
 
 /** What the page says where nothing has ever been run over the ground. */
 const val NO_SEGMENT_EFFORTS_MESSAGE: String =
@@ -217,8 +208,8 @@ data class RunSegmentEffortUi(
  * matching a time you already ran is not beating it.
  */
 fun runSegmentEffortsUi(rows: List<RunSegmentEffortRow>, sessionId: Long): List<RunSegmentEffortUi> {
-    val order = quickestFirst<RunSegmentEffortRow>(
-        elapsed = { it.elapsedMillis },
+    val order = quickestFirst<RunSegmentEffortRow, Long>(
+        time = { it.elapsedMillis },
         startedAt = { it.startedAtMillis },
         rowId = { it.effortId },
     )
@@ -245,162 +236,34 @@ fun runSegmentEffortsUi(rows: List<RunSegmentEffortRow>, sessionId: Long): List<
         }
 }
 
-/**
- * How times over one piece of ground are placed against each other — quickest first, and a tie kept
- * by whoever ran it first.
- *
- * Written once and read by every page that ranks them: both Segment pages (#70, #71) and a Route's
- * own page (#420). A Segment's page calling one time the PR while the Run's page hands the medal to
- * another would be the same question answered twice, and a course crowning a different best on two
- * reads of the same Runs would be the same fault again.
- *
- * [rowId] is the last word so the order is total: two Runs *can* carry the same start instant, and
- * an order that left them tied would place them differently on two reads of the same rows.
- */
-internal fun <T> quickestFirst(
-    elapsed: (T) -> Long,
-    startedAt: (T) -> Long,
-    rowId: (T) -> Long,
-): Comparator<T> = compareBy(elapsed).thenBy(startedAt).thenBy(rowId)
-
-
 // --- The full trophy view: the all-time top ten, and the trend behind it (#72) ---
 
-/** How deep the ranked list goes. */
-const val SEGMENT_TOP_COUNT: Int = 10
-
 /**
- * One effort in the ranked list: where it placed, and the row the page already built for it.
+ * What a Segment's page ranks (#72): every effort at it, quickest first, and the trend of its times.
  *
- * [medal] is the top three, in the same three metals a Run's own card and the record book hand out
- * (see [runSegmentEffortsUi]) — a place is a place, and a runner should not have to learn two of
- * them. Below third there is no metal, only the number.
- */
-data class SegmentRankedEffortUi(
-    val place: Int,
-    val medal: Medal?,
-    val effort: SegmentEffortUi,
-)
-
-/**
- * The quickest efforts ever run at a Segment, best first, cut at [SEGMENT_TOP_COUNT].
- *
- * The cut is to the top of the page and never to the runner's history: past ten, the page carries
- * every effort again underneath, newest first ([SEGMENT_ALL_EFFORTS_TITLE]). A page that quietly
- * stopped at ten would take runs off a runner who had done nothing but keep running.
+ * The table is the one every league of the runner's efforts is built by ([LeagueTable]); what is
+ * the Segment's own is the order — the app's one rule for times over one piece of ground
+ * ([quickestFirst]) — and that its trend plots seconds.
  *
  * Ranked off the list [segmentEffortsUi] built rather than off the rows behind it, so the PR card at
- * the top of the page and the gold disc in this list cannot disagree: they are one reading of one
- * list. A tie keeps the earlier effort ahead, the rule the record book keeps — matching a time you
- * already ran is not beating it.
- */
-fun segmentTopEfforts(efforts: List<SegmentEffortUi>): List<SegmentRankedEffortUi> = efforts
-    .sortedWith(
-        quickestFirst(
-            elapsed = { it.elapsedMillis },
-            startedAt = { it.startedAtMillis },
-            rowId = { it.effortId },
-        )
-    )
-    .take(SEGMENT_TOP_COUNT)
-    .mapIndexed { index, effort ->
-        SegmentRankedEffortUi(
-            place = index + 1,
-            // Off the enum itself, the way the record book decides how deep the metals go
-            // ([com.example.runningapp.analysis.Medal]).
-            medal = Medal.entries.getOrNull(index),
-            effort = effort,
-        )
-    }
-
-/**
- * What the ranked list is called, which depends on whether it is leaving anything out.
+ * the top of the page and the gold disc in the list cannot disagree: they are one reading of one list.
  *
- * A page holding every effort there has ever been must not call itself a top ten: that would tell
- * the runner something was cut when nothing was, and send them hunting for a rest of the list that
- * does not exist. Where efforts really are left out, the count says how many, because "top 10" out
- * of eleven and out of two hundred are very different facts about the same ten times.
+ * The cut at ten is to the top of the page and never to the runner's history: past ten, the page
+ * carries every effort again underneath, newest first ([SEGMENT_ALL_EFFORTS_TITLE]). A page that
+ * quietly stopped at ten would take runs off a runner who had done nothing but keep running.
  */
-fun segmentTopTitle(total: Int): String =
-    if (total <= SEGMENT_TOP_COUNT) "Every effort, quickest first"
-    else "Top $SEGMENT_TOP_COUNT of ${segmentEffortCountLabel(total)}"
-
-/** One day on the trend chart: when it was, how far into the chart it sits, and what it took. */
-data class SegmentTrendPoint(
-    val effortId: Long,
-    val date: LocalDate,
-    /** Days since the first point, which is the x the chart is drawn against. */
-    val dayOffset: Int,
-    val seconds: Long,
-    val dateLabel: String,
-    val timeLabel: String,
-)
-
-/**
- * The trend of the times at a Segment, oldest first — one point per day, at that day's quickest.
- *
- * One point per day and the rest of what that means is the shared rule ([bestEachDay]). Every effort
- * is still listed under the chart — in the ranked ten, and past ten in the newest-first list under
- * that ([SEGMENT_ALL_EFFORTS_TITLE]).
- *
- * Placed by the calendar rather than evenly, so a two-year gap is drawn as a two-year gap. Even
- * spacing would make the chart's own claim — whether the runner is getting quicker across months and
- * years — a lie about their own history.
- */
-fun segmentTrendPoints(efforts: List<SegmentEffortUi>): List<SegmentTrendPoint> {
-    val quickest = quickestFirst<SegmentEffortUi>(
-        elapsed = { it.elapsedMillis },
+val segmentLeague: LeagueTable<SegmentEffortUi> = LeagueTable(
+    bestFirst = quickestFirst(
+        time = { it.elapsedMillis },
         startedAt = { it.startedAtMillis },
         rowId = { it.effortId },
-    )
-    val bestPerDay = bestEachDay(efforts, day = { it.date }, better = quickest)
-    if (bestPerDay.isEmpty()) return emptyList()
-
-    val firstDay = bestPerDay.firstKey()
-    return bestPerDay.map { (date, effort) ->
-        SegmentTrendPoint(
-            effortId = effort.effortId,
-            date = date,
-            dayOffset = ChronoUnit.DAYS.between(firstDay, date).toInt(),
-            seconds = effort.elapsedMillis.roundedToSeconds(),
-            dateLabel = effort.dateLabel,
-            timeLabel = effort.timeLabel,
-        )
-    }
-}
-
-/**
- * The whole number of days this chart's x axis steps in — the shared rule ([trendStepDays]), asked
- * of these points.
- */
-fun segmentTrendStepDays(points: List<SegmentTrendPoint>): Int =
-    trendStepDays(points.map { it.dayOffset })
-
-/** How many positions this chart's bottom axis has to label — the shared rule ([trendAxisTicks]). */
-fun segmentTrendAxisTicks(points: List<SegmentTrendPoint>): Int =
-    trendAxisTicks(points.map { it.dayOffset })
-
-/**
- * What the trend chart is, said in one sentence for a runner who is being read the page.
- *
- * A chart is a picture, and a picture says nothing out loud. The two ends are what the chart is for
- * — the stretch of calendar it covers, and whether the time at the end of it is quicker than the
- * time at the start.
- *
- * Both ends are a day's quickest rather than a day's last, because that is what the chart plots
- * ([segmentTrendPoints]). Calling the last point the most recent time would name a slower later
- * attempt on that day as the one being read out, which is not the time on the chart.
- */
-fun segmentTrendDescription(points: List<SegmentTrendPoint>): String? {
-    if (points.isEmpty()) return null
-    val first = points.first()
-    val last = points.last()
-    return "Your quickest here from ${first.dateLabel} to ${last.dateLabel}: " +
-        "${first.timeLabel} on the first day, ${last.timeLabel} on the latest."
-}
-
-/** The seconds up the side of the chart, read back as the times they are. */
-fun segmentTrendTimeLabel(seconds: Float): String = formatDuration(seconds.roundToLong())
+    ),
+    day = { it.date },
+    plotted = { it.elapsedMillis.roundedToSeconds().toDouble() },
+    valueLabel = { formatDuration(it.roundToLong()) },
+    orderWord = "quickest",
+    trendSubject = "Your quickest here",
+)
 
 /** What the runner is told the trend chart is for, under its heading. */
 const val SEGMENT_TREND_TITLE: String = "Your times here"

@@ -37,6 +37,14 @@ class RecordsModelsTest {
         ranAtUtcOffsetSeconds = offsetSeconds,
     )
 
+    /** A Record's ranked list, as its page builds it. */
+    private fun top(rows: List<RecordEffortRow>, type: RecordType, zone: ZoneId) =
+        recordLeague(type).top(recordEfforts(rows, type, zone))
+
+    /** A Record's trend, as its page builds it. */
+    private fun trend(rows: List<RecordEffortRow>, type: RecordType, zone: ZoneId) =
+        recordLeague(type).trend(recordEfforts(rows, type, zone))
+
     // --- The grid ---
 
     @Test
@@ -90,10 +98,10 @@ class RecordsModelsTest {
     fun `the top ten is best first and cut at ten`() {
         val rows = (1L..14L).map { row(it, RecordType.FASTEST_1K, 300.0 + it, "2026-01-0" + 1) }
 
-        val top = recordTopEfforts(rows, RecordType.FASTEST_1K, zone)
+        val top = top(rows, RecordType.FASTEST_1K, zone)
 
-        assertEquals(RECORD_TOP_COUNT, top.size)
-        assertEquals(listOf(1L, 2L, 3L), top.take(3).map { it.effort.sessionId })
+        assertEquals(LEAGUE_TOP_COUNT, top.size)
+        assertEquals(listOf(1L, 2L, 3L), top.take(3).map { it.entry.sessionId })
         assertEquals(listOf(1, 2, 3), top.take(3).map { it.place })
     }
 
@@ -101,7 +109,7 @@ class RecordsModelsTest {
     fun `the top three carry medals and nothing below them does`() {
         val rows = (1L..5L).map { row(it, RecordType.FASTEST_1K, 300.0 + it, "2026-01-01") }
 
-        val top = recordTopEfforts(rows, RecordType.FASTEST_1K, zone)
+        val top = top(rows, RecordType.FASTEST_1K, zone)
 
         assertEquals(listOf(Medal.GOLD, Medal.SILVER, Medal.BRONZE), top.take(3).map { it.medal })
         assertTrue(top.drop(3).all { it.medal == null })
@@ -114,10 +122,10 @@ class RecordsModelsTest {
             row(3, RecordType.FASTEST_1K, 300.0, "2026-02-05"),
         )
 
-        val top = recordTopEfforts(rows, RecordType.FASTEST_1K, zone)
+        val top = top(rows, RecordType.FASTEST_1K, zone)
 
         // The lower session id is the earlier Run, which is the rule the record book itself keeps.
-        assertEquals(listOf(3L, 7L), top.map { it.effort.sessionId })
+        assertEquals(listOf(3L, 7L), top.map { it.entry.sessionId })
     }
 
     @Test
@@ -127,23 +135,23 @@ class RecordsModelsTest {
             row(2, RecordType.LONGEST_DISTANCE, 15_000.0, "2026-02-05"),
         )
 
-        val top = recordTopEfforts(rows, RecordType.LONGEST_DISTANCE, zone)
+        val top = top(rows, RecordType.LONGEST_DISTANCE, zone)
 
-        assertEquals(listOf(2L, 1L), top.map { it.effort.sessionId })
+        assertEquals(listOf(2L, 1L), top.map { it.entry.sessionId })
     }
 
     @Test
     fun `a distance run against the clock carries a pace, and the totals do not`() {
-        val fiveK = recordTopEfforts(
+        val fiveK = top(
             listOf(row(1, RecordType.FASTEST_5K, 1500.0, "2026-01-05")),
             RecordType.FASTEST_5K,
             zone,
-        ).single().effort
-        val longest = recordTopEfforts(
+        ).single().entry
+        val longest = top(
             listOf(row(2, RecordType.LONGEST_DURATION, 5_400.0, "2026-01-05")),
             RecordType.LONGEST_DURATION,
             zone,
-        ).single().effort
+        ).single().entry
 
         assertEquals("5:00 /km", fiveK.paceLabel)
         assertNull(longest.paceLabel)
@@ -161,7 +169,7 @@ class RecordsModelsTest {
             RecordEffortRow(1L, RecordType.FASTEST_5K, 1500.0, startedAt, sydney)
         )
 
-        val effort = recordTopEfforts(rows, RecordType.FASTEST_5K, zone).single().effort
+        val effort = top(rows, RecordType.FASTEST_5K, zone).single().entry
 
         assertEquals(LocalDate.parse("2026-01-06"), effort.date)
     }
@@ -173,16 +181,16 @@ class RecordsModelsTest {
             row(1, RecordType.LONGEST_DURATION, 3_000.0, "2026-01-05"),
         )
 
-        val top = recordTopEfforts(rows, RecordType.FASTEST_5K, zone)
+        val top = top(rows, RecordType.FASTEST_5K, zone)
 
         assertEquals(1, top.size)
-        assertEquals(RecordType.FASTEST_5K, top.single().effort.type)
+        assertEquals(RecordType.FASTEST_5K, top.single().entry.type)
     }
 
     @Test
     fun `the list names what it is leaving out, and says so only when it is`() {
-        assertEquals("Every effort, best first", recordTopTitle(RECORD_TOP_COUNT))
-        assertEquals("Top 10 of 14 efforts", recordTopTitle(14))
+        assertEquals("Every effort, best first", recordLeague(RecordType.FASTEST_1K).topTitle(LEAGUE_TOP_COUNT))
+        assertEquals("Top 10 of 14 efforts", recordLeague(RecordType.FASTEST_1K).topTitle(14))
     }
 
     // --- The empty page ---
@@ -220,10 +228,10 @@ class RecordsModelsTest {
             row(3, RecordType.FASTEST_5K, 1480.0, "2026-01-12", offsetSeconds = 0),
         )
 
-        val trend = recordTrendPoints(rows, RecordType.FASTEST_5K, zone)
+        val trend = trend(rows, RecordType.FASTEST_5K, zone)
 
         assertEquals(2, trend.size)
-        assertEquals(listOf(2L, 3L), trend.map { it.sessionId })
+        assertEquals(listOf(2L, 3L), trend.map { it.entry.sessionId })
         // Placed by the calendar: a week apart is seven days apart on the axis.
         assertEquals(listOf(0, 7), trend.map { it.dayOffset })
     }
@@ -235,7 +243,7 @@ class RecordsModelsTest {
             row(2, RecordType.FASTEST_5K, 1460.0, "2026-01-05", offsetSeconds = 0),
         )
 
-        assertTrue(recordTrendPoints(rows, RecordType.FASTEST_5K, zone).isEmpty())
+        assertTrue(trend(rows, RecordType.FASTEST_5K, zone).isEmpty())
     }
 
     @Test
@@ -245,10 +253,7 @@ class RecordsModelsTest {
             row(2, RecordType.FASTEST_5K, 1460.0, "2026-02-05", offsetSeconds = 0),
         )
 
-        val spoken = recordTrendDescription(
-            RecordType.FASTEST_5K,
-            recordTrendPoints(rows, RecordType.FASTEST_5K, zone),
-        )
+        val spoken = recordLeague(RecordType.FASTEST_5K).trendDescription(trend(rows, RecordType.FASTEST_5K, zone))
 
         assertEquals(
             "Your Fastest 5 km from 5 Jan 2026 to 5 Feb 2026: 25:00 on the first day, 24:20 on the latest.",

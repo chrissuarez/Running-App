@@ -70,6 +70,7 @@ fun RecordDetailScreen(
         },
     ) { padding ->
         val top = detail.top
+        val league = recordLeague(detail.type)
         if (top.isNullOrEmpty()) {
             Box(
                 modifier = Modifier
@@ -111,12 +112,12 @@ fun RecordDetailScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Text(
-                            text = top.first().effort.valueLabel,
+                            text = top.first().entry.valueLabel,
                             style = MaterialTheme.typography.headlineMedium,
                             fontWeight = FontWeight.Bold,
                         )
                         Text(
-                            text = recordEffortCountLabel(detail.effortCount),
+                            text = league.countLabel(detail.effortCount),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -139,14 +140,7 @@ fun RecordDetailScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             Spacer(modifier = Modifier.height(8.dp))
-                            TrendLineChart(
-                                points = detail.trend.map {
-                                    TrendChartPoint(it.dayOffset, it.value.toFloat())
-                                },
-                                firstDay = detail.trend.first().date,
-                                valueLabel = { recordTrendValueLabel(detail.type, it) },
-                                spoken = recordTrendDescription(detail.type, detail.trend).orEmpty(),
-                            )
+                            TrendLineChart(league = league, points = detail.trend)
                         }
                     }
                 }
@@ -154,14 +148,14 @@ fun RecordDetailScreen(
 
             item {
                 Text(
-                    text = recordTopTitle(detail.effortCount),
+                    text = league.topTitle(detail.effortCount),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
 
-            items(top, key = { it.effort.sessionId }) { placed ->
-                RecordRankedEffortRow(placed = placed, onOpen = { onOpenRun(placed.effort.sessionId) })
+            items(top, key = { it.entry.sessionId }) { placed ->
+                RecordRankedEffortRow(placed = placed, onOpen = { onOpenRun(placed.entry.sessionId) })
             }
         }
     }
@@ -173,8 +167,8 @@ fun RecordDetailScreen(
  * a place is a place and a runner should not have to learn two of them.
  */
 @Composable
-private fun RecordRankedEffortRow(placed: RecordRankedEffortUi, onOpen: () -> Unit) {
-    val effort = placed.effort
+private fun RecordRankedEffortRow(placed: Placed<RecordEffortUi>, onOpen: () -> Unit) {
+    val effort = placed.entry
     RankedEffortRow(
         place = placed.place,
         medal = placed.medal,
@@ -182,8 +176,6 @@ private fun RecordRankedEffortRow(placed: RecordRankedEffortUi, onOpen: () -> Un
         // Null at the two totals, which have no pace of their own ([RecordEffortUi.paceLabel]).
         secondary = effort.paceLabel,
         trailing = effort.valueLabel,
-        spoken = spokenPlace(placed.place, placed.medal) +
-            "${effort.dateLabel}, ${effort.valueLabel}" + effort.paceLabel?.let { ", $it" }.orEmpty(),
         onOpen = onOpen,
     )
 }
@@ -205,8 +197,8 @@ data class RecordDetailUi(
      * answered, and the answer is deliberately nothing because the answer it could give would be
      * read off a table that is still filling.
      */
-    val top: List<RecordRankedEffortUi>?,
-    val trend: List<RecordTrendPoint>,
+    val top: List<Placed<RecordEffortUi>>?,
+    val trend: List<TrendPoint<RecordEffortUi>>,
     /** How many Runs have ever contested it, which is what says whether the ten is the whole list. */
     val effortCount: Int,
     /**
