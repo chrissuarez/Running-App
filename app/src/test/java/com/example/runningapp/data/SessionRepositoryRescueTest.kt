@@ -95,19 +95,13 @@ class SessionRepositoryRescueTest {
     // point of the durable handoff is that it names the Run that has just been stamped.
     private val runsBooked = mutableListOf<Long>()
 
-    private val repository = SessionRepository(
+    private val repository = repositoryWithRecordBook(
         sessionDao = sessionDao,
-        sampleDao = sampleDao,
+        achievementDao = achievementDao,
         trackPointDao = trackPointDao,
+        sampleDao = sampleDao,
         intervalStatDao = intervalStatDao,
         runPauseDao = runPauseDao,
-        recordBook = recordBookOver(
-            sessionDao = sessionDao,
-            achievementDao = achievementDao,
-            trackPointDao = trackPointDao,
-            settingsRepository = settingsRepository,
-            refreshHistoryBackup = { backupsRefreshed++ },
-        ),
         settingsRepository = settingsRepository,
         refreshHistoryBackup = { backupsRefreshed++ },
         bookAfterRunWork = { runsBooked += it },
@@ -368,18 +362,13 @@ class SessionRepositoryRescueTest {
             whenever(sampleDao.getSamplesForSessionOnce(67L)).thenReturn(samples(67L, 22))
             whenever(trackPointDao.getTrackPointsForSessionOnce(67L)).thenReturn(emptyList())
             val order = mutableListOf<String>()
-            val repository = SessionRepository(
+            val repository = repositoryWithRecordBook(
                 sessionDao = sessionDao,
-                sampleDao = sampleDao,
+                achievementDao = achievementDao,
                 trackPointDao = trackPointDao,
+                sampleDao = sampleDao,
                 intervalStatDao = intervalStatDao,
                 runPauseDao = runPauseDao,
-                recordBook = recordBookOver(
-                    sessionDao = sessionDao,
-                    achievementDao = achievementDao,
-                    trackPointDao = trackPointDao,
-                    settingsRepository = settingsRepository,
-                ),
                 settingsRepository = settingsRepository,
                 bookAfterRunWork = { order += "booked" },
             )
@@ -397,19 +386,13 @@ class SessionRepositoryRescueTest {
             // it at all, which is the Run a Clear storage loses. The in-process copy is the
             // second-best answer and is owed whenever the booking did not come back.
             var refreshed = 0
-            val repository = SessionRepository(
+            val repository = repositoryWithRecordBook(
                 sessionDao = sessionDao,
-                sampleDao = sampleDao,
+                achievementDao = achievementDao,
                 trackPointDao = trackPointDao,
+                sampleDao = sampleDao,
                 intervalStatDao = intervalStatDao,
                 runPauseDao = runPauseDao,
-                recordBook = recordBookOver(
-                    sessionDao = sessionDao,
-                    achievementDao = achievementDao,
-                    trackPointDao = trackPointDao,
-                    settingsRepository = settingsRepository,
-                    refreshHistoryBackup = { refreshed++ },
-                ),
                 settingsRepository = settingsRepository,
                 refreshHistoryBackup = { refreshed++ },
                 bookAfterRunWork = { throw IllegalStateException("WorkManager not initialised") },
