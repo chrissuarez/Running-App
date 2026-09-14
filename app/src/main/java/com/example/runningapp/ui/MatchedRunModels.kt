@@ -190,6 +190,7 @@ val matchedRunLeague: LeagueTable<MatchedRunUi> = LeagueTable(
         rowId = { it.sessionId },
     ),
     day = { it.date },
+    dateLabel = { it.dateLabel },
     plotted = { it.paceMinPerKm },
     valueLabel = ::paceLabelOf,
     orderWord = "quickest",

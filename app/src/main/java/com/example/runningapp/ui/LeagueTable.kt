@@ -2,9 +2,7 @@ package com.example.runningapp.ui
 
 import com.example.runningapp.analysis.Medal
 import java.time.LocalDate
-import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
-import java.util.Locale
 import java.util.SortedMap
 
 /**
@@ -14,9 +12,10 @@ import java.util.SortedMap
  * Three pages rank the same runner against themselves — a Record's (#75), a Segment's (#72) and a
  * Run's matched runs (#73) — and each used to build its own table, down to trend words copied "with
  * one word changed". A fix in one copy missed the others. So the table is written once, and a page
- * names only what it ranks: the order ([bestFirst]), the day an entry was run ([day]), the number
- * the trend plots ([plotted]) and how that number reads ([valueLabel]). The drawing half was already
- * shared ([RankedEffortRow], [TrendLineChart]); this is the data half behind it.
+ * names only what it ranks: the order ([bestFirst]), the day an entry was run ([day]) and how the
+ * page already words it ([dateLabel]), the number the trend plots ([plotted]) and how that number
+ * reads ([valueLabel]). The drawing half was already shared ([RankedEffortRow], [TrendLineChart]);
+ * this is the data half behind it.
  *
  * Nothing here decides who may compete. Every page hands in the entries it already allows; the table
  * only places them against each other and puts them into words.
@@ -31,6 +30,11 @@ class LeagueTable<T>(
     private val bestFirst: Comparator<T>,
     /** The runner's own day the entry was run on, which is where the trend puts it (#304). */
     private val day: (T) -> LocalDate,
+    /**
+     * That day as the page's own rows print it. Taken from the page rather than formatted here, so a
+     * row and the trend's sentence about the same day cannot say it two ways.
+     */
+    private val dateLabel: (T) -> String,
     /**
      * The number the trend plots for an entry — seconds, metres, a pace — or null where nothing was
      * ever measured. A null is left off the trend and stays in the list: it is not a slow entry, and
@@ -109,7 +113,7 @@ class LeagueTable<T>(
                 date = date,
                 dayOffset = ChronoUnit.DAYS.between(firstDay, date).toInt(),
                 value = value,
-                dateLabel = LEAGUE_DATE_FORMAT.format(date),
+                dateLabel = dateLabel(entry),
                 valueLabel = valueLabel(value),
             )
         }
@@ -185,13 +189,3 @@ internal fun <T, M : Comparable<M>> quickestFirst(
     startedAt: (T) -> Long,
     rowId: (T) -> Long,
 ): Comparator<T> = compareBy(time).thenBy(startedAt).thenBy(rowId)
-
-/**
- * What one placed row says out loud: its metal or the number it came in at, then the row as it reads
- * — the day, the number the runner came for, and whatever is said under the day.
- */
-internal fun placedRowSpoken(place: Int, medal: Medal?, primary: String, secondary: String?, trailing: String): String =
-    (medal?.let { "${it.face.spoken}, " } ?: "Number $place, ") +
-        "$primary, $trailing" + secondary?.let { ", $it" }.orEmpty()
-
-private val LEAGUE_DATE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.UK)

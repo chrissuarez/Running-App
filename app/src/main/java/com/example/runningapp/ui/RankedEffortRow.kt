@@ -33,6 +33,8 @@ import com.example.runningapp.ui.theme.RunningUiTokens
  * be below third, the same date and detail stacked under each other so the row survives a narrow
  * phone at a large text size (#63, #232).
  *
+ * What it says out loud is built from what it shows ([placedRowSpoken]), so the two cannot drift.
+ *
  * The whole row is a door to the Run the effort was part of. A time is not the whole story of the
  * morning it was run, and the page the runner would go looking for it on is the Run's own.
  */
@@ -95,3 +97,11 @@ internal fun RankedEffortRow(
         )
     }
 }
+
+/**
+ * What one placed row says out loud: its metal or the number it came in at, then the row as it reads
+ * — the day, the number the runner came for, and whatever is said under the day.
+ */
+internal fun placedRowSpoken(place: Int, medal: Medal?, primary: String, secondary: String?, trailing: String): String =
+    (medal?.let { "${it.face.spoken}, " } ?: "Number $place, ") +
+        "$primary, $trailing" + secondary?.let { ", $it" }.orEmpty()
