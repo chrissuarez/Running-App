@@ -51,7 +51,6 @@ import com.google.android.gms.location.LocationServices
 import java.util.UUID
 import com.example.runningapp.recording.LocationFix
 import com.example.runningapp.routes.CourseAlerts
-import com.example.runningapp.routes.CourseVoice
 import com.example.runningapp.routes.OffCourseWatch
 import com.example.runningapp.routes.courseToWatchFlow
 import com.example.runningapp.run.Acquisition
@@ -591,19 +590,13 @@ class HrForegroundService : Service() {
      * silent for a Run following none, and for a routed Run in the moment between START and the
      * course being read out of the library.
      *
-     * Nothing here decides anything: [CourseVoice] decides, [CourseAlerts] holds that judgement
-     * together with the cues it has enqueued, and this file only lends it the queue. The threads it
-     * is reached from — the tracker's, for fixes, and a coroutine's, for the course — are its own
-     * problem and it takes a lock over both.
+     * Nothing here decides anything: [CourseAlerts] decides, and holds that judgement together with
+     * the cues it has enqueued, and this file only lends it the queue — through [QueuedCourseCues],
+     * which is where the course's name, its priority and the Run's bookkeeping are wired, and tested.
+     * The threads it is reached from — the tracker's, for fixes, and a coroutine's, for the course —
+     * are its own problem and it takes a lock over both.
      */
-    private val courseAlerts = CourseAlerts(
-        speak = { saying ->
-            Log.d(TAG, "Course cue: ${saying.spoken}")
-            enqueueCue(saying.spoken, CuePriority.NAVIGATION, CueTag.COURSE)
-        },
-        withdraw = { withdrawCue(CueTag.COURSE) },
-        withdrawCues = ::withdrawCues,
-    )
+    private val courseAlerts = CourseAlerts(QueuedCourseCues(outstandingCues) { cueLease })
 
     /** Keeps [courseAlerts] up with the library while the Run goes on — see [courseToWatchFlow]. */
     private var courseWatchJob: Job? = null
@@ -1914,8 +1907,8 @@ class HrForegroundService : Service() {
      * of these is true the moment it is made, but a cue waits its turn, and two things can stop one
      * being true while it waits — the line going out from under it, which takes back everything
      * under the name (#377), and, for a turn cue alone, the runner running past the piece of ground
-     * that cue is about, which takes back that cue by its own ticket and leaves the rest
-     * ([withdrawCues], #456). [CourseAlerts] handles both; this only hands it the fix.
+     * that cue is about, which takes back that cue by its own ticket and leaves the rest (#456).
+     * [CourseAlerts] handles both; this only hands it the fix.
      *
      * [CuePriority.NAVIGATION], which is the top of the queue: a runner going the wrong way is going
      * further the wrong way for as long as a split announcement takes to finish. It still never cuts
@@ -1928,28 +1921,12 @@ class HrForegroundService : Service() {
 
     /**
      * Take back the cues under a name that have not been spoken: whatever they were going to say is
-     * no longer true (#208, #377). Asked for by the Run ([RunEffect.WithdrawCue]), and by the course
-     * going away underneath what it had waiting ([CourseAlerts]).
+     * no longer true (#208). Asked for by the Run ([RunEffect.WithdrawCue]); the course takes its own
+     * back through [QueuedCourseCues] (#377).
      *
      * Inert when there is nothing to take back, and inert in the queue when the cue has already
      * gone out — so no caller has to know which of those it is.
      */
-    /**
-     * Take back these cues by their tickets, and no others (#456).
-     *
-     * The other half of [withdrawCue]: by name when everything under a name has stopped being true
-     * together, and by ticket when only some of them have. A turn cue is a sentence about one piece
-     * of ground and dies when the runner passes it, while the cue waiting beside it is about the
-     * next piece and does not — so the name is the wrong handle and the ticket is the right one.
-     *
-     * Inert for a ticket already spoken or already taken back, like every withdrawal here.
-     */
-    private fun withdrawCues(tickets: List<Long>) {
-        val taken = outstandingCues.takeBackTickets(tickets)
-        if (taken.isEmpty()) return
-        cueLease?.withdrawAll(taken)
-    }
-
     private fun withdrawCue(tag: CueTag) {
         val tickets = outstandingCues.takeBack(tag)
         if (tickets.isEmpty()) return

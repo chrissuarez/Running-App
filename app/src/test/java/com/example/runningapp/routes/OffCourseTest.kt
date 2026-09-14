@@ -62,13 +62,6 @@ class OffCourseTest {
     private fun OffCourseWatch.reachTheCourse(second: Long = 0L): CourseAlert? =
         onFix(fix(0.0), seconds(second), autoPaused = false)
 
-    /** The one door a Run builds a course through, and what it says about a course of no ground. */
-    @Test
-    fun `a Run following no course has nothing to watch`() {
-        assertNull(CourseVoice.of(emptyList()))
-        assertNull(CourseVoice.of(listOf(at(0.0))))
-    }
-
     @Test
     fun `the walk from the front door is not a wrong turn`() {
         val watch = watch()

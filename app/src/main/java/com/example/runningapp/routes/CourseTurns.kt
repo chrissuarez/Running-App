@@ -284,7 +284,32 @@ data class SaidTurn(
      *    whether the cue was worth making in the first place.
      */
     val falseFromAlongMeters: Double,
-)
+) {
+    /**
+     * Whether a runner [alongMeters] along the course has reached the ground this sentence is false
+     * from — and so whether a cue still waiting in the queue must be taken back ([CourseAlerts]).
+     */
+    fun isFalseAt(alongMeters: Double): Boolean = hasReached(alongMeters, falseFromAlongMeters)
+}
+
+/**
+ * Whether a runner [alongMeters] along the course has reached [ground] — the one comparison every
+ * turn cue's deadline is judged by, whether the cue is being made ([CourseTurnWatch]) or taken back
+ * once it waits in the queue ([SaidTurn.isFalseAt]).
+ *
+ * One function and not two copies of `>=`, because the two have to agree at the boundary: a cue
+ * made at a distance the withdrawal already calls dead would be enqueued and then left for the next
+ * fix to find (#479). Reached counts: arriving at the ground is what kills the sentence.
+ */
+private fun hasReached(alongMeters: Double, ground: Double): Boolean = alongMeters >= ground
+
+/**
+ * The first ground past [alongMeters] a cue said there is too late for — [TURN_CUE_LATE_METERS] on.
+ *
+ * One function, so a turn's own cue is made up to *exactly* the ground it is taken back from: the
+ * two are the same number, worked out once, and not the same sum worked out twice.
+ */
+private fun tooLateFrom(alongMeters: Double): Double = alongMeters + TURN_CUE_LATE_METERS
 
 /**
  * What the turns of a course have to say about one fix (#456).
@@ -412,7 +437,7 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
                 ),
                 CueAt(
                     alongMeters = it.alongMeters,
-                    falseFromAlongMeters = it.alongMeters + TURN_CUE_LATE_METERS,
+                    falseFromAlongMeters = tooLateFrom(it.alongMeters),
                     turnAlongMeters = it.alongMeters,
                     cue = TurnCue(it.direction, TurnCueMoment.AT_THE_TURN),
                 ),
@@ -569,7 +594,7 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
         val said = mutableListOf<SaidTurn>()
         while (nextCue < cues.size && cues[nextCue].alongMeters <= here.alongMeters) {
             val cue = cues[nextCue++]
-            if (here.alongMeters - cue.alongMeters < TURN_CUE_LATE_METERS) {
+            if (!hasReached(here.alongMeters, cue.tooLateFromAlongMeters)) {
                 said += SaidTurn(cue.cue, cue.falseFromAlongMeters)
             }
         }
@@ -622,5 +647,13 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
          */
         val turnAlongMeters: Double,
         val cue: TurnCue,
-    )
+    ) {
+        /**
+         * The first ground this sentence is too late to be said at. For a turn's own cue it is the
+         * very ground the sentence is false from — the same number, from the same function
+         * ([tooLateFrom]) — so it is never made at a distance the withdrawal would already take it
+         * back at.
+         */
+        val tooLateFromAlongMeters: Double = tooLateFrom(alongMeters)
+    }
 }

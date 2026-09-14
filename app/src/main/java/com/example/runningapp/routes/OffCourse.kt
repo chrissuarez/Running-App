@@ -100,7 +100,7 @@ enum class CourseAlert(override val spoken: String) : CourseSaying {
  *
  * **Which way round the course is turned changes nothing here**, so there is no door of its own for
  * building one: how far off a line the runner is is the same measurement in either direction, and
- * the one door a Run comes through is [CourseVoice.of], where the course's turns — which the
+ * the one door a Run comes through is [CourseAlerts.follow], where the course's turns — which the
  * direction changes entirely — are made from the same list at the same moment.
  */
 class OffCourseWatch(private val course: CourseLine) {
