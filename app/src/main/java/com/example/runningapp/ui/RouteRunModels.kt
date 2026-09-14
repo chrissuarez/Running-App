@@ -121,7 +121,7 @@ fun routeRunsUi(
     // you already ran is not beating it.
     val best = rows.filter { whyNotCounted(it) == null }.minWithOrNull(
         quickestFirst(
-            elapsed = { it.clockSeconds() },
+            time = { it.clockSeconds() },
             startedAt = { it.startTime },
             rowId = { it.sessionId },
         )

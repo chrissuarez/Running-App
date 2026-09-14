@@ -113,8 +113,8 @@ class RecordsViewModelTest {
         // same rather than ranking two runs one and two.
         val detail = viewModel.detail(RecordType.FASTEST_5K).first()
         assertTrue(detail.measuring)
-        assertEquals(emptyList<RecordRankedEffortUi>(), detail.top)
-        assertEquals(emptyList<RecordTrendPoint>(), detail.trend)
+        assertEquals(emptyList<Placed<RecordEffortUi>>(), detail.top)
+        assertEquals(emptyList<TrendPoint<RecordEffortUi>>(), detail.trend)
         assertEquals(0, detail.effortCount)
     }
 
@@ -197,7 +197,7 @@ class RecordsViewModelTest {
             val viewModel = viewModel()
             watch(viewModel)
             advanceUntilIdle()
-            assertEquals(emptyList<RecordRankedEffortUi>(), viewModel.detail(RecordType.FASTEST_5K).first().top)
+            assertEquals(emptyList<Placed<RecordEffortUi>>(), viewModel.detail(RecordType.FASTEST_5K).first().top)
 
             fillOwed.value = false
             efforts.value = listOf(effort(sessionId = 1L, seconds = 1_500.0))
@@ -253,7 +253,7 @@ class RecordsViewModelTest {
             assertEquals(RecordType.entries.size, viewModel.grid.value.slots?.size)
             assertTrue(viewModel.grid.value.slots.orEmpty().all { it.best == null })
             val answered = viewModel.detail(RecordType.FASTEST_5K).first()
-            assertEquals(emptyList<RecordRankedEffortUi>(), answered.top)
+            assertEquals(emptyList<Placed<RecordEffortUi>>(), answered.top)
             assertEquals(recordEmptyMessage(RecordType.FASTEST_5K), recordDetailMessage(answered))
         }
 
@@ -279,7 +279,7 @@ class RecordsViewModelTest {
         // Every message the page was ever handed: silence, then silence again because there is a
         // time to print. The empty-record sentence never appears.
         assertEquals(listOf<String?>(null, null), seen)
-        assertEquals("25:00", viewModel.detail(RecordType.FASTEST_5K).first().top?.first()?.effort?.valueLabel)
+        assertEquals("25:00", viewModel.detail(RecordType.FASTEST_5K).first().top?.first()?.entry?.valueLabel)
     }
 
     @Test

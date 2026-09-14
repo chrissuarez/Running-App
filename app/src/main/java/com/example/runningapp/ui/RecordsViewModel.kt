@@ -30,7 +30,7 @@ import kotlinx.coroutines.flow.stateIn
  *
  * Nothing is measured here and nothing is stored. Every row is a claim the record book already
  * banked as it scored the Run ([com.example.runningapp.data.RunEffortRow]); what this does is place
- * them and put them into words ([recordSlots], [recordTopEfforts], [recordTrendPoints]).
+ * them and put them into words ([recordSlots], [recordLeague]).
  */
 class RecordsViewModel(
     private val sessionRepository: SessionRepository,
@@ -165,12 +165,13 @@ class RecordsViewModel(
             measuring = true,
         ),
         read = { rows ->
-            val zone = zone()
+            val efforts = recordEfforts(rows, type, zone())
+            val league = recordLeague(type)
             RecordDetailUi(
                 type = type,
-                top = recordTopEfforts(rows, type, zone),
-                trend = recordTrendPoints(rows, type, zone),
-                effortCount = rows.count { it.type == type },
+                top = league.top(efforts),
+                trend = league.trend(efforts),
+                effortCount = efforts.size,
             )
         },
     )

@@ -169,8 +169,8 @@ class SegmentModelsTest {
 
     @Test
     fun `one effort is not one efforts`() {
-        assertEquals("1 effort", segmentEffortCountLabel(1))
-        assertEquals("14 efforts", segmentEffortCountLabel(14))
+        assertEquals("1 effort", segmentLeague.countLabel(1))
+        assertEquals("14 efforts", segmentLeague.countLabel(14))
     }
 
     private fun segment(sourceSessionId: Long?) = Segment(

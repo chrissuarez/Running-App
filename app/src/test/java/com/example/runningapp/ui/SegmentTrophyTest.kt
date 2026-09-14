@@ -37,7 +37,7 @@ class SegmentTrophyTest {
 
     @Test
     fun `the top of the list is the quickest ever run, not the latest`() {
-        val top = segmentTopEfforts(
+        val top = segmentLeague.top(
             shown(
                 row(1, day = 0, elapsedMillis = 100_000),
                 row(2, day = 1, elapsedMillis = 92_000),
@@ -46,12 +46,12 @@ class SegmentTrophyTest {
         )
 
         assertEquals(listOf(1, 2, 3), top.map { it.place })
-        assertEquals(listOf(2L, 3L, 1L), top.map { it.effort.effortId })
+        assertEquals(listOf(2L, 3L, 1L), top.map { it.entry.effortId })
     }
 
     @Test
     fun `the quickest three wear the same three metals the record book hands out`() {
-        val top = segmentTopEfforts(
+        val top = segmentLeague.top(
             shown(
                 row(1, day = 0, elapsedMillis = 100_000),
                 row(2, day = 1, elapsedMillis = 92_000),
@@ -70,14 +70,14 @@ class SegmentTrophyTest {
     fun `matching a time does not take the place off whoever ran it first`() {
         // The rule the record book and the PR card both keep: a place is the runner's until
         // somebody actually beats it.
-        val top = segmentTopEfforts(
+        val top = segmentLeague.top(
             shown(
                 row(1, day = 0, elapsedMillis = 92_000),
                 row(2, day = 1, elapsedMillis = 92_000),
             )
         )
 
-        assertEquals(listOf(1L, 2L), top.map { it.effort.effortId })
+        assertEquals(listOf(1L, 2L), top.map { it.entry.effortId })
     }
 
     @Test
@@ -87,18 +87,18 @@ class SegmentTrophyTest {
             row(1, day = 0, elapsedMillis = 92_000),
         )
 
-        val forwards = segmentTopEfforts(segmentEffortsUi(sameInstant, 400.0, london))
-        val backwards = segmentTopEfforts(segmentEffortsUi(sameInstant.reversed(), 400.0, london))
+        val forwards = segmentLeague.top(segmentEffortsUi(sameInstant, 400.0, london))
+        val backwards = segmentLeague.top(segmentEffortsUi(sameInstant.reversed(), 400.0, london))
 
-        assertEquals(listOf(1L, 2L), forwards.map { it.effort.effortId })
-        assertEquals(forwards.map { it.effort.effortId }, backwards.map { it.effort.effortId })
+        assertEquals(listOf(1L, 2L), forwards.map { it.entry.effortId })
+        assertEquals(forwards.map { it.entry.effortId }, backwards.map { it.entry.effortId })
     }
 
     @Test
     fun `the list stops at ten however many have been run`() {
         val twelve = (1..12).map { row(it.toLong(), day = it.toLong(), elapsedMillis = 90_000L + it * 1_000L) }
 
-        val top = segmentTopEfforts(segmentEffortsUi(twelve, 400.0, london))
+        val top = segmentLeague.top(segmentEffortsUi(twelve, 400.0, london))
 
         assertEquals(10, top.size)
         assertEquals(10, top.last().place)
@@ -109,27 +109,27 @@ class SegmentTrophyTest {
         // The ranked list cuts the top of the page, never the runner's history: the newest-first
         // list underneath carries every effort again.
         assertEquals("Every effort, newest first", SEGMENT_ALL_EFFORTS_TITLE)
-        assertEquals(10, SEGMENT_TOP_COUNT)
+        assertEquals(10, LEAGUE_TOP_COUNT)
     }
 
     @Test
     fun `a list holding every effort does not call itself a top ten`() {
         // Nine efforts shown out of nine is not a top ten, and saying so would be the page telling
         // the runner something was left out when nothing was.
-        assertEquals("Every effort, quickest first", segmentTopTitle(total = 9))
-        assertEquals("Every effort, quickest first", segmentTopTitle(total = 10))
+        assertEquals("Every effort, quickest first", segmentLeague.topTitle(total = 9))
+        assertEquals("Every effort, quickest first", segmentLeague.topTitle(total = 10))
     }
 
     @Test
     fun `a list that leaves efforts out says how many there were`() {
-        assertEquals("Top 10 of 23 efforts", segmentTopTitle(total = 23))
+        assertEquals("Top 10 of 23 efforts", segmentLeague.topTitle(total = 23))
     }
 
     // --- The trend of the times ---
 
     @Test
     fun `the trend runs oldest first, so the line reads left to right as time did`() {
-        val points = segmentTrendPoints(
+        val points = segmentLeague.trend(
             shown(
                 row(1, day = 0, elapsedMillis = 100_000),
                 row(2, day = 7, elapsedMillis = 95_000),
@@ -141,7 +141,7 @@ class SegmentTrophyTest {
             listOf(LocalDate.of(2024, 6, 3), LocalDate.of(2024, 6, 10), LocalDate.of(2024, 6, 24)),
             points.map { it.date },
         )
-        assertEquals(listOf(100L, 95L, 92L), points.map { it.seconds })
+        assertEquals(listOf(100.0, 95.0, 92.0), points.map { it.value })
     }
 
     @Test
@@ -149,7 +149,7 @@ class SegmentTrophyTest {
         // The whole claim of the chart is whether the runner is getting quicker across months and
         // years. Spacing the efforts evenly would draw a two-year gap as one step and make the
         // claim a lie.
-        val points = segmentTrendPoints(
+        val points = segmentLeague.trend(
             shown(
                 row(1, day = 0, elapsedMillis = 100_000),
                 row(2, day = 3, elapsedMillis = 95_000),
@@ -164,7 +164,7 @@ class SegmentTrophyTest {
     fun `a day the runner went over it twice is drawn once, at their quickest`() {
         // One point per day, because two points sharing a date have nowhere to sit apart on a
         // calendar axis — and the quickest is the one the runner would quote for that day.
-        val points = segmentTrendPoints(
+        val points = segmentLeague.trend(
             shown(
                 row(1, day = 0, elapsedMillis = 100_000, hourOfDay = 1),
                 row(2, day = 0, elapsedMillis = 94_000, hourOfDay = 2),
@@ -172,14 +172,14 @@ class SegmentTrophyTest {
             )
         )
 
-        assertEquals(listOf(94L, 96L), points.map { it.seconds })
-        assertEquals(listOf(2L, 3L), points.map { it.effortId })
+        assertEquals(listOf(94.0, 96.0), points.map { it.value })
+        assertEquals(listOf(2L, 3L), points.map { it.entry.effortId })
     }
 
     @Test
     fun `one effort draws no chart at all`() {
-        assertTrue(segmentTrendPoints(shown(row(1, day = 0, elapsedMillis = 100_000))).isEmpty())
-        assertTrue(segmentTrendPoints(emptyList()).isEmpty())
+        assertTrue(segmentLeague.trend(shown(row(1, day = 0, elapsedMillis = 100_000))).isEmpty())
+        assertTrue(segmentLeague.trend(emptyList()).isEmpty())
     }
 
     @Test
@@ -190,15 +190,15 @@ class SegmentTrophyTest {
             row(2, day = 0, elapsedMillis = 94_000, hourOfDay = 2),
         )
 
-        assertTrue(segmentTrendPoints(sameDay).isEmpty())
-        assertEquals(2, segmentTopEfforts(sameDay).size)
+        assertTrue(segmentLeague.trend(sameDay).isEmpty())
+        assertEquals(2, segmentLeague.top(sameDay).size)
     }
 
     @Test
     fun `the chart labels three dates however far apart the efforts are`() {
         // Vico steps the axis in whole units of the smallest gap between two points, so the spacing
         // is counted in those units and not in efforts.
-        val fortnightly = segmentTrendPoints(
+        val fortnightly = segmentLeague.trend(
             shown(
                 row(1, day = 0, elapsedMillis = 100_000),
                 row(2, day = 14, elapsedMillis = 98_000),
@@ -211,13 +211,13 @@ class SegmentTrophyTest {
 
         // Six points a fortnight apart: the axis steps in fortnights, so it has six ticks and not
         // seventy — which is what [threeLabelPlacer] needs to be told to land three dates on it.
-        assertEquals(14, segmentTrendStepDays(fortnightly))
-        assertEquals(6, segmentTrendAxisTicks(fortnightly))
+        assertEquals(14, trendStepDays(fortnightly.map { it.dayOffset }))
+        assertEquals(6, trendAxisTicks(fortnightly.map { it.dayOffset }))
     }
 
     @Test
     fun `irregular dates step by their divisor, not by their closest pair`() {
-        val irregular = segmentTrendPoints(
+        val irregular = segmentLeague.trend(
             shown(
                 row(1, day = 0, elapsedMillis = 100_000),
                 row(2, day = 3, elapsedMillis = 98_000),
@@ -228,20 +228,20 @@ class SegmentTrophyTest {
         // Vico's own xGcd folds gcdWith over the gaps between neighbouring x values, so three days
         // and four hundred step in ones — not in the three of the closest pair. Counting the ticks
         // any other way hands [threeLabelPlacer] a number the chart does not have.
-        assertEquals(1, segmentTrendStepDays(irregular))
-        assertEquals(401, segmentTrendAxisTicks(irregular))
+        assertEquals(1, trendStepDays(irregular.map { it.dayOffset }))
+        assertEquals(401, trendAxisTicks(irregular.map { it.dayOffset }))
     }
 
     @Test
     fun `an axis with nothing to step by is never asked to divide by it`() {
-        assertEquals(1, segmentTrendStepDays(emptyList()))
-        assertEquals(1, segmentTrendAxisTicks(emptyList()))
+        assertEquals(1, trendStepDays(emptyList()))
+        assertEquals(1, trendAxisTicks(emptyList()))
     }
 
     @Test
     fun `the chart says out loud what it draws, and over what stretch of the calendar`() {
-        val spoken = segmentTrendDescription(
-            segmentTrendPoints(
+        val spoken = segmentLeague.trendDescription(
+            segmentLeague.trend(
                 shown(
                     row(1, day = 0, elapsedMillis = 100_000),
                     row(2, day = 21, elapsedMillis = 92_000),
@@ -257,8 +257,8 @@ class SegmentTrophyTest {
 
     @Test
     fun `the last thing said is the latest day's quickest, not its last attempt`() {
-        val spoken = segmentTrendDescription(
-            segmentTrendPoints(
+        val spoken = segmentLeague.trendDescription(
+            segmentLeague.trend(
                 shown(
                     row(1, day = 0, elapsedMillis = 100_000),
                     row(2, day = 21, elapsedMillis = 92_000, hourOfDay = 7),
@@ -276,12 +276,12 @@ class SegmentTrophyTest {
 
     @Test
     fun `a chart nobody is drawing has nothing to say`() {
-        assertNull(segmentTrendDescription(emptyList()))
+        assertNull(segmentLeague.trendDescription(emptyList()))
     }
 
     @Test
     fun `the times up the side are read as times, not as seconds`() {
-        assertEquals("01:32", segmentTrendTimeLabel(92f))
-        assertEquals("1:01:32", segmentTrendTimeLabel(3692f))
+        assertEquals("01:32", segmentLeague.valueLabel(92.0))
+        assertEquals("1:01:32", segmentLeague.valueLabel(3692.0))
     }
 }

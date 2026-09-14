@@ -316,7 +316,7 @@ fun <T> ChipPicker(
  *
  * [ticks] is how many positions the axis has to label, which is not always how many points were
  * plotted: Vico steps an axis in whole units of the smallest gap between two x values, so a chart
- * drawn against the calendar counts its ticks in those steps (see [segmentTrendAxisTicks]).
+ * drawn against the calendar counts its ticks in those steps (see [trendAxisTicks]).
  *
  * One label per entry is what Vico would otherwise attempt, and at a day apart there is no room for
  * "5 May" — every label came out as "5 …", a chart of days that never says which month it is in.

@@ -9,7 +9,6 @@ import com.example.runningapp.ranOn
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
 import java.util.Locale
 import kotlin.math.roundToLong
 
@@ -27,9 +26,6 @@ import kotlin.math.roundToLong
  * only how those claims are placed against each other and how they are read out, and even the
  * placing is the book's own rule said again ([bestFirst]) rather than a second opinion.
  */
-
-/** How deep the ranked list on a Record's own page goes. */
-const val RECORD_TOP_COUNT: Int = 10
 
 /** One Run's claim at one Record, as the Records section prints it. */
 data class RecordEffortUi(
@@ -141,70 +137,38 @@ fun recordSlots(
             type = type,
             // The same order the ranked list places by, so the number on the grid and the gold on
             // the Record's own page are one answer rather than two readings a moment apart.
-            best = atType.minWithOrNull(bestFirst(type))?.toUi(zone),
+            best = recordLeague(type).best(atType.map { it.toUi(zone) }),
         )
     }
 }
 
-/** One effort in the ranked list: where it placed, and the row the page prints for it. */
-data class RecordRankedEffortUi(
-    val place: Int,
-    /**
-     * The top three, in the three metals the record book and a Run's own page hand out (#49, #71) —
-     * a place is a place, and a runner should not have to learn two of them. Below third there is no
-     * metal, only the number.
-     */
-    val medal: Medal?,
-    val effort: RecordEffortUi,
+/**
+ * What a Record's own page ranks (#75): every Run's claim at it, best first, and its trend.
+ *
+ * The table is the one every league of the runner's efforts is built by ([LeagueTable]); what is
+ * the Record's own is only the order, which is the record book's ([bestFirst]), and the unit a claim
+ * is said in. "Best" first rather than "quickest", because the longest run is not a time.
+ */
+fun recordLeague(type: RecordType): LeagueTable<RecordEffortUi> = LeagueTable(
+    bestFirst = bestFirst(type),
+    day = { it.date },
+    plotted = { it.value },
+    valueLabel = { recordValueLabel(type, it) },
+    orderWord = "best",
+    trendSubject = "Your ${type.label}",
 )
 
 /**
- * The best efforts ever run at one Record, best first, cut at [RECORD_TOP_COUNT] (#75).
+ * Every claim ever banked at one Record, as the page prints them — the entries [recordLeague] ranks.
  *
- * Deeper than the record book, which is the whole reason these rows are banked: beyond bronze the
- * book remembers nothing, and fourth to tenth place is exactly what a runner comparing themselves
- * against themselves wants to see.
- *
- * **A tie leaves the place with the earlier Run**, which is the record book's own rule
- * ([com.example.runningapp.analysis.recordBookOf]): a record is that Run's until somebody actually
- * beats it, and matching a time you already ran is not beating it. Said by session id, as the book
- * says it, so the medals in this list and the medals on a Run's own page cannot be broken apart by
- * two different tie-breaks.
+ * Every one and not only the best ten: the trend is drawn through all of them, and the count under
+ * the best says how many there were. The ranked list cuts at ten itself ([LeagueTable.top]).
  */
-fun recordTopEfforts(
+fun recordEfforts(
     rows: List<RecordEffortRow>,
     type: RecordType,
     zone: ZoneId = ZoneId.systemDefault(),
-): List<RecordRankedEffortUi> = rows
-    .filter { it.type == type }
-    .sortedWith(bestFirst(type))
-    .take(RECORD_TOP_COUNT)
-    .mapIndexed { index, row ->
-        RecordRankedEffortUi(
-            place = index + 1,
-            // Off the enum itself, the way the record book decides how deep the metals go
-            // ([Medal]): a list of three written out here would be a second answer to "how many
-            // places are worth a medal".
-            medal = Medal.entries.getOrNull(index),
-            effort = row.toUi(zone),
-        )
-    }
-
-/**
- * What the ranked list is called, which depends on whether it is leaving anything out.
- *
- * A page holding every effort there has ever been must not call itself a top ten: that would tell
- * the runner something was cut when nothing was, and send them hunting for a rest of the list that
- * does not exist. The wording is the Segments page's ([segmentTopTitle]) with one word changed —
- * "best" rather than "quickest", because the longest run is not a time.
- */
-fun recordTopTitle(total: Int): String =
-    if (total <= RECORD_TOP_COUNT) "Every effort, best first"
-    else "Top $RECORD_TOP_COUNT of ${recordEffortCountLabel(total)}"
-
-/** How many Runs have ever contested a Record — the other half of what a best time means. */
-fun recordEffortCountLabel(efforts: Int): String =
-    if (efforts == 1) "1 effort" else "$efforts efforts"
+): List<RecordEffortUi> = rows.filter { it.type == type }.map { it.toUi(zone) }
 
 /**
  * What a Record's own page says where nobody has ever contested it.
@@ -231,87 +195,16 @@ fun recordEmptyMessage(type: RecordType): String = when (type) {
             "save is measured against it."
 }
 
-/** One day on a Record's trend: when it was, where it sits on the axis, and what was done. */
-data class RecordTrendPoint(
-    val sessionId: Long,
-    val date: LocalDate,
-    /** Days since the first point, which is the x the chart is drawn against. */
-    val dayOffset: Int,
-    val value: Double,
-    val dateLabel: String,
-    val valueLabel: String,
-)
-
-/**
- * How the runner's best at one Record has moved across the calendar, oldest first — one point per
- * day, at that day's best (#75).
- *
- * Every effort and not only the top ten, which is what makes it a trend rather than a picture of ten
- * good days: a runner getting steadily quicker wants to see the line, and a line drawn through their
- * ten best times would show almost none of it.
- *
- * One point per day, and nothing below two days, is the rule both trend charts already keep
- * ([bestEachDay]). Placed by the calendar rather than evenly, so a two-year gap is drawn as a
- * two-year gap — even spacing would make the chart's own claim a lie about the runner's own history.
- */
-fun recordTrendPoints(
-    rows: List<RecordEffortRow>,
-    type: RecordType,
-    zone: ZoneId = ZoneId.systemDefault(),
-): List<RecordTrendPoint> {
-    val atType = rows.filter { it.type == type }
-    val bestPerDay = bestEachDay(
-        atType,
-        day = { ranOn(it.startTime, it.ranAtUtcOffsetSeconds, zone) },
-        better = bestFirst(type),
-    )
-    if (bestPerDay.isEmpty()) return emptyList()
-
-    val firstDay = bestPerDay.firstKey()
-    return bestPerDay.map { (date, row) ->
-        RecordTrendPoint(
-            sessionId = row.sessionId,
-            date = date,
-            dayOffset = ChronoUnit.DAYS.between(firstDay, date).toInt(),
-            value = row.value,
-            dateLabel = RECORD_DATE_FORMAT.format(date),
-            valueLabel = recordValueLabel(type, row.value),
-        )
-    }
-}
-
-/**
- * What a Record's trend chart is, said in one sentence for a runner who is being read the page.
- *
- * A chart is a picture, and a picture says nothing out loud. The two ends are what the chart is for
- * — the stretch of calendar it covers, and whether what is done at the end of it beats what was done
- * at the start.
- *
- * Both ends are a day's best rather than a day's last, because that is what the chart plots
- * ([recordTrendPoints]).
- */
-fun recordTrendDescription(type: RecordType, points: List<RecordTrendPoint>): String? {
-    if (points.isEmpty()) return null
-    val first = points.first()
-    val last = points.last()
-    return "Your ${type.label} from ${first.dateLabel} to ${last.dateLabel}: " +
-        "${first.valueLabel} on the first day, ${last.valueLabel} on the latest."
-}
-
-/** The values up the side of a Record's trend chart, read back as the thing they are. */
-fun recordTrendValueLabel(type: RecordType, value: Float): String =
-    recordValueLabel(type, value.toDouble())
-
 /**
  * Which of two claims at one Record is the better one — the record book's own direction
  * ([RecordType.lowerIsBetter]) with the book's own tie-break after it.
  *
- * A comparator rather than a sort written out at each of the three places that need one, because the
- * grid's best, the gold disc in the ranked list and the first point on the trend are the same claim
- * about the same Record and must never be three different rows.
+ * Handed to the one table that ranks the Record ([recordLeague]), and the grid asks that same table
+ * for its best, because the grid's best, the gold disc in the ranked list and each day's point on the
+ * trend are the same claim about the same Record and must never be three different rows.
  */
-private fun bestFirst(type: RecordType): Comparator<RecordEffortRow> =
-    compareBy<RecordEffortRow> { if (type.lowerIsBetter) it.value else -it.value }
+private fun bestFirst(type: RecordType): Comparator<RecordEffortUi> =
+    compareBy<RecordEffortUi> { if (type.lowerIsBetter) it.value else -it.value }
         // The earlier Run keeps the place. Ids and not start times, for the book's own reason: an id
         // is what the medal rows carry, so the two orders cannot part company.
         .thenBy { it.sessionId }

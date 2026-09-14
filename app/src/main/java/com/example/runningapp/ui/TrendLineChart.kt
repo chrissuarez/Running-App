@@ -23,19 +23,16 @@ import com.patrykandpatrick.vico.core.axis.AxisPosition
 import com.patrykandpatrick.vico.core.axis.formatter.AxisValueFormatter
 import com.patrykandpatrick.vico.core.entry.ChartEntryModelProducer
 import com.patrykandpatrick.vico.core.entry.entryOf
-import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-
-/** One point of a trend: how far into the chart it sits, and what it was worth. */
-data class TrendChartPoint(val dayOffset: Int, val value: Float)
 
 /**
  * A history drawn against the calendar it happened on.
  *
- * One chart, two pages: the times run at a Segment (#72) and the paces run on a matched route (#73).
- * Written once because they are the same picture and have to stay the same picture — a runner
- * should not have to learn two charts to read their own repetition.
+ * One chart, three pages: the times run at a Segment (#72), the paces run on a matched route (#73)
+ * and the best at a Record (#75). Written once because they are the same picture and have to stay
+ * the same picture — a runner should not have to learn three charts to read their own repetition.
+ * What goes on it, and what it says out loud, is the page's league table's ([LeagueTable.trend]).
  *
  * Drawn against the day rather than against the attempt number, so the gaps between attempts are the
  * gaps that really happened. Even spacing would make the chart's own claim — whether the runner is
@@ -48,28 +45,28 @@ data class TrendChartPoint(val dayOffset: Int, val value: Float)
  * going, so "24 Jul" alone would not say which July.
  */
 @Composable
-fun TrendLineChart(
-    points: List<TrendChartPoint>,
-    /** The day [TrendChartPoint.dayOffset] counts from, which is what turns an x back into a date. */
-    firstDay: LocalDate,
-    /** The values up the side, read back as the thing they are — a time, a pace. */
-    valueLabel: (Float) -> String,
-    /** What the chart says out loud, because a picture says nothing on its own. */
-    spoken: String,
+fun <T> TrendLineChart(
+    /** The table the points came from, which reads the values up the side and says the chart aloud. */
+    league: LeagueTable<T>,
+    points: List<TrendPoint<T>>,
     modifier: Modifier = Modifier,
 ) {
     if (points.isEmpty()) return
+    // The day every point's offset counts from, which is what turns an x back into a date.
+    val firstDay = points.first().date
+    // What the chart says out loud, because a picture says nothing on its own.
+    val spoken = league.trendDescription(points).orEmpty()
 
     // Handed to the producer as it is built rather than pushed into an empty one afterwards: a Vico
     // chart measured against an empty model throws, and an effect runs a frame too late (#63).
     val producer = remember(points) {
-        ChartEntryModelProducer(points.map { entryOf(it.dayOffset.toFloat(), it.value) })
+        ChartEntryModelProducer(points.map { entryOf(it.dayOffset.toFloat(), it.value.toFloat()) })
     }
 
     val dateLabels = AxisValueFormatter<AxisPosition.Horizontal.Bottom> { value, _ ->
         firstDay.plusDays(value.toLong()).format(TrendDateFormat)
     }
-    val valueLabels = AxisValueFormatter<AxisPosition.Vertical.Start> { value, _ -> valueLabel(value) }
+    val valueLabels = AxisValueFormatter<AxisPosition.Vertical.Start> { value, _ -> league.valueLabel(value.toDouble()) }
 
     Box(
         modifier = modifier
