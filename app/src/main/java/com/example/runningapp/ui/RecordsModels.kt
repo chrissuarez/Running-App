@@ -136,8 +136,13 @@ fun recordSlots(
         RecordSlotUi(
             type = type,
             // The same order the ranked list places by, so the number on the grid and the gold on
-            // the Record's own page are one answer rather than two readings a moment apart.
-            best = recordLeague(type).best(atType.map { it.toUi(zone) }),
+            // the Record's own page are one answer rather than two readings a moment apart. Placed
+            // on the stored rows and only the winner put into words: the grid keeps seven claims out
+            // of however many thousand a long history holds, and dating and formatting every one of
+            // them just to throw all but seven away is work the grid redoes on every refresh.
+            best = atType
+                .minWithOrNull(bestFirst(type, RecordEffortRow::value, RecordEffortRow::sessionId))
+                ?.toUi(zone),
         )
     }
 }
@@ -150,7 +155,7 @@ fun recordSlots(
  * is said in. "Best" first rather than "quickest", because the longest run is not a time.
  */
 fun recordLeague(type: RecordType): LeagueTable<RecordEffortUi> = LeagueTable(
-    bestFirst = bestFirst(type),
+    bestFirst = bestFirst(type, RecordEffortUi::value, RecordEffortUi::sessionId),
     day = { it.date },
     dateLabel = { it.dateLabel },
     plotted = { it.value },
@@ -200,15 +205,25 @@ fun recordEmptyMessage(type: RecordType): String = when (type) {
  * Which of two claims at one Record is the better one — the record book's own direction
  * ([RecordType.lowerIsBetter]) with the book's own tie-break after it.
  *
- * Handed to the one table that ranks the Record ([recordLeague]), and the grid asks that same table
- * for its best, because the grid's best, the gold disc in the ranked list and each day's point on the
- * trend are the same claim about the same Record and must never be three different rows.
+ * Handed to the one table that ranks the Record ([recordLeague]), and the grid places its stored rows
+ * by this same rule ([recordSlots]), because the grid's best, the gold disc in the ranked list and
+ * each day's point on the trend are the same claim about the same Record and must never be three
+ * different rows.
+ *
+ * Written once over the two things a claim is placed by — its [value] and its [sessionId] — rather
+ * than once for the stored row and once for the printed one. The grid places rows before any of them
+ * is put into words and the page places what it prints, and two copies of the rule would be exactly
+ * the two readings a moment apart the grid's own comment forbids.
  */
-private fun bestFirst(type: RecordType): Comparator<RecordEffortUi> =
-    compareBy<RecordEffortUi> { if (type.lowerIsBetter) it.value else -it.value }
+private fun <T> bestFirst(
+    type: RecordType,
+    value: (T) -> Double,
+    sessionId: (T) -> Long,
+): Comparator<T> =
+    compareBy<T> { if (type.lowerIsBetter) value(it) else -value(it) }
         // The earlier Run keeps the place. Ids and not start times, for the book's own reason: an id
         // is what the medal rows carry, so the two orders cannot part company.
-        .thenBy { it.sessionId }
+        .thenBy(sessionId)
 
 private fun RecordEffortRow.toUi(zone: ZoneId): RecordEffortUi {
     val day = ranOn(startTime, ranAtUtcOffsetSeconds, zone)
