@@ -4,10 +4,12 @@ import com.example.runningapp.SettingsRepository
 import com.example.runningapp.UserSettings
 import com.example.runningapp.analysis.Medal
 import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.training.HistoryBestEffort
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.kotlin.argumentCaptor
@@ -21,9 +23,9 @@ import org.mockito.kotlin.whenever
  * How the app's record book store maps each call onto Room (#487) — one check per call shape.
  *
  * Every rule the book keeps is tested in `RecordBookTest` over a store in memory. What is left for
- * here is the part that store cannot stand in for: which DAO calls a "replace" is made of, the
- * batching a bound-variable limit forces, where the seeding mark is kept, and the gate a track is
- * read through.
+ * here is the part that store cannot stand in for: that every read and write reaches its own table,
+ * which DAO calls a "replace" is made of, the batching a bound-variable limit forces, where the
+ * seeding mark is kept, and the gate a track is read through.
  */
 class RoomRecordBookStoreTest {
 
@@ -81,6 +83,76 @@ class RoomRecordBookStoreTest {
             verify(runEffortDao).deleteEffortsOfTypes(listOf(RecordType.LONGEST_DURATION))
             verify(runEffortDao).putEfforts(listOf(row))
         }
+    }
+
+    @Test
+    fun `each single write goes to its own table`() = runTest {
+        // The book's in-memory store stands in for these in RecordBookTest, so a write that went
+        // nowhere here would pass every rule: a newly scored Run would bank no claims.
+        val row = RunEffortRow(sessionId = 1, type = RecordType.LONGEST_DURATION, value = 600.0)
+        val stated = StatedBestEffort(sessionId = 1, type = RecordType.FASTEST_5K, seconds = 1_500)
+        val store = store()
+
+        store.putEfforts(listOf(row))
+        store.markScored(1L)
+        store.state(stated)
+        store.withdraw(1L, RecordType.FASTEST_5K)
+
+        verify(runEffortDao).putEfforts(listOf(row))
+        verify(sessionDao).setRecordsScored(1L)
+        verify(statedBestEffortDao).state(stated)
+        verify(statedBestEffortDao).withdraw(1L, RecordType.FASTEST_5K)
+    }
+
+    @Test
+    fun `each read hands back what its own table holds`() = runTest {
+        val run = RunnerSession(id = 1L, startTime = 1_700_000_000_000L, runMode = "outdoor")
+        val row = RunEffortRow(sessionId = 1, type = RecordType.LONGEST_DURATION, value = 600.0)
+        val stated = StatedBestEffort(sessionId = 1, type = RecordType.FASTEST_5K, seconds = 1_500)
+        val gold = Achievement(sessionId = 1, type = RecordType.FASTEST_5K, medal = Medal.GOLD, value = 1_300.0)
+        whenever(sessionDao.getSessionById(1L)).thenReturn(run)
+        whenever(sessionDao.getAllSessions()).thenReturn(listOf(run))
+        whenever(sessionDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(1L))
+        whenever(statedBestEffortDao.getForSession(1L)).thenReturn(listOf(stated))
+        whenever(statedBestEffortDao.getAll()).thenReturn(listOf(stated))
+        whenever(achievementDao.getAllAchievements()).thenReturn(listOf(gold))
+        whenever(achievementDao.getAchievementsForSessions(listOf(1L))).thenReturn(listOf(gold))
+        whenever(runEffortDao.getEffortsForSession(1L)).thenReturn(listOf(row))
+        whenever(runEffortDao.getEffortsOfTypes(listOf(RecordType.LONGEST_DURATION))).thenReturn(listOf(row))
+        whenever(recordFillDao.wholesaleFillOwed()).thenReturn(true)
+        val store = store()
+
+        assertEquals(run, store.run(1L))
+        assertEquals(listOf(run), store.runs())
+        assertEquals(listOf(1L), store.runsOwedScoring())
+        assertEquals(listOf(stated), store.statedFor(1L))
+        assertEquals(listOf(stated), store.allStated())
+        assertEquals(listOf(gold), store.medals())
+        assertEquals(listOf(gold), store.medalsHeldBy(listOf(1L)))
+        assertEquals(listOf(row), store.effortsFor(1L))
+        assertEquals(listOf(row), store.effortsOfTypes(listOf(RecordType.LONGEST_DURATION)))
+        assertEquals(true, store.wholesaleFillOwed())
+    }
+
+    @Test
+    fun `each reading the screens watch is its own table's`() {
+        val quickest = flowOf<HistoryBestEffort?>(null)
+        val counts = flowOf(emptyList<SessionMedalCount>())
+        val reading = flowOf(emptyList<RecordsReadingRow>())
+        val owed = flowOf(true)
+        val stated = flowOf(emptyList<StatedBestEffort>())
+        whenever(achievementDao.getQuickestInHistoryFlow(RecordType.FASTEST_5K)).thenReturn(quickest)
+        whenever(achievementDao.getMedalCountsFlow()).thenReturn(counts)
+        whenever(runEffortDao.getRecordsReadingFlow()).thenReturn(reading)
+        whenever(recordFillDao.wholesaleFillOwedFlow()).thenReturn(owed)
+        whenever(statedBestEffortDao.getForSessionFlow(1L)).thenReturn(stated)
+        val store = store()
+
+        assertSame(quickest, store.quickestInHistoryFlow(RecordType.FASTEST_5K))
+        assertSame(counts, store.medalCountsFlow())
+        assertSame(reading, store.recordsReadingFlow())
+        assertSame(owed, store.wholesaleFillOwedFlow())
+        assertSame(stated, store.statedForFlow(1L))
     }
 
     @Test
