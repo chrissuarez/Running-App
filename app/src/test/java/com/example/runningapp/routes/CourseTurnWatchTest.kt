@@ -2,6 +2,7 @@ package com.example.runningapp.routes
 
 import com.example.runningapp.recording.LocationFix
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -243,6 +244,30 @@ class CourseTurnWatchTest {
 
         assertEquals(nothing, watch.at(390.0))
         assertEquals(nothing, watch.at(420.1))
+    }
+
+    /**
+     * Making a cue and taking it back are one rule, judged in one place (#479): no cue is ever made
+     * on a fix that already has it false. Swept across the late allowance's edge in centimetres, so
+     * a fix lands on either side of it and as near to it as the arithmetic allows.
+     */
+    @Test
+    fun `no cue is made on a fix it is already false at`() {
+        var said = 0
+        for (centimetres in 41_900..42_100) {
+            val watch = watch()
+            watch.reachTheCourse()
+            watch.at(390.0)
+
+            val voice = watch.onFix(fix(centimetres / 100.0), autoPaused = false)
+
+            voice.said.forEach {
+                said++
+                assertFalse("${it.cue.spoken} at ${voice.alongMeters}", it.isFalseAt(voice.alongMeters!!))
+            }
+        }
+        // Both sides of the edge were reached: the sweep made the cue on the near side of it.
+        assertTrue(said > 0)
     }
 
     /**

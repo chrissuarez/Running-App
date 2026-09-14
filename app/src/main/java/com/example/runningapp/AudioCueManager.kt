@@ -118,7 +118,7 @@ class AudioCueManager(
      * already has the reference. Asking under the queue's lock whether this hold is still the
      * current one does, because [open] swaps the holder under the same lock.
      */
-    inner class Lease internal constructor() {
+    inner class Lease internal constructor() : CueHold {
         /**
          * Say this, in its turn. Returns the ticket the cue can later be taken back by
          * ([Lease.withdrawAll]); a caller with nothing to take back can ignore it.
@@ -126,10 +126,10 @@ class AudioCueManager(
          * Null when there was no queue left to join: this hold has let go ([shutdown]), or the next
          * Run has taken the queue since ([open]).
          */
-        fun enqueue(text: String, priority: CuePriority): Long? = enqueueFor(this, text, priority)
+        override fun enqueue(text: String, priority: CuePriority): Long? = enqueueFor(this, text, priority)
 
         /** See [AudioCueManager.withdrawAll]. */
-        fun withdrawAll(tickets: Collection<Long>) = this@AudioCueManager.withdrawAll(tickets)
+        override fun withdrawAll(tickets: Collection<Long>) = this@AudioCueManager.withdrawAll(tickets)
 
         /**
          * The service is going away and lets go of the queue. Nothing waiting is spoken after

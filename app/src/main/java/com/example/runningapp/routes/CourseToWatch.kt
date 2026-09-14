@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.map
  * The course a Run is being watched against, as it stands and as it stands again every time the
  * library moves under it (#58, #456).
  *
- * Null throughout for a Run following no course, and null again the moment the Route is deleted —
+ * Empty throughout for a Run following no course, and empty again the moment the Route is deleted —
  * which is the whole reason this is watched rather than read once at START. A Route stays the
  * runner's to edit and to delete while they are out on it, and the promise made where deleting is
  * offered is that it costs the Run nothing ([RouteDao.getRouteFlow]). The live map keeps that
@@ -43,13 +43,12 @@ import kotlinx.coroutines.flow.map
  * does on a worker. Where that is spent is the collector's to choose, and the service chooses
  * ([HrForegroundService], which collects this off its main-thread scope on purpose).
  */
-fun courseToWatchFlow(routeDao: RouteDao, routeId: Long?, reversed: Boolean): Flow<CourseVoice?> {
-    if (routeId == null) return flowOf(null)
+fun courseToWatchFlow(routeDao: RouteDao, routeId: Long?, reversed: Boolean): Flow<List<RoutePoint>> {
+    if (routeId == null) return flowOf(emptyList())
     return routeDao.getRouteFlow(routeId)
         .map { route ->
             val course = route?.let { RoutePolyline.decode(it.polyline) }.orEmpty()
             if (reversed) course.reversed() else course
         }
         .distinctUntilChanged()
-        .map(CourseVoice::of)
 }

@@ -4,20 +4,55 @@ import com.example.runningapp.recording.LocationFix
 import kotlinx.coroutines.flow.Flow
 
 /**
- * The app's voice about the course for the length of one Run: which course is being watched, what
- * it has to say about each fix, and what happens to a sentence that has not been said yet when the
- * course goes out from under it (#58, #377, #456).
+ * The cue queue, as the course sees it: the one way anything the course has to say reaches the
+ * speaker, and the one way it is taken back (#479).
  *
- * The judgement itself is [CourseVoice]'s and stays there. What is here is the pairing of that
- * judgement with the queue: a course alert is enqueued rather than spoken, and the queue never cuts
- * off the sentence already in flight (#53), so an alert can wait a whole split announcement before
- * it is heard. [courseToWatchFlow] can hand over a different course — or no course at all, the
- * Route deleted from the library — inside that wait. Then the line the alert is about is one the
- * live map has already stopped drawing, and saying it anyway tells the runner about a course the app
- * no longer holds.
+ * Every cue that comes through here is the course's — one name, one priority — so the port names
+ * none of that; the adapter the service passes in does ([com.example.runningapp.QueuedCourseCues]).
+ */
+interface CourseCueQueue {
+    /**
+     * Enqueue this sentence, in its turn, and hand back the queue's ticket for it — or null if it
+     * was not enqueued at all.
+     *
+     * The ticket is what lets one waiting sentence be taken back and another left alone
+     * ([takeBack]).
+     */
+    fun enqueue(saying: CourseSaying): Long?
+
+    /** Take back everything the course has waiting to be said, of every kind. */
+    fun takeBackAll()
+
+    /**
+     * Take back exactly these cues, by the tickets [enqueue] handed back, and nothing else (#456).
+     *
+     * By ticket rather than by name, and separate from [takeBackAll] on purpose: this fires while
+     * the course still stands and while other sentences about it are still true. A runner who has
+     * reached a corner has not stopped being off the line by reaching it, and one stale turn cue
+     * does not make the next turn's warning waiting behind it stale.
+     */
+    fun takeBack(tickets: List<Long>)
+}
+
+/**
+ * The app's voice about the course for the length of one Run: which course is being watched,
+ * everything it has to say about each fix — that the runner has left it or come back to it (#58),
+ * and which way it bends ahead of them (#456) — and what happens to a sentence that has not been
+ * said yet when it stops being true (#377, #456).
  *
- * So the two acts are held together here: the course a cue was made about, and the cue. Whenever the
- * course changes, whatever it made and nobody has heard is taken back first.
+ * The judgements are the two watches' and stay there: [OffCourseWatch] says when the runner has
+ * left the line, and [CourseTurnWatch] says which way it bends and what each turn cue is good until.
+ * What is here is the pairing of those judgements with the [queue]: a course cue is enqueued rather
+ * than spoken, and the queue never cuts off the sentence already in flight (#53), so a cue can wait
+ * a whole split announcement before it is heard. Two things can make it untrue in that wait — the
+ * course going out from under it, and, for a turn cue, the runner running past the ground it is
+ * about — and both are taken back here, through the one port.
+ *
+ * [courseToWatchFlow] can hand over a different course — or no course at all, the Route deleted
+ * from the library — inside that wait. Then the line the alert is about is one the live map has
+ * already stopped drawing, and saying it anyway tells the runner about a course the app no longer
+ * holds. So the two acts are held together here: the course a cue was made about, and the cue.
+ * Whenever the course changes, whatever it made and nobody has heard is taken back first.
  *
  * **One lock over both.** A fix is read on the location callback's thread and the course arrives on
  * the collector's, and a cue that is enqueued after the withdrawal has swept past it is exactly the
@@ -27,9 +62,9 @@ import kotlinx.coroutines.flow.Flow
  *
  * A lock rather than the Run's single thread (ADR 0002) because none of this is the Run's: the
  * rulebook has never heard of a GPS fix, and what is held together here is a reading of the phone
- * against a row of the library. The lock order is this instance's, then the cue bookkeeping's, then
- * the queue's — [speak] and [withdraw] both go that way and neither reaches back in here, so
- * holding across them adds no way to deadlock.
+ * against a row of the library. The lock order is this instance's, then whatever the [queue] takes
+ * — and nothing behind the queue reaches back in here, so holding across it adds no way to
+ * deadlock.
  *
  * **And a number for which watching is current**, because cancelling a collection is a request and
  * not an act: a collector already inside an emission when [stop] is called runs it to the end, and
@@ -38,25 +73,7 @@ import kotlinx.coroutines.flow.Flow
  * replaces it rather than by whoever cancels first.
  */
 class CourseAlerts(
-    /**
-     * Enqueue this sentence, in its turn — tagged, so that [withdraw] can name it again — and hand
-     * back the queue's ticket for it, or null if it was not enqueued at all.
-     *
-     * The ticket is what lets one waiting sentence be taken back and another left alone
-     * ([withdrawCues]).
-     */
-    private val speak: (CourseSaying) -> Long?,
-    /** Take back everything this Run's course had waiting to be said, of every kind. */
-    private val withdraw: () -> Unit,
-    /**
-     * Take back exactly these cues, by the tickets [speak] handed back, and nothing else (#456).
-     *
-     * By ticket rather than by name, and separate from [withdraw] on purpose: this fires while the
-     * course still stands and while other sentences about it are still true. A runner who has
-     * reached a corner has not stopped being off the line by reaching it, and one stale turn cue
-     * does not make the next turn's warning waiting behind it stale.
-     */
-    private val withdrawCues: (List<Long>) -> Unit,
+    private val queue: CourseCueQueue,
     /**
      * The clock the ten-second wait is lived through — the phone's, for the reason
      * [OffCourseWatch.onFix] gives.
@@ -67,23 +84,23 @@ class CourseAlerts(
     private val lock = Any()
 
     /** The course being watched, or null for a Run following none — and for a Route deleted. */
-    private var watch: CourseVoice? = null
+    private var watch: WatchedCourse? = null
 
     /**
-     * The cues of this course that carry a deadline, each with the ground it stops being true at.
+     * The turn cues of this course still in the queue, each with the ground it stops being true at.
      *
      * Kept here and not in the watch that judged them, because taking a cue back needs its queue
      * ticket and this is the only thing that has ever held one. A ticket for a cue already spoken
      * is inert when it is handed back, so nothing here has to know what has gone out — an entry
      * simply leaves when the ground passes it.
      *
-     * Emptied whenever the course changes, because [withdraw] has just taken every one of them back
-     * wholesale (#377) and what replaces them belongs to a different line.
+     * Emptied whenever the course changes, because [CourseCueQueue.takeBackAll] has just taken every
+     * one of them back wholesale (#377) and what replaces them belongs to a different line.
      */
     private val waiting = mutableListOf<WaitingCue>()
 
-    /** One enqueued cue, by its queue ticket, and the first ground it is no longer true from. */
-    private class WaitingCue(val ticket: Long, val falseFromAlongMeters: Double)
+    /** One enqueued turn cue, by its queue ticket, and what it said. */
+    private class WaitingCue(val ticket: Long, val said: SaidTurn)
 
     /** Which watching is the current one. A collection with an older number writes nothing. */
     private var watching = 0L
@@ -92,14 +109,16 @@ class CourseAlerts(
      * Watch each course [courses] hands over, in turn, until the collection is cancelled.
      *
      * Every emission is a course that has genuinely changed shape ([courseToWatchFlow]), which is
-     * exactly the moment an outstanding alert about the old shape stops being true.
+     * exactly the moment an outstanding alert about the old shape stops being true. The course is
+     * built into its two watches here, on the collector's thread and outside the lock — it is
+     * arithmetic over every place of the line, and the collector is where that is meant to be spent.
      *
      * Beginning is itself a stop: this course is watched from nothing, so a course left behind by
      * whatever was being watched before has nothing waiting by the time the first fix is read.
      */
-    suspend fun follow(courses: Flow<CourseVoice?>) {
+    suspend fun follow(courses: Flow<List<RoutePoint>>) {
         val mine = beginWatching()
-        courses.collect { next -> watchInstead(mine, next) }
+        courses.collect { points -> watchInstead(mine, WatchedCourse.of(points)) }
     }
 
     /**
@@ -114,7 +133,7 @@ class CourseAlerts(
 
     /** Let go of the course being watched, and give out the number for whatever comes next. */
     private fun beginWatching(): Long = synchronized(lock) {
-        withdraw()
+        queue.takeBackAll()
         waiting.clear()
         watch = null
         ++watching
@@ -129,10 +148,10 @@ class CourseAlerts(
      * off the old line is not told they are back on this one, and an "Off course." withdrawn here
      * leaves no half-state behind — the state that made it went with the watch that made it.
      */
-    private fun watchInstead(mine: Long, next: CourseVoice?) {
+    private fun watchInstead(mine: Long, next: WatchedCourse?) {
         synchronized(lock) {
             if (mine != watching) return
-            withdraw()
+            queue.takeBackAll()
             waiting.clear()
             watch = next
         }
@@ -141,16 +160,23 @@ class CourseAlerts(
     /**
      * Take one fix, and enqueue everything the course being watched has to say about it.
      *
-     * All of it, in the order [CourseVoice] hands it over: one fix can be both the moment the
-     * runner comes back onto the line and the moment the corner fifty metres ahead is worth a word,
-     * and enqueueing only one of the two would be picking which of them is true.
+     * All of it: one fix can be both the moment the runner comes back onto the line and the moment
+     * the corner fifty metres ahead is worth a word, and enqueueing only one of the two would be
+     * picking which of them is true.
+     *
+     * **What is said first, when both have something to say.** The off-course alert. Both go out at
+     * the same priority and the queue is first-in-first-out within a level (#53), so this ordering
+     * is the whole of what decides it: a runner who has just been told they are off the line needs
+     * that before they need the line's next corner, and one who has just been told they are back on
+     * it wants that before being told to turn. Neither cuts the other off — nothing in this app cuts
+     * off a sentence already being spoken.
      *
      * **What is stale goes back before what is new goes in.** A cue is enqueued and not spoken, and
      * the queue drops nothing (#53) — so a turn cue can outlive the ground it is about while it
      * waits behind a sentence already in flight. Which cues those are is [CourseTurnWatch]'s
-     * judgement and stays there; what is here is the pairing of that judgement with the queue, the
-     * same as everything else in this class. Taking back first is what stops the withdrawal
-     * swallowing the very sentence that replaces what it took.
+     * judgement and stays there ([SaidTurn.isFalseAt]); what is here is the pairing of that
+     * judgement with the queue. Taking back first is what stops the withdrawal swallowing the very
+     * sentence that replaces what it took.
      *
      * Two ways a turn cue dies, and the wholesale one goes first. Ground jumping under the runner —
      * leaving the course, or arriving on it somewhere they did not run to — kills everything
@@ -158,17 +184,21 @@ class CourseAlerts(
      * fix that reports a leaving there is no ground at all, and on an arrival the ground can even
      * have gone backwards. So the wholesale pass cannot be folded into the by-ground one, and it
      * must run before it.
+     *
+     * An off-course alert is never taken back by ground: it is about where the runner is *now*, and
+     * is true the moment it is made and afterwards. Only the course going takes it back.
      */
     fun onFix(fix: LocationFix, autoPaused: Boolean) {
         synchronized(lock) {
-            val speech = watch?.onFix(fix, nowMillis(), autoPaused) ?: return
-            if (speech.takeBackTurnCues) takeBack(waiting.toList())
-            speech.alongMeters?.let(::takeBackWhatIsStaleAt)
-            speech.said.forEach { utterance ->
-                val ticket = speak(utterance.saying)
-                if (ticket != null && utterance.falseFromAlongMeters != null) {
-                    waiting += WaitingCue(ticket, utterance.falseFromAlongMeters)
-                }
+            val course = watch ?: return
+            val alert = course.offCourse.onFix(fix, nowMillis(), autoPaused)
+            val turning = course.turns.onFix(fix, autoPaused)
+            if (turning.takeBackWhatIsWaiting) takeBack(waiting.toList())
+            turning.alongMeters?.let(::takeBackWhatIsStaleAt)
+            alert?.let(queue::enqueue)
+            turning.said.forEach { said ->
+                val ticket = queue.enqueue(said.cue) ?: return@forEach
+                waiting += WaitingCue(ticket, said)
             }
         }
     }
@@ -177,11 +207,10 @@ class CourseAlerts(
      * Take back every cue still waiting that the runner has now **reached** the ground of — one by
      * one, and leaving the rest exactly where they are.
      *
-     * Reached, not passed. Each cue names the first ground it is no longer true from
-     * ([SaidTurn.falseFromAlongMeters]), so arriving there is what kills it: a fix landing exactly
-     * on a turn makes the "in fifty metres" warning about that turn false, and leaving it standing
-     * because the runner is not yet *past* the corner would let it be spoken from on top of the
-     * corner. Named from the dead side so this is one comparison and not a judgement call.
+     * Reached, not passed ([SaidTurn.isFalseAt], where the rule is stated once for making a cue and
+     * for taking it back): a fix landing exactly on a turn makes the "in fifty metres" warning about
+     * that turn false, and leaving it standing because the runner is not yet *past* the corner would
+     * let it be spoken from on top of the corner.
      *
      * **One at a time is the whole point.** Two turn cues can be in the queue together — a turn's
      * own cue and the next turn's warning, where the two turns are between fifty and seventy metres
@@ -193,21 +222,50 @@ class CourseAlerts(
      * to it.
      */
     private fun takeBackWhatIsStaleAt(alongMeters: Double) {
-        takeBack(waiting.filter { alongMeters >= it.falseFromAlongMeters })
+        takeBack(waiting.filter { it.said.isFalseAt(alongMeters) })
     }
 
     /** These cues, out of the queue and off the waiting list, as one act. Inert when empty. */
     private fun takeBack(cues: List<WaitingCue>) {
         if (cues.isEmpty()) return
         waiting -= cues.toSet()
-        withdrawCues(cues.map { it.ticket })
+        queue.takeBack(cues.map { it.ticket })
     }
 
     /**
      * The fixes have stopped keeping up with the runner — a manual Pause, or the end of the Run.
-     * See [CourseVoice.recordingBroke]; only the wait is let go of.
+     *
+     * Only the off-course watch has anything to let go of: what it drops is a *wait*, ten seconds
+     * the runner has to spend off the line, and a Pause is time they did not spend running
+     * ([OffCourseWatch.recordingBroke]). The turns count ground and not time, so a Pause takes
+     * nothing from them: the runner starts again exactly as far along the course as they stopped,
+     * with the same turns still ahead of them.
      */
     fun recordingBroke() {
-        synchronized(lock) { watch?.recordingBroke() }
+        synchronized(lock) { watch?.offCourse?.recordingBroke() }
+    }
+
+    /**
+     * One course's two watches, over **one [CourseLine] between them** — built once and lent to
+     * both, so that the two are reading the same course rather than two courses that happen to have
+     * been built from the same list. Where each *reads* from on that line is its own business, and
+     * deliberately different — [CourseTurnWatch] says why.
+     */
+    private class WatchedCourse(val offCourse: OffCourseWatch, val turns: CourseTurnWatch) {
+        companion object {
+            /**
+             * The watches for the course [points] describe, or null when they describe no ground to
+             * run — an unrouted Run, an empty Route, a Route deleted from the library before the Run
+             * got going. A Run with no course has nothing to be told about.
+             *
+             * [points] arrive in the order the Run is running them, reversed already where the
+             * runner said they were setting off the other way round — the same list the live map is
+             * drawn from. That order is nothing to the off-course watch and everything to the turns:
+             * a course run the other way round turns right where it turned left ([courseTurnsOf]).
+             */
+            fun of(points: List<RoutePoint>): WatchedCourse? = CourseLine.of(points)?.let { line ->
+                WatchedCourse(OffCourseWatch(line), CourseTurnWatch(line, courseTurnsOf(points)))
+            }
+        }
     }
 }

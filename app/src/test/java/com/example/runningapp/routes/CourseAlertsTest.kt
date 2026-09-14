@@ -1,12 +1,15 @@
 package com.example.runningapp.routes
 
+import com.example.runningapp.CueHold
+import com.example.runningapp.CuePriority
 import com.example.runningapp.OutstandingCues
+import com.example.runningapp.QueuedCourseCues
 import com.example.runningapp.data.Route
 import com.example.runningapp.data.RouteSource
 import com.example.runningapp.recording.LocationFix
-import com.example.runningapp.run.CueTag
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
@@ -18,8 +21,9 @@ import org.junit.Test
  * What the app has waiting to be said about the course, when the course goes (#377).
  *
  * The queue here is a stand-in that says nothing at all: every cue enqueued is a cue still waiting,
- * which is the phone in the middle of a split announcement. The bookkeeping in front of it is the
- * real [OutstandingCues], so a cue is taken back the way the service takes one back.
+ * which is the phone in the middle of a split announcement. Everything in front of it is the real
+ * thing — the service's own adapter ([QueuedCourseCues]) over the real [OutstandingCues] — so a cue
+ * is enqueued and taken back exactly the way the service does it (#479).
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CourseAlertsTest {
@@ -29,20 +33,20 @@ class CourseAlertsTest {
      * working through a sentence. A cue already spoken cannot be unsaid, and taking its ticket back
      * does nothing — the same as the real queue (`AudioCueManager.withdrawAll`).
      */
-    private class WaitingCues {
+    private class WaitingCues : CueHold {
         private val waiting = LinkedHashMap<Long, String>()
         private var lastTicket = 0L
 
         /** What has been said out loud, oldest first. */
         val spoken = mutableListOf<String>()
 
-        fun enqueue(text: String): Long {
+        override fun enqueue(text: String, priority: CuePriority): Long {
             val ticket = ++lastTicket
             waiting[ticket] = text
             return ticket
         }
 
-        fun withdrawAll(tickets: Collection<Long>) = tickets.forEach { waiting.remove(it) }
+        override fun withdrawAll(tickets: Collection<Long>) = tickets.forEach { waiting.remove(it) }
 
         /** Say the cue at the front of the queue, as the engine does when it finishes a sentence. */
         fun speakNext() {
@@ -54,12 +58,11 @@ class CourseAlertsTest {
     }
 
     private val queue = WaitingCues()
-    private val cues = OutstandingCues()
     private var clockMillis = 0L
+
+    /** Wired to the queue exactly as the service wires it — the real adapter over the stand-in. */
     private val alerts = CourseAlerts(
-        speak = { saying -> cues.record(CueTag.COURSE) { queue.enqueue(saying.spoken) } },
-        withdraw = { queue.withdrawAll(cues.takeBack(CueTag.COURSE)) },
-        withdrawCues = { tickets -> queue.withdrawAll(cues.takeBackTickets(tickets)) },
+        QueuedCourseCues(OutstandingCues()) { queue },
         nowMillis = { clockMillis },
     )
 
@@ -470,6 +473,23 @@ class CourseAlertsTest {
 
         assertEquals(listOf("Turn right."), queue.texts())
         watching.cancel()
+    }
+
+    /**
+     * A Run following no ground — an empty Route, or a line of one place — has nothing to be told
+     * about, however far the runner wanders.
+     */
+    @Test
+    fun `a course of no ground says nothing`() = runTest {
+        for (course in listOf(emptyList(), listOf(at(0.0)))) {
+            val watching = backgroundScope.launch { alerts.follow(flowOf(course)) }
+            runCurrent()
+
+            strayOffTheCourse()
+
+            assertEquals(emptyList<String>(), queue.texts())
+            watching.cancel()
+        }
     }
 
     /**
