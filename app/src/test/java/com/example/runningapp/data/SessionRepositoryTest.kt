@@ -6665,6 +6665,34 @@ class SessionRepositoryTest {
         assertNull(context.fitnessAndForm)
     }
 
+    // --- The launch pass that scores what the book missed -----------------------------------------
+    //
+    // Which Runs are owed and how each is scored is the book's, and argued in `RecordBookTest`. What
+    // is left here is that the launch pass reaches the book through the repository at all.
+
+    @Test
+    fun `the launch pass scores a Run the book missed`() = runTest {
+        whenever(mockDao.getSessionIdsMissingRecordScoring()).thenReturn(listOf(42L))
+        whenever(mockDao.getSessionById(42L))
+            .thenReturn(aTreadmillRun(id = 42, seconds = 1_500).copy(distanceKm = 12.0))
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(historyRecordsSeeded = true)))
+        val book = BookInMemory()
+        val repo = repositoryWithRecordBook(
+            sessionDao = mockDao,
+            achievementDao = book,
+            settingsRepository = mockSettingsRepo,
+        )
+
+        repo.scoreMissedRecords()
+
+        assertEquals(
+            setOf(RecordType.LONGEST_DISTANCE to 12_000.0, RecordType.LONGEST_DURATION to 1_500.0),
+            book.getAllAchievements().map { it.type to it.value }.toSet(),
+        )
+        verify(mockDao).setRecordsScored(42L)
+    }
+
     // --- The wholesale fill of the banked claims, written down as its own fact (#75) -------------
     //
     // How the book raises and pays the fill is the book's, and argued in `RecordBookTest`. What is
