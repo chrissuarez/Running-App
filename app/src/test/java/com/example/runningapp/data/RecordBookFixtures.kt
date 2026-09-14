@@ -16,10 +16,37 @@ import org.mockito.kotlin.mock
  * read with nothing and takes every write. That is the whole of the store standing, as the app's
  * is — the book has no way to be told a table is missing.
  *
- * The repository's own [SessionDao], settings, backup and transaction are passed in again, because
- * the book reaches them on its own and has to reach the same ones.
+ * No settings, no backup, and a transaction that just runs the block. A test whose book needs any
+ * of those builds its repository with [repositoryWithRecordBook] instead, which hands the same ones
+ * to both (#487).
  */
 internal fun recordBookOver(
+    sessionDao: SessionDao,
+    achievementDao: AchievementDao? = null,
+    statedBestEffortDao: StatedBestEffortDao? = null,
+    runEffortDao: RunEffortDao? = null,
+    recordFillDao: RecordFillDao? = null,
+    trackPointDao: TrackPointDao? = null,
+): RecordBook = theAppsRecordBook(
+    sessionDao, achievementDao, statedBestEffortDao, runEffortDao, recordFillDao, trackPointDao,
+    settingsRepository = null,
+    refreshHistoryBackup = null,
+    inTransaction = { it() },
+)
+
+/**
+ * A repository handed the app's record book, with the settings, the backup and the transaction given
+ * once and reaching both (#487) — as [com.example.runningapp.AppContainer] hands the same ones to
+ * each.
+ *
+ * The book keeps the seeding mark in those settings, refreshes that backup after a mend, and
+ * re-reads a Run inside that transaction. Handed different ones from the repository's, a test would
+ * be checking a wiring the app never has.
+ *
+ * The repository's other tables are the ones the tests that need this pass; add one here when a
+ * test needs another.
+ */
+internal fun repositoryWithRecordBook(
     sessionDao: SessionDao,
     achievementDao: AchievementDao? = null,
     statedBestEffortDao: StatedBestEffortDao? = null,
@@ -29,6 +56,44 @@ internal fun recordBookOver(
     settingsRepository: SettingsRepository? = null,
     refreshHistoryBackup: (suspend () -> Unit)? = null,
     inTransaction: suspend (suspend () -> Unit) -> Unit = { it() },
+    sampleDao: SampleDao? = null,
+    intervalStatDao: RunWalkIntervalStatDao? = null,
+    runPauseDao: RunPauseDao? = null,
+    runShapeDao: RunShapeDao? = null,
+    runSummaryDao: RunSummaryDao? = null,
+    walkMarkDebtDao: WalkMarkDebtDao? = null,
+    aiCoachClient: AiCoachClient? = null,
+    bookAfterRunWork: ((Long) -> Unit)? = null,
+): SessionRepository = SessionRepository(
+    sessionDao = sessionDao,
+    sampleDao = sampleDao,
+    trackPointDao = trackPointDao,
+    intervalStatDao = intervalStatDao,
+    runPauseDao = runPauseDao,
+    recordBook = theAppsRecordBook(
+        sessionDao, achievementDao, statedBestEffortDao, runEffortDao, recordFillDao, trackPointDao,
+        settingsRepository, refreshHistoryBackup, inTransaction,
+    ),
+    runShapeDao = runShapeDao,
+    runSummaryDao = runSummaryDao,
+    walkMarkDebtDao = walkMarkDebtDao,
+    settingsRepository = settingsRepository,
+    aiCoachClient = aiCoachClient,
+    refreshHistoryBackup = refreshHistoryBackup,
+    bookAfterRunWork = bookAfterRunWork,
+    inTransaction = inTransaction,
+)
+
+private fun theAppsRecordBook(
+    sessionDao: SessionDao,
+    achievementDao: AchievementDao?,
+    statedBestEffortDao: StatedBestEffortDao?,
+    runEffortDao: RunEffortDao?,
+    recordFillDao: RecordFillDao?,
+    trackPointDao: TrackPointDao?,
+    settingsRepository: SettingsRepository?,
+    refreshHistoryBackup: (suspend () -> Unit)?,
+    inTransaction: suspend (suspend () -> Unit) -> Unit,
 ): RecordBook = RecordBook(
     RoomRecordBookStore(
         sessionDao = sessionDao,
