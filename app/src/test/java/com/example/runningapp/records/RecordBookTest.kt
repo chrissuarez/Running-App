@@ -27,9 +27,11 @@ import org.junit.Test
 /**
  * The record book's rules, over nothing but its own store (#478, #487).
  *
- * Every Record rule is argued here, stated against a store that behaves like a database, and
- * checked by what the store holds afterwards rather than by which calls reached it — so a change to
- * how the app's store talks to Room cannot break a test about a rule. What the repository's doors
+ * Every Record rule is argued here, stated against a store that behaves like a database. A rule
+ * about what the book holds is checked by what the store holds afterwards; a rule about order — a
+ * debt written before a delete, a fill handed back last — by the order of the store's events. Never
+ * by which DAO calls reached it, so a change to how the app's store talks to Room cannot break a test
+ * about a rule. What the repository's doors
  * hand the book is tested in `SessionRepositoryTest`; how the app's store maps each call onto a DAO
  * is tested in `RoomRecordBookStoreTest`.
  *
@@ -67,7 +69,7 @@ class RecordBookTest {
         var historyReads = 0
         var medalWritesFail = false
         var clearingTheSeededMarkFailsOnce = false
-        var fillWrites = 0
+        val fillWrites get() = events.count { it == "fill paid" }
 
         override suspend fun run(sessionId: Long): RunnerSession? {
             if (sessionId in unreadable) throw IllegalStateException("unreadable row")
@@ -129,7 +131,6 @@ class RecordBookTest {
         override suspend fun wholesaleFillOwed() = fillOwed
         override suspend fun markWholesaleFillPaid() {
             fillOwed = false
-            fillWrites++
             events += "fill paid"
         }
 
@@ -185,8 +186,8 @@ class RecordBookTest {
     }
 
     private val store = Store()
-    private var backups = 0
-    private val book = RecordBook(store, refreshHistoryBackup = { backups++; store.events += "backup" })
+    private val book = RecordBook(store, refreshHistoryBackup = { store.events += "backup" })
+    private val backups get() = store.events.count { it == "backup" }
 
     private fun Store.aTreadmillRun(
         id: Long,
@@ -206,8 +207,13 @@ class RecordBookTest {
         )
     }
 
-    private fun aTreadmillRun(id: Long, km: Double = 0.0, seconds: Long, finished: Boolean = true, isWalk: Boolean = false) =
-        store.aTreadmillRun(id, km, seconds, finished, isWalk)
+    private fun aTreadmillRun(
+        id: Long,
+        km: Double = 0.0,
+        seconds: Long,
+        finished: Boolean = true,
+        isWalk: Boolean = false,
+    ) = store.aTreadmillRun(id, km, seconds, finished, isWalk)
 
     private fun Store.holders(type: RecordType): List<Pair<Long, Medal>> =
         medals.filter { it.type == type }.sortedBy { it.medal.ordinal }.map { it.sessionId to it.medal }
@@ -216,6 +222,12 @@ class RecordBookTest {
 
     private fun stated(sessionId: Long, type: RecordType, seconds: Int) =
         StatedBestEffort(sessionId = sessionId, type = type, seconds = seconds)
+
+    private fun aGold(sessionId: Long, type: RecordType, value: Double) =
+        Achievement(sessionId = sessionId, type = type, medal = Medal.GOLD, value = value)
+
+    private fun Store.valuesAt(type: RecordType) =
+        medals.filter { it.type == type }.map { it.sessionId to it.value }
 
     // --- Scoring one Run (#49, #75, #210) ---
 
@@ -234,7 +246,10 @@ class RecordBookTest {
             earned.map { it.type to it.medal }.toSet(),
         )
         assertEquals(
-            setOf(RunEffortRow(2, RecordType.LONGEST_DISTANCE, 12_000.0), RunEffortRow(2, RecordType.LONGEST_DURATION, 2_000.0)),
+            setOf(
+                RunEffortRow(2, RecordType.LONGEST_DISTANCE, 12_000.0),
+                RunEffortRow(2, RecordType.LONGEST_DURATION, 2_000.0),
+            ),
             store.effortsFor(2).toSet(),
         )
         assertEquals(setOf(1L, 2L), store.scored)
@@ -244,7 +259,7 @@ class RecordBookTest {
     fun `scoring a run rewrites only the records it contested`() = runTest {
         // An outdoor Run's 5K standing on the book: a treadmill Run contests none of the fastest
         // five, so it must not be able to clear them off on its way past.
-        store.medals += Achievement(sessionId = 5, type = RecordType.FASTEST_5K, medal = Medal.GOLD, value = 1_300.0)
+        store.medals += aGold(sessionId = 5, RecordType.FASTEST_5K, value = 1_300.0)
         aTreadmillRun(7, seconds = 3_600)
 
         val earned = book.score(7)
@@ -278,7 +293,10 @@ class RecordBookTest {
         // reads, which is the whole point of them.
         assertTrue(store.medals.none { it.sessionId == 9L })
         assertEquals(
-            setOf(RunEffortRow(9, RecordType.LONGEST_DISTANCE, 500.0), RunEffortRow(9, RecordType.LONGEST_DURATION, 60.0)),
+            setOf(
+                RunEffortRow(9, RecordType.LONGEST_DISTANCE, 500.0),
+                RunEffortRow(9, RecordType.LONGEST_DURATION, 60.0),
+            ),
             store.effortsFor(9).toSet(),
         )
     }
@@ -578,7 +596,7 @@ class RecordBookTest {
         // not carry over what it never measured an effort for.
         aTreadmillRun(1, seconds = 600)
         aTreadmillRun(9, seconds = 3_600, finished = false)
-        store.medals += Achievement(sessionId = 9, type = RecordType.LONGEST_DURATION, medal = Medal.GOLD, value = 3_600.0)
+        store.medals += aGold(sessionId = 9, RecordType.LONGEST_DURATION, value = 3_600.0)
 
         book.seedFromHistory()
 
@@ -606,7 +624,7 @@ class RecordBookTest {
         aTreadmillRun(1, seconds = 600)
         aTreadmillRun(5, seconds = 1_800, isWalk = true)
         store.efforts += RunEffortRow(5, RecordType.LONGEST_DURATION, 1_800.0)
-        store.medals += Achievement(sessionId = 5, type = RecordType.LONGEST_DURATION, medal = Medal.GOLD, value = 1_800.0)
+        store.medals += aGold(sessionId = 5, RecordType.LONGEST_DURATION, value = 1_800.0)
 
         book.seedFromHistory()
 
@@ -816,7 +834,7 @@ class RecordBookTest {
     fun `a delete on an install still owing its first seeding does not mark it done`() = runTest {
         aTreadmillRun(1, seconds = 600)
         aTreadmillRun(2, seconds = 1_800)
-        store.medals += Achievement(sessionId = 2, type = RecordType.LONGEST_DURATION, medal = Medal.GOLD, value = 1_800.0)
+        store.medals += aGold(sessionId = 2, RecordType.LONGEST_DURATION, value = 1_800.0)
 
         book.changeAndRepair(listOf(2L)) { store.delete(2L) }
 
@@ -860,7 +878,7 @@ class RecordBookTest {
     }
 
     @Test
-    fun `a withdrawn distance gives up the medal it held, rather than keeping it at a number the run no longer has`() = runTest {
+    fun `a withdrawn distance gives up its medal, not keep it at a number the run no longer has`() = runTest {
         aTreadmillRun(1, km = 9.0, seconds = 1_200)
         aTreadmillRun(2, km = 12.0, seconds = 1_500)
         book.seedFromHistory()
@@ -871,7 +889,7 @@ class RecordBookTest {
 
         // The book still held Run 2's gold while the rebuild measured, and a Run that now measures
         // to nothing must not have that old row carried back in as a claim of its own.
-        assertEquals(listOf(1L to 9_000.0), store.medals.filter { it.type == RecordType.LONGEST_DISTANCE }.map { it.sessionId to it.value })
+        assertEquals(listOf(1L to 9_000.0), store.valuesAt(RecordType.LONGEST_DISTANCE))
     }
 
     @Test
@@ -902,10 +920,7 @@ class RecordBookTest {
         }
 
         // A Run that now claims nothing must not have its old row carried back in.
-        assertEquals(
-            listOf(1L to 1_440.0),
-            store.medals.filter { it.type == RecordType.FASTEST_5K }.map { it.sessionId to it.value },
-        )
+        assertEquals(listOf(1L to 1_440.0), store.valuesAt(RecordType.FASTEST_5K))
     }
 
     @Test
