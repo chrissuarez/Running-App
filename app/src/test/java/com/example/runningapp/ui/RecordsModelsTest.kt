@@ -92,6 +92,30 @@ class RecordsModelsTest {
         assertEquals("21.50 km", longest.best?.valueLabel)
     }
 
+    @Test
+    fun `the grid's best is the gold on the record's own page, a matched time included`() {
+        // The grid places the stored rows and the page places what it prints, so each Record is
+        // given a tie at the top, listed later Run first: an order that lost the tie-break on either
+        // side would hand the grid and the gold to two different Runs.
+        val rows = RecordType.entries.flatMap { type ->
+            val best = if (type.lowerIsBetter) 300.0 else 20_000.0
+            val worse = if (type.lowerIsBetter) 400.0 else 10_000.0
+            listOf(
+                row(9, type, worse, "2026-01-05"),
+                row(7, type, best, "2026-02-05"),
+                row(3, type, best, "2026-03-05"),
+            )
+        }
+
+        val slots = recordSlots(rows, zone)
+
+        RecordType.entries.forEach { type ->
+            val gold = top(rows, type, zone).first().entry
+            assertEquals(3L, gold.sessionId)
+            assertEquals(gold, slots.single { it.type == type }.best)
+        }
+    }
+
     // --- The top ten ---
 
     @Test
