@@ -2,57 +2,12 @@ package com.example.runningapp.routes
 
 import com.example.runningapp.data.KeptRoute
 import com.example.runningapp.data.RouteDao
-import com.example.runningapp.data.RouteKeeping
 import com.example.runningapp.data.RouteSource
 import com.example.runningapp.data.RunnerSession
 import com.example.runningapp.data.TrackPoint
 import com.example.runningapp.data.isFinished
 import com.example.runningapp.export.RunExportName
 import java.time.ZoneId
-
-/** What became of a Run the runner asked to keep as a course. */
-sealed interface RunRouteOutcome {
-    /**
-     * The ground this Run covered is now a course of its own.
-     *
-     * [sameGroundAs] names another course the library already keeps over this very ground, or null
-     * (#402) — see [com.example.runningapp.data.KeptRoute.sameGroundAs] for why it is reported
-     * rather than merged.
-     */
-    data class Saved(
-        val routeId: Long,
-        val name: String,
-        val sameGroundAs: String? = null,
-    ) : RunRouteOutcome
-
-    /**
-     * The library already held this course, drawn exactly as this Run draws it.
-     *
-     * [name] is what the kept Route is called, which may not be what this Run is called: a runner
-     * who saved a lap in the spring and renamed it needs telling which row is the one they have.
-     */
-    data class AlreadySaved(val name: String) : RunRouteOutcome
-
-    /**
-     * The Run has no course in it: no fixes at all, or none that reach further across the ground
-     * than the error of the fixes themselves ([ROUTE_MINIMUM_METERS]).
-     *
-     * Nothing is written. A treadmill Run never gets this far — the button is not offered without a
-     * recorded track — so this is the outdoor Run that stopped in the first seconds, and the one
-     * that recorded a standstill.
-     */
-    data object NoGround : RunRouteOutcome
-
-    /**
-     * The Run is still being recorded, so the course it will go over is not yet a course.
-     *
-     * Reachable, not defensive: History lists a Run the moment it starts, so its page can be opened
-     * while the runner is still on it. Kept then, the Route would be however far they had got when
-     * they looked at their phone — banked, never re-measured, and named after a Run that went twice
-     * as far.
-     */
-    data object StillRunning : RunRouteOutcome
-}
 
 /**
  * Keeps the ground a Run went over as a Route to run again (#55).
@@ -114,13 +69,13 @@ class RunRouteSaver(
         run: RunnerSession,
         trackPoints: List<TrackPoint>,
         zoneId: ZoneId = ZoneId.systemDefault(),
-    ): RunRouteOutcome {
-        if (!run.isFinished()) return RunRouteOutcome.StillRunning
+    ): RouteOutcome {
+        if (!run.isFinished()) return RouteOutcome.StillRunning
 
         val course = runAsCourse(trackPoints)
         // What counts as a course at all is one question, asked here and at the file door in the
         // same place, so the two cannot come to disagree about it (#397) — see [holdsACourse].
-        if (!course.holdsACourse()) return RunRouteOutcome.NoGround
+        if (!course.holdsACourse()) return RouteOutcome.NoGround
 
         // Offered rather than asked about first: the line is the course's identity, and the library
         // itself decides in one go whether this one is new — asking and then writing would leave a
@@ -153,14 +108,6 @@ class RunRouteSaver(
             kept
         }
 
-        return if (kept.keeping == RouteKeeping.KEPT) {
-            RunRouteOutcome.Saved(
-                routeId = kept.id,
-                name = kept.name,
-                sameGroundAs = kept.sameGroundAs,
-            )
-        } else {
-            RunRouteOutcome.AlreadySaved(name = kept.name)
-        }
+        return RouteOutcome.Kept(kept)
     }
 }

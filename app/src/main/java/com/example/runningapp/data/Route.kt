@@ -64,7 +64,8 @@ data class Route(
      * **This is the one column on the row that can be big, and the two rules about it are stated
      * here** (#403). Everything that reads a Route cites them from here rather than arguing them
      * again: [RouteDao.getLibraryFlow], [RouteDao.getRoutePolyline],
-     * [com.example.runningapp.routes.libraryRedrawn] and `RoutesViewModel`.
+     * [com.example.runningapp.routes.libraryRedrawn] and
+     * [com.example.runningapp.routes.RouteLibrary].
      *
      * How big: a line kept before #354 holds every point its file held, and a file may hold two
      * hundred thousand of them — some four megabytes of text in one row. A line written since is

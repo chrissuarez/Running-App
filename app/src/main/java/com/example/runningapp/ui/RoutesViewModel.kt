@@ -6,21 +6,12 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.runningapp.analysis.MapFix
 import com.example.runningapp.analysis.RouteThumbnail
-import com.example.runningapp.analysis.courseThumbnailOf
-import com.example.runningapp.data.RouteDao
 import com.example.runningapp.data.RouteHeader
-import com.example.runningapp.data.RouteLastRunRow
-import com.example.runningapp.data.RouteRunRow
-import com.example.runningapp.data.RouteShapeCandidate
-import com.example.runningapp.data.ShapedRunRow
-import com.example.runningapp.data.asCourseShape
-import com.example.runningapp.data.decoded
 import com.example.runningapp.repeatedOn
-import com.example.runningapp.routes.RouteImportOutcome
 import com.example.runningapp.routes.RouteImporter
-import com.example.runningapp.routes.RoutePolyline
-import com.example.runningapp.routes.asShape
-import com.example.runningapp.segments.RunShape
+import com.example.runningapp.routes.RouteLibrary
+import com.example.runningapp.routes.RouteOutcome
+import com.example.runningapp.routes.addedRouteId
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -30,7 +21,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emptyFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -77,80 +67,24 @@ fun courseWorthShowing(request: CourseToShow?, asksBefore: Long): CourseToShow? 
     request?.takeIf { it.ask > asksBefore }
 
 /**
- * Drives the Route library (#54).
+ * Drives the Route library screens (#54): the library, one course's page, and the import.
  *
  * A ViewModel rather than work launched from the screen for the same reason as [RestoreViewModel]:
  * an import reads a whole file across another app's content provider, and the runner may leave the
  * screen while it happens — including by way of the file picker, which is another app's screen and
  * can take this process down with it.
  *
+ * **Screen state only** (#480). The library's rules — families, where a page lands, what a rename,
+ * a flip or a delete writes, how a course is drawn — are [RouteLibrary]'s, and this class asks it.
+ * What is held here is what only a screen has: the drawings worked out so far, whether a file is
+ * being read, the words to show, and which course the list was asked to reach.
+ *
  * The library itself is never held here. It is a Room Flow, so a rename or a delete needs no state
- * of its own to keep in step: the table is the one copy of the truth and the screen watches it. The
- * one thing held is the shape of each course (#59), which is worked out from the table rather than
- * stored in it.
- *
- * **No course's line is ever held here, and never two at once** — the rule and its sizes are at
- * [com.example.runningapp.data.Route.polyline] (#403). The library arrives without its lines
- * ([RouteDao.getLibraryFlow]), and a line is fetched only to be drawn from and is let go as soon as
- * it has been: what stays is the thumbnail, which is a few dozen points whatever the course.
- *
- * Every course's line is still read once, the first time the library is opened — a thumbnail is a
- * drawing of the line, so there is no getting one without it. What the rule asks is that they are
- * not in hand together, and they never are.
+ * of its own to keep in step: the table is the one copy of the truth and the screen watches it.
  */
 class RoutesViewModel(
-    private val routeDao: RouteDao,
+    private val library: RouteLibrary,
     private val importer: RouteImporter,
-    /**
-     * Every finished Run remembered on one course, watched — for that course's own page (#420).
-     *
-     * A function rather than the whole `SessionDao`, the bargain `onSegmentSaved` makes in
-     * [SegmentsViewModel]: what the library wants of `sessions` is one question, and asking for the
-     * DAO would hand this class every other one. It is
-     * [com.example.runningapp.data.SessionDao.getRunsAlongRouteFlow], and only that.
-     *
-     * No default, so a wiring that forgot it would not compile rather than quietly show every course
-     * an empty history.
-     */
-    private val runsAlongRoute: (routeId: Long) -> Flow<List<RouteRunRow>>,
-    /**
-     * When each of a family's lengths was last run, asked once when a page opens (#421).
-     *
-     * A function rather than the DAO, the bargain [runsAlongRoute] already makes. It is
-     * [com.example.runningapp.data.SessionDao.lastRunOnRoutes] and only that, and it settles which
-     * length a family's page lands on ([routeFamilyLandingId]).
-     *
-     * No default, so a wiring that forgot it would not compile rather than quietly land every family
-     * on its shortest length.
-     */
-    private val lastRunOnRoutes: suspend (routeIds: List<Long>) -> List<RouteLastRunRow>,
-    /**
-     * One course's shape, watched — what its own page recognises Runs on this ground by (#74).
-     *
-     * A function rather than the DAO, the bargain [runsAlongRoute] makes. It is
-     * [com.example.runningapp.data.RouteShapeDao.getCourseShapeFlow] and only that. Never the line
-     * itself: a shape is five places, and a line is the one column in the app that can be megabytes
-     * ([com.example.runningapp.data.Route.polyline]).
-     *
-     * Null while a course is still owed its measurement, which a page draws as no recognised Runs
-     * rather than as a course with none — the remembered ones are printed either way.
-     *
-     * No default, [runsAlongRoute]'s rule and for its reason: a wiring that forgot it would not
-     * compile, rather than quietly showing every course only the Runs written down on it.
-     */
-    private val courseShape: (routeId: Long) -> Flow<RouteShapeCandidate?>,
-    /**
-     * Every finished Run that holds a shape, watched — the field a course recognises its Runs from
-     * (#74).
-     *
-     * The flow itself rather than a function, unlike its two neighbours, because unlike them it
-     * takes no argument: it is
-     * [com.example.runningapp.data.RunShapeDao.getShapedRunsForCoursesFlow] and only that, and a
-     * thunk in front of it would buy nothing a `Flow` does not already give.
-     *
-     * No default, [runsAlongRoute]'s rule and for its reason.
-     */
-    private val shapedRuns: Flow<List<ShapedRunRow>>,
     /**
      * Ticks whenever the phone's time zone changes
      * ([com.example.runningapp.AppContainer.zoneChanges]).
@@ -163,8 +97,6 @@ class RoutesViewModel(
     private val zoneChanges: Flow<Unit> = emptyFlow(),
     /** Where the file is read. Injected so a test can watch an import finish on its own scheduler. */
     private val io: CoroutineDispatcher = Dispatchers.IO,
-    /** Where a course's shape is worked out — anywhere but the thread drawing the list. */
-    private val courseDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : ViewModel() {
 
     /**
@@ -172,13 +104,13 @@ class RoutesViewModel(
      * everything below.
      *
      * Read from the database once however many things here want it — the picker, the rows the
-     * library screen shows, and the pass that works the shapes out.
+     * library screen shows, and the pass that draws the courses.
      */
-    val routes = routeDao.getLibraryFlow()
+    val routes = library.routes
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
-     * The shapes worked out so far, kept for as long as this view model is.
+     * The drawings worked out so far, kept for as long as this view model is.
      *
      * Held here rather than worked out per emission because the library re-emits for reasons that
      * have nothing to do with shapes — a rename, a delete, an import — and redrawing every course in
@@ -187,8 +119,8 @@ class RoutesViewModel(
      * Keyed by the Route's id alone, and the line it was drawn from is deliberately not kept beside
      * it. That rests on [com.example.runningapp.data.Route.polyline]'s second rule — a line is
      * written once and never rewritten — so an id names one line for as long as the row exists, and
-     * a shape looked up by id is that line's shape. Keeping the line here to check against would be
-     * keeping every line in the library, which is what its first rule forbids.
+     * a drawing looked up by id is that line's drawing. Keeping the line here to check against would
+     * be keeping every line in the library, which is what its first rule forbids.
      *
      * A course with nothing to draw is kept as a null against its id rather than left out, so
      * "asked, and there is no shape" is not read back as "not asked yet" and re-asked for the life
@@ -197,14 +129,14 @@ class RoutesViewModel(
     private val thumbnails = MutableStateFlow<Map<Long, RouteThumbnail?>>(emptyMap())
 
     /**
-     * The rows the library shows: what is stored, with each course's shape as it is worked out.
+     * The rows the library shows: what is stored, with each course's drawing as it is worked out.
      *
      * Watched from the moment this view model exists rather than from the moment the library is
      * opened, because the screen says "No routes yet" when this list is empty, and that is a claim
      * about the table. Started when the screen is, it would be empty for the first frame or two of
-     * every visit and a runner with a library would be told they have none. Working the shapes out
-     * is the expensive part and is still not done until asked
-     * ([drawCoursesWhileLibraryIsOpen]); this is one small query.
+     * every visit and a runner with a library would be told they have none. Drawing the courses is
+     * the expensive part and is still not done until asked ([drawCoursesWhileLibraryIsOpen]); this
+     * is one small query.
      */
     val rows: StateFlow<List<RouteRowUi>> = combine(routes, thumbnails) { routes, drawn ->
         routes.map { route -> RouteRowUi(route = route, thumbnail = drawn[route.id]) }
@@ -224,22 +156,19 @@ class RoutesViewModel(
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     /**
-     * Every family name the library already holds, for the box that offers them (#421).
+     * Every family name the library already holds, for the box that offers them (#421) — see
+     * [RouteLibrary.familyNames].
      *
-     * Read off the library rather than asked of the table as a question of its own: the names *are*
-     * the library's families, so a separate query would be a second answer that could disagree with
-     * the rows on screen.
-     *
-     * A plain Flow rather than a StateFlow, for [siblings]'s reason: what it must never do is answer
-     * "no families yet" before the first read has landed.
+     * A plain Flow rather than a StateFlow: what it must never do is answer "no families yet" before
+     * the first read has landed.
      */
-    val familyNames: Flow<List<String>> = routeDao.getLibraryFlow().map { routeFamilyNames(it) }
+    val familyNames: Flow<List<String>> = library.familyNames
 
     /** Whether the pass below has been set going, so opening the library twice does not start two. */
     private var drawing = false
 
     /**
-     * Start working the courses out — called when the library is opened, and not before.
+     * Start drawing the courses — called when the library is opened, and not before.
      *
      * This view model belongs to the activity rather than to the screen, so it exists from the
      * moment the app launches whether or not the runner ever opens their routes. Safe to call on
@@ -247,42 +176,26 @@ class RoutesViewModel(
      * started once.
      *
      * Once started it runs for the life of the view model rather than the life of the screen, which
-     * is what the name is worth: what it promises is that nothing is worked out *before* the
-     * library has been opened, not that anything is torn down after it is closed. Stopping it would
-     * only mean drawing the same courses again on the next visit.
+     * is what the name is worth: what it promises is that nothing is drawn *before* the library has
+     * been opened, not that anything is torn down after it is closed. Stopping it would only mean
+     * drawing the same courses again on the next visit.
      */
     fun drawCoursesWhileLibraryIsOpen() {
         if (drawing) return
         drawing = true
         viewModelScope.launch {
-            routes.collect { library ->
+            routes.collect { courses ->
                 // Courses already drawn are dropped as their Routes are, so a library emptied and
-                // filled again does not carry the old shapes about for the life of the screen.
-                thumbnails.value = thumbnails.value.filterKeys { id -> library.any { it.id == id } }
-                val pending = library.map { it.id }.filter { it !in thumbnails.value }
+                // filled again does not carry the old drawings about for the life of the screen.
+                thumbnails.value = thumbnails.value.filterKeys { id -> courses.any { it.id == id } }
+                val pending = courses.map { it.id }.filter { it !in thumbnails.value }
                 if (pending.isEmpty()) return@collect
-                // Worked out in one pass and published once, rather than a row at a time. Every
-                // publish rebuilds the whole row list on the thread drawing it, so publishing per
-                // route would rebuild it once per route in the library while the runner is already
+                // Drawn in one pass and published once, rather than a row at a time. Every publish
+                // rebuilds the whole row list on the thread drawing it, so publishing per route
+                // would rebuild it once per route in the library while the runner is already
                 // scrolling. The cost of holding them back is a pause before the first drawing
-                // appears, and each course is bounded work: an imported course is stored exactly
-                // as its file drew it, but the drawing samples any line down before it thins it,
-                // so what one costs is bounded whatever the file held (`courseThumbnailOf`).
-                //
-                // One line at a time, fetched here rather than carried in on the list (#403): the
-                // line is asked for, drawn from, and let go before the next id is reached, so the
-                // pass holds one course's text however many the library has. What it keeps is the
-                // thumbnail.
-                val drawn = withContext(courseDispatcher) {
-                    pending.associateWith { id ->
-                        // Null is the row having been deleted since the list arrived, which the
-                        // sweep above will drop on the next emission — there is nothing to draw.
-                        routeDao.getRoutePolyline(id)?.let { polyline ->
-                            courseThumbnailOf(RoutePolyline.decode(polyline).asShape())
-                        }
-                    }
-                }
-                thumbnails.value += drawn
+                // appears; each course is bounded work ([RouteLibrary.thumbnailsOf]).
+                thumbnails.value += library.thumbnailsOf(pending)
             }
         }
     }
@@ -291,189 +204,52 @@ class RoutesViewModel(
     //
     // Here rather than in a ViewModel of its own, the arrangement [SegmentsViewModel] already makes
     // for the Segments collection and one Segment's page. The two screens are one subject: the page
-    // renames a course and the library lists it under its new name, and both read the same table
-    // through the same rules about a Route's line. A second ViewModel would be a second place those
-    // rules are stated, and it would be built and thrown away with each visit to a page reached from
-    // a list this one is already watching.
-    //
-    // Nothing below is held. Every one of them is asked for by the page, per course — this ViewModel
-    // belongs to the activity and there is no "current course" for it to keep.
+    // renames a course and the library lists it under its new name. Nothing below is held — this
+    // ViewModel belongs to the activity and there is no "current course" for it to keep.
+
+    /** One course as its page shows it, watched — see [RouteLibrary.route]. */
+    fun route(routeId: Long): Flow<RouteHeader?> = library.route(routeId)
+
+    /** One course's line, drawn — see [RouteLibrary.line]. */
+    suspend fun line(routeId: Long): List<MapFix> = library.line(routeId)
 
     /**
-     * One course as its page shows it, watched: a rename made on the page reaches its own title, and
-     * a delete made in the library empties it.
-     *
-     * The row without its line ([RouteDao.getRouteHeaderFlow]) — the line comes back on its own from
-     * [line], because it never changes and the row does. See [com.example.runningapp.data.Route.polyline].
-     */
-    fun route(routeId: Long): Flow<RouteHeader?> = routeDao.getRouteHeaderFlow(routeId)
-
-    /**
-     * One course's line, drawn — read once, because a Route's line is written once and never
-     * rewritten ([com.example.runningapp.data.Route.polyline]).
-     *
-     * Empty for a row that has gone, which the page draws as no map rather than as an empty course.
-     * Decoded off the thread drawing the page: a course kept before #354 holds every point its file
-     * held.
-     */
-    suspend fun line(routeId: Long): List<MapFix> = withContext(courseDispatcher) {
-        routeDao.getRoutePolyline(routeId)
-            ?.let { RoutePolyline.decode(it).map { point -> MapFix(point.latitude, point.longitude) } }
-            .orEmpty()
-    }
-
-    /**
-     * Every Run remembered on one course, as its page prints them (#420).
-     *
-     * The course travels with the Runs because the best-time band is measured against the course's
-     * own length, so the row and the Runs have to come from one read rather than two taken a moment
-     * apart. Empty where the row is gone — a Run on ground the library no longer keeps is nothing
-     * this page can rank.
+     * Every Run on one course, as its page prints them (#420, #74) — empty where the course is gone.
      *
      * Built here rather than in the composable so [repeatedOn] can do its work: a zone change emits
-     * the same rows again, which a `remember` keyed on those rows would pass straight over, and the
-     * dates are read where the mapping runs ([routeRunsUi]).
-     *
-     * Since #74 the Runs recognised on this ground arrive here too, which is why the course's own
-     * shape and every shaped Run are in the same read: the list and the shape it is filtered by must
-     * be one answer, not two taken a moment apart.
+     * the same read again, which a `remember` keyed on it would pass straight over, and the dates are
+     * read where the mapping runs ([routeRunsUi]). Which Runs are on the course, and against which
+     * length they are ranked, are one read from [RouteLibrary.runsOn].
      */
     fun runsOnRoute(routeId: Long): Flow<List<RouteRunUi>> =
-        combine(
-            routeDao.getRouteHeaderFlow(routeId),
-            runsAlongRoute(routeId),
-            courseShape(routeId),
-            shapedRuns,
-        ) { row, remembered, course, shaped ->
-            RunsOnOneCourse(row, remembered, course?.decoded(), shaped)
-        }
+        library.runsOn(routeId)
             .repeatedOn(zoneChanges)
-            .map { read ->
-                if (read.course == null) {
-                    emptyList()
-                } else {
-                    routeRunsUi(
-                        runsOnCourse(read.remembered, read.shaped, read.shape),
-                        read.course.distanceMeters,
-                    )
-                }
-            }
+            .map { read -> read?.let { routeRunsUi(it.runs, it.course.distanceMeters) }.orEmpty() }
 
-    /**
-     * One read of everything a course's list of Runs is built from.
-     *
-     * A type rather than a nest of Pairs because there are four of them now, and because they must
-     * travel together: the best-time band is measured against the course's own length and the
-     * recognising against the course's own shape, so a row taken a moment apart from the Runs could
-     * rank them against a course the runner has since renamed, re-measured or deleted.
-     */
-    private data class RunsOnOneCourse(
-        val course: RouteHeader?,
-        val remembered: List<RouteRunRow>,
-        val shape: RunShape?,
-        val shaped: List<ShapedRunRow>,
-    )
+    /** Every length of one course's family, shortest first — see [RouteLibrary.siblings]. */
+    fun siblings(routeId: Long): Flow<List<RouteHeader>> = library.siblings(routeId)
 
-    /**
-     * Every length of one course's family, shortest first — itself alone where it has none (#421).
-     *
-     * Watched, because the chips move under an open page: a length imported, deleted, or given this
-     * very family name on this very page has to appear on the row of chips without the runner
-     * leaving and coming back.
-     *
-     * Read off the library flow rather than asked for by family name, and folded by the same
-     * [routeFamilyKey] the library row uses — so the chips and the row settle on one answer to "how
-     * many lengths is this" rather than two rules that could drift apart. They are separate reads of
-     * one table, so they agree once both have caught up, not within a single frame; nothing here
-     * needs them to, because the two are never on screen together.
-     *
-     * From the table rather than from [routes], which is a StateFlow and so answers with the empty
-     * list it was seeded with until its first read lands — a page opened on that answer would draw
-     * no chips at all on a course that has three.
-     */
-    fun siblings(routeId: Long): Flow<List<RouteHeader>> =
-        routeDao.getLibraryFlow().map { library -> routeSiblings(library, routeId) }
+    /** Which of a family's lengths the page should open on — see [RouteLibrary.landingSibling]. */
+    suspend fun landingSibling(routeId: Long): Long? = library.landingSibling(routeId)
 
-    /**
-     * Which of a family's lengths the page should open on — see [routeFamilyLandingId] (#421).
-     *
-     * Asked once, when the page opens, rather than watched: it settles where the runner lands, and a
-     * page that re-landed every time a Run finished would move the course out from under them.
-     *
-     * The library is read afresh here rather than taken from [routes], which is a StateFlow that
-     * answers with whatever it last held — an empty list, on a page opened before the first read
-     * lands, would land every family on nothing.
-     *
-     * Null is the course having gone from the library, which the page draws as no course.
-     *
-     * Since #436 it reads the Runs each length **recognises** as well as the Runs remembered on it,
-     * which is the history the page itself prints ([routeFamilyLastRuns]). That is the whole of what
-     * it costs: every sibling's shape and the runner's shaped Runs, decoded and matched, before the
-     * page is drawn. The rows are five places and two numbers each
-     * ([com.example.runningapp.data.RunShapeRow]), never a line, so the read is a few kilobytes and
-     * a few hundred comparisons — and it happens off the main thread, on [courseDispatcher], like
-     * every other measuring this class does.
-     *
-     * The page does wait on it, and that is the choice rather than an oversight. The alternative is
-     * to draw the length the library row opened and re-land once the read comes back, which moves
-     * the course out from under a runner who has already started reading it — the very thing this
-     * being asked *once* rather than watched exists to prevent.
-     *
-     * **This family's own shape debt is paid before the shapes are read** (#440). The library's
-     * shapes are backfilled by a pass started at launch on a scope of its own, so on the first
-     * launch after they shipped — or after a pass the runner cut short by backing out — a length
-     * with no shape yet reads as one nothing has ever been run on, and the family can land on the
-     * wrong length or on the "nobody has run this" shortest. Because the answer is settled once and
-     * never re-landed, a landing decided on an unpaid debt is not corrected later in that launch. So
-     * the debt of these few courses is paid here rather than waited on: a pass cut short never
-     * reports itself paid, so a page that waited for "paid" could wait for ever. See
-     * [com.example.runningapp.data.RouteDao.takeTheShapesStillOwedBy], which also names the half of
-     * the debt this knowingly leaves — a Run that has never been shaped is still absent from the
-     * recognising, and that debt is the whole of history rather than a handful of rows.
-     */
-    suspend fun landingSibling(routeId: Long): Long? = withContext(courseDispatcher) {
-        val siblings = routeSiblings(routeDao.getLibraryFlow().first(), routeId)
-        if (siblings.size < 2) return@withContext siblings.firstOrNull()?.id
-        // Before the shapes are read, not after: this decides where the runner lands and then has no
-        // further say, so a shape arriving a moment later is a shape this answer never sees (#440).
-        routeDao.takeTheShapesStillOwedBy(siblings.map { it.id })
-        // The shapes as they stand, not watched: this settles where the runner lands and then has
-        // no further say, so `first()` on the two flows the page already watches is the one-shot
-        // read of them — a second pair of queries would be the same rows asked for again under
-        // another name, and two ideas of what a shaped course is.
-        val courses = siblings.mapNotNull { sibling -> courseShape(sibling.id).first()?.asCourseShape() }
-        routeFamilyLandingId(
-            siblings,
-            routeFamilyLastRuns(
-                remembered = lastRunOnRoutes(siblings.map { it.id }),
-                courses = courses,
-                shaped = shapedRuns.first(),
-            ),
-        )
-    }
-
-    /**
-     * Puts a course in a family, or takes it out of one (#421).
-     *
-     * A blank box is no family, and it is [RouteDao.setRouteFamily] that settles that rather than
-     * this — so the rule holds for every caller of the table, not only for this screen.
-     *
-     * Unlike [rename], an unchanged value is still written. There is nothing to protect: the write
-     * is one short column on one row, and comparing first would mean deciding here what "unchanged"
-     * means about a value the table trims.
-     */
+    /** Puts a course in a family, or takes it out of one — see [RouteLibrary.setFamily]. */
     fun setFamily(route: RouteHeader, family: String?) {
-        viewModelScope.launch { routeDao.setRouteFamily(route.id, family) }
+        viewModelScope.launch { library.setFamily(route.id, family) }
     }
 
-    /**
-     * Turns a course round for good, or back again (#466).
-     *
-     * No question asked first: the same button undoes it, and the arrows on the page turn round the
-     * moment it is pressed, which is the answer to "did that do what I meant?".
-     */
+    /** Turns a course round for good, or back again — see [RouteLibrary.flip]. */
     fun flip(routeId: Long) {
-        viewModelScope.launch { routeDao.flipRoute(routeId) }
+        viewModelScope.launch { library.flip(routeId) }
+    }
+
+    /** Renames a course — see [RouteLibrary.rename] for what an empty box does. */
+    fun rename(route: RouteHeader, name: String) {
+        viewModelScope.launch { library.rename(route, name) }
+    }
+
+    /** Forgets a course — see [RouteLibrary.delete] for what it leaves alone. */
+    fun delete(route: RouteHeader) {
+        viewModelScope.launch { library.delete(route.id) }
     }
 
     private val _importing = MutableStateFlow(false)
@@ -493,10 +269,10 @@ class RoutesViewModel(
      * that, off the top. So the list was right and the view of it was wrong, and what is missing is
      * not a re-read but somewhere to look.
      *
-     * **Only [RouteImportOutcome.Imported] sets it**, because only that wrote a row. A file the
-     * library already held, a re-measure, and a refusal each leave the list exactly as it was, and
-     * moving the screen for one of them would be the app answering a question nobody asked. The
-     * runner is told what happened in words either way ([message]).
+     * **Only an import that added a row sets it** ([RouteOutcome.addedRouteId]). A file the library
+     * already held, a re-measure, and a refusal each leave the list exactly as it was, and moving the
+     * screen for one of them would be the app answering a question nobody asked. The runner is told
+     * what happened in words either way ([message]).
      *
      * Stamped with which ask it is, and that is the whole of how a request is kept to the screen it
      * was made for — see [CourseToShow], where the case that forces it is argued.
@@ -527,37 +303,10 @@ class RoutesViewModel(
             val outcome = withContext(io) { importer.import(uri) }
             // Set before the words, so the screen cannot be told "saved" by one collector and left
             // looking at the old top of the list by the other for a frame in between.
-            if (outcome is RouteImportOutcome.Imported) {
-                _courseToShow.value = CourseToShow(outcome.routeId, ++asks)
-            }
-            _message.value = when (outcome) {
-                is RouteImportOutcome.Imported ->
-                    routeImportedMessage(outcome.name) + routeSameGroundNote(outcome.sameGroundAs)
-                is RouteImportOutcome.AlreadySaved -> routeAlreadySavedMessage(outcome.name)
-                is RouteImportOutcome.Remeasured -> routeRemeasuredMessage(outcome.name)
-                is RouteImportOutcome.RemeasuredKeepingClimb ->
-                    routeRemeasuredKeepingClimbMessage(outcome.name)
-                is RouteImportOutcome.Refused -> gpxRefusalMessage(outcome.reason)
-            }
+            outcome.addedRouteId?.let { _courseToShow.value = CourseToShow(it, ++asks) }
+            _message.value = routeOutcomeMessage(outcome, RouteDoor.FILE)
             _importing.value = false
         }
-    }
-
-    /** A blank name is no name, so an empty box leaves the Route called what it was called. */
-    fun rename(route: RouteHeader, name: String) {
-        val trimmed = name.trim()
-        if (trimmed.isEmpty() || trimmed == route.name) return
-        viewModelScope.launch { routeDao.renameRoute(route.id, trimmed) }
-    }
-
-    /**
-     * Forgets a Route.
-     *
-     * It takes nothing else with it. A Route has no key into `sessions` and none out of it, so a Run
-     * that followed this course keeps its own recording of where it went, which was never this row.
-     */
-    fun delete(route: RouteHeader) {
-        viewModelScope.launch { routeDao.deleteRoute(route.id) }
     }
 
     fun messageShown() {
@@ -579,26 +328,14 @@ class RoutesViewModel(
 }
 
 class RoutesViewModelFactory(
-    private val routeDao: RouteDao,
+    private val library: RouteLibrary,
     private val importer: RouteImporter,
-    private val runsAlongRoute: (routeId: Long) -> Flow<List<RouteRunRow>>,
-    private val lastRunOnRoutes: suspend (routeIds: List<Long>) -> List<RouteLastRunRow>,
-    private val courseShape: (routeId: Long) -> Flow<RouteShapeCandidate?>,
-    private val shapedRuns: Flow<List<ShapedRunRow>>,
     private val zoneChanges: Flow<Unit> = emptyFlow(),
 ) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         if (modelClass.isAssignableFrom(RoutesViewModel::class.java)) {
             @Suppress("UNCHECKED_CAST")
-            return RoutesViewModel(
-                routeDao,
-                importer,
-                runsAlongRoute,
-                lastRunOnRoutes,
-                courseShape,
-                shapedRuns,
-                zoneChanges,
-            ) as T
+            return RoutesViewModel(library, importer, zoneChanges) as T
         }
         throw IllegalArgumentException("Unknown ViewModel class: ${modelClass.name}")
     }

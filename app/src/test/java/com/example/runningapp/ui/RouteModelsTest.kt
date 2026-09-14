@@ -1,8 +1,11 @@
 package com.example.runningapp.ui
 
+import com.example.runningapp.data.KeptRoute
 import com.example.runningapp.data.RouteHeader
+import com.example.runningapp.data.RouteKeeping
 import com.example.runningapp.data.RouteSource
 import com.example.runningapp.routes.GpxRefusal
+import com.example.runningapp.routes.RouteOutcome
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -57,6 +60,70 @@ class RouteModelsTest {
             assertTrue(message, message.endsWith("."))
             assertTrue(message, message.length > 40)
         }
+    }
+
+    // --- One outcome, put into words for either door (#480) ---
+
+    private fun kept(keeping: RouteKeeping, sameGroundAs: String? = null) =
+        RouteOutcome.Kept(KeptRoute(id = 1, name = "Park loop", keeping, sameGroundAs))
+
+    /** The two sentences that differ by door: a new row, and a course with no ground. */
+    @Test
+    fun `a new course and a groundless one are told in each door's own words`() {
+        val new = kept(RouteKeeping.KEPT)
+        assertEquals(routeImportedMessage("Park loop"), routeOutcomeMessage(new, RouteDoor.FILE))
+        assertEquals(runSavedAsRouteMessage("Park loop"), routeOutcomeMessage(new, RouteDoor.RUN))
+        val noGround = RouteOutcome.NoGround
+        assertEquals(gpxHasNoRouteToKeepMessage(), routeOutcomeMessage(noGround, RouteDoor.FILE))
+        assertEquals(runHasNoRouteToSaveMessage(), routeOutcomeMessage(noGround, RouteDoor.RUN))
+    }
+
+    /** Either door warns about a second row over the same ground in the same words (#402). */
+    @Test
+    fun `either door names a course already over the same ground`() {
+        val twin = kept(RouteKeeping.KEPT, sameGroundAs = "Canal towpath")
+
+        RouteDoor.entries.forEach { door ->
+            assertTrue(routeOutcomeMessage(twin, door).endsWith(routeSameGroundNote("Canal towpath")))
+        }
+    }
+
+    @Test
+    fun `a course the library already held is told the same from either door`() {
+        RouteDoor.entries.forEach { door ->
+            assertEquals(
+                routeAlreadySavedMessage("Park loop"),
+                routeOutcomeMessage(kept(RouteKeeping.ALREADY_KEPT), door),
+            )
+            assertEquals(
+                routeRemeasuredMessage("Park loop"),
+                routeOutcomeMessage(kept(RouteKeeping.REMEASURED), door),
+            )
+            assertEquals(
+                routeRemeasuredKeepingClimbMessage("Park loop"),
+                routeOutcomeMessage(kept(RouteKeeping.REMEASURED_KEEPING_CLIMB), door),
+            )
+        }
+    }
+
+    @Test
+    fun `a refused file and an unfinished run keep their own words`() {
+        assertEquals(
+            gpxRefusalMessage(GpxRefusal.TOO_LARGE),
+            routeOutcomeMessage(RouteOutcome.FileRefused(GpxRefusal.TOO_LARGE), RouteDoor.FILE),
+        )
+        assertEquals(
+            runStillRunningMessage(),
+            routeOutcomeMessage(RouteOutcome.StillRunning, RouteDoor.RUN),
+        )
+    }
+
+    /** The file door's no-ground words are its own, not any file refusal's. */
+    @Test
+    fun `a file with no ground has words no refusal shares`() {
+        val refusals = GpxRefusal.entries.map { gpxRefusalMessage(it) }
+
+        assertFalse(gpxHasNoRouteToKeepMessage() in refusals)
     }
 
     @Test

@@ -9,6 +9,7 @@ import com.example.runningapp.data.ShapedRunRow
 import com.example.runningapp.data.routeShapeRowOf
 import com.example.runningapp.routes.FakeRouteDao
 import com.example.runningapp.routes.RouteImporter
+import com.example.runningapp.routes.RouteLibrary
 import com.example.runningapp.routes.RoutePoint
 import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.routes.routeShapeOf
@@ -54,14 +55,16 @@ class RoutesViewModelRouteDetailTest {
     var lastRuns = emptyList<RouteLastRunRow>()
 
     private fun viewModel() = RoutesViewModel(
-        dao,
+        RouteLibrary(
+            dao,
+            runsAlongRoute = { runs },
+            lastRunOnRoutes = { ids -> lastRuns.filter { it.routeId in ids } },
+            courseShape = { flowOf(null) },
+            shapedRuns = flowOf(emptyList()),
+            measuring = dispatcher,
+        ),
         RouteImporter(mock(), dao, now = { 1_700_000_000_000L }),
-        runsAlongRoute = { runs },
-        lastRunOnRoutes = { ids -> lastRuns.filter { it.routeId in ids } },
-        courseShape = { flowOf(null) },
-        shapedRuns = flowOf(emptyList()),
         io = dispatcher,
-        courseDispatcher = dispatcher,
     )
 
     private val aLine = RoutePolyline.encode(
@@ -154,14 +157,16 @@ class RoutesViewModelRouteDetailTest {
         course: RouteShapeCandidate?,
         shaped: List<ShapedRunRow>,
     ) = RoutesViewModel(
-        dao,
+        RouteLibrary(
+            dao,
+            runsAlongRoute = { runs },
+            lastRunOnRoutes = { ids -> lastRuns.filter { it.routeId in ids } },
+            courseShape = { flowOf(course) },
+            shapedRuns = flowOf(shaped),
+            measuring = dispatcher,
+        ),
         RouteImporter(mock(), dao, now = { 1_700_000_000_000L }),
-        runsAlongRoute = { runs },
-        lastRunOnRoutes = { ids -> lastRuns.filter { it.routeId in ids } },
-        courseShape = { flowOf(course) },
-        shapedRuns = flowOf(shaped),
         io = dispatcher,
-        courseDispatcher = dispatcher,
     )
 
     @Test

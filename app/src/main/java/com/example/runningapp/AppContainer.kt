@@ -28,6 +28,7 @@ import com.example.runningapp.data.RouteShapeRow
 import com.example.runningapp.data.asCourseShape
 import com.example.runningapp.routes.CourseShape
 import com.example.runningapp.routes.RouteImporter
+import com.example.runningapp.routes.RouteLibrary
 import com.example.runningapp.routes.RouteShapeStore
 import com.example.runningapp.routes.RouteShaping
 import com.mapbox.common.MapboxOptions
@@ -192,6 +193,28 @@ class AppContainer(context: Context) {
      */
     val routeImporter: RouteImporter by lazy {
         RouteImporter(appContext.contentResolver, database.routeDao())
+    }
+
+    /**
+     * The runner's library of courses and its rules (#480) — families, where a page lands, what a
+     * rename, a flip and a delete write. See [RouteLibrary].
+     *
+     * Handed the few questions it asks of `sessions` and the shapes tables one function at a time,
+     * so it holds no DAO it does not need.
+     */
+    val routeLibrary: RouteLibrary by lazy {
+        RouteLibrary(
+            database.routeDao(),
+            // Every Run remembered on one course (#420).
+            runsAlongRoute = database.sessionDao()::getRunsAlongRouteFlow,
+            // Which of a family's lengths was run most recently, which is what its page opens on
+            // (#421).
+            lastRunOnRoutes = database.sessionDao()::lastRunOnRoutes,
+            // A course's own shape, and every Run that holds one — so a course's page shows the Runs
+            // that covered its ground as well as the Runs written down on it (#74).
+            courseShape = database.routeShapeDao()::getCourseShapeFlow,
+            shapedRuns = database.runShapeDao().getShapedRunsForCoursesFlow(),
+        )
     }
 
     /**

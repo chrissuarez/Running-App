@@ -3,7 +3,7 @@ package com.example.runningapp.data
 import com.example.runningapp.routes.RoutePoint
 import com.example.runningapp.routes.RoutePolyline
 import com.example.runningapp.routes.routeShapeOf
-import com.example.runningapp.ui.runsOnCourse
+import com.example.runningapp.routes.runsOnCourse
 import java.sql.Connection
 import java.sql.DriverManager
 import org.junit.After

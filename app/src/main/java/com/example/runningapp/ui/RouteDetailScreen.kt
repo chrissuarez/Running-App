@@ -87,7 +87,7 @@ fun RouteDetailScreen(
      *
      * The chips are drawn only where there are two or more. A family of one is a course with a name
      * on it and nothing to switch between, and a single chip that cannot be turned off would be a
-     * control that does nothing ([routeSiblings]).
+     * control that does nothing ([com.example.runningapp.routes.routeSiblings]).
      */
     siblings: List<RouteHeader>,
     /** Which length is being shown — always [route]'s own id once the page has settled (#421). */
