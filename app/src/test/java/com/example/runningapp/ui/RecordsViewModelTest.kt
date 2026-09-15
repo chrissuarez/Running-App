@@ -114,7 +114,7 @@ class RecordsViewModelTest {
         val detail = viewModel.detail(RecordType.FASTEST_5K).first()
         assertTrue(detail.measuring)
         assertEquals(emptyList<Placed<RecordEffortUi>>(), detail.top)
-        assertEquals(emptyList<TrendPoint<RecordEffortUi>>(), detail.trend)
+        assertEquals(emptyList<TrendPoint<RecordEffortRow>>(), detail.trend)
         assertEquals(0, detail.effortCount)
     }
 

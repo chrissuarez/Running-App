@@ -135,46 +135,73 @@ fun recordSlots(
         val atType = byType[type].orEmpty()
         RecordSlotUi(
             type = type,
-            // The same order the ranked list places by, so the number on the grid and the gold on
-            // the Record's own page are one answer rather than two readings a moment apart. Placed
-            // on the stored rows and only the winner put into words: the grid keeps seven claims out
-            // of however many thousand a long history holds, and dating and formatting every one of
-            // them just to throw all but seven away is work the grid redoes on every refresh.
-            best = atType
-                .minWithOrNull(bestFirst(type, RecordEffortRow::value, RecordEffortRow::sessionId))
-                ?.toUi(zone),
+            // Asked of the very table the Record's own page ranks by, so the number on the grid and
+            // the gold on that page are one answer rather than two readings a moment apart. The
+            // table places the stored rows and only the winner is put into words: the grid keeps
+            // seven claims out of however many thousand a long history holds, and dating and
+            // formatting every one of them just to throw all but seven away is work the grid would
+            // redo on every refresh.
+            best = recordLeague(type, zone).best(atType)?.toUi(zone),
         )
     }
 }
 
 /**
- * What a Record's own page ranks (#75): every Run's claim at it, best first, and its trend.
+ * One Record's whole page (#75): every Run's claim at it, best first and cut at ten, how the best
+ * has moved across the calendar, and how many claims there have ever been.
+ *
+ * Every claim is ranked and only the ten that stay on the page are put into words. The table works
+ * on the stored rows ([recordLeague]) — a trend point already carries its own date and value as the
+ * page prints them — so a history of thousands of efforts costs the page ten formatted rows on each
+ * refresh rather than thousands formatted and all but ten thrown away. That is the grid's bargain
+ * ([recordSlots]) kept on the page behind it, and for the grid's reason: the two are one reading of
+ * one table, and the page is the one that refreshes while the runner is looking at it.
+ *
+ * Every claim and not only the best ten feeds the trend and the count: the trend is drawn through
+ * all of them, and the count under the best says how many there were.
+ */
+fun recordDetail(
+    rows: List<RecordEffortRow>,
+    type: RecordType,
+    zone: ZoneId = ZoneId.systemDefault(),
+): RecordDetailUi {
+    val atType = rows.filter { it.type == type }
+    val league = recordLeague(type, zone)
+    return RecordDetailUi(
+        type = type,
+        top = league.top(atType).map { Placed(it.place, it.medal, it.entry.toUi(zone)) },
+        trend = league.trend(atType),
+        effortCount = atType.size,
+    )
+}
+
+/**
+ * What a Record's own page and the grid rank by (#75): every Run's stored claim at it, best first,
+ * and its trend.
  *
  * The table is the one every league of the runner's efforts is built by ([LeagueTable]); what is
  * the Record's own is only the order, which is the record book's ([bestFirst]), and the unit a claim
  * is said in. "Best" first rather than "quickest", because the longest run is not a time.
+ *
+ * It ranks the stored rows rather than the printed ones, so a claim is put into words only once it
+ * has earned a place on the screen ([recordSlots], [recordDetail]). The day a claim belongs to, and
+ * that day in words, are the same two helpers the printed row is dated by ([runnersDay],
+ * [recordDateLabel]), so a row in the list and a point on the trend cannot name one Run's day two
+ * ways. [zone] matters only to those dates: the order, the titles and the trend's sentence do not
+ * depend on it.
  */
-fun recordLeague(type: RecordType): LeagueTable<RecordEffortUi> = LeagueTable(
-    bestFirst = bestFirst(type, RecordEffortUi::value, RecordEffortUi::sessionId),
-    day = { it.date },
-    dateLabel = { it.dateLabel },
+fun recordLeague(
+    type: RecordType,
+    zone: ZoneId = ZoneId.systemDefault(),
+): LeagueTable<RecordEffortRow> = LeagueTable(
+    bestFirst = bestFirst(type),
+    day = { it.runnersDay(zone) },
+    dateLabel = { recordDateLabel(it.runnersDay(zone)) },
     plotted = { it.value },
     valueLabel = { recordValueLabel(type, it) },
     orderWord = "best",
     trendSubject = "Your ${type.label}",
 )
-
-/**
- * Every claim ever banked at one Record, as the page prints them — the entries [recordLeague] ranks.
- *
- * Every one and not only the best ten: the trend is drawn through all of them, and the count under
- * the best says how many there were. The ranked list cuts at ten itself ([LeagueTable.top]).
- */
-fun recordEfforts(
-    rows: List<RecordEffortRow>,
-    type: RecordType,
-    zone: ZoneId = ZoneId.systemDefault(),
-): List<RecordEffortUi> = rows.filter { it.type == type }.map { it.toUi(zone) }
 
 /**
  * What a Record's own page says where nobody has ever contested it.
@@ -205,34 +232,35 @@ fun recordEmptyMessage(type: RecordType): String = when (type) {
  * Which of two claims at one Record is the better one — the record book's own direction
  * ([RecordType.lowerIsBetter]) with the book's own tie-break after it.
  *
- * Handed to the one table that ranks the Record ([recordLeague]), and the grid places its stored rows
- * by this same rule ([recordSlots]), because the grid's best, the gold disc in the ranked list and
- * each day's point on the trend are the same claim about the same Record and must never be three
- * different rows.
+ * Handed only to the one table that ranks the Record ([recordLeague]), and the grid and the page
+ * both ask that table ([recordSlots], [recordDetail]), because the grid's best, the gold disc in the
+ * ranked list and each day's point on the trend are the same claim about the same Record and must
+ * never be three different rows.
  *
- * Written once over the two things a claim is placed by — its [value] and its [sessionId] — rather
- * than once for the stored row and once for the printed one. The grid places rows before any of them
- * is put into words and the page places what it prints, and two copies of the rule would be exactly
- * the two readings a moment apart the grid's own comment forbids.
+ * Over the stored row, which is the only thing that is ever placed: nothing is put into words until
+ * it has already won its place, so there is no printed claim for a second copy of this rule to rank.
  */
-private fun <T> bestFirst(
-    type: RecordType,
-    value: (T) -> Double,
-    sessionId: (T) -> Long,
-): Comparator<T> =
-    compareBy<T> { if (type.lowerIsBetter) value(it) else -value(it) }
+private fun bestFirst(type: RecordType): Comparator<RecordEffortRow> =
+    compareBy<RecordEffortRow> { if (type.lowerIsBetter) it.value else -it.value }
         // The earlier Run keeps the place. Ids and not start times, for the book's own reason: an id
         // is what the medal rows carry, so the two orders cannot part company.
-        .thenBy(sessionId)
+        .thenBy { it.sessionId }
+
+/** The runner's own day the claim was run on, rather than the phone's (#304). */
+private fun RecordEffortRow.runnersDay(zone: ZoneId): LocalDate =
+    ranOn(startTime, ranAtUtcOffsetSeconds, zone)
+
+/** A claim's day as every Record surface prints it — a row in the list and a point on the trend. */
+private fun recordDateLabel(day: LocalDate): String = RECORD_DATE_FORMAT.format(day)
 
 private fun RecordEffortRow.toUi(zone: ZoneId): RecordEffortUi {
-    val day = ranOn(startTime, ranAtUtcOffsetSeconds, zone)
+    val day = runnersDay(zone)
     return RecordEffortUi(
         sessionId = sessionId,
         type = type,
         value = value,
         date = day,
-        dateLabel = RECORD_DATE_FORMAT.format(day),
+        dateLabel = recordDateLabel(day),
         valueLabel = recordValueLabel(type, value),
         paceLabel = recordPaceLabel(type, value),
     )

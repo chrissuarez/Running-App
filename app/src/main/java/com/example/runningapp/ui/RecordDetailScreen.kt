@@ -36,6 +36,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.runningapp.analysis.RecordType
+import com.example.runningapp.data.RecordEffortRow
 import com.example.runningapp.ui.theme.RunningUiTokens
 
 /**
@@ -198,7 +199,11 @@ data class RecordDetailUi(
      * read off a table that is still filling.
      */
     val top: List<Placed<RecordEffortUi>>?,
-    val trend: List<TrendPoint<RecordEffortUi>>,
+    /**
+     * Each day's best, as the stored claim rather than the printed one: a point already carries the
+     * date and value the chart prints, so no claim is put into words just to be drawn ([recordDetail]).
+     */
+    val trend: List<TrendPoint<RecordEffortRow>>,
     /** How many Runs have ever contested it, which is what says whether the ten is the whole list. */
     val effortCount: Int,
     /**

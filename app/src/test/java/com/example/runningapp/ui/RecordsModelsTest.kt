@@ -39,11 +39,11 @@ class RecordsModelsTest {
 
     /** A Record's ranked list, as its page builds it. */
     private fun top(rows: List<RecordEffortRow>, type: RecordType, zone: ZoneId) =
-        recordLeague(type).top(recordEfforts(rows, type, zone))
+        recordDetail(rows, type, zone).top!!
 
     /** A Record's trend, as its page builds it. */
     private fun trend(rows: List<RecordEffortRow>, type: RecordType, zone: ZoneId) =
-        recordLeague(type).trend(recordEfforts(rows, type, zone))
+        recordDetail(rows, type, zone).trend
 
     // --- The grid ---
 

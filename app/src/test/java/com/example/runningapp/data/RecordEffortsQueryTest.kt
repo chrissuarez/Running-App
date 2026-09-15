@@ -2,8 +2,7 @@ package com.example.runningapp.data
 
 import com.example.runningapp.analysis.RecordType
 import com.example.runningapp.ui.recordSlots
-import com.example.runningapp.ui.recordEfforts
-import com.example.runningapp.ui.recordLeague
+import com.example.runningapp.ui.recordDetail
 import java.sql.Connection
 import java.sql.DriverManager
 import java.time.ZoneId
@@ -196,7 +195,7 @@ class RecordEffortsQueryTest {
     }
 
     /** One Record's ranked list off the real read, as its page builds it. */
-    private fun top(type: RecordType) = recordLeague(type).top(recordEfforts(effortRows(), type, zone))
+    private fun top(type: RecordType) = recordDetail(effortRows(), type, zone).top!!
 
     /** The claims of a reading taken with nothing being measured — the tests above owe no fill. */
     private fun effortRows(): List<RecordEffortRow> = recordsReading().efforts
