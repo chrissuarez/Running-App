@@ -61,8 +61,10 @@ class CourseAlertsTest {
     private val queue = WaitingCues()
     private var clockMillis = 0L
 
-    /** Wired to the queue exactly as the service wires it — the real adapter over the stand-in. */
+    /** Every line [alerts] wrote to its log, in order. */
     private val logged = mutableListOf<String>()
+
+    /** Wired to the queue exactly as the service wires it — the real adapter over the stand-in. */
     private val alerts = CourseAlerts(
         QueuedCourseCues(RunCueQueue(OutstandingCues()) { queue }),
         nowMillis = { clockMillis },
@@ -97,7 +99,7 @@ class CourseAlertsTest {
      *
      * The gap is what matters. The second turn's warning is earned at five hundred and ten, which
      * is inside the twenty metres the first turn's own cue is still worth hearing for, so a busy
-     * queue holds them both at once — and they stop being true thirty metres apart.
+     * queue holds them both at once — and they stop being true twenty-five metres apart.
      */
     private val courseWithTwoTurns =
         (0..5).map { at(it * 100.0) } +
@@ -339,7 +341,7 @@ class CourseAlertsTest {
      * true sentence left.
      */
     @Test
-    fun `a turn warning still waiting when the turn is reached is taken back`() = runTest {
+    fun `a turn warning still waiting when the turn's own cue is due is taken back`() = runTest {
         val dao = FakeRouteDao()
         val routeId = dao.keep(courseWithOneTurn)
         val watching = runningTheCourse(dao, routeId)
@@ -425,7 +427,7 @@ class CourseAlertsTest {
      *
      * Two turns sixty metres apart put two cues in the queue together — the first turn's own
      * "Turn right." and the second turn's "Turn left in 50 metres." — and they stop being true
-     * thirty metres apart. Held under one deadline, either the live one goes with the dead one or
+     * twenty-five metres apart. Held under one deadline, either the live one goes with the dead one or
      * the dead one waits for the live one; both are a wrong sentence in the runner's ear. Each cue
      * carries its own, so thirty metres past the first corner exactly one of them goes.
      */
@@ -439,8 +441,12 @@ class CourseAlertsTest {
         fix(onTheDogLeg(460.0), secondsIn = 10)
         assertEquals(listOf("Turn right in 50 metres."), queue.texts())
 
-        // At the first corner: its own cue is earned, the second corner's warning with it, and the
-        // warning about the corner they are standing on goes.
+        // Ten metres short of the first corner: its own cue is earned, alone, and the warning about
+        // it goes.
+        fix(onTheDogLeg(490.0), secondsIn = 17)
+        assertEquals(listOf("Turn right."), queue.texts())
+
+        // Just round the first corner: the second corner's warning joins it.
         fix(onTheDogLeg(512.0), secondsIn = 20)
         assertEquals(listOf("Turn right.", "Turn left in 50 metres."), queue.texts())
 

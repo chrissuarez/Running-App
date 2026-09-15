@@ -90,7 +90,8 @@ private const val TURN_LEAD_METERS = 15.0
 private const val TURNS_TOGETHER_METERS = TURN_WARNING_METERS
 
 /**
- * How far past a cue's own ground the runner may be and still be told.
+ * How far past a cue's ground the runner may be and still be told — past where a warning is said,
+ * and past the turn itself for the turn's own cue.
  *
  * Fixes land a few metres apart, so this never bites on a Run going normally: it is for the gap — a
  * pocket that lost the sky, a Pause, a wrong turn that put the runner off the line for a street —
@@ -299,7 +300,8 @@ data class SaidTurn(
      * dead side so the boundary needs no second thought: the runner reaching this ground is what
      * kills the sentence, so one comparison, `here >= falseFromAlongMeters`, settles every case.
      * A turn cue is a sentence about ground the runner is arriving at, and it stops being true when
-     * they arrive. Where that ground sits is the only thing that differs:
+     * they arrive — or, for a warning, when the sentence that replaces it comes due. Where that
+     * ground sits is the only thing that differs:
      *
      *  - A warning says the turn is [TURN_WARNING_METERS] ahead, so it is false **where the turn's
      *    own cue is due**, [TURN_LEAD_METERS] short of the turn (#498). Not late — false, because
@@ -331,7 +333,8 @@ data class SaidTurn(
 private fun hasReached(alongMeters: Double, ground: Double): Boolean = alongMeters >= ground
 
 /**
- * The first ground past [alongMeters] a cue said there is too late for — [TURN_CUE_LATE_METERS] on.
+ * The first ground past [alongMeters] a cue measured from there is too late for —
+ * [TURN_CUE_LATE_METERS] on. Where a warning is said, for a warning; the turn, for its own cue.
  *
  * For a turn's own cue this is also the ground it is false from — the one value is used for both
  * ([CueAt.falseFromAlongMeters]), so the cue is made up to *exactly* the ground it is taken back
@@ -477,9 +480,10 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
                 ),
             )
         }
-        // Stable, so that where a turn's own cue and the next turn's warning fall on the very same
-        // ground — which is exactly what [TURNS_TOGETHER_METERS] leaves standing at fifty metres
-        // apart — the turn the runner reaches first is still spoken first.
+        // By where each is said. A turn's own cue sits [TURN_LEAD_METERS] short of its turn and the
+        // next turn's warning at least on it, because [TURNS_TOGETHER_METERS] keeps turns fifty
+        // metres apart — so the two never share ground, and the turn the runner reaches first is
+        // spoken first. Stable all the same, so a tie could never reorder them.
         .sortedBy { it.alongMeters }
 
     /** Where the last heard fix landed on the course — the anchor the next one is read from. */
@@ -621,8 +625,8 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
      * Everything the cues have to say about the runner being here, and nothing about anywhere else.
      *
      * The pointer walks forwards over every cue whose ground has been reached, and each of those is
-     * said unless the runner is already [TURN_CUE_LATE_METERS] past it — a cue about ground behind
-     * them is not a late cue, it is a wrong one.
+     * said unless the runner has already reached the ground it is too late from
+     * ([TURN_CUE_LATE_METERS]) — a cue about ground behind them is not a late cue, it is a wrong one.
      */
     private fun whatIsDueAt(here: CourseProgress): TurnVoice {
         val said = mutableListOf<SaidTurn>()

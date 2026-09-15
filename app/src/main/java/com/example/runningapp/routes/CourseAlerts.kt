@@ -217,9 +217,9 @@ class CourseAlerts(
      * one, and leaving the rest exactly where they are.
      *
      * Reached, not passed ([SaidTurn.isFalseAt], where the rule is stated once for making a cue and
-     * for taking it back): a fix landing exactly on a turn makes the "in fifty metres" warning about
-     * that turn false, and leaving it standing because the runner is not yet *past* the corner would
-     * let it be spoken from on top of the corner.
+     * for taking it back): a fix landing exactly where a turn's own cue is due makes the "in fifty
+     * metres" warning about that turn false, and leaving it standing because the runner is not yet
+     * *past* that ground would let it be spoken after "Turn left." (#498).
      *
      * **One at a time is the whole point.** Two turn cues can be in the queue together — a turn's
      * own cue and the next turn's warning, where the two turns are between fifty and seventy metres
