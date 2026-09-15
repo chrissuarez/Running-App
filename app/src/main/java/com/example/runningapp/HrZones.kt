@@ -460,7 +460,7 @@ val UserSettings.hrProfile: HrProfile get() = HrProfile(maxHr, restingHr)
  * recompute (#267) — has to ask for this pair rather than [hrProfile], or it lands a run beside its
  * neighbours on a number they were never read under.
  */
-val UserSettings.historyHrProfile: HrProfile get() = HrProfile(historyMaxHr, restingHr)
+val UserSettings.historyHrProfile: HrProfile get() = HrProfile(historyMaxHr, historyRestingHr)
 
 fun hrZoneOf(bpm: Int, settings: UserSettings): HrZone? = hrZoneOf(bpm, settings.hrProfile)
 

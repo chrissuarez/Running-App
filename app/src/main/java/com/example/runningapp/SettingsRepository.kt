@@ -40,6 +40,10 @@ data class UserSettings(
     // is not a gap to fill in but a value in its own right: it reproduces the Max-HR-only model
     // exactly, so nobody's zones move until they measure and state a number.
     val restingHr: Int = RESTING_HR_UNSTATED,
+    // The resting heart rate every finished Run's zone times are banded against — the other half of
+    // [historyMaxHr]. Only ever differs from [restingHr] while a statement is in flight (#137): the
+    // new number is in force as it begins, and history is not on it until its re-tally lands.
+    val historyRestingHr: Int = restingHr,
     // The Max HR every finished Run's zone times are banded against, which is *not* always [maxHr].
     // The first deliberate set re-bands all history and every change after it is future-only
     // (#112), so a runner who set 181 and later corrected to 195 has history on 181 and zones on
@@ -220,6 +224,9 @@ internal object PreferencesKeys {
     val STATEMENT_IN_FLIGHT = booleanPreferencesKey("hr_statement_in_flight")
     val STATEMENT_MAX_HR = intPreferencesKey("hr_statement_max_hr")
     val STATEMENT_RESTING_HR = intPreferencesKey("hr_statement_resting_hr")
+    // The resting heart rate history is still banded on while that statement is in flight. See
+    // UserSettings.historyRestingHr.
+    val STATEMENT_HISTORY_RESTING_HR = intPreferencesKey("hr_statement_history_resting_hr")
     val BACKUP_FOLDER_URI = stringPreferencesKey("backup_folder_uri")
     val LAST_BACKUP_AT = longPreferencesKey("last_backup_at")
     // Whether the history already recorded has been scored against the record book (#50). See
@@ -265,6 +272,13 @@ private fun Preferences.readHistoryMaxHr(): Int =
  * - [UserSettings.historyMaxHr]: the stored maximum stands in where none is recorded, so it would
  *   claim history is already on the number it is still being moved to.
  *
+ * The resting heart rate is pinned the same way, as [UserSettings.historyRestingHr], and for the
+ * same reason: history's pair is what a Run with no Reserve of its own is read against, and the
+ * new resting heart rate beside history's maximum is a pair no zone time is banded on. Pinned
+ * whatever is stated, because stating the maximum alone can re-clamp the stored resting heart rate,
+ * and kept when one statement begins over another that never landed, because history is still
+ * where the first found it.
+ *
  * The numbers are noted as stated rather than as stored, because what history is re-banded
  * against is not simply what ends up stored: Max HR's future-only rule means a maximum stated
  * beside a resting heart rate does not move history at all.
@@ -279,6 +293,8 @@ internal fun MutablePreferences.beginHeartRateStatement(maxHr: Int?, restingHr: 
         this[PreferencesKeys.MAX_HR_EVER_SET] = readMaxHrEverSet()
         this[PreferencesKeys.HISTORY_MAX_HR] = readHistoryMaxHr()
     }
+    this[PreferencesKeys.STATEMENT_HISTORY_RESTING_HR] = this[PreferencesKeys.STATEMENT_HISTORY_RESTING_HR]
+        ?: (this[PreferencesKeys.RESTING_HR] ?: RESTING_HR_UNSTATED)
     writeStatedHeartRates(maxHr, restingHr)
 }
 
@@ -306,6 +322,7 @@ internal fun MutablePreferences.landHeartRateStatement(
         remove(PreferencesKeys.STATEMENT_IN_FLIGHT)
         remove(PreferencesKeys.STATEMENT_MAX_HR)
         remove(PreferencesKeys.STATEMENT_RESTING_HR)
+        remove(PreferencesKeys.STATEMENT_HISTORY_RESTING_HR)
     }
     writeStatedHeartRates(maxHr, restingHr)
     // The maximum carries a flag and the resting heart rate does not: `190` is a placeholder nobody
@@ -723,12 +740,14 @@ internal fun userSettingsOf(preferences: Preferences): UserSettings {
         preferences[PreferencesKeys.ACTIVE_PLAN_ID],
         preferences[PreferencesKeys.ACTIVE_STAGE_ID]
     )
+    val restingHr = preferences[PreferencesKeys.RESTING_HR] ?: RESTING_HR_UNSTATED
 
     return UserSettings(
         maxHr = preferences[PreferencesKeys.MAX_HR] ?: DEFAULT_MAX_HR,
         maxHrEverSet = preferences.readMaxHrEverSet(),
         maxHrCardDismissed = preferences[PreferencesKeys.MAX_HR_CARD_DISMISSED] ?: false,
-        restingHr = preferences[PreferencesKeys.RESTING_HR] ?: RESTING_HR_UNSTATED,
+        restingHr = restingHr,
+        historyRestingHr = preferences[PreferencesKeys.STATEMENT_HISTORY_RESTING_HR] ?: restingHr,
         historyMaxHr = preferences.readHistoryMaxHr(),
         // Sanitized on read, not only on write: an edge-zone target stored before #117 closed the
         // picker would otherwise keep overstating "In Target" forever.
@@ -829,6 +848,7 @@ class SettingsRepository(private val context: Context) {
             preferences.remove(PreferencesKeys.STATEMENT_IN_FLIGHT)
             preferences.remove(PreferencesKeys.STATEMENT_MAX_HR)
             preferences.remove(PreferencesKeys.STATEMENT_RESTING_HR)
+            preferences.remove(PreferencesKeys.STATEMENT_HISTORY_RESTING_HR)
         }
     }
 
@@ -1199,6 +1219,7 @@ class SettingsRepository(private val context: Context) {
             preferences.remove(PreferencesKeys.STATEMENT_IN_FLIGHT)
             preferences.remove(PreferencesKeys.STATEMENT_MAX_HR)
             preferences.remove(PreferencesKeys.STATEMENT_RESTING_HR)
+            preferences.remove(PreferencesKeys.STATEMENT_HISTORY_RESTING_HR)
             preferences.clearCoachWork()
         }
     }

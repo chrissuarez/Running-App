@@ -652,6 +652,42 @@ class SettingsRepositoryTest {
     }
 
     @Test
+    fun `history still reads as banded on the old resting hr until the statement lands`() {
+        // A Run with no Reserve of its own is read against history's pair. Written early, the new
+        // resting heart rate would sit beside history's maximum while every zone time is still
+        // banded on the old one — and a re-tally that threw would leave it there for the launch.
+        val preferences = mutablePreferencesOf(PreferencesKeys.RESTING_HR to 52)
+
+        preferences.beginHeartRateStatement(maxHr = null, restingHr = 60)
+
+        val settings = userSettingsOf(preferences)
+        assertEquals(60, settings.restingHr)
+        assertEquals(HrProfile(DEFAULT_MAX_HR, 52), settings.historyHrProfile)
+    }
+
+    @Test
+    fun `landing moves history's resting hr on to the one stated`() {
+        val preferences = mutablePreferencesOf(PreferencesKeys.RESTING_HR to 52)
+        preferences.beginHeartRateStatement(maxHr = null, restingHr = 60)
+
+        preferences.landHeartRateStatement(maxHr = null, restingHr = 60, rebandedHistoryAgainst = DEFAULT_MAX_HR)
+
+        assertEquals(HrProfile(DEFAULT_MAX_HR, 60), userSettingsOf(preferences).historyHrProfile)
+    }
+
+    @Test
+    fun `a statement begun over one that never landed keeps history where it really is`() {
+        // The first re-tally threw, so history is still on 52. The second statement carries the
+        // first; pinned afresh, it would record the unlanded 60 as where history already is.
+        val preferences = mutablePreferencesOf(PreferencesKeys.RESTING_HR to 52)
+        preferences.beginHeartRateStatement(maxHr = 181, restingHr = 60)
+
+        preferences.beginHeartRateStatement(maxHr = 181, restingHr = 55)
+
+        assertEquals(HrProfile(DEFAULT_MAX_HR, 52), userSettingsOf(preferences).historyHrProfile)
+    }
+
+    @Test
     fun `landing a first set spends the one-shot, records history's maximum and clears the note`() {
         val preferences = mutablePreferencesOf()
         preferences.beginHeartRateStatement(maxHr = 181, restingHr = null)
