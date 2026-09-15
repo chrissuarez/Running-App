@@ -1,6 +1,10 @@
 package com.example.runningapp.training
 
+import com.example.runningapp.PlanStage
+import com.example.runningapp.RunType
 import com.example.runningapp.TrainingPlanProvider
+import com.example.runningapp.WorkoutTemplate
+import com.example.runningapp.data.STAGE_EVIDENCE_MIN_SECONDS
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -166,6 +170,56 @@ class StageTrainingSummaryTest {
 
         assertEquals(4, stage.weeksRequirement)
         assertTrue(stage.graduationRequirementText.contains("4 weeks"))
+    }
+
+    /** A Stage asking for four weeks of [workouts]. */
+    private fun fourWeekStage(vararg workouts: WorkoutTemplate) = PlanStage(
+        id = "short_stage",
+        title = "Short Stage",
+        description = "",
+        graduationRequirementText = "Train for 4 weeks.",
+        weeksRequirement = 4,
+        workouts = workouts.toList(),
+    )
+
+    /** A Workout planned to last [seconds] door to door: one run, no walk, no envelope. */
+    private fun workoutOf(seconds: Int) = WorkoutTemplate(
+        id = "w$seconds",
+        title = "$seconds s",
+        targetZone = 2,
+        runDurationSeconds = seconds,
+        walkDurationSeconds = 0,
+        totalRepeats = 1,
+        warmUpSeconds = 0,
+        coolDownSeconds = 0,
+        runType = RunType.LONG,
+    )
+
+    @Test
+    fun `a weeks bar none of the stage's own workouts can be counted towards has no count`() {
+        // The count drops every Run of two minutes or less. A Stage whose every Workout ends inside
+        // that would print "No qualifying runs recorded" for ever, however often the runner did
+        // exactly what it asked — so the card says nothing, as it does under a bar with no weeks.
+        val stage = fourWeekStage(workoutOf(40), workoutOf(STAGE_EVIDENCE_MIN_SECONDS))
+
+        assertNull(stage.weeksTheCountCanAnswer)
+    }
+
+    @Test
+    fun `one workout long enough to be counted keeps the weeks bar`() {
+        val stage = fourWeekStage(workoutOf(40), workoutOf(STAGE_EVIDENCE_MIN_SECONDS + 1))
+
+        assertEquals(4, stage.weeksTheCountCanAnswer)
+    }
+
+    @Test
+    fun `every shipped stage with a weeks bar keeps its count`() {
+        val weeksStages = TrainingPlanProvider.getAllPlans()
+            .flatMap { it.stages }
+            .filter { it.weeksRequirement != null }
+
+        assertTrue(weeksStages.isNotEmpty())
+        weeksStages.forEach { assertEquals(it.id, it.weeksRequirement, it.weeksTheCountCanAnswer) }
     }
 
     @Test

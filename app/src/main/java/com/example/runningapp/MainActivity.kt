@@ -122,6 +122,7 @@ import com.example.runningapp.training.StageTrainingSummary
 import com.example.runningapp.training.alreadyBeatenLine
 import com.example.runningapp.training.barShortfallLine
 import com.example.runningapp.training.stageTrainingSummaryOf
+import com.example.runningapp.training.weeksTheCountCanAnswer
 import com.example.runningapp.ui.TrainingPlanScreen
 import com.example.runningapp.ui.backupResultMessage
 import com.example.runningapp.ui.strapRowSummary
@@ -1206,8 +1207,9 @@ class MainActivity : ComponentActivity() {
                                 value = activeStage?.let { stage ->
                                     stageTrainingSummaryOf(
                                         record = sessionRepository.stageTrainingRecord(stage.id),
-                                        // The Stage's own bar, where its bar names weeks (#445).
-                                        weeksRequired = stage.weeksRequirement,
+                                        // The Stage's own bar, where its bar names weeks (#445)
+                                        // and its own Workouts can be counted towards it (#452).
+                                        weeksRequired = stage.weeksTheCountCanAnswer,
                                     )
                                 }
                             }

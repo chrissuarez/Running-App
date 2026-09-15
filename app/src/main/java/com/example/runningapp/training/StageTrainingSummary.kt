@@ -1,5 +1,9 @@
 package com.example.runningapp.training
 
+import com.example.runningapp.PlanStage
+import com.example.runningapp.data.STAGE_EVIDENCE_MIN_SECONDS
+import com.example.runningapp.plannedSeconds
+
 /**
  * What the active Stage's card says about the training already recorded under it (#445).
  *
@@ -72,7 +76,8 @@ data class StageTrainingSummary(
  *
  * [weeksRequired] is the Stage's own bar where that bar names a number of weeks
  * ([com.example.runningapp.PlanStage.weeksRequirement]), and null where it does not — a Stage whose
- * bar is a time, or the Desk Test plan's *"Complete 2 short run/walk repeats"*.
+ * bar is a time, or the Desk Test plan's *"Complete 2 short run/walk repeats"*. The card passes
+ * [weeksTheCountCanAnswer], which is also null where the Stage's own Workouts are too short to count.
  *
  * **A null bar answers null**, and the card says nothing at all. Every figure here answers a bar
  * written in weeks, the count of Runs included: this record is the set the *coach* is handed, and
@@ -150,6 +155,24 @@ fun stageTrainingSummaryOf(
         countedLine = countedLine,
     )
 }
+
+/**
+ * The weeks bar the training count may be printed under: [PlanStage.weeksRequirement], or null where
+ * none of this Stage's own Workouts could ever be counted towards it (#452).
+ *
+ * The count is the graduation guard's own set, and that set drops every Run of
+ * [STAGE_EVIDENCE_MIN_SECONDS] or less. A Stage whose every Workout is planned inside that would read
+ * *"No qualifying runs recorded in this stage yet."* for ever, however often the runner did exactly
+ * what it asked — a card that looks broken. So it gets the answer a bar with no weeks gets: nothing.
+ * The filter is not lowered to fit, because two doors that answer "how many weeks" must be fed the
+ * same Runs (#445).
+ *
+ * Planned length, door to door ([plannedSeconds]), because that is the Run the Stage asks for.
+ */
+val PlanStage.weeksTheCountCanAnswer: Int?
+    get() = weeksRequirement?.takeIf {
+        workouts.any { it.plannedSeconds > STAGE_EVIDENCE_MIN_SECONDS }
+    }
 
 private fun weekOrWeeks(n: Int) = if (n == 1) "week" else "weeks"
 

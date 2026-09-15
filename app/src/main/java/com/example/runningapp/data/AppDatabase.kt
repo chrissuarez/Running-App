@@ -949,6 +949,16 @@ interface AchievementDao {
     suspend fun deleteAchievementsOfTypes(types: List<RecordType>)
 }
 
+/**
+ * The length a Run has to pass to count as a Stage's evidence: [SessionDao.getLast3AiEligibleRunsOfStage]
+ * and [SessionDao.getAiEvidenceRunDaysOfStage] drop everything of this many seconds or fewer.
+ *
+ * Named because a second door asks it (#452): the Stage card prints the training count only where
+ * one of the Stage's own Workouts is planned to last longer than this. A Stage whose every Workout
+ * ends inside it would be told "no qualifying runs" however often it was done.
+ */
+const val STAGE_EVIDENCE_MIN_SECONDS = 120
+
 @Dao
 interface SessionDao {
     @Insert
@@ -1396,7 +1406,7 @@ interface SessionDao {
         """
         SELECT * FROM sessions
         WHERE endTime > 0
-          AND durationSeconds > 120
+          AND durationSeconds > $STAGE_EVIDENCE_MIN_SECONDS
           AND includeInAiTraining = 1
           AND ranUnderStageId = :stageId
         ORDER BY startTime DESC
@@ -1428,7 +1438,7 @@ interface SessionDao {
         """
         SELECT id, startTime, ranAtUtcOffsetSeconds FROM sessions
         WHERE endTime > 0
-          AND durationSeconds > 120
+          AND durationSeconds > $STAGE_EVIDENCE_MIN_SECONDS
           AND includeInAiTraining = 1
           AND ranUnderStageId = :stageId
           AND isRunWalkMode = 1
