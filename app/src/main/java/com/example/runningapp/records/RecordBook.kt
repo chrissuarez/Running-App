@@ -133,8 +133,11 @@ class RecordBook(
      * Returns the medals *this run* holds afterwards, which is what its own page shows — an empty
      * list for an ordinary run, and for one that beat nothing.
      *
-     * Called when a run finishes, and safe to call again: [standingsAfter] drops the run's own standing rows
-     * before ranking it, so a re-score cannot leave it racing itself. The read of the book, the
+     * The app never calls this alone: a finished run is scored through [scoreAndMark], which also
+     * marks it scored, so the launch pass does not score it again.
+     *
+     * Safe to call again: [standingsAfter] drops the run's own standing rows before ranking it, so
+     * a re-score cannot leave it racing itself. The read of the book, the
      * ranking and the rewrite are one transaction, because a half-written book has a record with two
      * golds in it and no way to tell which one is real.
      *
