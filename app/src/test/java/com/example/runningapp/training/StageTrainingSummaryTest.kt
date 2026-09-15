@@ -203,15 +203,32 @@ class StageTrainingSummaryTest {
         // PR #497): the gate reads what the Run saves, not the plan's sum.
         val stage = fourWeekStage(workoutOf(40), workoutOf(STAGE_EVIDENCE_MIN_SECONDS - 1))
 
-        assertNull(stage.weeksTheCountCanAnswer)
+        assertFalse(stage.ownWorkoutsCanBeCounted)
+        assertNull(stageTrainingSummaryOf(StageTrainingRecord.NONE, stage))
     }
 
     @Test
-    fun `one workout long enough to be counted keeps the weeks bar`() {
+    fun `runs already counted are shown even where the workouts now are too short to add more`() {
+        // A plan shortened under a Stage that already holds longer Runs (Codex P2 on PR #497). The
+        // record is the evidence the coach is handed, so the card must not hide it.
+        val stage = fourWeekStage(workoutOf(40))
+
+        assertEquals(
+            "3 of 4 full weeks trained — 9 qualifying runs",
+            stageTrainingSummaryOf(threeWeeksNineRuns(), stage)!!.headline
+        )
+    }
+
+    @Test
+    fun `one workout long enough to be counted keeps the empty count on the card`() {
         // Saved at 121 seconds, one past the filter.
         val stage = fourWeekStage(workoutOf(40), workoutOf(STAGE_EVIDENCE_MIN_SECONDS))
 
-        assertEquals(4, stage.weeksTheCountCanAnswer)
+        assertTrue(stage.ownWorkoutsCanBeCounted)
+        assertEquals(
+            "No qualifying runs recorded in this stage yet.",
+            stageTrainingSummaryOf(StageTrainingRecord.NONE, stage)!!.headline
+        )
     }
 
     @Test
@@ -221,7 +238,7 @@ class StageTrainingSummaryTest {
             .filter { it.weeksRequirement != null }
 
         assertTrue(weeksStages.isNotEmpty())
-        weeksStages.forEach { assertEquals(it.id, it.weeksRequirement, it.weeksTheCountCanAnswer) }
+        weeksStages.forEach { assertTrue(it.id, it.ownWorkoutsCanBeCounted) }
     }
 
     @Test
