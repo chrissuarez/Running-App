@@ -131,25 +131,20 @@ class RecordBook(
      * Scores a finished run against the record book and banks whatever it won (#49).
      *
      * Returns the medals *this run* holds afterwards, which is what its own page shows — an empty
-     * list for an ordinary run, and for one that beat nothing.
+     * list for an ordinary run, and for one that beat nothing — or `null` for a Run that changed
+     * underneath the measuring, and was therefore not written to the book at all (#210).
      *
-     * The app never calls this alone: a finished run is scored through [scoreAndMark], which also
-     * marks it scored, so the launch pass does not score it again.
+     * Private, and never called except through [scoreAndMark], which also marks the Run scored so
+     * the launch pass does not score it again (#495). A door that scored without marking would be a
+     * Run the launch pass scores a second time.
      *
      * Safe to call again: [standingsAfter] drops the run's own standing rows before ranking it, so
-     * a re-score cannot leave it racing itself. The read of the book, the
-     * ranking and the rewrite are one transaction, because a half-written book has a record with two
-     * golds in it and no way to tell which one is real.
+     * a re-score cannot leave it racing itself. The read of the book, the ranking and the rewrite
+     * are one transaction, because a half-written book has a record with two golds in it and no way
+     * to tell which one is real.
      *
      * Scoring history recorded before this shipped is a job of its own (#50): it means measuring
      * every stored track, and it has to happen once rather than every time a run finishes.
-     */
-    suspend fun score(sessionId: Long): List<Achievement> =
-        scoreUnlessOvertaken(sessionId).orEmpty()
-
-    /**
-     * [score], with the one answer it cannot give: `null` for a Run that changed underneath
-     * the measuring, and was therefore not written to the book at all (#210).
      *
      * Measuring a Run is minutes of arithmetic on a long history, and the Run is read at the start
      * of it. A stated distance corrected in that window — or the Run deleted — is a change that
@@ -248,15 +243,16 @@ class RecordBook(
      * Scores a Run and, only once that has landed, writes down that it has been scored (#210).
      *
      * The order is the whole of it, which is why the two are one function rather than a rule three
-     * callers are asked to remember. [score] is the work; the mark is the receipt, and it is
-     * written after — never inside the scoring, and never in the same breath as the row being
-     * stamped finished. Every way the work can end short of finishing therefore leaves the Run
+     * callers are asked to remember. [scoreUnlessOvertaken] is the work; the mark is the receipt,
+     * and it is written after — never inside the scoring, and never in the same breath as the row
+     * being stamped finished. Every way the work can end short of finishing therefore leaves the Run
      * owing a scoring: the process reclaimed, the write thrown. That debt costs one redundant
      * re-score at the next launch, which is safe, where a receipt written early would cost the Run
      * its medals for good.
      *
-     * Returns what the Run holds afterwards, exactly as [score] does, and throws where it
-     * throws — an unmarked Run being precisely what the caller wants left behind.
+     * Returns the medals the Run holds afterwards — an empty list for a Run that won nothing — and
+     * throws where the scoring throws: an unmarked Run being precisely what the caller wants left
+     * behind.
      *
      * A Run that changed while it was being measured is one of those ways of ending short: nothing
      * was written to the book (see [scoreUnlessOvertaken]), so nothing is marked either, and
