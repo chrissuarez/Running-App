@@ -2120,9 +2120,6 @@ class SessionRepository(
         })
     }
 
-    /** Scores a finished Run against the record book — see [RecordBook.score]. */
-    suspend fun scoreRecords(sessionId: Long): List<Achievement> = recordBook.score(sessionId)
-
     /** Scores a Run and, only once that has landed, marks it scored — see [RecordBook.scoreAndMark]. */
     suspend fun scoreAndMarkRecords(sessionId: Long): List<Achievement> =
         recordBook.scoreAndMark(sessionId)
