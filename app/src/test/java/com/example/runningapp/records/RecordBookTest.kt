@@ -262,7 +262,7 @@ class RecordBookTest {
         store.medals += aGold(sessionId = 5, RecordType.FASTEST_5K, value = 1_300.0)
         aTreadmillRun(7, seconds = 3_600)
 
-        val earned = book.score(7)
+        val earned = book.scoreAndMark(7)
 
         assertEquals(listOf(RecordType.LONGEST_DURATION to Medal.GOLD), earned.map { it.type to it.medal })
         assertEquals(listOf(5L to Medal.GOLD), holders(RecordType.FASTEST_5K))
@@ -272,7 +272,7 @@ class RecordBookTest {
     fun `a run still being recorded is not scored at all`() = runTest {
         aTreadmillRun(7, km = 5.0, seconds = 1_800, finished = false)
 
-        assertTrue(book.score(7).isEmpty())
+        assertTrue(book.scoreAndMark(7).isEmpty())
 
         assertTrue(store.medals.isEmpty())
         assertTrue(store.efforts.isEmpty())
