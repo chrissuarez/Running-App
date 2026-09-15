@@ -16,6 +16,20 @@ import java.time.temporal.ChronoUnit
 private const val WEEKS_SHOWN = 12
 
 /**
+ * The length a Run has to pass to count as a Stage's evidence:
+ * `SessionDao.getLast3AiEligibleRunsOfStage` and `SessionDao.getAiEvidenceRunDaysOfStage` drop every
+ * Run of this many seconds or fewer.
+ *
+ * Named because a second door asks it (#452): the Stage card prints the training count only where
+ * one of the Stage's own Workouts is planned to last longer than this
+ * ([weeksTheCountCanAnswer]). A Stage whose every Workout ends inside it would be told
+ * "no qualifying runs" however often it was done.
+ *
+ * The card's own words say "longer than two minutes", and so does the handbook. Change those with it.
+ */
+const val STAGE_EVIDENCE_MIN_SECONDS = 120
+
+/**
  * One training week of a Stage: the Monday it began on, and how many of the Stage's qualifying Runs
  * fell in it (#289).
  *

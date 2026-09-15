@@ -17,6 +17,7 @@ import com.example.runningapp.routes.libraryRedrawn
 import com.example.runningapp.run.RunMode
 import com.example.runningapp.run.RunRoute
 import com.example.runningapp.training.HistoryBestEffort
+import com.example.runningapp.training.STAGE_EVIDENCE_MIN_SECONDS
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -949,16 +950,6 @@ interface AchievementDao {
     suspend fun deleteAchievementsOfTypes(types: List<RecordType>)
 }
 
-/**
- * The length a Run has to pass to count as a Stage's evidence: [SessionDao.getLast3AiEligibleRunsOfStage]
- * and [SessionDao.getAiEvidenceRunDaysOfStage] drop everything of this many seconds or fewer.
- *
- * Named because a second door asks it (#452): the Stage card prints the training count only where
- * one of the Stage's own Workouts is planned to last longer than this. A Stage whose every Workout
- * ends inside it would be told "no qualifying runs" however often it was done.
- */
-const val STAGE_EVIDENCE_MIN_SECONDS = 120
-
 @Dao
 interface SessionDao {
     @Insert
@@ -1107,9 +1098,10 @@ interface SessionDao {
      *   about how far the runner gets along a road.
      * - `distanceKm > 0` — an outdoor Run whose GPS never fixed measured no ground; dividing by it
      *   is dividing by nothing.
-     * - `durationSeconds > 120` — the same floor the coach's reads use
+     * - `durationSeconds > 120` — the same two minutes the coach's reads use
      *   ([getLast3AiEligibleRunsOfStage]): a two-minute Run is a start that was abandoned, and its
-     *   pace is the first two minutes of one.
+     *   pace is the first two minutes of one. Written out rather than read from
+     *   [STAGE_EVIDENCE_MIN_SECONDS], which is the Stage's evidence floor and not this pace read's.
      * - `isWalk = 0` — the runner's own word that they walked it (#275). A walked hour covers
      *   ground a run of the same hour would not, and suggesting a route off it under-shoots the
      *   session.

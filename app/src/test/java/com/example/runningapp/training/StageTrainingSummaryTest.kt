@@ -4,7 +4,6 @@ import com.example.runningapp.PlanStage
 import com.example.runningapp.RunType
 import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.WorkoutTemplate
-import com.example.runningapp.data.STAGE_EVIDENCE_MIN_SECONDS
 import java.time.LocalDate
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
