@@ -1,5 +1,6 @@
 package com.example.runningapp.data
 
+import com.example.runningapp.training.STAGE_EVIDENCE_MIN_SECONDS
 import java.sql.Connection
 import java.sql.DriverManager
 import org.junit.After
@@ -28,7 +29,7 @@ class StageEvidenceDaysQueryTest {
     private val evidenceDays = """
         SELECT id, startTime FROM sessions
         WHERE endTime > 0
-          AND durationSeconds > 120
+          AND durationSeconds > $STAGE_EVIDENCE_MIN_SECONDS
           AND includeInAiTraining = 1
           AND ranUnderStageId = 'base_builder'
           AND isRunWalkMode = 1

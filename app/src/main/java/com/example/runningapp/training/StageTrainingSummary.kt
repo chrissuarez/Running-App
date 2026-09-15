@@ -1,7 +1,6 @@
 package com.example.runningapp.training
 
 import com.example.runningapp.PlanStage
-import com.example.runningapp.data.STAGE_EVIDENCE_MIN_SECONDS
 import com.example.runningapp.plannedSeconds
 
 /**
