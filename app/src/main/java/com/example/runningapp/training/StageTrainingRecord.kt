@@ -22,7 +22,7 @@ private const val WEEKS_SHOWN = 12
  *
  * Named because a second door asks it (#452): the Stage card prints the training count only where
  * a Run of one of the Stage's own Workouts is saved longer than this
- * ([weeksTheCountCanAnswer]). A Stage whose every Workout ends inside it would be told
+ * ([ownWorkoutsCanBeCounted]). A Stage whose every Workout ends inside it would be told
  * "no qualifying runs" however often it was done.
  *
  * The card's own words say "longer than two minutes", and so does the handbook. Change those with it.

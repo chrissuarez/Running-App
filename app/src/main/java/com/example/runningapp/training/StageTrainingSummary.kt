@@ -75,8 +75,8 @@ data class StageTrainingSummary(
  *
  * [weeksRequired] is the Stage's own bar where that bar names a number of weeks
  * ([com.example.runningapp.PlanStage.weeksRequirement]), and null where it does not — a Stage whose
- * bar is a time, or the Desk Test plan's *"Complete 2 short run/walk repeats"*. The card passes
- * [weeksTheCountCanAnswer], which is also null where the Stage's own Workouts are too short to count.
+ * bar is a time, or the Desk Test plan's *"Complete 2 short run/walk repeats"*. The card comes in
+ * through the overload that takes the Stage, which also silences a count its Workouts cannot fill.
  *
  * **A null bar answers null**, and the card says nothing at all. Every figure here answers a bar
  * written in weeks, the count of Runs included: this record is the set the *coach* is handed, and
@@ -156,23 +156,34 @@ fun stageTrainingSummaryOf(
 }
 
 /**
- * The weeks bar the training count may be printed under: [PlanStage.weeksRequirement], or null where
- * none of this Stage's own Workouts could ever be counted towards it (#452).
+ * What the card says about [stage], from the [record] counted under it — the card's one way in.
  *
- * The count is the graduation guard's own set, and that set drops every Run of
- * [STAGE_EVIDENCE_MIN_SECONDS] or less. A Stage whose every Workout is planned inside that would read
- * *"No qualifying runs recorded in this stage yet."* for ever, however often the runner did exactly
- * what it asked — a card that looks broken. So it gets the answer a bar with no weeks gets: nothing.
- * The filter is not lowered to fit, because two doors that answer "how many weeks" must be fed the
- * same Runs (#445).
+ * [stage]'s own bar is its [PlanStage.weeksRequirement], and the rule of #452 is applied here, once:
+ * **an empty count the Stage's own Workouts can never fill says nothing.** The count drops every Run
+ * of [STAGE_EVIDENCE_MIN_SECONDS] or less, so a Stage whose every Workout is saved inside that would
+ * read *"No qualifying runs recorded in this stage yet."* for ever, however often the runner did
+ * exactly what it asked — a card that looks broken. It gets the answer a bar with no weeks gets:
+ * nothing. The filter is not lowered to fit, because two doors that answer "how many weeks" must be
+ * fed the same Runs (#445).
  *
- * The length a Run of the Workout is saved as ([recordedSeconds]), not the plan's sum: the filter
- * reads the saved length, and the two can differ by a second (Codex P2 on PR #497).
+ * Only an EMPTY count is silenced (Codex P2 on PR #497). A record that holds Runs is the evidence the
+ * coach is handed whatever the Workouts are now — a plan shortened under a Stage that already has
+ * longer Runs recorded in it — and hiding it would put the card at odds with that evidence.
  */
-val PlanStage.weeksTheCountCanAnswer: Int?
-    get() = weeksRequirement?.takeIf {
-        workouts.any { it.recordedSeconds > STAGE_EVIDENCE_MIN_SECONDS }
-    }
+fun stageTrainingSummaryOf(record: StageTrainingRecord, stage: PlanStage): StageTrainingSummary? {
+    if (record.isEmpty && !stage.ownWorkoutsCanBeCounted) return null
+    return stageTrainingSummaryOf(record, stage.weeksRequirement)
+}
+
+/**
+ * Whether a Run of one of this Stage's own Workouts, followed to its end, is long enough to be
+ * counted as the Stage's evidence (#452).
+ *
+ * The length a Run is saved as ([recordedSeconds]), not the plan's sum: the filter reads the saved
+ * length, and the two can differ by a second (Codex P2 on PR #497).
+ */
+val PlanStage.ownWorkoutsCanBeCounted: Boolean
+    get() = workouts.any { it.recordedSeconds > STAGE_EVIDENCE_MIN_SECONDS }
 
 private fun weekOrWeeks(n: Int) = if (n == 1) "week" else "weeks"
 
