@@ -3,6 +3,7 @@ package com.example.runningapp.run
 import com.example.runningapp.HrProfile
 import com.example.runningapp.HrZone
 import com.example.runningapp.WorkoutTemplate
+import com.example.runningapp.mainSetSeconds
 
 /**
  * Which of the two ways a Run is recorded — the only difference the Run itself cares about is
@@ -124,6 +125,23 @@ data class RunConfig(
     /** A Run following a Workout is a run/walk Run; that is what the record and the coach read. */
     val isRunWalkMode: Boolean get() = workout != null
 }
+
+/**
+ * How long a Run of this Workout is saved as, when it is followed to its own end (#452): the
+ * `durationSeconds` its row gets.
+ *
+ * Not [com.example.runningapp.plannedSeconds], which is the plan's sum. Two things the Run does
+ * make the two differ: the first Interval begins on the warm-up's last second, so a warm-up and the
+ * main set share one; and a phase of no length still takes one second to hand over. A door that
+ * compares a Workout against a floor on the saved length has to read this, or it passes a Workout
+ * whose every Run lands a second short.
+ *
+ * Only for a Workout that ends on its own — a run Interval and a repeat count above nothing. Pinned
+ * against the Run itself by `RecordedSecondsTest`, so a change to how the Run counts its seconds
+ * breaks that test rather than this sum.
+ */
+val WorkoutTemplate.recordedSeconds: Long
+    get() = maxOf(warmUpSeconds, 1).toLong() + mainSetSeconds - 1 + maxOf(coolDownSeconds, 1)
 
 /**
  * The settings the runner is allowed to change mid-Run.

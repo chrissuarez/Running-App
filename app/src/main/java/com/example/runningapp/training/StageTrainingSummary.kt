@@ -1,7 +1,7 @@
 package com.example.runningapp.training
 
 import com.example.runningapp.PlanStage
-import com.example.runningapp.plannedSeconds
+import com.example.runningapp.run.recordedSeconds
 
 /**
  * What the active Stage's card says about the training already recorded under it (#445).
@@ -166,11 +166,12 @@ fun stageTrainingSummaryOf(
  * The filter is not lowered to fit, because two doors that answer "how many weeks" must be fed the
  * same Runs (#445).
  *
- * Planned length, door to door ([plannedSeconds]), because that is the Run the Stage asks for.
+ * The length a Run of the Workout is saved as ([recordedSeconds]), not the plan's sum: the filter
+ * reads the saved length, and the two can differ by a second (Codex P2 on PR #497).
  */
 val PlanStage.weeksTheCountCanAnswer: Int?
     get() = weeksRequirement?.takeIf {
-        workouts.any { it.plannedSeconds > STAGE_EVIDENCE_MIN_SECONDS }
+        workouts.any { it.recordedSeconds > STAGE_EVIDENCE_MIN_SECONDS }
     }
 
 private fun weekOrWeeks(n: Int) = if (n == 1) "week" else "weeks"
