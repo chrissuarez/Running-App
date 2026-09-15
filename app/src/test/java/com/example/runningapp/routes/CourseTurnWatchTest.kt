@@ -83,15 +83,63 @@ class CourseTurnWatchTest {
     private fun CourseTurnWatch.reachTheCourse() = at(0.0)
 
     @Test
-    fun `the corner is announced before it and again at it`() {
+    fun `the corner is announced before it and again just short of it`() {
         val watch = watch()
         assertEquals(nothing, watch.reachTheCourse())
 
         assertEquals(nothing, watch.at(300.0))
         assertEquals(listOf(warning), watch.at(355.0))
         assertEquals(nothing, watch.at(380.0))
-        assertEquals(listOf(theTurn), watch.at(402.0))
+        assertEquals(listOf(theTurn), watch.at(386.0))
+        assertEquals(nothing, watch.at(402.0))
         assertEquals(nothing, watch.at(500.0))
+    }
+
+    /**
+     * #498, the walk that found it: a runner on the far pavement reaches the real corner before
+     * their place on the line does, so a "Turn left." said where the *line* turns came after they
+     * had started turning. It is said fifteen metres short of the corner instead, and a runner
+     * fifteen metres out on the far side hears it there too.
+     */
+    @Test
+    fun `a runner on the far pavement hears the turn before the corner`() {
+        val watch = watch()
+        watch.reachTheCourse()
+
+        assertEquals(listOf(warning), watch.at(355.0, offMeters = 15.0))
+        assertEquals(nothing, watch.at(380.0, offMeters = 15.0))
+        assertEquals(listOf(theTurn), watch.at(386.0, offMeters = 15.0))
+    }
+
+    /**
+     * The warning and the turn's own cue are never both true: "Turn left in 50 metres." is false
+     * from the very ground "Turn left." is made at, so a warning still waiting in the queue is
+     * taken back on the fix that makes its successor (#498). Swept across that ground in
+     * centimetres, so fixes land on either side of it and as near to it as the arithmetic allows.
+     */
+    @Test
+    fun `the warning is false from exactly where the turn's own cue is made`() {
+        var fixesThatMadeTheTurn = 0
+        var fixesThatDidNot = 0
+        for (centimetres in 38_400..38_600) {
+            val watch = watch()
+            watch.reachTheCourse()
+            val warned = watch.onFix(fix(360.0), autoPaused = false).said.single()
+            assertEquals(warning, warned.cue.spoken)
+
+            val voice = watch.onFix(fix(centimetres / 100.0), autoPaused = false)
+            val here = voice.alongMeters!!
+
+            if (voice.said.any { it.cue.spoken == theTurn }) {
+                fixesThatMadeTheTurn++
+                assertTrue("the warning outlived its successor at $here", warned.isFalseAt(here))
+            } else {
+                fixesThatDidNot++
+                assertFalse("the warning died before its successor at $here", warned.isFalseAt(here))
+            }
+        }
+        assertTrue(fixesThatMadeTheTurn > 0)
+        assertTrue(fixesThatDidNot > 0)
     }
 
     /**
@@ -171,7 +219,7 @@ class CourseTurnWatchTest {
         val watch = watch()
         watch.reachTheCourse()
 
-        assertEquals(nothing, watch.at(390.0))
+        assertEquals(nothing, watch.at(380.0))
         assertEquals(listOf(theTurn), watch.at(402.0))
     }
 
@@ -233,7 +281,7 @@ class CourseTurnWatchTest {
         val watch = watch()
         watch.reachTheCourse()
 
-        assertEquals(nothing, watch.at(390.0))
+        assertEquals(nothing, watch.at(380.0))
         assertEquals(listOf(theTurn), watch.at(419.9))
     }
 
@@ -242,7 +290,7 @@ class CourseTurnWatchTest {
         val watch = watch()
         watch.reachTheCourse()
 
-        assertEquals(nothing, watch.at(390.0))
+        assertEquals(nothing, watch.at(380.0))
         assertEquals(nothing, watch.at(420.1))
     }
 
@@ -258,7 +306,7 @@ class CourseTurnWatchTest {
         for (centimetres in 41_900..42_100) {
             val watch = watch()
             watch.reachTheCourse()
-            watch.at(390.0)
+            watch.at(380.0)
 
             val voice = watch.onFix(fix(centimetres / 100.0), autoPaused = false)
 
@@ -519,10 +567,11 @@ class CourseTurnWatchTest {
         }
 
         // Forty metres short of the second lap's first corner: the warning about it is spoken, and
-        // it stops being true at the corner itself, four thousand metres along.
+        // it stops being true where the corner's own cue takes over, fifteen metres short of the
+        // corner at four thousand metres along.
         val warned = heardAt(placeAt(3960.0))
         assertEquals(listOf("Turn right in 50 metres."), warned.said.map { it.cue.spoken })
-        assertEquals(4000.0, warned.said.single().falseFromAlongMeters, 10.0)
+        assertEquals(3985.0, warned.said.single().falseFromAlongMeters, 10.0)
 
         // Six hundred metres on — past the corner and well down the square's east side — which is
         // further than the window reaches, so the whole line is read and answers with the first lap.

@@ -599,7 +599,7 @@ class HrForegroundService : Service() {
      * The threads it is reached from — the tracker's, for fixes, and a coroutine's, for the course —
      * are its own problem and it takes a lock over both.
      */
-    private val courseAlerts = CourseAlerts(QueuedCourseCues(runCues))
+    private val courseAlerts = CourseAlerts(QueuedCourseCues(runCues), log = { Log.i(TAG, it) })
 
     /** Keeps [courseAlerts] up with the library while the Run goes on — see [courseToWatchFlow]. */
     private var courseWatchJob: Job? = null

@@ -2,6 +2,7 @@ package com.example.runningapp.routes
 
 import com.example.runningapp.recording.LocationFix
 import kotlinx.coroutines.flow.Flow
+import kotlin.math.roundToInt
 
 /**
  * The cue queue, as the course sees it: the one way anything the course has to say reaches the
@@ -79,6 +80,12 @@ class CourseAlerts(
      * [OffCourseWatch.onFix] gives.
      */
     private val nowMillis: () -> Long = System::currentTimeMillis,
+    /**
+     * Where one line about each turn cue goes as it is enqueued — the phone's log, in the service —
+     * so a walk can be checked from logcat rather than by replaying its track (#498): the ground
+     * the runner was at, the sentence, and its queue ticket.
+     */
+    private val log: (String) -> Unit = {},
 ) {
 
     private val lock = Any()
@@ -200,6 +207,7 @@ class CourseAlerts(
             turning.said.forEach { said ->
                 val ticket = queue.enqueue(said.cue) ?: return@forEach
                 waiting += WaitingCue(ticket, said)
+                log("Turn cue at ${turning.alongMeters?.roundToInt()} m along: ${said.cue.spoken} (ticket $ticket)")
             }
         }
     }

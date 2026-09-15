@@ -49,6 +49,28 @@ private const val TURN_DEGREES = 45.0
 private const val TURN_WARNING_METERS = 50.0
 
 /**
+ * How far short of a turn "Turn left." is said (#498).
+ *
+ * Not at the turn, because where the runner is on the course is where their place *projects* onto
+ * the line, and a runner off the line reaches the real corner before their projection does. A course
+ * drawn down the middle of a road with the runner on the far pavement, fifteen metres out, crossing
+ * to make the turn: the walk that found this heard "Turn right." fourteen seconds after reaching the
+ * corner, nine seconds after starting to turn, with the projection still four metres short when they
+ * were standing at the junction. GPS lag and the second the sentence takes to say add to it. A
+ * sat-nav says "turn right" a little before the turning for the same reasons.
+ *
+ * Fifteen metres is some five seconds of running and ten of walking: enough to cover a far pavement's
+ * worth of projection lag, and near enough that the turning in front of the runner is plainly the one
+ * meant. **Stated from the side the code accepts: the turn's own cue is due once the runner is
+ * fifteen metres or less short of the turn.**
+ *
+ * It is also where the warning stops being true ([SaidTurn.falseFromAlongMeters]): from here on
+ * "Turn left." is the sentence, and a "Turn left in 50 metres." heard after it would send the runner
+ * past the turning they have just been told is here.
+ */
+private const val TURN_LEAD_METERS = 15.0
+
+/**
  * How near two turns have to be before they are one instruction.
  *
  * A roundabout, a chicane, a dog-leg round a building are several bends and one decision, and told
@@ -75,8 +97,12 @@ private const val TURNS_TOGETHER_METERS = TURN_WARNING_METERS
  * after which the next fix can land hundreds of metres further along the course. A "Turn left in
  * fifty metres" about a corner already behind the runner is not a late cue, it is a wrong one.
  *
- * Under [TURN_WARNING_METERS] on purpose, so a warning can never still be waiting to be said once
- * the turn it warns about has been reached — by then the turn's own cue is the true sentence, and
+ * Measured from where a warning is said, and from the turn itself for the turn's own cue — the
+ * turn is what that cue is about, and it is said [TURN_LEAD_METERS] short of it, so measured from
+ * where it is said its allowance would run out five metres past the corner.
+ *
+ * Under [TURN_WARNING_METERS] less [TURN_LEAD_METERS] on purpose, so a warning can never still be
+ * waiting to be *made* once the turn's own cue is due — by then that cue is the true sentence, and
  * this is what stops the two arriving together.
  *
  * **Stated from the side the code accepts: a turn's own cue is worth saying while the runner is
@@ -108,7 +134,7 @@ enum class TurnCueMoment {
     /** [TURN_WARNING_METERS] before the turn. */
     AHEAD,
 
-    /** At it. */
+    /** Just short of it — [TURN_LEAD_METERS] (#498). */
     AT_THE_TURN,
 }
 
@@ -275,9 +301,10 @@ data class SaidTurn(
      * A turn cue is a sentence about ground the runner is arriving at, and it stops being true when
      * they arrive. Where that ground sits is the only thing that differs:
      *
-     *  - A warning says the turn is [TURN_WARNING_METERS] ahead, so it is false **at the turn**.
-     *    Not late — false, because heard there it would send the runner that distance beyond the
-     *    turning they are standing on. The turn's own cue is the true sentence by then.
+     *  - A warning says the turn is [TURN_WARNING_METERS] ahead, so it is false **where the turn's
+     *    own cue is due**, [TURN_LEAD_METERS] short of the turn (#498). Not late — false, because
+     *    heard after "Turn left." it would send the runner that distance beyond the turning they
+     *    have just been told is here. The turn's own cue is the true sentence from there on.
      *  - The turn's own cue says to turn here, and is merely *late* for a while afterwards. It is
      *    false at [TURN_CUE_LATE_METERS] past the turn, which is where its whole allowance for
      *    being late has been spent — the same number, on the same side, as the one that decides
@@ -311,6 +338,14 @@ private fun hasReached(alongMeters: Double, ground: Double): Boolean = alongMete
  * from.
  */
 private fun tooLateFrom(alongMeters: Double): Double = alongMeters + TURN_CUE_LATE_METERS
+
+/**
+ * The ground a turn at [turnAlongMeters] earns its own cue at, [TURN_LEAD_METERS] short of it
+ * (#498) — and the ground its warning is false from. One function and not the sum written twice, so
+ * the warning dies at bit-for-bit the ground its successor is made at, and the two are never both
+ * true on one fix.
+ */
+private fun turnCueDueFrom(turnAlongMeters: Double): Double = turnAlongMeters - TURN_LEAD_METERS
 
 /**
  * What the turns of a course have to say about one fix (#456).
@@ -436,7 +471,7 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
                     cue = TurnCue(it.direction, TurnCueMoment.AHEAD),
                 ),
                 CueAt(
-                    alongMeters = it.alongMeters,
+                    alongMeters = turnCueDueFrom(it.alongMeters),
                     turnAlongMeters = it.alongMeters,
                     cue = TurnCue(it.direction, TurnCueMoment.AT_THE_TURN),
                 ),
@@ -636,8 +671,8 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
     private class CueAt(
         val alongMeters: Double,
         /**
-         * The turn this sentence is about, as ground along the course — its own ground for the cue
-         * said at the turn, and fifty metres on for the warning said before it.
+         * The turn this sentence is about, as ground along the course — fifteen metres on for the
+         * turn's own cue, and fifty metres on for the warning said before it.
          *
          * What a cue is *about* is not where it is said, and arriving on the course is the one
          * moment that tells them apart: a warning triggered behind the runner can still be about a
@@ -646,17 +681,24 @@ class CourseTurnWatch(private val course: CourseLine, turns: List<CourseTurn>) {
         val turnAlongMeters: Double,
         val cue: TurnCue,
     ) {
-        /** The first ground this sentence is too late to be said at ([TURN_CUE_LATE_METERS]). */
-        val tooLateFromAlongMeters: Double = tooLateFrom(alongMeters)
+        /**
+         * The first ground this sentence is too late to be said at ([TURN_CUE_LATE_METERS]):
+         * twenty metres past where a warning is said, and twenty past the turn for its own cue.
+         */
+        val tooLateFromAlongMeters: Double = when (cue.moment) {
+            TurnCueMoment.AHEAD -> tooLateFrom(alongMeters)
+            TurnCueMoment.AT_THE_TURN -> tooLateFrom(turnAlongMeters)
+        }
 
         /**
          * The first ground this sentence is false from ([SaidTurn.falseFromAlongMeters], where the
-         * rule is argued): the turn, for the warning; and for a turn's own cue, the very value it is
-         * too late from — not the same sum worked out twice — so it is never made at a distance the
-         * withdrawal would already take it back at (#479).
+         * rule is argued): where the turn's own cue is due, for the warning — the very value that
+         * cue is made at (#498); and for a turn's own cue, the very value it is too late from — not
+         * the same sum worked out twice — so it is never made at a distance the withdrawal would
+         * already take it back at (#479).
          */
         val falseFromAlongMeters: Double = when (cue.moment) {
-            TurnCueMoment.AHEAD -> turnAlongMeters
+            TurnCueMoment.AHEAD -> turnCueDueFrom(turnAlongMeters)
             TurnCueMoment.AT_THE_TURN -> tooLateFromAlongMeters
         }
     }
