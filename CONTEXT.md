@@ -379,7 +379,9 @@ is a fact about a runner during one Run, and it lives only for as long as that R
 
 **Turn**:
 A place where the course changes direction sharply enough to be a decision, and the two things said
-about it: "Turn left in 50 metres." as the runner comes up to it, and "Turn left." at it (#456). It
+about it: "Turn left in 50 metres." as the runner comes up to it, and "Turn left." 15 m short of it
+(#456, #498) — short, because a runner on the far pavement reaches the real corner before their place
+on the line does, and a cue said on the line's own corner reached them after they had turned. It
 is arithmetic on the line the runner already keeps — no map, no street names, no internet — so a
 Turn is a fact about the *course* and never about the ground: the app says where the line bends, and
 the runner is the one who can see whether there is a gate there.
