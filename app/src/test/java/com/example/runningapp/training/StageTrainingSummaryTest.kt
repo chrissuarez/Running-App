@@ -181,16 +181,16 @@ class StageTrainingSummaryTest {
         workouts = workouts.toList(),
     )
 
-    /** A Workout planned to last [seconds] door to door: one run, no walk, no envelope. */
-    private fun workoutOf(seconds: Int) = WorkoutTemplate(
-        id = "w$seconds",
-        title = "$seconds s",
+    /** A Workout of one [main]-second run between a one-second warm-up and a one-second cool-down. */
+    private fun workoutOf(main: Int) = WorkoutTemplate(
+        id = "w$main",
+        title = "$main s",
         targetZone = 2,
-        runDurationSeconds = seconds,
+        runDurationSeconds = main,
         walkDurationSeconds = 0,
         totalRepeats = 1,
-        warmUpSeconds = 0,
-        coolDownSeconds = 0,
+        warmUpSeconds = 1,
+        coolDownSeconds = 1,
         runType = RunType.LONG,
     )
 
@@ -199,14 +199,17 @@ class StageTrainingSummaryTest {
         // The count drops every Run of two minutes or less. A Stage whose every Workout ends inside
         // that would print "No qualifying runs recorded" for ever, however often the runner did
         // exactly what it asked — so the card says nothing, as it does under a bar with no weeks.
-        val stage = fourWeekStage(workoutOf(40), workoutOf(STAGE_EVIDENCE_MIN_SECONDS))
+        // The 119-second one is PLANNED at 121 but saved at 120, which the filter drops (Codex P2 on
+        // PR #497): the gate reads what the Run saves, not the plan's sum.
+        val stage = fourWeekStage(workoutOf(40), workoutOf(STAGE_EVIDENCE_MIN_SECONDS - 1))
 
         assertNull(stage.weeksTheCountCanAnswer)
     }
 
     @Test
     fun `one workout long enough to be counted keeps the weeks bar`() {
-        val stage = fourWeekStage(workoutOf(40), workoutOf(STAGE_EVIDENCE_MIN_SECONDS + 1))
+        // Saved at 121 seconds, one past the filter.
+        val stage = fourWeekStage(workoutOf(40), workoutOf(STAGE_EVIDENCE_MIN_SECONDS))
 
         assertEquals(4, stage.weeksTheCountCanAnswer)
     }
