@@ -164,16 +164,7 @@ class RecordsViewModel(
             effortCount = 0,
             measuring = true,
         ),
-        read = { rows ->
-            val efforts = recordEfforts(rows, type, zone())
-            val league = recordLeague(type)
-            RecordDetailUi(
-                type = type,
-                top = league.top(efforts),
-                trend = league.trend(efforts),
-                effortCount = efforts.size,
-            )
-        },
+        read = { rows -> recordDetail(rows, type, zone()) },
     )
 }
 
