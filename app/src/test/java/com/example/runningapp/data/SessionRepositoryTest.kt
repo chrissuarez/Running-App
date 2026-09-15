@@ -2080,9 +2080,10 @@ class SessionRepositoryTest {
     }
 
     @Test
-    fun `the flag is only set once the recompute it pays for has finished`() = runTest {
-        // An interrupted recompute must be retried, not remembered as done — so the flag lands
-        // last. Ordering, not decoration: the other way round strands history half-converted.
+    fun `a first max hr set is in force before history moves, and spent only once it has`() = runTest {
+        // In force first (#137), so a Run started while the re-tally runs pins the number just
+        // typed. Spent last, so an interrupted recompute is retried, not remembered as done — the
+        // other way round strands history half-converted.
         val mockSampleDao: SampleDao = mock()
         val repositoryWithSamples = SessionRepository(
             sessionDao = mockDao,
@@ -2096,10 +2097,11 @@ class SessionRepositoryTest {
         repositoryWithSamples.setStatedProfile(maxHr = 181, restingHr = null)
 
         inOrder(mockDao, mockSettingsRepo) {
+            verify(mockSettingsRepo).beginStatement(181, null)
             verify(mockDao).updateZoneSecondsAndEffort(
                 sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0, bandedOnMaxHr = 181, bandedOnRestingHr = 0
             )
-            verify(mockSettingsRepo).setStatedHeartRates(eq(181), anyOrNull(), anyOrNull())
+            verify(mockSettingsRepo).setStatedHeartRates(181, null, 181)
         }
     }
 
@@ -2211,32 +2213,6 @@ class SessionRepositoryTest {
             sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0, bandedOnMaxHr = 181, bandedOnRestingHr = 52
         )
         verify(mockSettingsRepo).setStatedHeartRates(anyOrNull(), eq(52), anyOrNull())
-    }
-
-    @Test
-    fun `the resting hr is stored only once the re-tally it pays for has finished`() = runTest {
-        // Same ordering as Max HR, for the same reason: an interruption must leave the old number
-        // on screen and the conversion to be redone, not a settings screen claiming a re-band that
-        // half happened.
-        val mockSampleDao: SampleDao = mock()
-        val repositoryWithSamples = SessionRepository(
-            sessionDao = mockDao,
-            sampleDao = mockSampleDao,
-            settingsRepository = mockSettingsRepo
-        )
-        whenever(mockSettingsRepo.userSettingsFlow)
-            .thenReturn(flowOf(UserSettings(maxHr = 181, maxHrEverSet = true, historyMaxHr = 181)))
-        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
-        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
-
-        repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = 60)
-
-        inOrder(mockDao, mockSettingsRepo) {
-            verify(mockDao).updateZoneSecondsAndEffort(
-                sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0, bandedOnMaxHr = 181, bandedOnRestingHr = 60
-            )
-            verify(mockSettingsRepo).setStatedHeartRates(anyOrNull(), eq(60), anyOrNull())
-        }
     }
 
     @Test
@@ -2469,6 +2445,58 @@ class SessionRepositoryTest {
             )
             verify(mockSettingsRepo).setStatedHeartRates(null, 60, 181)
         }
+    }
+
+    @Test
+    fun `a statement finishes one left unlanded earlier in the same launch`() = runTest {
+        // A first Max HR of 181 began — so it is in force, with the one-shot pinned unspent — and
+        // its re-tally threw. The queue logs that and moves on, so the next statement is the only
+        // thing that will ever reach the note before the next launch. Beginning over it without
+        // carrying it would drop the owed maximum from the note, re-band history on the placeholder
+        // and clear it: 181 on screen and in every new Run, history on 190, nothing left to repair it.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 181, maxHrEverSet = false, historyMaxHr = 190)))
+        whenever(mockSettingsRepo.interruptedStatement()).thenReturn(StatedHeartRates(181, null))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
+
+        repositoryWithSamples.setStatedProfile(maxHr = null, restingHr = 60)
+
+        inOrder(mockDao, mockSettingsRepo) {
+            verify(mockSettingsRepo).beginStatement(181, 60)
+            verify(mockDao).updateZoneSecondsAndEffort(
+                sessionId = 7L, zone1 = 0, zone2 = 1, zone3 = 0, zone4 = 0, zone5 = 0, effortScore = 0, bandedOnMaxHr = 181, bandedOnRestingHr = 60
+            )
+            verify(mockSettingsRepo).setStatedHeartRates(181, 60, 181)
+        }
+    }
+
+    @Test
+    fun `a statement's own numbers win over the one it finishes`() = runTest {
+        // The runner corrected the maximum the failed statement had begun. Their number is the one
+        // that lands, and the one history is re-banded on — never the one they corrected it from.
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 181, maxHrEverSet = false, historyMaxHr = 190)))
+        whenever(mockSettingsRepo.interruptedStatement()).thenReturn(StatedHeartRates(181, 55))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
+
+        repositoryWithSamples.setStatedProfile(maxHr = 185, restingHr = null)
+
+        verify(mockSettingsRepo).beginStatement(185, 55)
+        verify(mockSettingsRepo).setStatedHeartRates(185, 55, 185)
     }
 
     @Test

@@ -612,8 +612,8 @@ class HrFieldState(
  * Built once and kept, never rebuilt. Both of the things that move while it is alive are handed to
  * it instead: a changed stored value through [HrFieldState.onStoredChanged], and a moved range
  * through [HrFieldState.parse]. Rebuilding on either would throw away whatever was half-typed —
- * and both of them land *precisely* when someone is typing, since a commit publishes only after
- * its re-tally of history has finished.
+ * and both of them land *precisely* when someone is typing, since a commit publishes a moment
+ * after the blur that sent it, once its turn on the statement queue comes round.
  */
 @Composable
 private fun rememberHrFieldState(
