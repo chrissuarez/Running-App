@@ -272,6 +272,8 @@ class RecordBookTest {
     fun `a run still being recorded is not scored at all`() = runTest {
         aTreadmillRun(7, km = 5.0, seconds = 1_800, finished = false)
 
+        // Not asserted either way: whether the Run is marked. Every door that scores — the finish,
+        // a statement, the launch pass — only ever reaches a finished Run.
         assertTrue(book.scoreAndMark(7).isEmpty())
 
         assertTrue(store.medals.isEmpty())
