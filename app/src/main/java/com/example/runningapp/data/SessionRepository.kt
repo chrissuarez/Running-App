@@ -789,11 +789,20 @@ class SessionRepository(
      * travel together because they bound one reserve, and a recompute against half of the runner's
      * profile would re-band history to a model nobody's zones are on.
      *
-     * Recompute first, then store: an interruption leaves the old numbers on screen with history
-     * part-converted, and the next statement redoes the whole thing (the tally is a pure
-     * re-derivation, so repeating it costs nothing). Storing first would leave the settings screen
-     * claiming a conversion that only half happened, and — for Max HR — would strand history
-     * permanently half-converted behind a spent one-shot flag.
+     * In force first, then re-banded, then landed (#137). The numbers are stored as the statement
+     * begins, so a Run started while history is still moving pins the number the runner has just
+     * typed rather than the one it replaces. What the re-band pays for — the one-shot flag, the
+     * maximum history is on — is spent only once it has committed, so an interruption leaves a
+     * re-band still owed, never one remembered as done: the note [SettingsRepository.beginStatement]
+     * leaves is replayed whole by the next launch (the tally is a pure re-derivation, so repeating
+     * it costs nothing).
+     *
+     * **A statement finishes one that never landed.** A re-tally or the landing can throw, and
+     * `StatedHeartRateQueue` logs that and moves on, so until the next launch the next statement is
+     * the only thing that will ever meet the note. Begun over it without carrying it, a resting-HR
+     * statement after a first Max HR that threw would drop the owed maximum from the note, re-band
+     * history on the placeholder and clear it: the new maximum in force for every new Run, history
+     * on the old one, and nothing left to repair it.
      *
      * Silent by design. There is nothing here to decide, and confirming a correction is nagging;
      * the one edit that *is* asked about is withdrawing a resting heart rate, and the screen asks
@@ -802,6 +811,14 @@ class SessionRepository(
     suspend fun setStatedProfile(maxHr: Int?, restingHr: Int?) = statedProfile.withLock {
         val settings = settingsRepository ?: return@withLock
         if (maxHr == null && restingHr == null) return@withLock
+        // Carried, not replayed: this statement's own numbers win, and only what it does not state
+        // is taken from the note — the rule `StatedHeartRateQueue` applies to one found at launch.
+        val unlanded = settings.interruptedStatement()
+        applyStatement(settings, maxHr ?: unlanded?.maxHr, restingHr ?: unlanded?.restingHr)
+    }
+
+    /** The body of [setStatedProfile], once any statement left unlanded is carried underneath. */
+    private suspend fun applyStatement(settings: SettingsRepository, maxHr: Int?, restingHr: Int?) {
         val current = settings.userSettingsFlow.first()
         val clampedMaxHr = maxHr?.let { effectiveMaxHr(it) }
         val firstMaxHrSet = clampedMaxHr != null && !current.maxHrEverSet
@@ -819,7 +836,7 @@ class SessionRepository(
                 // rate stated in the same breath is unaffected and still lands below.
                 if (firstMaxHrSet) {
                     if (restingHr != null) settings.setStatedHeartRates(null, restingHr, rebandedHistoryAgainst = null)
-                    return@withLock
+                    return
                 }
             } else {
                 // The maximum history is *already* banded against, not the one in force. They
@@ -832,8 +849,8 @@ class SessionRepository(
                     maxHr = historyMaxHr,
                     restingHr = restingHr ?: current.restingHr
                 )
-                // Noted before any of it moves, and cleared only by the statement landing below —
-                // see [SettingsRepository.beginStatement]. History and the profile live in
+                // Noted and put in force before any of it moves, and cleared only by the statement
+                // landing below — see [SettingsRepository.beginStatement]. History and the profile live in
                 // different stores, so this is what makes the pair of writes recoverable rather
                 // than merely each atomic.
                 settings.beginStatement(maxHr, restingHr)
@@ -975,7 +992,7 @@ class SessionRepository(
      * Holds [statedProfile] for the same reason the rescue pass does: this writes Scores, the
      * re-tally rewrites them, and both can run at launch. Under the lock a Run is either scored
      * before the re-tally walks history — and therefore re-banded by it — or scored afterwards
-     * against the profile the re-tally has finished storing. Unserialized, a Score computed against
+     * against the profile the re-tally's statement has landed. Unserialized, a Score computed against
      * the old maximum could land after the re-tally had already passed that row. The cost is that a
      * heart rate stated while this is running waits for it — the same bargain the re-tally strikes,
      * and bounded the same way: one read and one write per Run, and no file IO.
@@ -1626,7 +1643,7 @@ class SessionRepository(
      * on. Both happen at launch, which is exactly when they would meet: a statement interrupted last
      * session is replayed then (`StatedHeartRateQueue`), and so is this. Under the lock the Run is
      * either already banded when the re-tally walks history, or banded by this pass against the
-     * profile the re-tally has finished storing.
+     * profile the re-tally's statement has landed.
      */
     suspend fun rescueInterruptedRuns(startedBeforeMillis: Long) = statedProfile.withLock {
         val settings = settingsRepository ?: return@withLock

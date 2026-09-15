@@ -168,6 +168,10 @@ fun storedHeartRates(
  * This leaves one gap by choice: someone who deliberately set exactly [DEFAULT_MAX_HR] before the
  * flag existed still reads as unset. Indistinguishable from the placeholder by construction, and
  * the cost is one retally against a number that produces the same tally anyway.
+ *
+ * The inference is also why a statement pins the [flag] as it begins (#137): the maximum is written
+ * before history moves, and a first set begun but not landed would otherwise read as finished. See
+ * [beginHeartRateStatement].
  */
 fun maxHrEverSet(flag: Boolean?, storedMaxHr: Int?): Boolean =
     flag ?: (storedMaxHr != null && storedMaxHr != DEFAULT_MAX_HR)
@@ -211,8 +215,8 @@ internal object PreferencesKeys {
     val PREVIOUS_COACH_MESSAGE = stringPreferencesKey("previous_coach_message")
     val SIMULATION_ENABLED = booleanPreferencesKey("simulation_enabled")
     val TESTING_MODE_ENABLED = booleanPreferencesKey("testing_mode_enabled")
-    // A statement of the heart rates that has started moving history but has not yet been stored.
-    // See SettingsRepository.beginStatement.
+    // A statement of the heart rates that has begun moving history and has not yet landed. See
+    // beginHeartRateStatement.
     val STATEMENT_IN_FLIGHT = booleanPreferencesKey("hr_statement_in_flight")
     val STATEMENT_MAX_HR = intPreferencesKey("hr_statement_max_hr")
     val STATEMENT_RESTING_HR = intPreferencesKey("hr_statement_resting_hr")
@@ -221,6 +225,107 @@ internal object PreferencesKeys {
     // Whether the history already recorded has been scored against the record book (#50). See
     // UserSettings.historyRecordsSeeded.
     val HISTORY_RECORDS_SEEDED = booleanPreferencesKey("history_records_seeded")
+}
+
+/** [maxHrEverSet], read from storage. */
+private fun Preferences.readMaxHrEverSet(): Boolean =
+    maxHrEverSet(flag = this[PreferencesKeys.MAX_HR_EVER_SET], storedMaxHr = this[PreferencesKeys.MAX_HR])
+
+/**
+ * [UserSettings.historyMaxHr], read from storage.
+ *
+ * Absent for anyone whose history was last banded before the key existed. Their stored maximum is
+ * the best evidence available: if they set it once and never changed it — much the commonest case —
+ * it is exactly right, and if they changed it twice the value it was banded against is simply not
+ * recorded anywhere. Either way this is no worse than the behaviour it replaces.
+ */
+private fun Preferences.readHistoryMaxHr(): Int =
+    this[PreferencesKeys.HISTORY_MAX_HR] ?: (this[PreferencesKeys.MAX_HR] ?: DEFAULT_MAX_HR)
+
+/**
+ * Begins a statement of the heart rates that is about to move history: notes it, and puts its
+ * numbers in force, in one pass (#137).
+ *
+ * In force at once rather than once history has moved, because the re-tally takes seconds on a
+ * long history and a Run pins its numbers at START (ADR 0002). Stored last, a Run started in that
+ * gap kept the old number for its whole length and was finished after the re-tally had swept the
+ * rest — the one Run in history on a profile nobody holds.
+ *
+ * The note is what makes writing first safe. History lives in the database and the profile lives
+ * here, so the pair cannot be one transaction; anything left behind by a dead process is replayed
+ * whole by the next launch (`SessionRepository.interruptedStatement`), and a re-tally is a pure
+ * re-derivation from samples that are never pruned, so repeating one changes nothing.
+ *
+ * Two readings are inferred from the stored maximum, and writing it early would move both before
+ * the statement has earned either. So each is pinned first, at what it reads now, and only
+ * [landHeartRateStatement] moves them on:
+ * - [maxHrEverSet]: a maximum off the placeholder reads as set, so a first set begun and not landed
+ *   would look finished — and its replay would skip the very re-band it owes, stranding history on
+ *   the placeholder behind a spent one-shot.
+ * - [UserSettings.historyMaxHr]: the stored maximum stands in where none is recorded, so it would
+ *   claim history is already on the number it is still being moved to.
+ *
+ * The numbers are noted as stated rather than as stored, because what history is re-banded
+ * against is not simply what ends up stored: Max HR's future-only rule means a maximum stated
+ * beside a resting heart rate does not move history at all.
+ */
+internal fun MutablePreferences.beginHeartRateStatement(maxHr: Int?, restingHr: Int?) {
+    this[PreferencesKeys.STATEMENT_IN_FLIGHT] = true
+    if (maxHr != null) this[PreferencesKeys.STATEMENT_MAX_HR] = maxHr
+    else remove(PreferencesKeys.STATEMENT_MAX_HR)
+    if (restingHr != null) this[PreferencesKeys.STATEMENT_RESTING_HR] = restingHr
+    else remove(PreferencesKeys.STATEMENT_RESTING_HR)
+    if (maxHr != null) {
+        this[PreferencesKeys.MAX_HR_EVER_SET] = readMaxHrEverSet()
+        this[PreferencesKeys.HISTORY_MAX_HR] = readHistoryMaxHr()
+    }
+    writeStatedHeartRates(maxHr, restingHr)
+}
+
+/**
+ * Lands a statement of the heart rates — the whole of one that moved no history, or the end of one
+ * [beginHeartRateStatement] began. See [SettingsRepository.setStatedHeartRates].
+ */
+internal fun MutablePreferences.landHeartRateStatement(
+    maxHr: Int?,
+    restingHr: Int?,
+    rebandedHistoryAgainst: Int?
+) {
+    // Only a statement that actually re-banded history finishes the note, and it records the
+    // maximum it banded against while it does.
+    //
+    // Both halves matter. Recording it is what stops the *next* resting-HR statement dragging
+    // history onto a later, future-only maximum. And clearing it only here is what stops a
+    // statement that moved no history — a future-only Max HR change — wiping a note left by an
+    // interrupted re-tally, which would strand that history for good.
+    //
+    // Load-bearing rather than tidy-up: never clearing would have every launch re-band the whole
+    // of history again for ever, and nothing would fail to say so.
+    if (rebandedHistoryAgainst != null) {
+        this[PreferencesKeys.HISTORY_MAX_HR] = rebandedHistoryAgainst
+        remove(PreferencesKeys.STATEMENT_IN_FLIGHT)
+        remove(PreferencesKeys.STATEMENT_MAX_HR)
+        remove(PreferencesKeys.STATEMENT_RESTING_HR)
+    }
+    writeStatedHeartRates(maxHr, restingHr)
+    // The maximum carries a flag and the resting heart rate does not: `190` is a placeholder nobody
+    // chose, so history sitting on it is stranded until someone states the real number, and stating
+    // the value already held still counts — confirming it is exactly the statement the flag
+    // records. Only written when the maximum was actually stated, so a resting-only statement can
+    // never spend the one-shot.
+    if (maxHr != null) this[PreferencesKeys.MAX_HR_EVER_SET] = true
+}
+
+/** Writes [storedHeartRates] — see [SettingsRepository.setStatedHeartRates]. */
+private fun MutablePreferences.writeStatedHeartRates(maxHr: Int?, restingHr: Int?) {
+    val stored = storedHeartRates(
+        statedMaxHr = maxHr,
+        statedRestingHr = restingHr,
+        storedMaxHr = this[PreferencesKeys.MAX_HR],
+        storedRestingHr = this[PreferencesKeys.RESTING_HR]
+    )
+    if (maxHr != null) this[PreferencesKeys.MAX_HR] = stored.maxHr
+    stored.restingHr?.let { this[PreferencesKeys.RESTING_HR] = it }
 }
 
 /**
@@ -621,19 +726,10 @@ internal fun userSettingsOf(preferences: Preferences): UserSettings {
 
     return UserSettings(
         maxHr = preferences[PreferencesKeys.MAX_HR] ?: DEFAULT_MAX_HR,
-        maxHrEverSet = maxHrEverSet(
-            flag = preferences[PreferencesKeys.MAX_HR_EVER_SET],
-            storedMaxHr = preferences[PreferencesKeys.MAX_HR]
-        ),
+        maxHrEverSet = preferences.readMaxHrEverSet(),
         maxHrCardDismissed = preferences[PreferencesKeys.MAX_HR_CARD_DISMISSED] ?: false,
         restingHr = preferences[PreferencesKeys.RESTING_HR] ?: RESTING_HR_UNSTATED,
-        // Absent for anyone whose history was last banded before this key existed. Their stored
-        // maximum is the best evidence available: if they set it once and never changed it — much
-        // the commonest case — it is exactly right, and if they changed it twice the value it was
-        // banded against is simply not recorded anywhere. Either way this is no worse than the
-        // behaviour it replaces.
-        historyMaxHr = preferences[PreferencesKeys.HISTORY_MAX_HR]
-            ?: (preferences[PreferencesKeys.MAX_HR] ?: DEFAULT_MAX_HR),
+        historyMaxHr = preferences.readHistoryMaxHr(),
         // Sanitized on read, not only on write: an edge-zone target stored before #117 closed the
         // picker would otherwise keep overstating "In Target" forever.
         targetZone = HrZone.coachingTargetOfNumberOrDefault(preferences[PreferencesKeys.TARGET_ZONE]).number,
@@ -667,12 +763,15 @@ class SettingsRepository(private val context: Context) {
         .map { preferences -> userSettingsOf(preferences) }
 
     /**
-     * Records a statement of the heart rates the runner's zones are sliced from — either number,
-     * or both — in **one** write.
+     * Lands a statement of the heart rates the runner's zones are sliced from — either number, or
+     * both — in **one** write: the whole of a statement that moved no history, or the end of one
+     * [beginStatement] began.
      *
      * One write because the pair bounds one reserve. Published separately, a collector sees the
      * new maximum beside the old resting heart rate, and a Run started in that gap pins a profile
-     * that was never anyone's (ADR 0002 pins it at START and never revisits it).
+     * that was never anyone's (ADR 0002 pins it at START and never revisits it). A statement that
+     * re-bands history has already put the pair in force as it began, in one write of its own; this
+     * one writes the same numbers again and spends what the re-band paid for.
      *
      * Null means "not stated now" and leaves that number alone. Nothing should call this directly:
      * go through `SessionRepository.setStatedProfile`, the one door where stating the numbers and
@@ -690,69 +789,21 @@ class SettingsRepository(private val context: Context) {
      */
     suspend fun setStatedHeartRates(maxHr: Int?, restingHr: Int?, rebandedHistoryAgainst: Int?) {
         if (maxHr == null && restingHr == null) return
-        context.dataStore.edit { preferences ->
-            // Only a statement that actually re-banded history finishes the note, and it records
-            // the maximum it banded against while it does.
-            //
-            // Both halves matter. Recording it is what stops the *next* resting-HR statement
-            // dragging history onto a later, future-only maximum. And clearing it only here is
-            // what stops a statement that moved no history — a future-only Max HR change — wiping
-            // a note left by an interrupted re-tally, which would strand that history for good.
-            //
-            // Load-bearing rather than tidy-up: never clearing would have every launch re-band the
-            // whole of history again for ever, and nothing would fail to say so.
-            if (rebandedHistoryAgainst != null) {
-                preferences[PreferencesKeys.HISTORY_MAX_HR] = rebandedHistoryAgainst
-                preferences.remove(PreferencesKeys.STATEMENT_IN_FLIGHT)
-                preferences.remove(PreferencesKeys.STATEMENT_MAX_HR)
-                preferences.remove(PreferencesKeys.STATEMENT_RESTING_HR)
-            }
-            val stored = storedHeartRates(
-                statedMaxHr = maxHr,
-                statedRestingHr = restingHr,
-                storedMaxHr = preferences[PreferencesKeys.MAX_HR],
-                storedRestingHr = preferences[PreferencesKeys.RESTING_HR]
-            )
-            // The maximum carries a flag and the resting heart rate does not: `190` is a
-            // placeholder nobody chose, so history sitting on it is stranded until someone states
-            // the real number, and stating the value already held still counts — confirming it is
-            // exactly the statement the flag records. Only written when the maximum was actually
-            // stated, so a resting-only statement can never spend the one-shot.
-            if (maxHr != null) {
-                preferences[PreferencesKeys.MAX_HR] = stored.maxHr
-                preferences[PreferencesKeys.MAX_HR_EVER_SET] = true
-            }
-            stored.restingHr?.let { preferences[PreferencesKeys.RESTING_HR] = it }
-        }
+        context.dataStore.edit { it.landHeartRateStatement(maxHr, restingHr, rebandedHistoryAgainst) }
     }
 
     /**
-     * Notes a statement that is about to move history, before it moves any.
+     * Begins a statement that is about to move history, before it moves any: notes it, and puts
+     * its numbers in force (#137). See [beginHeartRateStatement].
      *
      * History lives in the database and the profile lives here, so a statement that touches both
-     * cannot be one transaction. Re-banding commits first; if this process dies — or the write
-     * below throws — in the gap before the profile lands, every finished run is banded against a
-     * profile the settings do not hold and no future run will use. Nothing would ever repair it,
-     * because nothing would know: the split #172 exists to prevent, silent and permanent.
-     *
-     * So the intent is recorded first and cleared only by the statement landing
-     * ([setStatedHeartRates]). Anything left behind is an interruption, and replaying it is safe
-     * because a re-tally is a pure re-derivation from stored per-second samples, which are never
-     * pruned — repeating one costs time and changes nothing. See
-     * `SessionRepository.interruptedStatement`, which `StatedHeartRateQueue` applies before anything else.
-     *
-     * The numbers are carried rather than re-read from storage on the way back, because what
-     * history is re-banded against is not simply what ends up stored: Max HR's future-only rule
-     * means a maximum stated beside a resting heart rate does not move history at all.
+     * cannot be one transaction. The note is cleared only by the statement landing
+     * ([setStatedHeartRates]); anything left behind is an interruption, which
+     * `SessionRepository.interruptedStatement` hands to `StatedHeartRateQueue` to apply before
+     * anything else.
      */
     suspend fun beginStatement(maxHr: Int?, restingHr: Int?) {
-        context.dataStore.edit { preferences ->
-            preferences[PreferencesKeys.STATEMENT_IN_FLIGHT] = true
-            if (maxHr != null) preferences[PreferencesKeys.STATEMENT_MAX_HR] = maxHr
-            else preferences.remove(PreferencesKeys.STATEMENT_MAX_HR)
-            if (restingHr != null) preferences[PreferencesKeys.STATEMENT_RESTING_HR] = restingHr
-            else preferences.remove(PreferencesKeys.STATEMENT_RESTING_HR)
-        }
+        context.dataStore.edit { it.beginHeartRateStatement(maxHr, restingHr) }
     }
 
     /**

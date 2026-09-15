@@ -96,8 +96,8 @@ class SettingsScreenTest {
 
     @Test
     fun `a resting hr already blurred still blocks a max hr with no room above it`() {
-        // Blur commits, but the commit is asynchronous and waits on a re-tally of the whole
-        // history before it publishes — so storage still reads the old number when the maximum is
+        // Blur commits, but the commit is asynchronous and waits its turn on the statement queue
+        // before it publishes — so storage can still read the old number when the maximum is
         // typed a moment later. Judged against disk this pair is accepted and one of the two
         // numbers is then quietly rewritten. What the field is holding is the honest answer.
         val restingInForce = hrInForce("60", stored = RESTING_HR_UNSTATED, ::parseRestingHrAlone)

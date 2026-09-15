@@ -50,7 +50,9 @@ the service leaves every one of those untested.
   deliberate set keeps the old number for its whole length — and is finalized
   after the retally has already swept the finished Runs, leaving it the single
   Run inconsistent with the history around it. #137 must be re-read once this
-  lands.
+  lands. It was: a statement now puts its numbers in force before the retally
+  runs, so only a Run already under way at the set keeps the old number — the
+  one the recorder finalizes from its own counters.
 - **Controls stay live, but arrive as events.** Coaching on/off, auto-pause and
   split announcements are things the runner flips *during* a Run (#109 built the
   first one deliberately), so they are not pinned. They are delivered as events

@@ -592,6 +592,79 @@ class SettingsRepositoryTest {
         assertFalse(userSettingsOf(mutablePreferencesOf()).maxHrCardDismissed)
     }
 
+    // --- A statement is in force the moment it begins (#137) ---
+
+    @Test
+    fun `a statement is in force the moment it begins, before any history moves`() {
+        // Re-banding history can take seconds on a long one. Stored only after it, a Run started in
+        // that gap pinned the old number for its whole length (ADR 0002) and was finished after the
+        // re-tally had swept the rest: the one Run in history on a profile nobody holds.
+        val preferences = mutablePreferencesOf()
+
+        preferences.beginHeartRateStatement(maxHr = 181, restingHr = 60)
+
+        val settings = userSettingsOf(preferences)
+        assertEquals(181, settings.maxHr)
+        assertEquals(60, settings.restingHr)
+        // And noted in the same pass, so the history half can be finished if the process dies.
+        assertEquals(true, preferences[PreferencesKeys.STATEMENT_IN_FLIGHT])
+        assertEquals(181, preferences[PreferencesKeys.STATEMENT_MAX_HR])
+        assertEquals(60, preferences[PreferencesKeys.STATEMENT_RESTING_HR])
+    }
+
+    @Test
+    fun `a first Max HR begun but not landed still reads as never set`() {
+        // A stored maximum that differs from the placeholder is how an upgrade from before the flag
+        // reads as deliberately set. Written early, the half-done statement would look exactly like
+        // that — and a replay reading it as set would skip the re-band it exists to finish, leaving
+        // history stranded on the placeholder behind a spent one-shot.
+        listOf(mutablePreferencesOf(), mutablePreferencesOf(PreferencesKeys.MAX_HR to DEFAULT_MAX_HR))
+            .forEach { preferences ->
+                preferences.beginHeartRateStatement(maxHr = 181, restingHr = null)
+
+                assertFalse(userSettingsOf(preferences).maxHrEverSet)
+            }
+    }
+
+    @Test
+    fun `history still reads as banded on the old maximum until the statement lands`() {
+        // With no maximum recorded for history, the stored one stands in for it. Written early, that
+        // stand-in would claim history is already on the number it is still being moved to.
+        val preferences = mutablePreferencesOf(PreferencesKeys.MAX_HR to DEFAULT_MAX_HR)
+
+        preferences.beginHeartRateStatement(maxHr = 181, restingHr = null)
+
+        assertEquals(DEFAULT_MAX_HR, userSettingsOf(preferences).historyMaxHr)
+    }
+
+    @Test
+    fun `a maximum already set stays set, and its history stays put, through a statement`() {
+        // Chosen before the flag existed, so the only evidence is the value. A later correction
+        // beside a resting heart rate must neither reopen the one-shot nor move history's maximum.
+        val preferences = mutablePreferencesOf(PreferencesKeys.MAX_HR to 180)
+
+        preferences.beginHeartRateStatement(maxHr = 195, restingHr = 60)
+
+        val settings = userSettingsOf(preferences)
+        assertTrue(settings.maxHrEverSet)
+        assertEquals(195, settings.maxHr)
+        assertEquals(180, settings.historyMaxHr)
+    }
+
+    @Test
+    fun `landing a first set spends the one-shot, records history's maximum and clears the note`() {
+        val preferences = mutablePreferencesOf()
+        preferences.beginHeartRateStatement(maxHr = 181, restingHr = null)
+
+        preferences.landHeartRateStatement(maxHr = 181, restingHr = null, rebandedHistoryAgainst = 181)
+
+        val settings = userSettingsOf(preferences)
+        assertTrue(settings.maxHrEverSet)
+        assertEquals(181, settings.maxHr)
+        assertEquals(181, settings.historyMaxHr)
+        assertNull(preferences[PreferencesKeys.STATEMENT_IN_FLIGHT])
+    }
+
     // --- What a statement of the pair actually stores (#172) ---
 
     @Test
