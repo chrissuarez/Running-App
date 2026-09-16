@@ -40,7 +40,6 @@ class LaunchPassesTest {
             verify(repository).reconcileCoachingWithHistory()
             verify(repository).backfillEffortScores()
             verify(repository).payWhatSegmentTimingOwes()
-            verify(repository).backfillWeather()
             verify(repository).payWhatRunShapesOwe()
         }
         verifyNoMoreInteractions(repository)
@@ -63,7 +62,6 @@ class LaunchPassesTest {
                 "coaching reconciliation",
                 "Effort Score backfill",
                 "Segment-timing debt",
-                "weather backfill",
                 "Run-shape debt",
                 "Route-shape debt",
             ),

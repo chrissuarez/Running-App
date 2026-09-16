@@ -1767,6 +1767,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        // The weather Runs are still owed, asked for every time the app comes to the front rather than
+        // once per process, so a phone that was offline at launch tries again when the runner comes
+        // back to it (#444). Nothing starts while an earlier ask is still going.
+        runningAppContainer().askForOwedWeather()
         Intent(this, HrForegroundService::class.java).also { intent ->
             bindService(intent, connection, Context.BIND_AUTO_CREATE)
         }

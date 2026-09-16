@@ -36,7 +36,7 @@ private data class OpenMeteoHourly(
 )
 
 // Open-Meteo's forecast endpoint only keeps a short recent-past window; anything older is asked
-// of the historical archive endpoint instead (used for launch-time retries of older sessions).
+// of the historical archive endpoint instead (used for backfill retries of older sessions).
 private const val ARCHIVE_CUTOFF_MILLIS = 26L * 60 * 60 * 1000
 
 class OpenMeteoWeatherClient(private val gson: Gson = Gson()) : WeatherClient {
