@@ -27,8 +27,8 @@ would leave the journal thinner.
 - The six waited lines stay as they are: `service-destroyed`, `run-row-created`, `run-row-discarded`,
   `run-stopped`, `run-finalized`, `demoted`.
 - `run-started` and `service-created` do not wait. Each opens an inference and is the missing half of
-  none. (`service-destroyed` and `run-stopped` open inferences too, but wait for being a missing half
-  elsewhere.) The ~40 ms between `run-started` and its waited `run-row-created` (10:18:57.568 and
+  none. (Several waited lines open an inference too; being the missing half of any one is enough
+  to wait.) The ~40 ms between `run-started` and its waited `run-row-created` (10:18:57.568 and
   10:18:57.607 on the phone) stays open on purpose: a process that dies inside it leaves no journal of
   that Run, which is silence, not a false statement.
 - `promoted` and `promotion-refused` do not wait. They are read by which one is present above a
