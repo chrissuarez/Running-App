@@ -30,13 +30,27 @@ import java.time.format.DateTimeFormatter
  * something false, which is worse than a journal that says nothing.
  *
  * So an event whose absence is evidence is waited for where it is written, by [RunJournal.write]
- * itself rather than by each call site remembering to. Marking these five covers every other line
+ * itself rather than by each call site remembering to. Marking these six covers every other line
  * as well: the journal has one writer thread and it is FIFO, so waiting for a decisive line has
- * already landed everything queued in front of it. That is what keeps this set small — an event is
- * marked because its own absence is read, never for being important. [PROMOTED] is the test of
- * that: it matters, and which of it and [PROMOTION_REFUSED] is present is how a hand-back of
- * something never held is told apart — but nothing is concluded from either being missing, so
- * neither waits, and the [DEMOTED] that follows lands them both anyway.
+ * already landed everything queued in front of it.
+ *
+ * The line is drawn by what losing an event does to the journal, not by how much the event matters
+ * (#312). Every inference above has the shape "X with no Y": an opening line whose presence is read,
+ * and a missing line whose absence is. **An event waits exactly when it is the missing half of an
+ * inference written above.** Lose one of those and the journal states the opposite of what
+ * happened — a Run that stopped reads as a Run that died. Lose an opening line and the inference
+ * goes with it: no [RUN_STARTED], so no Run to find a missing stop after, so the journal falls
+ * silent about that Run. Silence is a gap, which is the price every unwaited line already pays;
+ * only a lie is worth a synchronous write. That is why [SERVICE_CREATED] and [RUN_STARTED] do not
+ * wait, though each opens an inference, and why the tens of milliseconds between a [RUN_STARTED]
+ * and its waited [RUN_ROW_CREATED] are left open on purpose.
+ *
+ * [PROMOTED] and [PROMOTION_REFUSED] are the same test. They matter, and which of them is present
+ * is how a hand-back of something never held is told apart — but a `demoted` with neither above it
+ * says nothing either way, so neither waits, and the [DEMOTED] that follows lands them both anyway.
+ *
+ * A new inference joins the list above first, and its missing half is marked because of it. An event
+ * is never marked on the strength of an argument that its loss would leave the journal thinner.
  */
 enum class RunJournalEvent(val token: String, val absenceIsEvidence: Boolean = false) {
 
