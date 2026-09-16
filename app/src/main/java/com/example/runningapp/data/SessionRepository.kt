@@ -817,6 +817,17 @@ class SessionRepository(
         applyStatement(settings, maxHr ?: unlanded?.maxHr, restingHr ?: unlanded?.restingHr)
     }
 
+    /**
+     * Runs [read] with no statement of the heart rates in flight (#501).
+     *
+     * A statement puts its numbers in force as it begins and lands the rest only once history has
+     * moved, so storage read in between says one maximum is in force while history is on another,
+     * with a note to finish it. The archive carries the settings but not the note: exported in that
+     * window, a restore would keep the split with nothing left to heal it. Waiting on
+     * [statedProfile] means the read sees the profile either before a statement or after it.
+     */
+    suspend fun <T> betweenStatements(read: suspend () -> T): T = statedProfile.withLock { read() }
+
     /** The body of [setStatedProfile], once any statement left unlanded is carried underneath. */
     private suspend fun applyStatement(settings: SettingsRepository, maxHr: Int?, restingHr: Int?) {
         val current = settings.userSettingsFlow.first()

@@ -87,7 +87,9 @@ class RunArchiveContents(
         val document = ArchiveDocument(
             createdAtEpochMillis = createdAtEpochMillis,
             databaseVersion = database.openHelper.readableDatabase.version,
-            settings = settingsRepository.userSettingsFlow.first().toArchived(),
+            // Never mid-statement: the archive does not carry the note that would finish one (#501).
+            settings = sessionRepository.betweenStatements { settingsRepository.userSettingsFlow.first() }
+                .toArchived(),
             runs = runs,
             intervalStats = intervalStatDao.getAllIntervalStats()
         )
