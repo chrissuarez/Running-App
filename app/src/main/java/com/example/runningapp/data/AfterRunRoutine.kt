@@ -17,8 +17,8 @@ import com.example.runningapp.run.RunMode
  * what carries it, and WorkManager is what remembers it across a death. The body is here rather
  * than in the worker so the order below can be checked on a laptop.
  *
- * The order is the point, and it is the snapshot that goes first. A missed fetch is retried at the
- * next launch ([SessionRepository.backfillWeather]); a missed snapshot is only ever noticed by
+ * The order is the point, and it is the snapshot that goes first. A missed fetch is retried the next
+ * time the app comes to the front ([SessionRepository.backfillWeather]); a missed snapshot is only ever noticed by
  * a runner who has already cleared their storage. Putting the irrecoverable operation behind the
  * recoverable one is what a weather look-up costs when it goes slowly: the client waits ten seconds
  * to connect and ten more to read, with nothing capping the call as a whole, and a Clear storage
@@ -65,12 +65,12 @@ class AfterRunRoutine(
             return true
         }
 
-        // Swallowed on purpose: see the ordering note above. The launch retry is what covers a
+        // Swallowed on purpose: see the ordering note above. The weather backfill is what covers a
         // fetch that could not be made, and the snapshot it used to sit in front of is already out.
         try {
             fetchWeather(runRowId, latitude, longitude, run.startTime)
         } catch (e: Exception) {
-            Log.w(TAG, "Weather for run $runRowId failed; leaving it to the launch retry", e)
+            Log.w(TAG, "Weather for run $runRowId failed; leaving it to the weather backfill", e)
         }
 
         // The row rather than the fetch, which reports nothing either way. No weather, no reason to

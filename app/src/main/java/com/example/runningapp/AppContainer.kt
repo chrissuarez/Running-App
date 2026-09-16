@@ -364,6 +364,28 @@ class AppContainer(context: Context) {
     }
 
     /**
+     * Asks for the weather every Run is still owed, unless an earlier ask is still working through
+     * its list (#444). Called each time the app comes to the front, cold start included.
+     *
+     * Runs recorded before the weather shipped, or saved offline, have the position and the time to
+     * look one up and nothing stored (#81, #79). Not a launch pass, because it waits on the network:
+     * a phone offline at launch would otherwise leave every Run owed for as long as Android keeps the
+     * process. Minutes of fetching over a whole history, which is why it is on this scope and not a
+     * screen's. It writes five columns nothing else reads and reads none that anything else writes.
+     *
+     * An ask with nothing owed is one read of the owed list, on this scope, off the main thread — the
+     * list only holds finished outdoor Runs with no weather, which on a phone that is keeping up is
+     * none, so it is not worth a second, cheaper question in front of it.
+     */
+    fun askForOwedWeather() {
+        weatherBackfill.startUnlessRunning()
+    }
+
+    private val weatherBackfill by lazy {
+        RepeatablePass(passes, "weather backfill") { sessionRepository.backfillWeather() }
+    }
+
+    /**
      * Puts a newly cut Segment to every Run in history, so it arrives with its efforts and its PR
      * already on it (#70).
      *

@@ -45,7 +45,7 @@ data class WeatherFillTarget(
  *
  * The filters are the three the ticket states: outdoor Runs only, finished Runs only, and only
  * where no weather is stored. That last one is the whole of "a completed run is never re-fetched" —
- * the list is worked out afresh at every launch, so a Run filled by an earlier pass is simply not on
+ * the list is worked out afresh at every pass, so a Run filled by an earlier pass is simply not on
  * it, and a pass killed halfway comes back to the remainder.
  */
 const val RUNS_OWED_WEATHER_SQL: String =
@@ -81,8 +81,8 @@ const val RUNS_OWED_WEATHER_SQL: String =
  * burst is never mistaken for one.
  *
  * The cost of getting this wrong only ever lands one way. A refused request is not an error the
- * runner sees; it comes back as no weather, the Run stays on the work list, and the next launch
- * makes the same refused burst again. Paying a minute or two of waiting, once, on a pass nobody is
- * watching, buys a history that fills.
+ * runner sees; it comes back as no weather, the Run stays on the work list, and the next pass
+ * makes the same refused burst again. Paying a minute or two of waiting on a pass nobody is
+ * watching buys a history that fills.
  */
 const val WEATHER_FETCH_GAP_MILLIS: Long = 250L

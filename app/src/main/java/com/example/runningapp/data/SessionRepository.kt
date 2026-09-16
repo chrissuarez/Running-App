@@ -2258,7 +2258,7 @@ class SessionRepository(
     /**
      * Fetches and persists the weather snapshot for a session. Never throws — a failed or
      * unreachable weather service must not affect the run save it runs after (#79). Failures are
-     * picked up later by [backfillWeather] on a subsequent app launch.
+     * picked up later by [backfillWeather] the next time the app comes to the front.
      */
     suspend fun fetchAndSaveWeather(sessionId: Long, latitude: Double, longitude: Double, atEpochMillis: Long) {
         val client = weatherClient ?: return
@@ -2286,9 +2286,9 @@ class SessionRepository(
      *
      * **Idempotent and resumable, and both for the same reason: the work list is derived, never
      * stored.** [RUNS_OWED_WEATHER_SQL] asks the rows themselves which Runs have no weather, so a
-     * Run an *earlier launch* filled is simply not on the list, and a pass killed halfway leaves the
-     * rest of the list exactly as it found it, to be worked out again and finished at the next
-     * launch. There is no cursor to lose and no marker to get out of step with the rows.
+     * Run an *earlier pass* filled is simply not on the list, and a pass killed halfway leaves the
+     * rest of the list exactly as it found it, to be worked out again and finished by the next
+     * pass. There is no cursor to lose and no marker to get out of step with the rows.
      *
      * **The one Run this can ask about twice is the Run that has just finished**, whose own fetch
      * ([AfterRunRoutine]) may still be in flight when the list is read. No lock stands between them,
@@ -2298,12 +2298,12 @@ class SessionRepository(
      * — [SessionDao.updateWeather] is a plain overwrite, so neither order of the two leaves the row
      * saying anything different.
      *
-     * **A Run whose fetch fails stays on the list** and is tried again at the next launch, which is
-     * what an offline phone needs. [fetchAndSaveWeather] never throws, so one unreachable Run does
+     * **A Run whose fetch fails stays on the list** and is tried again the next time the app comes to the front, which is
+     * what an offline phone needs (#444). [fetchAndSaveWeather] never throws, so one unreachable Run does
      * not end the pass for the Runs behind it.
      *
      * **Nothing counts those attempts or ever gives up on a Run.** A Run could in principle be one
-     * the service has no reading for and be asked about at every launch for ever; the archive covers
+     * the service has no reading for and be asked about at every pass for ever; the archive covers
      * the whole globe back to 1940, so a real position is not that Run, and the cost of being wrong
      * the other way is much worse — a stored give-up would fall on Runs that were only ever offline,
      * and nothing would go back for them again.
@@ -2327,7 +2327,7 @@ class SessionRepository(
             fetchAndSaveWeather(run.sessionId, run.latitude, run.longitude, run.startTime)
         }
         // What was asked, not what landed: a Run the service had nothing for is on the next
-        // launch's list, and this line must not read as though it had been paid.
+        // pass's list, and this line must not read as though it had been paid.
         if (owed.isNotEmpty()) {
             Log.d("Weather", "Weather backfill asked about ${owed.size} run(s)")
         }
@@ -3351,7 +3351,7 @@ class SessionRepository(
      * the coach is usually asked while the fetch is still in flight, and a Run is asked about
      * exactly once and never again ([RunnerSession.stageSettled]) — so a debrief sent a moment too
      * early is a debrief that never mentions the headwind, and no later pass repairs it.
-     * [backfillWeather] mends the row at the next launch, which is a fact for the run detail
+     * [backfillWeather] mends the row the next time the app comes to the front, which is a fact for the run detail
      * page and comes far too late for the coach. So the fetch is pulled forward to here rather than
      * the settlement being made to wait on the worker: the settlement is what puts the runner's
      * next Workout on screen, and holding it behind a backup and an HTTP call would make every

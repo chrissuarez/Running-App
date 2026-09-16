@@ -104,11 +104,8 @@ fun launchPassesOver(
     // itself.
     LaunchPass("Segment-timing debt") { repository().payWhatSegmentTimingOwes() },
 
-    // Runs recorded before the weather shipped, or saved offline, have the position and the time to
-    // look one up and nothing stored (#81, #79). Minutes of fetching over a whole history, which is
-    // why it must not be tied to a screen. It writes five columns nothing else reads and reads none
-    // that anything else writes.
-    LaunchPass("weather backfill") { repository().backfillWeather() },
+    // Not the weather backfill (#81, #79): it waits on the network, so it is asked for every time the
+    // app comes to the front rather than once per process — see [AppContainer.askForOwedWeather] (#444).
 
     // Runs recorded before matched runs shipped have a track and no shape, so nothing would
     // recognise a route run fifty times until it was run again (#73).
