@@ -150,11 +150,15 @@ fun RouteDetailScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = { renaming = true }, enabled = route != null) {
-                        Icon(Icons.Default.Edit, contentDescription = "Rename route")
-                    }
-                    IconButton(onClick = { deleting = true }, enabled = route != null) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete route")
+                    // Looking after a course is Open Routes' job; a page opened to pick one only
+                    // shows it and picks it (#496).
+                    if (onPick == null) {
+                        IconButton(onClick = { renaming = true }, enabled = route != null) {
+                            Icon(Icons.Default.Edit, contentDescription = "Rename route")
+                        }
+                        IconButton(onClick = { deleting = true }, enabled = route != null) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete route")
+                        }
                     }
                 },
             )
@@ -265,11 +269,15 @@ fun RouteDetailScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.weight(1f),
                     )
-                    OutlinedButton(
-                        onClick = { onFlip(route) },
-                        modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
-                    ) {
-                        Text(FLIP_ROUTE_BUTTON_LABEL)
+                    // The arrows still show while picking; turning them round for good does not (#496)
+                    // — Run it backwards on the card turns them for this Run.
+                    if (onPick == null) {
+                        OutlinedButton(
+                            onClick = { onFlip(route) },
+                            modifier = Modifier.heightIn(min = RunningUiTokens.MinTouchTarget),
+                        ) {
+                            Text(FLIP_ROUTE_BUTTON_LABEL)
+                        }
                     }
                 }
             }
@@ -327,7 +335,9 @@ fun RouteDetailScreen(
                 }
             }
 
-            item {
+            // Not while picking (#496): the lengths are already the chips above, and the card is a
+            // door to editing the family.
+            if (onPick == null) item {
                 // Under the numbers rather than beside the name: putting a course in a family is a
                 // thing the runner does once, and the page is mostly about the course itself.
                 Card(

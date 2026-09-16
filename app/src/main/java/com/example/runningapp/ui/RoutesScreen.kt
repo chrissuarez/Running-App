@@ -177,24 +177,28 @@ fun RoutesScreen(
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                modifier = Modifier.onSizeChanged {
-                    importButtonHeight = with(density) { it.height.toDp() }
-                },
-                // Deaf while a file is being read rather than greyed out. An import is usually
-                // instant, so this is a guard against a double tap opening two pickers rather than
-                // a state a runner will sit looking at.
-                onClick = { if (!isImporting) onImport() },
-                expanded = true,
-                icon = {
-                    if (isImporting) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(Icons.Default.Add, contentDescription = null)
-                    }
-                },
-                text = { Text(if (isImporting) "Reading…" else "Import GPX") },
-            )
+            // Not while picking (#496): the start line is for choosing a course, and looking after
+            // the library is Open Routes' job.
+            if (picking == null) {
+                ExtendedFloatingActionButton(
+                    modifier = Modifier.onSizeChanged {
+                        importButtonHeight = with(density) { it.height.toDp() }
+                    },
+                    // Deaf while a file is being read rather than greyed out. An import is usually
+                    // instant, so this is a guard against a double tap opening two pickers rather than
+                    // a state a runner will sit looking at.
+                    onClick = { if (!isImporting) onImport() },
+                    expanded = true,
+                    icon = {
+                        if (isImporting) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.Add, contentDescription = null)
+                        }
+                    },
+                    text = { Text(if (isImporting) "Reading…" else "Import GPX") },
+                )
+            }
         },
     ) { padding ->
         if (rows.isEmpty()) {
@@ -262,7 +266,9 @@ fun RoutesScreen(
                         // forgot all of them would be the most destructive thing on the screen
                         // wearing the same icon as the least. Each length is forgotten from its own
                         // page, where the runner can see which one they are looking at (#421).
-                        onDelete = row.route?.let { route -> { deleting = route.id } },
+                        // No bin while picking either (#496): a course must not be forgotten from the
+                        // start line by a tap meant to choose it.
+                        onDelete = if (picking != null) null else row.route?.let { route -> { deleting = route.id } },
                     )
                 }
                 // Under the library rather than over it (#448). It is an answer to a question a
