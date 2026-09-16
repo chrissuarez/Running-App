@@ -2,6 +2,7 @@ package com.example.runningapp.archive
 
 import android.content.Context
 import com.example.runningapp.SettingsRepository
+import com.example.runningapp.UserSettings
 import com.example.runningapp.data.AppDatabase
 import com.example.runningapp.data.DatabaseBackupManager
 import com.example.runningapp.data.RunWalkIntervalStatDao
@@ -38,11 +39,23 @@ class RunArchiveContents(
     private val appContext = context.applicationContext
 
     suspend fun entries(createdAtEpochMillis: Long): List<ArchiveEntry> {
-        // Read once and used by both halves, so the GPX files and the JSON describe the same set of
-        // runs even if one finishes while the archive is being assembled.
-        val runs = sessionDao.getAllSessions()
-        return runEntries(runs) + jsonEntry(createdAtEpochMillis, runs) + databaseEntry() +
-            journalEntries()
+        val snapshot = File(appContext.cacheDir, SNAPSHOT_FILE_NAME)
+        // Everything a heart-rate statement moves — the settings, the runs' zone times in the JSON,
+        // the database — is copied between statements, so a restore never pairs a profile with
+        // history banded on another (#501). Only the copying is inside the lock; the slow part,
+        // compressing into the runner's folder, streams from these copies afterwards.
+        val (runs, settings) = sessionRepository.betweenStatements {
+            // Read once and used by both halves, so the GPX files and the JSON describe the same
+            // set of runs even if one finishes while the archive is being assembled.
+            val runs = sessionDao.getAllSessions()
+            val settings = settingsRepository.userSettingsFlow.first()
+            // Through the manager, which serialises this against every other snapshot in the app —
+            // the post-run backup and this one must not interleave.
+            DatabaseBackupManager.snapshotTo(database, snapshot)
+            runs to settings
+        }
+        return runEntries(runs) + jsonEntry(createdAtEpochMillis, runs, settings) +
+            databaseEntry(snapshot) + journalEntries()
     }
 
     /**
@@ -82,15 +95,13 @@ class RunArchiveContents(
 
     private suspend fun jsonEntry(
         createdAtEpochMillis: Long,
-        runs: List<RunnerSession>
+        runs: List<RunnerSession>,
+        settings: UserSettings
     ): ArchiveEntry {
         val document = ArchiveDocument(
             createdAtEpochMillis = createdAtEpochMillis,
             databaseVersion = database.openHelper.readableDatabase.version,
-            // Never mid-statement, and never over an unfinished one: the archive does not carry the
-            // note that would finish it (#501).
-            settings = (sessionRepository.settingsBetweenStatements()
-                ?: settingsRepository.userSettingsFlow.first()).toArchived(),
+            settings = settings.toArchived(),
             runs = runs,
             intervalStats = intervalStatDao.getAllIntervalStats()
         )
@@ -100,24 +111,21 @@ class RunArchiveContents(
     /**
      * The database itself, as SQLite writes it out.
      *
-     * Taken to a local file first and streamed into the archive from there, rather than written
-     * straight into the runner's folder: that means compressing and crossing a content provider,
-     * which is slow, and a run finishing halfway through would leave the entry torn across two
-     * versions of the database. Taking it locally is one bulk step — narrow enough that a run would
-     * have to finish inside it, rather than inside the whole backup.
+     * Taken to a local file first, inside the same lock as the settings (see [entries]), and
+     * streamed into the archive from there, rather than written straight into the runner's folder:
+     * that means compressing and crossing a content provider, which is slow, and a run finishing
+     * halfway through would leave the entry torn across two versions of the database. Taking it
+     * locally is one bulk step — narrow enough that a run would have to finish inside it, rather
+     * than inside the whole backup.
      *
      * A snapshot that cannot be taken **fails the archive** (#191) rather than shipping a database
-     * entry the archive cannot vouch for. The exception carries out through [ArchiveZip.write] to
-     * the [Archiver], which deletes the part-written file and reports the backup as failed — so an
-     * archive never exists whose `database/` half lags its own `archive.json`.
+     * entry the archive cannot vouch for. The exception carries out of [entries] to the [Archiver],
+     * which deletes the part-written file and reports the backup as failed — so an archive never
+     * exists whose `database/` half lags its own `archive.json`.
      */
-    private fun databaseEntry(): ArchiveEntry =
+    private fun databaseEntry(snapshot: File): ArchiveEntry =
         ArchiveEntry("${ArchiveZip.DATABASE_DIRECTORY}/${DatabaseBackupManager.DATABASE_NAME}") { out ->
-            val snapshot = File(appContext.cacheDir, SNAPSHOT_FILE_NAME)
             try {
-                // Through the manager, which serialises this against every other snapshot in the
-                // app — the post-run backup and this one must not interleave.
-                DatabaseBackupManager.snapshotTo(database, snapshot)
                 snapshot.inputStream().use { it.copyTo(out) }
             } finally {
                 snapshot.delete()

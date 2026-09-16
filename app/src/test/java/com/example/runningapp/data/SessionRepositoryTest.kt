@@ -2625,10 +2625,7 @@ class SessionRepositoryTest {
         val statement = launch { repositoryWithSamples.setStatedProfile(maxHr = 181, restingHr = null) }
         runCurrent()
         var read = false
-        val archive = launch {
-            repositoryWithSamples.settingsBetweenStatements()
-            read = true
-        }
+        val archive = launch { repositoryWithSamples.betweenStatements { read = true } }
         runCurrent()
 
         assertFalse(read)
@@ -2648,7 +2645,7 @@ class SessionRepositoryTest {
             .thenReturn(flowOf(UserSettings(maxHr = 181, maxHrEverSet = false, historyMaxHr = 190)))
 
         try {
-            repository.settingsBetweenStatements()
+            repository.betweenStatements { }
             fail("read a statement that never landed")
         } catch (expected: IllegalStateException) {
         }
