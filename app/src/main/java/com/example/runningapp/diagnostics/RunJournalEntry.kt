@@ -37,8 +37,8 @@ import java.time.format.DateTimeFormatter
  * An event waits exactly when it is the missing half of an inference written above (#312, ADR
  * 0022). Each has the shape "X with no Y". Losing a Y makes the journal state the opposite of what
  * happened; losing an X takes its inference with it and leaves only silence, which every unwaited
- * line already risks. An event that is both — [SERVICE_DESTROYED], [RUN_STOPPED] — waits for being a
- * Y. So [SERVICE_CREATED] and [RUN_STARTED] do not wait, though each opens an inference, and the
+ * line already risks. Several events are an X in one inference and a Y in another; being a Y
+ * anywhere is enough to wait. So [SERVICE_CREATED] and [RUN_STARTED] do not wait, though each opens an inference, and the
  * tens of milliseconds between a [RUN_STARTED] and its waited [RUN_ROW_CREATED] stay open on purpose.
  *
  * [PROMOTED] and [PROMOTION_REFUSED] are read by which one is present above a [DEMOTED], never by
