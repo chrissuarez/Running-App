@@ -214,6 +214,16 @@ fun runRouteChoiceSummary(route: RouteHeader?, reversed: Boolean): String {
 /** What the pre-run card offers as "follow nothing", and the top of the list of courses. */
 const val NO_ROUTE_CHOICE_LABEL = "No route"
 
+/** What the "No route" card on a picking library says under its name (#496). */
+fun noRouteChoiceSubtitle(nothingPicked: Boolean): String =
+    if (nothingPicked) "Picked · just go for a run" else "Just go for a run"
+
+/** The button on a course's own page that makes it the next Run's course (#496). */
+const val PICK_ROUTE_BUTTON_LABEL = "Run this route"
+
+/** What that button says where this length is the course already picked (#496). */
+const val ROUTE_ALREADY_PICKED_LABEL = "Picked · back to start"
+
 /** The switch that turns the course round, in the runner's words rather than the map's. */
 const val ROUTE_REVERSED_TOGGLE_LABEL = "Run it backwards"
 

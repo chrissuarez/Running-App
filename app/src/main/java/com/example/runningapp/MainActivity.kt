@@ -91,6 +91,9 @@ import com.example.runningapp.ui.SegmentsViewModel
 import com.example.runningapp.ui.SegmentsViewModelFactory
 import com.example.runningapp.routes.RunRouteSaver
 import com.example.runningapp.ui.RoutePickerCard
+import com.example.runningapp.ui.RoutePicking
+import com.example.runningapp.ui.routeLibraryRowsNearestFirst
+import com.example.runningapp.ui.runRouteAfterPick
 import com.example.runningapp.ui.routeSuggestionSinceMillis
 import com.example.runningapp.ui.suggestedRouteDistanceMeters
 import com.example.runningapp.ui.RunRouteSaver
@@ -524,7 +527,7 @@ class MainActivity : ComponentActivity() {
                     LaunchedEffect(pendingRouteFile) {
                         pendingRouteFile?.let { uri ->
                             pendingRouteFile = null
-                            navigateTo(Routes.ROUTE_LIBRARY)
+                            navigateTo(Routes.routeLibrary())
                             routesViewModel.fileChosen(uri)
                         }
                     }
@@ -591,6 +594,23 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
+                    // The picked course's shape, for the pre-run card (#496). Drawn for that one
+                    // course rather than by drawing the whole library, which is work only a runner
+                    // who opens their routes should pay for (#59).
+                    val pickedRouteThumbnail by produceState<com.example.runningapp.analysis.RouteThumbnail?>(
+                        initialValue = null,
+                        key1 = routeChoice?.routeId
+                    ) {
+                        value = null
+                        routeChoice?.routeId?.let { id -> value = routesViewModel.thumbnailOf(id) }
+                    }
+                    // A pick made on a Routes page goes back to the record screen it was made for,
+                    // past every Routes page the runner walked through to make it (#496).
+                    val pickRoute: (Long?) -> Unit = { routeId ->
+                        routeChoice = runRouteAfterPick(routeChoice, routeId)
+                        navController.popBackStack(Routes.MAIN, inclusive = false)
+                    }
+
                     NavHost(navController = navController, startDestination = Routes.MAIN) {
                         composable(Routes.MAIN) {
                             MainScreen(
@@ -603,6 +623,10 @@ class MainActivity : ComponentActivity() {
                                 routes = routeLibrary,
                                 routeChoice = routeChoice,
                                 onRouteChoiceChange = { routeChoice = it },
+                                pickedRouteThumbnail = pickedRouteThumbnail,
+                                onChooseRoute = { targetMeters, targetIsFixed ->
+                                    navigateTo(Routes.routePicker(targetMeters, targetIsFixed))
+                                },
                                 onStartRun = { request ->
                                     // An Outdoor run without location permission would silently
                                     // record 0 km (LocationTracker just logs and returns): ask
@@ -703,7 +727,7 @@ class MainActivity : ComponentActivity() {
                                     navigateTo(Routes.TRAINING_PLAN)
                                 },
                                 onOpenRoutes = {
-                                    navigateTo(Routes.ROUTE_LIBRARY)
+                                    navigateTo(Routes.routeLibrary())
                                 },
                                 onOpenSegments = {
                                     navigateTo(Routes.SEGMENTS)
@@ -1353,7 +1377,19 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
-                        composable(Routes.ROUTE_LIBRARY) {
+                        composable(
+                            route = Routes.ROUTE_LIBRARY,
+                            arguments = listOf(
+                                navArgument(Routes.ARG_PICK) { type = NavType.BoolType; defaultValue = false },
+                                navArgument(Routes.ARG_TARGET_METERS) { type = NavType.FloatType; defaultValue = -1f },
+                                navArgument(Routes.ARG_TARGET_FIXED) { type = NavType.BoolType; defaultValue = false },
+                            )
+                        ) { backStackEntry ->
+                            val arguments = backStackEntry.arguments
+                            val picking = arguments?.getBoolean(Routes.ARG_PICK) == true
+                            val targetMeters = arguments?.getFloat(Routes.ARG_TARGET_METERS)
+                                ?.takeIf { it >= 0f }?.toDouble()
+                            val targetIsFixed = arguments?.getBoolean(Routes.ARG_TARGET_FIXED) == true
                             // Folded: one row per family, the rest a row each (#421).
                             val routeRows by routesViewModel.libraryRows.collectAsState()
                             val importingRoute by routesViewModel.importing.collectAsState()
@@ -1365,13 +1401,32 @@ class MainActivity : ComponentActivity() {
                             // kept course is arithmetic nobody who never opens their routes should
                             // pay for (#59).
                             LaunchedEffect(Unit) { routesViewModel.drawCoursesWhileLibraryIsOpen() }
+                            // Picking sorts towards today's distance (#422, #496); browsing keeps
+                            // the library's own order.
+                            val shownRows = remember(routeRows, routeLibrary, picking, targetMeters, targetIsFixed) {
+                                if (picking) {
+                                    routeLibraryRowsNearestFirst(routeRows, routeLibrary, targetMeters, targetIsFixed)
+                                } else {
+                                    routeRows
+                                }
+                            }
                             RoutesScreen(
-                                rows = routeRows,
+                                rows = shownRows,
+                                picking = if (picking) {
+                                    RoutePicking(
+                                        targetMeters = targetMeters,
+                                        targetIsFixed = targetIsFixed,
+                                        nothingPicked = routeChoice == null,
+                                        onPickNoRoute = { pickRoute(null) },
+                                    )
+                                } else {
+                                    null
+                                },
                                 isImporting = importingRoute,
                                 message = routeMessage,
                                 courseToShow = courseToShow,
                                 onImport = { pickRouteFile.launch(arrayOf("*/*")) },
-                                onOpen = { routeId -> navigateTo(Routes.routeDetail(routeId)) },
+                                onOpen = { routeId -> navigateTo(Routes.routeDetail(routeId, picking)) },
                                 onDelete = { route -> routesViewModel.delete(route) },
                                 onMessageShown = { routesViewModel.messageShown() },
                                 onCourseShown = { ask -> routesViewModel.courseShown(ask) },
@@ -1380,9 +1435,13 @@ class MainActivity : ComponentActivity() {
                         }
                         composable(
                             route = Routes.ROUTE_DETAIL,
-                            arguments = listOf(navArgument(Routes.ARG_ROUTE_ID) { type = NavType.LongType })
+                            arguments = listOf(
+                                navArgument(Routes.ARG_ROUTE_ID) { type = NavType.LongType },
+                                navArgument(Routes.ARG_PICK) { type = NavType.BoolType; defaultValue = false },
+                            )
                         ) { backStackEntry ->
                             val routeId = backStackEntry.arguments?.getLong(Routes.ARG_ROUTE_ID)
+                            val picking = backStackEntry.arguments?.getBoolean(Routes.ARG_PICK) == true
                             // Which of the family's lengths the page is showing (#421).
                             //
                             // Held by the destination rather than by the screen, and remembered
@@ -1473,6 +1532,9 @@ class MainActivity : ComponentActivity() {
                                 onRename = { row, name -> routesViewModel.rename(row, name) },
                                 onDelete = { row -> routesViewModel.delete(row) },
                                 onFlip = { row -> routesViewModel.flip(row.id) },
+                                // Only on a page opened to pick the next Run's course (#496).
+                                onPick = if (picking) { row -> pickRoute(row.id) } else null,
+                                isPicked = routeChoice?.routeId != null && routeChoice?.routeId == shownRouteId,
                                 // A time on a course belongs to a morning, and the page that holds
                                 // the morning is the Run's own (#72, #420).
                                 onOpenRun = { runId -> navigateTo(Routes.sessionDetail(runId)) },
@@ -1777,6 +1839,10 @@ fun MainScreen(
      */
     routeChoice: RunRoute?,
     onRouteChoiceChange: (RunRoute?) -> Unit,
+    /** The picked course's shape, null while it is drawn or where it has none (#496). */
+    pickedRouteThumbnail: com.example.runningapp.analysis.RouteThumbnail?,
+    /** Opening the Routes screens to pick a course, sorted towards today's distance (#496). */
+    onChooseRoute: (targetMeters: Double?, targetIsFixed: Boolean) -> Unit,
     /**
      * The phone changing zone, so the Today card's "Test due" answer arrives when the runner lands
      * rather than at the midnight of the zone they took off from (#320).
@@ -2146,17 +2212,12 @@ fun MainScreen(
                         RoutePickerCard(
                             routes = routes,
                             picked = pickedRoute,
+                            pickedThumbnail = pickedRouteThumbnail,
                             reversed = pickedRouteReversed,
                             targetMeters = routeTargetMeters,
                             targetIsFixed = todaysFixedDistanceMeters != null,
-                            onPick = { routeId ->
-                                // A different course starts pointing the way it is drawn. Carrying
-                                // the last pick's direction over would send the runner backwards
-                                // round a course they never asked to reverse; re-picking the one
-                                // already chosen keeps the direction they set on it.
-                                val keptDirection =
-                                    routeId == routeChoice?.routeId && pickedRouteReversed
-                                onRouteChoiceChange(routeId?.let { RunRoute(it, keptDirection) })
+                            onChoose = {
+                                onChooseRoute(routeTargetMeters, todaysFixedDistanceMeters != null)
                             },
                             onReversedChange = { reversed ->
                                 routeChoice?.let { onRouteChoiceChange(it.copy(reversed = reversed)) }

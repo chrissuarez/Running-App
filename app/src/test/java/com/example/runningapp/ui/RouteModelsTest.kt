@@ -281,4 +281,10 @@ class RouteModelsTest {
         assertTrue(onTheGoMap.note.contains("elevation profile on"))
         assertTrue(onTheGoMap.note.contains("no heights"))
     }
+
+    @Test
+    fun `the No route card says when following nothing is already the choice`() {
+        assertEquals("Picked · just go for a run", noRouteChoiceSubtitle(nothingPicked = true))
+        assertEquals("Just go for a run", noRouteChoiceSubtitle(nothingPicked = false))
+    }
 }
