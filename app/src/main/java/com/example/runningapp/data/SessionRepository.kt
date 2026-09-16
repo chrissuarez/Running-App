@@ -22,6 +22,7 @@ import com.example.runningapp.distanceLabel
 import com.example.runningapp.testWorkout
 import com.example.runningapp.isCoachAdjusted
 import com.example.runningapp.HrProfile
+import com.example.runningapp.UserSettings
 import com.example.runningapp.effectiveMaxHr
 import com.example.runningapp.historyHrProfile
 import com.example.runningapp.hrProfile
@@ -818,15 +819,26 @@ class SessionRepository(
     }
 
     /**
-     * Runs [read] with no statement of the heart rates in flight (#501).
+     * The settings, read with no statement of the heart rates in flight (#501), or null with no
+     * settings store.
      *
      * A statement puts its numbers in force as it begins and lands the rest only once history has
      * moved, so storage read in between says one maximum is in force while history is on another,
      * with a note to finish it. The archive carries the settings but not the note: exported in that
-     * window, a restore would keep the split with nothing left to heal it. Waiting on
-     * [statedProfile] means the read sees the profile either before a statement or after it.
+     * window, a restore would keep the split with nothing left to heal it.
+     *
+     * Waiting on [statedProfile] covers a statement still running. It does not cover one that
+     * released the lock with its note still set — it threw, or a dead process left it for the
+     * launch replay, which may not have taken the lock yet. That state is refused rather than read:
+     * the backup fails, and the monthly job retries it once the note has been finished.
      */
-    suspend fun <T> betweenStatements(read: suspend () -> T): T = statedProfile.withLock { read() }
+    suspend fun settingsBetweenStatements(): UserSettings? = statedProfile.withLock {
+        val settings = settingsRepository ?: return@withLock null
+        check(settings.interruptedStatement() == null) {
+            "A heart-rate change is still being applied to past runs. Try again in a minute."
+        }
+        settings.userSettingsFlow.first()
+    }
 
     /** The body of [setStatedProfile], once any statement left unlanded is carried underneath. */
     private suspend fun applyStatement(settings: SettingsRepository, maxHr: Int?, restingHr: Int?) {
