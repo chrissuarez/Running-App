@@ -2601,6 +2601,40 @@ class SessionRepositoryTest {
         verify(mockSettingsRepo).setStatedHeartRates(eq(190), anyOrNull(), anyOrNull())
     }
 
+    @Test
+    fun `a read between statements waits for one in flight to land`() = runTest {
+        // An archive read mid-statement caught the new maximum in force over history still on the
+        // old one, and a restore of it had no note to finish the re-band (#501).
+        val mockSampleDao: SampleDao = mock()
+        val repositoryWithSamples = SessionRepository(
+            sessionDao = mockDao,
+            sampleDao = mockSampleDao,
+            settingsRepository = mockSettingsRepo
+        )
+        whenever(mockSettingsRepo.userSettingsFlow)
+            .thenReturn(flowOf(UserSettings(maxHr = 190, maxHrEverSet = false, historyMaxHr = 190)))
+        whenever(mockDao.getFinalizedSessionIds()).thenReturn(listOf(7L))
+        whenever(mockSampleDao.getRawBpmsForSession(7L)).thenReturn(listOf(140))
+        // Parks the statement after it has begun and before it lands.
+        val heldMidStatement = CompletableDeferred<Unit>()
+        mockSettingsRepo.stub {
+            onBlocking { setStatedHeartRates(any(), anyOrNull(), anyOrNull()) }
+                .doSuspendableAnswer { heldMidStatement.await() }
+        }
+
+        val statement = launch { repositoryWithSamples.setStatedProfile(maxHr = 181, restingHr = null) }
+        runCurrent()
+        var read = false
+        val archive = launch { repositoryWithSamples.betweenStatements { read = true } }
+        runCurrent()
+
+        assertFalse(read)
+
+        heldMidStatement.complete(Unit)
+        listOf(statement, archive).joinAll()
+        assertTrue(read)
+    }
+
     // --- What the coach may prescribe (#113) ---
 
     @Test
