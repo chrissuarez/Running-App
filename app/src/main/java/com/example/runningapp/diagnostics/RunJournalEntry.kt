@@ -34,23 +34,19 @@ import java.time.format.DateTimeFormatter
  * as well: the journal has one writer thread and it is FIFO, so waiting for a decisive line has
  * already landed everything queued in front of it.
  *
- * The line is drawn by what losing an event does to the journal, not by how much the event matters
- * (#312). Every inference above has the shape "X with no Y": an opening line whose presence is read,
- * and a missing line whose absence is. **An event waits exactly when it is the missing half of an
- * inference written above.** Lose one of those and the journal states the opposite of what
- * happened — a Run that stopped reads as a Run that died. Lose an opening line and the inference
- * goes with it: no [RUN_STARTED], so no Run to find a missing stop after, so the journal falls
- * silent about that Run. Silence is a gap, which is the price every unwaited line already pays;
- * only a lie is worth a synchronous write. That is why [SERVICE_CREATED] and [RUN_STARTED] do not
- * wait, though each opens an inference, and why the tens of milliseconds between a [RUN_STARTED]
- * and its waited [RUN_ROW_CREATED] are left open on purpose.
+ * An event waits exactly when it is the missing half of an inference written above (#312, ADR
+ * 0022). Each has the shape "X with no Y". Losing a Y makes the journal state the opposite of what
+ * happened; losing an X takes its inference with it and leaves only silence, which every unwaited
+ * line already risks. An event that is both — [SERVICE_DESTROYED], [RUN_STOPPED] — waits for being a
+ * Y. So [SERVICE_CREATED] and [RUN_STARTED] do not wait, though each opens an inference, and the
+ * tens of milliseconds between a [RUN_STARTED] and its waited [RUN_ROW_CREATED] stay open on purpose.
  *
- * [PROMOTED] and [PROMOTION_REFUSED] are the same test. They matter, and which of them is present
- * is how a hand-back of something never held is told apart — but a `demoted` with neither above it
- * says nothing either way, so neither waits, and the [DEMOTED] that follows lands them both anyway.
+ * [PROMOTED] and [PROMOTION_REFUSED] are read by which one is present above a [DEMOTED], never by
+ * absence, so neither waits. Nor need they: the [DEMOTED] they are read against waits, and the FIFO
+ * writer lands them before it. They can only be lost with no `demoted` after them to misread.
  *
- * A new inference joins the list above first, and its missing half is marked because of it. An event
- * is never marked on the strength of an argument that its loss would leave the journal thinner.
+ * A new event waits only once an inference that reads its absence is written above — never on the
+ * argument that losing it would leave the journal thinner.
  */
 enum class RunJournalEvent(val token: String, val absenceIsEvidence: Boolean = false) {
 
