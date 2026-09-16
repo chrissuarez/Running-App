@@ -12,6 +12,14 @@ Issues live in GitHub Issues for `chrissuarez/Running-App`, operated via the `gh
 
 Default vocabulary — the five canonical roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`) used as-is. See `docs/agents/triage-labels.md`.
 
+### Before `/implement` writes code — ask the open decision first
+
+Chris types `/implement <n>` without checking the ticket's state. So before the first edit, read the
+ticket's labels and body. If it is labelled `needs-triage`, or its body lists options under "Idea to
+grill" or any open choice, ask Chris that decision first (AskUserQuestion, 2 options max,
+recommendation first, plain words). Build only after he answers. A ticket that is already clear
+needs no questions — start the work.
+
 ### Codex review loop
 
 `/codex-loop [PR]` drives a PR through Codex review until it is clean or the findings have become
