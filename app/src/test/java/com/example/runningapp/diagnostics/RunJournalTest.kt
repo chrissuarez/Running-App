@@ -10,6 +10,7 @@ import kotlin.concurrent.thread
 import kotlin.system.measureTimeMillis
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -169,6 +170,39 @@ class RunJournalTest {
         RunJournalEvent.DEMOTED to
             "a destroy with a live Run and no demoted above it: the system took the service",
     )
+
+    /**
+     * The lines an inference in [readByTheirAbsence] opens from, and are never the missing half of
+     * one (#312).
+     *
+     * Their presence is read, not their absence. One lost with the process takes its inference with
+     * it — there is no `run-started` to find a missing `run-stopped` after — so the journal falls
+     * silent about that Run rather than saying something false about it. That is a gap, which is the
+     * price every unwaited line already pays, and not a lie, which is the one thing a wait is for.
+     */
+    private val openInferencesOnly = mapOf(
+        RunJournalEvent.SERVICE_CREATED to
+            "lost, there is no service-created to find a missing service-destroyed above",
+        RunJournalEvent.RUN_STARTED to
+            "lost, there is no Run to find a missing run-row-created or run-stopped for",
+        RunJournalEvent.PROMOTED to
+            "lost, a demoted has neither promoted nor promotion-refused above it, which says " +
+                "nothing either way",
+        RunJournalEvent.PROMOTION_REFUSED to
+            "lost, a demoted has neither promoted nor promotion-refused above it, which says " +
+                "nothing either way",
+    )
+
+    @Test
+    fun `a line that only opens an inference does not wait`() {
+        openInferencesOnly.forEach { (event, why) ->
+            assertFalse(
+                "${event.token} waits, but nothing is concluded from its absence — $why — so " +
+                    "the wait buys a journal that is only less silent, one sync at a time",
+                event.absenceIsEvidence,
+            )
+        }
+    }
 
     @Test
     fun `the events that wait are exactly the ones the journal is read backwards from`() {
