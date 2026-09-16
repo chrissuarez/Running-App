@@ -1769,7 +1769,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         // The weather Runs are still owed, asked for every time the app comes to the front rather than
         // once per process, so a phone that was offline at launch tries again when the runner comes
-        // back to it (#444). Nothing starts while an earlier ask is still going.
+        // back to it (#444). An ask while one is still going runs once it ends.
         runningAppContainer().askForOwedWeather()
         Intent(this, HrForegroundService::class.java).also { intent ->
             bindService(intent, connection, Context.BIND_AUTO_CREATE)

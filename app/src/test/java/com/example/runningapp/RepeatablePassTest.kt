@@ -32,21 +32,33 @@ class RepeatablePassTest {
     }
 
     @Test
-    fun `an ask while the pass is still running starts nothing`() = runTest {
+    fun `asks while the pass is still running become one more pass after it`() = runTest {
         var runs = 0
         val gate = CompletableDeferred<Unit>()
-        val pass = RepeatablePass(passesOn(this), "test") { runs++; gate.await() }
+        val pass = RepeatablePass(passesOn(this), "test") { runs++; if (runs == 1) gate.await() }
 
         assertTrue(pass.startUnlessRunning())
         advanceUntilIdle()
         assertFalse(pass.startUnlessRunning())
+        assertFalse(pass.startUnlessRunning())
+        advanceUntilIdle()
+        assertEquals(1, runs)
+
         gate.complete(Unit)
         advanceUntilIdle()
 
-        assertEquals(1, runs)
-        assertTrue(pass.startUnlessRunning())
-        advanceUntilIdle()
         assertEquals(2, runs)
+    }
+
+    @Test
+    fun `a pass with no ask during it is not followed by another`() = runTest {
+        var runs = 0
+        val pass = RepeatablePass(passesOn(this), "test") { runs++ }
+
+        pass.startUnlessRunning()
+        advanceUntilIdle()
+
+        assertEquals(1, runs)
     }
 
     @Test

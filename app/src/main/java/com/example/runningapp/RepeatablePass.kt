@@ -16,6 +16,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * over the same list would ask the service twice for every Run. A second attempt after the first has
  * finished is the whole point.
  *
+ * **An ask that lands while a pass is running is kept, not dropped.** The running pass read its list
+ * before that ask, and a Run it already tried while the phone was offline is not tried again inside
+ * it — so the runner coming back to the app with signal is exactly the ask that must still be paid.
+ * Any number of such asks become one more pass, started when the running one ends. A pass that
+ * starts clears the kept ask, because it reads its list after every ask made before it.
+ *
  * Cleared when the pass's [kotlinx.coroutines.Job] completes, however it completes — so a pass that
  * fails, or is cancelled before its body ever ran, still lets the next ask through.
  */
@@ -25,11 +31,24 @@ class RepeatablePass(
     private val work: suspend () -> Unit,
 ) {
     private val running = AtomicBoolean(false)
+    private val askedWhileRunning = AtomicBoolean(false)
 
-    /** Starts the pass unless one is still running. Returns whether it started one. */
+    /**
+     * Starts the pass unless one is still running, in which case one more pass follows it. Returns
+     * whether it started one now.
+     */
     fun startUnlessRunning(): Boolean {
-        if (!running.compareAndSet(false, true)) return false
-        passes.launch(name, work).invokeOnCompletion { running.set(false) }
+        if (!running.compareAndSet(false, true)) {
+            askedWhileRunning.set(true)
+            // The running pass may have ended between the check and the mark, and seen no mark.
+            if (!running.get() && askedWhileRunning.getAndSet(false)) return startUnlessRunning()
+            return false
+        }
+        askedWhileRunning.set(false)
+        passes.launch(name, work).invokeOnCompletion {
+            running.set(false)
+            if (askedWhileRunning.getAndSet(false)) startUnlessRunning()
+        }
         return true
     }
 }
