@@ -19,9 +19,12 @@ package com.example.runningapp
  * it — so the runner coming back to the app with signal is exactly the ask that must still be paid.
  * Any number of such asks become one more pass, started when the running one ends.
  *
- * **One lock, and the hand-off never lets go of it.** A pass that ends with an ask kept starts the
- * follow-up without ever marking itself not running, so no ask can slip into the gap and start a
- * pass of its own beside it — which would leave the kept ask to start a third.
+ * **A pass covers every ask made before its body begins**, so the body's first act is to clear the
+ * kept ask, under the same lock the asks take. That is the one rule, and it holds wherever the ask
+ * lands: while the last pass was running, in its hand-off, or before this one has been scheduled.
+ * An ask in the instant between that clear and the pass reading its list costs one more pass —
+ * never a lost ask, which is the failure that matters. The hand-off itself keeps the pass marked
+ * running, so two passes never run side by side.
  *
  * Handed on when the pass's [kotlinx.coroutines.Job] completes, however it completes — so a pass that
  * fails, or is cancelled before its body ever ran, still lets the next ask through.
@@ -52,7 +55,10 @@ class RepeatablePass(
     }
 
     private fun launchPass() {
-        passes.launch(name, work).invokeOnCompletion {
+        passes.launch(name) {
+            synchronized(lock) { askedWhileRunning = false }
+            work()
+        }.invokeOnCompletion {
             val again = synchronized(lock) {
                 if (askedWhileRunning) {
                     askedWhileRunning = false

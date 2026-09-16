@@ -51,6 +51,19 @@ class RepeatablePassTest {
     }
 
     @Test
+    fun `an ask before a started pass has begun is covered by that pass`() = runTest {
+        var runs = 0
+        val pass = RepeatablePass(passesOn(this), "test") { runs++ }
+
+        assertTrue(pass.startUnlessRunning())
+        // Started but not yet run: its list is still to be read, so it covers this ask.
+        assertFalse(pass.startUnlessRunning())
+        advanceUntilIdle()
+
+        assertEquals(1, runs)
+    }
+
+    @Test
     fun `a pass with no ask during it is not followed by another`() = runTest {
         var runs = 0
         val pass = RepeatablePass(passesOn(this), "test") { runs++ }
