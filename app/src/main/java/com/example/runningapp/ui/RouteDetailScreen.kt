@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -74,8 +75,9 @@ private val MapHeight = 220.dp
  * target: the row itself, which opens this page.
  *
  * There is deliberately no "start a run on this course" button. Starting a Run reaches into the run
- * screen and its settings, which is a second feature — the course is picked before START, where it
- * already is (#56).
+ * screen and its settings, which is a second feature. What there is, on a page opened from the
+ * pre-run card, is a button that picks the length on show for the next Run and goes back to START
+ * ([onPick], #496) — the pick is still made where #56 made it, for the Run about to begin.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -125,6 +127,13 @@ fun RouteDetailScreen(
     onDelete: (RouteHeader) -> Unit,
     /** Turning the course round for good, or back again (#466). */
     onFlip: (RouteHeader) -> Unit,
+    /**
+     * Picking the length on show for the next Run, or null where the page was not opened to pick
+     * (#496). The button is drawn only where this is non-null.
+     */
+    onPick: ((RouteHeader) -> Unit)? = null,
+    /** Whether the length on show is already the next Run's course, which changes the button's words. */
+    isPicked: Boolean = false,
     onBack: () -> Unit,
 ) {
     var renaming by rememberSaveable { mutableStateOf(false) }
@@ -221,6 +230,22 @@ fun RouteDetailScreen(
                             line = runOrder,
                             modifier = Modifier.fillMaxSize(),
                         )
+                    }
+                }
+            }
+
+            onPick?.let { pick ->
+                item {
+                    // Under the map and the chips, because the runner picks the length they have
+                    // just looked at; above the direction row, because the pick is what they came
+                    // to this page for (#496).
+                    Button(
+                        onClick = { pick(route) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = RunningUiTokens.MinTouchTarget),
+                    ) {
+                        Text(if (isPicked) ROUTE_ALREADY_PICKED_LABEL else PICK_ROUTE_BUTTON_LABEL)
                     }
                 }
             }

@@ -60,6 +60,22 @@ import com.example.runningapp.ui.theme.RunningAppTheme
 import com.example.runningapp.ui.theme.RunningUiTokens
 
 /**
+ * The Routes screens opened from the pre-run card to pick the next Run's course (#496).
+ *
+ * The same library a runner browses, not a copy of it: a course is picked by its shape, its lengths
+ * and the Runs already on it, and these screens are where all three already are. The pick itself is
+ * made on a course's own page; the library only adds the two things a start line needs above the
+ * list — today's likely distance, which the rows are sorted towards, and a way to follow no course.
+ */
+data class RoutePicking(
+    val targetMeters: Double?,
+    val targetIsFixed: Boolean,
+    /** Whether the next Run follows no course now, so "No route" can say it is the current choice. */
+    val nothingPicked: Boolean,
+    val onPickNoRoute: () -> Unit,
+)
+
+/**
  * The Route library: every course the runner keeps, and the one way into it (#54).
  *
  * Deliberately thin. Everything it prints comes from [routeRowSubtitle] and its neighbours in
@@ -76,6 +92,8 @@ fun RoutesScreen(
      * [routeLibraryRows].
      */
     rows: List<RouteLibraryRow>,
+    /** Non-null where the library was opened to pick the next Run's course (#496). */
+    picking: RoutePicking? = null,
     isImporting: Boolean,
     message: String?,
     /**
@@ -148,7 +166,7 @@ fun RoutesScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Routes") },
+                title = { Text(if (picking != null) "Choose a route" else "Routes") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Default.ArrowBack, contentDescription = "Back")
@@ -228,6 +246,11 @@ fun RoutesScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(RunningUiTokens.SectionSpacing),
             ) {
+                // Above the list and part of it, so following nothing is one of the choices and the
+                // order below has its reason on screen (#422, #496).
+                picking?.let { pick ->
+                    item(key = "pick-no-route") { NoRouteChoice(pick) }
+                }
                 // Told apart by kind as well as by value, so a family a runner named "5" and the
                 // course whose id is 5 cannot be handed the same key.
                 items(rows, key = { row -> row.family?.let { "family:$it" } ?: "route:${row.openRouteId}" }) { row ->
@@ -269,6 +292,38 @@ fun RoutesScreen(
                 TextButton(onClick = { deleting = null }) { Text("Cancel") }
             },
         )
+    }
+}
+
+/**
+ * The top of a picking library (#496): today's likely distance, then "No route".
+ *
+ * "No route" is a card of its own rather than a button in the bar, so going back to following
+ * nothing is found the same way as any course — at the top of the list.
+ */
+@Composable
+private fun NoRouteChoice(picking: RoutePicking) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        picking.targetMeters?.let { RouteSuggestionHintLine(it, picking.targetIsFixed) }
+        Card(modifier = Modifier.fillMaxWidth().clickable(onClick = picking.onPickNoRoute)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = RunningUiTokens.MinTouchTarget)
+                    .padding(RunningUiTokens.CardPadding),
+            ) {
+                Text(
+                    text = NO_ROUTE_CHOICE_LABEL,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = noRouteChoiceSubtitle(picking.nothingPicked),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 

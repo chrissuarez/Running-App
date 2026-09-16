@@ -7,6 +7,15 @@ object Routes {
     const val ARG_SEGMENT_ID = "segmentId"
     const val ARG_ROUTE_ID = "routeId"
 
+    /** Whether a Routes screen was opened to pick the next Run's course (#496). */
+    const val ARG_PICK = "pick"
+
+    /** Today's likely distance in metres, below zero for none — what a picking library sorts by. */
+    const val ARG_TARGET_METERS = "targetMeters"
+
+    /** Whether the plan stated [ARG_TARGET_METERS] rather than the phone estimating it (#422). */
+    const val ARG_TARGET_FIXED = "targetFixed"
+
     const val MAIN = "main"
     const val SETTINGS = "settings"
     const val MANAGE_DEVICES = "manage_devices"
@@ -17,13 +26,14 @@ object Routes {
     const val MAP = "map"
 
     /** The Route library (#54) — the courses the runner keeps, not one of these screen addresses. */
-    const val ROUTE_LIBRARY = "route_library"
+    const val ROUTE_LIBRARY =
+        "route_library?$ARG_PICK={$ARG_PICK}&$ARG_TARGET_METERS={$ARG_TARGET_METERS}&$ARG_TARGET_FIXED={$ARG_TARGET_FIXED}"
 
     /**
      * One course's own page (#420) — its map, its numbers and the Runs remembered on it, addressed
      * by the course itself.
      */
-    const val ROUTE_DETAIL = "route_detail/{$ARG_ROUTE_ID}"
+    const val ROUTE_DETAIL = "route_detail/{$ARG_ROUTE_ID}?$ARG_PICK={$ARG_PICK}"
 
     /** The Segments collection (#69) — the stretches of ground the runner has named. */
     const val SEGMENTS = "segments"
@@ -57,7 +67,18 @@ object Routes {
 
     fun segmentDetail(segmentId: Long): String = "segment_detail/$segmentId"
 
-    fun routeDetail(routeId: Long): String = "route_detail/$routeId"
+    fun routeDetail(routeId: Long, picking: Boolean = false): String =
+        "route_detail/$routeId?$ARG_PICK=$picking"
+
+    /** The library to browse and look after — the "Open Routes" door (#54). */
+    fun routeLibrary(): String = "route_library"
+
+    /**
+     * The same library opened from the pre-run card to pick a course (#496), sorted towards
+     * [targetMeters] where there is one.
+     */
+    fun routePicker(targetMeters: Double?, targetIsFixed: Boolean): String =
+        "route_library?$ARG_PICK=true&$ARG_TARGET_METERS=${targetMeters ?: -1.0}&$ARG_TARGET_FIXED=$targetIsFixed"
 
     fun segmentCreate(sessionId: Long): String = "segment_create/$sessionId"
 

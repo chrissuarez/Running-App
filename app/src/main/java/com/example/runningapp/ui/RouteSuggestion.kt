@@ -4,6 +4,7 @@ import com.example.runningapp.RunType
 import com.example.runningapp.TrainingPlanProvider
 import com.example.runningapp.WorkoutTemplate
 import com.example.runningapp.data.RouteHeader
+import com.example.runningapp.routes.routeFamilyKey
 import com.example.runningapp.data.RunPaceRow
 import com.example.runningapp.data.averagePaceMinPerKm
 import com.example.runningapp.plannedSeconds
@@ -227,10 +228,9 @@ fun routeSuggestionHint(targetMeters: Double, targetIsFixed: Boolean = false): S
  * being lax costs them a Test they cannot complete. Neither number is exact either way, so the
  * cheaper mistake is the one that only moves a row.
  *
- * A family needs no case of its own here. The picker lists every length as its own row, so
- * siblings are ranked one by one against the target and the closest of them is simply the one that
- * comes first — which is both "rank on the closest sibling" and "open on it", with no folding for
- * the runner to reach through on a start line.
+ * A family needs no case of its own here: siblings are ranked one by one against the target. The
+ * picker folds them into one row afterwards and places that row by its closest sibling
+ * ([routeLibraryRowsNearestFirst], #496).
  *
  * Ties keep the order they arrived in, fixed target or not: `sortedWith` is stable (it is
  * `java.util.List.sort`, a merge sort), and the comparator below only ever compares the two derived
@@ -251,4 +251,34 @@ fun routesNearestFirst(
         compareBy<RouteHeader> { if (it.distanceMeters >= targetMeters) 0 else 1 }
             .thenBy { abs(it.distanceMeters - targetMeters) }
     )
+}
+
+/**
+ * The folded library in the order a runner picking a course reads it (#496): each row placed by the
+ * member of it that fits today best.
+ *
+ * The picker is the Routes screen itself now, so a family is one row there as it is everywhere else,
+ * and the runner chooses the length on the family's own page. The row still has to sit where its
+ * best length would have sat, so the ranking is [routesNearestFirst]'s — same middle, same floor on a
+ * stated distance — and a row goes where its highest-ranked member lands. Ties keep the library's
+ * order, as they do there.
+ *
+ * [routes] is every course the rows were folded from; a family row is matched to its members by
+ * [com.example.runningapp.routes.routeFamilyKey], which is what [routeLibraryRows] folded on.
+ */
+fun routeLibraryRowsNearestFirst(
+    rows: List<RouteLibraryRow>,
+    routes: List<RouteHeader>,
+    targetMeters: Double?,
+    targetIsFixed: Boolean = false,
+): List<RouteLibraryRow> {
+    if (targetMeters == null) return rows
+    val rank = routesNearestFirst(routes, targetMeters, targetIsFixed)
+        .withIndex()
+        .associate { (index, route) -> route.id to index }
+    val ranked = routes.groupBy { routeFamilyKey(it) }
+    return rows.sortedBy { row ->
+        val members = row.family?.let { ranked[it] } ?: listOfNotNull(row.route)
+        members.minOfOrNull { rank[it.id] ?: Int.MAX_VALUE } ?: Int.MAX_VALUE
+    }
 }

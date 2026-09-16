@@ -40,4 +40,21 @@ class RunRouteSaverTest {
     fun `no course picked comes back as no course`() {
         assertNull(roundTrip(null))
     }
+
+    // ---- what a pick made on a route's own page leaves behind (#496) ----
+
+    @Test
+    fun `picking a different course starts it the usual way round`() {
+        assertEquals(RunRoute(7L, false), runRouteAfterPick(RunRoute(3L, true), 7L))
+    }
+
+    @Test
+    fun `picking the course already chosen keeps the direction set on it`() {
+        assertEquals(RunRoute(3L, true), runRouteAfterPick(RunRoute(3L, true), 3L))
+    }
+
+    @Test
+    fun `picking no route clears the choice`() {
+        assertNull(runRouteAfterPick(RunRoute(3L, true), null))
+    }
 }

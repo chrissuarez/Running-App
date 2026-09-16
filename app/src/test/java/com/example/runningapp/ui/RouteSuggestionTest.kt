@@ -262,8 +262,8 @@ class RouteSuggestionTest {
 
     @Test
     fun `a family's closest length comes first, and the rest of it follows`() {
-        // Three lengths of one course, plus a stranger. The picker lists lengths one by one, so the
-        // sibling nearest today is simply the row at the top — no folding to reach through.
+        // Three lengths of one course, plus a stranger. Ranked one by one, the sibling nearest today
+        // is first — which is what places the family's folded row (#496).
         val routes = listOf(
             header(id = 1, distanceMeters = 5_000.0, family = "Cuckoo Trail"),
             header(id = 2, distanceMeters = 8_000.0, family = "Cuckoo Trail"),
@@ -365,5 +365,57 @@ class RouteSuggestionTest {
     fun `a run's kind is its workout's`() {
         assertEquals(RunType.EASY, TrainingPlanProvider.runTypeOfRecordedRun(stage, easyRun))
         assertEquals(RunType.LONG, TrainingPlanProvider.runTypeOfRecordedRun(stage, longRun))
+    }
+
+    // ---- the order of the folded library, when a route is being picked (#496) ----
+
+    private fun lone(route: RouteHeader) = RouteLibraryRow(
+        title = route.name, subtitle = "", thumbnail = null, openRouteId = route.id,
+        family = null, lengthCount = 1, route = route,
+    )
+
+    private fun family(name: String, vararg lengths: RouteHeader) = RouteLibraryRow(
+        title = name, subtitle = "", thumbnail = null,
+        openRouteId = lengths.minBy { it.distanceMeters }.id,
+        family = name, lengthCount = lengths.size, route = null,
+    )
+
+    @Test
+    fun `a family is placed by its closest length`() {
+        val stranger = header(id = 1, distanceMeters = 6_000.0)
+        val short = header(id = 2, distanceMeters = 5_000.0, family = "Cuckoo Trail")
+        val middle = header(id = 3, distanceMeters = 7_400.0, family = "Cuckoo Trail")
+        val long = header(id = 4, distanceMeters = 12_000.0, family = "Cuckoo Trail")
+        val rows = listOf(lone(stranger), family("Cuckoo Trail", short, middle, long))
+
+        val offered = routeLibraryRowsNearestFirst(
+            rows, listOf(stranger, short, middle, long), targetMeters = 7_500.0,
+        )
+
+        assertEquals(listOf("Cuckoo Trail", "Route 1"), offered.map { it.title })
+    }
+
+    @Test
+    fun `no target leaves the folded library in its own order`() {
+        val a = header(id = 1, distanceMeters = 12_000.0)
+        val b = header(id = 2, distanceMeters = 5_000.0)
+        val rows = listOf(lone(a), lone(b))
+
+        assertEquals(rows, routeLibraryRowsNearestFirst(rows, listOf(a, b), targetMeters = null))
+    }
+
+    @Test
+    fun `on a test a family with a long enough length beats a nearer lone course that is short`() {
+        val shortLone = header(id = 1, distanceMeters = 4_990.0)
+        val familyShort = header(id = 2, distanceMeters = 3_000.0, family = "Loop")
+        val familyLong = header(id = 3, distanceMeters = 5_400.0, family = "Loop")
+        val rows = listOf(lone(shortLone), family("Loop", familyShort, familyLong))
+
+        val offered = routeLibraryRowsNearestFirst(
+            rows, listOf(shortLone, familyShort, familyLong),
+            targetMeters = 5_000.0, targetIsFixed = true,
+        )
+
+        assertEquals(listOf("Loop", "Route 1"), offered.map { it.title })
     }
 }

@@ -214,6 +214,14 @@ class RoutesViewModel(
     suspend fun line(routeId: Long): List<MapFix> = library.line(routeId)
 
     /**
+     * One course's drawing, for the pre-run card that names it (#496) — the library's drawing if it
+     * has been made, and otherwise drawn for this course alone.
+     */
+    suspend fun thumbnailOf(routeId: Long): RouteThumbnail? =
+        if (routeId in thumbnails.value) thumbnails.value[routeId]
+        else library.thumbnailsOf(listOf(routeId))[routeId]
+
+    /**
      * Every Run on one course, as its page prints them (#420, #74) — empty where the course is gone.
      *
      * Built here rather than in the composable so [repeatedOn] can do its work: a zone change emits

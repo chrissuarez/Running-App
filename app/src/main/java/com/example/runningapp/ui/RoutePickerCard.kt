@@ -1,5 +1,6 @@
 package com.example.runningapp.ui
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -7,30 +8,20 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.selection.selectable
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import com.example.runningapp.analysis.RouteThumbnail
 import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.run.RunRoute
 import com.example.runningapp.ui.theme.RunningUiTokens
@@ -55,6 +46,16 @@ val RunRouteSaver: Saver<RunRoute?, Any> = listSaver(
 )
 
 /**
+ * The choice a pick leaves behind (#56, #496): [routeId] the course tapped, null for no route.
+ *
+ * A different course starts pointing its usual way. Carrying the last pick's direction over would
+ * send the runner backwards round a course they never asked to reverse; re-picking the one already
+ * chosen keeps the direction they set on it.
+ */
+fun runRouteAfterPick(previous: RunRoute?, routeId: Long?): RunRoute? =
+    routeId?.let { RunRoute(it, reversed = it == previous?.routeId && previous.reversed) }
+
+/**
  * The pre-run route picker (#56): which course this Run will follow, and which way round.
  *
  * Outdoor only, and offered by the screen rather than decided by it — a treadmill Run follows no
@@ -67,14 +68,18 @@ val RunRouteSaver: Saver<RunRoute?, Any> = listSaver(
  * which is the truth, rather than naming a row that has gone.
  *
  * [targetMeters] is how far today's session is likely to cover, or null where too little history
- * has been recorded to say (#422) — see [suggestedRouteDistanceMeters]. It does two things and
- * nothing else: it prints a hint, and it orders the list nearest-first. It never picks: the runner
- * still taps, because the target is usually derived from a median and the runner knows things about
- * today that the median does not.
+ * has been recorded to say (#422) — see [suggestedRouteDistanceMeters]. It prints a hint here, and
+ * the Routes screens [onChoose] opens sort by it. It never picks: the runner still taps, because the
+ * target is usually derived from a median and the runner knows things about today that the median
+ * does not.
+ *
+ * The choosing itself happens on the Routes screens rather than in a dialog of names (#496): a
+ * runner picks a course by its shape, its lengths and the Runs already on it, and those screens
+ * already show all three.
  *
  * [targetIsFixed] says the plan stated that distance rather than the phone estimating it, which is
  * the Test days. It changes both the things [targetMeters] does: the hint's wording
- * ([routeSuggestionHint]) and the order ([routesNearestFirst]), because a stated distance is a floor
+ * ([routeSuggestionHint]) and the picking library's order ([routeLibraryRowsNearestFirst]), because a stated distance is a floor
  * the Run has to reach rather than a middle to be nearest to, so a course short of it is offered
  * after every course that is long enough. It is carried as its own flag rather than worked out from
  * the number here, because "is this a distance the plan holds" is a question about the plan and this
@@ -84,21 +89,15 @@ val RunRouteSaver: Saver<RunRoute?, Any> = listSaver(
 fun RoutePickerCard(
     routes: List<RouteHeader>,
     picked: RouteHeader?,
+    /** [picked]'s shape, null while it is being drawn or where the course has none (#496). */
+    pickedThumbnail: RouteThumbnail?,
     reversed: Boolean,
     targetMeters: Double?,
     targetIsFixed: Boolean,
-    onPick: (Long?) -> Unit,
+    /** Opening the Routes screens to pick from — see [RoutePicking]. */
+    onChoose: () -> Unit,
     onReversedChange: (Boolean) -> Unit
 ) {
-    var choosing by rememberSaveable { mutableStateOf(false) }
-    // Remembered rather than sorted on every recomposition: the library re-emits for reasons that
-    // have nothing to do with today's distance, and the order only moves when one of these three
-    // does. targetIsFixed is a key because it changes the order and not only the words: leave it out
-    // and a target that becomes stated keeps yesterday's symmetric order.
-    val offered = remember(routes, targetMeters, targetIsFixed) {
-        routesNearestFirst(routes, targetMeters, targetIsFixed)
-    }
-
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(RunningUiTokens.CardPadding)) {
             Text("Route", style = MaterialTheme.typography.labelLarge)
@@ -110,10 +109,21 @@ fun RoutePickerCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             } else {
-                Text(
-                    text = runRouteChoiceSummary(picked, reversed),
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // The square only where there is a course, held open while its drawing is
+                    // worked out so the words do not jump sideways when it arrives (#496).
+                    if (picked != null) {
+                        Box(modifier = Modifier.size(ThumbnailSize)) {
+                            pickedThumbnail?.let { RouteThumbnailDrawing(it) }
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                    }
+                    Text(
+                        text = runRouteChoiceSummary(picked, reversed),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
                 // Only where there are courses to compare it against (#422). "Today ≈ 7 km" beside
                 // "you have no routes yet" is advice about a library that holds nothing to take it.
                 if (targetMeters != null) {
@@ -122,7 +132,7 @@ fun RoutePickerCard(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
-                    onClick = { choosing = true },
+                    onClick = onChoose,
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = RunningUiTokens.MinTouchTarget)
@@ -151,56 +161,6 @@ fun RoutePickerCard(
             }
         }
     }
-
-    if (choosing) {
-        AlertDialog(
-            onDismissRequest = { choosing = false },
-            title = { Text("Choose a route") },
-            text = {
-                LazyColumn {
-                    // Repeated inside the dialog rather than left on the card behind it, because
-                    // this is where the order it explains is actually read: a list re-sorted with
-                    // no reason on screen reads as a list in no order at all (#422).
-                    if (targetMeters != null) {
-                        item {
-                            RouteSuggestionHintLine(
-                                targetMeters = targetMeters,
-                                targetIsFixed = targetIsFixed,
-                                modifier = Modifier.padding(bottom = 4.dp)
-                            )
-                        }
-                    }
-                    // "No route" at the top rather than as a separate button, so following nothing
-                    // is one of the choices in the same list and can be got back to the same way.
-                    item {
-                        RouteChoiceRow(
-                            label = NO_ROUTE_CHOICE_LABEL,
-                            subtitle = null,
-                            selected = picked == null,
-                            onSelect = {
-                                onPick(null)
-                                choosing = false
-                            }
-                        )
-                    }
-                    items(offered, key = { it.id }) { route ->
-                        RouteChoiceRow(
-                            label = route.name,
-                            subtitle = routeRowSubtitle(route),
-                            selected = picked?.id == route.id,
-                            onSelect = {
-                                onPick(route.id)
-                                choosing = false
-                            }
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { choosing = false }) { Text("Close") }
-            }
-        )
-    }
 }
 
 /**
@@ -211,7 +171,7 @@ fun RoutePickerCard(
  * differently inside the dialog would take them for two different claims.
  */
 @Composable
-private fun RouteSuggestionHintLine(
+internal fun RouteSuggestionHintLine(
     targetMeters: Double,
     targetIsFixed: Boolean,
     modifier: Modifier = Modifier
@@ -223,34 +183,3 @@ private fun RouteSuggestionHintLine(
         modifier = modifier
     )
 }
-
-@Composable
-private fun RouteChoiceRow(
-    label: String,
-    subtitle: String?,
-    selected: Boolean,
-    onSelect: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = RunningUiTokens.MinTouchTarget)
-            .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        RadioButton(selected = selected, onClick = null)
-        Spacer(modifier = Modifier.width(8.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge)
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
