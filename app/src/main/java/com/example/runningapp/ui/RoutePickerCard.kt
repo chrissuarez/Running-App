@@ -56,6 +56,15 @@ fun runRouteAfterPick(previous: RunRoute?, routeId: Long?): RunRoute? =
     routeId?.let { RunRoute(it, reversed = it == previous?.routeId && previous.reversed) }
 
 /**
+ * Whether the runner's pick has left START with no route to follow (#496): nothing picked, or a
+ * pick whose course is no longer in the library. A course deleted from the Routes screens after it
+ * was picked leaves the choice holding its id, but START sets out with no route — so the picker
+ * must mark "No route" as the choice, the same truth the card prints.
+ */
+fun routeChoiceIsNoRoute(choice: RunRoute?, library: List<RouteHeader>): Boolean =
+    choice == null || library.none { it.id == choice.routeId }
+
+/**
  * The pre-run route picker (#56): which course this Run will follow, and which way round.
  *
  * Outdoor only, and offered by the screen rather than decided by it — a treadmill Run follows no

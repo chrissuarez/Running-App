@@ -95,6 +95,7 @@ import com.example.runningapp.ui.RoutePicking
 import com.example.runningapp.ui.routeLengthToOpenWhilePicking
 import com.example.runningapp.ui.routeLibraryRowsNearestFirst
 import com.example.runningapp.ui.runRouteAfterPick
+import com.example.runningapp.ui.routeChoiceIsNoRoute
 import com.example.runningapp.ui.routeSuggestionSinceMillis
 import com.example.runningapp.ui.suggestedRouteDistanceMeters
 import com.example.runningapp.ui.RunRouteSaver
@@ -1417,7 +1418,7 @@ class MainActivity : ComponentActivity() {
                                     RoutePicking(
                                         targetMeters = targetMeters,
                                         targetIsFixed = targetIsFixed,
-                                        nothingPicked = routeChoice == null,
+                                        nothingPicked = routeChoiceIsNoRoute(routeChoice, routeLibrary),
                                         onPickNoRoute = { pickRoute(null) },
                                     )
                                 } else {

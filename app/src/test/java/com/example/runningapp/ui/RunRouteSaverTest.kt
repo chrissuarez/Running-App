@@ -1,9 +1,12 @@
 package com.example.runningapp.ui
 
 import androidx.compose.runtime.saveable.SaverScope
+import com.example.runningapp.data.RouteHeader
 import com.example.runningapp.run.RunRoute
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -56,5 +59,22 @@ class RunRouteSaverTest {
     @Test
     fun `picking no route clears the choice`() {
         assertNull(runRouteAfterPick(RunRoute(3L, true), null))
+    }
+
+    private fun header(id: Long) = RouteHeader(id, "Course $id", 5000.0, null, 0L, "gpx")
+
+    @Test
+    fun `a pick still in the library is not no route`() {
+        assertFalse(routeChoiceIsNoRoute(RunRoute(3L, false), listOf(header(3L))))
+    }
+
+    @Test
+    fun `a pick deleted from the library leaves no route as the choice`() {
+        assertTrue(routeChoiceIsNoRoute(RunRoute(3L, false), listOf(header(4L))))
+    }
+
+    @Test
+    fun `nothing picked is no route`() {
+        assertTrue(routeChoiceIsNoRoute(null, listOf(header(3L))))
     }
 }
