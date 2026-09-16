@@ -7,8 +7,8 @@ three rounds running — and by that test every line in the enum qualifies. #312
 
 ## The criterion
 
-Every inference the journal licenses has the shape **"X with no Y"**: an opening line whose presence
-is read, and a missing line whose absence is.
+Every absence inference the journal licenses has the shape **"X with no Y"**: an opening line whose
+presence is read, and a missing line whose absence is.
 
 **An event waits exactly when it is the missing half of a documented inference.**
 
@@ -27,16 +27,21 @@ would leave the journal thinner.
 - The six waited lines stay as they are: `service-destroyed`, `run-row-created`, `run-row-discarded`,
   `run-stopped`, `run-finalized`, `demoted`.
 - `run-started` and `service-created` do not wait. Each opens an inference and is the missing half of
-  none. The ~40 ms between `run-started` and its waited `run-row-created` (10:18:57.568 and
+  none. (`service-destroyed` and `run-stopped` open inferences too, but wait for being a missing half
+  elsewhere.) The ~40 ms between `run-started` and its waited `run-row-created` (10:18:57.568 and
   10:18:57.607 on the phone) stays open on purpose: a process that dies inside it leaves no journal of
   that Run, which is silence, not a false statement.
-- `promoted` and `promotion-refused` do not wait. Which of them is present tells a hand-back of a
-  refused start from a lost foreground; a `demoted` with neither above it says nothing either way.
-  The `demoted` that follows them waits, and the writer is FIFO, so it lands them anyway.
+- `promoted` and `promotion-refused` do not wait. They are read by which one is present above a
+  `demoted`, never by absence. The `demoted` they are read against waits, and the writer is FIFO, so
+  it lands them before itself. They can only be lost with no `demoted` after them to misread.
+
+The inferences run one way only. The journal does not license "a `service-created` with a
+`service-destroyed` above it means the service before it shut down cleanly", so a lost opening line
+cannot make that reading false.
 
 ## Considered
 
 **Mark `run-started` as well.** It closes the 40 ms window. It was declined because the same argument
 applies to every line in the enum, and following it turns the journal into a synchronous write on
-every event, including the session inbox's hot path. Since the set does not widen, no wait cost was
-measured on that thread.
+every event, Strap and status lines included. Since the set does not widen, no wait cost was
+measured.
